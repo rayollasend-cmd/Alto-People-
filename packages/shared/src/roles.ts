@@ -99,6 +99,7 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'view:payroll',
     'view:documents',
     'view:communications',
+    'view:performance',
   ]),
   CLIENT_PORTAL: new Set<Capability>([
     'view:dashboard',

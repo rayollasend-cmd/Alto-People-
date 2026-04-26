@@ -793,3 +793,65 @@ export const NotificationBroadcastInputSchema = z.object({
   category: z.string().min(1).max(80).optional(),
 });
 export type NotificationBroadcastInput = z.infer<typeof NotificationBroadcastInputSchema>;
+
+/* -------------------------------------------------------------------------- *
+ *  Performance — Phase 13
+ * -------------------------------------------------------------------------- */
+
+export const PerformanceReviewStatusSchema = z.enum([
+  'DRAFT',
+  'SUBMITTED',
+  'ACKNOWLEDGED',
+]);
+export type PerformanceReviewStatus = z.infer<typeof PerformanceReviewStatusSchema>;
+
+export const PerformanceReviewSchema = z.object({
+  id: UuidSchema,
+  associateId: UuidSchema,
+  associateName: z.string(),
+  reviewerUserId: UuidSchema.nullable(),
+  reviewerEmail: z.string().email().nullable(),
+  periodStart: z.string(),
+  periodEnd: z.string(),
+  overallRating: z.number().int().min(1).max(5),
+  summary: z.string(),
+  strengths: z.string().nullable(),
+  improvements: z.string().nullable(),
+  goals: z.string().nullable(),
+  status: PerformanceReviewStatusSchema,
+  submittedAt: z.string().datetime().nullable(),
+  acknowledgedAt: z.string().datetime().nullable(),
+  createdAt: z.string().datetime(),
+});
+export type PerformanceReview = z.infer<typeof PerformanceReviewSchema>;
+
+export const PerformanceReviewListResponseSchema = z.object({
+  reviews: z.array(PerformanceReviewSchema),
+});
+export type PerformanceReviewListResponse = z.infer<typeof PerformanceReviewListResponseSchema>;
+
+export const PerformanceReviewCreateInputSchema = z
+  .object({
+    associateId: UuidSchema,
+    periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    overallRating: z.number().int().min(1).max(5),
+    summary: z.string().min(1).max(4000),
+    strengths: z.string().max(2000).optional(),
+    improvements: z.string().max(2000).optional(),
+    goals: z.string().max(2000).optional(),
+  })
+  .refine((v) => v.periodEnd >= v.periodStart, {
+    message: 'periodEnd must be on or after periodStart',
+    path: ['periodEnd'],
+  });
+export type PerformanceReviewCreateInput = z.infer<typeof PerformanceReviewCreateInputSchema>;
+
+export const PerformanceReviewUpdateInputSchema = z.object({
+  overallRating: z.number().int().min(1).max(5).optional(),
+  summary: z.string().min(1).max(4000).optional(),
+  strengths: z.string().max(2000).nullable().optional(),
+  improvements: z.string().max(2000).nullable().optional(),
+  goals: z.string().max(2000).nullable().optional(),
+});
+export type PerformanceReviewUpdateInput = z.infer<typeof PerformanceReviewUpdateInputSchema>;

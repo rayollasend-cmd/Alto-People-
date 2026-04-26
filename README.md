@@ -2,7 +2,7 @@
 
 Workforce-management HR platform for **Alto Etho LLC d/b/a Alto HR**.
 
-> **Status:** Phase 12 — Communications (in-app inbox, HR send + broadcast, stubbed SMS/PUSH/EMAIL providers). Remaining modules (Phase 13+) follow.
+> **Status:** Phase 13 — Performance reviews (HR composes / submits, ASSOCIATE acknowledges). Remaining: Phase 14 Recruiting.
 
 ## Prerequisites
 
@@ -162,7 +162,8 @@ timeline ordering, and template scoping.
 - [x] **Phase 10** — Compliance dashboard: I-9 section 1 / section 2 verification (HR is recorded as the verifier; document list required for section 2), background checks (initiate is **stubbed** — real Checkr/Sterling lives here in a future drop-in; HR can manually flip status), J-1 program profiles with DS-2019 + sponsor + days-until-end indicator. Three-tab UI per module
 - [x] **Phase 11** — Analytics: `GET /analytics/dashboard` returns live KPIs (active associates, currently clocked-in, open shifts in next 30d, pending onboarding, pending I-9 section 2, pending document reviews, net paid in last 30d, net pending disbursement, application status histogram). Dashboard.tsx replaces "—" placeholders with live numbers
 - [x] **Phase 12** — Communications: `Notification` model with channels (SMS / PUSH / EMAIL / IN_APP) and statuses (QUEUED / SENT / FAILED / READ). HR can send to a specific recipient or broadcast to ALL_ASSOCIATES / ALL_HR. **External providers (Twilio / FCM / Resend) are stubbed** — `lib/notifications.ts` returns synthetic refs; swapping in the real client is one file. Associate inbox shows IN_APP with unread badge + click-to-mark-read
-- [ ] **Phase 13+** — Performance, Recruiting
+- [x] **Phase 13** — Performance reviews: `PerformanceReview` model with DRAFT → SUBMITTED → ACKNOWLEDGED lifecycle. HR composes (overall rating 1–5, summary, strengths/improvements/goals); associates only see SUBMITTED + ACKNOWLEDGED rows (DRAFT stays hidden). Cross-associate access returns 404 not 403 to avoid leaking existence. Added `view:performance` to ASSOCIATE capabilities so they can read their own
+- [ ] **Phase 14** — Recruiting (candidate pipeline → onboarding handoff)
 
 ## Project layout
 

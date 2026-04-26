@@ -28,6 +28,7 @@ const TABLES = [
   'PayrollItem',
   'PayrollRun',
   'Notification',
+  'PerformanceReview',
   'User',
   'Associate',
   'Client',

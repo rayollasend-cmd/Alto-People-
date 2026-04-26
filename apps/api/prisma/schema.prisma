@@ -165,6 +165,12 @@ enum NotificationStatus {
   READ        // IN_APP only — recipient opened it
 }
 
+enum PerformanceReviewStatus {
+  DRAFT          // HR is still composing — not visible to associate
+  SUBMITTED      // visible to associate, awaiting acknowledgement
+  ACKNOWLEDGED   // associate has read + signed off
+}
+
 // =============================================================================
 // Models
 // =============================================================================
@@ -193,6 +199,7 @@ model User {
   verifiedDocuments     DocumentRecord[]       @relation("DocumentVerifier")
   sentNotifications     Notification[]         @relation("NotificationSender")
   receivedNotifications Notification[]         @relation("NotificationRecipient")
+  authoredReviews       PerformanceReview[]    @relation("PerformanceReviewer")
 
   @@index([role])
   @@index([clientId])
@@ -251,6 +258,7 @@ model Associate {
   timeEntries      TimeEntry[]
   assignedShifts   Shift[]
   payrollItems     PayrollItem[]
+  performanceReviews PerformanceReview[]
 
   @@index([deletedAt])
 }
@@ -600,6 +608,29 @@ model PayrollItem {
   // rather than duplicating.
   @@unique([payrollRunId, associateId])
   @@index([associateId])
+  @@index([status])
+}
+
+model PerformanceReview {
+  id             String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId    String                  @db.Uuid
+  reviewerUserId String?                 @db.Uuid
+  periodStart    DateTime                @db.Date
+  periodEnd      DateTime                @db.Date
+  overallRating  Int
+  summary        String
+  strengths      String?
+  improvements   String?
+  goals          String?
+  status         PerformanceReviewStatus @default(DRAFT)
+  submittedAt    DateTime?               @db.Timestamptz(6)
+  acknowledgedAt DateTime?               @db.Timestamptz(6)
+  associate      Associate               @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  reviewer       User?                   @relation("PerformanceReviewer", fields: [reviewerUserId], references: [id], onDelete: SetNull)
+  createdAt      DateTime                @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime                @updatedAt @db.Timestamptz(6)
+
+  @@index([associateId, periodEnd])
   @@index([status])
 }
 
