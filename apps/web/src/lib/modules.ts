@@ -10,7 +10,8 @@ export type ModuleKey =
   | 'clients'
   | 'analytics'
   | 'compliance'
-  | 'performance';
+  | 'performance'
+  | 'recruiting';
 
 export interface ModuleNav {
   key: ModuleKey;
@@ -100,5 +101,13 @@ export const MODULES: ModuleNav[] = [
     description:
       'Reviews, KPIs, PIPs, commendations, disciplinary log, and 360 feedback.',
     requires: 'view:performance',
+  },
+  {
+    key: 'recruiting',
+    path: '/recruiting',
+    label: 'Recruiting',
+    description:
+      'Candidate pipeline, interviews, offers, and hire-to-onboarding handoff.',
+    requires: 'view:recruiting',
   },
 ];

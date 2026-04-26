@@ -2,7 +2,7 @@
 
 Workforce-management HR platform for **Alto Etho LLC d/b/a Alto HR**.
 
-> **Status:** Phase 13 — Performance reviews (HR composes / submits, ASSOCIATE acknowledges). Remaining: Phase 14 Recruiting.
+> **Status:** ✅ **All 14 roadmap phases complete.** All ten modules ship a working vertical slice: Onboarding, Time, Scheduling, Payroll, Documents, Compliance, Analytics, Communications, Performance, Recruiting. Third-party integrations (Wise/Branch/Twilio/FCM/Checkr) are stubbed with one-file swap-in points; everything else is real, tested, and audited.
 
 ## Prerequisites
 
@@ -163,7 +163,7 @@ timeline ordering, and template scoping.
 - [x] **Phase 11** — Analytics: `GET /analytics/dashboard` returns live KPIs (active associates, currently clocked-in, open shifts in next 30d, pending onboarding, pending I-9 section 2, pending document reviews, net paid in last 30d, net pending disbursement, application status histogram). Dashboard.tsx replaces "—" placeholders with live numbers
 - [x] **Phase 12** — Communications: `Notification` model with channels (SMS / PUSH / EMAIL / IN_APP) and statuses (QUEUED / SENT / FAILED / READ). HR can send to a specific recipient or broadcast to ALL_ASSOCIATES / ALL_HR. **External providers (Twilio / FCM / Resend) are stubbed** — `lib/notifications.ts` returns synthetic refs; swapping in the real client is one file. Associate inbox shows IN_APP with unread badge + click-to-mark-read
 - [x] **Phase 13** — Performance reviews: `PerformanceReview` model with DRAFT → SUBMITTED → ACKNOWLEDGED lifecycle. HR composes (overall rating 1–5, summary, strengths/improvements/goals); associates only see SUBMITTED + ACKNOWLEDGED rows (DRAFT stays hidden). Cross-associate access returns 404 not 403 to avoid leaking existence. Added `view:performance` to ASSOCIATE capabilities so they can read their own
-- [ ] **Phase 14** — Recruiting (candidate pipeline → onboarding handoff)
+- [x] **Phase 14** — Recruiting: `Candidate` model with pipeline stages (APPLIED → SCREENING → INTERVIEW → OFFER → HIRED / WITHDRAWN / REJECTED). HR creates, advances, and converts candidates. `POST /candidates/:id/hire` creates the Associate record and (optionally, with `clientId`+`templateId`) the matching Onboarding `Application` + checklist — closing the recruiting → onboarding handoff loop. REJECTED and WITHDRAWN require a reason; soft-delete preserves the audit trail; HIRED candidates are immutable
 
 ## Project layout
 

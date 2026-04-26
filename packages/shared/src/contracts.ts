@@ -855,3 +855,90 @@ export const PerformanceReviewUpdateInputSchema = z.object({
   goals: z.string().max(2000).nullable().optional(),
 });
 export type PerformanceReviewUpdateInput = z.infer<typeof PerformanceReviewUpdateInputSchema>;
+
+/* -------------------------------------------------------------------------- *
+ *  Recruiting — Phase 14
+ * -------------------------------------------------------------------------- */
+
+export const CandidateStageSchema = z.enum([
+  'APPLIED',
+  'SCREENING',
+  'INTERVIEW',
+  'OFFER',
+  'HIRED',
+  'WITHDRAWN',
+  'REJECTED',
+]);
+export type CandidateStage = z.infer<typeof CandidateStageSchema>;
+
+export const CandidateSchema = z.object({
+  id: UuidSchema,
+  firstName: z.string(),
+  lastName: z.string(),
+  email: z.string().email(),
+  phone: z.string().nullable(),
+  position: z.string().nullable(),
+  source: z.string().nullable(),
+  stage: CandidateStageSchema,
+  notes: z.string().nullable(),
+  hiredAssociateId: UuidSchema.nullable(),
+  hiredClientId: UuidSchema.nullable(),
+  hiredAt: z.string().datetime().nullable(),
+  rejectedReason: z.string().nullable(),
+  withdrawnReason: z.string().nullable(),
+  createdAt: z.string().datetime(),
+});
+export type Candidate = z.infer<typeof CandidateSchema>;
+
+export const CandidateListResponseSchema = z.object({
+  candidates: z.array(CandidateSchema),
+});
+export type CandidateListResponse = z.infer<typeof CandidateListResponseSchema>;
+
+export const CandidateCreateInputSchema = z.object({
+  firstName: z.string().min(1).max(80),
+  lastName: z.string().min(1).max(80),
+  email: z.string().email(),
+  phone: z.string().max(40).optional(),
+  position: z.string().max(120).optional(),
+  source: z.string().max(80).optional(),
+  notes: z.string().max(2000).optional(),
+});
+export type CandidateCreateInput = z.infer<typeof CandidateCreateInputSchema>;
+
+export const CandidateUpdateInputSchema = z.object({
+  firstName: z.string().min(1).max(80).optional(),
+  lastName: z.string().min(1).max(80).optional(),
+  phone: z.string().max(40).nullable().optional(),
+  position: z.string().max(120).nullable().optional(),
+  source: z.string().max(80).nullable().optional(),
+  notes: z.string().max(2000).nullable().optional(),
+});
+export type CandidateUpdateInput = z.infer<typeof CandidateUpdateInputSchema>;
+
+export const CandidateAdvanceInputSchema = z
+  .object({
+    stage: CandidateStageSchema,
+    rejectedReason: z.string().min(1).max(500).optional(),
+    withdrawnReason: z.string().min(1).max(500).optional(),
+  })
+  .refine(
+    (v) => v.stage !== 'REJECTED' || !!v.rejectedReason,
+    { message: 'rejectedReason is required when moving to REJECTED', path: ['rejectedReason'] }
+  )
+  .refine(
+    (v) => v.stage !== 'WITHDRAWN' || !!v.withdrawnReason,
+    { message: 'withdrawnReason is required when moving to WITHDRAWN', path: ['withdrawnReason'] }
+  )
+  .refine(
+    (v) => v.stage !== 'HIRED',
+    { message: 'use POST /candidates/:id/hire to move to HIRED (creates Associate)', path: ['stage'] }
+  );
+export type CandidateAdvanceInput = z.infer<typeof CandidateAdvanceInputSchema>;
+
+export const CandidateHireInputSchema = z.object({
+  /** Optional clientId to associate the new hire with via an Application. */
+  clientId: UuidSchema.optional(),
+  templateId: UuidSchema.optional(),
+});
+export type CandidateHireInput = z.infer<typeof CandidateHireInputSchema>;

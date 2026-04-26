@@ -171,6 +171,16 @@ enum PerformanceReviewStatus {
   ACKNOWLEDGED   // associate has read + signed off
 }
 
+enum CandidateStage {
+  APPLIED        // record exists, hasn't been screened yet
+  SCREENING      // recruiter is reviewing
+  INTERVIEW      // interview scheduled / in progress
+  OFFER          // offer extended, awaiting response
+  HIRED          // accepted; converted to Associate
+  WITHDRAWN      // candidate pulled out
+  REJECTED       // we passed
+}
+
 // =============================================================================
 // Models
 // =============================================================================
@@ -609,6 +619,30 @@ model PayrollItem {
   @@unique([payrollRunId, associateId])
   @@index([associateId])
   @@index([status])
+}
+
+model Candidate {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  firstName      String
+  lastName       String
+  email          String         @unique
+  phone          String?
+  position       String?
+  source         String?        // referral, indeed, careers-page, etc.
+  stage          CandidateStage @default(APPLIED)
+  notes          String?
+  // When HIRED, populated with the new Associate's id (and clientId).
+  hiredAssociateId String?      @unique @db.Uuid
+  hiredClientId    String?      @db.Uuid
+  hiredAt          DateTime?    @db.Timestamptz(6)
+  rejectedReason   String?
+  withdrawnReason  String?
+  createdAt        DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime     @updatedAt @db.Timestamptz(6)
+  deletedAt        DateTime?    @db.Timestamptz(6)
+
+  @@index([stage])
+  @@index([deletedAt])
 }
 
 model PerformanceReview {

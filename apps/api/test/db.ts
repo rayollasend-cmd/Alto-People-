@@ -29,6 +29,7 @@ const TABLES = [
   'PayrollRun',
   'Notification',
   'PerformanceReview',
+  'Candidate',
   'User',
   'Associate',
   'Client',
