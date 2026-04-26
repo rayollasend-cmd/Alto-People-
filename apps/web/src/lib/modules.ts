@@ -1,3 +1,18 @@
+import type { LucideIcon } from 'lucide-react';
+import {
+  Award,
+  Briefcase,
+  Building2,
+  Calendar,
+  ClipboardList,
+  DollarSign,
+  FileText,
+  LineChart,
+  MessageSquare,
+  ShieldCheck,
+  Timer,
+  UserPlus,
+} from 'lucide-react';
 import type { Capability } from './roles';
 
 export type ModuleKey =
@@ -19,7 +34,25 @@ export interface ModuleNav {
   label: string;
   description: string;
   requires: Capability;
+  /** Phase 27 — icon shown in the sidebar / module launcher. */
+  icon: LucideIcon;
 }
+
+// Re-exported so other components don't need their own lucide imports.
+export {
+  Award,
+  Briefcase,
+  Building2,
+  Calendar,
+  ClipboardList,
+  DollarSign,
+  FileText,
+  LineChart,
+  MessageSquare,
+  ShieldCheck,
+  Timer,
+  UserPlus,
+};
 
 export const MODULES: ModuleNav[] = [
   {
@@ -29,6 +62,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Digital application, document vault, e-signatures, background checks, and J-1 visa tracking.',
     requires: 'view:onboarding',
+    icon: ClipboardList,
   },
   {
     key: 'time-attendance',
@@ -37,6 +71,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Geofenced clock-in, timesheet approvals, and attendance auditing.',
     requires: 'view:time',
+    icon: Timer,
   },
   {
     key: 'scheduling',
@@ -45,6 +80,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Shift planning, fill rate tracking, and assignment management.',
     requires: 'view:scheduling',
+    icon: Calendar,
   },
   {
     key: 'payroll',
@@ -53,6 +89,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Multi-state payroll, anomaly detection, Branch cards, and Wise transfers.',
     requires: 'view:payroll',
+    icon: DollarSign,
   },
   {
     key: 'documents',
@@ -61,6 +98,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Centralized storage, e-signatures, expiration alerts, and audit trails.',
     requires: 'view:documents',
+    icon: FileText,
   },
   {
     key: 'communications',
@@ -69,6 +107,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'SMS, push notifications, broadcast messaging, and templates.',
     requires: 'view:communications',
+    icon: MessageSquare,
   },
   {
     key: 'clients',
@@ -77,6 +116,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'CRM, contracts, SOW renewals, and client portal access.',
     requires: 'view:clients',
+    icon: Building2,
   },
   {
     key: 'analytics',
@@ -85,6 +125,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Executive dashboard, custom reports, and predictive analytics.',
     requires: 'view:analytics',
+    icon: LineChart,
   },
   {
     key: 'compliance',
@@ -93,6 +134,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'OSHA, I-9, J-1, multi-state labor law, and certification tracking.',
     requires: 'view:compliance',
+    icon: ShieldCheck,
   },
   {
     key: 'performance',
@@ -101,6 +143,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'Reviews, KPIs, PIPs, commendations, disciplinary log, and 360 feedback.',
     requires: 'view:performance',
+    icon: Award,
   },
   {
     key: 'recruiting',
@@ -109,5 +152,13 @@ export const MODULES: ModuleNav[] = [
     description:
       'Candidate pipeline, interviews, offers, and hire-to-onboarding handoff.',
     requires: 'view:recruiting',
+    icon: UserPlus,
   },
 ];
+
+/** Sidebar entry for the home dashboard (not a module). */
+export const DASHBOARD_NAV = {
+  path: '/',
+  label: 'Dashboard',
+  icon: Briefcase,
+} as const;

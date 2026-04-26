@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom';
-import { MODULES } from '@/lib/modules';
+import type { LucideIcon } from 'lucide-react';
+import { DASHBOARD_NAV, MODULES } from '@/lib/modules';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 
@@ -16,10 +17,10 @@ export function Sidebar() {
         </p>
       </div>
 
-      <nav className="flex-1 overflow-y-auto py-3">
-        <SidebarLink to="/" end label="Dashboard" />
+      <nav className="flex-1 overflow-y-auto py-3" aria-label="Primary navigation">
+        <SidebarLink to={DASHBOARD_NAV.path} end label={DASHBOARD_NAV.label} icon={DASHBOARD_NAV.icon} />
         {visible.map((m) => (
-          <SidebarLink key={m.key} to={m.path} label={m.label} />
+          <SidebarLink key={m.key} to={m.path} label={m.label} icon={m.icon} />
         ))}
       </nav>
 
@@ -33,24 +34,26 @@ export function Sidebar() {
 interface SidebarLinkProps {
   to: string;
   label: string;
+  icon: LucideIcon;
   end?: boolean;
 }
 
-function SidebarLink({ to, label, end }: SidebarLinkProps) {
+function SidebarLink({ to, label, icon: Icon, end }: SidebarLinkProps) {
   return (
     <NavLink
       to={to}
       end={end}
       className={({ isActive }) =>
         cn(
-          'block px-6 py-2.5 text-sm border-l-2 transition',
+          'flex items-center gap-3 px-6 py-2.5 text-sm border-l-2 transition-colors',
           isActive
             ? 'bg-navy-secondary text-gold border-gold'
             : 'border-transparent text-silver hover:text-white hover:bg-navy-secondary/60'
         )
       }
     >
-      {label}
+      <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+      <span>{label}</span>
     </NavLink>
   );
 }

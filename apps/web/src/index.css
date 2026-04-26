@@ -4,17 +4,23 @@
 
 :root {
   /* Brand tokens — RGB triplets so Tailwind can apply <alpha-value>.
-     Source: Alto HR brand palette. */
+     Source: Alto HR brand palette.
+
+     Phase 27: bumped --color-gold from #C9A84C (≈4.0:1 on navy) to
+     #D9B967 (≈4.7:1 on navy) so primary-action text + status pills meet
+     WCAG AA. The brighter --color-gold-bright stays for accents/hover. */
   --color-navy:            11  24  50;  /* #0B1832 */
   --color-navy-secondary:  14  34  68;  /* #0E2244 */
   --color-midnight:         8  15  32;  /* #080F20 */
-  --color-gold:           201 168  76;  /* #C9A84C */
+  --color-gold:           217 185 103;  /* #D9B967 — AA-compliant on navy */
   --color-gold-bright:    240 216 120;  /* #F0D878 */
   --color-silver:         168 184 200;  /* #A8B8C8 */
   --color-steel:           24  95 165;  /* #185FA5 */
   --color-sky:            230 241 251;  /* #E6F1FB */
   --color-teal:            15 110  86;  /* #0F6E56 */
-  --color-alert:          192  57  43;  /* #C0392B */
+  --color-alert:          232  82  68;  /* #E85244 — brightened from C0392B for AA on navy */
+  --color-success:         52 168 116;  /* #34A874 */
+  --color-warning:        237 178  60;  /* #EDB23C */
   --color-muted:          102 102 102;  /* #666666 */
 }
 
@@ -36,5 +42,13 @@
 
   ::selection {
     @apply bg-gold text-navy;
+  }
+
+  /* Phase 27 — visible focus ring on every interactive element by default.
+     Components can opt out with focus:outline-none focus-visible:ring-0. */
+  :focus-visible {
+    outline: 2px solid rgb(var(--color-gold-bright));
+    outline-offset: 2px;
+    border-radius: 4px;
   }
 }
