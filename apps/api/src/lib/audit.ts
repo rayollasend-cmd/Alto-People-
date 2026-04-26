@@ -92,6 +92,33 @@ interface OnboardingEventContext {
   req?: Request;
 }
 
+interface ComplianceEventContext {
+  actorUserId: string | null;
+  action: string;
+  entityType: 'I9Verification' | 'BackgroundCheck' | 'J1Profile';
+  entityId: string;
+  associateId: string;
+  clientId?: string | null;
+  metadata?: Record<string, unknown>;
+  req?: Request;
+}
+
+export async function recordComplianceEvent(ctx: ComplianceEventContext) {
+  const reqMeta = ctx.req
+    ? { ip: ctx.req.ip ?? null, userAgent: ctx.req.headers['user-agent'] ?? null }
+    : {};
+  await prisma.auditLog.create({
+    data: {
+      actorUserId: ctx.actorUserId,
+      clientId: ctx.clientId ?? null,
+      action: ctx.action,
+      entityType: ctx.entityType,
+      entityId: ctx.entityId,
+      metadata: { associateId: ctx.associateId, ...reqMeta, ...(ctx.metadata ?? {}) },
+    },
+  });
+}
+
 interface TimeEventContext {
   actorUserId: string | null;
   action: string; // e.g. 'time.clock_in'

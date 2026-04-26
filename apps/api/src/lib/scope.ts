@@ -46,6 +46,13 @@ export function scopeTemplates(
   return {};
 }
 
+export function scopeBackgroundChecks(user: SessionUser): Prisma.BackgroundCheckWhereInput {
+  if (user.role === 'CLIENT_PORTAL' && user.clientId) {
+    return { clientId: user.clientId };
+  }
+  return {};
+}
+
 export function scopeDocuments(user: SessionUser): Prisma.DocumentRecordWhereInput {
   const base: Prisma.DocumentRecordWhereInput = { deletedAt: null };
   if (user.role === 'ASSOCIATE' && user.associateId) {

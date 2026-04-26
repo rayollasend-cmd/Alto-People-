@@ -2,7 +2,7 @@
 
 Workforce-management HR platform for **Alto Etho LLC d/b/a Alto HR**.
 
-> **Status:** Phase 9 — Document vault (associate upload, HR verify/reject, local-fs storage with S3 swap planned). Remaining modules (Phase 10+) follow.
+> **Status:** Phase 10 — Compliance dashboard (I-9 verification, background checks, J-1 program tracking). Remaining modules (Phase 11+) follow.
 
 ## Prerequisites
 
@@ -159,7 +159,8 @@ timeline ordering, and template scoping.
 - [x] **Phase 7** — Scheduling: shift CRUD with status (DRAFT/OPEN/ASSIGNED/COMPLETED/CANCELLED), assign/unassign/cancel with reasons, ASSOCIATE-scoped `/me/shifts`, audit trail
 - [x] **Phase 8** — Payroll MVP: PayrollRun + PayrollItem with snapshotted hours/rate/gross/tax/net; aggregates APPROVED TimeEntries × hourly rate (from period Shifts, falls back to default); placeholder federal withholding by W-4 filing status; DRAFT → FINALIZED → DISBURSED lifecycle; **disbursement is stubbed** (returns `STUB-…` refs — real Wise/Branch wiring is future work); FINANCE_ACCOUNTANT can view but only HR_ADMINISTRATOR can `process:payroll`
 - [x] **Phase 9** — Document vault: multipart upload (PDF/PNG/JPG/WEBP, 10 MB cap), associate `/me` + HR `/admin` verify/reject queue with rejection reasons, content-addressed local-fs storage at `apps/api/uploads/` (gitignored). The `s3Key` column stays — only the resolver in `lib/storage.ts` changes when S3 lands. Soft-delete preserves the audit trail; verified docs cannot be deleted by the associate
-- [ ] **Phase 10+** — Communications (Twilio/FCM), Compliance, Performance, Recruiting, Analytics
+- [x] **Phase 10** — Compliance dashboard: I-9 section 1 / section 2 verification (HR is recorded as the verifier; document list required for section 2), background checks (initiate is **stubbed** — real Checkr/Sterling lives here in a future drop-in; HR can manually flip status), J-1 program profiles with DS-2019 + sponsor + days-until-end indicator. Three-tab UI per module
+- [ ] **Phase 11+** — Communications (Twilio/FCM), Performance, Recruiting, Analytics
 
 ## Project layout
 

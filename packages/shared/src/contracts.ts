@@ -586,3 +586,122 @@ export const DocumentRejectInputSchema = z.object({
   reason: z.string().min(1).max(500),
 });
 export type DocumentRejectInput = z.infer<typeof DocumentRejectInputSchema>;
+
+/* -------------------------------------------------------------------------- *
+ *  Compliance — Phase 10 (I-9, Background, J-1)
+ * -------------------------------------------------------------------------- */
+
+export const I9DocumentListSchema = z.enum(['LIST_A', 'LIST_B_AND_C']);
+export type I9DocumentList = z.infer<typeof I9DocumentListSchema>;
+
+export const I9VerificationSchema = z.object({
+  id: UuidSchema,
+  associateId: UuidSchema,
+  associateName: z.string(),
+  associateEmail: z.string().email(),
+  section1CompletedAt: z.string().datetime().nullable(),
+  section2CompletedAt: z.string().datetime().nullable(),
+  section2VerifierUserId: UuidSchema.nullable(),
+  section2VerifierEmail: z.string().email().nullable(),
+  documentList: I9DocumentListSchema.nullable(),
+  supportingDocIds: z.array(UuidSchema),
+});
+export type I9Verification = z.infer<typeof I9VerificationSchema>;
+
+export const I9ListResponseSchema = z.object({
+  i9s: z.array(I9VerificationSchema),
+});
+export type I9ListResponse = z.infer<typeof I9ListResponseSchema>;
+
+export const I9UpsertInputSchema = z
+  .object({
+    section1CompletedAt: z.string().datetime().nullable().optional(),
+    section2CompletedAt: z.string().datetime().nullable().optional(),
+    documentList: I9DocumentListSchema.nullable().optional(),
+    supportingDocIds: z.array(UuidSchema).optional(),
+  })
+  .refine(
+    (v) =>
+      // Recording section 2 requires the document list — Form I-9 itself
+      // requires the verifier to record which list of docs they inspected.
+      !v.section2CompletedAt || (v.documentList !== undefined && v.documentList !== null),
+    { message: 'documentList is required when recording section 2', path: ['documentList'] }
+  );
+export type I9UpsertInput = z.infer<typeof I9UpsertInputSchema>;
+
+export const BgCheckStatusSchema = z.enum([
+  'INITIATED',
+  'IN_PROGRESS',
+  'PASSED',
+  'FAILED',
+  'NEEDS_REVIEW',
+]);
+export type BgCheckStatus = z.infer<typeof BgCheckStatusSchema>;
+
+export const BackgroundCheckSchema = z.object({
+  id: UuidSchema,
+  associateId: UuidSchema,
+  associateName: z.string(),
+  clientId: UuidSchema.nullable(),
+  provider: z.string(),
+  externalId: z.string().nullable(),
+  status: BgCheckStatusSchema,
+  initiatedAt: z.string().datetime(),
+  completedAt: z.string().datetime().nullable(),
+});
+export type BackgroundCheck = z.infer<typeof BackgroundCheckSchema>;
+
+export const BackgroundCheckListResponseSchema = z.object({
+  checks: z.array(BackgroundCheckSchema),
+});
+export type BackgroundCheckListResponse = z.infer<typeof BackgroundCheckListResponseSchema>;
+
+export const BackgroundInitiateInputSchema = z.object({
+  associateId: UuidSchema,
+  provider: z.string().min(1).max(80).default('alto-stub'),
+});
+export type BackgroundInitiateInput = z.infer<typeof BackgroundInitiateInputSchema>;
+
+export const BackgroundUpdateInputSchema = z.object({
+  status: BgCheckStatusSchema,
+  externalId: z.string().max(120).optional(),
+});
+export type BackgroundUpdateInput = z.infer<typeof BackgroundUpdateInputSchema>;
+
+export const J1ProfileSchema = z.object({
+  id: UuidSchema,
+  associateId: UuidSchema,
+  associateName: z.string(),
+  associateEmail: z.string().email(),
+  programStartDate: z.string(),
+  programEndDate: z.string(),
+  ds2019Number: z.string(),
+  sponsorAgency: z.string(),
+  visaNumber: z.string().nullable(),
+  sevisId: z.string().nullable(),
+  country: z.string(),
+  /** Server-computed: days from now until programEndDate (negative = expired). */
+  daysUntilEnd: z.number().int(),
+});
+export type J1Profile = z.infer<typeof J1ProfileSchema>;
+
+export const J1ListResponseSchema = z.object({
+  profiles: z.array(J1ProfileSchema),
+});
+export type J1ListResponse = z.infer<typeof J1ListResponseSchema>;
+
+export const J1UpsertInputSchema = z
+  .object({
+    programStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    programEndDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    ds2019Number: z.string().min(1).max(80),
+    sponsorAgency: z.string().min(1).max(120),
+    visaNumber: z.string().max(80).nullable().optional(),
+    sevisId: z.string().max(80).nullable().optional(),
+    country: z.string().min(1).max(80),
+  })
+  .refine((v) => v.programEndDate >= v.programStartDate, {
+    message: 'programEndDate must be on or after programStartDate',
+    path: ['programEndDate'],
+  });
+export type J1UpsertInput = z.infer<typeof J1UpsertInputSchema>;
