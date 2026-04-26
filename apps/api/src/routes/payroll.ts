@@ -16,12 +16,12 @@ import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopePayrollRuns } from '../lib/scope.js';
 import {
-  computeFederalWithholding,
-  computeNet,
   pickHourlyRate,
   round2,
   sumApprovedHours,
 } from '../lib/payroll.js';
+import { computePaycheckTaxes, type PayFrequency } from '../lib/payrollTax.js';
+import { hashPdf, renderPaystubPdf, type PaystubData } from '../lib/paystub.js';
 import { recordPayrollEvent } from '../lib/audit.js';
 
 export const payrollRouter = Router();
@@ -55,6 +55,16 @@ function toItem(i: RawItem): PayrollItem {
     hourlyRate: Number(i.hourlyRate),
     grossPay: Number(i.grossPay),
     federalWithholding: Number(i.federalWithholding),
+    fica: Number(i.fica),
+    medicare: Number(i.medicare),
+    stateWithholding: Number(i.stateWithholding),
+    taxState: i.taxState,
+    ytdWages: Number(i.ytdWages),
+    ytdMedicareWages: Number(i.ytdMedicareWages),
+    employerFica: Number(i.employerFica),
+    employerMedicare: Number(i.employerMedicare),
+    employerFuta: Number(i.employerFuta),
+    employerSuta: Number(i.employerSuta),
     netPay: Number(i.netPay),
     status: i.status,
     disbursementRef: i.disbursementRef,
@@ -74,6 +84,7 @@ function toSummary(r: RawRun): PayrollRunSummary {
     totalGross: Number(r.totalGross),
     totalTax: Number(r.totalTax),
     totalNet: Number(r.totalNet),
+    totalEmployerTax: Number(r.totalEmployerTax),
     itemCount: r.items.length,
     notes: r.notes,
     finalizedAt: r.finalizedAt ? r.finalizedAt.toISOString() : null,
@@ -174,7 +185,19 @@ payrollRouter.post('/runs', PROCESS, async (req, res, next) => {
         },
         include: {
           associate: {
-            select: { id: true, w4Submission: { select: { filingStatus: true, extraWithholding: true } } },
+            select: {
+              id: true,
+              state: true,
+              w4Submission: {
+                select: {
+                  filingStatus: true,
+                  extraWithholding: true,
+                  deductions: true,
+                  otherIncome: true,
+                  dependentsAmount: true,
+                },
+              },
+            },
           },
         },
       });
@@ -186,15 +209,19 @@ payrollRouter.post('/runs', PROCESS, async (req, res, next) => {
         byAssociate.set(e.associateId, arr);
       }
 
+      const payFrequency: PayFrequency = 'BIWEEKLY';
+
       let totalGross = 0;
       let totalTax = 0;
       let totalNet = 0;
+      let totalEmployerTax = 0;
+
+      const yearStart = new Date(Date.UTC(periodStart.getUTCFullYear(), 0, 1));
 
       for (const [associateId, group] of byAssociate) {
         const hoursWorked = sumApprovedHours(group);
         if (hoursWorked === 0) continue;
 
-        // Pull recent shifts for this associate in the period to pick a rate.
         const shifts = await tx.shift.findMany({
           where: {
             assignedAssociateId: associateId,
@@ -205,13 +232,34 @@ payrollRouter.post('/runs', PROCESS, async (req, res, next) => {
         const hourlyRate = pickHourlyRate(shifts, defaultRate);
         const grossPay = round2(hoursWorked * hourlyRate);
 
+        // Pull YTD wages so FICA cap and Medicare surcharge math is right.
+        // We sum prior PayrollItems in this calendar year EXCLUDING items
+        // belonging to this run (so re-aggregating doesn't double-count).
+        const priorYtd = await tx.payrollItem.aggregate({
+          where: {
+            associateId,
+            payrollRun: { periodStart: { gte: yearStart, lt: periodStart } },
+          },
+          _sum: { grossPay: true },
+        });
+        const ytdWages = Number(priorYtd._sum.grossPay ?? 0);
+        const ytdMedicareWages = ytdWages; // no Medicare exclusions in our model
+
         const w4 = group[0].associate.w4Submission;
-        const federalWithholding = computeFederalWithholding({
+        const associateState = group[0].associate.state ?? null;
+
+        const breakdown = computePaycheckTaxes({
           grossPay,
           filingStatus: w4?.filingStatus ?? null,
+          payFrequency,
+          state: associateState,
+          ytdWages,
+          ytdMedicareWages,
           extraWithholding: w4?.extraWithholding ? Number(w4.extraWithholding) : 0,
+          deductions: w4?.deductions ? Number(w4.deductions) : 0,
+          otherIncome: w4?.otherIncome ? Number(w4.otherIncome) : 0,
+          dependentsAmount: w4?.dependentsAmount ? Number(w4.dependentsAmount) : 0,
         });
-        const netPay = computeNet(grossPay, federalWithholding);
 
         await tx.payrollItem.upsert({
           where: { payrollRunId_associateId: { payrollRunId: run.id, associateId } },
@@ -221,22 +269,47 @@ payrollRouter.post('/runs', PROCESS, async (req, res, next) => {
             hoursWorked,
             hourlyRate,
             grossPay,
-            federalWithholding,
-            netPay,
+            federalWithholding: breakdown.federalIncomeTax,
+            fica: breakdown.socialSecurity,
+            medicare: breakdown.medicare,
+            stateWithholding: breakdown.stateIncomeTax,
+            taxState: associateState,
+            ytdWages,
+            ytdMedicareWages,
+            employerFica: breakdown.employer.fica,
+            employerMedicare: breakdown.employer.medicare,
+            employerFuta: breakdown.employer.futa,
+            employerSuta: breakdown.employer.suta,
+            netPay: breakdown.netPay,
             status: 'PENDING',
           },
           update: {
             hoursWorked,
             hourlyRate,
             grossPay,
-            federalWithholding,
-            netPay,
+            federalWithholding: breakdown.federalIncomeTax,
+            fica: breakdown.socialSecurity,
+            medicare: breakdown.medicare,
+            stateWithholding: breakdown.stateIncomeTax,
+            taxState: associateState,
+            ytdWages,
+            ytdMedicareWages,
+            employerFica: breakdown.employer.fica,
+            employerMedicare: breakdown.employer.medicare,
+            employerFuta: breakdown.employer.futa,
+            employerSuta: breakdown.employer.suta,
+            netPay: breakdown.netPay,
           },
         });
 
         totalGross += grossPay;
-        totalTax += federalWithholding;
-        totalNet += netPay;
+        totalTax += breakdown.totalEmployeeTax;
+        totalNet += breakdown.netPay;
+        totalEmployerTax +=
+          breakdown.employer.fica +
+          breakdown.employer.medicare +
+          breakdown.employer.futa +
+          breakdown.employer.suta;
       }
 
       await tx.payrollRun.update({
@@ -245,6 +318,7 @@ payrollRouter.post('/runs', PROCESS, async (req, res, next) => {
           totalGross: round2(totalGross),
           totalTax: round2(totalTax),
           totalNet: round2(totalNet),
+          totalEmployerTax: round2(totalEmployerTax),
         },
       });
 
@@ -345,6 +419,120 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
     });
 
     res.json(toDetail(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Paystub PDF ===================================================== */
+
+// Streams the rendered paystub PDF for a single PayrollItem. Scope:
+// associates can fetch their own item; HR/Finance can fetch any item
+// inside a run their scope sees. The first download stamps the
+// PayrollItem.paystubHash; subsequent downloads must produce the same
+// hash. If the PDF byte stream ever changes (font swap, layout tweak)
+// finance gets a verifiable signal that the immutable record drifted.
+payrollRouter.get('/items/:itemId/paystub.pdf', async (req, res, next) => {
+  try {
+    const item = await prisma.payrollItem.findUnique({
+      where: { id: req.params.itemId },
+      include: {
+        payrollRun: { include: { client: { select: { name: true } } } },
+        associate: true,
+      },
+    });
+    if (!item) throw new HttpError(404, 'item_not_found', 'Paystub not found');
+
+    const user = req.user!;
+    const isOwner = user.associateId && user.associateId === item.associateId;
+    const canManage = ['HR_ADMINISTRATOR', 'OPERATIONS_MANAGER', 'FINANCE_ACCOUNTANT', 'EXECUTIVE_CHAIRMAN'].includes(user.role);
+    if (!isOwner && !canManage) {
+      throw new HttpError(404, 'item_not_found', 'Paystub not found');
+    }
+
+    const stateCode = item.taxState ?? null;
+    const stateLabel = stateCode ? `${stateCode} state withholding` : 'State withholding';
+
+    const data: PaystubData = {
+      company: { name: item.payrollRun.client?.name ?? 'Alto Etho LLC' },
+      associate: {
+        firstName: item.associate.firstName,
+        lastName: item.associate.lastName,
+        email: item.associate.email,
+        addressLine1: item.associate.addressLine1,
+        city: item.associate.city,
+        state: item.associate.state,
+        zip: item.associate.zip,
+      },
+      period: {
+        start: ymd(item.payrollRun.periodStart),
+        end: ymd(item.payrollRun.periodEnd),
+      },
+      earnings: {
+        hours: Number(item.hoursWorked),
+        rate: Number(item.hourlyRate),
+        gross: Number(item.grossPay),
+      },
+      taxes: {
+        federalIncomeTax: Number(item.federalWithholding),
+        socialSecurity: Number(item.fica),
+        medicare: Number(item.medicare),
+        stateIncomeTax: Number(item.stateWithholding),
+        stateLabel,
+      },
+      totals: {
+        totalEmployeeTax: round2(
+          Number(item.federalWithholding) +
+            Number(item.fica) +
+            Number(item.medicare) +
+            Number(item.stateWithholding)
+        ),
+        netPay: Number(item.netPay),
+      },
+      ytd: {
+        wages: Number(item.ytdWages),
+        medicareWages: Number(item.ytdMedicareWages),
+      },
+      employer: {
+        fica: Number(item.employerFica),
+        medicare: Number(item.employerMedicare),
+        futa: Number(item.employerFuta),
+        suta: Number(item.employerSuta),
+      },
+      meta: {
+        runId: item.payrollRunId,
+        itemId: item.id,
+        issuedAt: new Date().toISOString(),
+      },
+    };
+
+    const pdf = await renderPaystubPdf(data);
+    const hash = hashPdf(pdf);
+
+    if (!item.paystubHash) {
+      // Stamp the first-download hash so future downloads can be verified.
+      await prisma.payrollItem.update({
+        where: { id: item.id },
+        data: { paystubHash: hash },
+      });
+    }
+
+    await recordPayrollEvent({
+      actorUserId: user.id,
+      action: 'payroll.paystub_downloaded',
+      payrollRunId: item.payrollRunId,
+      clientId: item.payrollRun.clientId,
+      metadata: { itemId: item.id, sha256: hash },
+      req,
+    });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="paystub-${item.payrollRun.periodStart.toISOString().slice(0, 10)}-${item.id.slice(0, 8)}.pdf"`
+    );
+    res.setHeader('X-Paystub-Hash', hash);
+    res.send(pdf);
   } catch (err) {
     next(err);
   }

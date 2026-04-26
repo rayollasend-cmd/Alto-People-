@@ -482,6 +482,18 @@ export const PayrollItemSchema = z.object({
   hourlyRate: z.number().nonnegative(),
   grossPay: z.number().nonnegative(),
   federalWithholding: z.number().nonnegative(),
+  // Phase 18 — full per-paycheck tax breakdown.
+  fica: z.number().nonnegative(),
+  medicare: z.number().nonnegative(),
+  stateWithholding: z.number().nonnegative(),
+  taxState: z.string().nullable(),
+  ytdWages: z.number().nonnegative(),
+  ytdMedicareWages: z.number().nonnegative(),
+  // Employer-side. Not deducted from net; surfaced for finance/audit.
+  employerFica: z.number().nonnegative(),
+  employerMedicare: z.number().nonnegative(),
+  employerFuta: z.number().nonnegative(),
+  employerSuta: z.number().nonnegative(),
   netPay: z.number(),
   status: PayrollItemStatusSchema,
   disbursementRef: z.string().nullable(),
@@ -500,6 +512,8 @@ export const PayrollRunSummarySchema = z.object({
   totalGross: z.number().nonnegative(),
   totalTax: z.number().nonnegative(),
   totalNet: z.number(),
+  // Phase 18 — employer-side total (FICA match + Medicare match + FUTA + SUTA).
+  totalEmployerTax: z.number().nonnegative(),
   itemCount: z.number().int().nonnegative(),
   notes: z.string().nullable(),
   finalizedAt: z.string().datetime().nullable(),

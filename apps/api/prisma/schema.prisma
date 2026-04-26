@@ -690,6 +690,9 @@ model PayrollRun {
   totalGross    Decimal          @default(0) @db.Decimal(12, 2)
   totalTax      Decimal          @default(0) @db.Decimal(12, 2)
   totalNet      Decimal          @default(0) @db.Decimal(12, 2)
+  // Phase 18 — employer-side total (FICA match + Medicare match + FUTA + SUTA)
+  // is the company's true cost on top of totalGross. Used in finance reports.
+  totalEmployerTax Decimal       @default(0) @db.Decimal(12, 2)
   notes         String?
   createdById   String?          @db.Uuid
   finalizedAt   DateTime?        @db.Timestamptz(6)
@@ -715,9 +718,32 @@ model PayrollItem {
   hoursWorked        Decimal           @db.Decimal(8, 2)
   hourlyRate         Decimal           @db.Decimal(8, 2)
   grossPay           Decimal           @db.Decimal(12, 2)
+  // Phase 18 employee-side tax breakdown. federalWithholding is now FIT
+  // alone — it used to absorb the placeholder flat tax. fica =
+  // 6.2% Social Security (capped at SS wage base), medicare = 1.45% +
+  // 0.9% surcharge over $200k YTD, stateWithholding = per-state SIT.
   federalWithholding Decimal           @db.Decimal(12, 2)
+  fica               Decimal           @default(0) @db.Decimal(12, 2)
+  medicare           Decimal           @default(0) @db.Decimal(12, 2)
+  stateWithholding   Decimal           @default(0) @db.Decimal(12, 2)
+  // Phase 18 employer-side. The company owes these on top of gross.
+  employerFica       Decimal           @default(0) @db.Decimal(12, 2)
+  employerMedicare   Decimal           @default(0) @db.Decimal(12, 2)
+  employerFuta       Decimal           @default(0) @db.Decimal(12, 2)
+  employerSuta       Decimal           @default(0) @db.Decimal(12, 2)
+  // YTD snapshots at the moment this paystub was computed. Required for
+  // SS-cap and Medicare-surcharge math; preserved for paystub display.
+  ytdWages           Decimal           @default(0) @db.Decimal(12, 2)
+  ytdMedicareWages   Decimal           @default(0) @db.Decimal(12, 2)
   netPay             Decimal           @db.Decimal(12, 2)
+  // The state used for SIT lookup (snapshot of associate.state at compute
+  // time). Lets the paystub label the SIT line and the auditor see why a
+  // CA-rate was applied to someone who later moved to TX.
+  taxState           String?
   status             PayrollItemStatus @default(PENDING)
+  // sha256 of the rendered paystub PDF the FIRST time it was downloaded.
+  // Subsequent downloads must produce the same hash; verifies immutability.
+  paystubHash        String?
   // Stub for now; in production this is the Wise transfer ID or Branch txn ID.
   disbursementRef    String?
   disbursedAt        DateTime?         @db.Timestamptz(6)
