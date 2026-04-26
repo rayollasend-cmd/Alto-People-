@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ClipboardList } from 'lucide-react';
+import { ClipboardList, Plus } from 'lucide-react';
 import type { ApplicationSummary } from '@alto-people/shared';
 import { listApplications } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { ProgressBar } from '@/components/ProgressBar';
 import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
@@ -17,6 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/Table';
+import { NewApplicationDialog } from './NewApplicationDialog';
 
 const STATUS_LABEL: Record<string, string> = {
   DRAFT: 'Draft',
@@ -44,33 +47,42 @@ const TRACK_LABEL: Record<string, string> = {
 };
 
 export function ApplicationsList() {
+  const { can } = useAuth();
+  const canManage = can('manage:onboarding');
   const [items, setItems] = useState<ApplicationSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [openCreate, setOpenCreate] = useState(false);
+
+  const refresh = useCallback(() => {
+    setError(null);
+    listApplications()
+      .then((res) => setItems(res.applications))
+      .catch((err) =>
+        setError(err instanceof ApiError ? err.message : 'Failed to load.')
+      );
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    listApplications()
-      .then((res) => {
-        if (!cancelled) setItems(res.applications);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(err instanceof ApiError ? err.message : 'Failed to load.');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    refresh();
+  }, [refresh]);
 
   return (
     <div className="max-w-6xl mx-auto">
-      <header className="mb-6">
-        <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
-          Onboarding
-        </h1>
-        <p className="text-silver">
-          Active applications and their checklist progress.
-        </p>
+      <header className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
+            Onboarding
+          </h1>
+          <p className="text-silver">
+            Active applications and their checklist progress.
+          </p>
+        </div>
+        {canManage && (
+          <Button onClick={() => setOpenCreate(true)}>
+            <Plus className="h-4 w-4" />
+            New application
+          </Button>
+        )}
       </header>
 
       {error && (
@@ -94,9 +106,27 @@ export function ApplicationsList() {
         <EmptyState
           icon={ClipboardList}
           title="No active applications"
-          description="When HR creates an onboarding application, it'll show up here with live checklist progress."
+          description={
+            canManage
+              ? 'Click "New application" to invite the first associate.'
+              : 'When HR creates an onboarding application, it\'ll show up here with live checklist progress.'
+          }
+          action={
+            canManage ? (
+              <Button onClick={() => setOpenCreate(true)}>
+                <Plus className="h-4 w-4" />
+                New application
+              </Button>
+            ) : undefined
+          }
         />
       )}
+
+      <NewApplicationDialog
+        open={openCreate}
+        onOpenChange={setOpenCreate}
+        onCreated={refresh}
+      />
 
       {items && items.length > 0 && (
         <Card className="overflow-hidden">

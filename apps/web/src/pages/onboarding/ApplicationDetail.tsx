@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { Copy, Send } from 'lucide-react';
+import { toast } from 'sonner';
 import type {
   ApplicationDetail as ApplicationDetailType,
   AuditLogEntry,
@@ -8,12 +10,14 @@ import type {
 import {
   getApplication,
   getApplicationAudit,
+  resendInvite,
   skipTask,
 } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { ProgressBar } from '@/components/ProgressBar';
 import { AuditTimeline } from '@/components/AuditTimeline';
+import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/cn';
 
 const TASK_LABEL: Record<string, string> = {
@@ -86,6 +90,31 @@ export function ApplicationDetail() {
     }
   };
 
+  const handleResend = async () => {
+    try {
+      const res = await resendInvite(detail.id);
+      if (res.inviteUrl) {
+        await navigator.clipboard.writeText(res.inviteUrl).catch(() => {});
+        toast.success('Fresh invite link copied', {
+          description: 'Email is stubbed — paste the link in Slack / a manual email.',
+          icon: <Copy className="h-4 w-4" />,
+        });
+      } else {
+        toast.success('Fresh invite emailed');
+      }
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'user_already_active') {
+        toast.message('Already accepted', {
+          description: 'This associate has already set their password.',
+        });
+        return;
+      }
+      toast.error('Could not resend', {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+
   return (
     <div className="max-w-5xl mx-auto">
       <Link
@@ -95,15 +124,23 @@ export function ApplicationDetail() {
         ← All applications
       </Link>
 
-      <header className="mb-6">
-        <h1 className="font-display text-3xl md:text-4xl text-white mb-1">
-          {detail.associateName}
-        </h1>
-        <p className="text-silver text-sm">
-          {detail.clientName}
-          {detail.position && ` · ${detail.position}`} · Track:{' '}
-          {detail.onboardingTrack}
-        </p>
+      <header className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-display text-3xl md:text-4xl text-white mb-1">
+            {detail.associateName}
+          </h1>
+          <p className="text-silver text-sm">
+            {detail.clientName}
+            {detail.position && ` · ${detail.position}`} · Track:{' '}
+            {detail.onboardingTrack}
+          </p>
+        </div>
+        {canManage && (
+          <Button variant="outline" size="sm" onClick={handleResend}>
+            <Send className="h-4 w-4" />
+            Resend invite
+          </Button>
+        )}
       </header>
 
       <section className="bg-navy border border-navy-secondary rounded-lg p-5 mb-6">

@@ -1,8 +1,10 @@
 import type {
+  ApplicationCreateInput,
   ApplicationDetail,
   ApplicationListResponse,
   ApplicationPoliciesResponse,
   AuditLogListResponse,
+  ClientListResponse,
   DirectDepositInput,
   PolicyAckInput,
   ProfileSubmission,
@@ -13,6 +15,40 @@ import { apiFetch } from './api';
 
 export function listApplications(): Promise<ApplicationListResponse> {
   return apiFetch<ApplicationListResponse>('/onboarding/applications');
+}
+
+export interface CreateApplicationResponse {
+  id: string;
+  invitedUserId: string;
+  /**
+   * Present only when the API isn't configured with Resend (dev mode):
+   * the raw accept-invite link HR can copy/paste to the new associate.
+   * In prod this is always null because the email goes out for real.
+   */
+  inviteUrl: string | null;
+}
+
+export function createApplication(
+  body: ApplicationCreateInput
+): Promise<CreateApplicationResponse> {
+  return apiFetch<CreateApplicationResponse>('/onboarding/applications', {
+    method: 'POST',
+    body,
+  });
+}
+
+export function resendInvite(applicationId: string): Promise<{
+  invitedUserId: string;
+  inviteUrl: string | null;
+}> {
+  return apiFetch<{ invitedUserId: string; inviteUrl: string | null }>(
+    `/onboarding/applications/${applicationId}/resend-invite`,
+    { method: 'POST' }
+  );
+}
+
+export function listClients(): Promise<ClientListResponse> {
+  return apiFetch<ClientListResponse>('/clients');
 }
 
 export function getApplication(id: string): Promise<ApplicationDetail> {
