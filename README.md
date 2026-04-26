@@ -2,7 +2,7 @@
 
 Workforce-management HR platform for **Alto Etho LLC d/b/a Alto HR**.
 
-> **Status:** Phase 11 — Analytics (live dashboard KPIs derived from existing data). Remaining modules (Phase 12+) follow.
+> **Status:** Phase 12 — Communications (in-app inbox, HR send + broadcast, stubbed SMS/PUSH/EMAIL providers). Remaining modules (Phase 13+) follow.
 
 ## Prerequisites
 
@@ -161,7 +161,8 @@ timeline ordering, and template scoping.
 - [x] **Phase 9** — Document vault: multipart upload (PDF/PNG/JPG/WEBP, 10 MB cap), associate `/me` + HR `/admin` verify/reject queue with rejection reasons, content-addressed local-fs storage at `apps/api/uploads/` (gitignored). The `s3Key` column stays — only the resolver in `lib/storage.ts` changes when S3 lands. Soft-delete preserves the audit trail; verified docs cannot be deleted by the associate
 - [x] **Phase 10** — Compliance dashboard: I-9 section 1 / section 2 verification (HR is recorded as the verifier; document list required for section 2), background checks (initiate is **stubbed** — real Checkr/Sterling lives here in a future drop-in; HR can manually flip status), J-1 program profiles with DS-2019 + sponsor + days-until-end indicator. Three-tab UI per module
 - [x] **Phase 11** — Analytics: `GET /analytics/dashboard` returns live KPIs (active associates, currently clocked-in, open shifts in next 30d, pending onboarding, pending I-9 section 2, pending document reviews, net paid in last 30d, net pending disbursement, application status histogram). Dashboard.tsx replaces "—" placeholders with live numbers
-- [ ] **Phase 12+** — Communications (Twilio/FCM), Performance, Recruiting
+- [x] **Phase 12** — Communications: `Notification` model with channels (SMS / PUSH / EMAIL / IN_APP) and statuses (QUEUED / SENT / FAILED / READ). HR can send to a specific recipient or broadcast to ALL_ASSOCIATES / ALL_HR. **External providers (Twilio / FCM / Resend) are stubbed** — `lib/notifications.ts` returns synthetic refs; swapping in the real client is one file. Associate inbox shows IN_APP with unread badge + click-to-mark-read
+- [ ] **Phase 13+** — Performance, Recruiting
 
 ## Project layout
 

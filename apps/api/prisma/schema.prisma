@@ -151,6 +151,20 @@ enum PayrollItemStatus {
   HELD        // HR put a hold on this single item
 }
 
+enum NotificationChannel {
+  SMS         // Twilio (Phase 12 stubbed)
+  PUSH        // FCM (Phase 12 stubbed)
+  EMAIL       // SES / Resend (Phase 12 stubbed)
+  IN_APP      // delivered via the web inbox; no external service
+}
+
+enum NotificationStatus {
+  QUEUED      // accepted, not yet sent
+  SENT        // delivered to provider (or in-app written)
+  FAILED      // provider returned an error
+  READ        // IN_APP only — recipient opened it
+}
+
 // =============================================================================
 // Models
 // =============================================================================
@@ -177,6 +191,8 @@ model User {
   createdShifts         Shift[]                @relation("ShiftCreator")
   createdPayrollRuns    PayrollRun[]           @relation("PayrollRunCreator")
   verifiedDocuments     DocumentRecord[]       @relation("DocumentVerifier")
+  sentNotifications     Notification[]         @relation("NotificationSender")
+  receivedNotifications Notification[]         @relation("NotificationRecipient")
 
   @@index([role])
   @@index([clientId])
@@ -585,6 +601,35 @@ model PayrollItem {
   @@unique([payrollRunId, associateId])
   @@index([associateId])
   @@index([status])
+}
+
+model Notification {
+  id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  channel        NotificationChannel
+  status         NotificationStatus  @default(QUEUED)
+  // Recipient: a user (in-app), or by phone/email for SMS/EMAIL when the
+  // recipient may not be a User yet.
+  recipientUserId String?            @db.Uuid
+  recipientPhone  String?
+  recipientEmail  String?
+  subject        String?
+  body           String
+  // Optional template/category so HR can filter ("shift_reminder", etc.).
+  category       String?
+  // Provider's id for the sent message (Twilio SID, FCM message id).
+  externalRef    String?
+  failureReason  String?
+  sentAt         DateTime?           @db.Timestamptz(6)
+  readAt         DateTime?           @db.Timestamptz(6)
+  // Sender: HR user, or null for system-triggered notifications.
+  senderUserId   String?             @db.Uuid
+  recipientUser  User?               @relation("NotificationRecipient", fields: [recipientUserId], references: [id], onDelete: SetNull)
+  senderUser     User?               @relation("NotificationSender", fields: [senderUserId], references: [id], onDelete: SetNull)
+  createdAt      DateTime            @default(now()) @db.Timestamptz(6)
+
+  @@index([recipientUserId, createdAt])
+  @@index([status])
+  @@index([category])
 }
 
 model AuditLog {

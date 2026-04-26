@@ -13,6 +13,7 @@ import { payrollRouter } from './routes/payroll.js';
 import { documentsRouter } from './routes/documents.js';
 import { complianceRouter } from './routes/compliance.js';
 import { analyticsRouter } from './routes/analytics.js';
+import { communicationsRouter } from './routes/communications.js';
 import { attachUser, requireCapability } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 
@@ -59,6 +60,11 @@ export function createApp() {
     '/analytics',
     requireCapability('view:dashboard'),
     analyticsRouter
+  );
+  app.use(
+    '/communications',
+    requireCapability('view:communications'),
+    communicationsRouter
   );
 
   app.use(notFoundHandler);

@@ -27,6 +27,7 @@ const TABLES = [
   'Shift',
   'PayrollItem',
   'PayrollRun',
+  'Notification',
   'User',
   'Associate',
   'Client',

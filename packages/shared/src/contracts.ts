@@ -725,3 +725,71 @@ export const DashboardKPIsSchema = z.object({
   applicationStatusCounts: z.record(z.number().int().nonnegative()),
 });
 export type DashboardKPIs = z.infer<typeof DashboardKPIsSchema>;
+
+/* -------------------------------------------------------------------------- *
+ *  Communications — Phase 12 (stubbed providers; queue-based)
+ * -------------------------------------------------------------------------- */
+
+export const NotificationChannelSchema = z.enum(['SMS', 'PUSH', 'EMAIL', 'IN_APP']);
+export type NotificationChannel = z.infer<typeof NotificationChannelSchema>;
+
+export const NotificationStatusSchema = z.enum(['QUEUED', 'SENT', 'FAILED', 'READ']);
+export type NotificationStatus = z.infer<typeof NotificationStatusSchema>;
+
+export const NotificationSchema = z.object({
+  id: UuidSchema,
+  channel: NotificationChannelSchema,
+  status: NotificationStatusSchema,
+  recipientUserId: UuidSchema.nullable(),
+  recipientPhone: z.string().nullable(),
+  recipientEmail: z.string().email().nullable(),
+  subject: z.string().nullable(),
+  body: z.string(),
+  category: z.string().nullable(),
+  externalRef: z.string().nullable(),
+  failureReason: z.string().nullable(),
+  sentAt: z.string().datetime().nullable(),
+  readAt: z.string().datetime().nullable(),
+  senderUserId: UuidSchema.nullable(),
+  senderEmail: z.string().email().nullable(),
+  createdAt: z.string().datetime(),
+});
+export type Notification = z.infer<typeof NotificationSchema>;
+
+export const NotificationListResponseSchema = z.object({
+  notifications: z.array(NotificationSchema),
+});
+export type NotificationListResponse = z.infer<typeof NotificationListResponseSchema>;
+
+export const NotificationSendInputSchema = z
+  .object({
+    channel: NotificationChannelSchema,
+    recipientUserId: UuidSchema.optional(),
+    recipientPhone: z.string().min(5).max(20).optional(),
+    recipientEmail: z.string().email().optional(),
+    subject: z.string().max(200).optional(),
+    body: z.string().min(1).max(4000),
+    category: z.string().min(1).max(80).optional(),
+  })
+  .refine(
+    (v) => v.recipientUserId || v.recipientPhone || v.recipientEmail,
+    { message: 'one of recipientUserId / recipientPhone / recipientEmail is required' }
+  )
+  .refine(
+    (v) => v.channel !== 'IN_APP' || !!v.recipientUserId,
+    { message: 'IN_APP notifications require recipientUserId', path: ['channel'] }
+  )
+  .refine(
+    (v) => v.channel !== 'SMS' || !!v.recipientPhone || !!v.recipientUserId,
+    { message: 'SMS requires recipientPhone or recipientUserId', path: ['channel'] }
+  );
+export type NotificationSendInput = z.infer<typeof NotificationSendInputSchema>;
+
+export const NotificationBroadcastInputSchema = z.object({
+  channel: NotificationChannelSchema.exclude(['SMS']),
+  audience: z.enum(['ALL_ASSOCIATES', 'ALL_HR']),
+  subject: z.string().max(200).optional(),
+  body: z.string().min(1).max(4000),
+  category: z.string().min(1).max(80).optional(),
+});
+export type NotificationBroadcastInput = z.infer<typeof NotificationBroadcastInputSchema>;
