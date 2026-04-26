@@ -1,0 +1,182 @@
+import { PrismaClient, type Prisma } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+/**
+ * Phase 2 seed.
+ *
+ * Creates one of each major entity so the API has something to return:
+ * - 1 HR_ADMIN user (passwordHash null — Phase 3 owns auth, will set it)
+ * - 1 Client (active hospitality)
+ * - 1 OnboardingTemplate (STANDARD track, 6 tasks)
+ * - 1 Policy (global, required for onboarding)
+ * - 1 Associate
+ * - 1 Application with instantiated OnboardingChecklist + tasks
+ *
+ * Idempotent via upserts on natural keys (email, name+track).
+ */
+async function main() {
+  // ---- Admin user (auth wired up in Phase 3) -----------------------------
+  const adminUser = await prisma.user.upsert({
+    where: { email: 'admin@altohr.com' },
+    update: {},
+    create: {
+      email: 'admin@altohr.com',
+      role: 'HR_ADMINISTRATOR',
+      status: 'INVITED',
+    },
+  });
+
+  // ---- Client ------------------------------------------------------------
+  const existingClient = await prisma.client.findFirst({
+    where: { name: 'Seaside Hospitality Group' },
+  });
+  const client =
+    existingClient ??
+    (await prisma.client.create({
+      data: {
+        name: 'Seaside Hospitality Group',
+        industry: 'hospitality',
+        status: 'ACTIVE',
+        contactEmail: 'ops@seasidehospitality.example',
+      },
+    }));
+
+  // ---- Standard onboarding template (global, clientId=null) --------------
+  // NOTE: Postgres treats NULL != NULL in unique constraints, so we can't use
+  // upsert against the (clientId, track) compound unique. Use find-or-create.
+  const existingTemplate = await prisma.onboardingTemplate.findFirst({
+    where: { clientId: null, track: 'STANDARD' },
+  });
+  const standardTemplate =
+    existingTemplate ??
+    (await prisma.onboardingTemplate.create({
+      data: {
+        clientId: null,
+        track: 'STANDARD',
+        name: 'Standard onboarding',
+        tasks: {
+          create: [
+            {
+              kind: 'PROFILE_INFO',
+              title: 'Complete profile information',
+              description: 'Personal details, address, emergency contact.',
+              order: 1,
+            },
+            {
+              kind: 'DOCUMENT_UPLOAD',
+              title: 'Upload identity documents',
+              description: 'Government ID and Social Security card.',
+              order: 2,
+            },
+            {
+              kind: 'I9_VERIFICATION',
+              title: 'I-9 employment eligibility',
+              description: 'Section 1 self-attestation; HR completes Section 2.',
+              order: 3,
+            },
+            {
+              kind: 'W4',
+              title: 'W-4 tax withholding',
+              description: 'Filing status, dependents, additional withholding.',
+              order: 4,
+            },
+            {
+              kind: 'DIRECT_DEPOSIT',
+              title: 'Set up direct deposit or Branch card',
+              description: 'Add a payout method so payroll can land on payday.',
+              order: 5,
+            },
+            {
+              kind: 'POLICY_ACK',
+              title: 'Acknowledge company policies',
+              description: 'Read and e-sign each required policy.',
+              order: 6,
+            },
+          ],
+        },
+      },
+    }));
+
+  // ---- Global policy -----------------------------------------------------
+  const existingPolicy = await prisma.policy.findFirst({
+    where: { clientId: null, title: 'Code of Conduct', version: 'v1.0' },
+  });
+  const policy =
+    existingPolicy ??
+    (await prisma.policy.create({
+      data: {
+        clientId: null,
+        title: 'Code of Conduct',
+        version: 'v1.0',
+        requiredForOnboarding: true,
+      },
+    }));
+
+  // ---- Associate ---------------------------------------------------------
+  const associate = await prisma.associate.upsert({
+    where: { email: 'maria.lopez@example.com' },
+    update: {},
+    create: {
+      firstName: 'Maria',
+      lastName: 'Lopez',
+      email: 'maria.lopez@example.com',
+      phone: '+1-850-555-0142',
+      city: 'Tallahassee',
+      state: 'FL',
+      zip: '32301',
+      j1Status: false,
+    },
+  });
+
+  // ---- Application + Checklist (instantiated from template) --------------
+  const existingApp = await prisma.application.findFirst({
+    where: { associateId: associate.id, clientId: client.id },
+  });
+
+  if (!existingApp) {
+    const tasksFromTemplate = await prisma.onboardingTemplateTask.findMany({
+      where: { templateId: standardTemplate.id },
+      orderBy: { order: 'asc' },
+    });
+
+    const taskCreates: Prisma.OnboardingTaskCreateWithoutChecklistInput[] =
+      tasksFromTemplate.map((t) => ({
+        kind: t.kind,
+        title: t.title,
+        description: t.description,
+        order: t.order,
+      }));
+
+    await prisma.application.create({
+      data: {
+        associateId: associate.id,
+        clientId: client.id,
+        onboardingTrack: 'STANDARD',
+        status: 'DRAFT',
+        position: 'Front-of-house associate',
+        checklist: {
+          create: {
+            tasks: { create: taskCreates },
+          },
+        },
+      },
+    });
+  }
+
+  console.log('[seed] complete');
+  console.log(`[seed]   admin user: ${adminUser.email} (${adminUser.id})`);
+  console.log(`[seed]   client: ${client.name} (${client.id})`);
+  console.log(`[seed]   associate: ${associate.firstName} ${associate.lastName} (${associate.id})`);
+  console.log(`[seed]   template: ${standardTemplate.name} (${standardTemplate.id})`);
+  console.log(`[seed]   policy: ${policy.title} ${policy.version} (${policy.id})`);
+}
+
+main()
+  .catch((err) => {
+    console.error('[seed] failed:', err);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });

@@ -1,0 +1,457 @@
+// Alto People — Prisma schema (Phase 2)
+// Conventions:
+// - UUID primary keys (gen_random_uuid)
+// - Timestamptz timestamps everywhere
+// - deletedAt on PII / compliance-relevant tables (retention then delete)
+// - Explicit onDelete on every relation
+// - Denormalized clientId on documents/bg-checks/audit-log for future RLS
+// - Money: Decimal(12,2). Encrypted PII: Bytes. Files: S3 keys, never blobs.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// =============================================================================
+// Enums
+// =============================================================================
+
+enum Role {
+  EXECUTIVE_CHAIRMAN
+  HR_ADMINISTRATOR
+  OPERATIONS_MANAGER
+  LIVE_ASN
+  ASSOCIATE
+  CLIENT_PORTAL
+  FINANCE_ACCOUNTANT
+  INTERNAL_RECRUITER
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+  INVITED
+}
+
+enum ClientStatus {
+  ACTIVE
+  INACTIVE
+  PROSPECT
+}
+
+enum OnboardingTrack {
+  STANDARD
+  J1
+  CLIENT_SPECIFIC
+}
+
+enum ApplicationStatus {
+  DRAFT
+  SUBMITTED
+  IN_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum TaskKind {
+  PROFILE_INFO
+  DOCUMENT_UPLOAD
+  E_SIGN
+  BACKGROUND_CHECK
+  W4
+  DIRECT_DEPOSIT
+  POLICY_ACK
+  J1_DOCS
+  I9_VERIFICATION
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  DONE
+  SKIPPED
+}
+
+enum DocumentKind {
+  ID
+  SSN_CARD
+  I9_SUPPORTING
+  W4_PDF
+  OFFER_LETTER
+  POLICY
+  HOUSING_AGREEMENT
+  TRANSPORT_AGREEMENT
+  J1_DS2019
+  J1_VISA
+  OTHER
+}
+
+enum DocumentStatus {
+  UPLOADED
+  VERIFIED
+  REJECTED
+  EXPIRED
+}
+
+enum BgCheckStatus {
+  INITIATED
+  IN_PROGRESS
+  PASSED
+  FAILED
+  NEEDS_REVIEW
+}
+
+enum PayoutType {
+  BANK_ACCOUNT
+  BRANCH_CARD
+}
+
+enum W4FilingStatus {
+  SINGLE
+  MARRIED_FILING_JOINTLY
+  HEAD_OF_HOUSEHOLD
+}
+
+enum I9DocumentList {
+  LIST_A
+  LIST_B_AND_C
+}
+
+// =============================================================================
+// Models
+// =============================================================================
+
+model User {
+  id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email         String     @unique
+  passwordHash  String?    @db.VarChar(255)
+  role          Role
+  status        UserStatus @default(INVITED)
+  associateId   String?    @unique @db.Uuid
+  clientId      String?    @db.Uuid
+  associate     Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)
+  client        Client?    @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  createdAt     DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime   @updatedAt @db.Timestamptz(6)
+  deletedAt     DateTime?  @db.Timestamptz(6)
+
+  signaturesGiven       Signature[]            @relation("UserSignatures")
+  i9VerificationsAsRep  I9Verification[]       @relation("I9Verifier")
+  auditLogActions       AuditLog[]             @relation("AuditActor")
+
+  @@index([role])
+  @@index([clientId])
+  @@index([deletedAt])
+}
+
+model Client {
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String
+  industry     String?
+  status       ClientStatus @default(ACTIVE)
+  contactEmail String?
+  createdAt    DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime     @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime?    @db.Timestamptz(6)
+
+  applications Application[]
+  users        User[]
+  policies     Policy[]
+  templates    OnboardingTemplate[]
+
+  @@index([status])
+  @@index([deletedAt])
+}
+
+model Associate {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  firstName    String
+  lastName     String
+  dob          DateTime? @db.Date
+  email        String    @unique
+  phone        String?
+  ssnLast4     String?   @db.VarChar(4)
+  addressLine1 String?
+  addressLine2 String?
+  city         String?
+  state        String?   @db.VarChar(2)
+  zip          String?   @db.VarChar(10)
+  j1Status     Boolean   @default(false)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime? @db.Timestamptz(6)
+
+  user             User?
+  j1Profile        J1Profile?
+  applications     Application[]
+  documents        DocumentRecord[]
+  signatures       Signature[]            @relation("AssociateSignatures")
+  backgroundChecks BackgroundCheck[]
+  policyAcks       PolicyAcknowledgment[]
+  i9Verification   I9Verification?
+  w4Submission     W4Submission?
+  payoutMethods    PayoutMethod[]
+
+  @@index([deletedAt])
+}
+
+model J1Profile {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId       String    @unique @db.Uuid
+  programStartDate  DateTime  @db.Date
+  programEndDate    DateTime  @db.Date
+  ds2019Number      String
+  sponsorAgency     String
+  visaNumber        String?
+  sevisId           String?
+  country           String
+  associate         Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  createdAt         DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @db.Timestamptz(6)
+}
+
+model Application {
+  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId     String              @db.Uuid
+  clientId        String              @db.Uuid
+  onboardingTrack OnboardingTrack
+  status          ApplicationStatus   @default(DRAFT)
+  position        String?
+  startDate       DateTime?           @db.Date
+  invitedAt       DateTime            @default(now()) @db.Timestamptz(6)
+  submittedAt     DateTime?           @db.Timestamptz(6)
+  associate       Associate           @relation(fields: [associateId], references: [id], onDelete: Restrict)
+  client          Client              @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  checklist       OnboardingChecklist?
+  createdAt       DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime            @updatedAt @db.Timestamptz(6)
+  deletedAt       DateTime?           @db.Timestamptz(6)
+
+  @@index([associateId])
+  @@index([clientId, status])
+  @@index([status])
+  @@index([invitedAt])
+  @@index([deletedAt])
+}
+
+model OnboardingChecklist {
+  id            String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  applicationId String           @unique @db.Uuid
+  application   Application      @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  tasks         OnboardingTask[]
+  createdAt     DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime         @updatedAt @db.Timestamptz(6)
+}
+
+model OnboardingTask {
+  id          String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  checklistId String              @db.Uuid
+  kind        TaskKind
+  status      TaskStatus          @default(PENDING)
+  title       String
+  description String?
+  order       Int
+  documentId  String?             @db.Uuid
+  completedAt DateTime?           @db.Timestamptz(6)
+  checklist   OnboardingChecklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
+  document    DocumentRecord?     @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  createdAt   DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime            @updatedAt @db.Timestamptz(6)
+
+  @@index([checklistId])
+  @@index([status])
+}
+
+model OnboardingTemplate {
+  id        String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId  String?                  @db.Uuid
+  track     OnboardingTrack
+  name      String
+  client    Client?                  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  tasks     OnboardingTemplateTask[]
+  createdAt DateTime                 @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime                 @updatedAt @db.Timestamptz(6)
+
+  @@unique([clientId, track])
+  @@index([track])
+}
+
+model OnboardingTemplateTask {
+  id          String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  templateId  String             @db.Uuid
+  kind        TaskKind
+  title       String
+  description String?
+  order       Int
+  template    OnboardingTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@index([templateId])
+}
+
+model Policy {
+  id                    String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId              String?                @db.Uuid
+  industry              String?
+  title                 String
+  version               String
+  bodyUrl               String?
+  requiredForOnboarding Boolean                @default(true)
+  supersedesId          String?                @db.Uuid
+  client                Client?                @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  supersedes            Policy?                @relation("PolicyVersions", fields: [supersedesId], references: [id], onDelete: SetNull)
+  supersededBy          Policy[]               @relation("PolicyVersions")
+  acknowledgments       PolicyAcknowledgment[]
+  createdAt             DateTime               @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime               @updatedAt @db.Timestamptz(6)
+  deletedAt             DateTime?              @db.Timestamptz(6)
+
+  @@index([clientId])
+  @@index([industry])
+}
+
+model PolicyAcknowledgment {
+  id             String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  policyId       String     @db.Uuid
+  associateId    String     @db.Uuid
+  clientId       String?    @db.Uuid
+  signatureId    String?    @db.Uuid
+  acknowledgedAt DateTime   @default(now()) @db.Timestamptz(6)
+  policy         Policy     @relation(fields: [policyId], references: [id], onDelete: Restrict)
+  associate      Associate  @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  signature      Signature? @relation(fields: [signatureId], references: [id], onDelete: SetNull)
+
+  @@unique([policyId, associateId])
+  @@index([associateId])
+  @@index([policyId])
+  @@index([clientId])
+}
+
+model DocumentRecord {
+  id          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId String            @db.Uuid
+  clientId    String?           @db.Uuid
+  kind        DocumentKind
+  s3Key       String?
+  filename    String
+  mimeType    String
+  size        Int
+  status      DocumentStatus    @default(UPLOADED)
+  expiresAt   DateTime?         @db.Timestamptz(6)
+  associate   Associate         @relation(fields: [associateId], references: [id], onDelete: Restrict)
+  signatures  Signature[]
+  tasks       OnboardingTask[]
+  createdAt   DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime          @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime?         @db.Timestamptz(6)
+
+  @@index([associateId, kind])
+  @@index([status])
+  @@index([expiresAt])
+  @@index([clientId])
+  @@index([deletedAt])
+}
+
+model Signature {
+  id              String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  documentId      String                 @db.Uuid
+  signerUserId    String?                @db.Uuid
+  associateId     String?                @db.Uuid
+  signedAt        DateTime               @default(now()) @db.Timestamptz(6)
+  ipAddress       String?
+  userAgent       String?
+  signatureS3Key  String
+  document        DocumentRecord         @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  signerUser      User?                  @relation("UserSignatures", fields: [signerUserId], references: [id], onDelete: SetNull)
+  associate       Associate?             @relation("AssociateSignatures", fields: [associateId], references: [id], onDelete: SetNull)
+  policyAcks      PolicyAcknowledgment[]
+
+  @@index([documentId])
+  @@index([signerUserId])
+  @@index([associateId])
+}
+
+model BackgroundCheck {
+  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId String        @db.Uuid
+  clientId    String?       @db.Uuid
+  provider    String
+  externalId  String?
+  status      BgCheckStatus @default(INITIATED)
+  initiatedAt DateTime      @default(now()) @db.Timestamptz(6)
+  completedAt DateTime?     @db.Timestamptz(6)
+  associate   Associate     @relation(fields: [associateId], references: [id], onDelete: Restrict)
+
+  @@index([associateId])
+  @@index([status])
+  @@index([clientId])
+}
+
+model I9Verification {
+  id                       String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId              String          @unique @db.Uuid
+  section1CompletedAt      DateTime?       @db.Timestamptz(6)
+  section2VerifierUserId   String?         @db.Uuid
+  section2CompletedAt      DateTime?       @db.Timestamptz(6)
+  documentList             I9DocumentList?
+  supportingDocIds         Json?
+  associate                Associate       @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  section2Verifier         User?           @relation("I9Verifier", fields: [section2VerifierUserId], references: [id], onDelete: SetNull)
+  createdAt                DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt                DateTime        @updatedAt @db.Timestamptz(6)
+}
+
+model W4Submission {
+  id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId       String          @unique @db.Uuid
+  filingStatus      W4FilingStatus
+  multipleJobs      Boolean         @default(false)
+  dependentsAmount  Decimal         @default(0) @db.Decimal(12, 2)
+  otherIncome       Decimal         @default(0) @db.Decimal(12, 2)
+  deductions        Decimal         @default(0) @db.Decimal(12, 2)
+  extraWithholding  Decimal         @default(0) @db.Decimal(12, 2)
+  ssnEncrypted      Bytes?
+  signedDocumentId  String?         @db.Uuid
+  signedAt          DateTime?       @db.Timestamptz(6)
+  associate         Associate       @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  createdAt         DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime        @updatedAt @db.Timestamptz(6)
+}
+
+model PayoutMethod {
+  id               String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId      String     @db.Uuid
+  type             PayoutType
+  routingNumberEnc Bytes?
+  accountNumberEnc Bytes?
+  accountType      String?
+  branchCardId     String?
+  isPrimary        Boolean    @default(false)
+  verifiedAt       DateTime?  @db.Timestamptz(6)
+  associate        Associate  @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  createdAt        DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime   @updatedAt @db.Timestamptz(6)
+
+  @@index([associateId])
+}
+
+model AuditLog {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorUserId  String?   @db.Uuid
+  clientId     String?   @db.Uuid
+  action       String
+  entityType   String
+  entityId     String
+  metadata     Json?
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  actorUser    User?     @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([actorUserId])
+  @@index([clientId])
+  @@index([createdAt])
+}

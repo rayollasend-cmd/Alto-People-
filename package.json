@@ -5,16 +5,25 @@
   "description": "Alto People — workforce management HR platform for Alto Etho LLC",
   "license": "UNLICENSED",
   "workspaces": [
-    "apps/*"
+    "apps/*",
+    "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently -n web,api -c blue,green \"npm -w apps/web run dev\" \"npm -w apps/api run dev\"",
+    "predev": "npm -w @alto-people/shared run build",
+    "dev": "concurrently -n shared,web,api -c yellow,blue,green \"npm -w @alto-people/shared run dev\" \"npm -w apps/web run dev\" \"npm -w apps/api run dev\"",
     "dev:web": "npm -w apps/web run dev",
     "dev:api": "npm -w apps/api run dev",
-    "build": "npm -w apps/web run build && npm -w apps/api run build",
+    "build": "npm -w @alto-people/shared run build && npm -w apps/web run build && npm -w apps/api run build",
     "build:web": "npm -w apps/web run build",
     "build:api": "npm -w apps/api run build",
-    "clean": "rimraf \"apps/*/dist\" \"apps/*/node_modules\" node_modules"
+    "build:shared": "npm -w @alto-people/shared run build",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "db:logs": "docker compose logs -f postgres",
+    "db:migrate": "npm -w apps/api run db:migrate",
+    "db:seed": "npm -w apps/api run db:seed",
+    "db:studio": "npm -w apps/api run db:studio",
+    "clean": "rimraf \"apps/*/dist\" \"packages/*/dist\" \"apps/*/node_modules\" \"packages/*/node_modules\" node_modules"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
