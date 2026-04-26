@@ -15,6 +15,9 @@ const EnvSchema = z.object({
     .string()
     .min(32, 'JWT_SECRET must be at least 32 chars (use openssl rand -base64 48)'),
   JWT_TTL_SECONDS: z.coerce.number().int().positive().default(86400),
+  PAYOUT_ENCRYPTION_KEY: z
+    .string()
+    .min(44, 'PAYOUT_ENCRYPTION_KEY must be base64-encoded 32 bytes (use openssl rand -base64 32)'),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

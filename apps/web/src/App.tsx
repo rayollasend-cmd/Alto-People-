@@ -5,6 +5,45 @@ import { Dashboard } from '@/pages/Dashboard';
 import { ModulePlaceholder } from '@/pages/ModulePlaceholder';
 import { MODULES } from '@/lib/modules';
 import { RequireAuth } from '@/lib/auth';
+import { OnboardingHome } from '@/pages/onboarding/OnboardingHome';
+import { ApplicationDetail } from '@/pages/onboarding/ApplicationDetail';
+import { AssociateChecklist } from '@/pages/onboarding/AssociateChecklist';
+import { ProfileInfoTask } from '@/pages/onboarding/tasks/ProfileInfoTask';
+import { W4Task } from '@/pages/onboarding/tasks/W4Task';
+import { DirectDepositTask } from '@/pages/onboarding/tasks/DirectDepositTask';
+import { PolicyAckTask } from '@/pages/onboarding/tasks/PolicyAckTask';
+import { StubTask } from '@/pages/onboarding/tasks/StubTask';
+
+const ONBOARDING_ROUTES = [
+  { path: 'onboarding', element: <OnboardingHome /> },
+  {
+    path: 'onboarding/applications/:id',
+    element: <ApplicationDetail />,
+  },
+  {
+    path: 'onboarding/me/:applicationId',
+    element: <AssociateChecklist />,
+  },
+  {
+    path: 'onboarding/me/:applicationId/tasks/profile_info',
+    element: <ProfileInfoTask />,
+  },
+  { path: 'onboarding/me/:applicationId/tasks/w4', element: <W4Task /> },
+  {
+    path: 'onboarding/me/:applicationId/tasks/direct_deposit',
+    element: <DirectDepositTask />,
+  },
+  {
+    path: 'onboarding/me/:applicationId/tasks/policy_ack',
+    element: <PolicyAckTask />,
+  },
+  {
+    path: 'onboarding/me/:applicationId/tasks/:taskKind',
+    element: <StubTask />,
+  },
+];
+
+const PLACEHOLDER_MODULES = MODULES.filter((m) => m.key !== 'onboarding');
 
 export const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
@@ -17,7 +56,8 @@ export const router = createBrowserRouter([
     ),
     children: [
       { index: true, element: <Dashboard /> },
-      ...MODULES.map((m) => ({
+      ...ONBOARDING_ROUTES,
+      ...PLACEHOLDER_MODULES.map((m) => ({
         path: m.path.replace(/^\//, ''),
         element: (
           <ModulePlaceholder

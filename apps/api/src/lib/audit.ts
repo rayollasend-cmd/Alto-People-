@@ -73,3 +73,42 @@ export async function recordLogout(ctx: LogoutContext) {
     },
   });
 }
+
+/* -------------------------------------------------------------------------- *
+ *  Onboarding events
+ *
+ *  Single helper for every onboarding-related AuditLog entry. `applicationId`
+ *  is always carried in metadata so the timeline query in
+ *  `GET /onboarding/applications/:id/audit` is cheap.
+ * -------------------------------------------------------------------------- */
+
+interface OnboardingEventContext {
+  actorUserId: string | null;
+  action: string; // e.g. 'onboarding.profile_updated'
+  applicationId: string;
+  taskId?: string | null;
+  clientId?: string | null;
+  metadata?: Record<string, unknown>;
+  req?: Request;
+}
+
+export async function recordOnboardingEvent(ctx: OnboardingEventContext) {
+  const reqMeta = ctx.req
+    ? { ip: ctx.req.ip ?? null, userAgent: ctx.req.headers['user-agent'] ?? null }
+    : {};
+  await prisma.auditLog.create({
+    data: {
+      actorUserId: ctx.actorUserId,
+      clientId: ctx.clientId ?? null,
+      action: ctx.action,
+      entityType: 'Application',
+      entityId: ctx.applicationId,
+      metadata: {
+        applicationId: ctx.applicationId,
+        ...(ctx.taskId ? { taskId: ctx.taskId } : {}),
+        ...reqMeta,
+        ...(ctx.metadata ?? {}),
+      },
+    },
+  });
+}

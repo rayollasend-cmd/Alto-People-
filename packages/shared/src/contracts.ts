@@ -198,3 +198,101 @@ export const MeResponseSchema = z.object({
   user: AuthUserSchema.nullable(),
 });
 export type MeResponse = z.infer<typeof MeResponseSchema>;
+
+/* -------------------------------------------------------------------------- *
+ *  Onboarding — Phase 4 inputs and read-extras
+ * -------------------------------------------------------------------------- */
+
+export const ApplicationCreateInputSchema = z.object({
+  associateEmail: z.string().email(),
+  associateFirstName: z.string().min(1).max(80),
+  associateLastName: z.string().min(1).max(80),
+  clientId: UuidSchema,
+  templateId: UuidSchema,
+  position: z.string().min(1).max(120).optional(),
+  startDate: z.string().datetime().optional(),
+});
+export type ApplicationCreateInput = z.infer<typeof ApplicationCreateInputSchema>;
+
+export const ProfileSubmissionSchema = z.object({
+  firstName: z.string().min(1).max(80),
+  lastName: z.string().min(1).max(80),
+  dob: z.string().datetime().nullable().optional(),
+  phone: z.string().max(40).nullable().optional(),
+  addressLine1: z.string().max(200).nullable().optional(),
+  addressLine2: z.string().max(200).nullable().optional(),
+  city: z.string().max(80).nullable().optional(),
+  state: z.string().length(2).nullable().optional(),
+  zip: z.string().max(10).nullable().optional(),
+});
+export type ProfileSubmission = z.infer<typeof ProfileSubmissionSchema>;
+
+export const W4FilingStatusSchema = z.enum([
+  'SINGLE',
+  'MARRIED_FILING_JOINTLY',
+  'HEAD_OF_HOUSEHOLD',
+]);
+
+export const W4SubmissionInputSchema = z.object({
+  filingStatus: W4FilingStatusSchema,
+  multipleJobs: z.boolean().default(false),
+  dependentsAmount: z.number().nonnegative().default(0),
+  otherIncome: z.number().nonnegative().default(0),
+  deductions: z.number().nonnegative().default(0),
+  extraWithholding: z.number().nonnegative().default(0),
+  ssn: z
+    .string()
+    .regex(/^\d{3}-?\d{2}-?\d{4}$/, 'SSN must be 9 digits (formatted ###-##-#### accepted)')
+    .optional(),
+});
+export type W4SubmissionInput = z.infer<typeof W4SubmissionInputSchema>;
+
+export const DirectDepositInputSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('BANK_ACCOUNT'),
+    routingNumber: z.string().regex(/^\d{9}$/, 'Routing number must be 9 digits'),
+    accountNumber: z.string().regex(/^\d{4,17}$/, 'Account number must be 4–17 digits'),
+    accountType: z.enum(['CHECKING', 'SAVINGS']),
+  }),
+  z.object({
+    type: z.literal('BRANCH_CARD'),
+    branchCardId: z.string().min(1).max(80),
+  }),
+]);
+export type DirectDepositInput = z.infer<typeof DirectDepositInputSchema>;
+
+export const PolicyAckInputSchema = z.object({
+  policyId: UuidSchema,
+});
+export type PolicyAckInput = z.infer<typeof PolicyAckInputSchema>;
+
+export const PolicyForApplicationSchema = z.object({
+  id: UuidSchema,
+  title: z.string(),
+  version: z.string(),
+  industry: z.string().nullable(),
+  bodyUrl: z.string().nullable(),
+  acknowledged: z.boolean(),
+  acknowledgedAt: z.string().datetime().nullable(),
+});
+export type PolicyForApplication = z.infer<typeof PolicyForApplicationSchema>;
+
+export const ApplicationPoliciesResponseSchema = z.object({
+  policies: z.array(PolicyForApplicationSchema),
+});
+export type ApplicationPoliciesResponse = z.infer<typeof ApplicationPoliciesResponseSchema>;
+
+export const AuditLogEntrySchema = z.object({
+  id: UuidSchema,
+  action: z.string(),
+  actorUserId: UuidSchema.nullable(),
+  actorEmail: z.string().email().nullable(),
+  createdAt: z.string().datetime(),
+  metadata: z.record(z.unknown()).nullable(),
+});
+export type AuditLogEntry = z.infer<typeof AuditLogEntrySchema>;
+
+export const AuditLogListResponseSchema = z.object({
+  entries: z.array(AuditLogEntrySchema),
+});
+export type AuditLogListResponse = z.infer<typeof AuditLogListResponseSchema>;

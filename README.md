@@ -2,7 +2,7 @@
 
 Workforce-management HR platform for **Alto Etho LLC d/b/a Alto HR**.
 
-> **Status:** Phase 3 — real auth + RBAC. Onboarding e2e (Phase 4) follows.
+> **Status:** Phase 4 — Onboarding e2e (vertical slice). Tests (Phase 5) and remaining modules (Phase 6+) follow.
 
 ## Prerequisites
 
@@ -71,12 +71,38 @@ npm run dev:api
 
 Sign in at `/login` with email + password. Auth is JWT-in-httpOnly-cookie (24h, SameSite=Lax). Sessions survive refresh and are invalidated server-side via `User.tokenVersion`. Login uses argon2id; failed attempts are rate-limited (20/min/IP, 5/15min/email) and recorded in `AuditLog`.
 
-**Dev seed credentials:** `admin@altohr.com` / `alto-admin-dev`. Change the password before any non-local use. The seed populates this user only if no `passwordHash` is set — pre-existing hashes are left alone.
+**Dev seed credentials** (all should be rotated before any non-local use; the seed only sets the password when `passwordHash` is null, so existing hashes are left alone):
 
-`apps/api/.env` must include a `JWT_SECRET` ≥ 32 chars. Generate one with:
+| Email                              | Password           | Role            |
+| ---------------------------------- | ------------------ | --------------- |
+| `admin@altohr.com`                 | `alto-admin-dev`   | HR_ADMINISTRATOR |
+| `maria.lopez@example.com`          | `maria-dev-2026!`  | ASSOCIATE       |
+| `portal@coastalresort.example`     | `portal-dev-2026!` | CLIENT_PORTAL   |
+
+`apps/api/.env` must include:
+- `JWT_SECRET` ≥ 32 chars (generate via `openssl rand -base64 48`)
+- `PAYOUT_ENCRYPTION_KEY` = 32-byte base64 (generate via `openssl rand -base64 32`) — used for at-rest encryption of W-4 SSN and bank account numbers
+
+## Creating an onboarding application (no UI yet)
+
+Phase 4 ships endpoints; the HR-create form is Phase 5+. Create from a logged-in admin shell:
 
 ```sh
-openssl rand -base64 48
+JAR=$(mktemp).cookies
+curl -sS -c "$JAR" -X POST http://localhost:3001/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"admin@altohr.com","password":"alto-admin-dev"}'
+# get clientId + templateId from /clients and /onboarding/templates, then:
+curl -sS -b "$JAR" -X POST http://localhost:3001/onboarding/applications \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "associateEmail":"new.hire@example.com",
+    "associateFirstName":"Demo",
+    "associateLastName":"Hire",
+    "clientId":"<uuid>",
+    "templateId":"<uuid>",
+    "position":"Server"
+  }'
 ```
 
 ## Roles
@@ -97,7 +123,7 @@ openssl rand -base64 48
 - [x] **Phase 1** — foundation & UI shell
 - [x] **Phase 2** — backend, PostgreSQL schema, Prisma
 - [x] **Phase 3** — real JWT auth + RBAC
-- [ ] **Phase 4** — Onboarding module end-to-end
+- [x] **Phase 4** — Onboarding e2e (PROFILE_INFO, W4, DIRECT_DEPOSIT, POLICY_ACK fully implemented; DOCUMENT_UPLOAD, E_SIGN, BACKGROUND_CHECK, I9_VERIFICATION, J1_DOCS stubbed with HR-only "skip" affordance)
 - [ ] **Phase 5** — tests for phases 1–4
 - [ ] **Phase 6+** — remaining modules + integrations (ASN Nexus, Fieldglass, Wise, Branch, Twilio, FCM, Google Maps)
 

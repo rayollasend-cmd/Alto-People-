@@ -4,6 +4,8 @@ import { hashPassword } from '../src/lib/passwords.js';
 const prisma = new PrismaClient();
 
 const ADMIN_DEV_PASSWORD = 'alto-admin-dev';
+const ASSOCIATE_DEV_PASSWORD = 'maria-dev-2026!';
+const PORTAL_DEV_PASSWORD = 'portal-dev-2026!';
 
 /**
  * Phase 2 seed.
@@ -119,20 +121,37 @@ async function main() {
       },
     }));
 
-  // ---- Global policy -----------------------------------------------------
-  const existingPolicy = await prisma.policy.findFirst({
-    where: { clientId: null, title: 'Code of Conduct', version: 'v1.0' },
-  });
-  const policy =
-    existingPolicy ??
-    (await prisma.policy.create({
-      data: {
+  // ---- Policies (global + hospitality industry) -------------------------
+  const policySpecs = [
+    { title: 'Code of Conduct', version: 'v1.0', industry: null },
+    { title: 'Food Safety Awareness', version: 'v1.0', industry: 'hospitality' },
+    { title: 'Alcohol Service Awareness', version: 'v1.0', industry: 'hospitality' },
+    { title: 'Employee Handbook', version: 'v1.0', industry: 'hospitality' },
+  ];
+
+  const policies = [];
+  for (const spec of policySpecs) {
+    const existing = await prisma.policy.findFirst({
+      where: {
         clientId: null,
-        title: 'Code of Conduct',
-        version: 'v1.0',
-        requiredForOnboarding: true,
+        title: spec.title,
+        version: spec.version,
       },
-    }));
+    });
+    policies.push(
+      existing ??
+        (await prisma.policy.create({
+          data: {
+            clientId: null,
+            title: spec.title,
+            version: spec.version,
+            industry: spec.industry,
+            requiredForOnboarding: true,
+          },
+        }))
+    );
+  }
+  const policy = policies[0];
 
   // ---- Associate ---------------------------------------------------------
   const associate = await prisma.associate.upsert({
@@ -149,6 +168,76 @@ async function main() {
       j1Status: false,
     },
   });
+
+  // ---- Associate user (Phase 4: Maria can log in) ------------------------
+  const existingAssocUser = await prisma.user.findUnique({
+    where: { email: associate.email },
+  });
+  let associateUser;
+  if (!existingAssocUser) {
+    associateUser = await prisma.user.create({
+      data: {
+        email: associate.email,
+        passwordHash: await hashPassword(ASSOCIATE_DEV_PASSWORD),
+        role: 'ASSOCIATE',
+        status: 'ACTIVE',
+        associateId: associate.id,
+      },
+    });
+  } else if (!existingAssocUser.passwordHash) {
+    associateUser = await prisma.user.update({
+      where: { id: existingAssocUser.id },
+      data: {
+        passwordHash: await hashPassword(ASSOCIATE_DEV_PASSWORD),
+        status: 'ACTIVE',
+        associateId: associate.id,
+      },
+    });
+  } else {
+    associateUser = existingAssocUser;
+  }
+
+  // ---- Second client + portal user (cross-tenant verification) -----------
+  const existingPortalClient = await prisma.client.findFirst({
+    where: { name: 'Coastal Resort Holdings' },
+  });
+  const portalClient =
+    existingPortalClient ??
+    (await prisma.client.create({
+      data: {
+        name: 'Coastal Resort Holdings',
+        industry: 'hospitality',
+        status: 'ACTIVE',
+        contactEmail: 'hr@coastalresort.example',
+      },
+    }));
+
+  const existingPortalUser = await prisma.user.findUnique({
+    where: { email: 'portal@coastalresort.example' },
+  });
+  let portalUser;
+  if (!existingPortalUser) {
+    portalUser = await prisma.user.create({
+      data: {
+        email: 'portal@coastalresort.example',
+        passwordHash: await hashPassword(PORTAL_DEV_PASSWORD),
+        role: 'CLIENT_PORTAL',
+        status: 'ACTIVE',
+        clientId: portalClient.id,
+      },
+    });
+  } else if (!existingPortalUser.passwordHash) {
+    portalUser = await prisma.user.update({
+      where: { id: existingPortalUser.id },
+      data: {
+        passwordHash: await hashPassword(PORTAL_DEV_PASSWORD),
+        status: 'ACTIVE',
+        clientId: portalClient.id,
+      },
+    });
+  } else {
+    portalUser = existingPortalUser;
+  }
 
   // ---- Application + Checklist (instantiated from template) --------------
   const existingApp = await prisma.application.findFirst({
@@ -186,12 +275,18 @@ async function main() {
   }
 
   console.log('[seed] complete');
-  console.log(`[seed]   admin user: ${adminUser.email} (${adminUser.id})`);
-  console.log(`[seed]   dev password: ${ADMIN_DEV_PASSWORD}`);
-  console.log(`[seed]   client: ${client.name} (${client.id})`);
+  console.log(`[seed]   admin user: ${adminUser.email} / ${ADMIN_DEV_PASSWORD}`);
+  console.log(`[seed]   associate user: ${associateUser.email} / ${ASSOCIATE_DEV_PASSWORD}`);
+  console.log(`[seed]   portal user: ${portalUser.email} / ${PORTAL_DEV_PASSWORD}`);
+  console.log(`[seed]   client (primary): ${client.name} (${client.id})`);
+  console.log(`[seed]   client (portal):  ${portalClient.name} (${portalClient.id})`);
   console.log(`[seed]   associate: ${associate.firstName} ${associate.lastName} (${associate.id})`);
   console.log(`[seed]   template: ${standardTemplate.name} (${standardTemplate.id})`);
-  console.log(`[seed]   policy: ${policy.title} ${policy.version} (${policy.id})`);
+  console.log(`[seed]   policies (${policies.length}):`);
+  for (const p of policies) {
+    console.log(`[seed]     - ${p.title} ${p.version} (industry=${p.industry ?? 'null'})`);
+  }
+  console.log(`[seed]   sample policy id (for /policy-ack curl): ${policy.id}`);
 }
 
 main()

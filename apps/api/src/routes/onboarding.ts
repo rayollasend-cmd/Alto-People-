@@ -1,20 +1,44 @@
 import { Router } from 'express';
-import type {
-  ApplicationDetail,
-  ApplicationListResponse,
-  ApplicationSummary,
-  ChecklistTask,
-  OnboardingTemplate,
-  TemplateListResponse,
-  TemplateTask,
+import {
+  ApplicationCreateInputSchema,
+  DirectDepositInputSchema,
+  PolicyAckInputSchema,
+  ProfileSubmissionSchema,
+  W4SubmissionInputSchema,
+  type ApplicationDetail,
+  type ApplicationListResponse,
+  type ApplicationPoliciesResponse,
+  type ApplicationSummary,
+  type AuditLogEntry,
+  type AuditLogListResponse,
+  type ChecklistTask,
+  type OnboardingTemplate,
+  type PolicyForApplication,
+  type TemplateListResponse,
+  type TemplateTask,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { scopeApplications, scopeTemplates } from '../lib/scope.js';
+import { requireCapability } from '../middleware/auth.js';
+import {
+  assertCanModifyApplication,
+  scopeApplications,
+  scopeTemplates,
+} from '../lib/scope.js';
+import {
+  computePercent,
+  markTaskDoneByKind,
+  markTaskSkippedById,
+} from '../lib/checklist.js';
+import { encryptString } from '../lib/crypto.js';
+import { recordOnboardingEvent } from '../lib/audit.js';
 
 export const onboardingRouter = Router();
 
-/* GET /onboarding/applications ------------------------------------------- */
+const MANAGE = requireCapability('manage:onboarding');
+
+/* ===== READ ============================================================== */
+
 onboardingRouter.get('/applications', async (req, res, next) => {
   try {
     const rows = await prisma.application.findMany({
@@ -23,11 +47,7 @@ onboardingRouter.get('/applications', async (req, res, next) => {
       include: {
         associate: { select: { firstName: true, lastName: true } },
         client: { select: { name: true } },
-        checklist: {
-          include: {
-            tasks: { select: { status: true } },
-          },
-        },
+        checklist: { include: { tasks: { select: { status: true } } } },
       },
     });
 
@@ -51,7 +71,6 @@ onboardingRouter.get('/applications', async (req, res, next) => {
   }
 });
 
-/* GET /onboarding/applications/:id --------------------------------------- */
 onboardingRouter.get('/applications/:id', async (req, res, next) => {
   try {
     const row = await prisma.application.findFirst({
@@ -59,19 +78,11 @@ onboardingRouter.get('/applications/:id', async (req, res, next) => {
       include: {
         associate: { select: { firstName: true, lastName: true } },
         client: { select: { name: true } },
-        checklist: {
-          include: {
-            tasks: { orderBy: { order: 'asc' } },
-          },
-        },
+        checklist: { include: { tasks: { orderBy: { order: 'asc' } } } },
       },
     });
     if (!row) {
-      throw new HttpError(
-        404,
-        'application_not_found',
-        'Application not found'
-      );
+      throw new HttpError(404, 'application_not_found', 'Application not found');
     }
 
     const tasks: ChecklistTask[] = (row.checklist?.tasks ?? []).map((t) => ({
@@ -106,7 +117,6 @@ onboardingRouter.get('/applications/:id', async (req, res, next) => {
   }
 });
 
-/* GET /onboarding/templates ---------------------------------------------- */
 onboardingRouter.get('/templates', async (req, res, next) => {
   try {
     const rows = await prisma.onboardingTemplate.findMany({
@@ -114,7 +124,6 @@ onboardingRouter.get('/templates', async (req, res, next) => {
       include: { tasks: { orderBy: { order: 'asc' } } },
       orderBy: [{ track: 'asc' }, { name: 'asc' }],
     });
-
     const templates: OnboardingTemplate[] = rows.map((row) => ({
       id: row.id,
       clientId: row.clientId,
@@ -130,7 +139,6 @@ onboardingRouter.get('/templates', async (req, res, next) => {
         })
       ),
     }));
-
     const payload: TemplateListResponse = { templates };
     res.json(payload);
   } catch (err) {
@@ -138,10 +146,479 @@ onboardingRouter.get('/templates', async (req, res, next) => {
   }
 });
 
-/* ------------------------------------------------------------------------ */
+/* ===== POLICIES + AUDIT (read-extras) ==================================== */
 
-function computePercent(tasks: Array<{ status: string }>): number {
-  if (tasks.length === 0) return 0;
-  const done = tasks.filter((t) => t.status === 'DONE').length;
-  return Math.round((done / tasks.length) * 100);
-}
+onboardingRouter.get('/applications/:id/policies', async (req, res, next) => {
+  try {
+    const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+    const client = await prisma.client.findUniqueOrThrow({
+      where: { id: app.clientId },
+      select: { industry: true },
+    });
+
+    const required = await prisma.policy.findMany({
+      where: {
+        deletedAt: null,
+        requiredForOnboarding: true,
+        OR: [
+          { clientId: app.clientId },
+          {
+            clientId: null,
+            industry: client.industry?.toLowerCase() ?? null,
+          },
+          { clientId: null, industry: null },
+        ],
+      },
+      orderBy: [{ industry: 'asc' }, { title: 'asc' }],
+    });
+
+    const acks = await prisma.policyAcknowledgment.findMany({
+      where: {
+        associateId: app.associateId,
+        policyId: { in: required.map((p) => p.id) },
+      },
+    });
+    const ackByPolicyId = new Map(acks.map((a) => [a.policyId, a]));
+
+    const policies: PolicyForApplication[] = required.map((p) => {
+      const ack = ackByPolicyId.get(p.id) ?? null;
+      return {
+        id: p.id,
+        title: p.title,
+        version: p.version,
+        industry: p.industry,
+        bodyUrl: p.bodyUrl,
+        acknowledged: !!ack,
+        acknowledgedAt: ack ? ack.acknowledgedAt.toISOString() : null,
+      };
+    });
+
+    const payload: ApplicationPoliciesResponse = { policies };
+    res.json(payload);
+  } catch (err) {
+    next(err);
+  }
+});
+
+onboardingRouter.get(
+  '/applications/:id/audit',
+  MANAGE,
+  async (req, res, next) => {
+    try {
+      // Just confirms scope; HR/Ops always pass scopeApplications.
+      const app = await assertCanModifyApplication(
+        prisma,
+        req.user!,
+        req.params.id
+      );
+
+      const rows = await prisma.auditLog.findMany({
+        where: {
+          OR: [
+            { entityType: 'Application', entityId: app.id },
+            // Also surface auth events of the associate's user, scoped to the app's window.
+            // For Phase 4 keep it simple — onboarding events are tagged with applicationId in metadata.
+          ],
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+        include: {
+          actorUser: { select: { email: true } },
+        },
+      });
+
+      const entries: AuditLogEntry[] = rows.map((r) => ({
+        id: r.id,
+        action: r.action,
+        actorUserId: r.actorUserId,
+        actorEmail: r.actorUser?.email ?? null,
+        createdAt: r.createdAt.toISOString(),
+        metadata: (r.metadata as Record<string, unknown>) ?? null,
+      }));
+
+      const payload: AuditLogListResponse = { entries };
+      res.json(payload);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/* ===== CREATE APPLICATION (HR/Ops) ====================================== */
+
+onboardingRouter.post('/applications', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = ApplicationCreateInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const input = parsed.data;
+    const email = input.associateEmail.trim().toLowerCase();
+
+    const result = await prisma.$transaction(async (tx) => {
+      // Find or create the associate
+      let associate = await tx.associate.findUnique({ where: { email } });
+      if (!associate) {
+        associate = await tx.associate.create({
+          data: {
+            email,
+            firstName: input.associateFirstName,
+            lastName: input.associateLastName,
+          },
+        });
+      }
+
+      // Validate client + template exist
+      const [client, template] = await Promise.all([
+        tx.client.findFirst({
+          where: { id: input.clientId, deletedAt: null },
+        }),
+        tx.onboardingTemplate.findUnique({
+          where: { id: input.templateId },
+          include: { tasks: { orderBy: { order: 'asc' } } },
+        }),
+      ]);
+      if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+      if (!template) throw new HttpError(404, 'template_not_found', 'Template not found');
+
+      const application = await tx.application.create({
+        data: {
+          associateId: associate.id,
+          clientId: client.id,
+          onboardingTrack: template.track,
+          status: 'DRAFT',
+          position: input.position ?? null,
+          startDate: input.startDate ? new Date(input.startDate) : null,
+          checklist: {
+            create: {
+              tasks: {
+                create: template.tasks.map((t) => ({
+                  kind: t.kind,
+                  title: t.title,
+                  description: t.description,
+                  order: t.order,
+                })),
+              },
+            },
+          },
+        },
+      });
+
+      return { application, client };
+    });
+
+    await recordOnboardingEvent({
+      actorUserId: req.user!.id,
+      action: 'onboarding.application_created',
+      applicationId: result.application.id,
+      clientId: result.client.id,
+      metadata: { associateEmail: email, templateId: input.templateId },
+      req,
+    });
+
+    res.status(201).json({ id: result.application.id });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== TASK WRITES ======================================================= */
+
+/* PROFILE_INFO ----------------------------------------------------------- */
+onboardingRouter.post('/applications/:id/profile', async (req, res, next) => {
+  try {
+    const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+    const parsed = ProfileSubmissionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const input = parsed.data;
+
+    await prisma.$transaction(async (tx) => {
+      await tx.associate.update({
+        where: { id: app.associateId },
+        data: {
+          firstName: input.firstName,
+          lastName: input.lastName,
+          dob: input.dob ? new Date(input.dob) : null,
+          phone: input.phone ?? null,
+          addressLine1: input.addressLine1 ?? null,
+          addressLine2: input.addressLine2 ?? null,
+          city: input.city ?? null,
+          state: input.state ?? null,
+          zip: input.zip ?? null,
+        },
+      });
+      const checklist = await tx.onboardingChecklist.findUnique({
+        where: { applicationId: app.id },
+      });
+      if (checklist) {
+        await markTaskDoneByKind(tx, checklist.id, 'PROFILE_INFO');
+      }
+    });
+
+    await recordOnboardingEvent({
+      actorUserId: req.user!.id,
+      action: 'onboarding.profile_updated',
+      applicationId: app.id,
+      clientId: app.clientId,
+      req,
+    });
+
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* W4 -------------------------------------------------------------------- */
+onboardingRouter.post('/applications/:id/w4', async (req, res, next) => {
+  try {
+    const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+    const parsed = W4SubmissionInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const input = parsed.data;
+    const ssnCipher = input.ssn ? encryptString(input.ssn.replace(/-/g, '')) : null;
+
+    await prisma.$transaction(async (tx) => {
+      await tx.w4Submission.upsert({
+        where: { associateId: app.associateId },
+        create: {
+          associateId: app.associateId,
+          filingStatus: input.filingStatus,
+          multipleJobs: input.multipleJobs,
+          dependentsAmount: input.dependentsAmount,
+          otherIncome: input.otherIncome,
+          deductions: input.deductions,
+          extraWithholding: input.extraWithholding,
+          ssnEncrypted: ssnCipher,
+        },
+        update: {
+          filingStatus: input.filingStatus,
+          multipleJobs: input.multipleJobs,
+          dependentsAmount: input.dependentsAmount,
+          otherIncome: input.otherIncome,
+          deductions: input.deductions,
+          extraWithholding: input.extraWithholding,
+          ...(ssnCipher ? { ssnEncrypted: ssnCipher } : {}),
+        },
+      });
+      const checklist = await tx.onboardingChecklist.findUnique({
+        where: { applicationId: app.id },
+      });
+      if (checklist) {
+        await markTaskDoneByKind(tx, checklist.id, 'W4');
+      }
+    });
+
+    await recordOnboardingEvent({
+      actorUserId: req.user!.id,
+      action: 'onboarding.w4_submitted',
+      applicationId: app.id,
+      clientId: app.clientId,
+      metadata: { hasSsn: input.ssn !== undefined },
+      req,
+    });
+
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* DIRECT_DEPOSIT -------------------------------------------------------- */
+onboardingRouter.post(
+  '/applications/:id/direct-deposit',
+  async (req, res, next) => {
+    try {
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+      const parsed = DirectDepositInputSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+      }
+      const input = parsed.data;
+
+      await prisma.$transaction(async (tx) => {
+        const existing = await tx.payoutMethod.findFirst({
+          where: { associateId: app.associateId, isPrimary: true },
+        });
+
+        if (input.type === 'BANK_ACCOUNT') {
+          const data = {
+            type: 'BANK_ACCOUNT' as const,
+            // Routing numbers are public (printed on every check). No encryption.
+            routingNumberEnc: Buffer.from(input.routingNumber, 'utf8'),
+            accountNumberEnc: encryptString(input.accountNumber),
+            accountType: input.accountType,
+            branchCardId: null,
+            isPrimary: true,
+            verifiedAt: null,
+          };
+          if (existing) {
+            await tx.payoutMethod.update({ where: { id: existing.id }, data });
+          } else {
+            await tx.payoutMethod.create({
+              data: { associateId: app.associateId, ...data },
+            });
+          }
+        } else {
+          const data = {
+            type: 'BRANCH_CARD' as const,
+            routingNumberEnc: null,
+            accountNumberEnc: null,
+            accountType: null,
+            branchCardId: input.branchCardId,
+            isPrimary: true,
+            verifiedAt: null,
+          };
+          if (existing) {
+            await tx.payoutMethod.update({ where: { id: existing.id }, data });
+          } else {
+            await tx.payoutMethod.create({
+              data: { associateId: app.associateId, ...data },
+            });
+          }
+        }
+
+        const checklist = await tx.onboardingChecklist.findUnique({
+          where: { applicationId: app.id },
+        });
+        if (checklist) {
+          await markTaskDoneByKind(tx, checklist.id, 'DIRECT_DEPOSIT');
+        }
+      });
+
+      await recordOnboardingEvent({
+        actorUserId: req.user!.id,
+        action: 'onboarding.direct_deposit_set',
+        applicationId: app.id,
+        clientId: app.clientId,
+        metadata: { type: input.type },
+        req,
+      });
+
+      res.status(204).end();
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/* POLICY_ACK ------------------------------------------------------------ */
+onboardingRouter.post('/applications/:id/policy-ack', async (req, res, next) => {
+  try {
+    const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+    const parsed = PolicyAckInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const policyId = parsed.data.policyId;
+
+    await prisma.$transaction(async (tx) => {
+      const policy = await tx.policy.findFirst({
+        where: { id: policyId, deletedAt: null },
+      });
+      if (!policy) {
+        throw new HttpError(404, 'policy_not_found', 'Policy not found');
+      }
+
+      // Idempotent — unique on (policyId, associateId).
+      await tx.policyAcknowledgment.upsert({
+        where: {
+          policyId_associateId: { policyId, associateId: app.associateId },
+        },
+        create: {
+          policyId,
+          associateId: app.associateId,
+          clientId: app.clientId,
+        },
+        update: {},
+      });
+
+      // If every required policy for this app is now acked, mark task DONE.
+      const client = await tx.client.findUnique({
+        where: { id: app.clientId },
+        select: { industry: true },
+      });
+
+      const required = await tx.policy.findMany({
+        where: {
+          deletedAt: null,
+          requiredForOnboarding: true,
+          OR: [
+            { clientId: app.clientId },
+            { clientId: null, industry: client?.industry?.toLowerCase() ?? null },
+            { clientId: null, industry: null },
+          ],
+        },
+        select: { id: true },
+      });
+
+      const ackedCount = await tx.policyAcknowledgment.count({
+        where: {
+          associateId: app.associateId,
+          policyId: { in: required.map((p) => p.id) },
+        },
+      });
+
+      if (ackedCount >= required.length && required.length > 0) {
+        const checklist = await tx.onboardingChecklist.findUnique({
+          where: { applicationId: app.id },
+        });
+        if (checklist) {
+          await markTaskDoneByKind(tx, checklist.id, 'POLICY_ACK');
+        }
+      }
+    });
+
+    await recordOnboardingEvent({
+      actorUserId: req.user!.id,
+      action: 'onboarding.policy_acknowledged',
+      applicationId: app.id,
+      clientId: app.clientId,
+      metadata: { policyId },
+      req,
+    });
+
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* TASK SKIP (HR/Ops only, demo) ----------------------------------------- */
+onboardingRouter.post(
+  '/applications/:id/tasks/:taskId/skip',
+  MANAGE,
+  async (req, res, next) => {
+    try {
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+      const taskId = req.params.taskId;
+
+      const task = await prisma.onboardingTask.findFirst({
+        where: { id: taskId, checklist: { applicationId: app.id } },
+      });
+      if (!task) {
+        throw new HttpError(404, 'task_not_found', 'Task not found');
+      }
+
+      await markTaskSkippedById(prisma, taskId);
+
+      await recordOnboardingEvent({
+        actorUserId: req.user!.id,
+        action: 'onboarding.task_skipped',
+        applicationId: app.id,
+        clientId: app.clientId,
+        taskId: taskId,
+        metadata: { kind: task.kind },
+        req,
+      });
+
+      res.status(204).end();
+    } catch (err) {
+      next(err);
+    }
+  }
+);

@@ -1,5 +1,8 @@
-import type { Prisma } from '@prisma/client';
+import type { Prisma, PrismaClient, Application } from '@prisma/client';
 import type { SessionUser } from '../types/express.js';
+import { HttpError } from '../middleware/error.js';
+
+type Tx = Prisma.TransactionClient | PrismaClient;
 
 /**
  * Centralized multi-tenant + role scoping for Prisma queries.
@@ -41,4 +44,32 @@ export function scopeTemplates(
     return { OR: [{ clientId: null }, { clientId: user.clientId }] };
   }
   return {};
+}
+
+/**
+ * Loads an application the caller is allowed to modify, or throws 404.
+ * Use 404 (not 403) so existence isn't leaked across tenants.
+ *
+ * Defense-in-depth: even though `scopeApplications` already filters
+ * Associates to their own application, we re-check here so a future
+ * scope-helper bug doesn't become a write leak.
+ */
+export async function assertCanModifyApplication(
+  tx: Tx,
+  user: SessionUser,
+  applicationId: string
+): Promise<Application> {
+  const app = await tx.application.findFirst({
+    where: { ...scopeApplications(user), id: applicationId },
+  });
+  if (!app) {
+    throw new HttpError(404, 'application_not_found', 'Application not found');
+  }
+  if (
+    user.role === 'ASSOCIATE' &&
+    app.associateId !== user.associateId
+  ) {
+    throw new HttpError(404, 'application_not_found', 'Application not found');
+  }
+  return app;
 }
