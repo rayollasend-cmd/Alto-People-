@@ -124,6 +124,15 @@ enum I9DocumentList {
   LIST_B_AND_C
 }
 
+// USCIS Form I-9 Section 1 citizenship attestation. The employee picks
+// exactly one — Phase 20 self-attest endpoint enforces that.
+enum I9CitizenshipStatus {
+  US_CITIZEN
+  NON_CITIZEN_NATIONAL
+  LAWFUL_PERMANENT_RESIDENT
+  ALIEN_AUTHORIZED_TO_WORK
+}
+
 enum TimeEntryStatus {
   ACTIVE      // clocked in, not yet out
   COMPLETED   // clocked out, awaiting review
@@ -544,17 +553,29 @@ model BackgroundCheck {
 }
 
 model I9Verification {
-  id                       String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId              String          @unique @db.Uuid
-  section1CompletedAt      DateTime?       @db.Timestamptz(6)
-  section2VerifierUserId   String?         @db.Uuid
-  section2CompletedAt      DateTime?       @db.Timestamptz(6)
+  id                       String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId              String              @unique @db.Uuid
+  section1CompletedAt      DateTime?           @db.Timestamptz(6)
+  // Phase 20 — Section 1 employee self-attestation fields. citizenshipStatus
+  // is the exclusive choice the employee picks. alienRegistrationNumberEnc
+  // is encrypted at rest (same key as W-4 SSN); workAuthExpiresAt applies
+  // only to ALIEN_AUTHORIZED_TO_WORK (or LAWFUL_PERMANENT_RESIDENT with an
+  // expiring USCIS number). section1TypedName + IP + userAgent capture the
+  // typed-name e-signature exactly per Phase 19's pattern.
+  citizenshipStatus        I9CitizenshipStatus?
+  alienRegistrationNumberEnc Bytes?
+  workAuthExpiresAt        DateTime?           @db.Date
+  section1TypedName        String?
+  section1Ip               String?
+  section1UserAgent        String?
+  section2VerifierUserId   String?             @db.Uuid
+  section2CompletedAt      DateTime?           @db.Timestamptz(6)
   documentList             I9DocumentList?
   supportingDocIds         Json?
-  associate                Associate       @relation(fields: [associateId], references: [id], onDelete: Cascade)
-  section2Verifier         User?           @relation("I9Verifier", fields: [section2VerifierUserId], references: [id], onDelete: SetNull)
-  createdAt                DateTime        @default(now()) @db.Timestamptz(6)
-  updatedAt                DateTime        @updatedAt @db.Timestamptz(6)
+  associate                Associate           @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  section2Verifier         User?               @relation("I9Verifier", fields: [section2VerifierUserId], references: [id], onDelete: SetNull)
+  createdAt                DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt                DateTime            @updatedAt @db.Timestamptz(6)
 }
 
 model W4Submission {

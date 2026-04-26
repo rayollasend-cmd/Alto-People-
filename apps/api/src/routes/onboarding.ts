@@ -38,6 +38,7 @@ import {
   markTaskDoneByKind,
   markTaskSkippedById,
 } from '../lib/checklist.js';
+import multer from 'multer';
 import { encryptString } from '../lib/crypto.js';
 import { recordOnboardingEvent } from '../lib/audit.js';
 
@@ -702,6 +703,379 @@ onboardingRouter.post('/applications/:id/policy-ack', async (req, res, next) => 
     next(err);
   }
 });
+
+/* ===== I-9 (Phase 20) ================================================ */
+//
+// Phase 4 already had the I9_VERIFICATION task as a stub and Phase 10
+// shipped the HR-side `compliance/i9` upsert. Phase 20 adds:
+//   1. Associate-facing Section 1 self-attestation with typed-name e-sign
+//      (capturing IP/UA/citizenship status/work-auth expiry).
+//   2. Mobile-camera document upload — multipart photo accepting ID,
+//      passport, SSN card, etc. Files land in the existing document vault
+//      at uploads/i9/<associateId>/<hash>.<ext>.
+//   3. Section 2 verifier flow that records WHICH uploaded document IDs
+//      satisfy the I-9 List A or List B+C requirements, and DONE-s the
+//      I9_VERIFICATION task once both sections are complete.
+
+const I9_MAX_BYTES = 10 * 1024 * 1024;
+const I9_ALLOWED_MIMES = new Set([
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+]);
+
+const i9Upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: I9_MAX_BYTES },
+  fileFilter: (_req, file, cb) => {
+    if (!I9_ALLOWED_MIMES.has(file.mimetype)) {
+      cb(new HttpError(400, 'invalid_mime', `Unsupported file type: ${file.mimetype}`));
+      return;
+    }
+    cb(null, true);
+  },
+});
+
+const I9_CITIZENSHIP_VALUES = [
+  'US_CITIZEN',
+  'NON_CITIZEN_NATIONAL',
+  'LAWFUL_PERMANENT_RESIDENT',
+  'ALIEN_AUTHORIZED_TO_WORK',
+] as const;
+
+type I9CitizenshipStatus = typeof I9_CITIZENSHIP_VALUES[number];
+
+function maybeMarkI9TaskDone(
+  tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+  applicationId: string,
+  hasSection1: boolean,
+  hasSection2: boolean,
+  now: Date
+): Promise<unknown> | null {
+  if (!hasSection1 || !hasSection2) return null;
+  return tx.onboardingTask.updateMany({
+    where: {
+      checklist: { applicationId },
+      kind: 'I9_VERIFICATION',
+      status: { not: 'DONE' },
+    },
+    data: { status: 'DONE', completedAt: now },
+  });
+}
+
+// Read I-9 status for the application's associate.
+onboardingRouter.get('/applications/:id/i9', async (req, res, next) => {
+  try {
+    const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+    const row = await prisma.i9Verification.findUnique({
+      where: { associateId: app.associateId },
+      include: {
+        section2Verifier: { select: { email: true } },
+      },
+    });
+    res.json({
+      associateId: app.associateId,
+      section1: row && row.section1CompletedAt
+        ? {
+            completedAt: row.section1CompletedAt.toISOString(),
+            citizenshipStatus: row.citizenshipStatus,
+            workAuthExpiresAt: row.workAuthExpiresAt
+              ? row.workAuthExpiresAt.toISOString().slice(0, 10)
+              : null,
+            // alienRegistrationNumberEnc is intentionally NOT returned —
+            // the associate types it once and HR doesn't need it back
+            // through the wire. A future hardened decrypt path can expose
+            // it to the section-2 verifier UI when needed.
+            hasAlienNumber: row.alienRegistrationNumberEnc !== null,
+            typedName: row.section1TypedName,
+          }
+        : null,
+      section2: row && row.section2CompletedAt
+        ? {
+            completedAt: row.section2CompletedAt.toISOString(),
+            verifierEmail: row.section2Verifier?.email ?? null,
+            documentList: row.documentList,
+            supportingDocIds: Array.isArray(row.supportingDocIds)
+              ? (row.supportingDocIds as string[])
+              : [],
+          }
+        : null,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Associate (or HR-on-behalf, audited) submits Section 1 attestation.
+onboardingRouter.post('/applications/:id/i9/section1', async (req, res, next) => {
+  try {
+    const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+
+    const status = String(req.body?.citizenshipStatus ?? '').toUpperCase();
+    if (!I9_CITIZENSHIP_VALUES.includes(status as I9CitizenshipStatus)) {
+      throw new HttpError(400, 'invalid_citizenship_status', 'Pick exactly one citizenship status');
+    }
+    const typedName = String(req.body?.typedName ?? '').trim();
+    if (typedName.length < 2 || typedName.length > 200) {
+      throw new HttpError(400, 'invalid_typed_name', 'Typed name must be 2-200 chars');
+    }
+    const alienRegistrationNumber: string | null =
+      typeof req.body?.alienRegistrationNumber === 'string'
+        ? req.body.alienRegistrationNumber.replace(/\s+/g, '').slice(0, 30) || null
+        : null;
+    const workAuthExpiresAt: Date | null = req.body?.workAuthExpiresAt
+      ? new Date(`${String(req.body.workAuthExpiresAt).slice(0, 10)}T00:00:00.000Z`)
+      : null;
+
+    // Per USCIS: ALIEN_AUTHORIZED_TO_WORK requires either an A-Number, an
+    // I-94, or a foreign-passport number. We accept A-Number; the others
+    // can come in via the supporting-docs upload. Either way, we require
+    // the work-auth expiry date for that status (it's literally on the
+    // form). LAWFUL_PERMANENT_RESIDENT requires the A-Number.
+    if (status === 'ALIEN_AUTHORIZED_TO_WORK' && !workAuthExpiresAt) {
+      throw new HttpError(
+        400,
+        'work_auth_expiry_required',
+        'workAuthExpiresAt is required for ALIEN_AUTHORIZED_TO_WORK'
+      );
+    }
+    if (
+      (status === 'ALIEN_AUTHORIZED_TO_WORK' || status === 'LAWFUL_PERMANENT_RESIDENT') &&
+      !alienRegistrationNumber
+    ) {
+      throw new HttpError(
+        400,
+        'alien_number_required',
+        'alienRegistrationNumber is required for this citizenship status'
+      );
+    }
+
+    const now = new Date();
+    const ipAddress = req.ip ?? null;
+    const userAgent = req.get('user-agent') ?? null;
+    const alienEnc = alienRegistrationNumber ? encryptString(alienRegistrationNumber) : null;
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const upserted = await tx.i9Verification.upsert({
+        where: { associateId: app.associateId },
+        create: {
+          associateId: app.associateId,
+          section1CompletedAt: now,
+          citizenshipStatus: status as I9CitizenshipStatus,
+          alienRegistrationNumberEnc: alienEnc,
+          workAuthExpiresAt,
+          section1TypedName: typedName,
+          section1Ip: ipAddress,
+          section1UserAgent: userAgent,
+        },
+        update: {
+          section1CompletedAt: now,
+          citizenshipStatus: status as I9CitizenshipStatus,
+          // Only overwrite the encrypted blob when the caller provided a
+          // fresh number — re-attestations without a new A# keep the old
+          // value so we don't accidentally erase it.
+          ...(alienEnc !== null ? { alienRegistrationNumberEnc: alienEnc } : {}),
+          workAuthExpiresAt,
+          section1TypedName: typedName,
+          section1Ip: ipAddress,
+          section1UserAgent: userAgent,
+        },
+      });
+      await maybeMarkI9TaskDone(
+        tx,
+        app.id,
+        true,
+        upserted.section2CompletedAt !== null,
+        now
+      );
+      return upserted;
+    }, TX_OPTS);
+
+    await recordOnboardingEvent({
+      actorUserId: req.user!.id,
+      action: 'onboarding.i9_section1_submitted',
+      applicationId: app.id,
+      clientId: app.clientId,
+      metadata: {
+        citizenshipStatus: updated.citizenshipStatus,
+        hasAlienNumber: alienEnc !== null,
+        workAuthExpiresAt: workAuthExpiresAt ? workAuthExpiresAt.toISOString().slice(0, 10) : null,
+      },
+      req,
+    });
+
+    res.status(200).json({
+      section1CompletedAt: updated.section1CompletedAt?.toISOString() ?? null,
+      citizenshipStatus: updated.citizenshipStatus,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Mobile-camera document upload. Accepts a single multipart "file" field;
+// the request also carries documentKind (one of I9_SUPPORTING / ID /
+// SSN_CARD / J1_VISA / J1_DS2019), and an optional documentSide
+// (FRONT/BACK) preserved in the filename for the Section-2 verifier.
+onboardingRouter.post(
+  '/applications/:id/i9/documents',
+  i9Upload.single('file'),
+  async (req, res, next) => {
+    try {
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+      const file = req.file;
+      if (!file) throw new HttpError(400, 'file_required', 'multipart "file" field required');
+
+      const allowedKinds = ['I9_SUPPORTING', 'ID', 'SSN_CARD', 'J1_VISA', 'J1_DS2019'] as const;
+      const documentKind = (req.body?.documentKind ?? 'I9_SUPPORTING').toString();
+      if (!allowedKinds.includes(documentKind as typeof allowedKinds[number])) {
+        throw new HttpError(400, 'invalid_document_kind', `documentKind must be one of ${allowedKinds.join(', ')}`);
+      }
+      const side = req.body?.documentSide
+        ? String(req.body.documentSide).toUpperCase()
+        : null;
+      if (side && side !== 'FRONT' && side !== 'BACK') {
+        throw new HttpError(400, 'invalid_document_side', 'documentSide must be FRONT or BACK');
+      }
+
+      // Hash the file body for content-addressed storage. Keeps duplicate
+      // uploads (a user re-tapping submit) from spamming the vault.
+      const { createHash } = await import('node:crypto');
+      const sha = createHash('sha256').update(file.buffer).digest('hex');
+      const ext = (file.mimetype === 'image/jpeg' && '.jpg') ||
+        (file.mimetype === 'image/png' && '.png') ||
+        (file.mimetype === 'image/webp' && '.webp') ||
+        (file.mimetype === 'application/pdf' && '.pdf') ||
+        '';
+      const sideTag = side ? `-${side.toLowerCase()}` : '';
+      const relativeKey = `i9/${app.associateId}/${sha.slice(0, 16)}${sideTag}${ext}`;
+      const targetDir = join(UPLOAD_ROOT, 'i9', app.associateId);
+      await mkdir(targetDir, { recursive: true });
+      await writeFile(resolveStoragePath(relativeKey), file.buffer);
+
+      const baseFilename = file.originalname || `i9-${documentKind.toLowerCase()}${sideTag}${ext}`;
+      const doc = await prisma.documentRecord.create({
+        data: {
+          associateId: app.associateId,
+          clientId: app.clientId,
+          kind: documentKind as 'I9_SUPPORTING' | 'ID' | 'SSN_CARD' | 'J1_VISA' | 'J1_DS2019',
+          s3Key: relativeKey,
+          filename: baseFilename,
+          mimeType: file.mimetype,
+          size: file.size,
+          status: 'UPLOADED',
+        },
+      });
+
+      await recordOnboardingEvent({
+        actorUserId: req.user!.id,
+        action: 'onboarding.i9_document_uploaded',
+        applicationId: app.id,
+        clientId: app.clientId,
+        metadata: { documentId: doc.id, documentKind, documentSide: side, sha256: sha, size: file.size },
+        req,
+      });
+
+      res.status(201).json({
+        documentId: doc.id,
+        kind: doc.kind,
+        side,
+        size: doc.size,
+        mimeType: doc.mimeType,
+        sha256: sha,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// HR Section 2 verification. Caller picks the document list (LIST_A or
+// LIST_B_AND_C) and the document IDs they personally inspected.
+onboardingRouter.post(
+  '/applications/:id/i9/section2',
+  MANAGE,
+  async (req, res, next) => {
+    try {
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+      const documentList = String(req.body?.documentList ?? '').toUpperCase();
+      if (documentList !== 'LIST_A' && documentList !== 'LIST_B_AND_C') {
+        throw new HttpError(400, 'invalid_document_list', 'documentList must be LIST_A or LIST_B_AND_C');
+      }
+      const supportingDocIds: unknown = req.body?.supportingDocIds;
+      if (!Array.isArray(supportingDocIds) || supportingDocIds.length === 0) {
+        throw new HttpError(
+          400,
+          'docs_required',
+          'supportingDocIds is required (must be a non-empty array of document UUIDs)'
+        );
+      }
+      const ids = supportingDocIds.map((x) => String(x));
+      // Verify every doc belongs to this associate.
+      const docs = await prisma.documentRecord.findMany({
+        where: { id: { in: ids }, associateId: app.associateId, deletedAt: null },
+        select: { id: true },
+      });
+      if (docs.length !== ids.length) {
+        throw new HttpError(404, 'doc_not_found', 'One or more supporting documents not found for this associate');
+      }
+      const minDocs = documentList === 'LIST_A' ? 1 : 2;
+      if (ids.length < minDocs) {
+        throw new HttpError(
+          400,
+          'doc_count',
+          `LIST_${documentList === 'LIST_A' ? 'A' : 'B_AND_C'} requires at least ${minDocs} document(s)`
+        );
+      }
+      // Section 1 must be complete first.
+      const existing = await prisma.i9Verification.findUnique({
+        where: { associateId: app.associateId },
+      });
+      if (!existing || !existing.section1CompletedAt) {
+        throw new HttpError(409, 'section1_required', 'Section 1 must be completed before Section 2');
+      }
+
+      const now = new Date();
+      const updated = await prisma.$transaction(async (tx) => {
+        const upserted = await tx.i9Verification.update({
+          where: { associateId: app.associateId },
+          data: {
+            section2CompletedAt: now,
+            section2VerifierUserId: req.user!.id,
+            documentList: documentList as 'LIST_A' | 'LIST_B_AND_C',
+            supportingDocIds: ids,
+          },
+        });
+        // Also flip the associated DocumentRecords to VERIFIED with the
+        // current HR user as verifier.
+        await tx.documentRecord.updateMany({
+          where: { id: { in: ids } },
+          data: { status: 'VERIFIED', verifiedById: req.user!.id, verifiedAt: now },
+        });
+        await maybeMarkI9TaskDone(tx, app.id, true, true, now);
+        return upserted;
+      }, TX_OPTS);
+
+      await recordOnboardingEvent({
+        actorUserId: req.user!.id,
+        action: 'onboarding.i9_section2_verified',
+        applicationId: app.id,
+        clientId: app.clientId,
+        metadata: { documentList: updated.documentList, docCount: ids.length },
+        req,
+      });
+
+      res.json({
+        section2CompletedAt: updated.section2CompletedAt?.toISOString() ?? null,
+        documentList: updated.documentList,
+        supportingDocIds: ids,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 /* ===== E-SIGNATURE (Phase 19) ======================================== */
 
