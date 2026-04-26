@@ -1277,3 +1277,80 @@ export const TimeOffMyBalanceResponseSchema = z.object({
   recentLedger: z.array(TimeOffLedgerEntrySchema),
 });
 export type TimeOffMyBalanceResponse = z.infer<typeof TimeOffMyBalanceResponseSchema>;
+
+/* -------------------------------------------------------------------------- *
+ *  Phase 30 — Time-off requests (associate-submitted; HR-approved)
+ * -------------------------------------------------------------------------- */
+
+export const TimeOffRequestStatusSchema = z.enum([
+  'PENDING',
+  'APPROVED',
+  'DENIED',
+  'CANCELLED',
+]);
+export type TimeOffRequestStatus = z.infer<typeof TimeOffRequestStatusSchema>;
+
+// Dates are submitted as YYYY-MM-DD strings; the server clamps to UTC midnight.
+const IsoDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD');
+
+export const TimeOffRequestCreateInputSchema = z
+  .object({
+    category: TimeOffCategorySchema,
+    startDate: IsoDateSchema,
+    endDate: IsoDateSchema,
+    // Hours (decimal, half-hour granularity). Server converts to minutes.
+    hours: z.number().positive().max(2000).multipleOf(0.5),
+    reason: z.string().max(500).optional(),
+  })
+  .refine((v) => v.endDate >= v.startDate, {
+    message: 'endDate must be on or after startDate',
+    path: ['endDate'],
+  });
+export type TimeOffRequestCreateInput = z.infer<typeof TimeOffRequestCreateInputSchema>;
+
+export const TimeOffRequestDecisionInputSchema = z.object({
+  note: z.string().max(500).optional(),
+});
+export type TimeOffRequestDecisionInput = z.infer<typeof TimeOffRequestDecisionInputSchema>;
+
+export const TimeOffRequestDenyInputSchema = z.object({
+  // Note is required for DENY — the associate sees this in their history.
+  note: z.string().min(1).max(500),
+});
+export type TimeOffRequestDenyInput = z.infer<typeof TimeOffRequestDenyInputSchema>;
+
+export const TimeOffRequestSchema = z.object({
+  id: UuidSchema,
+  associateId: UuidSchema,
+  associateName: z.string().nullable(),
+  category: TimeOffCategorySchema,
+  startDate: z.string(),  // YYYY-MM-DD
+  endDate: z.string(),
+  requestedMinutes: z.number().int(),
+  reason: z.string().nullable(),
+  status: TimeOffRequestStatusSchema,
+  reviewerUserId: UuidSchema.nullable(),
+  reviewerEmail: z.string().nullable(),
+  reviewerNote: z.string().nullable(),
+  decidedAt: z.string().datetime().nullable(),
+  cancelledAt: z.string().datetime().nullable(),
+  createdAt: z.string().datetime(),
+});
+export type TimeOffRequest = z.infer<typeof TimeOffRequestSchema>;
+
+export const TimeOffRequestListResponseSchema = z.object({
+  requests: z.array(TimeOffRequestSchema),
+});
+export type TimeOffRequestListResponse = z.infer<typeof TimeOffRequestListResponseSchema>;
+
+export const TimeOffRequestResponseSchema = z.object({
+  request: TimeOffRequestSchema,
+});
+export type TimeOffRequestResponse = z.infer<typeof TimeOffRequestResponseSchema>;
+
+export const TimeOffAdminListQuerySchema = z.object({
+  status: TimeOffRequestStatusSchema.optional(),
+});
+export type TimeOffAdminListQuery = z.infer<typeof TimeOffAdminListQuerySchema>;

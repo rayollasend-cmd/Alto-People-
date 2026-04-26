@@ -239,6 +239,7 @@ model User {
   createdEsignAgreements EsignAgreement[]      @relation("EsignAgreementCreator")
   payrollDisbursementAttempts PayrollDisbursementAttempt[] @relation("PayrollDisbursementAttemptActor")
   timeOffLedgerEntriesAuthored TimeOffLedgerEntry[]
+  timeOffReviews               TimeOffRequest[]               @relation("TimeOffReviewer")
 
   @@index([role])
   @@index([clientId])
@@ -315,6 +316,7 @@ model Associate {
   swapsReceived      ShiftSwapRequest[] @relation("SwapCounterparty")
   timeOffBalances    TimeOffBalance[]
   timeOffLedger      TimeOffLedgerEntry[]
+  timeOffRequests    TimeOffRequest[]
 
   @@index([deletedAt])
 }
@@ -781,17 +783,61 @@ model TimeOffLedgerEntry {
   // Optional foreign keys so we can audit-trail back to the source.
   // sourceTimeEntryId is the worked entry that drove an ACCRUAL row.
   sourceTimeEntryId  String?             @db.Uuid
+  // Phase 30 — the request that drove a USE row. One USE entry per request.
+  sourceRequestId    String?             @unique @db.Uuid
   sourceUserId       String?             @db.Uuid
   notes              String?
   createdAt          DateTime            @default(now()) @db.Timestamptz(6)
   associate          Associate           @relation(fields: [associateId], references: [id], onDelete: Cascade)
   sourceTimeEntry    TimeEntry?          @relation(fields: [sourceTimeEntryId], references: [id], onDelete: SetNull)
+  sourceRequest      TimeOffRequest?     @relation(fields: [sourceRequestId], references: [id], onDelete: SetNull)
   sourceUser         User?               @relation(fields: [sourceUserId], references: [id], onDelete: SetNull)
 
   // Idempotency guard for the accrual hook: one accrual row per (entry,
   // category). If the approve handler runs twice we no-op.
   @@unique([sourceTimeEntryId, category, reason], name: "uniq_accrual_per_entry")
   @@index([associateId, createdAt])
+}
+
+// Phase 30 — associate-submitted time-off request and its approval state.
+// Approval is the single point that debits the balance ledger; denial /
+// cancellation never touches the ledger. The unique sourceRequestId on
+// TimeOffLedgerEntry guarantees at-most-one USE entry per request even if
+// the approve handler is retried.
+enum TimeOffRequestStatus {
+  PENDING
+  APPROVED
+  DENIED
+  CANCELLED
+}
+
+model TimeOffRequest {
+  id              String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId     String               @db.Uuid
+  category        TimeOffCategory
+  // Inclusive day range. We store dates (not timestamps) because requests
+  // are scheduled at day granularity; the UI picks days, not minutes.
+  startDate       DateTime             @db.Date
+  endDate         DateTime             @db.Date
+  // Hours requested in MINUTES so the unit matches the ledger and balance.
+  // We store minutes (not days) because part-days are valid (a half-day off
+  // = 240 min for an 8h schedule) and we'd lose precision converting twice.
+  requestedMinutes Int
+  reason          String?
+  status          TimeOffRequestStatus  @default(PENDING)
+  reviewerUserId  String?              @db.Uuid
+  reviewerNote    String?
+  decidedAt       DateTime?            @db.Timestamptz(6)
+  cancelledAt     DateTime?            @db.Timestamptz(6)
+  createdAt       DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime             @updatedAt @db.Timestamptz(6)
+
+  associate       Associate            @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  reviewer        User?                @relation("TimeOffReviewer", fields: [reviewerUserId], references: [id], onDelete: SetNull)
+  ledgerEntry     TimeOffLedgerEntry?
+
+  @@index([associateId, status])
+  @@index([status, createdAt])
 }
 
 model AssociateAvailability {

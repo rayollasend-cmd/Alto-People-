@@ -4,6 +4,7 @@ import {
   Briefcase,
   Building2,
   Calendar,
+  CalendarOff,
   ClipboardList,
   DollarSign,
   FileText,
@@ -18,6 +19,7 @@ import type { Capability } from './roles';
 export type ModuleKey =
   | 'onboarding'
   | 'time-attendance'
+  | 'time-off'
   | 'scheduling'
   | 'payroll'
   | 'documents'
@@ -44,6 +46,7 @@ export {
   Briefcase,
   Building2,
   Calendar,
+  CalendarOff,
   ClipboardList,
   DollarSign,
   FileText,
@@ -72,6 +75,15 @@ export const MODULES: ModuleNav[] = [
       'Geofenced clock-in, timesheet approvals, and attendance auditing.',
     requires: 'view:time',
     icon: Timer,
+  },
+  {
+    key: 'time-off',
+    path: '/time-off',
+    label: 'Time Off',
+    description:
+      'PTO requests, sick-leave balances, and HR approval queue.',
+    requires: 'view:time',
+    icon: CalendarOff,
   },
   {
     key: 'scheduling',

@@ -16,6 +16,7 @@ import { PolicyAckTask } from '@/pages/onboarding/tasks/PolicyAckTask';
 import { I9Task } from '@/pages/onboarding/tasks/I9Task';
 import { StubTask } from '@/pages/onboarding/tasks/StubTask';
 import { TimeHome } from '@/pages/time/TimeHome';
+import { TimeOffHome } from '@/pages/timeoff/TimeOffHome';
 import { SchedulingHome } from '@/pages/scheduling/SchedulingHome';
 import { PayrollHome } from '@/pages/payroll/PayrollHome';
 import { DocumentsHome } from '@/pages/documents/DocumentsHome';
@@ -61,6 +62,7 @@ const PLACEHOLDER_MODULES = MODULES.filter(
   (m) =>
     m.key !== 'onboarding' &&
     m.key !== 'time-attendance' &&
+    m.key !== 'time-off' &&
     m.key !== 'scheduling' &&
     m.key !== 'payroll' &&
     m.key !== 'documents' &&
@@ -83,6 +85,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <Dashboard /> },
       { path: 'time-attendance', element: <TimeHome /> },
+      { path: 'time-off', element: <TimeOffHome /> },
       { path: 'scheduling', element: <SchedulingHome /> },
       { path: 'payroll', element: <PayrollHome /> },
       { path: 'documents', element: <DocumentsHome /> },
