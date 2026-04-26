@@ -18,8 +18,11 @@ import {
   type TemplateTask,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { generateInviteToken } from '../lib/inviteToken.js';
+import { send } from '../lib/notifications.js';
 import {
   assertCanModifyApplication,
   scopeApplications,
@@ -260,6 +263,10 @@ onboardingRouter.post('/applications', MANAGE, async (req, res, next) => {
     const input = parsed.data;
     const email = input.associateEmail.trim().toLowerCase();
 
+    // Generate the invite token raw outside the tx so we can use it after.
+    const invite = generateInviteToken();
+    const expiresAt = new Date(Date.now() + env.INVITE_TOKEN_TTL_SECONDS * 1000);
+
     const result = await prisma.$transaction(async (tx) => {
       // Find or create the associate
       let associate = await tx.associate.findUnique({ where: { email } });
@@ -286,6 +293,46 @@ onboardingRouter.post('/applications', MANAGE, async (req, res, next) => {
       if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
       if (!template) throw new HttpError(404, 'template_not_found', 'Template not found');
 
+      // Find or create the User. If they already exist as ACTIVE under this
+      // email, refuse — re-inviting an active user is a sign of confused
+      // state; HR can reset password manually if needed.
+      let user = await tx.user.findUnique({ where: { email } });
+      if (user) {
+        if (user.status === 'ACTIVE' && user.passwordHash) {
+          throw new HttpError(
+            409,
+            'user_already_active',
+            'A user with this email is already active. Cannot re-invite.'
+          );
+        }
+        // Link the existing INVITED user to this Associate if missing.
+        if (user.associateId !== associate.id) {
+          user = await tx.user.update({
+            where: { id: user.id },
+            data: { associateId: associate.id },
+          });
+        }
+      } else {
+        user = await tx.user.create({
+          data: {
+            email,
+            role: 'ASSOCIATE',
+            status: 'INVITED',
+            associateId: associate.id,
+          },
+        });
+      }
+
+      // Always issue a fresh token; an old one becomes stale once the
+      // accept-invite endpoint consumes either.
+      await tx.inviteToken.create({
+        data: {
+          tokenHash: invite.hash,
+          userId: user.id,
+          expiresAt,
+        },
+      });
+
       const application = await tx.application.create({
         data: {
           associateId: associate.id,
@@ -309,19 +356,77 @@ onboardingRouter.post('/applications', MANAGE, async (req, res, next) => {
         },
       });
 
-      return { application, client };
+      return { application, client, user, associate };
     }, TX_OPTS);
+
+    // Queue + send the invitation email. Wrapped in try/catch so an email
+    // failure doesn't roll back the application — HR can resend later.
+    const acceptUrl = `${env.APP_BASE_URL}/accept-invite/${invite.raw}`;
+    const subject = `You're invited to onboard with ${result.client.name}`;
+    const body = [
+      `Hi ${result.associate.firstName},`,
+      ``,
+      `${result.client.name} has invited you to complete onboarding through Alto People.`,
+      ``,
+      `Click this link to set your password and start your onboarding tasks:`,
+      acceptUrl,
+      ``,
+      `This invitation expires on ${expiresAt.toISOString()}.`,
+      ``,
+      `If you didn't expect this email, you can safely ignore it.`,
+    ].join('\n');
+
+    let emailRef: string | null = null;
+    let emailFailed: string | null = null;
+    try {
+      const r = await send({
+        channel: 'EMAIL',
+        recipient: { userId: result.user.id, phone: null, email },
+        subject,
+        body,
+      });
+      emailRef = r.externalRef;
+    } catch (err) {
+      emailFailed = err instanceof Error ? err.message : String(err);
+    }
+    await prisma.notification.create({
+      data: {
+        channel: 'EMAIL',
+        status: emailFailed ? 'FAILED' : 'SENT',
+        recipientUserId: result.user.id,
+        recipientEmail: email,
+        subject,
+        body,
+        category: 'onboarding.invite',
+        externalRef: emailRef,
+        failureReason: emailFailed,
+        sentAt: emailFailed ? null : new Date(),
+        senderUserId: req.user!.id,
+      },
+    });
 
     await recordOnboardingEvent({
       actorUserId: req.user!.id,
       action: 'onboarding.application_created',
       applicationId: result.application.id,
       clientId: result.client.id,
-      metadata: { associateEmail: email, templateId: input.templateId },
+      metadata: {
+        associateEmail: email,
+        templateId: input.templateId,
+        invitedUserId: result.user.id,
+        emailQueued: emailRef !== null || emailFailed !== null,
+        emailFailed,
+      },
       req,
     });
 
-    res.status(201).json({ id: result.application.id });
+    res.status(201).json({
+      id: result.application.id,
+      invitedUserId: result.user.id,
+      // Returned in dev-stub mode only — gives HR a copy-pasteable link
+      // when no real Resend is configured. Hidden when Resend sent for real.
+      inviteUrl: env.RESEND_API_KEY && env.RESEND_FROM ? null : acceptUrl,
+    });
   } catch (err) {
     next(err);
   }

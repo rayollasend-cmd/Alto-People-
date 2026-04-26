@@ -1176,3 +1176,21 @@ export const ClientGeofenceInputSchema = z
     { message: 'latitude, longitude, and geofenceRadiusMeters must be set or cleared together' }
   );
 export type ClientGeofenceInput = z.infer<typeof ClientGeofenceInputSchema>;
+
+/* -------------------------------------------------------------------------- *
+ *  Phase 16 — Invitation flow
+ * -------------------------------------------------------------------------- */
+
+export const InviteSummarySchema = z.object({
+  email: z.string().email(),
+  firstName: z.string().nullable(),
+  lastName: z.string().nullable(),
+  expiresAt: z.string().datetime(),
+});
+export type InviteSummary = z.infer<typeof InviteSummarySchema>;
+
+export const AcceptInviteInputSchema = z.object({
+  token: z.string().min(20).max(200),
+  password: z.string().min(12).max(256),
+});
+export type AcceptInviteInput = z.infer<typeof AcceptInviteInputSchema>;

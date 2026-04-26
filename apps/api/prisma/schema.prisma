@@ -224,6 +224,7 @@ model User {
   sentNotifications     Notification[]         @relation("NotificationSender")
   receivedNotifications Notification[]         @relation("NotificationRecipient")
   authoredReviews       PerformanceReview[]    @relation("PerformanceReviewer")
+  inviteTokens          InviteToken[]
 
   @@index([role])
   @@index([clientId])
@@ -755,6 +756,22 @@ model Candidate {
 
   @@index([stage])
   @@index([deletedAt])
+}
+
+model InviteToken {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // sha256(rawToken) — never store the raw token. The user-facing magic link
+  // contains the raw token; the server hashes the lookup key before query.
+  tokenHash   String    @unique
+  userId      String    @db.Uuid
+  expiresAt   DateTime  @db.Timestamptz(6)
+  // Single-use: set on accept-invite. Lookups exclude consumedAt != NULL.
+  consumedAt  DateTime? @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, consumedAt])
+  @@index([expiresAt])
 }
 
 model PerformanceReview {

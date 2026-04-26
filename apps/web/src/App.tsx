@@ -1,6 +1,7 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { Login } from '@/pages/Login';
+import { AcceptInvite } from '@/pages/AcceptInvite';
 import { Dashboard } from '@/pages/Dashboard';
 import { ModulePlaceholder } from '@/pages/ModulePlaceholder';
 import { MODULES } from '@/lib/modules';
@@ -66,6 +67,7 @@ const PLACEHOLDER_MODULES = MODULES.filter(
 
 export const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
+  { path: '/accept-invite/:token', element: <AcceptInvite /> },
   {
     path: '/',
     element: (

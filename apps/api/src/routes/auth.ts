@@ -1,11 +1,16 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { HUMAN_ROLES } from '@alto-people/shared';
-import type { AuthUser } from '@alto-people/shared';
+import {
+  AcceptInviteInputSchema,
+  HUMAN_ROLES,
+  type AuthUser,
+  type InviteSummary,
+} from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
 import { signSession } from '../lib/jwt.js';
 import {
+  hashPassword,
   verifyPassword,
   DUMMY_HASH,
 } from '../lib/passwords.js';
@@ -19,6 +24,8 @@ import {
   loginIpLimiter,
   loginEmailLimiter,
 } from '../middleware/rateLimit.js';
+import { hashToken } from '../lib/inviteToken.js';
+import { HttpError } from '../middleware/error.js';
 
 export const authRouter = Router();
 
@@ -171,4 +178,116 @@ authRouter.get('/me', (req, res) => {
     return;
   }
   res.json({ user: req.user ? toAuthUser(req.user) : null });
+});
+
+/* ===== Invitation flow (Phase 16) ====================================== */
+
+/**
+ * GET /auth/invite/:token
+ * Public — no auth required. Returns the associate's name + email so the
+ * accept-invite page can render a personalized welcome. 404 on any
+ * invalid/expired/consumed token (no oracle: same response for "doesn't
+ * exist" vs "expired" vs "consumed").
+ */
+authRouter.get('/invite/:token', async (req, res, next) => {
+  try {
+    const tokenHash = hashToken(req.params.token);
+    const invite = await prisma.inviteToken.findUnique({
+      where: { tokenHash },
+      include: {
+        user: {
+          include: {
+            associate: { select: { firstName: true, lastName: true } },
+          },
+        },
+      },
+    });
+    if (!invite || invite.consumedAt || invite.expiresAt <= new Date()) {
+      throw new HttpError(404, 'invite_not_found', 'Invitation not found or expired');
+    }
+    const payload: InviteSummary = {
+      email: invite.user.email,
+      firstName: invite.user.associate?.firstName ?? null,
+      lastName: invite.user.associate?.lastName ?? null,
+      expiresAt: invite.expiresAt.toISOString(),
+    };
+    res.json(payload);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /auth/accept-invite { token, password }
+ * Consumes the token, sets passwordHash, flips status to ACTIVE, issues a
+ * session cookie. Wrapped in a transaction so a partial failure doesn't
+ * leave a consumed token attached to a still-INVITED user.
+ */
+authRouter.post('/accept-invite', async (req, res, next) => {
+  try {
+    const parsed = AcceptInviteInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const { token, password } = parsed.data;
+    const tokenHash = hashToken(token);
+
+    const invite = await prisma.inviteToken.findUnique({
+      where: { tokenHash },
+      include: { user: true },
+    });
+    if (!invite || invite.consumedAt || invite.expiresAt <= new Date()) {
+      throw new HttpError(404, 'invite_not_found', 'Invitation not found or expired');
+    }
+    if (invite.user.status === 'ACTIVE' && invite.user.passwordHash) {
+      // The user is already set up — could happen if HR re-invited then the
+      // associate accepted the older link. Refuse rather than silently
+      // overwriting their password.
+      throw new HttpError(409, 'already_active', 'This account is already active. Use sign in.');
+    }
+
+    const passwordHash = await hashPassword(password);
+    const now = new Date();
+
+    const updatedUser = await prisma.$transaction(async (tx) => {
+      await tx.inviteToken.update({
+        where: { id: invite.id },
+        data: { consumedAt: now },
+      });
+      // Invalidate any other outstanding invites for this user — once one
+      // is consumed, the rest are useless.
+      await tx.inviteToken.updateMany({
+        where: { userId: invite.userId, consumedAt: null, id: { not: invite.id } },
+        data: { consumedAt: now },
+      });
+      return tx.user.update({
+        where: { id: invite.userId },
+        data: {
+          passwordHash,
+          status: 'ACTIVE',
+          // Bump tokenVersion so any pre-existing session cookies (unlikely
+          // for an INVITED user but defensive) become stale.
+          tokenVersion: { increment: 1 },
+        },
+      });
+    });
+
+    const sessionToken = signSession({
+      sub: updatedUser.id,
+      role: updatedUser.role,
+      ver: updatedUser.tokenVersion,
+    });
+    res.cookie(SESSION_COOKIE, sessionToken, cookieOptions());
+
+    await recordLoginSuccess({
+      email: updatedUser.email,
+      req,
+      userId: updatedUser.id,
+      clientId: updatedUser.clientId,
+    });
+
+    res.json({ user: toAuthUser(updatedUser) });
+  } catch (err) {
+    next(err);
+  }
 });

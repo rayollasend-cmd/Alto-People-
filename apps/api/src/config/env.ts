@@ -18,6 +18,23 @@ const EnvSchema = z.object({
   PAYOUT_ENCRYPTION_KEY: z
     .string()
     .min(44, 'PAYOUT_ENCRYPTION_KEY must be base64-encoded 32 bytes (use openssl rand -base64 32)'),
+  // Optional: ping the DB every N seconds to keep Neon's serverless compute
+  // from suspending. 0 (default) disables. 240 = every 4 min, comfortably
+  // under Neon's 5-min idle threshold. Each ping is a single SELECT 1, but
+  // it does count against your Neon compute hours — leave at 0 in production.
+  KEEP_ALIVE_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(0),
+  // Phase 16 invitation flow.
+  // Base URL the magic link in invitation emails points to. In dev this is
+  // the Vite dev server; in prod it's wherever the web app is hosted.
+  APP_BASE_URL: z.string().url().default('http://localhost:5173'),
+  // Default invite token lifetime in seconds. 7 days = 604800.
+  INVITE_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(7 * 24 * 60 * 60),
+  // Optional: real Resend API key. If unset, EMAIL notifications stay
+  // stubbed — the body (with magic link) prints to the API console and a
+  // STUB-EMAIL-... ref is returned so the UI flow still works end-to-end.
+  RESEND_API_KEY: z.string().optional(),
+  // Sender shown in real Resend emails. Required only when RESEND_API_KEY is set.
+  RESEND_FROM: z.string().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

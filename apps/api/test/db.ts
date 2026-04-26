@@ -34,6 +34,7 @@ const TABLES = [
   'Notification',
   'PerformanceReview',
   'Candidate',
+  'InviteToken',
   'User',
   'Associate',
   'Client',
