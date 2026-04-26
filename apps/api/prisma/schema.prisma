@@ -237,6 +237,7 @@ model User {
   authoredReviews       PerformanceReview[]    @relation("PerformanceReviewer")
   inviteTokens          InviteToken[]
   createdEsignAgreements EsignAgreement[]      @relation("EsignAgreementCreator")
+  payrollDisbursementAttempts PayrollDisbursementAttempt[] @relation("PayrollDisbursementAttemptActor")
 
   @@index([role])
   @@index([clientId])
@@ -824,10 +825,35 @@ model PayrollItem {
   createdAt          DateTime          @default(now()) @db.Timestamptz(6)
   updatedAt          DateTime          @updatedAt @db.Timestamptz(6)
 
+  // Phase 22 — every disbursement call (success or fail) appends a row
+  // here, even retries. PayrollItem.disbursementRef stores the latest
+  // SUCCESS ref; this table preserves the full attempt history for audit.
+  disbursementAttempts PayrollDisbursementAttempt[]
+
   // One paystub per (run, associate) — re-aggregating updates in place
   // rather than duplicating.
   @@unique([payrollRunId, associateId])
   @@index([associateId])
+  @@index([status])
+}
+
+// Phase 22 — disbursement attempt log. One row per provider call, regardless
+// of outcome. Lets finance reconstruct "who got paid when, by which provider,
+// for which run" without trusting that PayrollItem.disbursementRef is
+// authoritative (it isn't — retries overwrite it).
+model PayrollDisbursementAttempt {
+  id              String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  payrollItemId   String       @db.Uuid
+  provider        String
+  status          String       // SUCCESS | PENDING | FAILED (mirrors DisbursementResult.status)
+  externalRef     String?
+  failureReason   String?
+  attemptedAt     DateTime     @default(now()) @db.Timestamptz(6)
+  attemptedById   String?      @db.Uuid
+  payrollItem     PayrollItem  @relation(fields: [payrollItemId], references: [id], onDelete: Cascade)
+  attemptedBy     User?        @relation("PayrollDisbursementAttemptActor", fields: [attemptedById], references: [id], onDelete: SetNull)
+
+  @@index([payrollItemId, attemptedAt])
   @@index([status])
 }
 

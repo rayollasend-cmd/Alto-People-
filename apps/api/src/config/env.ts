@@ -39,6 +39,13 @@ const EnvSchema = z.object({
   // (every 30 min) in production. The threshold for "stale" is hard-coded
   // at 48h in lib/inviteReminder.ts; this only controls scan cadence.
   INVITE_REMINDER_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(0),
+  // Phase 22 — payroll disbursement adapter. STUB (default) returns
+  // synthetic refs; WISE / BRANCH attempt the real provider when the
+  // matching API key is also set. Falls back to STUB if the chosen
+  // provider's key is missing.
+  PAYROLL_DISBURSEMENT_PROVIDER: z.enum(['STUB', 'WISE', 'BRANCH']).default('STUB'),
+  WISE_API_KEY: z.string().optional(),
+  BRANCH_API_KEY: z.string().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

@@ -22,7 +22,9 @@ import {
 } from '../lib/payroll.js';
 import { computePaycheckTaxes, type PayFrequency } from '../lib/payrollTax.js';
 import { hashPdf, renderPaystubPdf, type PaystubData } from '../lib/paystub.js';
+import { pickAdapter } from '../lib/disbursement.js';
 import { recordPayrollEvent } from '../lib/audit.js';
+import archiver from 'archiver';
 
 export const payrollRouter = Router();
 
@@ -372,10 +374,12 @@ payrollRouter.post('/runs/:id/finalize', PROCESS, async (req, res, next) => {
 });
 
 /**
- * Disbursement is STUBBED. In production this calls Wise/Branch per item;
- * here we just flip every PENDING item to DISBURSED with a synthetic ref
- * and mark the run DISBURSED. The route is wired so the UI flow works
- * end-to-end; swapping the body for real provider calls is a future PR.
+ * Disbursement runs each PENDING item through the configured provider
+ * adapter (Phase 22: STUB by default; WISE/BRANCH stubbed-but-wired). Each
+ * call appends a PayrollDisbursementAttempt row regardless of outcome so
+ * finance can reconstruct retries. Provider-level failures don't fail the
+ * whole batch — the failing item stays PENDING with failureReason and HR
+ * can retry. The run flips to DISBURSED only when every item succeeded.
  */
 payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
   try {
@@ -387,38 +391,207 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
       throw new HttpError(409, 'not_finalized', 'Run must be FINALIZED before disbursement');
     }
 
-    const updated = await prisma.$transaction(async (tx) => {
-      const items = await tx.payrollItem.findMany({
-        where: { payrollRunId: run.id, status: 'PENDING' },
+    const adapter = pickAdapter();
+    const items = await prisma.payrollItem.findMany({
+      where: { payrollRunId: run.id, status: 'PENDING' },
+      include: { associate: true },
+    });
+
+    let allSucceeded = true;
+    const now = new Date();
+    for (const item of items) {
+      const result = await adapter.disburse({
+        amount: Number(item.netPay),
+        currency: 'USD',
+        recipient: {
+          associateId: item.associateId,
+          fullName: `${item.associate.firstName} ${item.associate.lastName}`,
+        },
+        idempotencyKey: item.id,
+      }).catch((err: unknown) => ({
+        provider: adapter.provider,
+        externalRef: '',
+        status: 'FAILED' as const,
+        failureReason: err instanceof Error ? err.message : String(err),
+      }));
+
+      // Append the attempt log first — we want it persisted even if the
+      // PayrollItem update later races.
+      await prisma.payrollDisbursementAttempt.create({
+        data: {
+          payrollItemId: item.id,
+          provider: result.provider,
+          status: result.status,
+          externalRef: result.externalRef || null,
+          failureReason: result.failureReason ?? null,
+          attemptedById: req.user!.id,
+        },
       });
-      const now = new Date();
-      for (const item of items) {
-        await tx.payrollItem.update({
+
+      if (result.status === 'SUCCESS') {
+        await prisma.payrollItem.update({
           where: { id: item.id },
           data: {
             status: 'DISBURSED',
-            disbursementRef: `STUB-${item.id.slice(0, 8)}`,
+            disbursementRef: result.externalRef,
             disbursedAt: now,
+            failureReason: null,
           },
         });
+      } else if (result.status === 'PENDING') {
+        // Provider accepted the request but hasn't settled. Leave PayrollItem
+        // PENDING; webhook handler (future) will flip to DISBURSED.
+        allSucceeded = false;
+      } else {
+        // FAILED — mark the item HELD so HR sees it in the failure queue
+        // without polluting the future SUCCESS retry attempt log.
+        await prisma.payrollItem.update({
+          where: { id: item.id },
+          data: { status: 'HELD', failureReason: result.failureReason ?? 'unknown' },
+        });
+        allSucceeded = false;
       }
-      return tx.payrollRun.update({
-        where: { id: run.id },
-        data: { status: 'DISBURSED', disbursedAt: now },
-        include: RUN_INCLUDE,
-      });
-    }, TX_OPTS);
+    }
+
+    const updated = await prisma.payrollRun.update({
+      where: { id: run.id },
+      data: allSucceeded
+        ? { status: 'DISBURSED', disbursedAt: now }
+        : {},
+      include: RUN_INCLUDE,
+    });
 
     await recordPayrollEvent({
       actorUserId: req.user!.id,
       action: 'payroll.run_disbursed',
       payrollRunId: updated.id,
       clientId: updated.clientId,
-      metadata: { items: updated.items.length, stub: true },
+      metadata: {
+        provider: adapter.provider,
+        items: items.length,
+        allSucceeded,
+      },
       req,
     });
 
     res.json(toDetail(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Bulk paystubs ZIP (HR/Finance) ================================ */
+//
+// Streams a ZIP of every paystub PDF in the run. Renders each PDF on the
+// fly using the same path as the single-paystub endpoint so the bytes
+// match (and Phase 18's paystubHash stamping works for downstream
+// re-verification). Capability gate is the existing payroll view scope —
+// associates would 404 anyway because their scope doesn't include
+// other associates' items.
+payrollRouter.get('/runs/:runId/paystubs.zip', async (req, res, next) => {
+  try {
+    const run = await prisma.payrollRun.findFirst({
+      where: { id: req.params.runId, ...scopePayrollRuns(req.user!) },
+      include: { client: { select: { name: true } } },
+    });
+    if (!run) throw new HttpError(404, 'run_not_found', 'Payroll run not found');
+
+    const items = await prisma.payrollItem.findMany({
+      where: { payrollRunId: run.id },
+      include: { associate: true },
+      orderBy: { associate: { lastName: 'asc' } },
+    });
+    if (items.length === 0) {
+      throw new HttpError(404, 'no_items', 'Run has no paystubs');
+    }
+
+    const periodStart = ymd(run.periodStart);
+    const periodEnd = ymd(run.periodEnd);
+    const filename = `paystubs-${periodStart}-${run.id.slice(0, 8)}.zip`;
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    const archive = archiver('zip', { zlib: { level: 6 } });
+    archive.on('error', (err) => {
+      res.destroy(err);
+    });
+    archive.pipe(res);
+
+    const issuedAt = new Date().toISOString();
+    for (const item of items) {
+      const stateLabel = item.taxState
+        ? `${item.taxState} state withholding`
+        : 'State withholding';
+      const data: PaystubData = {
+        company: { name: run.client?.name ?? 'Alto Etho LLC' },
+        associate: {
+          firstName: item.associate.firstName,
+          lastName: item.associate.lastName,
+          email: item.associate.email,
+          addressLine1: item.associate.addressLine1,
+          city: item.associate.city,
+          state: item.associate.state,
+          zip: item.associate.zip,
+        },
+        period: { start: periodStart, end: periodEnd },
+        earnings: {
+          hours: Number(item.hoursWorked),
+          rate: Number(item.hourlyRate),
+          gross: Number(item.grossPay),
+        },
+        taxes: {
+          federalIncomeTax: Number(item.federalWithholding),
+          socialSecurity: Number(item.fica),
+          medicare: Number(item.medicare),
+          stateIncomeTax: Number(item.stateWithholding),
+          stateLabel,
+        },
+        totals: {
+          totalEmployeeTax: round2(
+            Number(item.federalWithholding) +
+              Number(item.fica) +
+              Number(item.medicare) +
+              Number(item.stateWithholding)
+          ),
+          netPay: Number(item.netPay),
+        },
+        ytd: { wages: Number(item.ytdWages), medicareWages: Number(item.ytdMedicareWages) },
+        employer: {
+          fica: Number(item.employerFica),
+          medicare: Number(item.employerMedicare),
+          futa: Number(item.employerFuta),
+          suta: Number(item.employerSuta),
+        },
+        meta: { runId: run.id, itemId: item.id, issuedAt },
+      };
+      const pdf = await renderPaystubPdf(data);
+      const hash = hashPdf(pdf);
+      // Stamp the per-item hash on first generation, exactly like the
+      // single-paystub route, so a later single-download verifies as
+      // identical to the bytes we just packed.
+      if (!item.paystubHash) {
+        await prisma.payrollItem.update({
+          where: { id: item.id },
+          data: { paystubHash: hash },
+        });
+      }
+      const safeName = `${item.associate.lastName}-${item.associate.firstName}-${item.id.slice(0, 8)}.pdf`
+        .toLowerCase()
+        .replace(/[^a-z0-9.-]+/g, '-');
+      archive.append(pdf, { name: safeName });
+    }
+
+    await recordPayrollEvent({
+      actorUserId: req.user!.id,
+      action: 'payroll.paystubs_bulk_downloaded',
+      payrollRunId: run.id,
+      clientId: run.clientId,
+      metadata: { items: items.length },
+      req,
+    });
+
+    await archive.finalize();
   } catch (err) {
     next(err);
   }

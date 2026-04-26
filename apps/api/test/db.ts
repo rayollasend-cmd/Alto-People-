@@ -30,6 +30,7 @@ const TABLES = [
   'Shift',
   'AssociateAvailability',
   'Job',
+  'PayrollDisbursementAttempt',
   'PayrollItem',
   'PayrollRun',
   'Notification',
