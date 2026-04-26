@@ -1,0 +1,26 @@
+{
+  "name": "alto-people",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Alto People — workforce management HR platform for Alto Etho LLC",
+  "license": "UNLICENSED",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n web,api -c blue,green \"npm -w apps/web run dev\" \"npm -w apps/api run dev\"",
+    "dev:web": "npm -w apps/web run dev",
+    "dev:api": "npm -w apps/api run dev",
+    "build": "npm -w apps/web run build && npm -w apps/api run build",
+    "build:web": "npm -w apps/web run build",
+    "build:api": "npm -w apps/api run build",
+    "clean": "rimraf \"apps/*/dist\" \"apps/*/node_modules\" node_modules"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "rimraf": "^5.0.10"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
