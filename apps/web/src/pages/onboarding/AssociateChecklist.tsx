@@ -26,6 +26,7 @@ const REAL_KINDS = new Set([
   'W4',
   'DIRECT_DEPOSIT',
   'POLICY_ACK',
+  'I9_VERIFICATION',
 ]);
 
 export function AssociateChecklist() {

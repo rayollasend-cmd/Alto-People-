@@ -13,6 +13,7 @@ import { ProfileInfoTask } from '@/pages/onboarding/tasks/ProfileInfoTask';
 import { W4Task } from '@/pages/onboarding/tasks/W4Task';
 import { DirectDepositTask } from '@/pages/onboarding/tasks/DirectDepositTask';
 import { PolicyAckTask } from '@/pages/onboarding/tasks/PolicyAckTask';
+import { I9Task } from '@/pages/onboarding/tasks/I9Task';
 import { StubTask } from '@/pages/onboarding/tasks/StubTask';
 import { TimeHome } from '@/pages/time/TimeHome';
 import { SchedulingHome } from '@/pages/scheduling/SchedulingHome';
@@ -45,6 +46,10 @@ const ONBOARDING_ROUTES = [
   {
     path: 'onboarding/me/:applicationId/tasks/policy_ack',
     element: <PolicyAckTask />,
+  },
+  {
+    path: 'onboarding/me/:applicationId/tasks/i9_verification',
+    element: <I9Task />,
   },
   {
     path: 'onboarding/me/:applicationId/tasks/:taskKind',
