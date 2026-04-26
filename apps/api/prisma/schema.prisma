@@ -181,6 +181,20 @@ enum CandidateStage {
   REJECTED       // we passed
 }
 
+enum BreakType {
+  MEAL           // 30+ min unpaid (state-dependent)
+  REST           // 10-15 min paid
+}
+
+enum ShiftSwapStatus {
+  PENDING_PEER       // sent to counterparty associate
+  PEER_ACCEPTED      // counterparty agreed; awaiting manager approval
+  PEER_DECLINED      // counterparty refused
+  MANAGER_APPROVED   // executed — shift assignment swapped
+  MANAGER_REJECTED   // manager refused after peer accepted
+  CANCELLED          // requester pulled it
+}
+
 // =============================================================================
 // Models
 // =============================================================================
@@ -217,14 +231,20 @@ model User {
 }
 
 model Client {
-  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name         String
-  industry     String?
-  status       ClientStatus @default(ACTIVE)
-  contactEmail String?
-  createdAt    DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt    DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt    DateTime?    @db.Timestamptz(6)
+  id                   String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                 String
+  industry             String?
+  status               ClientStatus @default(ACTIVE)
+  contactEmail         String?
+  // Geofence anchor for clock-in validation. NULL latitude/longitude means
+  // no geofence enforced (associates can clock in from anywhere).
+  // Stored as Decimal for precision; ~5cm at 7 decimals.
+  latitude             Decimal?     @db.Decimal(10, 7)
+  longitude            Decimal?     @db.Decimal(10, 7)
+  geofenceRadiusMeters Int?
+  createdAt            DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime     @updatedAt @db.Timestamptz(6)
+  deletedAt            DateTime?    @db.Timestamptz(6)
 
   applications Application[]
   users        User[]
@@ -232,6 +252,7 @@ model Client {
   templates    OnboardingTemplate[]
   shifts       Shift[]
   payrollRuns  PayrollRun[]
+  jobs         Job[]
 
   @@index([status])
   @@index([deletedAt])
@@ -269,6 +290,9 @@ model Associate {
   assignedShifts   Shift[]
   payrollItems     PayrollItem[]
   performanceReviews PerformanceReview[]
+  availability       AssociateAvailability[]
+  swapsRequested     ShiftSwapRequest[] @relation("SwapRequester")
+  swapsReceived      ShiftSwapRequest[] @relation("SwapCounterparty")
 
   @@index([deletedAt])
 }
@@ -522,15 +546,32 @@ model TimeEntry {
   // Denormalized clientId so HR can scope/filter by client without joining.
   // Captured from the Associate's currently-assigned client at clock-in.
   clientId      String?         @db.Uuid
+  // Optional Job for cost-coding. Null means generic / undifferentiated time.
+  jobId         String?         @db.Uuid
   clockInAt     DateTime        @db.Timestamptz(6)
   clockOutAt    DateTime?       @db.Timestamptz(6)
+  // GPS coords captured from the associate's device at each transition.
+  // Used for geofence audit; nullable so the partial-unique still works
+  // and so older entries (pre-geofence) aren't broken.
+  clockInLat    Decimal?        @db.Decimal(10, 7)
+  clockInLng    Decimal?        @db.Decimal(10, 7)
+  clockOutLat   Decimal?        @db.Decimal(10, 7)
+  clockOutLng   Decimal?        @db.Decimal(10, 7)
+  // Snapshotted pay rate at clock-in time for payroll repeatability.
+  payRate       Decimal?        @db.Decimal(8, 2)
   status        TimeEntryStatus @default(ACTIVE)
   notes         String?
+  // Tags surfaced in the HR queue: NO_BREAK, OVERTIME_UNAPPROVED,
+  // GEOFENCE_VIOLATION, FORGOT_CLOCKOUT, MEAL_BREAK_TOO_SHORT, etc.
+  // Computed at clock-out and re-computed on edit.
+  anomalies     Json?
   rejectionReason String?
   approvedById  String?         @db.Uuid
   approvedAt    DateTime?       @db.Timestamptz(6)
   associate     Associate       @relation(fields: [associateId], references: [id], onDelete: Cascade)
   approvedBy    User?           @relation("TimeApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  job           Job?            @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  breaks        BreakEntry[]
   createdAt     DateTime        @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime        @updatedAt @db.Timestamptz(6)
 
@@ -539,6 +580,7 @@ model TimeEntry {
   @@index([associateId, clockInAt])
   @@index([clientId, status])
   @@index([status])
+  @@index([jobId])
 }
 
 model Shift {
@@ -548,7 +590,10 @@ model Shift {
   startsAt             DateTime    @db.Timestamptz(6)
   endsAt               DateTime    @db.Timestamptz(6)
   location             String?
+  // What the client is billed (revenue side).
   hourlyRate           Decimal?    @db.Decimal(8, 2)
+  // What the associate is paid (cost side). null = use Job.payRate or default.
+  payRate              Decimal?    @db.Decimal(8, 2)
   status               ShiftStatus @default(DRAFT)
   notes                String?
   assignedAssociateId  String?     @db.Uuid
@@ -559,12 +604,79 @@ model Shift {
   client               Client      @relation(fields: [clientId], references: [id], onDelete: Restrict)
   assignedAssociate    Associate?  @relation(fields: [assignedAssociateId], references: [id], onDelete: SetNull)
   createdBy            User?       @relation("ShiftCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  swapRequests         ShiftSwapRequest[]
   createdAt            DateTime    @default(now()) @db.Timestamptz(6)
   updatedAt            DateTime    @updatedAt @db.Timestamptz(6)
 
   @@index([clientId, startsAt])
   @@index([assignedAssociateId, startsAt])
   @@index([status, startsAt])
+}
+
+model Job {
+  id           String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId     String      @db.Uuid
+  name         String
+  // Default rates if a Shift doesn't override. Bill = revenue, pay = cost.
+  billRate     Decimal?    @db.Decimal(8, 2)
+  payRate      Decimal?    @db.Decimal(8, 2)
+  isActive     Boolean     @default(true)
+  client       Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  timeEntries  TimeEntry[]
+  createdAt    DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime    @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime?   @db.Timestamptz(6)
+
+  @@unique([clientId, name])
+  @@index([clientId, isActive])
+}
+
+model BreakEntry {
+  id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  timeEntryId   String     @db.Uuid
+  type          BreakType
+  startedAt     DateTime   @db.Timestamptz(6)
+  endedAt       DateTime?  @db.Timestamptz(6)
+  timeEntry     TimeEntry  @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
+
+  @@index([timeEntryId])
+}
+
+model AssociateAvailability {
+  id                   String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId          String     @db.Uuid
+  // 0 = Sunday … 6 = Saturday
+  dayOfWeek            Int
+  // Minutes since midnight: 480 = 08:00, 1080 = 18:00.
+  startMinute          Int
+  endMinute            Int
+  associate            Associate  @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  createdAt            DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime   @updatedAt @db.Timestamptz(6)
+
+  @@index([associateId, dayOfWeek])
+}
+
+model ShiftSwapRequest {
+  id                  String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  shiftId             String          @db.Uuid
+  requesterAssociateId String         @db.Uuid
+  // Counterparty associate the requester proposes the swap to. They must
+  // accept before HR/Ops sees it for final approval.
+  counterpartyAssociateId String      @db.Uuid
+  status              ShiftSwapStatus @default(PENDING_PEER)
+  note                String?
+  decidedById         String?         @db.Uuid
+  decidedAt           DateTime?       @db.Timestamptz(6)
+  shift               Shift           @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  requester           Associate       @relation("SwapRequester", fields: [requesterAssociateId], references: [id], onDelete: Cascade)
+  counterparty        Associate       @relation("SwapCounterparty", fields: [counterpartyAssociateId], references: [id], onDelete: Cascade)
+  createdAt           DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime        @updatedAt @db.Timestamptz(6)
+
+  @@index([shiftId])
+  @@index([counterpartyAssociateId, status])
+  @@index([requesterAssociateId, status])
 }
 
 model PayrollRun {

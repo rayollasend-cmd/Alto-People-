@@ -325,6 +325,15 @@ export const TimeEntrySchema = z.object({
   approvedAt: z.string().datetime().nullable(),
   /** Server-computed convenience: minutes between clockInAt and clockOutAt (or now() if ACTIVE). */
   minutesElapsed: z.number().int().nonnegative(),
+  // Phase 15 additions — all nullable so older entries serialize cleanly.
+  jobId: UuidSchema.nullable().optional(),
+  jobName: z.string().nullable().optional(),
+  payRate: z.number().nullable().optional(),
+  clockInLat: z.number().nullable().optional(),
+  clockInLng: z.number().nullable().optional(),
+  clockOutLat: z.number().nullable().optional(),
+  clockOutLng: z.number().nullable().optional(),
+  anomalies: z.array(z.string()).optional(),
 });
 export type TimeEntry = z.infer<typeof TimeEntrySchema>;
 
@@ -942,3 +951,228 @@ export const CandidateHireInputSchema = z.object({
   templateId: UuidSchema.optional(),
 });
 export type CandidateHireInput = z.infer<typeof CandidateHireInputSchema>;
+
+/* -------------------------------------------------------------------------- *
+ *  Phase 15 — Time / Scheduling depth (Rippling-grade)
+ * -------------------------------------------------------------------------- */
+
+export const TimeAnomalySchema = z.enum([
+  'GEOFENCE_VIOLATION_IN',
+  'GEOFENCE_VIOLATION_OUT',
+  'NO_BREAK',
+  'MEAL_BREAK_TOO_SHORT',
+  'OVERTIME_UNAPPROVED',
+  'FORGOT_CLOCKOUT',
+  'OUTSIDE_SHIFT_WINDOW',
+]);
+export type TimeAnomaly = z.infer<typeof TimeAnomalySchema>;
+
+export const BreakTypeSchema = z.enum(['MEAL', 'REST']);
+export type BreakType = z.infer<typeof BreakTypeSchema>;
+
+export const BreakEntrySchema = z.object({
+  id: UuidSchema,
+  timeEntryId: UuidSchema,
+  type: BreakTypeSchema,
+  startedAt: z.string().datetime(),
+  endedAt: z.string().datetime().nullable(),
+  minutes: z.number().int().nonnegative(),
+});
+export type BreakEntry = z.infer<typeof BreakEntrySchema>;
+
+export const JobSchema = z.object({
+  id: UuidSchema,
+  clientId: UuidSchema,
+  clientName: z.string().nullable(),
+  name: z.string(),
+  billRate: z.number().nullable(),
+  payRate: z.number().nullable(),
+  isActive: z.boolean(),
+});
+export type Job = z.infer<typeof JobSchema>;
+
+export const JobListResponseSchema = z.object({
+  jobs: z.array(JobSchema),
+});
+export type JobListResponse = z.infer<typeof JobListResponseSchema>;
+
+export const JobCreateInputSchema = z.object({
+  clientId: UuidSchema,
+  name: z.string().min(1).max(120),
+  billRate: z.number().nonnegative().optional(),
+  payRate: z.number().nonnegative().optional(),
+});
+export type JobCreateInput = z.infer<typeof JobCreateInputSchema>;
+
+export const JobUpdateInputSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  billRate: z.number().nonnegative().nullable().optional(),
+  payRate: z.number().nonnegative().nullable().optional(),
+  isActive: z.boolean().optional(),
+});
+export type JobUpdateInput = z.infer<typeof JobUpdateInputSchema>;
+
+const GeoSchema = z.object({
+  lat: z.number().min(-90).max(90),
+  lng: z.number().min(-180).max(180),
+});
+
+export const ClockInInputV2Schema = z.object({
+  notes: z.string().max(500).optional(),
+  jobId: UuidSchema.optional(),
+  geo: GeoSchema.optional(),
+});
+export type ClockInInputV2 = z.infer<typeof ClockInInputV2Schema>;
+
+export const ClockOutInputV2Schema = z.object({
+  notes: z.string().max(500).optional(),
+  geo: GeoSchema.optional(),
+});
+export type ClockOutInputV2 = z.infer<typeof ClockOutInputV2Schema>;
+
+export const StartBreakInputSchema = z.object({
+  type: BreakTypeSchema,
+});
+export type StartBreakInput = z.infer<typeof StartBreakInputSchema>;
+
+export const ActiveDashboardEntrySchema = z.object({
+  id: UuidSchema,
+  associateId: UuidSchema,
+  associateName: z.string(),
+  clientId: UuidSchema.nullable(),
+  clientName: z.string().nullable(),
+  jobId: UuidSchema.nullable(),
+  jobName: z.string().nullable(),
+  clockInAt: z.string().datetime(),
+  minutesElapsed: z.number().int().nonnegative(),
+  onBreak: z.boolean(),
+  geofenceOk: z.boolean().nullable(),
+  clockInLat: z.number().nullable(),
+  clockInLng: z.number().nullable(),
+});
+export type ActiveDashboardEntry = z.infer<typeof ActiveDashboardEntrySchema>;
+
+export const ActiveDashboardResponseSchema = z.object({
+  entries: z.array(ActiveDashboardEntrySchema),
+});
+export type ActiveDashboardResponse = z.infer<typeof ActiveDashboardResponseSchema>;
+
+export const AvailabilityWindowSchema = z.object({
+  id: UuidSchema,
+  associateId: UuidSchema,
+  dayOfWeek: z.number().int().min(0).max(6),
+  startMinute: z.number().int().min(0).max(24 * 60),
+  endMinute: z.number().int().min(0).max(24 * 60),
+});
+export type AvailabilityWindow = z.infer<typeof AvailabilityWindowSchema>;
+
+export const AvailabilityListResponseSchema = z.object({
+  windows: z.array(AvailabilityWindowSchema),
+});
+export type AvailabilityListResponse = z.infer<typeof AvailabilityListResponseSchema>;
+
+export const AvailabilityReplaceInputSchema = z.object({
+  windows: z
+    .array(
+      z
+        .object({
+          dayOfWeek: z.number().int().min(0).max(6),
+          startMinute: z.number().int().min(0).max(24 * 60),
+          endMinute: z.number().int().min(0).max(24 * 60),
+        })
+        .refine((w) => w.endMinute > w.startMinute, {
+          message: 'endMinute must be greater than startMinute',
+        })
+    )
+    .max(50),
+});
+export type AvailabilityReplaceInput = z.infer<typeof AvailabilityReplaceInputSchema>;
+
+export const ShiftSwapStatusSchema = z.enum([
+  'PENDING_PEER',
+  'PEER_ACCEPTED',
+  'PEER_DECLINED',
+  'MANAGER_APPROVED',
+  'MANAGER_REJECTED',
+  'CANCELLED',
+]);
+export type ShiftSwapStatus = z.infer<typeof ShiftSwapStatusSchema>;
+
+export const ShiftSwapRequestSchema = z.object({
+  id: UuidSchema,
+  shiftId: UuidSchema,
+  shiftStartsAt: z.string().datetime(),
+  shiftEndsAt: z.string().datetime(),
+  shiftPosition: z.string(),
+  shiftClientName: z.string().nullable(),
+  requesterAssociateId: UuidSchema,
+  requesterName: z.string(),
+  counterpartyAssociateId: UuidSchema,
+  counterpartyName: z.string(),
+  status: ShiftSwapStatusSchema,
+  note: z.string().nullable(),
+  decidedAt: z.string().datetime().nullable(),
+  createdAt: z.string().datetime(),
+});
+export type ShiftSwapRequest = z.infer<typeof ShiftSwapRequestSchema>;
+
+export const ShiftSwapListResponseSchema = z.object({
+  requests: z.array(ShiftSwapRequestSchema),
+});
+export type ShiftSwapListResponse = z.infer<typeof ShiftSwapListResponseSchema>;
+
+export const SwapCreateInputSchema = z.object({
+  shiftId: UuidSchema,
+  counterpartyAssociateId: UuidSchema,
+  note: z.string().max(500).optional(),
+});
+export type SwapCreateInput = z.infer<typeof SwapCreateInputSchema>;
+
+export const SwapDecideInputSchema = z.object({
+  reason: z.string().max(500).optional(),
+});
+export type SwapDecideInput = z.infer<typeof SwapDecideInputSchema>;
+
+export const ShiftConflictSchema = z.object({
+  conflictingShiftId: UuidSchema,
+  conflictingStartsAt: z.string().datetime(),
+  conflictingEndsAt: z.string().datetime(),
+  conflictingClientName: z.string().nullable(),
+  conflictingPosition: z.string(),
+});
+export type ShiftConflict = z.infer<typeof ShiftConflictSchema>;
+
+export const ShiftConflictsResponseSchema = z.object({
+  conflicts: z.array(ShiftConflictSchema),
+});
+export type ShiftConflictsResponse = z.infer<typeof ShiftConflictsResponseSchema>;
+
+export const AutoFillCandidateSchema = z.object({
+  associateId: UuidSchema,
+  associateName: z.string(),
+  weeklyMinutesScheduled: z.number().int().nonnegative(),
+  weeklyMinutesActual: z.number().int().nonnegative(),
+  matchesAvailability: z.boolean(),
+  noConflict: z.boolean(),
+  score: z.number().min(0).max(1),
+});
+export type AutoFillCandidate = z.infer<typeof AutoFillCandidateSchema>;
+
+export const AutoFillResponseSchema = z.object({
+  candidates: z.array(AutoFillCandidateSchema),
+});
+export type AutoFillResponse = z.infer<typeof AutoFillResponseSchema>;
+
+export const ClientGeofenceInputSchema = z
+  .object({
+    latitude: z.number().min(-90).max(90).nullable().optional(),
+    longitude: z.number().min(-180).max(180).nullable().optional(),
+    geofenceRadiusMeters: z.number().int().min(10).max(50_000).nullable().optional(),
+  })
+  .refine(
+    (v) =>
+      ((v.latitude == null) === (v.longitude == null)) &&
+      ((v.latitude == null) === (v.geofenceRadiusMeters == null)),
+    { message: 'latitude, longitude, and geofenceRadiusMeters must be set or cleared together' }
+  );
+export type ClientGeofenceInput = z.infer<typeof ClientGeofenceInputSchema>;

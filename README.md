@@ -2,7 +2,7 @@
 
 Workforce-management HR platform for **Alto Etho LLC d/b/a Alto HR**.
 
-> **Status:** ✅ **All 14 roadmap phases complete.** All ten modules ship a working vertical slice: Onboarding, Time, Scheduling, Payroll, Documents, Compliance, Analytics, Communications, Performance, Recruiting. Third-party integrations (Wise/Branch/Twilio/FCM/Checkr) are stubbed with one-file swap-in points; everything else is real, tested, and audited.
+> **Status:** Phase 15 — Time & Scheduling deepened to a Rippling-comparable feature set on the backend (geofencing with real haversine, job costing with billRate vs payRate split, break tracking with auto-close + 30-min meal enforcement, anomaly detection on clock-out, real-time active dashboard, schedule conflict detection, weekly availability windows, full peer→manager swap marketplace, ranked auto-fill suggestions). Web UI for the new endpoints is intentionally minimal in this commit — backend has 43 new tests proving the depth. UI polish lands next.
 
 ## Prerequisites
 

@@ -16,6 +16,7 @@ import { analyticsRouter } from './routes/analytics.js';
 import { communicationsRouter } from './routes/communications.js';
 import { performanceRouter } from './routes/performance.js';
 import { recruitingRouter } from './routes/recruiting.js';
+import { jobsRouter } from './routes/jobs.js';
 import { attachUser, requireCapability } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 
@@ -78,6 +79,7 @@ export function createApp() {
     requireCapability('view:recruiting'),
     recruitingRouter
   );
+  app.use('/jobs', requireCapability('view:scheduling'), jobsRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
