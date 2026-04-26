@@ -46,6 +46,32 @@ export function scopeTemplates(
   return {};
 }
 
+export function scopeShifts(user: SessionUser): Prisma.ShiftWhereInput {
+  // ASSOCIATE only ever sees shifts assigned to them.
+  if (user.role === 'ASSOCIATE' && user.associateId) {
+    return { assignedAssociateId: user.associateId };
+  }
+  // CLIENT_PORTAL is restricted to its own client's shifts.
+  if (user.role === 'CLIENT_PORTAL' && user.clientId) {
+    return { clientId: user.clientId };
+  }
+  return {};
+}
+
+export function scopeTimeEntries(user: SessionUser): Prisma.TimeEntryWhereInput {
+  // ASSOCIATE only ever sees their own entries (defense-in-depth on top of
+  // the route-level /me vs /admin split). HR/Ops see all.
+  if (user.role === 'ASSOCIATE' && user.associateId) {
+    return { associateId: user.associateId };
+  }
+  // CLIENT_PORTAL doesn't have view:time so it shouldn't reach here, but if
+  // it ever does, scope to its own client's entries via denormalized clientId.
+  if (user.role === 'CLIENT_PORTAL' && user.clientId) {
+    return { clientId: user.clientId };
+  }
+  return {};
+}
+
 /**
  * Loads an application the caller is allowed to modify, or throws 404.
  * Use 404 (not 403) so existence isn't leaked across tenants.

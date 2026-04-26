@@ -122,6 +122,21 @@ enum I9DocumentList {
   LIST_B_AND_C
 }
 
+enum TimeEntryStatus {
+  ACTIVE      // clocked in, not yet out
+  COMPLETED   // clocked out, awaiting review
+  APPROVED    // HR/Ops approved for payroll
+  REJECTED    // HR/Ops rejected (associate must edit + resubmit)
+}
+
+enum ShiftStatus {
+  DRAFT       // HR scratch pad, not yet open for assignment
+  OPEN        // published, no one assigned
+  ASSIGNED    // associate accepted (or HR assigned)
+  COMPLETED   // worked
+  CANCELLED   // pulled
+}
+
 // =============================================================================
 // Models
 // =============================================================================
@@ -144,6 +159,8 @@ model User {
   signaturesGiven       Signature[]            @relation("UserSignatures")
   i9VerificationsAsRep  I9Verification[]       @relation("I9Verifier")
   auditLogActions       AuditLog[]             @relation("AuditActor")
+  timeApprovals         TimeEntry[]            @relation("TimeApprover")
+  createdShifts         Shift[]                @relation("ShiftCreator")
 
   @@index([role])
   @@index([clientId])
@@ -164,6 +181,7 @@ model Client {
   users        User[]
   policies     Policy[]
   templates    OnboardingTemplate[]
+  shifts       Shift[]
 
   @@index([status])
   @@index([deletedAt])
@@ -197,6 +215,8 @@ model Associate {
   i9Verification   I9Verification?
   w4Submission     W4Submission?
   payoutMethods    PayoutMethod[]
+  timeEntries      TimeEntry[]
+  assignedShifts   Shift[]
 
   @@index([deletedAt])
 }
@@ -438,6 +458,57 @@ model PayoutMethod {
   updatedAt        DateTime   @updatedAt @db.Timestamptz(6)
 
   @@index([associateId])
+}
+
+model TimeEntry {
+  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId   String          @db.Uuid
+  // Denormalized clientId so HR can scope/filter by client without joining.
+  // Captured from the Associate's currently-assigned client at clock-in.
+  clientId      String?         @db.Uuid
+  clockInAt     DateTime        @db.Timestamptz(6)
+  clockOutAt    DateTime?       @db.Timestamptz(6)
+  status        TimeEntryStatus @default(ACTIVE)
+  notes         String?
+  rejectionReason String?
+  approvedById  String?         @db.Uuid
+  approvedAt    DateTime?       @db.Timestamptz(6)
+  associate     Associate       @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  approvedBy    User?           @relation("TimeApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  createdAt     DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime        @updatedAt @db.Timestamptz(6)
+
+  // At most one ACTIVE row per associate at any time. Postgres treats this
+  // as a partial unique via the where clause below.
+  @@index([associateId, clockInAt])
+  @@index([clientId, status])
+  @@index([status])
+}
+
+model Shift {
+  id                   String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId             String      @db.Uuid
+  position             String
+  startsAt             DateTime    @db.Timestamptz(6)
+  endsAt               DateTime    @db.Timestamptz(6)
+  location             String?
+  hourlyRate           Decimal?    @db.Decimal(8, 2)
+  status               ShiftStatus @default(DRAFT)
+  notes                String?
+  assignedAssociateId  String?     @db.Uuid
+  assignedAt           DateTime?   @db.Timestamptz(6)
+  createdById          String?     @db.Uuid
+  cancelledAt          DateTime?   @db.Timestamptz(6)
+  cancellationReason   String?
+  client               Client      @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  assignedAssociate    Associate?  @relation(fields: [assignedAssociateId], references: [id], onDelete: SetNull)
+  createdBy            User?       @relation("ShiftCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt            DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime    @updatedAt @db.Timestamptz(6)
+
+  @@index([clientId, startsAt])
+  @@index([assignedAssociateId, startsAt])
+  @@index([status, startsAt])
 }
 
 model AuditLog {

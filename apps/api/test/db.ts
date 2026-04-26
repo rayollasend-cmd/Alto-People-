@@ -23,6 +23,8 @@ const TABLES = [
   'Application',
   'Policy',
   'J1Profile',
+  'TimeEntry',
+  'Shift',
   'User',
   'Associate',
   'Client',

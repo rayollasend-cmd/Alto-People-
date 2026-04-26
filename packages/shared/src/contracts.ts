@@ -296,3 +296,150 @@ export const AuditLogListResponseSchema = z.object({
   entries: z.array(AuditLogEntrySchema),
 });
 export type AuditLogListResponse = z.infer<typeof AuditLogListResponseSchema>;
+
+/* -------------------------------------------------------------------------- *
+ *  Time & Attendance — Phase 6
+ * -------------------------------------------------------------------------- */
+
+export const TimeEntryStatusSchema = z.enum([
+  'ACTIVE',
+  'COMPLETED',
+  'APPROVED',
+  'REJECTED',
+]);
+export type TimeEntryStatus = z.infer<typeof TimeEntryStatusSchema>;
+
+export const TimeEntrySchema = z.object({
+  id: UuidSchema,
+  associateId: UuidSchema,
+  associateName: z.string().nullable(),
+  clientId: UuidSchema.nullable(),
+  clientName: z.string().nullable(),
+  clockInAt: z.string().datetime(),
+  clockOutAt: z.string().datetime().nullable(),
+  status: TimeEntryStatusSchema,
+  notes: z.string().nullable(),
+  rejectionReason: z.string().nullable(),
+  approvedById: UuidSchema.nullable(),
+  approverEmail: z.string().email().nullable(),
+  approvedAt: z.string().datetime().nullable(),
+  /** Server-computed convenience: minutes between clockInAt and clockOutAt (or now() if ACTIVE). */
+  minutesElapsed: z.number().int().nonnegative(),
+});
+export type TimeEntry = z.infer<typeof TimeEntrySchema>;
+
+export const TimeEntryListResponseSchema = z.object({
+  entries: z.array(TimeEntrySchema),
+});
+export type TimeEntryListResponse = z.infer<typeof TimeEntryListResponseSchema>;
+
+export const ClockInInputSchema = z.object({
+  notes: z.string().max(500).optional(),
+});
+export type ClockInInput = z.infer<typeof ClockInInputSchema>;
+
+export const ClockOutInputSchema = z.object({
+  notes: z.string().max(500).optional(),
+});
+export type ClockOutInput = z.infer<typeof ClockOutInputSchema>;
+
+export const TimeApproveInputSchema = z.object({
+  /** Optional override of clockInAt/clockOutAt during approval (e.g., HR fixes a forgotten clock-out). */
+  clockInAt: z.string().datetime().optional(),
+  clockOutAt: z.string().datetime().optional(),
+});
+export type TimeApproveInput = z.infer<typeof TimeApproveInputSchema>;
+
+export const TimeRejectInputSchema = z.object({
+  reason: z.string().min(1).max(500),
+});
+export type TimeRejectInput = z.infer<typeof TimeRejectInputSchema>;
+
+export const ActiveTimeEntryResponseSchema = z.object({
+  active: TimeEntrySchema.nullable(),
+});
+export type ActiveTimeEntryResponse = z.infer<typeof ActiveTimeEntryResponseSchema>;
+
+/* -------------------------------------------------------------------------- *
+ *  Scheduling — Phase 7
+ * -------------------------------------------------------------------------- */
+
+export const ShiftStatusSchema = z.enum([
+  'DRAFT',
+  'OPEN',
+  'ASSIGNED',
+  'COMPLETED',
+  'CANCELLED',
+]);
+export type ShiftStatus = z.infer<typeof ShiftStatusSchema>;
+
+export const ShiftSchema = z.object({
+  id: UuidSchema,
+  clientId: UuidSchema,
+  clientName: z.string().nullable(),
+  position: z.string(),
+  startsAt: z.string().datetime(),
+  endsAt: z.string().datetime(),
+  location: z.string().nullable(),
+  hourlyRate: z.number().nullable(),
+  status: ShiftStatusSchema,
+  notes: z.string().nullable(),
+  assignedAssociateId: UuidSchema.nullable(),
+  assignedAssociateName: z.string().nullable(),
+  assignedAt: z.string().datetime().nullable(),
+  cancellationReason: z.string().nullable(),
+  /** Server-computed convenience: minutes between startsAt and endsAt. */
+  scheduledMinutes: z.number().int().nonnegative(),
+});
+export type Shift = z.infer<typeof ShiftSchema>;
+
+export const ShiftListResponseSchema = z.object({
+  shifts: z.array(ShiftSchema),
+});
+export type ShiftListResponse = z.infer<typeof ShiftListResponseSchema>;
+
+export const ShiftCreateInputSchema = z
+  .object({
+    clientId: UuidSchema,
+    position: z.string().min(1).max(120),
+    startsAt: z.string().datetime(),
+    endsAt: z.string().datetime(),
+    location: z.string().max(200).optional(),
+    hourlyRate: z.number().nonnegative().optional(),
+    notes: z.string().max(1000).optional(),
+    status: ShiftStatusSchema.optional(),
+  })
+  .refine((v) => new Date(v.endsAt) > new Date(v.startsAt), {
+    message: 'endsAt must be after startsAt',
+    path: ['endsAt'],
+  });
+export type ShiftCreateInput = z.infer<typeof ShiftCreateInputSchema>;
+
+export const ShiftUpdateInputSchema = z
+  .object({
+    position: z.string().min(1).max(120).optional(),
+    startsAt: z.string().datetime().optional(),
+    endsAt: z.string().datetime().optional(),
+    location: z.string().max(200).nullable().optional(),
+    hourlyRate: z.number().nonnegative().nullable().optional(),
+    notes: z.string().max(1000).nullable().optional(),
+    status: ShiftStatusSchema.optional(),
+  })
+  .refine(
+    (v) =>
+      v.startsAt === undefined ||
+      v.endsAt === undefined ||
+      new Date(v.endsAt) > new Date(v.startsAt),
+    { message: 'endsAt must be after startsAt', path: ['endsAt'] }
+  );
+export type ShiftUpdateInput = z.infer<typeof ShiftUpdateInputSchema>;
+
+export const ShiftAssignInputSchema = z.object({
+  associateId: UuidSchema,
+});
+export type ShiftAssignInput = z.infer<typeof ShiftAssignInputSchema>;
+
+export const ShiftCancelInputSchema = z.object({
+  reason: z.string().min(1).max(500),
+});
+export type ShiftCancelInput = z.infer<typeof ShiftCancelInputSchema>;

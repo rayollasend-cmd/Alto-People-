@@ -7,6 +7,8 @@ import { healthRouter } from './routes/health.js';
 import { authRouter } from './routes/auth.js';
 import { clientsRouter } from './routes/clients.js';
 import { onboardingRouter } from './routes/onboarding.js';
+import { timeRouter } from './routes/time.js';
+import { schedulingRouter } from './routes/scheduling.js';
 import { attachUser, requireCapability } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 
@@ -31,6 +33,12 @@ export function createApp() {
     '/onboarding',
     requireCapability('view:onboarding'),
     onboardingRouter
+  );
+  app.use('/time', requireCapability('view:time'), timeRouter);
+  app.use(
+    '/scheduling',
+    requireCapability('view:scheduling'),
+    schedulingRouter
   );
 
   app.use(notFoundHandler);

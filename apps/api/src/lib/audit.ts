@@ -92,6 +92,61 @@ interface OnboardingEventContext {
   req?: Request;
 }
 
+interface TimeEventContext {
+  actorUserId: string | null;
+  action: string; // e.g. 'time.clock_in'
+  timeEntryId: string;
+  associateId: string;
+  clientId?: string | null;
+  metadata?: Record<string, unknown>;
+  req?: Request;
+}
+
+interface ShiftEventContext {
+  actorUserId: string | null;
+  action: string; // e.g. 'shift.created'
+  shiftId: string;
+  clientId: string;
+  metadata?: Record<string, unknown>;
+  req?: Request;
+}
+
+export async function recordShiftEvent(ctx: ShiftEventContext) {
+  const reqMeta = ctx.req
+    ? { ip: ctx.req.ip ?? null, userAgent: ctx.req.headers['user-agent'] ?? null }
+    : {};
+  await prisma.auditLog.create({
+    data: {
+      actorUserId: ctx.actorUserId,
+      clientId: ctx.clientId,
+      action: ctx.action,
+      entityType: 'Shift',
+      entityId: ctx.shiftId,
+      metadata: { ...reqMeta, ...(ctx.metadata ?? {}) },
+    },
+  });
+}
+
+export async function recordTimeEvent(ctx: TimeEventContext) {
+  const reqMeta = ctx.req
+    ? { ip: ctx.req.ip ?? null, userAgent: ctx.req.headers['user-agent'] ?? null }
+    : {};
+  await prisma.auditLog.create({
+    data: {
+      actorUserId: ctx.actorUserId,
+      clientId: ctx.clientId ?? null,
+      action: ctx.action,
+      entityType: 'TimeEntry',
+      entityId: ctx.timeEntryId,
+      metadata: {
+        associateId: ctx.associateId,
+        ...reqMeta,
+        ...(ctx.metadata ?? {}),
+      },
+    },
+  });
+}
+
 export async function recordOnboardingEvent(ctx: OnboardingEventContext) {
   const reqMeta = ctx.req
     ? { ip: ctx.req.ip ?? null, userAgent: ctx.req.headers['user-agent'] ?? null }

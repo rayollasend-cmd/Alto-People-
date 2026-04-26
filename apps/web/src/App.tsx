@@ -13,6 +13,8 @@ import { W4Task } from '@/pages/onboarding/tasks/W4Task';
 import { DirectDepositTask } from '@/pages/onboarding/tasks/DirectDepositTask';
 import { PolicyAckTask } from '@/pages/onboarding/tasks/PolicyAckTask';
 import { StubTask } from '@/pages/onboarding/tasks/StubTask';
+import { TimeHome } from '@/pages/time/TimeHome';
+import { SchedulingHome } from '@/pages/scheduling/SchedulingHome';
 
 const ONBOARDING_ROUTES = [
   { path: 'onboarding', element: <OnboardingHome /> },
@@ -43,7 +45,12 @@ const ONBOARDING_ROUTES = [
   },
 ];
 
-const PLACEHOLDER_MODULES = MODULES.filter((m) => m.key !== 'onboarding');
+const PLACEHOLDER_MODULES = MODULES.filter(
+  (m) =>
+    m.key !== 'onboarding' &&
+    m.key !== 'time-attendance' &&
+    m.key !== 'scheduling'
+);
 
 export const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
@@ -56,6 +63,8 @@ export const router = createBrowserRouter([
     ),
     children: [
       { index: true, element: <Dashboard /> },
+      { path: 'time-attendance', element: <TimeHome /> },
+      { path: 'scheduling', element: <SchedulingHome /> },
       ...ONBOARDING_ROUTES,
       ...PLACEHOLDER_MODULES.map((m) => ({
         path: m.path.replace(/^\//, ''),
