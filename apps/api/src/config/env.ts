@@ -11,6 +11,10 @@ const EnvSchema = z.object({
   // DIRECT_URL is consumed by Prisma migrate, not by app code — but we
   // still validate it's present so devs aren't surprised.
   DIRECT_URL: z.string().min(1).optional(),
+  JWT_SECRET: z
+    .string()
+    .min(32, 'JWT_SECRET must be at least 32 chars (use openssl rand -base64 48)'),
+  JWT_TTL_SECONDS: z.coerce.number().int().positive().default(86400),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

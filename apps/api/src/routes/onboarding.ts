@@ -10,14 +10,15 @@ import type {
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
+import { scopeApplications, scopeTemplates } from '../lib/scope.js';
 
 export const onboardingRouter = Router();
 
 /* GET /onboarding/applications ------------------------------------------- */
-onboardingRouter.get('/applications', async (_req, res, next) => {
+onboardingRouter.get('/applications', async (req, res, next) => {
   try {
     const rows = await prisma.application.findMany({
-      where: { deletedAt: null },
+      where: scopeApplications(req.user!),
       orderBy: { invitedAt: 'desc' },
       include: {
         associate: { select: { firstName: true, lastName: true } },
@@ -54,7 +55,7 @@ onboardingRouter.get('/applications', async (_req, res, next) => {
 onboardingRouter.get('/applications/:id', async (req, res, next) => {
   try {
     const row = await prisma.application.findFirst({
-      where: { id: req.params.id, deletedAt: null },
+      where: { ...scopeApplications(req.user!), id: req.params.id },
       include: {
         associate: { select: { firstName: true, lastName: true } },
         client: { select: { name: true } },
@@ -106,9 +107,10 @@ onboardingRouter.get('/applications/:id', async (req, res, next) => {
 });
 
 /* GET /onboarding/templates ---------------------------------------------- */
-onboardingRouter.get('/templates', async (_req, res, next) => {
+onboardingRouter.get('/templates', async (req, res, next) => {
   try {
     const rows = await prisma.onboardingTemplate.findMany({
+      where: scopeTemplates(req.user!),
       include: { tasks: { orderBy: { order: 'asc' } } },
       orderBy: [{ track: 'asc' }, { name: 'asc' }],
     });

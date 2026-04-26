@@ -1,60 +1,110 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import {
-  type Role,
+  type AuthUser,
   type Capability,
-  ROLES,
+  type Role,
+  type LoginResponse,
+  type MeResponse,
   ROLE_CAPABILITIES,
   hasCapability,
-} from './roles';
-
-const STORAGE_KEY = 'alto.mockRole';
+} from '@alto-people/shared';
+import { ApiError, NetworkError, apiFetch } from './api';
 
 interface AuthState {
+  /** Initial /auth/me probe in flight. Components should hold rendering. */
+  isInitializing: boolean;
+  /** True iff a network call (login/logout/me) was disrupted; UI can hint. */
+  isOffline: boolean;
+  user: AuthUser | null;
   role: Role | null;
   capabilities: ReadonlySet<Capability>;
-  signIn: (role: Role) => void;
-  signOut: () => void;
+  signIn: (email: string, password: string) => Promise<void>;
+  signOut: () => Promise<void>;
   can: (capability: Capability) => boolean;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
 
-function readStoredRole(): Role | null {
-  if (typeof window === 'undefined') return null;
-  const stored = window.localStorage.getItem(STORAGE_KEY);
-  if (!stored) return null;
-  return stored in ROLES ? (stored as Role) : null;
-}
+const EMPTY_CAPS: ReadonlySet<Capability> = new Set();
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [role, setRole] = useState<Role | null>(readStoredRole);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [isInitializing, setIsInitializing] = useState(true);
+  const [isOffline, setIsOffline] = useState(false);
+  const initRanRef = useRef(false);
 
+  // Initial /auth/me probe — runs once on mount.
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (role) window.localStorage.setItem(STORAGE_KEY, role);
-    else window.localStorage.removeItem(STORAGE_KEY);
-  }, [role]);
+    if (initRanRef.current) return;
+    initRanRef.current = true;
+
+    const ac = new AbortController();
+    (async () => {
+      try {
+        const me = await apiFetch<MeResponse>('/auth/me', { signal: ac.signal });
+        setUser(me.user);
+        setIsOffline(false);
+      } catch (err) {
+        if (ac.signal.aborted) return;
+        if (err instanceof ApiError && err.status === 401) {
+          // Cookie was present but stale. Server cleared it; we clear local state.
+          setUser(null);
+        } else if (err instanceof NetworkError) {
+          // Keep user state untouched; show "reconnecting" affordance.
+          setIsOffline(true);
+        } else {
+          setUser(null);
+        }
+      } finally {
+        if (!ac.signal.aborted) setIsInitializing(false);
+      }
+    })();
+
+    return () => ac.abort();
+  }, []);
+
+  const signIn = useCallback(async (email: string, password: string) => {
+    const res = await apiFetch<LoginResponse>('/auth/login', {
+      method: 'POST',
+      body: { email, password },
+    });
+    setUser(res.user);
+    setIsOffline(false);
+  }, []);
+
+  const signOut = useCallback(async () => {
+    try {
+      await apiFetch<void>('/auth/logout', { method: 'POST' });
+    } catch {
+      // Ignore — clear local state regardless so user lands at /login.
+    }
+    setUser(null);
+  }, []);
 
   const value = useMemo<AuthState>(() => {
-    const capabilities = role
-      ? ROLE_CAPABILITIES[role]
-      : (new Set<Capability>() as ReadonlySet<Capability>);
+    const role = user?.role ?? null;
+    const capabilities = role ? ROLE_CAPABILITIES[role] : EMPTY_CAPS;
     return {
+      isInitializing,
+      isOffline,
+      user,
       role,
       capabilities,
-      signIn: (next) => setRole(next),
-      signOut: () => setRole(null),
+      signIn,
+      signOut,
       can: (cap) => (role ? hasCapability(role, cap) : false),
     };
-  }, [role]);
+  }, [isInitializing, isOffline, user, signIn, signOut]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
@@ -66,10 +116,25 @@ export function useAuth(): AuthState {
 }
 
 export function RequireAuth({ children }: { children: ReactNode }) {
-  const { role } = useAuth();
+  const { user, isInitializing } = useAuth();
   const location = useLocation();
-  if (!role) {
+
+  if (isInitializing) {
+    return <AuthSplash />;
+  }
+  if (!user) {
     return <Navigate to="/login" state={{ from: location.pathname }} replace />;
   }
   return <>{children}</>;
+}
+
+function AuthSplash() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-midnight">
+      <div className="text-center">
+        <div className="font-display text-4xl text-gold mb-2">Alto People</div>
+        <div className="text-silver text-sm tracking-widest uppercase">Loading…</div>
+      </div>
+    </div>
+  );
 }

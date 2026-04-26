@@ -1,6 +1,9 @@
 import { PrismaClient, type Prisma } from '@prisma/client';
+import { hashPassword } from '../src/lib/passwords.js';
 
 const prisma = new PrismaClient();
+
+const ADMIN_DEV_PASSWORD = 'alto-admin-dev';
 
 /**
  * Phase 2 seed.
@@ -16,16 +19,34 @@ const prisma = new PrismaClient();
  * Idempotent via upserts on natural keys (email, name+track).
  */
 async function main() {
-  // ---- Admin user (auth wired up in Phase 3) -----------------------------
-  const adminUser = await prisma.user.upsert({
+  // ---- Admin user (Phase 3 auth ready) -----------------------------------
+  const existingAdmin = await prisma.user.findUnique({
     where: { email: 'admin@altohr.com' },
-    update: {},
-    create: {
-      email: 'admin@altohr.com',
-      role: 'HR_ADMINISTRATOR',
-      status: 'INVITED',
-    },
   });
+
+  let adminUser;
+  if (!existingAdmin) {
+    adminUser = await prisma.user.create({
+      data: {
+        email: 'admin@altohr.com',
+        passwordHash: await hashPassword(ADMIN_DEV_PASSWORD),
+        role: 'HR_ADMINISTRATOR',
+        status: 'ACTIVE',
+      },
+    });
+  } else if (!existingAdmin.passwordHash) {
+    // First Phase-3 seed run upgrades the Phase-2 INVITED admin to a usable
+    // ACTIVE user with a known dev password. Leaves an existing hash alone.
+    adminUser = await prisma.user.update({
+      where: { id: existingAdmin.id },
+      data: {
+        passwordHash: await hashPassword(ADMIN_DEV_PASSWORD),
+        status: 'ACTIVE',
+      },
+    });
+  } else {
+    adminUser = existingAdmin;
+  }
 
   // ---- Client ------------------------------------------------------------
   const existingClient = await prisma.client.findFirst({
@@ -166,6 +187,7 @@ async function main() {
 
   console.log('[seed] complete');
   console.log(`[seed]   admin user: ${adminUser.email} (${adminUser.id})`);
+  console.log(`[seed]   dev password: ${ADMIN_DEV_PASSWORD}`);
   console.log(`[seed]   client: ${client.name} (${client.id})`);
   console.log(`[seed]   associate: ${associate.firstName} ${associate.lastName} (${associate.id})`);
   console.log(`[seed]   template: ${standardTemplate.name} (${standardTemplate.id})`);

@@ -2,7 +2,7 @@
 
 Workforce-management HR platform for **Alto Etho LLC d/b/a Alto HR**.
 
-> **Status:** Phase 2 — backend & schema in place. Real auth (Phase 3) and Onboarding e2e (Phase 4) follow.
+> **Status:** Phase 3 — real auth + RBAC. Onboarding e2e (Phase 4) follows.
 
 ## Prerequisites
 
@@ -67,9 +67,17 @@ npm run dev:web
 npm run dev:api
 ```
 
-## Phase 1 mock login
+## Login
 
-The login screen presents a role picker. Pick a role to preview the navigation that role sees — the sidebar filters modules by the role's capabilities. The selection is persisted to `localStorage` ("alto.mockRole") and survives refresh. Real authentication arrives in Phase 3.
+Sign in at `/login` with email + password. Auth is JWT-in-httpOnly-cookie (24h, SameSite=Lax). Sessions survive refresh and are invalidated server-side via `User.tokenVersion`. Login uses argon2id; failed attempts are rate-limited (20/min/IP, 5/15min/email) and recorded in `AuditLog`.
+
+**Dev seed credentials:** `admin@altohr.com` / `alto-admin-dev`. Change the password before any non-local use. The seed populates this user only if no `passwordHash` is set — pre-existing hashes are left alone.
+
+`apps/api/.env` must include a `JWT_SECRET` ≥ 32 chars. Generate one with:
+
+```sh
+openssl rand -base64 48
+```
 
 ## Roles
 
@@ -88,7 +96,7 @@ The login screen presents a role picker. Pick a role to preview the navigation t
 
 - [x] **Phase 1** — foundation & UI shell
 - [x] **Phase 2** — backend, PostgreSQL schema, Prisma
-- [ ] **Phase 3** — real JWT auth + RBAC
+- [x] **Phase 3** — real JWT auth + RBAC
 - [ ] **Phase 4** — Onboarding module end-to-end
 - [ ] **Phase 5** — tests for phases 1–4
 - [ ] **Phase 6+** — remaining modules + integrations (ASN Nexus, Fieldglass, Wise, Branch, Twilio, FCM, Google Maps)

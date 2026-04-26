@@ -155,3 +155,46 @@ export const HealthResponseSchema = z.object({
   ts: z.string().datetime(),
 });
 export type HealthResponse = z.infer<typeof HealthResponseSchema>;
+
+/* -------------------------------------------------------------------------- *
+ *  Auth
+ * -------------------------------------------------------------------------- */
+
+export const RoleSchema = z.enum([
+  'EXECUTIVE_CHAIRMAN',
+  'HR_ADMINISTRATOR',
+  'OPERATIONS_MANAGER',
+  'LIVE_ASN',
+  'ASSOCIATE',
+  'CLIENT_PORTAL',
+  'FINANCE_ACCOUNTANT',
+  'INTERNAL_RECRUITER',
+]);
+
+export const UserStatusSchema = z.enum(['ACTIVE', 'DISABLED', 'INVITED']);
+
+export const AuthUserSchema = z.object({
+  id: UuidSchema,
+  email: z.string().email(),
+  role: RoleSchema,
+  status: UserStatusSchema,
+  clientId: UuidSchema.nullable(),
+  associateId: UuidSchema.nullable(),
+});
+export type AuthUser = z.infer<typeof AuthUserSchema>;
+
+export const LoginRequestSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(12),
+});
+export type LoginRequest = z.infer<typeof LoginRequestSchema>;
+
+export const LoginResponseSchema = z.object({
+  user: AuthUserSchema,
+});
+export type LoginResponse = z.infer<typeof LoginResponseSchema>;
+
+export const MeResponseSchema = z.object({
+  user: AuthUserSchema.nullable(),
+});
+export type MeResponse = z.infer<typeof MeResponseSchema>;

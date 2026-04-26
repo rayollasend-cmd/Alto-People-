@@ -132,6 +132,7 @@ model User {
   passwordHash  String?    @db.VarChar(255)
   role          Role
   status        UserStatus @default(INVITED)
+  tokenVersion  Int        @default(0)
   associateId   String?    @unique @db.Uuid
   clientId      String?    @db.Uuid
   associate     Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)

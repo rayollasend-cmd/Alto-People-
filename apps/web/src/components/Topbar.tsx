@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { ROLE_LABELS } from '@/lib/roles';
@@ -7,12 +8,19 @@ interface TopbarProps {
 }
 
 export function Topbar({ onOpenMobileNav }: TopbarProps) {
-  const { role, signOut } = useAuth();
+  const { user, signOut, isOffline } = useAuth();
   const navigate = useNavigate();
+  const [signingOut, setSigningOut] = useState(false);
 
-  const handleSignOut = () => {
-    signOut();
-    navigate('/login', { replace: true });
+  const handleSignOut = async () => {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await signOut();
+    } finally {
+      setSigningOut(false);
+      navigate('/login', { replace: true });
+    }
   };
 
   return (
@@ -30,22 +38,34 @@ export function Topbar({ onOpenMobileNav }: TopbarProps) {
 
       <div className="md:hidden font-display text-xl text-gold">Alto People</div>
 
+      {isOffline && (
+        <span
+          className="hidden md:inline-block text-xs text-alert/90 px-2 py-1 rounded bg-alert/10 border border-alert/30"
+          role="status"
+        >
+          Reconnecting…
+        </span>
+      )}
+
       <div className="flex-1" />
 
-      {role && (
+      {user && (
         <>
           <div className="hidden sm:block text-right leading-tight">
             <div className="text-[10px] uppercase tracking-widest text-silver">
-              Signed in as
+              {ROLE_LABELS[user.role]}
             </div>
-            <div className="text-sm text-white">{ROLE_LABELS[role]}</div>
+            <div className="text-sm text-white truncate max-w-[16ch] md:max-w-[24ch]">
+              {user.email}
+            </div>
           </div>
           <button
             type="button"
             onClick={handleSignOut}
-            className="text-sm text-silver hover:text-gold transition"
+            disabled={signingOut}
+            className="text-sm text-silver hover:text-gold transition disabled:opacity-50"
           >
-            Sign out
+            {signingOut ? 'Signing out…' : 'Sign out'}
           </button>
         </>
       )}
