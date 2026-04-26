@@ -8,6 +8,7 @@ import { authRouter } from './routes/auth.js';
 import { clientsRouter } from './routes/clients.js';
 import { onboardingRouter } from './routes/onboarding.js';
 import { timeRouter } from './routes/time.js';
+import { timeOffRouter } from './routes/timeOff.js';
 import { schedulingRouter } from './routes/scheduling.js';
 import { payrollRouter } from './routes/payroll.js';
 import { documentsRouter } from './routes/documents.js';
@@ -43,6 +44,7 @@ export function createApp() {
     onboardingRouter
   );
   app.use('/time', requireCapability('view:time'), timeRouter);
+  app.use('/time-off', requireCapability('view:time'), timeOffRouter);
   app.use(
     '/scheduling',
     requireCapability('view:scheduling'),

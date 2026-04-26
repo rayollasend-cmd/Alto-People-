@@ -238,6 +238,7 @@ model User {
   inviteTokens          InviteToken[]
   createdEsignAgreements EsignAgreement[]      @relation("EsignAgreementCreator")
   payrollDisbursementAttempts PayrollDisbursementAttempt[] @relation("PayrollDisbursementAttemptActor")
+  timeOffLedgerEntriesAuthored TimeOffLedgerEntry[]
 
   @@index([role])
   @@index([clientId])
@@ -312,6 +313,8 @@ model Associate {
   availability       AssociateAvailability[]
   swapsRequested     ShiftSwapRequest[] @relation("SwapRequester")
   swapsReceived      ShiftSwapRequest[] @relation("SwapCounterparty")
+  timeOffBalances    TimeOffBalance[]
+  timeOffLedger      TimeOffLedgerEntry[]
 
   @@index([deletedAt])
 }
@@ -650,6 +653,7 @@ model TimeEntry {
   approvedBy    User?           @relation("TimeApprover", fields: [approvedById], references: [id], onDelete: SetNull)
   job           Job?            @relation(fields: [jobId], references: [id], onDelete: SetNull)
   breaks        BreakEntry[]
+  timeOffLedgerEntries TimeOffLedgerEntry[]
   createdAt     DateTime        @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime        @updatedAt @db.Timestamptz(6)
 
@@ -726,6 +730,68 @@ model BreakEntry {
   timeEntry     TimeEntry  @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
 
   @@index([timeEntryId])
+}
+
+// Phase 26 — time-off categories. Sick is the only one accruing
+// automatically today (driven by StateLaborPolicy.paidSickLeaveAccrualPerHour
+// when a TimeEntry is approved). VACATION/PTO/etc. exist in the enum so the
+// later request-flow phase doesn't need a schema migration.
+enum TimeOffCategory {
+  SICK
+  VACATION
+  PTO
+  BEREAVEMENT
+  JURY_DUTY
+  OTHER
+}
+
+// Source of a ledger entry. ACCRUAL = automatic from worked time.
+// USE = consumed by an approved time-off request. ADJUSTMENT = HR
+// manually credited or debited (carryover at year boundary, dispute fix,
+// etc.). PAYOUT = associate cashed out at termination.
+enum TimeOffLedgerReason {
+  ACCRUAL
+  USE
+  ADJUSTMENT
+  PAYOUT
+}
+
+model TimeOffBalance {
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId    String          @db.Uuid
+  category       TimeOffCategory
+  // Stored in MINUTES so we don't lose precision on fractional accrual
+  // (CA: 1hr per 30hrs = 2 min per worked hour). Convert to hours at the
+  // edge for display.
+  balanceMinutes Int             @default(0)
+  updatedAt      DateTime        @updatedAt @db.Timestamptz(6)
+  associate      Associate       @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@unique([associateId, category])
+  @@index([associateId])
+}
+
+model TimeOffLedgerEntry {
+  id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId        String              @db.Uuid
+  category           TimeOffCategory
+  reason             TimeOffLedgerReason
+  // Signed: +N for accrual/credit, -N for use/payout.
+  deltaMinutes       Int
+  // Optional foreign keys so we can audit-trail back to the source.
+  // sourceTimeEntryId is the worked entry that drove an ACCRUAL row.
+  sourceTimeEntryId  String?             @db.Uuid
+  sourceUserId       String?             @db.Uuid
+  notes              String?
+  createdAt          DateTime            @default(now()) @db.Timestamptz(6)
+  associate          Associate           @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  sourceTimeEntry    TimeEntry?          @relation(fields: [sourceTimeEntryId], references: [id], onDelete: SetNull)
+  sourceUser         User?               @relation(fields: [sourceUserId], references: [id], onDelete: SetNull)
+
+  // Idempotency guard for the accrual hook: one accrual row per (entry,
+  // category). If the approve handler runs twice we no-op.
+  @@unique([sourceTimeEntryId, category, reason], name: "uniq_accrual_per_entry")
+  @@index([associateId, createdAt])
 }
 
 model AssociateAvailability {

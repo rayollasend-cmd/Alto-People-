@@ -27,6 +27,7 @@ import {
   netWorkedMinutes,
   startOfWeekUTC,
 } from '../lib/timeAnomalies.js';
+import { accrueSickLeaveForEntry } from '../lib/timeOffAccrual.js';
 
 export const timeRouter = Router();
 
@@ -585,13 +586,22 @@ timeRouter.post('/admin/entries/:id/approve', MANAGE, async (req, res, next) => 
       include: ENTRY_INCLUDE,
     });
 
+    // Phase 26 — accrue state-driven sick leave on approval. Idempotent;
+    // re-approving a never-clocks-out / 0-rate entry is a no-op.
+    const accrual = await accrueSickLeaveForEntry(prisma, updated.id);
+
     await recordTimeEvent({
       actorUserId: user.id,
       action: 'time.approved',
       timeEntryId: updated.id,
       associateId: updated.associateId,
       clientId: updated.clientId,
-      metadata: { minutes: minutesElapsed(updated) },
+      metadata: {
+        minutes: minutesElapsed(updated),
+        ...(accrual.accrued
+          ? { sickAccrualMinutes: accrual.earnedMinutes, state: accrual.state }
+          : {}),
+      },
       req,
     });
 

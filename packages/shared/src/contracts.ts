@@ -1232,3 +1232,48 @@ export const AcceptInviteInputSchema = z.object({
   password: z.string().min(12).max(256),
 });
 export type AcceptInviteInput = z.infer<typeof AcceptInviteInputSchema>;
+
+/* -------------------------------------------------------------------------- *
+ *  Phase 26 — Time off (sick-leave accrual + ledger)
+ * -------------------------------------------------------------------------- */
+
+export const TimeOffCategorySchema = z.enum([
+  'SICK',
+  'VACATION',
+  'PTO',
+  'BEREAVEMENT',
+  'JURY_DUTY',
+  'OTHER',
+]);
+export type TimeOffCategory = z.infer<typeof TimeOffCategorySchema>;
+
+export const TimeOffLedgerReasonSchema = z.enum([
+  'ACCRUAL',
+  'USE',
+  'ADJUSTMENT',
+  'PAYOUT',
+]);
+export type TimeOffLedgerReason = z.infer<typeof TimeOffLedgerReasonSchema>;
+
+export const TimeOffBalanceSchema = z.object({
+  category: TimeOffCategorySchema,
+  balanceMinutes: z.number().int(),
+});
+export type TimeOffBalance = z.infer<typeof TimeOffBalanceSchema>;
+
+export const TimeOffLedgerEntrySchema = z.object({
+  id: UuidSchema,
+  category: TimeOffCategorySchema,
+  reason: TimeOffLedgerReasonSchema,
+  deltaMinutes: z.number().int(),
+  sourceTimeEntryId: UuidSchema.nullable(),
+  notes: z.string().nullable(),
+  createdAt: z.string().datetime(),
+});
+export type TimeOffLedgerEntry = z.infer<typeof TimeOffLedgerEntrySchema>;
+
+export const TimeOffMyBalanceResponseSchema = z.object({
+  balances: z.array(TimeOffBalanceSchema),
+  recentLedger: z.array(TimeOffLedgerEntrySchema),
+});
+export type TimeOffMyBalanceResponse = z.infer<typeof TimeOffMyBalanceResponseSchema>;

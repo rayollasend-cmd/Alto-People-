@@ -24,6 +24,8 @@ const TABLES = [
   'Application',
   'Policy',
   'J1Profile',
+  'TimeOffLedgerEntry',
+  'TimeOffBalance',
   'BreakEntry',
   'TimeEntry',
   'ShiftSwapRequest',
