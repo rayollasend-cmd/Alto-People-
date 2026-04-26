@@ -24,6 +24,10 @@ import { requireCapability } from '../middleware/auth.js';
 import { generateInviteToken } from '../lib/inviteToken.js';
 import { sendReminderForUser } from '../lib/inviteReminder.js';
 import { send } from '../lib/notifications.js';
+import { hashSignedPdf, renderSignedAgreement } from '../lib/esign.js';
+import { resolveStoragePath, UPLOAD_ROOT } from '../lib/storage.js';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
   assertCanModifyApplication,
   scopeApplications,
@@ -698,6 +702,256 @@ onboardingRouter.post('/applications/:id/policy-ack', async (req, res, next) => 
     next(err);
   }
 });
+
+/* ===== E-SIGNATURE (Phase 19) ======================================== */
+
+// HR creates an agreement for an application. Optionally attaches it to an
+// existing E_SIGN task in the checklist — when set, signing the agreement
+// marks that task DONE.
+onboardingRouter.post(
+  '/applications/:id/esign/agreements',
+  MANAGE,
+  async (req, res, next) => {
+    try {
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+      const title = String(req.body?.title ?? '').trim();
+      const body = String(req.body?.body ?? '').trim();
+      const taskId = req.body?.taskId ? String(req.body.taskId) : null;
+      if (title.length === 0 || title.length > 200) {
+        throw new HttpError(400, 'invalid_title', 'Title must be 1-200 chars');
+      }
+      if (body.length === 0 || body.length > 50_000) {
+        throw new HttpError(400, 'invalid_body', 'Body must be 1-50000 chars');
+      }
+      if (taskId) {
+        const task = await prisma.onboardingTask.findFirst({
+          where: { id: taskId, kind: 'E_SIGN', checklist: { applicationId: app.id } },
+        });
+        if (!task) throw new HttpError(404, 'task_not_found', 'E_SIGN task not found');
+      }
+
+      const agreement = await prisma.esignAgreement.create({
+        data: {
+          applicationId: app.id,
+          taskId,
+          title,
+          body,
+          createdById: req.user!.id,
+        },
+      });
+
+      await recordOnboardingEvent({
+        actorUserId: req.user!.id,
+        action: 'onboarding.esign_agreement_created',
+        applicationId: app.id,
+        clientId: app.clientId,
+        metadata: { agreementId: agreement.id, taskId },
+        req,
+      });
+
+      res.status(201).json({
+        id: agreement.id,
+        applicationId: agreement.applicationId,
+        taskId: agreement.taskId,
+        title: agreement.title,
+        body: agreement.body,
+        createdAt: agreement.createdAt.toISOString(),
+        signedAt: null,
+        signatureId: null,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// Either side (HR or assigned associate) reads the agreement to display.
+onboardingRouter.get(
+  '/applications/:id/esign/agreements/:agreementId',
+  async (req, res, next) => {
+    try {
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+      const agreement = await prisma.esignAgreement.findFirst({
+        where: { id: req.params.agreementId, applicationId: app.id },
+      });
+      if (!agreement) throw new HttpError(404, 'agreement_not_found', 'Agreement not found');
+      res.json({
+        id: agreement.id,
+        applicationId: agreement.applicationId,
+        taskId: agreement.taskId,
+        title: agreement.title,
+        body: agreement.body,
+        createdAt: agreement.createdAt.toISOString(),
+        signedAt: agreement.signedAt ? agreement.signedAt.toISOString() : null,
+        signatureId: agreement.signatureId,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// Associate (or HR on their behalf — the typed name is recorded as proof
+// of who-typed-what regardless) submits the typed signature. Server renders
+// the signed PDF, hashes it, stores it under uploads/esign/, creates a
+// DocumentRecord (so it shows up in the document vault) and a Signature
+// row, and marks the linked E_SIGN task DONE if any.
+onboardingRouter.post(
+  '/applications/:id/esign/agreements/:agreementId/sign',
+  async (req, res, next) => {
+    try {
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+      const agreement = await prisma.esignAgreement.findFirst({
+        where: { id: req.params.agreementId, applicationId: app.id },
+        include: { application: { include: { associate: true } } },
+      });
+      if (!agreement) throw new HttpError(404, 'agreement_not_found', 'Agreement not found');
+      if (agreement.signedAt) {
+        throw new HttpError(409, 'already_signed', 'Agreement already signed');
+      }
+      const typedName = String(req.body?.typedName ?? '').trim();
+      if (typedName.length < 2 || typedName.length > 200) {
+        throw new HttpError(400, 'invalid_typed_name', 'Typed name must be 2-200 chars');
+      }
+
+      // Capture audit context BEFORE rendering — they get embedded in the PDF.
+      const ipAddress = req.ip ?? null;
+      const userAgent = req.get('user-agent') ?? null;
+      const signedAt = new Date();
+      const associate = agreement.application.associate;
+
+      const pdf = await renderSignedAgreement({
+        agreement: { id: agreement.id, title: agreement.title, body: agreement.body },
+        signer: {
+          fullName: `${associate.firstName} ${associate.lastName}`,
+          email: associate.email,
+        },
+        signedAt,
+        ipAddress,
+        userAgent,
+        typedName,
+      });
+      const pdfHash = hashSignedPdf(pdf);
+
+      // Persist to uploads/esign/<agreementId>/<hash>.pdf
+      const relativeKey = `esign/${agreement.id}/${pdfHash.slice(0, 16)}.pdf`;
+      const targetDir = join(UPLOAD_ROOT, 'esign', agreement.id);
+      await mkdir(targetDir, { recursive: true });
+      await writeFile(resolveStoragePath(relativeKey), pdf);
+
+      const result = await prisma.$transaction(async (tx) => {
+        const doc = await tx.documentRecord.create({
+          data: {
+            associateId: associate.id,
+            clientId: app.clientId,
+            kind: 'SIGNED_AGREEMENT',
+            s3Key: relativeKey,
+            filename: `${slugify(agreement.title)}.pdf`,
+            mimeType: 'application/pdf',
+            size: pdf.byteLength,
+            status: 'VERIFIED',
+            verifiedById: req.user!.id,
+            verifiedAt: signedAt,
+          },
+        });
+        const sig = await tx.signature.create({
+          data: {
+            documentId: doc.id,
+            signerUserId: req.user!.id,
+            associateId: associate.id,
+            signedAt,
+            ipAddress,
+            userAgent,
+            signatureS3Key: relativeKey,
+            agreementId: agreement.id,
+            typedName,
+            pdfHash,
+          },
+        });
+        const updatedAgreement = await tx.esignAgreement.update({
+          where: { id: agreement.id },
+          data: { signedAt, signatureId: sig.id },
+        });
+        // Mark the linked task DONE if any.
+        if (agreement.taskId) {
+          await tx.onboardingTask.update({
+            where: { id: agreement.taskId },
+            data: { status: 'DONE', completedAt: signedAt, documentId: doc.id },
+          });
+        }
+        return { doc, sig, agreement: updatedAgreement };
+      }, TX_OPTS);
+
+      await recordOnboardingEvent({
+        actorUserId: req.user!.id,
+        action: 'onboarding.esign_signed',
+        applicationId: app.id,
+        clientId: app.clientId,
+        metadata: {
+          agreementId: agreement.id,
+          signatureId: result.sig.id,
+          documentId: result.doc.id,
+          pdfHash,
+          taskId: agreement.taskId,
+        },
+        req,
+      });
+
+      res.status(200).json({
+        signatureId: result.sig.id,
+        documentId: result.doc.id,
+        pdfHash,
+        signedAt: signedAt.toISOString(),
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// Streams the signed PDF. Scope: associate can fetch their own; HR/Ops
+// can fetch any inside their scope.
+onboardingRouter.get(
+  '/esign/signatures/:signatureId/pdf',
+  async (req, res, next) => {
+    try {
+      const sig = await prisma.signature.findUnique({
+        where: { id: req.params.signatureId },
+        include: { agreement: true },
+      });
+      if (!sig || !sig.agreement || !sig.signatureS3Key) {
+        throw new HttpError(404, 'signature_not_found', 'Signature not found');
+      }
+      // Authz: scope by application.
+      const app = await assertCanModifyApplication(
+        prisma,
+        req.user!,
+        sig.agreement.applicationId
+      );
+      void app;
+
+      const path = resolveStoragePath(sig.signatureS3Key);
+      const { readFile } = await import('node:fs/promises');
+      const pdf = await readFile(path);
+      const liveHash = hashSignedPdf(pdf);
+
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader(
+        'Content-Disposition',
+        `inline; filename="signed-${sig.agreementId?.slice(0, 8) ?? 'agreement'}.pdf"`
+      );
+      res.setHeader('X-Pdf-Hash', liveHash);
+      res.setHeader('X-Pdf-Hash-Stored', sig.pdfHash ?? '');
+      res.send(pdf);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+function slugify(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'agreement';
+}
 
 /* RESEND INVITE (HR/Ops only) ------------------------------------------ */
 // Rotates the invite token for the application's associate user, sends a

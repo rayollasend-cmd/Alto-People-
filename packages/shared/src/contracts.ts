@@ -569,6 +569,7 @@ export const DocumentKindSchema = z.enum([
   'TRANSPORT_AGREEMENT',
   'J1_DS2019',
   'J1_VISA',
+  'SIGNED_AGREEMENT',
   'OTHER',
 ]);
 export type DocumentKind = z.infer<typeof DocumentKindSchema>;

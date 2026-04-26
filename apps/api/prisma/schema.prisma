@@ -88,6 +88,8 @@ enum DocumentKind {
   TRANSPORT_AGREEMENT
   J1_DS2019
   J1_VISA
+  // Phase 19 — server-rendered signed agreement PDF (typed-name e-sign).
+  SIGNED_AGREEMENT
   OTHER
 }
 
@@ -225,6 +227,7 @@ model User {
   receivedNotifications Notification[]         @relation("NotificationRecipient")
   authoredReviews       PerformanceReview[]    @relation("PerformanceReviewer")
   inviteTokens          InviteToken[]
+  createdEsignAgreements EsignAgreement[]      @relation("EsignAgreementCreator")
 
   @@index([role])
   @@index([clientId])
@@ -326,6 +329,7 @@ model Application {
   associate       Associate           @relation(fields: [associateId], references: [id], onDelete: Restrict)
   client          Client              @relation(fields: [clientId], references: [id], onDelete: Restrict)
   checklist       OnboardingChecklist?
+  esignAgreements EsignAgreement[]
   createdAt       DateTime            @default(now()) @db.Timestamptz(6)
   updatedAt       DateTime            @updatedAt @db.Timestamptz(6)
   deletedAt       DateTime?           @db.Timestamptz(6)
@@ -358,6 +362,7 @@ model OnboardingTask {
   completedAt DateTime?           @db.Timestamptz(6)
   checklist   OnboardingChecklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
   document    DocumentRecord?     @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  esignAgreements EsignAgreement[]
   createdAt   DateTime            @default(now()) @db.Timestamptz(6)
   updatedAt   DateTime            @updatedAt @db.Timestamptz(6)
 
@@ -467,6 +472,15 @@ model Signature {
   ipAddress       String?
   userAgent       String?
   signatureS3Key  String
+  // Phase 19 — when this Signature row was produced by the typed-name
+  // e-sign flow (rather than uploaded out-of-band), agreementId points at
+  // the EsignAgreement that was signed. typedName is exactly what the
+  // signer typed (immutable proof). pdfHash is sha256 of the rendered
+  // signed PDF — a future re-render must hash to the same value.
+  agreementId     String?                @db.Uuid
+  typedName       String?
+  pdfHash         String?
+  agreement       EsignAgreement?        @relation(fields: [agreementId], references: [id], onDelete: SetNull)
   document        DocumentRecord         @relation(fields: [documentId], references: [id], onDelete: Restrict)
   signerUser      User?                  @relation("UserSignatures", fields: [signerUserId], references: [id], onDelete: SetNull)
   associate       Associate?             @relation("AssociateSignatures", fields: [associateId], references: [id], onDelete: SetNull)
@@ -475,6 +489,42 @@ model Signature {
   @@index([documentId])
   @@index([signerUserId])
   @@index([associateId])
+  @@index([agreementId])
+}
+
+// Phase 19 — server-side typed-name e-signature.
+//
+// HR creates an EsignAgreement attached to an Application (and optionally
+// the OnboardingTask of kind E_SIGN that triggers it). The body is plain
+// text that gets rendered into a PDF at sign time, with a signature block
+// (typed name + IP + UA + signedAt + sha256 of the rendered bytes) so the
+// signed PDF carries its own audit trail. Each successful signing creates
+// exactly one Signature row; duplicate sign attempts return 409. The
+// agreement itself is immutable once signed.
+model EsignAgreement {
+  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  applicationId String       @db.Uuid
+  // Optional link to the onboarding checklist task — when set, signing
+  // this agreement marks that task DONE.
+  taskId        String?      @db.Uuid
+  title         String
+  // Plain-text agreement body (markdown-light: \n linebreaks). Renderer
+  // wraps it into the PDF as paragraphs; no HTML/script execution.
+  body          String
+  createdById   String       @db.Uuid
+  createdAt     DateTime     @default(now()) @db.Timestamptz(6)
+  // Once signed, signedAt mirrors the Signature row for fast dashboard
+  // queries. Null = unsigned.
+  signedAt      DateTime?    @db.Timestamptz(6)
+  signatureId   String?      @db.Uuid
+  application   Application  @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  task          OnboardingTask? @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  createdBy     User         @relation("EsignAgreementCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  signatures    Signature[]
+
+  @@index([applicationId])
+  @@index([taskId])
+  @@index([signedAt])
 }
 
 model BackgroundCheck {

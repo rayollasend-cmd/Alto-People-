@@ -10,6 +10,7 @@ export const prisma = new PrismaClient();
 const TABLES = [
   'AuditLog',
   'PolicyAcknowledgment',
+  'EsignAgreement',
   'Signature',
   'PayoutMethod',
   'W4Submission',
