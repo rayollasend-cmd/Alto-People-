@@ -250,6 +250,11 @@ model Client {
   industry             String?
   status               ClientStatus @default(ACTIVE)
   contactEmail         String?
+  // Two-letter USPS code of the work site. Drives Phase 23 OT/meal-break
+  // policy AND Phase 25 predictive-scheduling enforcement (NY, IL, WA, PA,
+  // OR demand 14-day notice). Null = federal default = no state-specific
+  // rules enforced.
+  state                String?      @db.VarChar(2)
   // Geofence anchor for clock-in validation. NULL latitude/longitude means
   // no geofence enforced (associates can clock in from anywhere).
   // Stored as Decimal for precision; ~5cm at 7 decimals.
@@ -674,6 +679,14 @@ model Shift {
   createdById          String?     @db.Uuid
   cancelledAt          DateTime?   @db.Timestamptz(6)
   cancellationReason   String?
+  // Phase 25 — stamped the first time the shift transitions out of DRAFT
+  // (= "schedule was published"). Combined with startsAt, this is the
+  // notice window every fair-workweek law audits against.
+  publishedAt          DateTime?   @db.Timestamptz(6)
+  // Documented justification when a shift in a fair-workweek state was
+  // published inside the 14-day notice window (mutual agreement,
+  // emergency call-out cover, etc.). Required by the API for those cases.
+  lateNoticeReason     String?
   client               Client      @relation(fields: [clientId], references: [id], onDelete: Restrict)
   assignedAssociate    Associate?  @relation(fields: [assignedAssociateId], references: [id], onDelete: SetNull)
   createdBy            User?       @relation("ShiftCreator", fields: [createdById], references: [id], onDelete: SetNull)

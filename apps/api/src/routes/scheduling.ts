@@ -26,6 +26,10 @@ import { requireCapability } from '../middleware/auth.js';
 import { scopeShifts } from '../lib/scope.js';
 import { recordShiftEvent } from '../lib/audit.js';
 import { netWorkedMinutes, startOfWeekUTC, endOfWeekUTC } from '../lib/timeAnomalies.js';
+import {
+  evaluateShiftNotice,
+  isPublishingTransition,
+} from '../lib/predictiveScheduling.js';
 
 export const schedulingRouter = Router();
 
@@ -61,6 +65,8 @@ function toShift(row: RawShift): Shift {
     assignedAt: row.assignedAt ? row.assignedAt.toISOString() : null,
     cancellationReason: row.cancellationReason,
     scheduledMinutes: scheduledMinutes(row),
+    publishedAt: row.publishedAt ? row.publishedAt.toISOString() : null,
+    lateNoticeReason: row.lateNoticeReason,
   };
 }
 
@@ -118,6 +124,28 @@ schedulingRouter.post('/shifts', MANAGE, async (req, res, next) => {
     });
     if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
 
+    const status = input.status ?? 'OPEN';
+    const isPublishing = isPublishingTransition(undefined, status);
+    const now = new Date();
+    let lateNoticeReason: string | null = null;
+    let publishedAt: Date | null = null;
+    if (isPublishing) {
+      const evaluation = evaluateShiftNotice({
+        state: client.state,
+        startsAt: new Date(input.startsAt),
+        publishAt: now,
+      });
+      if (evaluation.requiresReason && !input.lateNoticeReason) {
+        throw new HttpError(
+          400,
+          'late_notice_reason_required',
+          `Publishing a shift inside the 14-day notice window in ${evaluation.state} requires lateNoticeReason`
+        );
+      }
+      lateNoticeReason = input.lateNoticeReason ?? null;
+      publishedAt = now;
+    }
+
     const created = await prisma.shift.create({
       data: {
         clientId: input.clientId,
@@ -127,8 +155,10 @@ schedulingRouter.post('/shifts', MANAGE, async (req, res, next) => {
         location: input.location ?? null,
         hourlyRate: input.hourlyRate ?? null,
         notes: input.notes ?? null,
-        status: input.status ?? 'OPEN',
+        status,
         createdById: req.user!.id,
+        publishedAt,
+        lateNoticeReason,
       },
       include: SHIFT_INCLUDE,
     });
@@ -138,7 +168,11 @@ schedulingRouter.post('/shifts', MANAGE, async (req, res, next) => {
       action: 'shift.created',
       shiftId: created.id,
       clientId: created.clientId,
-      metadata: { position: created.position, status: created.status },
+      metadata: {
+        position: created.position,
+        status: created.status,
+        ...(lateNoticeReason ? { lateNoticeReason, lateNotice: true } : {}),
+      },
       req,
     });
 
@@ -157,6 +191,7 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
 
     const existing = await prisma.shift.findFirst({
       where: { id: req.params.id, ...scopeShifts(req.user!) },
+      include: { client: { select: { state: true } } },
     });
     if (!existing) throw new HttpError(404, 'shift_not_found', 'Shift not found');
 
@@ -170,6 +205,27 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
     if (i.notes !== undefined) data.notes = i.notes;
     if (i.status !== undefined) data.status = i.status;
 
+    // Phase 25 — predictive scheduling enforcement on a DRAFT→OPEN/ASSIGNED
+    // transition. Re-publishing or other status changes don't re-evaluate.
+    if (i.status !== undefined && isPublishingTransition(existing.status, i.status)) {
+      const now = new Date();
+      const newStartsAt = i.startsAt ? new Date(i.startsAt) : existing.startsAt;
+      const evaluation = evaluateShiftNotice({
+        state: existing.client.state,
+        startsAt: newStartsAt,
+        publishAt: now,
+      });
+      if (evaluation.requiresReason && !i.lateNoticeReason) {
+        throw new HttpError(
+          400,
+          'late_notice_reason_required',
+          `Publishing a shift inside the 14-day notice window in ${evaluation.state} requires lateNoticeReason`
+        );
+      }
+      data.publishedAt = now;
+      data.lateNoticeReason = i.lateNoticeReason ?? null;
+    }
+
     const updated = await prisma.shift.update({
       where: { id: existing.id },
       data,
@@ -181,7 +237,12 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
       action: 'shift.updated',
       shiftId: updated.id,
       clientId: updated.clientId,
-      metadata: { fields: Object.keys(data) },
+      metadata: {
+        fields: Object.keys(data),
+        ...(updated.lateNoticeReason && data.publishedAt
+          ? { lateNoticeReason: updated.lateNoticeReason, lateNotice: true }
+          : {}),
+      },
       req,
     });
 

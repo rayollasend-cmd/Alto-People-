@@ -71,8 +71,16 @@ export const ClientSummarySchema = z.object({
   industry: z.string().nullable(),
   status: ClientStatusSchema,
   contactEmail: z.string().email().nullable(),
+  // Two-letter USPS code; drives Phase 23 OT/break policy and Phase 25
+  // predictive-scheduling enforcement. Null = federal default.
+  state: z.string().length(2).nullable(),
 });
 export type ClientSummary = z.infer<typeof ClientSummarySchema>;
+
+export const ClientStateInputSchema = z.object({
+  state: z.string().length(2).nullable(),
+});
+export type ClientStateInput = z.infer<typeof ClientStateInputSchema>;
 
 export const ClientListResponseSchema = z.object({
   clients: z.array(ClientSummarySchema),
@@ -399,6 +407,12 @@ export const ShiftSchema = z.object({
   cancellationReason: z.string().nullable(),
   /** Server-computed convenience: minutes between startsAt and endsAt. */
   scheduledMinutes: z.number().int().nonnegative(),
+  // Phase 25 — predictive scheduling. publishedAt is stamped when the
+  // shift first transitions out of DRAFT (= "the schedule was posted").
+  // lateNoticeReason is required and recorded when a fair-workweek state
+  // shift is published inside the 14-day notice window.
+  publishedAt: z.string().datetime().nullable(),
+  lateNoticeReason: z.string().nullable(),
 });
 export type Shift = z.infer<typeof ShiftSchema>;
 
@@ -417,6 +431,9 @@ export const ShiftCreateInputSchema = z
     hourlyRate: z.number().nonnegative().optional(),
     notes: z.string().max(1000).optional(),
     status: ShiftStatusSchema.optional(),
+    // Phase 25 — required by the server when publishing a shift inside
+    // the 14-day fair-workweek notice window in covered states.
+    lateNoticeReason: z.string().min(1).max(500).optional(),
   })
   .refine((v) => new Date(v.endsAt) > new Date(v.startsAt), {
     message: 'endsAt must be after startsAt',
@@ -433,6 +450,7 @@ export const ShiftUpdateInputSchema = z
     hourlyRate: z.number().nonnegative().nullable().optional(),
     notes: z.string().max(1000).nullable().optional(),
     status: ShiftStatusSchema.optional(),
+    lateNoticeReason: z.string().min(1).max(500).optional(),
   })
   .refine(
     (v) =>

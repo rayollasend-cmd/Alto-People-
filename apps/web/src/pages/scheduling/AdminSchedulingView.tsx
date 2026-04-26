@@ -502,6 +502,7 @@ function CreateShiftForm({ clients, onCreated }: CreateShiftFormProps) {
   const [location, setLocation] = useState('');
   const [hourlyRate, setHourlyRate] = useState('');
   const [notes, setNotes] = useState('');
+  const [lateNoticeReason, setLateNoticeReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -523,6 +524,7 @@ function CreateShiftForm({ clients, onCreated }: CreateShiftFormProps) {
         hourlyRate: hourlyRate ? Number(hourlyRate) : undefined,
         notes: notes || undefined,
         status: 'OPEN',
+        lateNoticeReason: lateNoticeReason.trim() || undefined,
       });
       onCreated();
     } catch (err) {
@@ -637,6 +639,18 @@ function CreateShiftForm({ clients, onCreated }: CreateShiftFormProps) {
           rows={2}
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
+          className={inputCls}
+        />
+      </label>
+      <label className="block">
+        <span className="block text-xs uppercase tracking-widest text-silver mb-1">
+          Late-notice reason (only required for fair-workweek states inside the 14-day window)
+        </span>
+        <textarea
+          rows={2}
+          value={lateNoticeReason}
+          onChange={(e) => setLateNoticeReason(e.target.value)}
+          placeholder="e.g. Mutual agreement — associate volunteered to cover a sick call-out"
           className={inputCls}
         />
       </label>

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   ClientGeofenceInputSchema,
+  ClientStateInputSchema,
   type ClientListResponse,
   type ClientSummary,
 } from '@alto-people/shared';
@@ -46,6 +47,7 @@ function toSummary(row: {
   industry: string | null;
   status: 'ACTIVE' | 'INACTIVE' | 'PROSPECT';
   contactEmail: string | null;
+  state: string | null;
 }): ClientSummary {
   return {
     id: row.id,
@@ -53,6 +55,7 @@ function toSummary(row: {
     industry: row.industry,
     status: row.status,
     contactEmail: row.contactEmail,
+    state: row.state,
   };
 }
 
@@ -70,6 +73,31 @@ clientsRouter.get('/:id/geofence', async (req, res, next) => {
       longitude: row.longitude ? Number(row.longitude) : null,
       geofenceRadiusMeters: row.geofenceRadiusMeters,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Phase 25 — set the work-site state. Drives Phase 23 OT/break policy and
+// Phase 25 predictive-scheduling enforcement. Two-letter USPS code or null
+// to clear (which puts the client back on the federal default).
+clientsRouter.put('/:id/state', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = ClientStateInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'state must be a 2-letter code or null', parsed.error.flatten());
+    }
+    const existing = await prisma.client.findFirst({
+      where: { ...scopeClients(req.user!), id: req.params.id },
+    });
+    if (!existing) throw new HttpError(404, 'client_not_found', 'Client not found');
+
+    const normalized = parsed.data.state ? parsed.data.state.toUpperCase() : null;
+    const updated = await prisma.client.update({
+      where: { id: existing.id },
+      data: { state: normalized },
+    });
+    res.json(toSummary(updated));
   } catch (err) {
     next(err);
   }
