@@ -156,6 +156,10 @@ describe('POST /auth/accept-invite', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.user?.email).toBe('pat@example.com');
+    // Phase 32: response carries a nextPath pointing at this associate's
+    // newly-created onboarding checklist so the web client can land them
+    // there instead of the dashboard.
+    expect(res.body.nextPath).toMatch(/^\/onboarding\/me\/[0-9a-f-]{36}$/i);
     const setCookie = res.headers['set-cookie'];
     const cookieStr = Array.isArray(setCookie) ? setCookie.join('\n') : String(setCookie ?? '');
     expect(cookieStr).toMatch(/alto\.session=/);
@@ -166,6 +170,12 @@ describe('POST /auth/accept-invite', () => {
 
     const invite = await prisma.inviteToken.findFirstOrThrow({ where: { userId: user.id } });
     expect(invite.consumedAt).not.toBeNull();
+
+    // The nextPath should reference the very application created above.
+    const application = await prisma.application.findFirstOrThrow({
+      where: { associateId: user.associateId! },
+    });
+    expect(res.body.nextPath).toBe(`/onboarding/me/${application.id}`);
   });
 
   it('rejects a 2nd attempt with the same token (consumed) → 404', async () => {

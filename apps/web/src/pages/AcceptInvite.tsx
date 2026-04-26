@@ -1,6 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import type { InviteSummary, LoginResponse } from '@alto-people/shared';
+import type {
+  AcceptInviteResponse,
+  InviteSummary,
+} from '@alto-people/shared';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
@@ -55,14 +58,16 @@ export function AcceptInvite() {
     setSubmitting(true);
     setError(null);
     try {
-      const res = await apiFetch<LoginResponse>('/auth/accept-invite', {
+      const res = await apiFetch<AcceptInviteResponse>('/auth/accept-invite', {
         method: 'POST',
         body: { token, password },
       });
       // Cookie is set by the server. Force a full reload of the app so the
       // AuthProvider re-runs /auth/me and picks up the new session cleanly.
-      void res;
-      window.location.assign('/');
+      // The server tells us where to land — usually the new associate's
+      // onboarding checklist; falls back to / for HR-created users.
+      const dest = res?.nextPath && res.nextPath.startsWith('/') ? res.nextPath : '/';
+      window.location.assign(dest);
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         setError('This account is already active. Try signing in instead.');

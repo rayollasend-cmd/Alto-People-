@@ -202,6 +202,18 @@ export const LoginResponseSchema = z.object({
 });
 export type LoginResponse = z.infer<typeof LoginResponseSchema>;
 
+/**
+ * Phase 32 — accept-invite returns the same shape as login PLUS a hint
+ * for the client about where to send the freshly-activated user. For
+ * new associates with an open onboarding application, this is their
+ * checklist URL so they don't dead-end on the dashboard.
+ */
+export const AcceptInviteResponseSchema = z.object({
+  user: AuthUserSchema,
+  nextPath: z.string(),
+});
+export type AcceptInviteResponse = z.infer<typeof AcceptInviteResponseSchema>;
+
 export const MeResponseSchema = z.object({
   user: AuthUserSchema.nullable(),
 });

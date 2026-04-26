@@ -10,6 +10,7 @@ import { ApiError } from '@/lib/api';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Badge } from '@/components/ui/Badge';
+import { OnboardingBanner } from '@/components/OnboardingBanner';
 import { cn } from '@/lib/cn';
 
 const fmtMoney = (n: number) =>
@@ -60,12 +61,16 @@ const STATUS_VARIANT: Record<
 };
 
 export function Dashboard() {
-  const { role, can } = useAuth();
+  const { role, can, user } = useAuth();
   const accessible = MODULES.filter((m) => can(m.requires));
+  const isAssociate = user?.role === 'ASSOCIATE';
   const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Associates don't see HR-side KPIs; skip the call entirely so we
+    // don't flash a Skeleton or surface an unrelated error to them.
+    if (isAssociate) return;
     let cancelled = false;
     (async () => {
       try {
@@ -80,7 +85,7 @@ export function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isAssociate]);
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -94,32 +99,36 @@ export function Dashboard() {
         </p>
       </header>
 
+      {isAssociate && <OnboardingBanner />}
+
       {error && (
         <div className="mb-4 p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm" role="alert">
           {error}
         </div>
       )}
 
-      <section
-        aria-label="Key performance indicators"
-        className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-10"
-      >
-        {kpis ? (
-          buildKpis(kpis).map((kpi) => <KpiTile key={kpi.label} kpi={kpi} />)
-        ) : (
-          Array.from({ length: 4 }).map((_, i) => (
-            <Card key={i}>
-              <CardContent className="pt-5">
-                <Skeleton className="h-3 w-2/3 mb-3" />
-                <Skeleton className="h-8 w-1/2 mb-2" />
-                <Skeleton className="h-3 w-1/3" />
-              </CardContent>
-            </Card>
-          ))
-        )}
-      </section>
+      {!isAssociate && (
+        <section
+          aria-label="Key performance indicators"
+          className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-10"
+        >
+          {kpis ? (
+            buildKpis(kpis).map((kpi) => <KpiTile key={kpi.label} kpi={kpi} />)
+          ) : (
+            Array.from({ length: 4 }).map((_, i) => (
+              <Card key={i}>
+                <CardContent className="pt-5">
+                  <Skeleton className="h-3 w-2/3 mb-3" />
+                  <Skeleton className="h-8 w-1/2 mb-2" />
+                  <Skeleton className="h-3 w-1/3" />
+                </CardContent>
+              </Card>
+            ))
+          )}
+        </section>
+      )}
 
-      {kpis && Object.keys(kpis.applicationStatusCounts).length > 0 && (
+      {!isAssociate && kpis && Object.keys(kpis.applicationStatusCounts).length > 0 && (
         <section className="mb-10">
           <h2 className="font-display text-2xl text-white mb-3">
             Onboarding pipeline

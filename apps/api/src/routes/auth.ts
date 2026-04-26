@@ -286,8 +286,29 @@ authRouter.post('/accept-invite', async (req, res, next) => {
       clientId: updatedUser.clientId,
     });
 
-    res.json({ user: toAuthUser(updatedUser) });
+    // Phase 32 — point the freshly-activated user straight at their
+    // checklist if they have one open. The dashboard is a fine fallback
+    // for HR-created users without an Application, but most accept-invite
+    // flows are associates whose application drives the entire reason
+    // they got the invite in the first place.
+    const nextPath = await pickPostAcceptPath(updatedUser.id);
+
+    res.json({ user: toAuthUser(updatedUser), nextPath });
   } catch (err) {
     next(err);
   }
 });
+
+async function pickPostAcceptPath(userId: string): Promise<string> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { associateId: true },
+  });
+  if (!user?.associateId) return '/';
+  const app = await prisma.application.findFirst({
+    where: { associateId: user.associateId },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true },
+  });
+  return app ? `/onboarding/me/${app.id}` : '/';
+}
