@@ -10,6 +10,16 @@ vi.mock('@/lib/timeApi', () => ({
   listMyTimeEntries: vi.fn(),
   clockIn: vi.fn(),
   clockOut: vi.fn(),
+  startBreak: vi.fn(),
+  endBreak: vi.fn(),
+  // jsdom doesn't expose navigator.geolocation; the helper resolves null
+  // there anyway, but stubbing keeps the test free of timing on the 5s
+  // geolocation timeout.
+  tryGetGeolocation: vi.fn(async () => null),
+}));
+
+vi.mock('@/lib/jobsApi', () => ({
+  listJobs: vi.fn(async () => ({ jobs: [] })),
 }));
 
 import {

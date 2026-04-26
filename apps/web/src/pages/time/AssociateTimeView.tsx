@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { TimeEntry } from '@alto-people/shared';
+import type { BreakType, Job, TimeEntry } from '@alto-people/shared';
 import {
   clockIn,
   clockOut,
+  endBreak,
   getActiveTimeEntry,
   listMyTimeEntries,
+  startBreak,
+  tryGetGeolocation,
 } from '@/lib/timeApi';
+import { listJobs } from '@/lib/jobsApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 
@@ -16,10 +20,7 @@ function formatHM(mins: number): string {
   return `${h}h ${m.toString().padStart(2, '0')}m`;
 }
 
-function statusBadge(status: TimeEntry['status']): {
-  label: string;
-  cls: string;
-} {
+function statusBadge(status: TimeEntry['status']): { label: string; cls: string } {
   switch (status) {
     case 'ACTIVE':
       return { label: 'Active', cls: 'bg-gold/20 text-gold border-gold/40' };
@@ -32,9 +33,17 @@ function statusBadge(status: TimeEntry['status']): {
   }
 }
 
+const ANOMALY_LABELS: Record<string, string> = {
+  GEOFENCE_VIOLATION_IN: 'Off-site clock-in',
+  GEOFENCE_VIOLATION_OUT: 'Off-site clock-out',
+  NO_BREAK: 'No break taken',
+  MEAL_BREAK_TOO_SHORT: 'Meal break < 30 min',
+  OVERTIME_UNAPPROVED: 'Overtime',
+  FORGOT_CLOCKOUT: 'Forgot clock-out',
+  OUTSIDE_SHIFT_WINDOW: 'Off-schedule',
+};
+
 function useTicker(active: boolean): number {
-  // Re-renders once per second so the live "Active" timer updates without
-  // requiring a polling refetch.
   const [, setTick] = useState(0);
   useEffect(() => {
     if (!active) return;
@@ -47,17 +56,26 @@ function useTicker(active: boolean): number {
 export function AssociateTimeView() {
   const [active, setActive] = useState<TimeEntry | null>(null);
   const [entries, setEntries] = useState<TimeEntry[] | null>(null);
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [selectedJobId, setSelectedJobId] = useState<string>('');
   const [busy, setBusy] = useState(false);
+  const [breakBusy, setBreakBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
 
   useTicker(!!active);
 
   const refresh = useCallback(async () => {
     try {
       setError(null);
-      const [a, list] = await Promise.all([getActiveTimeEntry(), listMyTimeEntries()]);
+      const [a, list, jobList] = await Promise.all([
+        getActiveTimeEntry(),
+        listMyTimeEntries(),
+        listJobs().catch(() => ({ jobs: [] as Job[] })),
+      ]);
       setActive(a.active);
       setEntries(list.entries);
+      setJobs(jobList.jobs);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load time data.');
     }
@@ -67,12 +85,31 @@ export function AssociateTimeView() {
     refresh();
   }, [refresh]);
 
+  // Reflect break state — derived from the API's active entry; the dashboard
+  // model is "open break exists" but we don't have that on the entry shape,
+  // so we infer from a local flag we set on start/end.
+  const [onBreak, setOnBreak] = useState(false);
+  useEffect(() => {
+    // When the active entry changes (e.g. via refresh), reset the local flag.
+    // The next render of either the start-break or end-break button will fix
+    // the state if our cache is wrong.
+    if (!active) setOnBreak(false);
+  }, [active]);
+
   const handleClockIn = async () => {
     if (busy) return;
     setBusy(true);
     setError(null);
+    setInfo(null);
     try {
-      await clockIn();
+      const geo = await tryGetGeolocation();
+      if (!geo) {
+        setInfo("Couldn't read your location — clocking in without GPS.");
+      }
+      await clockIn({
+        geo: geo ?? undefined,
+        jobId: selectedJobId || undefined,
+      });
       await refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Clock-in failed.');
@@ -85,8 +122,11 @@ export function AssociateTimeView() {
     if (busy) return;
     setBusy(true);
     setError(null);
+    setInfo(null);
     try {
-      await clockOut();
+      const geo = await tryGetGeolocation();
+      await clockOut({ geo: geo ?? undefined });
+      setOnBreak(false);
       await refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Clock-out failed.');
@@ -95,8 +135,34 @@ export function AssociateTimeView() {
     }
   };
 
-  // Live elapsed minutes for the active entry — recomputed every render
-  // (which the ticker triggers each second).
+  const handleStartBreak = async (type: BreakType) => {
+    if (breakBusy) return;
+    setBreakBusy(true);
+    setError(null);
+    try {
+      await startBreak(type);
+      setOnBreak(true);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Start break failed.');
+    } finally {
+      setBreakBusy(false);
+    }
+  };
+
+  const handleEndBreak = async () => {
+    if (breakBusy) return;
+    setBreakBusy(true);
+    setError(null);
+    try {
+      await endBreak();
+      setOnBreak(false);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'End break failed.');
+    } finally {
+      setBreakBusy(false);
+    }
+  };
+
   const liveMinutes = active
     ? Math.max(0, Math.floor((Date.now() - new Date(active.clockInAt).getTime()) / 60_000))
     : 0;
@@ -121,35 +187,93 @@ export function AssociateTimeView() {
           <>
             <div className="text-xs uppercase tracking-widest text-gold mb-2">
               Currently clocked in
+              {active.jobName && <span className="ml-2 text-silver normal-case tracking-normal">· {active.jobName}</span>}
             </div>
             <div className="font-display text-5xl md:text-6xl text-white mb-1 tabular-nums">
               {formatHM(liveMinutes)}
             </div>
             <div className="text-sm text-silver mb-6">
               since {new Date(active.clockInAt).toLocaleTimeString()}
-            </div>
-            <button
-              type="button"
-              onClick={handleClockOut}
-              disabled={busy}
-              className={cn(
-                'px-6 py-3 rounded font-medium text-base transition',
-                busy
-                  ? 'bg-navy-secondary text-silver/50 cursor-not-allowed'
-                  : 'bg-alert text-white hover:opacity-90'
+              {active.clockInLat != null && active.clockInLng != null && (
+                <span className="ml-2 text-silver/60">
+                  · {active.clockInLat.toFixed(4)}, {active.clockInLng.toFixed(4)}
+                </span>
               )}
-            >
-              {busy ? 'Saving…' : 'Clock out'}
-            </button>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={handleClockOut}
+                disabled={busy}
+                className={cn(
+                  'px-6 py-3 rounded font-medium text-base transition',
+                  busy
+                    ? 'bg-navy-secondary text-silver/50 cursor-not-allowed'
+                    : 'bg-alert text-white hover:opacity-90'
+                )}
+              >
+                {busy ? 'Saving…' : 'Clock out'}
+              </button>
+              {!onBreak ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => handleStartBreak('MEAL')}
+                    disabled={breakBusy}
+                    className="px-3 py-2 rounded text-sm border border-gold/40 text-gold hover:bg-gold/10 disabled:opacity-50"
+                  >
+                    Start meal break
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleStartBreak('REST')}
+                    disabled={breakBusy}
+                    className="px-3 py-2 rounded text-sm border border-silver/30 text-silver hover:bg-silver/10 disabled:opacity-50"
+                  >
+                    Start rest break
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleEndBreak}
+                  disabled={breakBusy}
+                  className="px-3 py-2 rounded text-sm border border-gold/40 text-gold hover:bg-gold/10 disabled:opacity-50"
+                >
+                  {breakBusy ? 'Ending…' : 'End break'}
+                </button>
+              )}
+            </div>
           </>
         ) : (
           <>
             <div className="text-xs uppercase tracking-widest text-silver mb-2">
               Not clocked in
             </div>
-            <div className="font-display text-3xl text-white mb-6">
+            <div className="font-display text-3xl text-white mb-4">
               Ready when you are.
             </div>
+            {jobs.length > 0 && (
+              <label className="block mb-4 max-w-xs">
+                <span className="block text-xs uppercase tracking-widest text-silver mb-1">
+                  Job (optional)
+                </span>
+                <select
+                  value={selectedJobId}
+                  onChange={(e) => setSelectedJobId(e.target.value)}
+                  className="w-full px-3 py-2 rounded bg-navy-secondary/60 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white"
+                >
+                  <option value="">— No job tag —</option>
+                  {jobs.map((j) => (
+                    <option key={j.id} value={j.id}>
+                      {j.name}
+                      {j.payRate ? ` · $${j.payRate.toFixed(2)}/hr` : ''}
+                      {j.clientName ? ` · ${j.clientName}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <button
               type="button"
               onClick={handleClockIn}
@@ -163,12 +287,18 @@ export function AssociateTimeView() {
             >
               {busy ? 'Saving…' : 'Clock in'}
             </button>
+            <p className="text-xs text-silver/60 mt-3">
+              Your browser will ask permission to share your location for geofence verification.
+            </p>
           </>
         )}
         {error && (
           <p role="alert" className="text-sm text-alert mt-4">
             {error}
           </p>
+        )}
+        {info && (
+          <p className="text-sm text-silver mt-4">{info}</p>
         )}
       </section>
 
@@ -182,12 +312,13 @@ export function AssociateTimeView() {
           <ul className="space-y-2">
             {entries.map((e) => {
               const badge = statusBadge(e.status);
+              const anomalies = e.anomalies ?? [];
               return (
                 <li
                   key={e.id}
-                  className="flex items-center justify-between gap-4 p-4 bg-navy border border-navy-secondary rounded-lg"
+                  className="flex items-start justify-between gap-4 p-4 bg-navy border border-navy-secondary rounded-lg"
                 >
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <div className="text-white tabular-nums">
                       {new Date(e.clockInAt).toLocaleString()} –{' '}
                       {e.clockOutAt
@@ -196,12 +327,26 @@ export function AssociateTimeView() {
                     </div>
                     <div className="text-sm text-silver">
                       {formatHM(e.minutesElapsed)}
+                      {e.jobName && <span className="ml-2">· {e.jobName}</span>}
+                      {e.payRate && (
+                        <span className="ml-2">· ${e.payRate.toFixed(2)}/hr</span>
+                      )}
                       {e.rejectionReason && (
-                        <span className="ml-2 text-alert">
-                          · {e.rejectionReason}
-                        </span>
+                        <span className="ml-2 text-alert">· {e.rejectionReason}</span>
                       )}
                     </div>
+                    {anomalies.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {anomalies.map((a) => (
+                          <span
+                            key={a}
+                            className="text-[10px] uppercase tracking-widest px-2 py-0.5 rounded border border-alert/40 bg-alert/10 text-alert"
+                          >
+                            {ANOMALY_LABELS[a] ?? a}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <span
                     className={cn(

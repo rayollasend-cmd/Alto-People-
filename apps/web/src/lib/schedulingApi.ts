@@ -1,11 +1,20 @@
 import type {
+  AutoFillResponse,
+  AvailabilityListResponse,
+  AvailabilityReplaceInput,
   Shift,
   ShiftAssignInput,
   ShiftCancelInput,
+  ShiftConflictsResponse,
   ShiftCreateInput,
   ShiftListResponse,
   ShiftStatus,
+  ShiftSwapListResponse,
+  ShiftSwapRequest,
+  ShiftSwapStatus,
   ShiftUpdateInput,
+  SwapCreateInput,
+  SwapDecideInput,
 } from '@alto-people/shared';
 import { apiFetch } from './api';
 
@@ -52,4 +61,84 @@ export function unassignShift(id: string): Promise<Shift> {
 
 export function cancelShift(id: string, body: ShiftCancelInput): Promise<Shift> {
   return apiFetch<Shift>(`/scheduling/shifts/${id}/cancel`, { method: 'POST', body });
+}
+
+/* Phase 15 — conflicts, auto-fill, availability, swaps */
+
+export function getShiftConflicts(
+  shiftId: string,
+  associateId: string
+): Promise<ShiftConflictsResponse> {
+  return apiFetch<ShiftConflictsResponse>(
+    `/scheduling/shifts/${shiftId}/conflicts?associateId=${associateId}`
+  );
+}
+
+export function getAutoFillCandidates(shiftId: string): Promise<AutoFillResponse> {
+  return apiFetch<AutoFillResponse>(`/scheduling/shifts/${shiftId}/auto-fill`);
+}
+
+export function getMyAvailability(): Promise<AvailabilityListResponse> {
+  return apiFetch<AvailabilityListResponse>('/scheduling/me/availability');
+}
+
+export function replaceMyAvailability(
+  body: AvailabilityReplaceInput
+): Promise<AvailabilityListResponse> {
+  return apiFetch<AvailabilityListResponse>('/scheduling/me/availability', {
+    method: 'PUT',
+    body,
+  });
+}
+
+export function createSwap(body: SwapCreateInput): Promise<ShiftSwapRequest> {
+  return apiFetch<ShiftSwapRequest>('/scheduling/swap-requests', {
+    method: 'POST',
+    body,
+  });
+}
+
+export function listSwapsIncoming(): Promise<ShiftSwapListResponse> {
+  return apiFetch<ShiftSwapListResponse>('/scheduling/swap-requests/me/incoming');
+}
+
+export function listSwapsOutgoing(): Promise<ShiftSwapListResponse> {
+  return apiFetch<ShiftSwapListResponse>('/scheduling/swap-requests/me/outgoing');
+}
+
+export function peerAcceptSwap(id: string): Promise<ShiftSwapRequest> {
+  return apiFetch<ShiftSwapRequest>(`/scheduling/swap-requests/${id}/peer-accept`, {
+    method: 'POST',
+  });
+}
+
+export function peerDeclineSwap(id: string): Promise<ShiftSwapRequest> {
+  return apiFetch<ShiftSwapRequest>(`/scheduling/swap-requests/${id}/peer-decline`, {
+    method: 'POST',
+  });
+}
+
+export function cancelSwap(id: string): Promise<ShiftSwapRequest> {
+  return apiFetch<ShiftSwapRequest>(`/scheduling/swap-requests/${id}/cancel`, {
+    method: 'POST',
+  });
+}
+
+export function listAdminSwaps(filters: { status?: ShiftSwapStatus } = {}): Promise<ShiftSwapListResponse> {
+  const qs = filters.status ? `?status=${filters.status}` : '';
+  return apiFetch<ShiftSwapListResponse>(`/scheduling/swap-requests/admin${qs}`);
+}
+
+export function managerApproveSwap(id: string, body: SwapDecideInput = {}): Promise<ShiftSwapRequest> {
+  return apiFetch<ShiftSwapRequest>(`/scheduling/swap-requests/${id}/manager-approve`, {
+    method: 'POST',
+    body,
+  });
+}
+
+export function managerRejectSwap(id: string, body: SwapDecideInput = {}): Promise<ShiftSwapRequest> {
+  return apiFetch<ShiftSwapRequest>(`/scheduling/swap-requests/${id}/manager-reject`, {
+    method: 'POST',
+    body,
+  });
 }

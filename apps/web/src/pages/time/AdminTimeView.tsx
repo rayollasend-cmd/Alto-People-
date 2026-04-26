@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { TimeEntry, TimeEntryStatus } from '@alto-people/shared';
+import type {
+  ActiveDashboardEntry,
+  TimeEntry,
+  TimeEntryStatus,
+} from '@alto-people/shared';
 import {
   approveTimeEntry,
+  getActiveDashboard,
   listAdminTimeEntries,
   rejectTimeEntry,
 } from '@/lib/timeApi';
@@ -27,9 +32,13 @@ interface AdminTimeViewProps {
   canManage: boolean;
 }
 
+type Tab = 'live' | 'queue';
+
 export function AdminTimeView({ canManage }: AdminTimeViewProps) {
+  const [tab, setTab] = useState<Tab>('live');
   const [filter, setFilter] = useState<TimeEntryStatus | 'ALL'>('COMPLETED');
   const [entries, setEntries] = useState<TimeEntry[] | null>(null);
+  const [active, setActive] = useState<ActiveDashboardEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
@@ -45,9 +54,27 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     }
   }, [filter]);
 
+  const refreshActive = useCallback(async () => {
+    try {
+      setError(null);
+      const res = await getActiveDashboard();
+      setActive(res.entries);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to load active dashboard.');
+    }
+  }, []);
+
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    if (tab === 'queue') refresh();
+    else refreshActive();
+  }, [tab, refresh, refreshActive]);
+
+  // Auto-refresh the live tab every 30s while it's open.
+  useEffect(() => {
+    if (tab !== 'live') return;
+    const id = setInterval(refreshActive, 30_000);
+    return () => clearInterval(id);
+  }, [tab, refreshActive]);
 
   const onApprove = async (id: string) => {
     if (pendingId) return;
@@ -90,6 +117,88 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
         </p>
       </header>
 
+      <div role="tablist" className="flex gap-2 mb-5 border-b border-navy-secondary">
+        {(['live', 'queue'] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            role="tab"
+            aria-selected={tab === t}
+            onClick={() => setTab(t)}
+            className={cn(
+              'px-3 py-2 text-sm border-b-2 -mb-px transition capitalize',
+              tab === t
+                ? 'border-gold text-gold'
+                : 'border-transparent text-silver hover:text-white'
+            )}
+          >
+            {t === 'live' ? 'Live (clocked in)' : 'Approval queue'}
+          </button>
+        ))}
+      </div>
+
+      {error && (
+        <p role="alert" className="text-sm text-alert mb-4">
+          {error}
+        </p>
+      )}
+
+      {tab === 'live' && (
+        <>
+          {!active && <p className="text-silver">Loading…</p>}
+          {active && active.length === 0 && (
+            <p className="text-silver">No associates currently clocked in.</p>
+          )}
+          {active && active.length > 0 && (
+            <div className="bg-navy border border-navy-secondary rounded-lg overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-navy-secondary/40 text-silver text-xs uppercase tracking-widest">
+                  <tr>
+                    <th className="px-4 py-3 text-left">Associate</th>
+                    <th className="px-4 py-3 text-left">Client</th>
+                    <th className="px-4 py-3 text-left">Job</th>
+                    <th className="px-4 py-3 text-left">Since</th>
+                    <th className="px-4 py-3 text-left">Elapsed</th>
+                    <th className="px-4 py-3 text-left">Status</th>
+                    <th className="px-4 py-3 text-left">Geofence</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {active.map((e) => (
+                    <tr key={e.id} className="border-t border-navy-secondary/60 text-white">
+                      <td className="px-4 py-3">{e.associateName}</td>
+                      <td className="px-4 py-3 text-silver">{e.clientName ?? '—'}</td>
+                      <td className="px-4 py-3 text-silver">{e.jobName ?? '—'}</td>
+                      <td className="px-4 py-3 tabular-nums text-silver">
+                        {new Date(e.clockInAt).toLocaleTimeString()}
+                      </td>
+                      <td className="px-4 py-3 tabular-nums">{formatHM(e.minutesElapsed)}</td>
+                      <td className="px-4 py-3 text-xs uppercase tracking-widest">
+                        {e.onBreak ? (
+                          <span className="text-gold">On break</span>
+                        ) : (
+                          <span className="text-emerald-300">Working</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-xs uppercase tracking-widest">
+                        {e.geofenceOk === null && <span className="text-silver/60">N/A</span>}
+                        {e.geofenceOk === true && <span className="text-emerald-300">OK</span>}
+                        {e.geofenceOk === false && <span className="text-alert">Off-site</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="px-4 py-2 text-[10px] uppercase tracking-widest text-silver/60 border-t border-navy-secondary/60">
+                Auto-refreshes every 30s
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {tab === 'queue' && (
+        <>
       <div className="flex flex-wrap gap-2 mb-5">
         {STATUS_FILTERS.map((f) => (
           <button
@@ -107,12 +216,6 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
           </button>
         ))}
       </div>
-
-      {error && (
-        <p role="alert" className="text-sm text-alert mb-4">
-          {error}
-        </p>
-      )}
 
       {!entries && <p className="text-silver">Loading…</p>}
       {entries && entries.length === 0 && (
@@ -199,6 +302,8 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
             </tbody>
           </table>
         </div>
+      )}
+        </>
       )}
     </div>
   );

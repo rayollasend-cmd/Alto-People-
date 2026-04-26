@@ -3,6 +3,8 @@ import type { Shift } from '@alto-people/shared';
 import { listMyShifts } from '@/lib/schedulingApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { AvailabilityEditor } from './AvailabilityEditor';
+import { SwapMarketplace } from './SwapMarketplace';
 
 function formatRange(s: Shift): string {
   const a = new Date(s.startsAt);
@@ -95,6 +97,11 @@ export function AssociateScheduleView() {
           })}
         </ul>
       )}
+
+      <div className="mt-8">
+        <SwapMarketplace />
+        <AvailabilityEditor />
+      </div>
     </div>
   );
 }

@@ -1,10 +1,21 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { ClientSummary, Shift, ShiftStatus } from '@alto-people/shared';
+import type {
+  AutoFillCandidate,
+  ClientSummary,
+  Shift,
+  ShiftStatus,
+  ShiftSwapRequest,
+} from '@alto-people/shared';
 import {
   assignShift,
   cancelShift,
   createShift,
+  getAutoFillCandidates,
+  getShiftConflicts,
+  listAdminSwaps,
   listShifts,
+  managerApproveSwap,
+  managerRejectSwap,
   unassignShift,
 } from '@/lib/schedulingApi';
 import { apiFetch, ApiError } from '@/lib/api';
@@ -63,13 +74,66 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     })();
   }, [canManage]);
 
+  const [autoFillForShift, setAutoFillForShift] = useState<{
+    shiftId: string;
+    candidates: AutoFillCandidate[];
+  } | null>(null);
+
   const onAssign = async (id: string) => {
     if (pendingId) return;
     const associateId = window.prompt('Associate ID to assign?');
     if (!associateId) return;
+    // Check conflicts before assigning — surface them to HR but don't block.
     setPendingId(id);
     try {
+      const c = await getShiftConflicts(id, associateId).catch(() => null);
+      if (c && c.conflicts.length > 0) {
+        const summary = c.conflicts
+          .map(
+            (cf) =>
+              `• ${cf.conflictingPosition} @ ${cf.conflictingClientName ?? '—'} ${new Date(
+                cf.conflictingStartsAt
+              ).toLocaleString()}`
+          )
+          .join('\n');
+        const proceed = window.confirm(
+          `This associate has ${c.conflicts.length} overlapping shift${
+            c.conflicts.length === 1 ? '' : 's'
+          }:\n\n${summary}\n\nAssign anyway?`
+        );
+        if (!proceed) {
+          setPendingId(null);
+          return;
+        }
+      }
       await assignShift(id, { associateId });
+      await refresh();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Assign failed.');
+    } finally {
+      setPendingId(null);
+    }
+  };
+
+  const onAutoFill = async (id: string) => {
+    if (pendingId) return;
+    setPendingId(id);
+    try {
+      const res = await getAutoFillCandidates(id);
+      setAutoFillForShift({ shiftId: id, candidates: res.candidates });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Auto-fill failed.');
+    } finally {
+      setPendingId(null);
+    }
+  };
+
+  const onPickAutoFill = async (associateId: string) => {
+    if (!autoFillForShift) return;
+    setPendingId(autoFillForShift.shiftId);
+    try {
+      await assignShift(autoFillForShift.shiftId, { associateId });
+      setAutoFillForShift(null);
       await refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Assign failed.');
@@ -204,14 +268,24 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                   {canManage && (
                     <td className="px-4 py-3 text-right whitespace-nowrap space-x-2">
                       {(s.status === 'OPEN' || s.status === 'DRAFT') && (
-                        <button
-                          type="button"
-                          onClick={() => onAssign(s.id)}
-                          disabled={pendingId === s.id}
-                          className="text-xs px-2 py-1 rounded border border-gold/40 text-gold hover:bg-gold/10 disabled:opacity-50"
-                        >
-                          Assign
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => onAutoFill(s.id)}
+                            disabled={pendingId === s.id}
+                            className="text-xs px-2 py-1 rounded border border-gold/40 text-gold hover:bg-gold/10 disabled:opacity-50"
+                          >
+                            Auto-fill
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onAssign(s.id)}
+                            disabled={pendingId === s.id}
+                            className="text-xs px-2 py-1 rounded border border-silver/40 text-silver hover:bg-silver/10 disabled:opacity-50"
+                          >
+                            Assign…
+                          </button>
+                        </>
                       )}
                       {s.status === 'ASSIGNED' && (
                         <button
@@ -241,7 +315,177 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           </table>
         </div>
       )}
+
+      {canManage && <AdminSwapsPanel />}
+
+      {autoFillForShift && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 bg-midnight/80 flex items-center justify-center z-50 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setAutoFillForShift(null);
+          }}
+        >
+          <div className="bg-navy border border-gold/40 rounded-lg max-w-2xl w-full max-h-[80vh] overflow-y-auto p-5">
+            <div className="flex items-baseline justify-between mb-3">
+              <h2 className="font-display text-2xl text-white">Suggested associates</h2>
+              <button
+                type="button"
+                onClick={() => setAutoFillForShift(null)}
+                className="text-silver hover:text-white text-sm"
+              >
+                Close
+              </button>
+            </div>
+            {autoFillForShift.candidates.length === 0 && (
+              <p className="text-silver">No candidates returned.</p>
+            )}
+            {autoFillForShift.candidates.length > 0 && (
+              <ul className="space-y-2">
+                {autoFillForShift.candidates.slice(0, 15).map((c) => (
+                  <li
+                    key={c.associateId}
+                    className="flex items-center justify-between gap-3 p-3 bg-navy-secondary/30 border border-navy-secondary rounded"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="text-white text-sm">{c.associateName}</div>
+                      <div className="text-xs text-silver flex flex-wrap gap-x-3">
+                        <span className={c.matchesAvailability ? 'text-emerald-300' : 'text-silver/60'}>
+                          {c.matchesAvailability ? '✓ Available' : '— No availability'}
+                        </span>
+                        <span className={c.noConflict ? 'text-emerald-300' : 'text-alert'}>
+                          {c.noConflict ? '✓ No conflict' : '⚠ Conflict'}
+                        </span>
+                        <span className="tabular-nums">
+                          {Math.round(c.weeklyMinutesActual / 60)}h worked this week
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-gold tabular-nums">
+                        {(c.score * 100).toFixed(0)}%
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => onPickAutoFill(c.associateId)}
+                        className="text-xs px-3 py-1 rounded border border-gold/40 text-gold hover:bg-gold/10"
+                      >
+                        Assign
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+const SWAP_STATUS_CLS: Record<ShiftSwapRequest['status'], string> = {
+  PENDING_PEER: 'text-gold',
+  PEER_ACCEPTED: 'text-emerald-300',
+  PEER_DECLINED: 'text-alert',
+  MANAGER_APPROVED: 'text-emerald-300',
+  MANAGER_REJECTED: 'text-alert',
+  CANCELLED: 'text-silver/60',
+};
+
+function AdminSwapsPanel() {
+  const [items, setItems] = useState<ShiftSwapRequest[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pendingId, setPendingId] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      setError(null);
+      const res = await listAdminSwaps({ status: 'PEER_ACCEPTED' });
+      setItems(res.requests);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to load swaps.');
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const wrap = async (id: string, fn: () => Promise<unknown>) => {
+    setPendingId(id);
+    try {
+      await fn();
+      await refresh();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Action failed.');
+    } finally {
+      setPendingId(null);
+    }
+  };
+
+  return (
+    <section className="mt-8 bg-navy border border-navy-secondary rounded-lg p-5">
+      <h2 className="font-display text-2xl text-white mb-3">
+        Swap requests awaiting your approval
+      </h2>
+      {error && (
+        <p role="alert" className="text-sm text-alert mb-3">
+          {error}
+        </p>
+      )}
+      {!items && <p className="text-silver">Loading…</p>}
+      {items && items.length === 0 && (
+        <p className="text-silver">No swap requests need your approval.</p>
+      )}
+      {items && items.length > 0 && (
+        <ul className="space-y-2">
+          {items.map((s) => (
+            <li
+              key={s.id}
+              className="p-3 bg-navy-secondary/30 border border-navy-secondary rounded flex items-start justify-between gap-3 flex-wrap"
+            >
+              <div>
+                <div className="text-white text-sm">
+                  <span className="font-medium">{s.requesterName}</span>
+                  {' → '}
+                  <span className="font-medium">{s.counterpartyName}</span>
+                </div>
+                <div className="text-xs text-silver">
+                  {s.shiftPosition} · {s.shiftClientName ?? '—'} ·{' '}
+                  {new Date(s.shiftStartsAt).toLocaleString()}
+                </div>
+                {s.note && (
+                  <div className="text-xs text-silver/70 italic mt-1">"{s.note}"</div>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={cn('text-[10px] uppercase tracking-widest', SWAP_STATUS_CLS[s.status])}>
+                  {s.status.replace(/_/g, ' ')}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => wrap(s.id, () => managerApproveSwap(s.id))}
+                  disabled={pendingId === s.id}
+                  className="text-xs px-2 py-1 rounded border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-50"
+                >
+                  Approve
+                </button>
+                <button
+                  type="button"
+                  onClick={() => wrap(s.id, () => managerRejectSwap(s.id))}
+                  disabled={pendingId === s.id}
+                  className="text-xs px-2 py-1 rounded border border-alert/40 text-alert hover:bg-alert/10 disabled:opacity-50"
+                >
+                  Reject
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
