@@ -22,6 +22,7 @@ import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { generateInviteToken } from '../lib/inviteToken.js';
+import { sendReminderForUser } from '../lib/inviteReminder.js';
 import { send } from '../lib/notifications.js';
 import {
   assertCanModifyApplication,
@@ -697,6 +698,65 @@ onboardingRouter.post('/applications/:id/policy-ack', async (req, res, next) => 
     next(err);
   }
 });
+
+/* RESEND INVITE (HR/Ops only) ------------------------------------------ */
+// Rotates the invite token for the application's associate user, sends a
+// fresh "your new onboarding link" email, and kills the previous link. Use
+// when a user lost the original email or the link expired. 409 if the user
+// already accepted (status=ACTIVE with a passwordHash).
+onboardingRouter.post(
+  '/applications/:id/resend-invite',
+  MANAGE,
+  async (req, res, next) => {
+    try {
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+      const user = await prisma.user.findFirst({
+        where: { associateId: app.associateId },
+      });
+      if (!user) {
+        throw new HttpError(404, 'no_invited_user', 'No user found for this associate');
+      }
+      if (user.status === 'ACTIVE' && user.passwordHash) {
+        throw new HttpError(
+          409,
+          'user_already_active',
+          'This associate has already accepted the invitation.'
+        );
+      }
+      // Coerce them back to INVITED if they were DISABLED — the rotation
+      // wipes any stale state.
+      if (user.status !== 'INVITED') {
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { status: 'INVITED', passwordHash: null },
+        });
+      }
+
+      const result = await sendReminderForUser(prisma, user.id, { reason: 'manual' });
+
+      await recordOnboardingEvent({
+        actorUserId: req.user!.id,
+        action: 'onboarding.invite_resent',
+        applicationId: app.id,
+        clientId: app.clientId,
+        metadata: { invitedUserId: user.id, externalRef: result.externalRef },
+        req,
+      });
+
+      res.status(200).json({
+        invitedUserId: user.id,
+        // Same dev-stub affordance as POST /applications: only show the
+        // raw link when Resend isn't configured.
+        inviteUrl:
+          env.RESEND_API_KEY && env.RESEND_FROM
+            ? null
+            : `${env.APP_BASE_URL}/accept-invite/${result.rawToken}`,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 /* TASK SKIP (HR/Ops only, demo) ----------------------------------------- */
 onboardingRouter.post(

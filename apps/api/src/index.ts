@@ -2,6 +2,7 @@ import { env } from './config/env.js';
 import { createApp } from './app.js';
 import { prisma } from './db.js';
 import { startKeepAlive } from './lib/keepalive.js';
+import { startInviteReminderCron } from './lib/inviteReminder.js';
 
 const app = createApp();
 
@@ -30,4 +31,6 @@ app.listen(env.PORT, async () => {
         '(uses Neon compute hours; set KEEP_ALIVE_INTERVAL_SECONDS=0 to disable)'
     );
   }
+
+  startInviteReminderCron();
 });

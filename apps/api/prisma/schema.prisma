@@ -767,11 +767,19 @@ model InviteToken {
   expiresAt   DateTime  @db.Timestamptz(6)
   // Single-use: set on accept-invite. Lookups exclude consumedAt != NULL.
   consumedAt  DateTime? @db.Timestamptz(6)
+  // Set the first time a reminder email goes out for this token. The 48h
+  // sweep skips rows where this is non-null so users get reminded at most
+  // once per token. HR-triggered resend always rotates the token (creates
+  // a new row), so this never blocks a manual resend.
+  reminderSentAt DateTime? @db.Timestamptz(6)
   createdAt   DateTime  @default(now()) @db.Timestamptz(6)
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, consumedAt])
   @@index([expiresAt])
+  // Sweep query filters by (consumedAt IS NULL, reminderSentAt IS NULL,
+  // expiresAt > now, createdAt < threshold). Composite index covers it.
+  @@index([consumedAt, reminderSentAt, createdAt])
 }
 
 model PerformanceReview {

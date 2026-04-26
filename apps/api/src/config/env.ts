@@ -35,6 +35,10 @@ const EnvSchema = z.object({
   RESEND_API_KEY: z.string().optional(),
   // Sender shown in real Resend emails. Required only when RESEND_API_KEY is set.
   RESEND_FROM: z.string().optional(),
+  // Phase 17 — invite reminder cron. 0 (default) disables. Set e.g. 1800
+  // (every 30 min) in production. The threshold for "stale" is hard-coded
+  // at 48h in lib/inviteReminder.ts; this only controls scan cadence.
+  INVITE_REMINDER_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(0),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
