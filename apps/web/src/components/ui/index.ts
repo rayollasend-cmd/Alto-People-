@@ -5,6 +5,7 @@
 export * from './Badge';
 export * from './Button';
 export * from './Card';
+export * from './CommandPalette';
 export * from './Dialog';
 export * from './DropdownMenu';
 export * from './EmptyState';
