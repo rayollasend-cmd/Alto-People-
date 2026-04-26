@@ -1,8 +1,11 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { Lock, Mail, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { ApiError, NetworkError } from '@/lib/api';
-import { cn } from '@/lib/cn';
+import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Input';
+import { Label, FormHint } from '@/components/ui/Label';
 
 interface LocationState {
   from?: string;
@@ -42,10 +45,12 @@ export function Login() {
     }
   };
 
+  const canSubmit = !!email && password.length >= 12 && !submitting;
+
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-gradient-to-br from-midnight via-navy to-navy-secondary">
       <div className="w-full max-w-md">
-        <div className="text-center mb-8">
+        <div className="text-center mb-8 animate-fade-in">
           <h1 className="font-display text-5xl md:text-6xl text-gold mb-2 leading-none">
             Alto People
           </h1>
@@ -56,7 +61,7 @@ export function Login() {
 
         <form
           onSubmit={handleSubmit}
-          className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 shadow-2xl"
+          className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 shadow-2xl animate-zoom-in"
           noValidate
         >
           <h2 className="font-display text-2xl md:text-3xl text-white mb-1">
@@ -66,59 +71,69 @@ export function Login() {
             Use your Alto HR credentials.
           </p>
 
-          <label className="block mb-4">
-            <span className="block text-xs uppercase tracking-widest text-silver mb-1.5">
-              Email
-            </span>
-            <input
-              type="email"
-              autoComplete="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-3 py-2.5 rounded bg-navy-secondary/60 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white"
-            />
-          </label>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="login-email" required>
+                Email
+              </Label>
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/60 pointer-events-none" />
+                <Input
+                  id="login-email"
+                  type="email"
+                  autoComplete="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+            </div>
 
-          <label className="block mb-2">
-            <span className="block text-xs uppercase tracking-widest text-silver mb-1.5">
-              Password
-            </span>
-            <input
-              type="password"
-              autoComplete="current-password"
-              required
-              minLength={12}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-3 py-2.5 rounded bg-navy-secondary/60 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white"
-            />
-          </label>
+            <div>
+              <Label htmlFor="login-password" required>
+                Password
+              </Label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/60 pointer-events-none" />
+                <Input
+                  id="login-password"
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  minLength={12}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+              <FormHint>Minimum 12 characters.</FormHint>
+            </div>
+          </div>
 
           {error && (
-            <p
-              role="alert"
-              className="text-sm text-alert mt-4 mb-2"
-            >
+            <div className="mt-4 p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm" role="alert">
               {error}
-            </p>
+            </div>
           )}
 
-          <button
+          <Button
             type="submit"
-            disabled={submitting || !email || password.length < 12}
-            className={cn(
-              'w-full py-3 mt-4 rounded font-medium transition',
-              submitting || !email || password.length < 12
-                ? 'bg-navy-secondary text-silver/50 cursor-not-allowed'
-                : 'bg-gold text-navy hover:bg-gold-bright'
-            )}
+            size="lg"
+            disabled={!canSubmit}
+            loading={submitting}
+            className="w-full mt-6"
           >
             {submitting ? 'Signing in…' : 'Sign in'}
-          </button>
+          </Button>
+
+          <div className="mt-6 flex items-center justify-center gap-1.5 text-[10px] uppercase tracking-widest text-silver/60">
+            <ShieldCheck className="h-3 w-3" aria-hidden="true" />
+            Secured by Alto HR
+          </div>
 
           {import.meta.env.DEV && (
-            <p className="text-center text-xs text-silver/60 mt-6">
+            <p className="text-center text-xs text-silver/60 mt-4">
               Dev seed: admin@altohr.com / alto-admin-dev
             </p>
           )}

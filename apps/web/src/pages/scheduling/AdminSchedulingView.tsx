@@ -1,4 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
+import {
+  AlertTriangle,
+  Calendar,
+  CheckCircle2,
+  Plus,
+  Sparkles,
+  UserPlus,
+  X,
+} from 'lucide-react';
 import type {
   AutoFillCandidate,
   ClientSummary,
@@ -19,6 +28,30 @@ import {
   unassignShift,
 } from '@/lib/schedulingApi';
 import { apiFetch, ApiError } from '@/lib/api';
+import { Button } from '@/components/ui/Button';
+import { Badge } from '@/components/ui/Badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/Dialog';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Input, Textarea } from '@/components/ui/Input';
+import { Label } from '@/components/ui/Label';
+import { Skeleton } from '@/components/ui/Skeleton';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/Table';
+import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
 
 const STATUS_FILTERS: Array<{ value: ShiftStatus | 'ALL'; label: string }> = [
@@ -29,6 +62,17 @@ const STATUS_FILTERS: Array<{ value: ShiftStatus | 'ALL'; label: string }> = [
   { value: 'CANCELLED', label: 'Cancelled' },
   { value: 'ALL', label: 'All' },
 ];
+
+const STATUS_VARIANT: Record<
+  ShiftStatus,
+  'success' | 'pending' | 'destructive' | 'default' | 'accent'
+> = {
+  OPEN: 'pending',
+  ASSIGNED: 'success',
+  DRAFT: 'default',
+  COMPLETED: 'success',
+  CANCELLED: 'destructive',
+};
 
 function fmt(iso: string): string {
   return new Date(iso).toLocaleString();
@@ -43,16 +87,23 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const [shifts, setShifts] = useState<Shift[] | null>(null);
   const [clients, setClients] = useState<ClientSummary[]>([]);
   const [showCreate, setShowCreate] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
+
+  // Dialog state — replaces window.prompt + window.confirm.
+  const [assignTarget, setAssignTarget] = useState<Shift | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<Shift | null>(null);
+  const [autoFillForShift, setAutoFillForShift] = useState<{
+    shiftId: string;
+    candidates: AutoFillCandidate[];
+  } | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      setError(null);
       const res = await listShifts(filter === 'ALL' ? {} : { status: filter });
       setShifts(res.shifts);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
+      const msg = err instanceof ApiError ? err.message : 'Failed to load shifts.';
+      toast.error(msg);
     }
   }, [filter]);
 
@@ -67,53 +118,10 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         const res = await apiFetch<{ clients: ClientSummary[] }>('/clients');
         setClients(res.clients);
       } catch {
-        // The Create form will fall back to a free-text clientId entry if
-        // /clients isn't accessible (e.g., this user has view:scheduling but
-        // not view:clients).
+        // Silent — Create form falls back to free-text Client UUID entry.
       }
     })();
   }, [canManage]);
-
-  const [autoFillForShift, setAutoFillForShift] = useState<{
-    shiftId: string;
-    candidates: AutoFillCandidate[];
-  } | null>(null);
-
-  const onAssign = async (id: string) => {
-    if (pendingId) return;
-    const associateId = window.prompt('Associate ID to assign?');
-    if (!associateId) return;
-    // Check conflicts before assigning — surface them to HR but don't block.
-    setPendingId(id);
-    try {
-      const c = await getShiftConflicts(id, associateId).catch(() => null);
-      if (c && c.conflicts.length > 0) {
-        const summary = c.conflicts
-          .map(
-            (cf) =>
-              `• ${cf.conflictingPosition} @ ${cf.conflictingClientName ?? '—'} ${new Date(
-                cf.conflictingStartsAt
-              ).toLocaleString()}`
-          )
-          .join('\n');
-        const proceed = window.confirm(
-          `This associate has ${c.conflicts.length} overlapping shift${
-            c.conflicts.length === 1 ? '' : 's'
-          }:\n\n${summary}\n\nAssign anyway?`
-        );
-        if (!proceed) {
-          setPendingId(null);
-          return;
-        }
-      }
-      await assignShift(id, { associateId });
-      await refresh();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Assign failed.');
-    } finally {
-      setPendingId(null);
-    }
-  };
 
   const onAutoFill = async (id: string) => {
     if (pendingId) return;
@@ -122,7 +130,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       const res = await getAutoFillCandidates(id);
       setAutoFillForShift({ shiftId: id, candidates: res.candidates });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Auto-fill failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Auto-fill failed.');
     } finally {
       setPendingId(null);
     }
@@ -134,37 +142,24 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     try {
       await assignShift(autoFillForShift.shiftId, { associateId });
       setAutoFillForShift(null);
+      toast.success('Shift assigned.');
       await refresh();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Assign failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Assign failed.');
     } finally {
       setPendingId(null);
     }
   };
 
-  const onUnassign = async (id: string) => {
+  const onUnassign = async (s: Shift) => {
     if (pendingId) return;
-    setPendingId(id);
+    setPendingId(s.id);
     try {
-      await unassignShift(id);
+      await unassignShift(s.id);
+      toast.success('Shift unassigned.');
       await refresh();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Unassign failed.');
-    } finally {
-      setPendingId(null);
-    }
-  };
-
-  const onCancel = async (id: string) => {
-    if (pendingId) return;
-    const reason = window.prompt('Cancellation reason?');
-    if (!reason) return;
-    setPendingId(id);
-    try {
-      await cancelShift(id, { reason });
-      await refresh();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Cancel failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Unassign failed.');
     } finally {
       setPendingId(null);
     }
@@ -184,21 +179,21 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           </p>
         </div>
         {canManage && (
-          <button
-            type="button"
-            onClick={() => setShowCreate((v) => !v)}
-            className="px-4 py-2 rounded font-medium bg-gold text-navy hover:bg-gold-bright"
-          >
-            {showCreate ? 'Close' : '+ New shift'}
-          </button>
+          <Button onClick={() => setShowCreate(true)}>
+            <Plus className="h-4 w-4" />
+            New shift
+          </Button>
         )}
       </header>
 
-      {showCreate && canManage && (
-        <CreateShiftForm
+      {canManage && (
+        <CreateShiftDialog
+          open={showCreate}
           clients={clients}
+          onOpenChange={setShowCreate}
           onCreated={() => {
             setShowCreate(false);
+            toast.success('Shift created.');
             refresh();
           }}
         />
@@ -211,10 +206,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             type="button"
             onClick={() => setFilter(f.value)}
             className={cn(
-              'px-3 py-1.5 rounded text-sm border transition',
+              'px-3 py-1.5 rounded-md text-sm border transition-colors',
+              'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
               filter === f.value
                 ? 'border-gold text-gold bg-gold/10'
-                : 'border-navy-secondary text-silver hover:text-white'
+                : 'border-navy-secondary text-silver hover:text-white hover:border-silver/40'
             )}
           >
             {f.label}
@@ -222,190 +218,489 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         ))}
       </div>
 
-      {error && (
-        <p role="alert" className="text-sm text-alert mb-4">
-          {error}
-        </p>
+      {!shifts && (
+        <Card>
+          <div className="p-2 space-y-2">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-14" />
+            ))}
+          </div>
+        </Card>
       )}
-
-      {!shifts && <p className="text-silver">Loading…</p>}
       {shifts && shifts.length === 0 && (
-        <p className="text-silver">No shifts match this filter.</p>
+        <EmptyState
+          icon={Calendar}
+          title="No shifts match this filter"
+          description={
+            canManage
+              ? 'Try a different filter, or create a new shift to start staffing.'
+              : 'Try a different filter to see other shifts.'
+          }
+          action={
+            canManage ? (
+              <Button onClick={() => setShowCreate(true)}>
+                <Plus className="h-4 w-4" />
+                New shift
+              </Button>
+            ) : undefined
+          }
+        />
       )}
 
       {shifts && shifts.length > 0 && (
-        <div className="bg-navy border border-navy-secondary rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-navy-secondary/40 text-silver text-xs uppercase tracking-widest">
-              <tr>
-                <th className="px-4 py-3 text-left">Position</th>
-                <th className="px-4 py-3 text-left">Client</th>
-                <th className="px-4 py-3 text-left">Starts</th>
-                <th className="px-4 py-3 text-left">Ends</th>
-                <th className="px-4 py-3 text-left">Assigned</th>
-                <th className="px-4 py-3 text-left">Status</th>
-                {canManage && <th className="px-4 py-3 text-right">Actions</th>}
-              </tr>
-            </thead>
-            <tbody>
+        <Card className="overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Position</TableHead>
+                <TableHead>Client</TableHead>
+                <TableHead>Starts</TableHead>
+                <TableHead>Ends</TableHead>
+                <TableHead>Assigned</TableHead>
+                <TableHead>Status</TableHead>
+                {canManage && <TableHead className="text-right">Actions</TableHead>}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {shifts.map((s) => (
-                <tr key={s.id} className="border-t border-navy-secondary/60 text-white">
-                  <td className="px-4 py-3">{s.position}</td>
-                  <td className="px-4 py-3 text-silver">{s.clientName ?? '—'}</td>
-                  <td className="px-4 py-3 tabular-nums">{fmt(s.startsAt)}</td>
-                  <td className="px-4 py-3 tabular-nums">{fmt(s.endsAt)}</td>
-                  <td className="px-4 py-3 text-silver">
+                <TableRow key={s.id}>
+                  <TableCell className="font-medium">{s.position}</TableCell>
+                  <TableCell className="text-silver">{s.clientName ?? '—'}</TableCell>
+                  <TableCell className="tabular-nums">{fmt(s.startsAt)}</TableCell>
+                  <TableCell className="tabular-nums">{fmt(s.endsAt)}</TableCell>
+                  <TableCell className="text-silver">
                     {s.assignedAssociateName ?? '—'}
-                  </td>
-                  <td className="px-4 py-3 text-xs uppercase tracking-widest text-silver">
-                    {s.status}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={STATUS_VARIANT[s.status] ?? 'default'}>
+                      {s.status}
+                    </Badge>
                     {s.cancellationReason && (
-                      <div className="text-alert text-[10px] normal-case tracking-normal mt-1">
+                      <div className="text-alert text-[10px] mt-1">
                         {s.cancellationReason}
                       </div>
                     )}
-                  </td>
+                  </TableCell>
                   {canManage && (
-                    <td className="px-4 py-3 text-right whitespace-nowrap space-x-2">
-                      {(s.status === 'OPEN' || s.status === 'DRAFT') && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => onAutoFill(s.id)}
+                    <TableCell className="text-right whitespace-nowrap">
+                      <div className="inline-flex gap-1.5">
+                        {(s.status === 'OPEN' || s.status === 'DRAFT') && (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => onAutoFill(s.id)}
+                              disabled={pendingId === s.id}
+                            >
+                              <Sparkles className="h-3.5 w-3.5" />
+                              Auto-fill
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => setAssignTarget(s)}
+                              disabled={pendingId === s.id}
+                            >
+                              <UserPlus className="h-3.5 w-3.5" />
+                              Assign
+                            </Button>
+                          </>
+                        )}
+                        {s.status === 'ASSIGNED' && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => onUnassign(s)}
                             disabled={pendingId === s.id}
-                            className="text-xs px-2 py-1 rounded border border-gold/40 text-gold hover:bg-gold/10 disabled:opacity-50"
                           >
-                            Auto-fill
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => onAssign(s.id)}
+                            Unassign
+                          </Button>
+                        )}
+                        {s.status !== 'COMPLETED' && s.status !== 'CANCELLED' && (
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            onClick={() => setCancelTarget(s)}
                             disabled={pendingId === s.id}
-                            className="text-xs px-2 py-1 rounded border border-silver/40 text-silver hover:bg-silver/10 disabled:opacity-50"
                           >
-                            Assign…
-                          </button>
-                        </>
-                      )}
-                      {s.status === 'ASSIGNED' && (
-                        <button
-                          type="button"
-                          onClick={() => onUnassign(s.id)}
-                          disabled={pendingId === s.id}
-                          className="text-xs px-2 py-1 rounded border border-silver/40 text-silver hover:bg-silver/10 disabled:opacity-50"
-                        >
-                          Unassign
-                        </button>
-                      )}
-                      {s.status !== 'COMPLETED' && s.status !== 'CANCELLED' && (
-                        <button
-                          type="button"
-                          onClick={() => onCancel(s.id)}
-                          disabled={pendingId === s.id}
-                          className="text-xs px-2 py-1 rounded border border-alert/40 text-alert hover:bg-alert/10 disabled:opacity-50"
-                        >
-                          Cancel
-                        </button>
-                      )}
-                    </td>
+                            <X className="h-3.5 w-3.5" />
+                            Cancel
+                          </Button>
+                        )}
+                      </div>
+                    </TableCell>
                   )}
-                </tr>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
+        </Card>
       )}
 
       {canManage && <AdminSwapsPanel />}
 
-      {autoFillForShift && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 bg-midnight/80 flex items-center justify-center z-50 p-4"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setAutoFillForShift(null);
-          }}
-        >
-          <div className="bg-navy border border-gold/40 rounded-lg max-w-2xl w-full max-h-[80vh] overflow-y-auto p-5">
-            <div className="flex items-baseline justify-between mb-3">
-              <h2 className="font-display text-2xl text-white">Suggested associates</h2>
-              <button
-                type="button"
-                onClick={() => setAutoFillForShift(null)}
-                className="text-silver hover:text-white text-sm"
-              >
-                Close
-              </button>
-            </div>
-            {autoFillForShift.candidates.length === 0 && (
-              <p className="text-silver">No candidates returned.</p>
-            )}
-            {autoFillForShift.candidates.length > 0 && (
-              <ul className="space-y-2">
-                {autoFillForShift.candidates.slice(0, 15).map((c) => (
-                  <li
-                    key={c.associateId}
-                    className="flex items-center justify-between gap-3 p-3 bg-navy-secondary/30 border border-navy-secondary rounded"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="text-white text-sm">{c.associateName}</div>
-                      <div className="text-xs text-silver flex flex-wrap gap-x-3">
-                        <span className={c.matchesAvailability ? 'text-emerald-300' : 'text-silver/60'}>
-                          {c.matchesAvailability ? '✓ Available' : '— No availability'}
-                        </span>
-                        <span className={c.noConflict ? 'text-emerald-300' : 'text-alert'}>
-                          {c.noConflict ? '✓ No conflict' : '⚠ Conflict'}
-                        </span>
-                        <span className="tabular-nums">
-                          {Math.round(c.weeklyMinutesActual / 60)}h worked this week
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-xs text-gold tabular-nums">
-                        {(c.score * 100).toFixed(0)}%
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => onPickAutoFill(c.associateId)}
-                        className="text-xs px-3 py-1 rounded border border-gold/40 text-gold hover:bg-gold/10"
-                      >
-                        Assign
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </div>
-      )}
+      {/* Assign-with-conflicts dialog */}
+      <AssignDialog
+        target={assignTarget}
+        onClose={() => setAssignTarget(null)}
+        onAssigned={() => {
+          setAssignTarget(null);
+          toast.success('Shift assigned.');
+          refresh();
+        }}
+      />
+
+      {/* Cancel-with-reason dialog */}
+      <CancelDialog
+        target={cancelTarget}
+        onClose={() => setCancelTarget(null)}
+        onCancelled={() => {
+          setCancelTarget(null);
+          toast.success('Shift cancelled.');
+          refresh();
+        }}
+      />
+
+      {/* Auto-fill candidates dialog */}
+      <AutoFillDialog
+        target={autoFillForShift}
+        onClose={() => setAutoFillForShift(null)}
+        onPick={onPickAutoFill}
+        pending={pendingId !== null}
+      />
     </div>
   );
 }
 
-const SWAP_STATUS_CLS: Record<ShiftSwapRequest['status'], string> = {
-  PENDING_PEER: 'text-gold',
-  PEER_ACCEPTED: 'text-emerald-300',
-  PEER_DECLINED: 'text-alert',
-  MANAGER_APPROVED: 'text-emerald-300',
-  MANAGER_REJECTED: 'text-alert',
-  CANCELLED: 'text-silver/60',
+/* ===== Assign dialog ====================================================== */
+
+function AssignDialog({
+  target,
+  onClose,
+  onAssigned,
+}: {
+  target: Shift | null;
+  onClose: () => void;
+  onAssigned: () => void;
+}) {
+  const [associateId, setAssociateId] = useState('');
+  const [conflicts, setConflicts] = useState<
+    null | Array<{ position: string; client: string | null; startsAt: string }>
+  >(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Reset on open.
+  useEffect(() => {
+    if (target) {
+      setAssociateId('');
+      setConflicts(null);
+      setSubmitting(false);
+    }
+  }, [target]);
+
+  const submit = async (force = false) => {
+    if (!target || !associateId.trim()) return;
+    setSubmitting(true);
+    try {
+      if (!force) {
+        const c = await getShiftConflicts(target.id, associateId).catch(() => null);
+        if (c && c.conflicts.length > 0) {
+          setConflicts(
+            c.conflicts.map((cf) => ({
+              position: cf.conflictingPosition,
+              client: cf.conflictingClientName,
+              startsAt: cf.conflictingStartsAt,
+            }))
+          );
+          setSubmitting(false);
+          return;
+        }
+      }
+      await assignShift(target.id, { associateId });
+      onAssigned();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Assign failed.');
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open={target !== null} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Assign shift</DialogTitle>
+          <DialogDescription>
+            {target && (
+              <>
+                {target.position} at {target.clientName ?? '—'} ·{' '}
+                {fmt(target.startsAt)}
+              </>
+            )}
+          </DialogDescription>
+        </DialogHeader>
+
+        {!conflicts && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              submit(false);
+            }}
+            className="space-y-3"
+          >
+            <div>
+              <Label htmlFor="assign-id" required>
+                Associate ID
+              </Label>
+              <Input
+                id="assign-id"
+                value={associateId}
+                onChange={(e) => setAssociateId(e.target.value)}
+                placeholder="UUID"
+                autoFocus
+                required
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="secondary" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button type="submit" loading={submitting} disabled={!associateId.trim()}>
+                Assign
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
+
+        {conflicts && (
+          <div className="space-y-3">
+            <div className="flex items-start gap-2 p-3 rounded-md border border-warning/40 bg-warning/10 text-sm">
+              <AlertTriangle className="h-4 w-4 text-warning mt-0.5 shrink-0" />
+              <div>
+                <div className="font-medium text-white">
+                  This associate has {conflicts.length} overlapping shift
+                  {conflicts.length === 1 ? '' : 's'}.
+                </div>
+                <ul className="mt-2 space-y-1 text-silver">
+                  {conflicts.map((c, i) => (
+                    <li key={i} className="text-xs">
+                      • {c.position} @ {c.client ?? '—'} ·{' '}
+                      <span className="tabular-nums">{fmt(c.startsAt)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="secondary" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                loading={submitting}
+                onClick={() => submit(true)}
+              >
+                Assign anyway
+              </Button>
+            </DialogFooter>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ===== Cancel dialog ====================================================== */
+
+function CancelDialog({
+  target,
+  onClose,
+  onCancelled,
+}: {
+  target: Shift | null;
+  onClose: () => void;
+  onCancelled: () => void;
+}) {
+  const [reason, setReason] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (target) {
+      setReason('');
+      setSubmitting(false);
+    }
+  }, [target]);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!target || !reason.trim()) return;
+    setSubmitting(true);
+    try {
+      await cancelShift(target.id, { reason: reason.trim() });
+      onCancelled();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Cancel failed.');
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open={target !== null} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Cancel shift</DialogTitle>
+          <DialogDescription>
+            {target && (
+              <>
+                {target.position} at {target.clientName ?? '—'} ·{' '}
+                {fmt(target.startsAt)}
+              </>
+            )}
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          <div>
+            <Label htmlFor="cancel-reason" required>
+              Cancellation reason
+            </Label>
+            <Textarea
+              id="cancel-reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Required for the audit trail."
+              autoFocus
+              rows={3}
+              required
+            />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={onClose}>
+              Keep shift
+            </Button>
+            <Button
+              type="submit"
+              variant="destructive"
+              loading={submitting}
+              disabled={!reason.trim()}
+            >
+              Cancel shift
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ===== Auto-fill dialog =================================================== */
+
+function AutoFillDialog({
+  target,
+  onClose,
+  onPick,
+  pending,
+}: {
+  target: { shiftId: string; candidates: AutoFillCandidate[] } | null;
+  onClose: () => void;
+  onPick: (associateId: string) => void;
+  pending: boolean;
+}) {
+  return (
+    <Dialog open={target !== null} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Suggested associates</DialogTitle>
+          <DialogDescription>
+            Ranked by availability, conflict-free, and weekly hours headroom.
+          </DialogDescription>
+        </DialogHeader>
+        {target?.candidates.length === 0 && (
+          <p className="text-silver text-sm">
+            No candidates returned. Check that associates have set availability.
+          </p>
+        )}
+        {target && target.candidates.length > 0 && (
+          <ul className="space-y-2 max-h-[60vh] overflow-y-auto">
+            {target.candidates.slice(0, 15).map((c) => (
+              <li
+                key={c.associateId}
+                className="flex items-center justify-between gap-3 p-3 bg-navy-secondary/30 border border-navy-secondary rounded-md"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="text-white text-sm font-medium">{c.associateName}</div>
+                  <div className="text-xs text-silver flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
+                    <span
+                      className={cn(
+                        'inline-flex items-center gap-1',
+                        c.matchesAvailability ? 'text-success' : 'text-silver/60'
+                      )}
+                    >
+                      {c.matchesAvailability ? (
+                        <CheckCircle2 className="h-3 w-3" />
+                      ) : null}
+                      {c.matchesAvailability ? 'Available' : 'No availability'}
+                    </span>
+                    <span
+                      className={cn(
+                        'inline-flex items-center gap-1',
+                        c.noConflict ? 'text-success' : 'text-alert'
+                      )}
+                    >
+                      {c.noConflict ? (
+                        <CheckCircle2 className="h-3 w-3" />
+                      ) : (
+                        <AlertTriangle className="h-3 w-3" />
+                      )}
+                      {c.noConflict ? 'No conflict' : 'Conflict'}
+                    </span>
+                    <span className="tabular-nums">
+                      {Math.round(c.weeklyMinutesActual / 60)}h worked this week
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Badge variant="accent">{(c.score * 100).toFixed(0)}%</Badge>
+                  <Button
+                    size="sm"
+                    onClick={() => onPick(c.associateId)}
+                    disabled={pending}
+                  >
+                    Assign
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ===== Swaps panel ======================================================== */
+
+const SWAP_STATUS_VARIANT: Record<
+  ShiftSwapRequest['status'],
+  'success' | 'pending' | 'destructive' | 'default'
+> = {
+  PENDING_PEER: 'pending',
+  PEER_ACCEPTED: 'pending',
+  PEER_DECLINED: 'destructive',
+  MANAGER_APPROVED: 'success',
+  MANAGER_REJECTED: 'destructive',
+  CANCELLED: 'default',
 };
 
 function AdminSwapsPanel() {
   const [items, setItems] = useState<ShiftSwapRequest[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      setError(null);
       const res = await listAdminSwaps({ status: 'PEER_ACCEPTED' });
       setItems(res.requests);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load swaps.');
+      toast.error(err instanceof ApiError ? err.message : 'Failed to load swaps.');
     }
   }, []);
 
@@ -413,88 +708,100 @@ function AdminSwapsPanel() {
     refresh();
   }, [refresh]);
 
-  const wrap = async (id: string, fn: () => Promise<unknown>) => {
+  const wrap = async (id: string, fn: () => Promise<unknown>, successMsg: string) => {
     setPendingId(id);
     try {
       await fn();
+      toast.success(successMsg);
       await refresh();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Action failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Action failed.');
     } finally {
       setPendingId(null);
     }
   };
 
   return (
-    <section className="mt-8 bg-navy border border-navy-secondary rounded-lg p-5">
-      <h2 className="font-display text-2xl text-white mb-3">
-        Swap requests awaiting your approval
-      </h2>
-      {error && (
-        <p role="alert" className="text-sm text-alert mb-3">
-          {error}
-        </p>
-      )}
-      {!items && <p className="text-silver">Loading…</p>}
-      {items && items.length === 0 && (
-        <p className="text-silver">No swap requests need your approval.</p>
-      )}
-      {items && items.length > 0 && (
-        <ul className="space-y-2">
-          {items.map((s) => (
-            <li
-              key={s.id}
-              className="p-3 bg-navy-secondary/30 border border-navy-secondary rounded flex items-start justify-between gap-3 flex-wrap"
-            >
-              <div>
-                <div className="text-white text-sm">
-                  <span className="font-medium">{s.requesterName}</span>
-                  {' → '}
-                  <span className="font-medium">{s.counterpartyName}</span>
+    <Card className="mt-8">
+      <CardHeader>
+        <CardTitle>Swap requests awaiting your approval</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {!items && <Skeleton className="h-16" />}
+        {items && items.length === 0 && (
+          <p className="text-silver text-sm">
+            No swap requests need your approval.
+          </p>
+        )}
+        {items && items.length > 0 && (
+          <ul className="space-y-2">
+            {items.map((s) => (
+              <li
+                key={s.id}
+                className="p-3 bg-navy-secondary/30 border border-navy-secondary rounded-md flex items-start justify-between gap-3 flex-wrap"
+              >
+                <div>
+                  <div className="text-white text-sm">
+                    <span className="font-medium">{s.requesterName}</span>
+                    {' → '}
+                    <span className="font-medium">{s.counterpartyName}</span>
+                  </div>
+                  <div className="text-xs text-silver mt-0.5">
+                    {s.shiftPosition} · {s.shiftClientName ?? '—'} ·{' '}
+                    <span className="tabular-nums">
+                      {new Date(s.shiftStartsAt).toLocaleString()}
+                    </span>
+                  </div>
+                  {s.note && (
+                    <div className="text-xs text-silver/70 italic mt-1">"{s.note}"</div>
+                  )}
                 </div>
-                <div className="text-xs text-silver">
-                  {s.shiftPosition} · {s.shiftClientName ?? '—'} ·{' '}
-                  {new Date(s.shiftStartsAt).toLocaleString()}
+                <div className="flex items-center gap-2">
+                  <Badge variant={SWAP_STATUS_VARIANT[s.status]}>
+                    {s.status.replace(/_/g, ' ')}
+                  </Badge>
+                  <Button
+                    size="sm"
+                    onClick={() =>
+                      wrap(s.id, () => managerApproveSwap(s.id), 'Swap approved.')
+                    }
+                    disabled={pendingId === s.id}
+                  >
+                    Approve
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={() =>
+                      wrap(s.id, () => managerRejectSwap(s.id), 'Swap rejected.')
+                    }
+                    disabled={pendingId === s.id}
+                  >
+                    Reject
+                  </Button>
                 </div>
-                {s.note && (
-                  <div className="text-xs text-silver/70 italic mt-1">"{s.note}"</div>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                <span className={cn('text-[10px] uppercase tracking-widest', SWAP_STATUS_CLS[s.status])}>
-                  {s.status.replace(/_/g, ' ')}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => wrap(s.id, () => managerApproveSwap(s.id))}
-                  disabled={pendingId === s.id}
-                  className="text-xs px-2 py-1 rounded border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-50"
-                >
-                  Approve
-                </button>
-                <button
-                  type="button"
-                  onClick={() => wrap(s.id, () => managerRejectSwap(s.id))}
-                  disabled={pendingId === s.id}
-                  className="text-xs px-2 py-1 rounded border border-alert/40 text-alert hover:bg-alert/10 disabled:opacity-50"
-                >
-                  Reject
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
-interface CreateShiftFormProps {
-  clients: ClientSummary[];
-  onCreated: () => void;
-}
+/* ===== Create-shift dialog ================================================ */
 
-function CreateShiftForm({ clients, onCreated }: CreateShiftFormProps) {
+function CreateShiftDialog({
+  open,
+  clients,
+  onOpenChange,
+  onCreated,
+}: {
+  open: boolean;
+  clients: ClientSummary[];
+  onOpenChange: (open: boolean) => void;
+  onCreated: () => void;
+}) {
   const [clientId, setClientId] = useState(clients[0]?.id ?? '');
   const [position, setPosition] = useState('');
   const [startsAt, setStartsAt] = useState('');
@@ -504,15 +811,24 @@ function CreateShiftForm({ clients, onCreated }: CreateShiftFormProps) {
   const [notes, setNotes] = useState('');
   const [lateNoticeReason, setLateNoticeReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
-  const inputCls =
-    'w-full px-3 py-2 rounded bg-navy-secondary/60 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white';
+  useEffect(() => {
+    if (open) {
+      setClientId(clients[0]?.id ?? '');
+      setPosition('');
+      setStartsAt('');
+      setEndsAt('');
+      setLocation('');
+      setHourlyRate('');
+      setNotes('');
+      setLateNoticeReason('');
+      setSubmitting(false);
+    }
+  }, [open, clients]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
-    setError(null);
     setSubmitting(true);
     try {
       await createShift({
@@ -528,153 +844,137 @@ function CreateShiftForm({ clients, onCreated }: CreateShiftFormProps) {
       });
       onCreated();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Create failed.');
-    } finally {
+      toast.error(err instanceof ApiError ? err.message : 'Create failed.');
       setSubmitting(false);
     }
   };
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="bg-navy border border-navy-secondary rounded-lg p-5 mb-5 space-y-3"
-    >
-      <h2 className="font-display text-2xl text-white">New shift</h2>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <label className="block">
-          <span className="block text-xs uppercase tracking-widest text-silver mb-1">
-            Client
-          </span>
-          {clients.length > 0 ? (
-            <select
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-              required
-              className={inputCls}
-            >
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <input
-              type="text"
-              required
-              placeholder="Client UUID"
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-              className={inputCls}
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>New shift</DialogTitle>
+          <DialogDescription>
+            Open shifts publish immediately. Drafts stay private until you publish them.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="cs-client" required>
+                Client
+              </Label>
+              {clients.length > 0 ? (
+                <select
+                  id="cs-client"
+                  value={clientId}
+                  onChange={(e) => setClientId(e.target.value)}
+                  required
+                  className="flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 py-2 text-sm text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+                >
+                  {clients.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <Input
+                  id="cs-client"
+                  required
+                  placeholder="Client UUID"
+                  value={clientId}
+                  onChange={(e) => setClientId(e.target.value)}
+                />
+              )}
+            </div>
+            <div>
+              <Label htmlFor="cs-position" required>
+                Position
+              </Label>
+              <Input
+                id="cs-position"
+                required
+                value={position}
+                onChange={(e) => setPosition(e.target.value)}
+                placeholder="e.g. Server"
+              />
+            </div>
+            <div>
+              <Label htmlFor="cs-starts" required>
+                Starts at
+              </Label>
+              <Input
+                id="cs-starts"
+                type="datetime-local"
+                required
+                value={startsAt}
+                onChange={(e) => setStartsAt(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor="cs-ends" required>
+                Ends at
+              </Label>
+              <Input
+                id="cs-ends"
+                type="datetime-local"
+                required
+                value={endsAt}
+                onChange={(e) => setEndsAt(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor="cs-location">Location</Label>
+              <Input
+                id="cs-location"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor="cs-rate">Hourly rate ($)</Label>
+              <Input
+                id="cs-rate"
+                type="number"
+                min={0}
+                step="0.01"
+                value={hourlyRate}
+                onChange={(e) => setHourlyRate(e.target.value)}
+              />
+            </div>
+          </div>
+          <div>
+            <Label htmlFor="cs-notes">Notes</Label>
+            <Textarea
+              id="cs-notes"
+              rows={2}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
             />
-          )}
-        </label>
-        <label className="block">
-          <span className="block text-xs uppercase tracking-widest text-silver mb-1">
-            Position
-          </span>
-          <input
-            type="text"
-            required
-            value={position}
-            onChange={(e) => setPosition(e.target.value)}
-            placeholder="e.g. Server"
-            className={inputCls}
-          />
-        </label>
-        <label className="block">
-          <span className="block text-xs uppercase tracking-widest text-silver mb-1">
-            Starts at
-          </span>
-          <input
-            type="datetime-local"
-            required
-            value={startsAt}
-            onChange={(e) => setStartsAt(e.target.value)}
-            className={inputCls}
-          />
-        </label>
-        <label className="block">
-          <span className="block text-xs uppercase tracking-widest text-silver mb-1">
-            Ends at
-          </span>
-          <input
-            type="datetime-local"
-            required
-            value={endsAt}
-            onChange={(e) => setEndsAt(e.target.value)}
-            className={inputCls}
-          />
-        </label>
-        <label className="block">
-          <span className="block text-xs uppercase tracking-widest text-silver mb-1">
-            Location
-          </span>
-          <input
-            type="text"
-            value={location}
-            onChange={(e) => setLocation(e.target.value)}
-            className={inputCls}
-          />
-        </label>
-        <label className="block">
-          <span className="block text-xs uppercase tracking-widest text-silver mb-1">
-            Hourly rate ($)
-          </span>
-          <input
-            type="number"
-            min={0}
-            step="0.01"
-            value={hourlyRate}
-            onChange={(e) => setHourlyRate(e.target.value)}
-            className={inputCls}
-          />
-        </label>
-      </div>
-      <label className="block">
-        <span className="block text-xs uppercase tracking-widest text-silver mb-1">
-          Notes
-        </span>
-        <textarea
-          rows={2}
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          className={inputCls}
-        />
-      </label>
-      <label className="block">
-        <span className="block text-xs uppercase tracking-widest text-silver mb-1">
-          Late-notice reason (only required for fair-workweek states inside the 14-day window)
-        </span>
-        <textarea
-          rows={2}
-          value={lateNoticeReason}
-          onChange={(e) => setLateNoticeReason(e.target.value)}
-          placeholder="e.g. Mutual agreement — associate volunteered to cover a sick call-out"
-          className={inputCls}
-        />
-      </label>
-
-      {error && (
-        <p role="alert" className="text-sm text-alert">
-          {error}
-        </p>
-      )}
-
-      <div className="flex items-center gap-3 pt-1">
-        <button
-          type="submit"
-          disabled={submitting}
-          className={cn(
-            'px-5 py-2.5 rounded font-medium transition',
-            submitting
-              ? 'bg-navy-secondary text-silver/50 cursor-not-allowed'
-              : 'bg-gold text-navy hover:bg-gold-bright'
-          )}
-        >
-          {submitting ? 'Saving…' : 'Create shift'}
-        </button>
-      </div>
-    </form>
+          </div>
+          <div>
+            <Label htmlFor="cs-late">
+              Late-notice reason (only required for fair-workweek states inside the 14-day window)
+            </Label>
+            <Textarea
+              id="cs-late"
+              rows={2}
+              value={lateNoticeReason}
+              onChange={(e) => setLateNoticeReason(e.target.value)}
+              placeholder="e.g. Mutual agreement — associate volunteered to cover a sick call-out"
+            />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" loading={submitting}>
+              Create shift
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

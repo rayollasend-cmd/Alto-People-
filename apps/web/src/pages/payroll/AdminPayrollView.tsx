@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { CheckCircle2, FileText, Plus, Send } from 'lucide-react';
 import type {
   PayrollRunDetail,
   PayrollRunStatus,
@@ -12,6 +13,30 @@ import {
   listPayrollRuns,
 } from '@/lib/payrollApi';
 import { ApiError } from '@/lib/api';
+import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/Dialog';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Input, Textarea } from '@/components/ui/Input';
+import { Label } from '@/components/ui/Label';
+import { Skeleton } from '@/components/ui/Skeleton';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/Table';
+import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
 
 const fmtMoney = (n: number) =>
@@ -25,6 +50,16 @@ const STATUS_FILTERS: Array<{ value: PayrollRunStatus | 'ALL'; label: string }> 
   { value: 'ALL', label: 'All' },
 ];
 
+const RUN_STATUS_VARIANT: Record<
+  PayrollRunStatus,
+  'success' | 'pending' | 'destructive' | 'default' | 'accent'
+> = {
+  DRAFT: 'default',
+  FINALIZED: 'pending',
+  DISBURSED: 'success',
+  CANCELLED: 'destructive',
+};
+
 interface AdminPayrollViewProps {
   canProcess: boolean;
 }
@@ -34,16 +69,15 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
   const [runs, setRuns] = useState<PayrollRunSummary[] | null>(null);
   const [selected, setSelected] = useState<PayrollRunDetail | null>(null);
   const [showCreate, setShowCreate] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [confirmDisburse, setConfirmDisburse] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
-      setError(null);
       const res = await listPayrollRuns(filter === 'ALL' ? {} : { status: filter });
       setRuns(res.runs);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
+      toast.error(err instanceof ApiError ? err.message : 'Failed to load runs.');
     }
   }, [filter]);
 
@@ -56,7 +90,7 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
       const detail = await getPayrollRun(id);
       setSelected(detail);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load run.');
+      toast.error(err instanceof ApiError ? err.message : 'Failed to load run.');
     }
   };
 
@@ -66,9 +100,10 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
     try {
       const updated = await finalizePayrollRun(selected.id);
       setSelected(updated);
+      toast.success('Run finalized.');
       refresh();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Finalize failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Finalize failed.');
     } finally {
       setBusy(false);
     }
@@ -76,14 +111,15 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
 
   const onDisburse = async () => {
     if (!selected || busy) return;
-    if (!window.confirm('Disburse this run? (Stubbed — no real funds move.)')) return;
     setBusy(true);
+    setConfirmDisburse(false);
     try {
       const updated = await disbursePayrollRun(selected.id);
       setSelected(updated);
+      toast.success('Run disbursed.');
       refresh();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Disburse failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Disburse failed.');
     } finally {
       setBusy(false);
     }
@@ -103,21 +139,21 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
           </p>
         </div>
         {canProcess && (
-          <button
-            type="button"
-            onClick={() => setShowCreate((v) => !v)}
-            className="px-4 py-2 rounded font-medium bg-gold text-navy hover:bg-gold-bright"
-          >
-            {showCreate ? 'Close' : '+ New run'}
-          </button>
+          <Button onClick={() => setShowCreate(true)}>
+            <Plus className="h-4 w-4" />
+            New run
+          </Button>
         )}
       </header>
 
-      {showCreate && canProcess && (
-        <CreateRunForm
+      {canProcess && (
+        <CreateRunDialog
+          open={showCreate}
+          onOpenChange={setShowCreate}
           onCreated={(detail) => {
             setShowCreate(false);
             setSelected(detail);
+            toast.success('Run created and aggregated.');
             refresh();
           }}
         />
@@ -130,10 +166,11 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
             type="button"
             onClick={() => setFilter(f.value)}
             className={cn(
-              'px-3 py-1.5 rounded text-sm border transition',
+              'px-3 py-1.5 rounded-md text-sm border transition-colors',
+              'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
               filter === f.value
                 ? 'border-gold text-gold bg-gold/10'
-                : 'border-navy-secondary text-silver hover:text-white'
+                : 'border-navy-secondary text-silver hover:text-white hover:border-silver/40'
             )}
           >
             {f.label}
@@ -141,169 +178,226 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
         ))}
       </div>
 
-      {error && (
-        <p role="alert" className="text-sm text-alert mb-4">
-          {error}
-        </p>
-      )}
-
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        <div>
-          <h2 className="font-display text-2xl text-white mb-3">Runs</h2>
-          {!runs && <p className="text-silver">Loading…</p>}
-          {runs && runs.length === 0 && (
-            <p className="text-silver">No runs match this filter.</p>
-          )}
-          {runs && runs.length > 0 && (
-            <ul className="space-y-2">
-              {runs.map((r) => (
-                <li key={r.id}>
-                  <button
-                    type="button"
-                    onClick={() => openRun(r.id)}
-                    className={cn(
-                      'w-full text-left p-3 rounded border transition',
-                      selected?.id === r.id
-                        ? 'border-gold/40 bg-gold/5'
-                        : 'border-navy-secondary hover:border-silver/40'
-                    )}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="text-white">
-                        {r.periodStart} → {r.periodEnd}
+        {/* Run list */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Runs</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {!runs && (
+              <div className="space-y-2">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <Skeleton key={i} className="h-16" />
+                ))}
+              </div>
+            )}
+            {runs && runs.length === 0 && (
+              <p className="text-silver text-sm">No runs match this filter.</p>
+            )}
+            {runs && runs.length > 0 && (
+              <ul className="space-y-2">
+                {runs.map((r) => (
+                  <li key={r.id}>
+                    <button
+                      type="button"
+                      onClick={() => openRun(r.id)}
+                      className={cn(
+                        'w-full text-left p-3 rounded-md border transition-colors',
+                        'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                        selected?.id === r.id
+                          ? 'border-gold/60 bg-gold/5'
+                          : 'border-navy-secondary hover:border-silver/40 hover:bg-navy-secondary/30'
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-white font-medium">
+                          {r.periodStart} → {r.periodEnd}
+                        </div>
+                        <Badge variant={RUN_STATUS_VARIANT[r.status]}>{r.status}</Badge>
                       </div>
-                      <span className="text-xs uppercase tracking-widest text-silver">
-                        {r.status}
-                      </span>
-                    </div>
-                    <div className="text-xs text-silver mt-1 tabular-nums">
-                      {r.itemCount} paystubs · gross {fmtMoney(r.totalGross)} · net{' '}
-                      {fmtMoney(r.totalNet)}
-                    </div>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        <div>
-          <h2 className="font-display text-2xl text-white mb-3">Detail</h2>
-          {!selected && <p className="text-silver">Select a run on the left.</p>}
-          {selected && (
-            <div className="bg-navy border border-navy-secondary rounded-lg p-4">
-              <div className="flex items-baseline justify-between gap-3 mb-3">
-                <div className="font-display text-xl text-white">
-                  {selected.periodStart} → {selected.periodEnd}
-                </div>
-                <span className="text-xs uppercase tracking-widest text-silver">
-                  {selected.status}
-                </span>
-              </div>
-              <div className="grid grid-cols-3 gap-3 mb-4 text-sm">
-                <div>
-                  <div className="text-xs uppercase tracking-widest text-silver/60">Gross</div>
-                  <div className="text-white tabular-nums">{fmtMoney(selected.totalGross)}</div>
-                </div>
-                <div>
-                  <div className="text-xs uppercase tracking-widest text-silver/60">Tax</div>
-                  <div className="text-white tabular-nums">{fmtMoney(selected.totalTax)}</div>
-                </div>
-                <div>
-                  <div className="text-xs uppercase tracking-widest text-gold">Net</div>
-                  <div className="text-gold tabular-nums">{fmtMoney(selected.totalNet)}</div>
-                </div>
-              </div>
-
-              {selected.items.length === 0 && (
-                <p className="text-sm text-silver">
-                  No approved time entries in this period — no paystubs created.
-                </p>
-              )}
-              {selected.items.length > 0 && (
-                <table className="w-full text-sm">
-                  <thead className="text-silver text-xs uppercase tracking-widest">
-                    <tr>
-                      <th className="text-left py-1">Associate</th>
-                      <th className="text-right py-1">Hrs</th>
-                      <th className="text-right py-1">Rate</th>
-                      <th className="text-right py-1">Net</th>
-                      <th className="text-right py-1">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selected.items.map((it) => (
-                      <tr key={it.id} className="border-t border-navy-secondary/60 text-white">
-                        <td className="py-2">{it.associateName ?? '—'}</td>
-                        <td className="py-2 text-right tabular-nums">
-                          {it.hoursWorked.toFixed(2)}
-                        </td>
-                        <td className="py-2 text-right tabular-nums">
-                          {fmtMoney(it.hourlyRate)}
-                        </td>
-                        <td className="py-2 text-right tabular-nums">
-                          {fmtMoney(it.netPay)}
-                        </td>
-                        <td className="py-2 text-right text-xs uppercase tracking-widest text-silver">
-                          {it.status}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-
-              {canProcess && (
-                <div className="flex gap-2 mt-4 pt-3 border-t border-navy-secondary">
-                  {selected.status === 'DRAFT' && (
-                    <button
-                      type="button"
-                      onClick={onFinalize}
-                      disabled={busy}
-                      className="px-3 py-1.5 rounded text-sm border border-gold/40 text-gold hover:bg-gold/10 disabled:opacity-50"
-                    >
-                      Finalize
+                      <div className="text-xs text-silver mt-1 tabular-nums">
+                        {r.itemCount} paystubs · gross {fmtMoney(r.totalGross)} · net{' '}
+                        {fmtMoney(r.totalNet)}
+                      </div>
                     </button>
-                  )}
-                  {selected.status === 'FINALIZED' && (
-                    <button
-                      type="button"
-                      onClick={onDisburse}
-                      disabled={busy}
-                      className="px-3 py-1.5 rounded text-sm border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-50"
-                    >
-                      Disburse (stub)
-                    </button>
-                  )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Detail pane */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Detail</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {!selected && (
+              <EmptyState
+                icon={FileText}
+                title="Select a run"
+                description="Pick a payroll run on the left to see its paystubs and totals."
+              />
+            )}
+            {selected && (
+              <div>
+                <div className="flex items-center justify-between gap-3 mb-4">
+                  <div className="font-display text-xl text-white">
+                    {selected.periodStart} → {selected.periodEnd}
+                  </div>
+                  <Badge variant={RUN_STATUS_VARIANT[selected.status]}>
+                    {selected.status}
+                  </Badge>
                 </div>
-              )}
-            </div>
-          )}
-        </div>
+                <div className="grid grid-cols-3 gap-3 mb-4 text-sm">
+                  <Stat label="Gross" value={fmtMoney(selected.totalGross)} />
+                  <Stat label="Tax" value={fmtMoney(selected.totalTax)} />
+                  <Stat label="Net" value={fmtMoney(selected.totalNet)} highlight />
+                </div>
+
+                {selected.items.length === 0 && (
+                  <p className="text-sm text-silver">
+                    No approved time entries in this period — no paystubs created.
+                  </p>
+                )}
+                {selected.items.length > 0 && (
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead>Associate</TableHead>
+                        <TableHead className="text-right">Hrs</TableHead>
+                        <TableHead className="text-right">Rate</TableHead>
+                        <TableHead className="text-right">Net</TableHead>
+                        <TableHead className="text-right">Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {selected.items.map((it) => (
+                        <TableRow key={it.id}>
+                          <TableCell>{it.associateName ?? '—'}</TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {it.hoursWorked.toFixed(2)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {fmtMoney(it.hourlyRate)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums text-gold">
+                            {fmtMoney(it.netPay)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <span className="text-xs uppercase tracking-widest text-silver">
+                              {it.status}
+                            </span>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+
+                {canProcess && (
+                  <div className="flex gap-2 mt-4 pt-3 border-t border-navy-secondary">
+                    {selected.status === 'DRAFT' && (
+                      <Button onClick={onFinalize} loading={busy} disabled={busy}>
+                        <CheckCircle2 className="h-4 w-4" />
+                        Finalize
+                      </Button>
+                    )}
+                    {selected.status === 'FINALIZED' && (
+                      <Button
+                        variant="primary"
+                        onClick={() => setConfirmDisburse(true)}
+                        disabled={busy}
+                      >
+                        <Send className="h-4 w-4" />
+                        Disburse
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <Dialog open={confirmDisburse} onOpenChange={setConfirmDisburse}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Disburse this run?</DialogTitle>
+            <DialogDescription>
+              Stubbed in dev — no real funds move. In production, this triggers
+              the configured payout adapter (Wise / Branch) for every paystub.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setConfirmDisburse(false)}>
+              Cancel
+            </Button>
+            <Button onClick={onDisburse} loading={busy}>
+              Disburse
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  highlight,
+}: {
+  label: string;
+  value: string;
+  highlight?: boolean;
+}) {
+  return (
+    <div>
+      <div
+        className={cn(
+          'text-xs uppercase tracking-widest',
+          highlight ? 'text-gold' : 'text-silver/60'
+        )}
+      >
+        {label}
+      </div>
+      <div className={cn('tabular-nums mt-0.5', highlight ? 'text-gold' : 'text-white')}>
+        {value}
       </div>
     </div>
   );
 }
 
-interface CreateRunFormProps {
+interface CreateRunDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onCreated: (detail: PayrollRunDetail) => void;
 }
 
-function CreateRunForm({ onCreated }: CreateRunFormProps) {
+function CreateRunDialog({ open, onOpenChange, onCreated }: CreateRunDialogProps) {
   const [periodStart, setPeriodStart] = useState('');
   const [periodEnd, setPeriodEnd] = useState('');
   const [defaultRate, setDefaultRate] = useState('15');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
-  const inputCls =
-    'w-full px-3 py-2 rounded bg-navy-secondary/60 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white';
+  useEffect(() => {
+    if (open) {
+      setPeriodStart('');
+      setPeriodEnd('');
+      setDefaultRate('15');
+      setNotes('');
+      setSubmitting(false);
+    }
+  }, [open]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
-    setError(null);
     setSubmitting(true);
     try {
       const detail = await createPayrollRun({
@@ -314,87 +408,77 @@ function CreateRunForm({ onCreated }: CreateRunFormProps) {
       });
       onCreated(detail);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Create failed.');
-    } finally {
+      toast.error(err instanceof ApiError ? err.message : 'Create failed.');
       setSubmitting(false);
     }
   };
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="bg-navy border border-navy-secondary rounded-lg p-5 mb-5 space-y-3"
-    >
-      <h2 className="font-display text-2xl text-white">New payroll run</h2>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <label className="block">
-          <span className="block text-xs uppercase tracking-widest text-silver mb-1">
-            Period start
-          </span>
-          <input
-            type="date"
-            required
-            value={periodStart}
-            onChange={(e) => setPeriodStart(e.target.value)}
-            className={inputCls}
-          />
-        </label>
-        <label className="block">
-          <span className="block text-xs uppercase tracking-widest text-silver mb-1">
-            Period end
-          </span>
-          <input
-            type="date"
-            required
-            value={periodEnd}
-            onChange={(e) => setPeriodEnd(e.target.value)}
-            className={inputCls}
-          />
-        </label>
-        <label className="block">
-          <span className="block text-xs uppercase tracking-widest text-silver mb-1">
-            Default rate ($/hr)
-          </span>
-          <input
-            type="number"
-            min={0}
-            step="0.01"
-            value={defaultRate}
-            onChange={(e) => setDefaultRate(e.target.value)}
-            className={inputCls}
-          />
-        </label>
-      </div>
-      <label className="block">
-        <span className="block text-xs uppercase tracking-widest text-silver mb-1">
-          Notes
-        </span>
-        <textarea
-          rows={2}
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          className={inputCls}
-        />
-      </label>
-      {error && (
-        <p role="alert" className="text-sm text-alert">
-          {error}
-        </p>
-      )}
-      <div className="pt-1">
-        <button
-          type="submit"
-          disabled={submitting}
-          className={cn(
-            'px-5 py-2.5 rounded font-medium transition',
-            submitting
-              ? 'bg-navy-secondary text-silver/50 cursor-not-allowed'
-              : 'bg-gold text-navy hover:bg-gold-bright'
-          )}
-        >
-          {submitting ? 'Aggregating…' : 'Create + aggregate'}
-        </button>
-      </div>
-    </form>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>New payroll run</DialogTitle>
+          <DialogDescription>
+            Aggregates every APPROVED time entry in the period into paystubs.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <Label htmlFor="cr-start" required>
+                Period start
+              </Label>
+              <Input
+                id="cr-start"
+                type="date"
+                required
+                value={periodStart}
+                onChange={(e) => setPeriodStart(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor="cr-end" required>
+                Period end
+              </Label>
+              <Input
+                id="cr-end"
+                type="date"
+                required
+                value={periodEnd}
+                onChange={(e) => setPeriodEnd(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor="cr-rate">Default rate ($/hr)</Label>
+              <Input
+                id="cr-rate"
+                type="number"
+                min={0}
+                step="0.01"
+                value={defaultRate}
+                onChange={(e) => setDefaultRate(e.target.value)}
+              />
+            </div>
+          </div>
+          <div>
+            <Label htmlFor="cr-notes">Notes</Label>
+            <Textarea
+              id="cr-notes"
+              rows={2}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" loading={submitting}>
+              Create + aggregate
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
