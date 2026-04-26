@@ -23,6 +23,10 @@
     "db:migrate": "npm -w apps/api run db:migrate",
     "db:seed": "npm -w apps/api run db:seed",
     "db:studio": "npm -w apps/api run db:studio",
+    "test": "npm -w @alto-people/shared run test && npm -w apps/api run test && npm -w apps/web run test",
+    "test:shared": "npm -w @alto-people/shared run test",
+    "test:api": "npm -w apps/api run test",
+    "test:web": "npm -w apps/web run test",
     "clean": "rimraf \"apps/*/dist\" \"packages/*/dist\" \"apps/*/node_modules\" \"packages/*/node_modules\" node_modules"
   },
   "devDependencies": {

@@ -1,10 +1,19 @@
 import rateLimit from 'express-rate-limit';
 import type { Request } from 'express';
 
+// In test runs the entire suite shares 127.0.0.1, which would trip the
+// IP limiter across unrelated tests. The per-email limiter still enforces
+// brute-force defense and is exercised explicitly by auth.test.ts.
+const IP_LIMIT = process.env.NODE_ENV === 'test' ? 100_000 : 20;
+
+// Brute-force defense matters in prod and is exercised in tests; in
+// development it just gets in the way when iterating on the login flow.
+const EMAIL_LIMIT = process.env.NODE_ENV === 'development' ? 100_000 : 5;
+
 /** 20 requests / minute / IP for /auth/login. */
 export const loginIpLimiter = rateLimit({
   windowMs: 60 * 1000,
-  limit: 20,
+  limit: IP_LIMIT,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: {
@@ -15,10 +24,10 @@ export const loginIpLimiter = rateLimit({
   },
 });
 
-/** 5 requests / 15 minutes / email for /auth/login. */
+/** 5 requests / 15 minutes / email for /auth/login (production only). */
 export const loginEmailLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 5,
+  limit: EMAIL_LIMIT,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   keyGenerator: (req: Request) => {

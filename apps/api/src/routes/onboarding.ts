@@ -37,6 +37,11 @@ export const onboardingRouter = Router();
 
 const MANAGE = requireCapability('manage:onboarding');
 
+// Prisma's interactive-transaction default ceiling is 5 s. Neon (over the
+// internet) routinely exceeds that for the multi-statement writes below, so
+// every $transaction in this file passes TX_OPTS to lift it to 30 s.
+const TX_OPTS = { timeout: 30_000, maxWait: 10_000 };
+
 /* ===== READ ============================================================== */
 
 onboardingRouter.get('/applications', async (req, res, next) => {
@@ -305,7 +310,7 @@ onboardingRouter.post('/applications', MANAGE, async (req, res, next) => {
       });
 
       return { application, client };
-    });
+    }, TX_OPTS);
 
     await recordOnboardingEvent({
       actorUserId: req.user!.id,
@@ -355,7 +360,7 @@ onboardingRouter.post('/applications/:id/profile', async (req, res, next) => {
       if (checklist) {
         await markTaskDoneByKind(tx, checklist.id, 'PROFILE_INFO');
       }
-    });
+    }, TX_OPTS);
 
     await recordOnboardingEvent({
       actorUserId: req.user!.id,
@@ -411,7 +416,7 @@ onboardingRouter.post('/applications/:id/w4', async (req, res, next) => {
       if (checklist) {
         await markTaskDoneByKind(tx, checklist.id, 'W4');
       }
-    });
+    }, TX_OPTS);
 
     await recordOnboardingEvent({
       actorUserId: req.user!.id,
@@ -488,7 +493,7 @@ onboardingRouter.post(
         if (checklist) {
           await markTaskDoneByKind(tx, checklist.id, 'DIRECT_DEPOSIT');
         }
-      });
+      }, TX_OPTS);
 
       await recordOnboardingEvent({
         actorUserId: req.user!.id,
@@ -571,7 +576,7 @@ onboardingRouter.post('/applications/:id/policy-ack', async (req, res, next) => 
           await markTaskDoneByKind(tx, checklist.id, 'POLICY_ACK');
         }
       }
-    });
+    }, TX_OPTS);
 
     await recordOnboardingEvent({
       actorUserId: req.user!.id,

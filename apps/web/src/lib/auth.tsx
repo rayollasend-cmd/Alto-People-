@@ -4,7 +4,6 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -33,7 +32,7 @@ interface AuthState {
   can: (capability: Capability) => boolean;
 }
 
-const AuthContext = createContext<AuthState | null>(null);
+export const AuthContext = createContext<AuthState | null>(null);
 
 const EMPTY_CAPS: ReadonlySet<Capability> = new Set();
 
@@ -41,21 +40,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
   const [isOffline, setIsOffline] = useState(false);
-  const initRanRef = useRef(false);
 
-  // Initial /auth/me probe — runs once on mount.
+  // Initial /auth/me probe. Under React.StrictMode (dev) this effect mounts,
+  // unmounts, and remounts — we let the second run complete naturally and
+  // unconditionally clear isInitializing so the splash never gets stuck.
   useEffect(() => {
-    if (initRanRef.current) return;
-    initRanRef.current = true;
-
     const ac = new AbortController();
+    let cancelled = false;
     (async () => {
       try {
         const me = await apiFetch<MeResponse>('/auth/me', { signal: ac.signal });
+        if (cancelled) return;
         setUser(me.user);
         setIsOffline(false);
       } catch (err) {
-        if (ac.signal.aborted) return;
+        if (cancelled || ac.signal.aborted) return;
         if (err instanceof ApiError && err.status === 401) {
           // Cookie was present but stale. Server cleared it; we clear local state.
           setUser(null);
@@ -66,11 +65,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(null);
         }
       } finally {
-        if (!ac.signal.aborted) setIsInitializing(false);
+        if (!cancelled) setIsInitializing(false);
       }
     })();
 
-    return () => ac.abort();
+    return () => {
+      cancelled = true;
+      ac.abort();
+    };
   }, []);
 
   const signIn = useCallback(async (email: string, password: string) => {

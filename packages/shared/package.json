@@ -21,6 +21,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "clean": "rimraf dist"
   },
   "dependencies": {
@@ -28,6 +30,7 @@
   },
   "devDependencies": {
     "rimraf": "^5.0.10",
-    "typescript": "^5.6.2"
+    "typescript": "^5.6.2",
+    "vitest": "^2.1.9"
   }
 }

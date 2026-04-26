@@ -12,5 +12,6 @@
     "noEmit": true
   },
   "include": ["src"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "test"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
