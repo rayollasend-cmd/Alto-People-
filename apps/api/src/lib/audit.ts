@@ -102,6 +102,61 @@ interface TimeEventContext {
   req?: Request;
 }
 
+interface DocumentEventContext {
+  actorUserId: string | null;
+  action: string; // e.g. 'document.uploaded'
+  documentId: string;
+  associateId: string;
+  clientId?: string | null;
+  metadata?: Record<string, unknown>;
+  req?: Request;
+}
+
+export async function recordDocumentEvent(ctx: DocumentEventContext) {
+  const reqMeta = ctx.req
+    ? { ip: ctx.req.ip ?? null, userAgent: ctx.req.headers['user-agent'] ?? null }
+    : {};
+  await prisma.auditLog.create({
+    data: {
+      actorUserId: ctx.actorUserId,
+      clientId: ctx.clientId ?? null,
+      action: ctx.action,
+      entityType: 'DocumentRecord',
+      entityId: ctx.documentId,
+      metadata: {
+        associateId: ctx.associateId,
+        ...reqMeta,
+        ...(ctx.metadata ?? {}),
+      },
+    },
+  });
+}
+
+interface PayrollEventContext {
+  actorUserId: string | null;
+  action: string; // e.g. 'payroll.run_created'
+  payrollRunId: string;
+  clientId?: string | null;
+  metadata?: Record<string, unknown>;
+  req?: Request;
+}
+
+export async function recordPayrollEvent(ctx: PayrollEventContext) {
+  const reqMeta = ctx.req
+    ? { ip: ctx.req.ip ?? null, userAgent: ctx.req.headers['user-agent'] ?? null }
+    : {};
+  await prisma.auditLog.create({
+    data: {
+      actorUserId: ctx.actorUserId,
+      clientId: ctx.clientId ?? null,
+      action: ctx.action,
+      entityType: 'PayrollRun',
+      entityId: ctx.payrollRunId,
+      metadata: { ...reqMeta, ...(ctx.metadata ?? {}) },
+    },
+  });
+}
+
 interface ShiftEventContext {
   actorUserId: string | null;
   action: string; // e.g. 'shift.created'

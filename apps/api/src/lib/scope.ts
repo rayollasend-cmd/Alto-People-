@@ -46,6 +46,27 @@ export function scopeTemplates(
   return {};
 }
 
+export function scopeDocuments(user: SessionUser): Prisma.DocumentRecordWhereInput {
+  const base: Prisma.DocumentRecordWhereInput = { deletedAt: null };
+  if (user.role === 'ASSOCIATE' && user.associateId) {
+    return { ...base, associateId: user.associateId };
+  }
+  if (user.role === 'CLIENT_PORTAL' && user.clientId) {
+    return { ...base, clientId: user.clientId };
+  }
+  return base;
+}
+
+export function scopePayrollRuns(user: SessionUser): Prisma.PayrollRunWhereInput {
+  // CLIENT_PORTAL only ever sees runs for its own client (although it lacks
+  // view:payroll today; defense in depth for when finance roles are added).
+  if (user.role === 'CLIENT_PORTAL' && user.clientId) {
+    return { clientId: user.clientId };
+  }
+  // ASSOCIATE doesn't list runs — they hit /payroll/me/items instead.
+  return {};
+}
+
 export function scopeShifts(user: SessionUser): Prisma.ShiftWhereInput {
   // ASSOCIATE only ever sees shifts assigned to them.
   if (user.role === 'ASSOCIATE' && user.associateId) {

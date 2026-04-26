@@ -37,10 +37,50 @@ export default async function globalSetup() {
   }
 
   // Apply migrations against alto_test. `migrate deploy` is idempotent —
-  // a no-op once everything is up-to-date, so reruns stay cheap.
-  execSync('npx prisma migrate deploy', {
-    cwd: resolve(__dirname, '..'),
-    stdio: 'inherit',
-    env: process.env,
-  });
+  // a no-op once everything is up-to-date. Neon cold-starts can fail the
+  // first attempt; one retry after a short wait is enough.
+  const runMigrate = (): { stdout: string; stderr: string } => {
+    try {
+      const stdout = execSync('npx prisma migrate deploy', {
+        cwd: resolve(__dirname, '..'),
+        env: process.env,
+        encoding: 'utf8',
+      });
+      console.log(stdout);
+      return { stdout, stderr: '' };
+    } catch (err) {
+      // execSync attaches stdout/stderr to the error when it captures them.
+      const e = err as { stdout?: Buffer | string; stderr?: Buffer | string; message: string };
+      const stdout = e.stdout?.toString() ?? '';
+      const stderr = e.stderr?.toString() ?? '';
+      console.log(stdout);
+      console.error(stderr);
+      throw new Error(
+        `prisma migrate deploy failed: ${e.message}\nstderr: ${stderr}`
+      );
+    }
+  };
+  // Up to 4 attempts with backoff. Neon's pooled endpoint can take longer
+  // to wake than direct, and migrate spawns its own connection so warming
+  // the bootstrap client above doesn't always carry over.
+  const delays = [0, 3000, 6000, 10000];
+  let lastErr: unknown;
+  for (let i = 0; i < delays.length; i++) {
+    if (delays[i] > 0) {
+      console.warn(
+        `[globalSetup] migrate deploy retry ${i} after ${delays[i]}ms (Neon cold start?)`
+      );
+      await new Promise((r) => setTimeout(r, delays[i]));
+    }
+    try {
+      runMigrate();
+      lastErr = null;
+      break;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/Can't reach database server|connection|P1001/i.test(msg)) throw err;
+      lastErr = err;
+    }
+  }
+  if (lastErr) throw lastErr;
 }

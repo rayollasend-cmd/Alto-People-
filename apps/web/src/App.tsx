@@ -15,6 +15,8 @@ import { PolicyAckTask } from '@/pages/onboarding/tasks/PolicyAckTask';
 import { StubTask } from '@/pages/onboarding/tasks/StubTask';
 import { TimeHome } from '@/pages/time/TimeHome';
 import { SchedulingHome } from '@/pages/scheduling/SchedulingHome';
+import { PayrollHome } from '@/pages/payroll/PayrollHome';
+import { DocumentsHome } from '@/pages/documents/DocumentsHome';
 
 const ONBOARDING_ROUTES = [
   { path: 'onboarding', element: <OnboardingHome /> },
@@ -49,7 +51,9 @@ const PLACEHOLDER_MODULES = MODULES.filter(
   (m) =>
     m.key !== 'onboarding' &&
     m.key !== 'time-attendance' &&
-    m.key !== 'scheduling'
+    m.key !== 'scheduling' &&
+    m.key !== 'payroll' &&
+    m.key !== 'documents'
 );
 
 export const router = createBrowserRouter([
@@ -65,6 +69,8 @@ export const router = createBrowserRouter([
       { index: true, element: <Dashboard /> },
       { path: 'time-attendance', element: <TimeHome /> },
       { path: 'scheduling', element: <SchedulingHome /> },
+      { path: 'payroll', element: <PayrollHome /> },
+      { path: 'documents', element: <DocumentsHome /> },
       ...ONBOARDING_ROUTES,
       ...PLACEHOLDER_MODULES.map((m) => ({
         path: m.path.replace(/^\//, ''),

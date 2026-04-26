@@ -12,8 +12,10 @@ export default defineConfig({
     pool: 'forks',
     poolOptions: { forks: { singleFork: true } },
     // Generous: integration tests run sequential round-trips against Neon
-    // over the public internet (~200-400 ms per query).
-    testTimeout: 60_000,
+    // over the public internet (~200-400 ms per query). The happy-path
+    // onboarding test does ~6 sequential POSTs each containing a multi-step
+    // $transaction, so it can legitimately need >60s.
+    testTimeout: 120_000,
     hookTimeout: 60_000,
   },
 });

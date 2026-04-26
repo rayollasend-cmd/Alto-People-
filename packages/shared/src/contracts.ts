@@ -443,3 +443,146 @@ export const ShiftCancelInputSchema = z.object({
   reason: z.string().min(1).max(500),
 });
 export type ShiftCancelInput = z.infer<typeof ShiftCancelInputSchema>;
+
+/* -------------------------------------------------------------------------- *
+ *  Payroll — Phase 8 (MVP, demo-only withholding; disbursement stubbed)
+ * -------------------------------------------------------------------------- */
+
+export const PayrollRunStatusSchema = z.enum([
+  'DRAFT',
+  'FINALIZED',
+  'DISBURSED',
+  'CANCELLED',
+]);
+export type PayrollRunStatus = z.infer<typeof PayrollRunStatusSchema>;
+
+export const PayrollItemStatusSchema = z.enum([
+  'PENDING',
+  'DISBURSED',
+  'FAILED',
+  'HELD',
+]);
+export type PayrollItemStatus = z.infer<typeof PayrollItemStatusSchema>;
+
+export const PayrollItemSchema = z.object({
+  id: UuidSchema,
+  payrollRunId: UuidSchema,
+  associateId: UuidSchema,
+  associateName: z.string().nullable(),
+  hoursWorked: z.number().nonnegative(),
+  hourlyRate: z.number().nonnegative(),
+  grossPay: z.number().nonnegative(),
+  federalWithholding: z.number().nonnegative(),
+  netPay: z.number(),
+  status: PayrollItemStatusSchema,
+  disbursementRef: z.string().nullable(),
+  disbursedAt: z.string().datetime().nullable(),
+  failureReason: z.string().nullable(),
+});
+export type PayrollItem = z.infer<typeof PayrollItemSchema>;
+
+export const PayrollRunSummarySchema = z.object({
+  id: UuidSchema,
+  clientId: UuidSchema.nullable(),
+  clientName: z.string().nullable(),
+  periodStart: z.string(),  // YYYY-MM-DD
+  periodEnd: z.string(),
+  status: PayrollRunStatusSchema,
+  totalGross: z.number().nonnegative(),
+  totalTax: z.number().nonnegative(),
+  totalNet: z.number(),
+  itemCount: z.number().int().nonnegative(),
+  notes: z.string().nullable(),
+  finalizedAt: z.string().datetime().nullable(),
+  disbursedAt: z.string().datetime().nullable(),
+  createdAt: z.string().datetime(),
+});
+export type PayrollRunSummary = z.infer<typeof PayrollRunSummarySchema>;
+
+export const PayrollRunListResponseSchema = z.object({
+  runs: z.array(PayrollRunSummarySchema),
+});
+export type PayrollRunListResponse = z.infer<typeof PayrollRunListResponseSchema>;
+
+export const PayrollRunDetailSchema = PayrollRunSummarySchema.extend({
+  items: z.array(PayrollItemSchema),
+});
+export type PayrollRunDetail = z.infer<typeof PayrollRunDetailSchema>;
+
+export const PayrollRunCreateInputSchema = z
+  .object({
+    clientId: UuidSchema.nullable().optional(),
+    /** YYYY-MM-DD inclusive. */
+    periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'periodStart must be YYYY-MM-DD'),
+    /** YYYY-MM-DD inclusive. */
+    periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'periodEnd must be YYYY-MM-DD'),
+    /** Default hourly rate when an associate's shifts in the period have none. */
+    defaultHourlyRate: z.number().nonnegative().optional(),
+    notes: z.string().max(1000).optional(),
+  })
+  .refine((v) => v.periodEnd >= v.periodStart, {
+    message: 'periodEnd must be on or after periodStart',
+    path: ['periodEnd'],
+  });
+export type PayrollRunCreateInput = z.infer<typeof PayrollRunCreateInputSchema>;
+
+export const PayrollItemListResponseSchema = z.object({
+  items: z.array(PayrollItemSchema),
+});
+export type PayrollItemListResponse = z.infer<typeof PayrollItemListResponseSchema>;
+
+/* -------------------------------------------------------------------------- *
+ *  Documents — Phase 9 (local-fs storage; S3 swap is future work)
+ * -------------------------------------------------------------------------- */
+
+export const DocumentKindSchema = z.enum([
+  'ID',
+  'SSN_CARD',
+  'I9_SUPPORTING',
+  'W4_PDF',
+  'OFFER_LETTER',
+  'POLICY',
+  'HOUSING_AGREEMENT',
+  'TRANSPORT_AGREEMENT',
+  'J1_DS2019',
+  'J1_VISA',
+  'OTHER',
+]);
+export type DocumentKind = z.infer<typeof DocumentKindSchema>;
+
+export const DocumentStatusSchema = z.enum([
+  'UPLOADED',
+  'VERIFIED',
+  'REJECTED',
+  'EXPIRED',
+]);
+export type DocumentStatus = z.infer<typeof DocumentStatusSchema>;
+
+export const DocumentRecordSchema = z.object({
+  id: UuidSchema,
+  associateId: UuidSchema,
+  associateName: z.string().nullable(),
+  clientId: UuidSchema.nullable(),
+  kind: DocumentKindSchema,
+  filename: z.string(),
+  mimeType: z.string(),
+  size: z.number().int().nonnegative(),
+  status: DocumentStatusSchema,
+  expiresAt: z.string().datetime().nullable(),
+  rejectionReason: z.string().nullable(),
+  verifiedById: UuidSchema.nullable(),
+  verifierEmail: z.string().email().nullable(),
+  verifiedAt: z.string().datetime().nullable(),
+  createdAt: z.string().datetime(),
+});
+export type DocumentRecord = z.infer<typeof DocumentRecordSchema>;
+
+export const DocumentListResponseSchema = z.object({
+  documents: z.array(DocumentRecordSchema),
+});
+export type DocumentListResponse = z.infer<typeof DocumentListResponseSchema>;
+
+export const DocumentRejectInputSchema = z.object({
+  reason: z.string().min(1).max(500),
+});
+export type DocumentRejectInput = z.infer<typeof DocumentRejectInputSchema>;

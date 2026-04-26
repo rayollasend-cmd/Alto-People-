@@ -2,7 +2,7 @@
 
 Workforce-management HR platform for **Alto Etho LLC d/b/a Alto HR**.
 
-> **Status:** Phase 7 — Scheduling vertical slice (shift CRUD, assign/unassign/cancel, associate "my shifts" view). Remaining modules (Phase 8+) follow.
+> **Status:** Phase 9 — Document vault (associate upload, HR verify/reject, local-fs storage with S3 swap planned). Remaining modules (Phase 10+) follow.
 
 ## Prerequisites
 
@@ -157,8 +157,9 @@ timeline ordering, and template scoping.
 - [x] **Phase 5** — tests for phases 1–4 (Vitest across `packages/shared`, `apps/api`, `apps/web`; integration suite against `alto_test` schema)
 - [x] **Phase 6** — Time & Attendance: associate clock-in/out, HR approval queue with reject reasons, partial unique index preventing concurrent double clock-in, full audit trail
 - [x] **Phase 7** — Scheduling: shift CRUD with status (DRAFT/OPEN/ASSIGNED/COMPLETED/CANCELLED), assign/unassign/cancel with reasons, ASSOCIATE-scoped `/me/shifts`, audit trail
-- [ ] **Phase 8** — Payroll (consumes Time + W4 + DirectDeposit; Wise / Branch integrations)
-- [ ] **Phase 9+** — Documents, Communications (Twilio/FCM), Compliance, Performance, Recruiting, Analytics
+- [x] **Phase 8** — Payroll MVP: PayrollRun + PayrollItem with snapshotted hours/rate/gross/tax/net; aggregates APPROVED TimeEntries × hourly rate (from period Shifts, falls back to default); placeholder federal withholding by W-4 filing status; DRAFT → FINALIZED → DISBURSED lifecycle; **disbursement is stubbed** (returns `STUB-…` refs — real Wise/Branch wiring is future work); FINANCE_ACCOUNTANT can view but only HR_ADMINISTRATOR can `process:payroll`
+- [x] **Phase 9** — Document vault: multipart upload (PDF/PNG/JPG/WEBP, 10 MB cap), associate `/me` + HR `/admin` verify/reject queue with rejection reasons, content-addressed local-fs storage at `apps/api/uploads/` (gitignored). The `s3Key` column stays — only the resolver in `lib/storage.ts` changes when S3 lands. Soft-delete preserves the audit trail; verified docs cannot be deleted by the associate
+- [ ] **Phase 10+** — Communications (Twilio/FCM), Compliance, Performance, Recruiting, Analytics
 
 ## Project layout
 

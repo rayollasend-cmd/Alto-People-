@@ -137,6 +137,20 @@ enum ShiftStatus {
   CANCELLED   // pulled
 }
 
+enum PayrollRunStatus {
+  DRAFT       // newly created, items aggregated, can be edited
+  FINALIZED   // locked for review, ready to disburse
+  DISBURSED   // funds sent (real or stubbed)
+  CANCELLED
+}
+
+enum PayrollItemStatus {
+  PENDING     // computed, not yet sent
+  DISBURSED   // sent (with disbursementRef)
+  FAILED      // disbursement attempt failed
+  HELD        // HR put a hold on this single item
+}
+
 // =============================================================================
 // Models
 // =============================================================================
@@ -161,6 +175,8 @@ model User {
   auditLogActions       AuditLog[]             @relation("AuditActor")
   timeApprovals         TimeEntry[]            @relation("TimeApprover")
   createdShifts         Shift[]                @relation("ShiftCreator")
+  createdPayrollRuns    PayrollRun[]           @relation("PayrollRunCreator")
+  verifiedDocuments     DocumentRecord[]       @relation("DocumentVerifier")
 
   @@index([role])
   @@index([clientId])
@@ -182,6 +198,7 @@ model Client {
   policies     Policy[]
   templates    OnboardingTemplate[]
   shifts       Shift[]
+  payrollRuns  PayrollRun[]
 
   @@index([status])
   @@index([deletedAt])
@@ -217,6 +234,7 @@ model Associate {
   payoutMethods    PayoutMethod[]
   timeEntries      TimeEntry[]
   assignedShifts   Shift[]
+  payrollItems     PayrollItem[]
 
   @@index([deletedAt])
 }
@@ -353,22 +371,26 @@ model PolicyAcknowledgment {
 }
 
 model DocumentRecord {
-  id          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId String            @db.Uuid
-  clientId    String?           @db.Uuid
-  kind        DocumentKind
-  s3Key       String?
-  filename    String
-  mimeType    String
-  size        Int
-  status      DocumentStatus    @default(UPLOADED)
-  expiresAt   DateTime?         @db.Timestamptz(6)
-  associate   Associate         @relation(fields: [associateId], references: [id], onDelete: Restrict)
-  signatures  Signature[]
-  tasks       OnboardingTask[]
-  createdAt   DateTime          @default(now()) @db.Timestamptz(6)
-  updatedAt   DateTime          @updatedAt @db.Timestamptz(6)
-  deletedAt   DateTime?         @db.Timestamptz(6)
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId      String            @db.Uuid
+  clientId         String?           @db.Uuid
+  kind             DocumentKind
+  s3Key            String?
+  filename         String
+  mimeType         String
+  size             Int
+  status           DocumentStatus    @default(UPLOADED)
+  expiresAt        DateTime?         @db.Timestamptz(6)
+  rejectionReason  String?
+  verifiedById     String?           @db.Uuid
+  verifiedAt       DateTime?         @db.Timestamptz(6)
+  associate        Associate         @relation(fields: [associateId], references: [id], onDelete: Restrict)
+  verifiedBy       User?             @relation("DocumentVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
+  signatures       Signature[]
+  tasks            OnboardingTask[]
+  createdAt        DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime          @updatedAt @db.Timestamptz(6)
+  deletedAt        DateTime?         @db.Timestamptz(6)
 
   @@index([associateId, kind])
   @@index([status])
@@ -509,6 +531,60 @@ model Shift {
   @@index([clientId, startsAt])
   @@index([assignedAssociateId, startsAt])
   @@index([status, startsAt])
+}
+
+model PayrollRun {
+  id            String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // clientId is nullable so a run can span all clients (Alto-internal payroll).
+  clientId      String?          @db.Uuid
+  periodStart   DateTime         @db.Date
+  periodEnd     DateTime         @db.Date
+  status        PayrollRunStatus @default(DRAFT)
+  totalGross    Decimal          @default(0) @db.Decimal(12, 2)
+  totalTax      Decimal          @default(0) @db.Decimal(12, 2)
+  totalNet      Decimal          @default(0) @db.Decimal(12, 2)
+  notes         String?
+  createdById   String?          @db.Uuid
+  finalizedAt   DateTime?        @db.Timestamptz(6)
+  disbursedAt   DateTime?        @db.Timestamptz(6)
+  cancelledAt   DateTime?        @db.Timestamptz(6)
+  client        Client?          @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  createdBy     User?            @relation("PayrollRunCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  items         PayrollItem[]
+  createdAt     DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime         @updatedAt @db.Timestamptz(6)
+
+  @@index([clientId, periodStart])
+  @@index([status])
+}
+
+model PayrollItem {
+  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  payrollRunId       String            @db.Uuid
+  associateId        String            @db.Uuid
+  // Snapshot of inputs at the time of aggregation. Source TimeEntries /
+  // Shifts can change later (e.g. a bug-fix amendment), but the paystub
+  // record is immutable.
+  hoursWorked        Decimal           @db.Decimal(8, 2)
+  hourlyRate         Decimal           @db.Decimal(8, 2)
+  grossPay           Decimal           @db.Decimal(12, 2)
+  federalWithholding Decimal           @db.Decimal(12, 2)
+  netPay             Decimal           @db.Decimal(12, 2)
+  status             PayrollItemStatus @default(PENDING)
+  // Stub for now; in production this is the Wise transfer ID or Branch txn ID.
+  disbursementRef    String?
+  disbursedAt        DateTime?         @db.Timestamptz(6)
+  failureReason      String?
+  payrollRun         PayrollRun        @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  associate          Associate         @relation(fields: [associateId], references: [id], onDelete: Restrict)
+  createdAt          DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime          @updatedAt @db.Timestamptz(6)
+
+  // One paystub per (run, associate) — re-aggregating updates in place
+  // rather than duplicating.
+  @@unique([payrollRunId, associateId])
+  @@index([associateId])
+  @@index([status])
 }
 
 model AuditLog {

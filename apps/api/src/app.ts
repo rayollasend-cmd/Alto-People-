@@ -9,6 +9,8 @@ import { clientsRouter } from './routes/clients.js';
 import { onboardingRouter } from './routes/onboarding.js';
 import { timeRouter } from './routes/time.js';
 import { schedulingRouter } from './routes/scheduling.js';
+import { payrollRouter } from './routes/payroll.js';
+import { documentsRouter } from './routes/documents.js';
 import { attachUser, requireCapability } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 
@@ -39,6 +41,12 @@ export function createApp() {
     '/scheduling',
     requireCapability('view:scheduling'),
     schedulingRouter
+  );
+  app.use('/payroll', requireCapability('view:payroll'), payrollRouter);
+  app.use(
+    '/documents',
+    requireCapability('view:documents'),
+    documentsRouter
   );
 
   app.use(notFoundHandler);

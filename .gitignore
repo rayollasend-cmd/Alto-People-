@@ -37,3 +37,6 @@ Desktop.ini
 
 # Vite
 *.local
+
+# Document storage (Phase 9 — local fs; S3 in production)
+apps/api/uploads/

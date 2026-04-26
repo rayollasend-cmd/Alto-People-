@@ -25,6 +25,8 @@ const TABLES = [
   'J1Profile',
   'TimeEntry',
   'Shift',
+  'PayrollItem',
+  'PayrollRun',
   'User',
   'Associate',
   'Client',
