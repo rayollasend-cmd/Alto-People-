@@ -228,7 +228,7 @@ timeRouter.post('/me/clock-out', async (req, res, next) => {
 
     const active = await prisma.timeEntry.findFirst({
       where: { associateId: user.associateId, status: 'ACTIVE' },
-      include: { breaks: true },
+      include: { breaks: true, associate: { select: { state: true } } },
     });
     if (!active) {
       throw new HttpError(409, 'not_clocked_in', 'No active time entry to close');
@@ -310,6 +310,7 @@ timeRouter.post('/me/clock-out', async (req, res, next) => {
         endedAt: b.endedAt,
       })),
       weeklyMinutesIncludingThis: weeklyTotal,
+      state: active.associate?.state ?? null,
     });
 
     const updated = await prisma.timeEntry.update({

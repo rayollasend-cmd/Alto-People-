@@ -1,4 +1,5 @@
 import type { TimeAnomaly } from '@alto-people/shared';
+import { getLaborPolicy } from './stateLaborPolicy.js';
 
 /**
  * Pure functions for detecting anomalies on a completed TimeEntry.
@@ -65,15 +66,25 @@ export interface DetectAnomaliesInput {
   weeklyMinutesIncludingThis: number;
   /** Optional Shift the entry should fall within. */
   matchedShift?: ShiftFacts;
+  /**
+   * Phase 23 — two-letter state code for the associate (or the work site).
+   * Drives meal-break / OT thresholds via lib/stateLaborPolicy. Null →
+   * FEDERAL fallback (same as the pre-Phase-23 hard-coded behavior).
+   */
+  state?: string | null;
 }
 
 const NO_BREAK_THRESHOLD_HOURS = 6;
-const MIN_MEAL_BREAK_MINUTES = 30;
-const WEEKLY_OT_HOURS = 40;
 const SHIFT_WINDOW_DRIFT_MINUTES = 60;
+// Floor used when the state policy doesn't mandate a meal break but the
+// associate still took one — under federal rules, a "break" of less than
+// 30min that's spent off-task is paid time, not unpaid lunch. We flag
+// short federal-state meal breaks to surface possible payroll bugs.
+const FEDERAL_DEFAULT_MEAL_FLOOR_MIN = 30;
 
 export function detectAnomalies(input: DetectAnomaliesInput): TimeAnomaly[] {
   const { entry, breaks, weeklyMinutesIncludingThis, matchedShift } = input;
+  const policy = getLaborPolicy(input.state ?? null);
   const out: TimeAnomaly[] = [];
 
   if (entry.geofenceInOk === false) out.push('GEOFENCE_VIOLATION_IN');
@@ -85,16 +96,27 @@ export function detectAnomalies(input: DetectAnomaliesInput): TimeAnomaly[] {
     if (workedHours >= NO_BREAK_THRESHOLD_HOURS && breaks.length === 0) {
       out.push('NO_BREAK');
     }
+    const mealRequiredAfter = policy.mealBreakRequiredAfterHours;
+    const mealMinMinutes = policy.mealBreakMinMinutes || FEDERAL_DEFAULT_MEAL_FLOOR_MIN;
+    const triggerHours = mealRequiredAfter ?? 5;
     if (
-      workedHours >= 5 &&
+      workedHours >= triggerHours &&
       breaks.some((b) => b.type === 'MEAL') &&
-      totalMealBreakMinutes(breaks) < MIN_MEAL_BREAK_MINUTES
+      totalMealBreakMinutes(breaks) < mealMinMinutes
     ) {
       out.push('MEAL_BREAK_TOO_SHORT');
     }
   }
 
-  if (weeklyMinutesIncludingThis > WEEKLY_OT_HOURS * 60) {
+  // Daily OT (CA + CO have 8h or 12h thresholds).
+  if (entry.clockOutAt && policy.dailyOTHoursThreshold !== null) {
+    const workedHours = (entry.clockOutAt.getTime() - entry.clockInAt.getTime()) / HOUR_MS;
+    if (workedHours > policy.dailyOTHoursThreshold) {
+      out.push('OVERTIME_UNAPPROVED');
+    }
+  }
+
+  if (weeklyMinutesIncludingThis > policy.weeklyOTHoursThreshold * 60) {
     out.push('OVERTIME_UNAPPROVED');
   }
 
@@ -110,7 +132,8 @@ export function detectAnomalies(input: DetectAnomaliesInput): TimeAnomaly[] {
     }
   }
 
-  return out;
+  // Dedupe — daily + weekly OT can both fire and we don't want to repeat.
+  return Array.from(new Set(out));
 }
 
 /** UTC ISO week-start (Sunday 00:00) for the given instant. */
