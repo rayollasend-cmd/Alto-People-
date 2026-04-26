@@ -623,6 +623,11 @@ export const I9VerificationSchema = z.object({
   associateId: UuidSchema,
   associateName: z.string(),
   associateEmail: z.string().email(),
+  // Most recent Application id for the associate, used by the HR Section 2
+  // verifier to call POST /onboarding/applications/:id/i9/section2. Null when
+  // the associate has never had an application (which would also mean they
+  // can't have an I-9 — defensive nullable, not an expected case).
+  applicationId: UuidSchema.nullable(),
   section1CompletedAt: z.string().datetime().nullable(),
   section2CompletedAt: z.string().datetime().nullable(),
   section2VerifierUserId: UuidSchema.nullable(),

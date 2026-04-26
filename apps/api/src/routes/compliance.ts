@@ -30,7 +30,18 @@ function ymd(d: Date): string {
 
 type RawI9 = Prisma.I9VerificationGetPayload<{
   include: {
-    associate: { select: { firstName: true; lastName: true; email: true } };
+    associate: {
+      select: {
+        firstName: true;
+        lastName: true;
+        email: true;
+        applications: {
+          select: { id: true; invitedAt: true };
+          orderBy: { invitedAt: 'desc' };
+          take: 1;
+        };
+      };
+    };
     section2Verifier: { select: { email: true } };
   };
 }>;
@@ -41,6 +52,7 @@ function toI9(row: RawI9): I9Verification {
     associateId: row.associateId,
     associateName: `${row.associate.firstName} ${row.associate.lastName}`,
     associateEmail: row.associate.email,
+    applicationId: row.associate.applications[0]?.id ?? null,
     section1CompletedAt: row.section1CompletedAt ? row.section1CompletedAt.toISOString() : null,
     section2CompletedAt: row.section2CompletedAt ? row.section2CompletedAt.toISOString() : null,
     section2VerifierUserId: row.section2VerifierUserId,
@@ -53,7 +65,18 @@ function toI9(row: RawI9): I9Verification {
 }
 
 const I9_INCLUDE = {
-  associate: { select: { firstName: true, lastName: true, email: true } },
+  associate: {
+    select: {
+      firstName: true,
+      lastName: true,
+      email: true,
+      applications: {
+        select: { id: true, invitedAt: true },
+        orderBy: { invitedAt: 'desc' as const },
+        take: 1,
+      },
+    },
+  },
   section2Verifier: { select: { email: true } },
 } as const;
 

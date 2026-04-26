@@ -991,6 +991,57 @@ onboardingRouter.post(
   }
 );
 
+// List the I-9 supporting documents uploaded for this application's
+// associate (Phase 24). HR uses this to render thumbnails on the Section 2
+// verifier card. Returns only I-9-relevant kinds; the response is
+// download-URL-linkable via /api/documents/:id/download (HR-scoped).
+onboardingRouter.get('/applications/:id/i9/documents', async (req, res, next) => {
+  try {
+    const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+    const rows = await prisma.documentRecord.findMany({
+      where: {
+        associateId: app.associateId,
+        deletedAt: null,
+        kind: { in: ['I9_SUPPORTING', 'ID', 'SSN_CARD', 'J1_VISA', 'J1_DS2019'] },
+      },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        kind: true,
+        filename: true,
+        mimeType: true,
+        size: true,
+        status: true,
+        createdAt: true,
+      },
+    });
+    res.json({
+      documents: rows.map((d) => {
+        // Filename embeds the side tag (e.g. `id-front.jpg`); pull it back
+        // out so the verifier UI can group front/back of the same doc.
+        const lower = d.filename.toLowerCase();
+        const side: 'FRONT' | 'BACK' | null = lower.includes('-front')
+          ? 'FRONT'
+          : lower.includes('-back')
+            ? 'BACK'
+            : null;
+        return {
+          id: d.id,
+          kind: d.kind,
+          filename: d.filename,
+          mimeType: d.mimeType,
+          size: d.size,
+          status: d.status,
+          side,
+          createdAt: d.createdAt.toISOString(),
+        };
+      }),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // HR Section 2 verification. Caller picks the document list (LIST_A or
 // LIST_B_AND_C) and the document IDs they personally inspected.
 onboardingRouter.post(

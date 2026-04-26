@@ -353,6 +353,63 @@ describe('POST /onboarding/applications/:id/i9/section2 (HR verifier)', () => {
   });
 });
 
+describe('GET /onboarding/applications/:id/i9/documents (Phase 24 verifier list)', () => {
+  function fakePng(): Buffer {
+    return Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+      0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+      0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+      0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+      0x89,
+    ]);
+  }
+
+  it('returns I-9 docs grouped by side, only I-9-relevant kinds', async () => {
+    const { application, assocUserEmail, hrAgent, associate } = await seedWorld();
+    const a = await loginAs(assocUserEmail);
+    // Two I-9 docs (front + back).
+    await a
+      .post(`/onboarding/applications/${application.id}/i9/documents`)
+      .field('documentKind', 'ID')
+      .field('documentSide', 'FRONT')
+      .attach('file', fakePng(), { filename: 'license-front.png', contentType: 'image/png' });
+    await a
+      .post(`/onboarding/applications/${application.id}/i9/documents`)
+      .field('documentKind', 'ID')
+      .field('documentSide', 'BACK')
+      .attach('file', fakePng(), { filename: 'license-back.png', contentType: 'image/png' });
+    // Plus one unrelated kind that must NOT appear.
+    await prisma.documentRecord.create({
+      data: {
+        associateId: associate.id,
+        clientId: null,
+        kind: 'OTHER',
+        s3Key: 'unrelated/x.pdf',
+        filename: 'handbook.pdf',
+        mimeType: 'application/pdf',
+        size: 100,
+        status: 'UPLOADED',
+      },
+    });
+
+    const res = await hrAgent.get(`/onboarding/applications/${application.id}/i9/documents`);
+    expect(res.status).toBe(200);
+    expect(res.body.documents).toHaveLength(2);
+    const kinds = res.body.documents.map((d: { kind: string }) => d.kind);
+    expect(kinds).toEqual(['ID', 'ID']);
+    const sides = res.body.documents.map((d: { side: string | null }) => d.side);
+    expect(sides).toContain('FRONT');
+    expect(sides).toContain('BACK');
+  });
+
+  it('bogus application id → 404 (not 403 — no existence oracle)', async () => {
+    const { hrAgent } = await seedWorld();
+    const bogusId = '00000000-0000-4000-8000-000000000000';
+    const res = await hrAgent.get(`/onboarding/applications/${bogusId}/i9/documents`);
+    expect(res.status).toBe(404);
+  });
+});
+
 describe('GET /onboarding/applications/:id/i9', () => {
   it('returns null sections when nothing has happened yet', async () => {
     const { application, assocUserEmail } = await seedWorld();

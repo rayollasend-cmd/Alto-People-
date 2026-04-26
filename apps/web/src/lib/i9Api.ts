@@ -44,6 +44,23 @@ export interface Section2Input {
   supportingDocIds: string[];
 }
 
+export interface I9DocumentListItem {
+  id: string;
+  kind: 'I9_SUPPORTING' | 'ID' | 'SSN_CARD' | 'J1_VISA' | 'J1_DS2019';
+  filename: string;
+  mimeType: string;
+  size: number;
+  status: 'PENDING' | 'UPLOADED' | 'VERIFIED' | 'REJECTED' | 'EXPIRED';
+  side: 'FRONT' | 'BACK' | null;
+  createdAt: string;
+}
+
+export function listI9Documents(
+  applicationId: string
+): Promise<{ documents: I9DocumentListItem[] }> {
+  return jsonFetch(`/api/onboarding/applications/${applicationId}/i9/documents`);
+}
+
 export function getI9Status(applicationId: string): Promise<I9Status> {
   return jsonFetch<I9Status>(`/api/onboarding/applications/${applicationId}/i9`);
 }
