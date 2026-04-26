@@ -2,7 +2,7 @@
 
 Workforce-management HR platform for **Alto Etho LLC d/b/a Alto HR**.
 
-> **Status:** Phase 10 — Compliance dashboard (I-9 verification, background checks, J-1 program tracking). Remaining modules (Phase 11+) follow.
+> **Status:** Phase 11 — Analytics (live dashboard KPIs derived from existing data). Remaining modules (Phase 12+) follow.
 
 ## Prerequisites
 
@@ -160,7 +160,8 @@ timeline ordering, and template scoping.
 - [x] **Phase 8** — Payroll MVP: PayrollRun + PayrollItem with snapshotted hours/rate/gross/tax/net; aggregates APPROVED TimeEntries × hourly rate (from period Shifts, falls back to default); placeholder federal withholding by W-4 filing status; DRAFT → FINALIZED → DISBURSED lifecycle; **disbursement is stubbed** (returns `STUB-…` refs — real Wise/Branch wiring is future work); FINANCE_ACCOUNTANT can view but only HR_ADMINISTRATOR can `process:payroll`
 - [x] **Phase 9** — Document vault: multipart upload (PDF/PNG/JPG/WEBP, 10 MB cap), associate `/me` + HR `/admin` verify/reject queue with rejection reasons, content-addressed local-fs storage at `apps/api/uploads/` (gitignored). The `s3Key` column stays — only the resolver in `lib/storage.ts` changes when S3 lands. Soft-delete preserves the audit trail; verified docs cannot be deleted by the associate
 - [x] **Phase 10** — Compliance dashboard: I-9 section 1 / section 2 verification (HR is recorded as the verifier; document list required for section 2), background checks (initiate is **stubbed** — real Checkr/Sterling lives here in a future drop-in; HR can manually flip status), J-1 program profiles with DS-2019 + sponsor + days-until-end indicator. Three-tab UI per module
-- [ ] **Phase 11+** — Communications (Twilio/FCM), Performance, Recruiting, Analytics
+- [x] **Phase 11** — Analytics: `GET /analytics/dashboard` returns live KPIs (active associates, currently clocked-in, open shifts in next 30d, pending onboarding, pending I-9 section 2, pending document reviews, net paid in last 30d, net pending disbursement, application status histogram). Dashboard.tsx replaces "—" placeholders with live numbers
+- [ ] **Phase 12+** — Communications (Twilio/FCM), Performance, Recruiting
 
 ## Project layout
 

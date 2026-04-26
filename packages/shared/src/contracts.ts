@@ -705,3 +705,23 @@ export const J1UpsertInputSchema = z
     path: ['programEndDate'],
   });
 export type J1UpsertInput = z.infer<typeof J1UpsertInputSchema>;
+
+/* -------------------------------------------------------------------------- *
+ *  Analytics — Phase 11
+ * -------------------------------------------------------------------------- */
+
+export const DashboardKPIsSchema = z.object({
+  activeAssociates: z.number().int().nonnegative(),
+  openShiftsNext30d: z.number().int().nonnegative(),
+  associatesClockedIn: z.number().int().nonnegative(),
+  pendingOnboardingApplications: z.number().int().nonnegative(),
+  pendingI9Section2: z.number().int().nonnegative(),
+  pendingDocumentReviews: z.number().int().nonnegative(),
+  /** Sum of NET pay across all DISBURSED runs in the last 30 days. */
+  netPaidLast30d: z.number().nonnegative(),
+  /** Sum of NET pay across DRAFT + FINALIZED runs (pending disbursement). */
+  netPendingDisbursement: z.number().nonnegative(),
+  /** Bucketed counts for chart rendering. */
+  applicationStatusCounts: z.record(z.number().int().nonnegative()),
+});
+export type DashboardKPIs = z.infer<typeof DashboardKPIsSchema>;
