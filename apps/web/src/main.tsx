@@ -37,6 +37,16 @@ try {
   document.documentElement.dataset.density = 'comfortable';
 }
 
+// Phase 98 — register the service worker for PWA install + offline shell.
+// Skipped in dev so we don't pollute the dev experience with stale caches.
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {
+      // Silent fail — SW is best-effort enhancement.
+    });
+  });
+}
+
 ReactDOM.createRoot(rootEl).render(
   <React.StrictMode>
     <ThemeProvider>

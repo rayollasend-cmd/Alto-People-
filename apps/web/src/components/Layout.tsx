@@ -11,6 +11,7 @@ import {
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 import { MobileNav } from './MobileNav';
+import { InstallPrompt } from './InstallPrompt';
 
 export function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -58,6 +59,7 @@ export function Layout() {
           onOpenChange={setShortcutsOpen}
         />
         <Toaster />
+        <InstallPrompt />
       </div>
     </TooltipProvider>
   );

@@ -1,0 +1,43 @@
+{
+  "name": "Alto People",
+  "short_name": "Alto",
+  "description": "Workforce management HR platform",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0B1832",
+  "theme_color": "#0B1832",
+  "icons": [
+    {
+      "src": "/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["business", "productivity"],
+  "shortcuts": [
+    {
+      "name": "Time clock",
+      "url": "/time-attendance",
+      "description": "Clock in / out"
+    },
+    {
+      "name": "My profile",
+      "url": "/me",
+      "description": "Self-service profile"
+    },
+    {
+      "name": "Reimbursements",
+      "url": "/reimbursements",
+      "description": "Submit an expense report"
+    }
+  ]
+}
