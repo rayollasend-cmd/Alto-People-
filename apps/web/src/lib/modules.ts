@@ -55,6 +55,7 @@ export type ModuleKey =
   | 'help-center'
   | 'ramp'
   | 'career'
+  | 'tuition'
   | 'team'
   | 'workflows'
   | 'me'
@@ -114,7 +115,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon, LogOut as SeparationIcon, Briefcase as InternalJobsIcon, Syringe as VaccinationsIcon, FileSignature as AgreementsIcon, MessageCircle as HrCasesIcon, BookOpen as KbIcon, Target as RampIcon, TrendingUp as CareerIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon, LogOut as SeparationIcon, Briefcase as InternalJobsIcon, Syringe as VaccinationsIcon, FileSignature as AgreementsIcon, MessageCircle as HrCasesIcon, BookOpen as KbIcon, Target as RampIcon, TrendingUp as CareerIcon, GraduationCap as TuitionIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -366,6 +367,16 @@ export const MODULES: ModuleNav[] = [
     requires: 'view:dashboard',
     icon: CareerIcon,
     group: 'workforce',
+  },
+  {
+    key: 'tuition',
+    path: '/tuition',
+    label: 'Tuition',
+    description:
+      'Tuition reimbursement requests. Submit course-by-course with receipt and grade; HR approves and payroll pays out.',
+    requires: 'view:dashboard',
+    icon: TuitionIcon,
+    group: 'time-and-pay',
   },
   {
     key: 'team',

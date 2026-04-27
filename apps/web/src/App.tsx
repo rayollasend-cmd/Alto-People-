@@ -58,6 +58,7 @@ import { HrCasesHome } from '@/pages/hrCases/HrCasesHome';
 import { KbHome } from '@/pages/kb/KbHome';
 import { RampHome } from '@/pages/ramp/RampHome';
 import { CareerHome } from '@/pages/career/CareerHome';
+import { TuitionHome } from '@/pages/tuition/TuitionHome';
 import { TeamHome } from '@/pages/team/TeamHome';
 import { WorkflowsHome } from '@/pages/workflows/WorkflowsHome';
 import { MeHome } from '@/pages/me/MeHome';
@@ -169,7 +170,8 @@ const PLACEHOLDER_MODULES = MODULES.filter(
     m.key !== 'hr-cases' &&
     m.key !== 'help-center' &&
     m.key !== 'ramp' &&
-    m.key !== 'career'
+    m.key !== 'career' &&
+    m.key !== 'tuition'
 );
 
 export const router = createBrowserRouter([
@@ -228,6 +230,7 @@ export const router = createBrowserRouter([
       { path: 'help-center', element: <KbHome /> },
       { path: 'ramp', element: <RampHome /> },
       { path: 'career', element: <CareerHome /> },
+      { path: 'tuition', element: <TuitionHome /> },
       { path: 'team', element: <TeamHome /> },
       { path: 'workflows', element: <WorkflowsHome /> },
       { path: 'me', element: <MeHome /> },

@@ -348,6 +348,8 @@ model User {
   rampPlansCreated             RampPlan[]                     @relation("RampPlanCreator")
   rampPlansManaged             RampPlan[]                     @relation("RampPlanManager")
   careerLaddersCreated         CareerLadder[]
+  tuitionRequestsReviewed      TuitionRequest[]               @relation("TuitionReviewer")
+  tuitionRequestsPaid          TuitionRequest[]               @relation("TuitionPayer")
 
   @@index([role])
   @@index([clientId])
@@ -572,6 +574,8 @@ model Associate {
   kbFeedback            KbFeedback[]
   // Phase 125 — new-hire ramp plans.
   rampPlans             RampPlan[]
+  // Phase 127 — tuition reimbursement requests.
+  tuitionRequests       TuitionRequest[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -4415,4 +4419,46 @@ model CareerLevelSkill {
   skill Skill       @relation(fields: [skillId], references: [id], onDelete: Cascade)
 
   @@unique([levelId, skillId])
+}
+
+// ===== Phase 127 — Tuition reimbursement ===================================
+//
+// Per-course request flow. Associate submits with a receipt; after the term
+// ends, attaches their grade. HR approves or rejects; once approved, a
+// payroll process marks PAID. Distinct from Phase 97 reimbursements (general
+// expenses) because tuition has IRS Section 127 reporting needs.
+enum TuitionStatus {
+  SUBMITTED
+  APPROVED
+  REJECTED
+  PAID
+}
+
+model TuitionRequest {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId   String        @db.Uuid
+  schoolName    String
+  programName   String?
+  courseName    String
+  termStartDate DateTime      @db.Date
+  termEndDate   DateTime      @db.Date
+  amount        Decimal       @db.Decimal(10, 2)
+  currency      String        @default("USD") @db.VarChar(3)
+  status        TuitionStatus @default(SUBMITTED)
+  receiptUrl    String?
+  gradeReceived String?
+  reviewedById  String?       @db.Uuid
+  reviewedAt    DateTime?     @db.Timestamptz(6)
+  reviewerNotes String?
+  paidAt        DateTime?     @db.Timestamptz(6)
+  paidById      String?       @db.Uuid
+  createdAt     DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime      @updatedAt @db.Timestamptz(6)
+
+  associate  Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  reviewedBy User?     @relation("TuitionReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  paidBy     User?     @relation("TuitionPayer", fields: [paidById], references: [id], onDelete: SetNull)
+
+  @@index([associateId])
+  @@index([status])
 }
