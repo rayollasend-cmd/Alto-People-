@@ -55,6 +55,8 @@ import { LearningHome } from '@/pages/learning/LearningHome';
 import { WorktagsHome } from '@/pages/worktags/WorktagsHome';
 import { ReportsHome } from '@/pages/reports/ReportsHome';
 import { ReimbursementsHome } from '@/pages/reimbursements/ReimbursementsHome';
+import { KioskPage } from '@/pages/kiosk/KioskPage';
+import { KioskAdmin } from '@/pages/kiosk/KioskAdmin';
 import { RouterErrorPage } from '@/pages/RouterErrorPage';
 
 const ONBOARDING_ROUTES = [
@@ -144,6 +146,8 @@ export const router = createBrowserRouter([
     element: <AcceptInvite />,
     errorElement: <RouterErrorPage />,
   },
+  // Phase 99 — public kiosk page. No auth, no Layout — full-screen.
+  { path: '/kiosk', element: <KioskPage />, errorElement: <RouterErrorPage /> },
   {
     path: '/',
     element: (
@@ -188,6 +192,7 @@ export const router = createBrowserRouter([
       { path: 'worktags', element: <WorktagsHome /> },
       { path: 'reports', element: <ReportsHome /> },
       { path: 'reimbursements', element: <ReimbursementsHome /> },
+      { path: 'time-attendance/kiosk', element: <KioskAdmin /> },
       ...ONBOARDING_ROUTES,
       ...PLACEHOLDER_MODULES.map((m) => ({
         path: m.path.replace(/^\//, ''),

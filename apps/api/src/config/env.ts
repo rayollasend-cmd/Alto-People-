@@ -65,6 +65,10 @@ const EnvSchema = z.object({
   INTUIT_CLIENT_ID: z.string().optional(),
   INTUIT_CLIENT_SECRET: z.string().optional(),
   INTUIT_ENV: z.enum(['sandbox', 'production']).default('sandbox'),
+  // Phase 99 — server-side secret used to HMAC kiosk PINs. Defaults to
+  // PAYOUT_ENCRYPTION_KEY in dev so we don't bloat .env; production
+  // should set its own (rotation invalidates all existing PINs).
+  KIOSK_PIN_SECRET: z.string().min(32).optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

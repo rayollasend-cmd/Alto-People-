@@ -320,6 +320,9 @@ model User {
   reportsCreated               Report[]                       @relation("ReportCreator")
   // Phase 97 — reimbursement decisions.
   reimbursementsDecided        Reimbursement[]                @relation("ReimbursementDecider")
+  // Phase 99 — kiosk authorship (devices registered, PINs assigned).
+  kioskDevicesCreated          KioskDevice[]                  @relation("KioskDeviceCreator")
+  kioskPinsCreated             KioskPin[]                     @relation("KioskPinCreator")
 
   @@index([role])
   @@index([clientId])
@@ -394,6 +397,9 @@ model Client {
   webhooks               Webhook[]
   // Phase 94 — LMS courses scoped to this client.
   courses                Course[]
+  // Phase 99 — kiosk devices + PINs registered at this client.
+  kioskDevices           KioskDevice[]
+  kioskPins              KioskPin[]
 
   @@index([status])
   @@index([deletedAt])
@@ -496,6 +502,9 @@ model Associate {
   courseEnrollments  CourseEnrollment[]
   // Phase 97 — reimbursement requests.
   reimbursements     Reimbursement[]
+  // Phase 99 — kiosk PINs (one per client) + punch history.
+  kioskPins          KioskPin[]
+  kioskPunches       KioskPunch[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -843,6 +852,8 @@ model TimeEntry {
   project       Project?        @relation(fields: [projectId], references: [id], onDelete: SetNull)
   breaks        BreakEntry[]
   timeOffLedgerEntries TimeOffLedgerEntry[]
+  // Phase 99 — kiosk punches that opened/closed this entry.
+  kioskPunches  KioskPunch[]
   createdAt     DateTime        @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime        @updatedAt @db.Timestamptz(6)
 
@@ -3357,4 +3368,69 @@ model ExpenseLine {
   reimbursement Reimbursement @relation(fields: [reimbursementId], references: [id], onDelete: Cascade)
 
   @@index([reimbursementId])
+}
+
+// Phase 99 — Kiosk-mode clock in/out: 4-digit PIN + selfie.
+
+enum KioskPunchAction {
+  CLOCK_IN
+  CLOCK_OUT
+  REJECTED
+}
+
+model KioskDevice {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId    String    @db.Uuid
+  name        String
+  tokenHash   String
+  lastSeenAt  DateTime? @db.Timestamptz(6)
+  isActive    Boolean   @default(true)
+  createdById String?   @db.Uuid
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+
+  client    Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy User?         @relation("KioskDeviceCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  punches   KioskPunch[]
+
+  @@index([clientId, isActive])
+}
+
+model KioskPin {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId String   @db.Uuid
+  clientId    String   @db.Uuid
+  pinHmac     Bytes
+  createdById String?  @db.Uuid
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
+
+  associate Associate    @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  client    Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy User?        @relation("KioskPinCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  punches   KioskPunch[]
+
+  @@unique([clientId, associateId])
+  @@unique([clientId, pinHmac])
+}
+
+model KioskPunch {
+  id            String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kioskDeviceId String           @db.Uuid
+  kioskPinId    String?          @db.Uuid
+  associateId   String?          @db.Uuid
+  timeEntryId   String?          @db.Uuid
+  action        KioskPunchAction
+  selfie        Bytes?
+  rejectReason  String?
+  createdAt     DateTime         @default(now()) @db.Timestamptz(6)
+
+  device    KioskDevice @relation(fields: [kioskDeviceId], references: [id], onDelete: Cascade)
+  pin       KioskPin?   @relation(fields: [kioskPinId], references: [id], onDelete: SetNull)
+  associate Associate?  @relation(fields: [associateId], references: [id], onDelete: SetNull)
+  timeEntry TimeEntry?  @relation(fields: [timeEntryId], references: [id], onDelete: SetNull)
+
+  @@index([kioskDeviceId])
+  @@index([associateId])
+  @@index([createdAt])
 }
