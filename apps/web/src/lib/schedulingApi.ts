@@ -2,6 +2,8 @@ import type {
   AutoFillResponse,
   AvailabilityListResponse,
   AvailabilityReplaceInput,
+  CopyWeekInput,
+  CopyWeekResponse,
   Shift,
   ShiftAssignInput,
   ShiftCancelInput,
@@ -12,6 +14,10 @@ import type {
   ShiftSwapListResponse,
   ShiftSwapRequest,
   ShiftSwapStatus,
+  ShiftTemplate,
+  ShiftTemplateApplyInput,
+  ShiftTemplateCreateInput,
+  ShiftTemplateListResponse,
   ShiftUpdateInput,
   SwapCreateInput,
   SwapDecideInput,
@@ -161,6 +167,42 @@ export function managerApproveSwap(id: string, body: SwapDecideInput = {}): Prom
 
 export function managerRejectSwap(id: string, body: SwapDecideInput = {}): Promise<ShiftSwapRequest> {
   return apiFetch<ShiftSwapRequest>(`/scheduling/swap-requests/${id}/manager-reject`, {
+    method: 'POST',
+    body,
+  });
+}
+
+/* Phase 51 — shift templates + copy-week */
+
+export function listShiftTemplates(
+  filters: { clientId?: string } = {}
+): Promise<ShiftTemplateListResponse> {
+  const qs = filters.clientId ? `?clientId=${filters.clientId}` : '';
+  return apiFetch<ShiftTemplateListResponse>(`/scheduling/templates${qs}`);
+}
+
+export function createShiftTemplate(
+  body: ShiftTemplateCreateInput
+): Promise<ShiftTemplate> {
+  return apiFetch<ShiftTemplate>('/scheduling/templates', { method: 'POST', body });
+}
+
+export function deleteShiftTemplate(id: string): Promise<void> {
+  return apiFetch<void>(`/scheduling/templates/${id}`, { method: 'DELETE' });
+}
+
+export function applyShiftTemplate(
+  id: string,
+  body: ShiftTemplateApplyInput
+): Promise<Shift> {
+  return apiFetch<Shift>(`/scheduling/templates/${id}/apply`, {
+    method: 'POST',
+    body,
+  });
+}
+
+export function copyWeek(body: CopyWeekInput): Promise<CopyWeekResponse> {
+  return apiFetch<CopyWeekResponse>('/scheduling/copy-week', {
     method: 'POST',
     body,
   });

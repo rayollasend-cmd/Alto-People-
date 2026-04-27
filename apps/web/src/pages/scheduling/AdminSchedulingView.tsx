@@ -7,6 +7,8 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  Copy,
+  LayoutTemplate,
   List,
   Plus,
   Sparkles,
@@ -19,16 +21,22 @@ import type {
   Shift,
   ShiftStatus,
   ShiftSwapRequest,
+  ShiftTemplate,
 } from '@alto-people/shared';
 import {
+  applyShiftTemplate,
   assignShift,
   cancelShift,
+  copyWeek,
   createShift,
+  createShiftTemplate,
+  deleteShiftTemplate,
   getAutoFillCandidates,
   getSchedulingKpis,
   getShiftConflicts,
   listAdminSwaps,
   listShifts,
+  listShiftTemplates,
   managerApproveSwap,
   managerRejectSwap,
   unassignShift,
@@ -133,6 +141,32 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // KPI strip — always pulls the *current* week regardless of which week
   // the calendar is showing, so the "right now" signal stays consistent.
   const [kpis, setKpis] = useState<SchedulingKpis | null>(null);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [copyingWeek, setCopyingWeek] = useState(false);
+
+  const onCopyWeekToNext = async () => {
+    if (copyingWeek) return;
+    if (!confirm('Copy every non-cancelled shift from this week into next week as drafts?')) return;
+    setCopyingWeek(true);
+    try {
+      const target = shiftWeek(weekStart, 1);
+      const result = await copyWeek({
+        sourceWeekStart: weekStart.toISOString(),
+        targetWeekStart: target.toISOString(),
+      });
+      toast.success(
+        result.created === 0
+          ? 'Nothing to copy — this week is empty.'
+          : `Copied ${result.created} shift${result.created === 1 ? '' : 's'} to next week (DRAFT).`
+      );
+      // Hop to the target week so HR can review the new drafts immediately.
+      setWeekStart(target);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Copy failed.');
+    } finally {
+      setCopyingWeek(false);
+    }
+  };
   useEffect(() => {
     getSchedulingKpis().then(setKpis).catch(() => setKpis(null));
     // shifts changing is a proxy for "something happened" — refresh KPIs
@@ -237,10 +271,16 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           </p>
         </div>
         {canManage && (
-          <Button onClick={() => setShowCreate(true)}>
-            <Plus className="h-4 w-4" />
-            New shift
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={() => setShowTemplates(true)}>
+              <LayoutTemplate className="h-4 w-4" />
+              Templates
+            </Button>
+            <Button onClick={() => setShowCreate(true)}>
+              <Plus className="h-4 w-4" />
+              New shift
+            </Button>
+          </div>
         )}
       </header>
 
@@ -321,6 +361,18 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               {' – '}
               {new Date(weekEnd.getTime() - 1).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
             </span>
+            {canManage && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onCopyWeekToNext}
+                loading={copyingWeek}
+                title="Copy this week's shifts to next week (as drafts)"
+              >
+                <Copy className="h-3.5 w-3.5" />
+                Copy to next week
+              </Button>
+            )}
           </div>
         )}
 
@@ -524,6 +576,20 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         onPick={onPickAutoFill}
         pending={pendingId !== null}
       />
+
+      {/* Phase 51 — templates */}
+      {canManage && (
+        <TemplatesDialog
+          open={showTemplates}
+          onOpenChange={setShowTemplates}
+          clients={clients}
+          weekStart={weekStart}
+          onApplied={() => {
+            toast.success('Template applied as a draft shift.');
+            refresh();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1207,6 +1273,302 @@ function CreateShiftDialog({
             <Button type="submit" loading={submitting}>
               Create shift
             </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ===== Phase 51 — Templates dialog ======================================== */
+
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function fmtMinute(m: number): string {
+  const h = Math.floor(m / 60);
+  const min = m % 60;
+  const period = h >= 12 ? 'p' : 'a';
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(min).padStart(2, '0')}${period}`;
+}
+
+function TemplatesDialog({
+  open,
+  onOpenChange,
+  clients,
+  weekStart,
+  onApplied,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  clients: ClientSummary[];
+  weekStart: Date;
+  onApplied: () => void;
+}) {
+  const [templates, setTemplates] = useState<ShiftTemplate[] | null>(null);
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const res = await listShiftTemplates();
+      setTemplates(res.templates);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to load templates.');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (open) refresh();
+  }, [open, refresh]);
+
+  const onApply = async (id: string, requiresClient: boolean) => {
+    let clientId: string | undefined;
+    if (requiresClient) {
+      const fallback = clients[0]?.id;
+      if (!fallback) {
+        toast.error('Create a client first to apply a global template.');
+        return;
+      }
+      clientId = fallback;
+    }
+    setPendingId(id);
+    try {
+      await applyShiftTemplate(id, {
+        weekStart: weekStart.toISOString(),
+        clientId,
+      });
+      onApplied();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Apply failed.');
+    } finally {
+      setPendingId(null);
+    }
+  };
+
+  const onDelete = async (id: string) => {
+    if (!confirm('Delete this template? Existing shifts created from it are not affected.')) return;
+    setPendingId(id);
+    try {
+      await deleteShiftTemplate(id);
+      toast.success('Template deleted.');
+      await refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Delete failed.');
+    } finally {
+      setPendingId(null);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Shift templates</DialogTitle>
+          <DialogDescription>
+            Reusable "Friday closer", "weekend opener" patterns. Apply one to drop a
+            DRAFT shift on the matching day of the week you're viewing.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex justify-end mb-2">
+          <Button variant="secondary" size="sm" onClick={() => setShowCreate(true)}>
+            <Plus className="h-3.5 w-3.5" />
+            New template
+          </Button>
+        </div>
+
+        {!templates && <Skeleton className="h-32" />}
+        {templates && templates.length === 0 && (
+          <p className="text-silver text-sm py-4 text-center">
+            No templates yet — create one to get started.
+          </p>
+        )}
+        {templates && templates.length > 0 && (
+          <ul className="space-y-2">
+            {templates.map((t) => (
+              <li
+                key={t.id}
+                className="p-3 bg-navy-secondary/30 border border-navy-secondary rounded-md flex items-start justify-between gap-3"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="text-white text-sm font-medium">{t.name}</div>
+                  <div className="text-xs text-silver mt-0.5 flex flex-wrap gap-x-3">
+                    <span>{t.position}</span>
+                    <span className="tabular-nums">
+                      {DAY_NAMES[t.dayOfWeek]} · {fmtMinute(t.startMinute)}–{fmtMinute(t.endMinute)}
+                    </span>
+                    <span className={t.clientName ? 'text-silver' : 'text-gold/80 italic'}>
+                      {t.clientName ?? 'global'}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <Button
+                    size="sm"
+                    onClick={() => onApply(t.id, t.clientId === null)}
+                    disabled={pendingId === t.id}
+                  >
+                    Apply
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={() => onDelete(t.id)}
+                    disabled={pendingId === t.id}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <CreateTemplateDialog
+          open={showCreate}
+          clients={clients}
+          onOpenChange={setShowCreate}
+          onCreated={() => {
+            setShowCreate(false);
+            toast.success('Template created.');
+            refresh();
+          }}
+        />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function CreateTemplateDialog({
+  open,
+  clients,
+  onOpenChange,
+  onCreated,
+}: {
+  open: boolean;
+  clients: ClientSummary[];
+  onOpenChange: (v: boolean) => void;
+  onCreated: () => void;
+}) {
+  const [name, setName] = useState('');
+  const [position, setPosition] = useState('');
+  const [clientId, setClientId] = useState<string>('');
+  const [dayOfWeek, setDayOfWeek] = useState(1); // Monday
+  const [startTime, setStartTime] = useState('09:00');
+  const [endTime, setEndTime] = useState('17:00');
+  const [hourlyRate, setHourlyRate] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setName('');
+      setPosition('');
+      setClientId('');
+      setDayOfWeek(1);
+      setStartTime('09:00');
+      setEndTime('17:00');
+      setHourlyRate('');
+      setSubmitting(false);
+    }
+  }, [open]);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const parseHHMM = (s: string): number => {
+      const [h, m] = s.split(':').map(Number);
+      return h * 60 + (m || 0);
+    };
+    setSubmitting(true);
+    try {
+      await createShiftTemplate({
+        clientId: clientId || null,
+        name: name.trim(),
+        position: position.trim(),
+        dayOfWeek,
+        startMinute: parseHHMM(startTime),
+        endMinute: parseHHMM(endTime),
+        hourlyRate: hourlyRate ? Number(hourlyRate) : null,
+      });
+      onCreated();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Create failed.');
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>New shift template</DialogTitle>
+          <DialogDescription>
+            Saves a reusable shape. Applying it stamps a DRAFT shift on the chosen
+            day of the visible week.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="ct-name" required>Name</Label>
+              <Input id="ct-name" value={name} onChange={(e) => setName(e.target.value)} required maxLength={80} />
+            </div>
+            <div>
+              <Label htmlFor="ct-position" required>Position</Label>
+              <Input id="ct-position" value={position} onChange={(e) => setPosition(e.target.value)} required maxLength={120} />
+            </div>
+            <div>
+              <Label htmlFor="ct-client">Client (or global)</Label>
+              <select
+                id="ct-client"
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+                className="flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 py-2 text-sm text-white focus:border-gold focus:outline-none"
+              >
+                <option value="">— Global —</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <Label htmlFor="ct-day" required>Day of week</Label>
+              <select
+                id="ct-day"
+                value={dayOfWeek}
+                onChange={(e) => setDayOfWeek(Number(e.target.value))}
+                className="flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 py-2 text-sm text-white focus:border-gold focus:outline-none"
+              >
+                {DAY_NAMES.map((n, i) => (
+                  <option key={i} value={i}>{n}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <Label htmlFor="ct-start" required>Start time</Label>
+              <Input id="ct-start" type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} required />
+            </div>
+            <div>
+              <Label htmlFor="ct-end" required>End time</Label>
+              <Input id="ct-end" type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} required />
+            </div>
+            <div>
+              <Label htmlFor="ct-rate">Hourly rate ($)</Label>
+              <Input
+                id="ct-rate"
+                type="number"
+                min={0}
+                step="0.01"
+                value={hourlyRate}
+                onChange={(e) => setHourlyRate(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" loading={submitting}>Create</Button>
           </DialogFooter>
         </form>
       </DialogContent>

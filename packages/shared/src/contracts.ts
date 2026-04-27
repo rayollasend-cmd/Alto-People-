@@ -720,6 +720,69 @@ export const ShiftCancelInputSchema = z.object({
 export type ShiftCancelInput = z.infer<typeof ShiftCancelInputSchema>;
 
 /* -------------------------------------------------------------------------- *
+ *  Phase 51 — shift templates + copy-week
+ * -------------------------------------------------------------------------- */
+
+export const ShiftTemplateSchema = z.object({
+  id: UuidSchema,
+  clientId: UuidSchema.nullable(),
+  clientName: z.string().nullable(),
+  name: z.string(),
+  position: z.string(),
+  dayOfWeek: z.number().int().min(0).max(6), // 0 = Sun
+  startMinute: z.number().int().min(0).max(1439),
+  endMinute: z.number().int().min(0).max(1439),
+  location: z.string().nullable(),
+  hourlyRate: z.number().nullable(),
+  payRate: z.number().nullable(),
+  notes: z.string().nullable(),
+  createdAt: z.string().datetime(),
+});
+export type ShiftTemplate = z.infer<typeof ShiftTemplateSchema>;
+
+export const ShiftTemplateListResponseSchema = z.object({
+  templates: z.array(ShiftTemplateSchema),
+});
+export type ShiftTemplateListResponse = z.infer<typeof ShiftTemplateListResponseSchema>;
+
+export const ShiftTemplateCreateInputSchema = z.object({
+  clientId: UuidSchema.nullable(),
+  name: z.string().trim().min(1).max(80),
+  position: z.string().trim().min(1).max(120),
+  dayOfWeek: z.number().int().min(0).max(6),
+  startMinute: z.number().int().min(0).max(1439),
+  endMinute: z.number().int().min(0).max(1439),
+  location: z.string().trim().max(200).nullable().optional(),
+  hourlyRate: z.number().nonnegative().nullable().optional(),
+  payRate: z.number().nonnegative().nullable().optional(),
+  notes: z.string().trim().max(1000).nullable().optional(),
+});
+export type ShiftTemplateCreateInput = z.infer<typeof ShiftTemplateCreateInputSchema>;
+
+export const ShiftTemplateApplyInputSchema = z.object({
+  /** ISO date that anchors the target week — server snaps to local Sunday. */
+  weekStart: z.string().datetime(),
+  /** Override the template's clientId (required if template is global). */
+  clientId: UuidSchema.optional(),
+});
+export type ShiftTemplateApplyInput = z.infer<typeof ShiftTemplateApplyInputSchema>;
+
+export const CopyWeekInputSchema = z.object({
+  /** ISO timestamp; server snaps to the local Sunday at 00:00. */
+  sourceWeekStart: z.string().datetime(),
+  targetWeekStart: z.string().datetime(),
+  /** When set, only shifts for this client are copied. */
+  clientId: UuidSchema.optional(),
+});
+export type CopyWeekInput = z.infer<typeof CopyWeekInputSchema>;
+
+export const CopyWeekResponseSchema = z.object({
+  created: z.number().int().nonnegative(),
+  skipped: z.number().int().nonnegative(),
+});
+export type CopyWeekResponse = z.infer<typeof CopyWeekResponseSchema>;
+
+/* -------------------------------------------------------------------------- *
  *  Payroll — Phase 8 (MVP, demo-only withholding; disbursement stubbed)
  * -------------------------------------------------------------------------- */
 

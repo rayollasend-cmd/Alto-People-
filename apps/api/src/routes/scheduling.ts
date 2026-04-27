@@ -4,21 +4,27 @@ import {
   AutoFillResponseSchema,
   AvailabilityListResponseSchema,
   AvailabilityReplaceInputSchema,
+  CopyWeekInputSchema,
   ShiftAssignInputSchema,
   ShiftCancelInputSchema,
   ShiftConflictsResponseSchema,
   ShiftCreateInputSchema,
   ShiftListResponseSchema,
   ShiftSwapListResponseSchema,
+  ShiftTemplateApplyInputSchema,
+  ShiftTemplateCreateInputSchema,
+  ShiftTemplateListResponseSchema,
   ShiftUpdateInputSchema,
   SwapCreateInputSchema,
   SwapDecideInputSchema,
   type AutoFillCandidate,
   type AvailabilityWindow,
+  type CopyWeekResponse,
   type Shift,
   type ShiftConflict,
   type ShiftListResponse,
   type ShiftSwapRequest as ShiftSwapRequestDTO,
+  type ShiftTemplate as ShiftTemplateDTO,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
@@ -1125,6 +1131,258 @@ schedulingRouter.post('/swap-requests/:id/manager-reject', MANAGE, async (req, r
     });
 
     res.json(toSwap(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Phase 51 — shift templates + copy-week ============================ */
+
+type RawTemplate = Prisma.ShiftTemplateGetPayload<{
+  include: { client: { select: { name: true } } };
+}>;
+
+function toTemplate(row: RawTemplate): ShiftTemplateDTO {
+  return {
+    id: row.id,
+    clientId: row.clientId,
+    clientName: row.client?.name ?? null,
+    name: row.name,
+    position: row.position,
+    dayOfWeek: row.dayOfWeek,
+    startMinute: row.startMinute,
+    endMinute: row.endMinute,
+    location: row.location,
+    hourlyRate: row.hourlyRate ? Number(row.hourlyRate) : null,
+    payRate: row.payRate ? Number(row.payRate) : null,
+    notes: row.notes,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+const TEMPLATE_INCLUDE = {
+  client: { select: { name: true } },
+} as const;
+
+/**
+ * GET /scheduling/templates?clientId=X
+ * When clientId is supplied, returns templates for that client + every
+ * global template. Without clientId, returns ALL non-deleted templates
+ * (HR overview).
+ */
+schedulingRouter.get('/templates', MANAGE, async (req, res, next) => {
+  try {
+    const clientId = req.query.clientId?.toString();
+    const where: Prisma.ShiftTemplateWhereInput = {
+      deletedAt: null,
+      ...(clientId ? { OR: [{ clientId }, { clientId: null }] } : {}),
+    };
+    const rows = await prisma.shiftTemplate.findMany({
+      where,
+      orderBy: [{ dayOfWeek: 'asc' }, { startMinute: 'asc' }],
+      include: TEMPLATE_INCLUDE,
+    });
+    res.json(
+      ShiftTemplateListResponseSchema.parse({ templates: rows.map(toTemplate) })
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+schedulingRouter.post('/templates', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = ShiftTemplateCreateInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const i = parsed.data;
+    if (i.clientId) {
+      const c = await prisma.client.findFirst({ where: { id: i.clientId, deletedAt: null } });
+      if (!c) throw new HttpError(404, 'client_not_found', 'Client not found');
+    }
+    const created = await prisma.shiftTemplate.create({
+      data: {
+        clientId: i.clientId,
+        name: i.name,
+        position: i.position,
+        dayOfWeek: i.dayOfWeek,
+        startMinute: i.startMinute,
+        endMinute: i.endMinute,
+        location: i.location ?? null,
+        hourlyRate: i.hourlyRate ?? null,
+        payRate: i.payRate ?? null,
+        notes: i.notes ?? null,
+      },
+      include: TEMPLATE_INCLUDE,
+    });
+    res.status(201).json(toTemplate(created));
+  } catch (err) {
+    next(err);
+  }
+});
+
+schedulingRouter.delete('/templates/:id', MANAGE, async (req, res, next) => {
+  try {
+    const existing = await prisma.shiftTemplate.findFirst({
+      where: { id: req.params.id, deletedAt: null },
+    });
+    if (!existing) throw new HttpError(404, 'template_not_found', 'Template not found');
+    await prisma.shiftTemplate.update({
+      where: { id: existing.id },
+      data: { deletedAt: new Date() },
+    });
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /scheduling/templates/:id/apply
+ * Body: { weekStart, clientId? }
+ * Stamps a DRAFT shift on the template's dayOfWeek of the target week.
+ * Returns the created shift.
+ */
+schedulingRouter.post('/templates/:id/apply', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = ShiftTemplateApplyInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const tpl = await prisma.shiftTemplate.findFirst({
+      where: { id: req.params.id, deletedAt: null },
+    });
+    if (!tpl) throw new HttpError(404, 'template_not_found', 'Template not found');
+
+    const clientId = tpl.clientId ?? parsed.data.clientId;
+    if (!clientId) {
+      throw new HttpError(
+        400,
+        'client_required',
+        'Global templates require a clientId at apply time'
+      );
+    }
+
+    // Snap the supplied weekStart to local Sunday at 00:00, then advance
+    // by `dayOfWeek` days. Local time keeps templates intuitive — "9am
+    // Friday" is whatever 9am means in the user's timezone.
+    const anchor = new Date(parsed.data.weekStart);
+    anchor.setHours(0, 0, 0, 0);
+    anchor.setDate(anchor.getDate() - anchor.getDay());
+    const target = new Date(anchor);
+    target.setDate(target.getDate() + tpl.dayOfWeek);
+    const startsAt = new Date(target);
+    startsAt.setHours(0, tpl.startMinute, 0, 0);
+    const endsAt = new Date(target);
+    endsAt.setHours(0, tpl.endMinute, 0, 0);
+    // Overnight templates: endMinute <= startMinute means roll endsAt to
+    // the next day so duration is positive.
+    if (endsAt <= startsAt) endsAt.setDate(endsAt.getDate() + 1);
+
+    const created = await prisma.shift.create({
+      data: {
+        clientId,
+        position: tpl.position,
+        startsAt,
+        endsAt,
+        location: tpl.location,
+        hourlyRate: tpl.hourlyRate,
+        payRate: tpl.payRate,
+        notes: tpl.notes,
+        status: 'DRAFT',
+        createdById: req.user!.id,
+      },
+      include: SHIFT_INCLUDE,
+    });
+
+    await recordShiftEvent({
+      actorUserId: req.user!.id,
+      action: 'shift.created_from_template',
+      shiftId: created.id,
+      clientId: created.clientId,
+      metadata: { templateId: tpl.id, templateName: tpl.name },
+      req,
+    });
+
+    res.status(201).json(toShift(created));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /scheduling/copy-week
+ * Body: { sourceWeekStart, targetWeekStart, clientId? }
+ *
+ * Duplicates every non-cancelled shift from the source week into the
+ * target week, preserving day-of-week + time-of-day. New shifts land in
+ * DRAFT with no assignee — HR re-publishes after review. Idempotency
+ * is on the user; calling twice produces duplicates.
+ */
+schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = CopyWeekInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const snap = (iso: string): Date => {
+      const d = new Date(iso);
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() - d.getDay());
+      return d;
+    };
+    const source = snap(parsed.data.sourceWeekStart);
+    const target = snap(parsed.data.targetWeekStart);
+    const sourceEnd = new Date(source);
+    sourceEnd.setDate(sourceEnd.getDate() + 7);
+
+    const where: Prisma.ShiftWhereInput = {
+      ...scopeShifts(req.user!),
+      startsAt: { gte: source, lt: sourceEnd },
+      status: { not: 'CANCELLED' },
+      ...(parsed.data.clientId ? { clientId: parsed.data.clientId } : {}),
+    };
+    const sourceShifts = await prisma.shift.findMany({ where });
+    if (sourceShifts.length === 0) {
+      const empty: CopyWeekResponse = { created: 0, skipped: 0 };
+      res.json(empty);
+      return;
+    }
+
+    const offsetMs = target.getTime() - source.getTime();
+    const data = sourceShifts.map((s) => ({
+      clientId: s.clientId,
+      position: s.position,
+      startsAt: new Date(s.startsAt.getTime() + offsetMs),
+      endsAt: new Date(s.endsAt.getTime() + offsetMs),
+      location: s.location,
+      hourlyRate: s.hourlyRate,
+      payRate: s.payRate,
+      notes: s.notes,
+      status: 'DRAFT' as const,
+      createdById: req.user!.id,
+    }));
+    const result = await prisma.shift.createMany({ data });
+
+    await prisma.auditLog.create({
+      data: {
+        actorUserId: req.user!.id,
+        action: 'scheduling.copied_week',
+        entityType: 'Shift',
+        entityId: source.toISOString(),
+        metadata: {
+          ip: req.ip ?? null,
+          userAgent: req.headers['user-agent'] ?? null,
+          source: source.toISOString(),
+          target: target.toISOString(),
+          createdCount: result.count,
+        },
+      },
+    });
+
+    const body: CopyWeekResponse = { created: result.count, skipped: 0 };
+    res.json(body);
   } catch (err) {
     next(err);
   }

@@ -287,6 +287,7 @@ model Client {
   jobs         Job[]
   benefitsPlans BenefitsPlan[]
   quickbooksConnection QuickbooksConnection?
+  shiftTemplates ShiftTemplate[]
 
   @@index([status])
   @@index([deletedAt])
@@ -721,6 +722,33 @@ model Shift {
   @@index([clientId, startsAt])
   @@index([assignedAssociateId, startsAt])
   @@index([status, startsAt])
+}
+
+// Phase 51 — reusable shift template ("Friday closer", "weekend
+// opener"). Apply-template stamps a DRAFT shift onto the configured
+// dayOfWeek of a target week. Times are minute-of-day (0..1439) so
+// templates are timezone-agnostic — they instantiate against the
+// browser-local week start.
+model ShiftTemplate {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // null clientId = global template usable across every client.
+  clientId    String?   @db.Uuid
+  name        String
+  position    String
+  dayOfWeek   Int       // 0 = Sunday … 6 = Saturday (matches JS Date.getDay).
+  startMinute Int       // minutes from local midnight, 0..1439.
+  endMinute   Int       // minutes from local midnight, 0..1439. May be < startMinute for overnight.
+  location    String?
+  hourlyRate  Decimal?  @db.Decimal(8, 2)
+  payRate     Decimal?  @db.Decimal(8, 2)
+  notes       String?
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+  client      Client?   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId, dayOfWeek])
+  @@index([deletedAt])
 }
 
 model Job {
