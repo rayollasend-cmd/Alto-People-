@@ -31,6 +31,7 @@ import { customFieldsRouter } from './routes/customFields.js';
 import { selfServiceRouter } from './routes/selfService.js';
 import { compensationRouter } from './routes/compensation.js';
 import { qualificationsRouter } from './routes/qualifications.js';
+import { projectsAndPayRouter } from './routes/projectsAndPay.js';
 import { attachUser, requireCapability } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 
@@ -125,6 +126,9 @@ export function createApp() {
   // namespace deliberately — open shifts are inherently cross-client for
   // associates with multi-client visibility.
   app.use('/', qualificationsRouter);
+  // Phase 86 — projects, premium-pay rules, tip pools. Self-gates per
+  // route between view:time / manage:time / view:payroll / process:payroll.
+  app.use('/', projectsAndPayRouter);
   // QuickBooks router self-gates each route — the OAuth callback must accept
   // an unauthenticated browser redirect from Intuit, so we cannot apply a
   // capability check at this mount point.

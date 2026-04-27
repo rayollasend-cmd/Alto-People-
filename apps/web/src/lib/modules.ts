@@ -38,7 +38,8 @@ export type ModuleKey =
   | 'workflows'
   | 'me'
   | 'compensation'
-  | 'marketplace';
+  | 'marketplace'
+  | 'payrules';
 
 /**
  * Phase 67 — sidebar groupings, F500-style. Modules with the same `group`
@@ -91,7 +92,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -222,6 +223,16 @@ export const MODULES: ModuleNav[] = [
       'Marketplace of open shifts qualified associates can pick up. Managers approve claims.',
     requires: 'view:scheduling',
     icon: StoreIcon,
+    group: 'time-and-pay',
+  },
+  {
+    key: 'payrules',
+    path: '/payrules',
+    label: 'Pay rules',
+    description:
+      'Project codes, premium-pay differentials (overtime, night, holiday), and tip pools.',
+    requires: 'view:payroll',
+    icon: PayRulesIcon,
     group: 'time-and-pay',
   },
   {
