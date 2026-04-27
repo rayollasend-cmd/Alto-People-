@@ -30,6 +30,11 @@ enum Role {
   CLIENT_PORTAL
   FINANCE_ACCOUNTANT
   INTERNAL_RECRUITER
+  // Phase 76 — line manager. Has a small subset of HR power scoped to
+  // their direct reports: approve their team's time entries / time-off /
+  // schedule changes, view their team's performance reviews. Not a
+  // replacement for OPERATIONS_MANAGER (which is org-wide ops admin).
+  MANAGER
 }
 
 enum UserStatus {
@@ -288,6 +293,10 @@ model Client {
   benefitsPlans BenefitsPlan[]
   quickbooksConnection QuickbooksConnection?
   shiftTemplates ShiftTemplate[]
+  // Phase 76 — org hierarchy entities are per-client.
+  departments  Department[]
+  costCenters  CostCenter[]
+  jobProfiles  JobProfile[]
 
   @@index([status])
   @@index([deletedAt])
@@ -310,6 +319,13 @@ model Associate {
   // Phase 41 — W-2 vs 1099. Default W2 keeps every existing record's
   // payroll math identical; 1099 records skip W-4 / FICA / Medicare.
   employmentType EmploymentType @default(W2_EMPLOYEE)
+  // Phase 76 — org hierarchy. All four are nullable: existing rows
+  // continue to work with NULLs and HR fills them in over time. The
+  // managerId self-reference enables direct-reports queries.
+  managerId      String?  @db.Uuid
+  departmentId   String?  @db.Uuid
+  costCenterId   String?  @db.Uuid
+  jobProfileId   String?  @db.Uuid
   createdAt    DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
   deletedAt    DateTime? @db.Timestamptz(6)
@@ -336,8 +352,18 @@ model Associate {
   timeOffRequests    TimeOffRequest[]
   benefitsEnrollments BenefitsEnrollment[]
   timeOffEntitlements TimeOffEntitlement[]
+  // Phase 76 — manager chain.
+  manager        Associate?  @relation("AssociateManager", fields: [managerId], references: [id], onDelete: SetNull)
+  directReports  Associate[] @relation("AssociateManager")
+  department     Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  costCenter     CostCenter? @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
+  jobProfile     JobProfile? @relation(fields: [jobProfileId], references: [id], onDelete: SetNull)
 
   @@index([deletedAt])
+  @@index([managerId])
+  @@index([departmentId])
+  @@index([costCenterId])
+  @@index([jobProfileId])
 }
 
 model J1Profile {
@@ -1288,4 +1314,69 @@ model QuickbooksConnection {
   updatedAt       DateTime @updatedAt @db.Timestamptz(6)
 
   client          Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+}
+
+// ===== Phase 76 — Org hierarchy ===========================================
+//
+// Three sibling lookup entities that hang off Client. Department supports
+// nested hierarchy via a self-FK; CostCenter is flat; JobProfile is a
+// title taxonomy with FLSA exemption flag. Associate carries nullable FKs
+// to all three plus a self-FK manager relationship.
+
+model Department {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId    String       @db.Uuid
+  parentId    String?      @db.Uuid
+  name        String
+  code        String?
+  description String?
+  createdAt   DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime     @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime?    @db.Timestamptz(6)
+
+  client      Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  parent      Department?  @relation("DepartmentParent", fields: [parentId], references: [id], onDelete: SetNull)
+  children    Department[] @relation("DepartmentParent")
+  associates  Associate[]
+
+  @@index([clientId, deletedAt])
+  @@index([parentId])
+}
+
+model CostCenter {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId    String      @db.Uuid
+  code        String
+  name        String
+  description String?
+  createdAt   DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime    @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime?   @db.Timestamptz(6)
+
+  client      Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  associates  Associate[]
+
+  @@index([clientId, deletedAt])
+}
+
+model JobProfile {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId    String      @db.Uuid
+  code        String
+  title       String
+  family      String?
+  level       String?
+  // FLSA exemption flag — exempt salaried employees aren't entitled to
+  // overtime under federal rules; surfaced in payroll OT calc later.
+  isExempt    Boolean     @default(false)
+  description String?
+  createdAt   DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime    @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime?   @db.Timestamptz(6)
+
+  client      Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  associates  Associate[]
+
+  @@index([clientId, family])
+  @@index([clientId, deletedAt])
 }

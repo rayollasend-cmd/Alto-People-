@@ -7,6 +7,7 @@ export const ROLES = {
   CLIENT_PORTAL: 'CLIENT_PORTAL',
   FINANCE_ACCOUNTANT: 'FINANCE_ACCOUNTANT',
   INTERNAL_RECRUITER: 'INTERNAL_RECRUITER',
+  MANAGER: 'MANAGER',
 } as const;
 
 export type Role = keyof typeof ROLES;
@@ -20,6 +21,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   CLIENT_PORTAL: 'Client Portal',
   FINANCE_ACCOUNTANT: 'Finance / Accountant',
   INTERNAL_RECRUITER: 'Internal Recruiter',
+  MANAGER: 'Manager',
 };
 
 export const ROLE_DESCRIPTIONS: Record<Role, string> = {
@@ -31,6 +33,8 @@ export const ROLE_DESCRIPTIONS: Record<Role, string> = {
   CLIENT_PORTAL: 'Read-only access scoped to one client account',
   FINANCE_ACCOUNTANT: 'Read-only access to financial modules',
   INTERNAL_RECRUITER: 'Full access to recruiting pipeline',
+  MANAGER:
+    'Approves time, time-off, and schedule changes for direct reports; sees a "my team" view',
 };
 
 export type Capability =
@@ -46,7 +50,12 @@ export type Capability =
   | 'view:compliance' | 'manage:compliance'
   | 'view:performance' | 'manage:performance'
   | 'view:recruiting' | 'manage:recruiting'
-  | 'view:audit';
+  | 'view:audit'
+  // Phase 76 — manager-scoped + org-hierarchy capabilities.
+  | 'view:my-team'
+  | 'manage:team-time'
+  | 'manage:team-time-off'
+  | 'view:org' | 'manage:org';
 
 const ALL_VIEWS: Capability[] = [
   'view:dashboard',
@@ -61,11 +70,15 @@ const ALL_VIEWS: Capability[] = [
   'view:compliance',
   'view:performance',
   'view:recruiting',
+  'view:my-team',
+  'view:org',
 ];
 
 const ALL_MANAGE: Capability[] = [
   'manage:onboarding',
   'manage:time',
+  'manage:team-time',
+  'manage:team-time-off',
   'manage:scheduling',
   'process:payroll',
   'manage:documents',
@@ -74,6 +87,7 @@ const ALL_MANAGE: Capability[] = [
   'manage:compliance',
   'manage:performance',
   'manage:recruiting',
+  'manage:org',
 ];
 
 export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
@@ -83,6 +97,8 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     ...ALL_VIEWS,
     'manage:onboarding',
     'manage:time',
+    'manage:team-time',
+    'manage:team-time-off',
     'manage:scheduling',
     'manage:documents',
     'manage:communications',
@@ -90,6 +106,7 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'manage:compliance',
     'manage:performance',
     'manage:recruiting',
+    'manage:org',
   ]),
   LIVE_ASN: new Set<Capability>(),
   ASSOCIATE: new Set<Capability>([
@@ -121,6 +138,20 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'manage:recruiting',
     'view:communications',
     'manage:communications',
+  ]),
+  // Phase 76 — line manager: a small subset of HR power, scoped at
+  // the call site to the manager's direct reports.
+  MANAGER: new Set<Capability>([
+    'view:dashboard',
+    'view:my-team',
+    'view:time',
+    'manage:team-time',
+    'view:scheduling',
+    'view:performance',
+    'manage:team-time-off',
+    'view:onboarding',
+    'view:communications',
+    'view:org',
   ]),
 };
 

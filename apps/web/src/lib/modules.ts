@@ -32,7 +32,8 @@ export type ModuleKey =
   | 'performance'
   | 'recruiting'
   | 'audit'
-  | 'benefits';
+  | 'benefits'
+  | 'org';
 
 /**
  * Phase 67 — sidebar groupings, F500-style. Modules with the same `group`
@@ -85,6 +86,8 @@ export {
   UserPlus,
 };
 
+import { Network as OrgChartIcon } from 'lucide-react';
+
 export const MODULES: ModuleNav[] = [
   {
     key: 'onboarding',
@@ -104,6 +107,16 @@ export const MODULES: ModuleNav[] = [
       'Candidate pipeline, interviews, offers, and hire-to-onboarding handoff.',
     requires: 'view:recruiting',
     icon: UserPlus,
+    group: 'workforce',
+  },
+  {
+    key: 'org',
+    path: '/org',
+    label: 'Org structure',
+    description:
+      'Departments, cost centers, job profiles, and the manager chain that holds approvals + dimensional reporting together.',
+    requires: 'view:org',
+    icon: OrgChartIcon,
     group: 'workforce',
   },
   {

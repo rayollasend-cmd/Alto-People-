@@ -36,6 +36,7 @@ import { AnalyticsHome } from '@/pages/analytics/AnalyticsHome';
 import { Settings } from '@/pages/Settings';
 import { AuditHome } from '@/pages/audit/AuditHome';
 import { BenefitsHome } from '@/pages/benefits/BenefitsHome';
+import { OrgHome } from '@/pages/org/OrgHome';
 import { RouterErrorPage } from '@/pages/RouterErrorPage';
 
 const ONBOARDING_ROUTES = [
@@ -107,7 +108,8 @@ const PLACEHOLDER_MODULES = MODULES.filter(
     m.key !== 'clients' &&
     m.key !== 'analytics' &&
     m.key !== 'audit' &&
-    m.key !== 'benefits'
+    m.key !== 'benefits' &&
+    m.key !== 'org'
 );
 
 export const router = createBrowserRouter([
@@ -142,6 +144,7 @@ export const router = createBrowserRouter([
       { path: 'settings', element: <Settings /> },
       { path: 'audit', element: <AuditHome /> },
       { path: 'benefits', element: <BenefitsHome /> },
+      { path: 'org', element: <OrgHome /> },
       ...ONBOARDING_ROUTES,
       ...PLACEHOLDER_MODULES.map((m) => ({
         path: m.path.replace(/^\//, ''),

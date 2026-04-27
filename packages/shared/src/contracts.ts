@@ -2034,3 +2034,112 @@ export const TimeOffAdminListQuerySchema = z.object({
   status: TimeOffRequestStatusSchema.optional(),
 });
 export type TimeOffAdminListQuery = z.infer<typeof TimeOffAdminListQuerySchema>;
+
+// ===== Phase 76 — Org hierarchy ===========================================
+
+export const DepartmentSchema = z.object({
+  id: UuidSchema,
+  clientId: UuidSchema,
+  parentId: UuidSchema.nullable(),
+  name: z.string(),
+  code: z.string().nullable(),
+  description: z.string().nullable(),
+  associateCount: z.number().int().nonnegative(),
+});
+export type Department = z.infer<typeof DepartmentSchema>;
+
+export const DepartmentListResponseSchema = z.object({
+  departments: z.array(DepartmentSchema),
+});
+export type DepartmentListResponse = z.infer<typeof DepartmentListResponseSchema>;
+
+export const DepartmentInputSchema = z.object({
+  clientId: UuidSchema,
+  parentId: UuidSchema.nullable().optional(),
+  name: z.string().min(1).max(120),
+  code: z.string().max(40).optional().nullable(),
+  description: z.string().max(500).optional().nullable(),
+});
+export type DepartmentInput = z.infer<typeof DepartmentInputSchema>;
+
+export const CostCenterSchema = z.object({
+  id: UuidSchema,
+  clientId: UuidSchema,
+  code: z.string(),
+  name: z.string(),
+  description: z.string().nullable(),
+  associateCount: z.number().int().nonnegative(),
+});
+export type CostCenter = z.infer<typeof CostCenterSchema>;
+
+export const CostCenterListResponseSchema = z.object({
+  costCenters: z.array(CostCenterSchema),
+});
+export type CostCenterListResponse = z.infer<typeof CostCenterListResponseSchema>;
+
+export const CostCenterInputSchema = z.object({
+  clientId: UuidSchema,
+  code: z.string().min(1).max(40),
+  name: z.string().min(1).max(120),
+  description: z.string().max(500).optional().nullable(),
+});
+export type CostCenterInput = z.infer<typeof CostCenterInputSchema>;
+
+export const JobProfileSchema = z.object({
+  id: UuidSchema,
+  clientId: UuidSchema,
+  code: z.string(),
+  title: z.string(),
+  family: z.string().nullable(),
+  level: z.string().nullable(),
+  isExempt: z.boolean(),
+  description: z.string().nullable(),
+  associateCount: z.number().int().nonnegative(),
+});
+export type JobProfile = z.infer<typeof JobProfileSchema>;
+
+export const JobProfileListResponseSchema = z.object({
+  jobProfiles: z.array(JobProfileSchema),
+});
+export type JobProfileListResponse = z.infer<typeof JobProfileListResponseSchema>;
+
+export const JobProfileInputSchema = z.object({
+  clientId: UuidSchema,
+  code: z.string().min(1).max(40),
+  title: z.string().min(1).max(120),
+  family: z.string().max(80).optional().nullable(),
+  level: z.string().max(40).optional().nullable(),
+  isExempt: z.boolean().optional(),
+  description: z.string().max(500).optional().nullable(),
+});
+export type JobProfileInput = z.infer<typeof JobProfileInputSchema>;
+
+// Associate-side org assignment. Used by PUT /associates/:id/org.
+export const AssociateOrgAssignmentInputSchema = z.object({
+  managerId: UuidSchema.nullable().optional(),
+  departmentId: UuidSchema.nullable().optional(),
+  costCenterId: UuidSchema.nullable().optional(),
+  jobProfileId: UuidSchema.nullable().optional(),
+});
+export type AssociateOrgAssignmentInput = z.infer<typeof AssociateOrgAssignmentInputSchema>;
+
+export const AssociateOrgSummarySchema = z.object({
+  id: UuidSchema,
+  firstName: z.string(),
+  lastName: z.string(),
+  email: z.string(),
+  managerId: UuidSchema.nullable(),
+  managerName: z.string().nullable(),
+  departmentId: UuidSchema.nullable(),
+  departmentName: z.string().nullable(),
+  costCenterId: UuidSchema.nullable(),
+  costCenterCode: z.string().nullable(),
+  jobProfileId: UuidSchema.nullable(),
+  jobProfileTitle: z.string().nullable(),
+});
+export type AssociateOrgSummary = z.infer<typeof AssociateOrgSummarySchema>;
+
+export const AssociateOrgListResponseSchema = z.object({
+  associates: z.array(AssociateOrgSummarySchema),
+});
+export type AssociateOrgListResponse = z.infer<typeof AssociateOrgListResponseSchema>;
