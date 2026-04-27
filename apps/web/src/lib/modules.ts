@@ -8,6 +8,7 @@ import {
   ClipboardList,
   DollarSign,
   FileText,
+  HeartPulse,
   LineChart,
   MessageSquare,
   ScrollText,
@@ -30,7 +31,8 @@ export type ModuleKey =
   | 'compliance'
   | 'performance'
   | 'recruiting'
-  | 'audit';
+  | 'audit'
+  | 'benefits';
 
 export interface ModuleNav {
   key: ModuleKey;
@@ -52,6 +54,7 @@ export {
   ClipboardList,
   DollarSign,
   FileText,
+  HeartPulse,
   LineChart,
   MessageSquare,
   ScrollText,
@@ -177,6 +180,15 @@ export const MODULES: ModuleNav[] = [
       'Searchable, exportable feed of every auth, onboarding, payroll, and document event.',
     requires: 'view:audit',
     icon: ScrollText,
+  },
+  {
+    key: 'benefits',
+    path: '/benefits',
+    label: 'Benefits',
+    description:
+      'Health, dental, vision, 401(k), HSA/FSA — pre-tax elections that come out of every paycheck.',
+    requires: 'view:payroll',
+    icon: HeartPulse,
   },
 ];
 

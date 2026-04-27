@@ -285,6 +285,7 @@ model Client {
   shifts       Shift[]
   payrollRuns  PayrollRun[]
   jobs         Job[]
+  benefitsPlans BenefitsPlan[]
 
   @@index([status])
   @@index([deletedAt])
@@ -331,6 +332,7 @@ model Associate {
   timeOffBalances    TimeOffBalance[]
   timeOffLedger      TimeOffLedgerEntry[]
   timeOffRequests    TimeOffRequest[]
+  benefitsEnrollments BenefitsEnrollment[]
 
   @@index([deletedAt])
 }
@@ -946,6 +948,11 @@ model PayrollItem {
   // SS-cap and Medicare-surcharge math; preserved for paystub display.
   ytdWages           Decimal           @default(0) @db.Decimal(12, 2)
   ytdMedicareWages   Decimal           @default(0) @db.Decimal(12, 2)
+  // Phase 42 — pre-tax benefit deductions taken this period. Reduced
+  // from gross before federal/FICA/Medicare/state are computed; also
+  // subtracted again from net to land on take-home. Stored as a sum
+  // here; per-plan breakdown lives in BenefitsEnrollment + the period.
+  preTaxDeductions   Decimal           @default(0) @db.Decimal(12, 2)
   netPay             Decimal           @db.Decimal(12, 2)
   // The state used for SIT lookup (snapshot of associate.state at compute
   // time). Lets the paystub label the SIT line and the auditor see why a
@@ -1111,4 +1118,73 @@ model AuditLog {
   @@index([actorUserId])
   @@index([clientId])
   @@index([createdAt])
+}
+
+// ===== Phase 42 — Benefits enrollment =====================================
+//
+// Categories the IRS treats as Section 125 / pre-tax deductions. Every kind
+// in this enum is treated as pre-tax in the v1 payroll engine — taxable
+// income (federal + FICA + Medicare) drops by the enrolled amount before
+// the tax engine runs. Post-tax deductions (e.g. Roth 401k, garnishments)
+// will get a separate isPretax flag in a follow-up.
+enum BenefitsPlanKind {
+  HEALTH_MEDICAL
+  DENTAL
+  VISION
+  HSA
+  FSA_HEALTHCARE
+  FSA_DEPENDENT_CARE
+  RETIREMENT_401K
+  RETIREMENT_403B
+  LIFE_INSURANCE
+  DISABILITY
+}
+
+// Per-client benefits offering. The associate-side election picks an amount
+// per pay period; the employer side has a flat per-period contribution that
+// HR records here for reporting (not currently posted to payroll — only the
+// associate election affects taxable income / net pay).
+model BenefitsPlan {
+  id                              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId                        String           @db.Uuid
+  kind                            BenefitsPlanKind
+  name                            String
+  description                     String?
+  // Per-pay-period amount the employer contributes. Reporting only for v1.
+  employerContributionCentsPerPeriod Int           @default(0)
+  // Default amount shown to the associate when they enroll. They can
+  // override; the actual deduction comes from BenefitsEnrollment.
+  employeeContributionDefaultCentsPerPeriod Int    @default(0)
+  isActive                        Boolean          @default(true)
+  createdAt                       DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt                       DateTime         @updatedAt @db.Timestamptz(6)
+
+  client                          Client           @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  enrollments                     BenefitsEnrollment[]
+
+  @@index([clientId, isActive])
+  @@index([clientId, kind])
+}
+
+// One row per associate × plan. effectiveDate / terminationDate gate whether
+// the deduction posts in a given payroll period; null terminationDate means
+// "currently enrolled."
+model BenefitsEnrollment {
+  id                        String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId               String       @db.Uuid
+  planId                    String       @db.Uuid
+  electedAmountCentsPerPeriod Int
+  effectiveDate             DateTime     @db.Date
+  terminationDate           DateTime?    @db.Date
+  createdAt                 DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt                 DateTime     @updatedAt @db.Timestamptz(6)
+
+  associate                 Associate    @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  plan                      BenefitsPlan @relation(fields: [planId], references: [id], onDelete: Restrict)
+
+  // One active election per (associate, plan) at a time. Re-enrolling after
+  // a termination produces a new row (so the history is preserved).
+  @@unique([associateId, planId, effectiveDate])
+  @@index([associateId, terminationDate])
+  @@index([planId])
 }

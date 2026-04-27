@@ -256,13 +256,38 @@ payrollRouter.post('/runs', PROCESS, async (req, res, next) => {
         const associateState = group[0].associate.state ?? null;
         const employmentType = group[0].associate.employmentType;
 
+        // Phase 42 — sum active pre-tax benefit elections for this period.
+        // Active = effectiveDate <= periodEnd AND (terminationDate is null
+        // OR terminationDate >= periodStart). 1099 contractors don't take
+        // payroll deductions through us — they handle their own benefits.
+        let preTaxDeductions = 0;
+        if (employmentType === 'W2_EMPLOYEE') {
+          const enrollments = await tx.benefitsEnrollment.findMany({
+            where: {
+              associateId,
+              effectiveDate: { lte: periodEndExclusive },
+              OR: [
+                { terminationDate: null },
+                { terminationDate: { gte: periodStart } },
+              ],
+            },
+            select: { electedAmountCentsPerPeriod: true },
+          });
+          const totalCents = enrollments.reduce(
+            (acc, e) => acc + e.electedAmountCentsPerPeriod,
+            0
+          );
+          preTaxDeductions = round2(totalCents / 100);
+        }
+        const taxableGross = round2(Math.max(0, grossPay - preTaxDeductions));
+
         // Phase 41 — 1099 contractors are paid gross. No federal/state
         // withholding, no FICA/Medicare, no employer-side payroll tax.
         // 1099-NEC reporting (Box 1 = grossPay totals) is downstream.
         const breakdown =
           employmentType === 'W2_EMPLOYEE'
             ? computePaycheckTaxes({
-                grossPay,
+                grossPay: taxableGross,
                 filingStatus: w4?.filingStatus ?? null,
                 payFrequency,
                 state: associateState,
@@ -283,6 +308,7 @@ payrollRouter.post('/runs', PROCESS, async (req, res, next) => {
             hoursWorked,
             hourlyRate,
             grossPay,
+            preTaxDeductions,
             federalWithholding: breakdown.federalIncomeTax,
             fica: breakdown.socialSecurity,
             medicare: breakdown.medicare,
@@ -301,6 +327,7 @@ payrollRouter.post('/runs', PROCESS, async (req, res, next) => {
             hoursWorked,
             hourlyRate,
             grossPay,
+            preTaxDeductions,
             federalWithholding: breakdown.federalIncomeTax,
             fica: breakdown.socialSecurity,
             medicare: breakdown.medicare,

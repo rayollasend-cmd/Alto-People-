@@ -330,6 +330,90 @@ export const AuditLogListResponseSchema = z.object({
 });
 export type AuditLogListResponse = z.infer<typeof AuditLogListResponseSchema>;
 
+/* -------------------------------------------------------------------------- *
+ *  Phase 42 — Benefits enrollment
+ * -------------------------------------------------------------------------- */
+
+export const BenefitsPlanKindSchema = z.enum([
+  'HEALTH_MEDICAL',
+  'DENTAL',
+  'VISION',
+  'HSA',
+  'FSA_HEALTHCARE',
+  'FSA_DEPENDENT_CARE',
+  'RETIREMENT_401K',
+  'RETIREMENT_403B',
+  'LIFE_INSURANCE',
+  'DISABILITY',
+]);
+export type BenefitsPlanKind = z.infer<typeof BenefitsPlanKindSchema>;
+
+export const BenefitsPlanSchema = z.object({
+  id: UuidSchema,
+  clientId: UuidSchema,
+  kind: BenefitsPlanKindSchema,
+  name: z.string(),
+  description: z.string().nullable(),
+  employerContributionCentsPerPeriod: z.number().int().nonnegative(),
+  employeeContributionDefaultCentsPerPeriod: z.number().int().nonnegative(),
+  isActive: z.boolean(),
+});
+export type BenefitsPlan = z.infer<typeof BenefitsPlanSchema>;
+
+export const BenefitsPlanListResponseSchema = z.object({
+  plans: z.array(BenefitsPlanSchema),
+});
+export type BenefitsPlanListResponse = z.infer<typeof BenefitsPlanListResponseSchema>;
+
+export const BenefitsPlanCreateInputSchema = z.object({
+  clientId: UuidSchema,
+  kind: BenefitsPlanKindSchema,
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(2000).optional(),
+  employerContributionCentsPerPeriod: z.number().int().nonnegative().default(0),
+  employeeContributionDefaultCentsPerPeriod: z.number().int().nonnegative().default(0),
+});
+export type BenefitsPlanCreateInput = z.infer<typeof BenefitsPlanCreateInputSchema>;
+
+export const BenefitsPlanUpdateInputSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  description: z.string().trim().max(2000).nullable().optional(),
+  employerContributionCentsPerPeriod: z.number().int().nonnegative().optional(),
+  employeeContributionDefaultCentsPerPeriod: z.number().int().nonnegative().optional(),
+  isActive: z.boolean().optional(),
+});
+export type BenefitsPlanUpdateInput = z.infer<typeof BenefitsPlanUpdateInputSchema>;
+
+export const BenefitsEnrollmentSchema = z.object({
+  id: UuidSchema,
+  associateId: UuidSchema,
+  planId: UuidSchema,
+  electedAmountCentsPerPeriod: z.number().int().nonnegative(),
+  effectiveDate: z.string().datetime(),
+  terminationDate: z.string().datetime().nullable(),
+  // Joined plan summary so the UI can render without a second fetch.
+  planKind: BenefitsPlanKindSchema,
+  planName: z.string(),
+});
+export type BenefitsEnrollment = z.infer<typeof BenefitsEnrollmentSchema>;
+
+export const BenefitsEnrollmentListResponseSchema = z.object({
+  enrollments: z.array(BenefitsEnrollmentSchema),
+});
+export type BenefitsEnrollmentListResponse = z.infer<typeof BenefitsEnrollmentListResponseSchema>;
+
+export const BenefitsEnrollInputSchema = z.object({
+  planId: UuidSchema,
+  electedAmountCentsPerPeriod: z.number().int().nonnegative(),
+  effectiveDate: z.string().datetime(),
+});
+export type BenefitsEnrollInput = z.infer<typeof BenefitsEnrollInputSchema>;
+
+export const BenefitsTerminateInputSchema = z.object({
+  terminationDate: z.string().datetime(),
+});
+export type BenefitsTerminateInput = z.infer<typeof BenefitsTerminateInputSchema>;
+
 /* ----- Phase 40 — global audit search (with entity context) ------------ */
 
 export const AuditSearchEntrySchema = z.object({

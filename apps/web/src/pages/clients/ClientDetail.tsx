@@ -26,6 +26,7 @@ import { Input } from '@/components/ui/Input';
 import { Label, FormHint } from '@/components/ui/Label';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { JobsSection } from './JobsSection';
+import { BenefitsPlansSection } from './BenefitsPlansSection';
 
 // Two-letter US state codes that have either OT/break rules in Phase 23
 // or predictive scheduling in Phase 25. The select doubles as a shortcut
@@ -114,6 +115,8 @@ export function ClientDetail() {
       />
 
       <JobsSection clientId={client.id} />
+
+      <BenefitsPlansSection clientId={client.id} />
     </div>
   );
 }
