@@ -54,6 +54,7 @@ export type ModuleKey =
   | 'hr-cases'
   | 'help-center'
   | 'ramp'
+  | 'career'
   | 'team'
   | 'workflows'
   | 'me'
@@ -113,7 +114,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon, LogOut as SeparationIcon, Briefcase as InternalJobsIcon, Syringe as VaccinationsIcon, FileSignature as AgreementsIcon, MessageCircle as HrCasesIcon, BookOpen as KbIcon, Target as RampIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon, LogOut as SeparationIcon, Briefcase as InternalJobsIcon, Syringe as VaccinationsIcon, FileSignature as AgreementsIcon, MessageCircle as HrCasesIcon, BookOpen as KbIcon, Target as RampIcon, TrendingUp as CareerIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -354,6 +355,16 @@ export const MODULES: ModuleNav[] = [
       'New-hire 30/60/90 day milestones. Manager updates status as they progress; achieve / miss is captured for the timeline.',
     requires: 'view:onboarding',
     icon: RampIcon,
+    group: 'workforce',
+  },
+  {
+    key: 'career',
+    path: '/career',
+    label: 'Career ladders',
+    description:
+      'Progression paths through your job family. Each rung links a job profile and lists required skills with a minimum proficiency.',
+    requires: 'view:dashboard',
+    icon: CareerIcon,
     group: 'workforce',
   },
   {

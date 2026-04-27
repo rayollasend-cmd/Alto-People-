@@ -347,6 +347,7 @@ model User {
   kbArticlesAuthored           KbArticle[]
   rampPlansCreated             RampPlan[]                     @relation("RampPlanCreator")
   rampPlansManaged             RampPlan[]                     @relation("RampPlanManager")
+  careerLaddersCreated         CareerLadder[]
 
   @@index([role])
   @@index([clientId])
@@ -403,6 +404,8 @@ model Client {
   holidays               Holiday[]
   // Phase 124 — client-specific KB articles.
   kbArticles             KbArticle[]
+  // Phase 126 — career ladders defined for this client.
+  careerLadders          CareerLadder[]
   // Phase 86 — projects, premium-pay rules, tip pools.
   projects               Project[]
   premiumPayRules        PremiumPayRule[]
@@ -1618,6 +1621,8 @@ model JobProfile {
   associates  Associate[]
   positions   Position[]
   compBands   CompBand[]
+  // Phase 126 — career-ladder rungs that point at this profile.
+  careerLevels CareerLevel[]
 
   @@index([clientId, family])
   @@index([clientId, deletedAt])
@@ -3710,6 +3715,8 @@ model Skill {
   associateSkills AssociateSkill[]
   // Phase 112 — mentorships focused on this skill.
   mentorships     Mentorship[]
+  // Phase 126 — career-level skill requirements.
+  careerLevelRequirements CareerLevelSkill[]
 
   @@index([category])
 }
@@ -4353,4 +4360,59 @@ model RampMilestone {
   plan RampPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
 
   @@index([planId, dayCheckpoint])
+}
+
+// ===== Phase 126 — Career ladders ==========================================
+//
+// CareerLadder is one progression path (typically per family — Engineering,
+// Sales, Operations…). CareerLevel rows are the rungs, ranked 1..N inside the
+// ladder (unique). Each rung optionally links a JobProfile and lists required
+// skills with a minimum SkillLevel from Phase 111.
+model CareerLadder {
+  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId    String?       @db.Uuid
+  name        String
+  family      String?
+  description String?
+  archivedAt  DateTime?     @db.Timestamptz(6)
+  createdById String?       @db.Uuid
+  createdAt   DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime      @updatedAt @db.Timestamptz(6)
+
+  client    Client?       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy User?         @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  levels    CareerLevel[]
+
+  @@index([clientId])
+}
+
+model CareerLevel {
+  id           String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ladderId     String              @db.Uuid
+  rank         Int
+  title        String
+  description  String?
+  jobProfileId String?             @db.Uuid
+  createdAt    DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime            @updatedAt @db.Timestamptz(6)
+
+  ladder       CareerLadder       @relation(fields: [ladderId], references: [id], onDelete: Cascade)
+  jobProfile   JobProfile?        @relation(fields: [jobProfileId], references: [id], onDelete: SetNull)
+  skills       CareerLevelSkill[]
+
+  @@unique([ladderId, rank])
+  @@index([jobProfileId])
+}
+
+model CareerLevelSkill {
+  id        String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  levelId   String     @db.Uuid
+  skillId   String     @db.Uuid
+  minLevel  SkillLevel
+  createdAt DateTime   @default(now()) @db.Timestamptz(6)
+
+  level CareerLevel @relation(fields: [levelId], references: [id], onDelete: Cascade)
+  skill Skill       @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@unique([levelId, skillId])
 }
