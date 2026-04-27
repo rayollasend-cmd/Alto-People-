@@ -16,6 +16,7 @@ import {
   deleteCostCenter,
   deleteDepartment,
   deleteJobProfile,
+  listAssociateHistory,
   listCostCenters,
   listDepartments,
   listJobProfiles,
@@ -23,6 +24,7 @@ import {
   updateCostCenter,
   updateDepartment,
   updateJobProfile,
+  type AssociateHistoryEntry,
 } from '@/lib/orgApi';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
@@ -1141,6 +1143,21 @@ function PersonOrgDrawer({
   const [jobProfileId, setJobProfileId] = useState(associate.jobProfileId ?? '');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [history, setHistory] = useState<AssociateHistoryEntry[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    listAssociateHistory(associate.id)
+      .then((res) => {
+        if (!cancelled) setHistory(res.history);
+      })
+      .catch(() => {
+        if (!cancelled) setHistory([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [associate.id]);
 
   const submit = async () => {
     setError(null);
@@ -1247,6 +1264,45 @@ function PersonOrgDrawer({
             </select>
           </div>
           {error && <p role="alert" className="text-sm text-alert">{error}</p>}
+
+          <div className="pt-3 border-t border-navy-secondary">
+            <div className="text-[10px] uppercase tracking-widest text-silver/80 mb-2">
+              Effective changes
+            </div>
+            {history === null && (
+              <div className="text-xs text-silver">Loading…</div>
+            )}
+            {history?.length === 0 && (
+              <div className="text-xs text-silver">No history yet.</div>
+            )}
+            {history && history.length > 0 && (
+              <ol className="space-y-2 text-xs">
+                {history.map((h) => {
+                  const isCurrent = h.effectiveTo === null;
+                  return (
+                    <li
+                      key={h.id}
+                      className="flex items-start gap-3 border-l-2 pl-3 border-navy-secondary data-[current=true]:border-gold"
+                      data-current={isCurrent}
+                    >
+                      <div className="min-w-0">
+                        <div className="text-white tabular-nums">
+                          {new Date(h.effectiveFrom).toLocaleString()}
+                          {isCurrent ? (
+                            <Badge variant="default" className="ml-2">current</Badge>
+                          ) : null}
+                        </div>
+                        <div className="text-silver mt-0.5">
+                          {h.reason ?? '—'}
+                          {h.actorEmail ? ` · ${h.actorEmail}` : ''}
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
+          </div>
         </div>
       </DrawerBody>
       <DrawerFooter>

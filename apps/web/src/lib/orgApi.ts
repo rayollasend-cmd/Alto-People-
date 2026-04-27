@@ -83,3 +83,42 @@ export function assignOrgFields(
     body: input,
   });
 }
+
+export interface AssociateHistoryEntry {
+  id: string;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  managerId: string | null;
+  departmentId: string | null;
+  costCenterId: string | null;
+  jobProfileId: string | null;
+  state: string | null;
+  hourlyRate: string | null;
+  reason: string | null;
+  actorEmail: string | null;
+  createdAt: string;
+}
+
+export function listAssociateHistory(
+  associateId: string,
+): Promise<{ history: AssociateHistoryEntry[] }> {
+  return apiFetch(`/org/associates/${associateId}/history`);
+}
+
+export function getAssociateAsOf(
+  associateId: string,
+  when?: string,
+): Promise<{
+  when: string;
+  snapshot: {
+    managerId: string | null;
+    departmentId: string | null;
+    costCenterId: string | null;
+    jobProfileId: string | null;
+    state: string | null;
+    hourlyRate: string | null;
+  } | null;
+}> {
+  const q = when ? `?when=${encodeURIComponent(when)}` : '';
+  return apiFetch(`/org/associates/${associateId}/as-of${q}`);
+}

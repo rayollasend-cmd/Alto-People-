@@ -16,6 +16,7 @@ import {
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { asOf, recordChange } from '../lib/associateHistory.js';
 
 export const orgRouter = Router();
 
@@ -519,6 +520,20 @@ orgRouter.put(
           input.jobProfileId === undefined ? undefined : input.jobProfileId,
       },
     });
+    // Phase 77 — record into AssociateHistory if anything actually changed.
+    // Helper is idempotent: if the snapshot matches the current row it's a
+    // no-op, so we can call it unconditionally on every PUT.
+    await recordChange(prisma, {
+      associateId: id,
+      managerId: updated.managerId,
+      departmentId: updated.departmentId,
+      costCenterId: updated.costCenterId,
+      jobProfileId: updated.jobProfileId,
+      state: updated.state,
+      hourlyRate: null,
+      reason: 'org_assign',
+      actorUserId: req.user!.id,
+    });
     await audit(req, 'associate.org_assign', 'Associate', id, {
       managerId: updated.managerId,
       departmentId: updated.departmentId,
@@ -531,6 +546,69 @@ orgRouter.put(
       departmentId: updated.departmentId,
       costCenterId: updated.costCenterId,
       jobProfileId: updated.jobProfileId,
+    });
+  },
+);
+
+// ----- Effective-dated history -------------------------------------------
+
+orgRouter.get(
+  '/associates/:id/history',
+  VIEW,
+  async (req: Request, res: Response) => {
+    const id = req.params.id;
+    const rows = await prisma.associateHistory.findMany({
+      where: { associateId: id },
+      orderBy: { effectiveFrom: 'desc' },
+      include: {
+        actor: { select: { email: true } },
+      },
+    });
+    res.json({
+      history: rows.map((r) => ({
+        id: r.id,
+        effectiveFrom: r.effectiveFrom.toISOString(),
+        effectiveTo: r.effectiveTo?.toISOString() ?? null,
+        managerId: r.managerId,
+        departmentId: r.departmentId,
+        costCenterId: r.costCenterId,
+        jobProfileId: r.jobProfileId,
+        state: r.state,
+        hourlyRate: r.hourlyRate?.toString() ?? null,
+        reason: r.reason,
+        actorEmail: r.actor?.email ?? null,
+        createdAt: r.createdAt.toISOString(),
+      })),
+    });
+  },
+);
+
+orgRouter.get(
+  '/associates/:id/as-of',
+  VIEW,
+  async (req: Request, res: Response) => {
+    const id = req.params.id;
+    const whenStr =
+      typeof req.query.when === 'string' ? req.query.when : undefined;
+    const when = whenStr ? new Date(whenStr) : new Date();
+    if (Number.isNaN(when.getTime())) {
+      throw new HttpError(400, 'invalid_when', 'Invalid `when` timestamp.');
+    }
+    const snapshot = await asOf(prisma, id, when);
+    if (!snapshot) {
+      res.json({ snapshot: null, when: when.toISOString() });
+      return;
+    }
+    res.json({
+      when: when.toISOString(),
+      snapshot: {
+        managerId: snapshot.managerId,
+        departmentId: snapshot.departmentId,
+        costCenterId: snapshot.costCenterId,
+        jobProfileId: snapshot.jobProfileId,
+        state: snapshot.state,
+        hourlyRate: snapshot.hourlyRate?.toString() ?? null,
+      },
     });
   },
 );

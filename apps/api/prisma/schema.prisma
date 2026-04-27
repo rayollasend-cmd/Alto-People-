@@ -256,6 +256,7 @@ model User {
   payrollDisbursementAttempts PayrollDisbursementAttempt[] @relation("PayrollDisbursementAttemptActor")
   timeOffLedgerEntriesAuthored TimeOffLedgerEntry[]
   timeOffReviews               TimeOffRequest[]               @relation("TimeOffReviewer")
+  associateHistoryEntries      AssociateHistory[]             @relation("AssociateHistoryActor")
 
   @@index([role])
   @@index([clientId])
@@ -358,6 +359,8 @@ model Associate {
   department     Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
   costCenter     CostCenter? @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
   jobProfile     JobProfile? @relation(fields: [jobProfileId], references: [id], onDelete: SetNull)
+  // Phase 77 — effective-dated history of tracked fields.
+  history        AssociateHistory[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -1379,4 +1382,31 @@ model JobProfile {
 
   @@index([clientId, family])
   @@index([clientId, deletedAt])
+}
+
+// ===== Phase 77 — Effective-dated AssociateHistory ========================
+//
+// One row per change to any tracked field. Each row is the snapshot
+// from effectiveFrom until effectiveTo (NULL = current). The current row
+// mirrors Associate's denormalized current values; this table is the
+// audit + as-of source of truth.
+model AssociateHistory {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId   String    @db.Uuid
+  effectiveFrom DateTime  @db.Timestamptz(6)
+  effectiveTo   DateTime? @db.Timestamptz(6)
+  managerId     String?   @db.Uuid
+  departmentId  String?   @db.Uuid
+  costCenterId  String?   @db.Uuid
+  jobProfileId  String?   @db.Uuid
+  state         String?   @db.VarChar(2)
+  hourlyRate    Decimal?  @db.Decimal(8, 2)
+  reason        String?
+  actorUserId   String?   @db.Uuid
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  actor     User?     @relation("AssociateHistoryActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([associateId, effectiveFrom(sort: Desc)])
 }
