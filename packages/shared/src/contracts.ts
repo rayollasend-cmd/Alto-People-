@@ -82,6 +82,31 @@ export const ClientStateInputSchema = z.object({
 });
 export type ClientStateInput = z.infer<typeof ClientStateInputSchema>;
 
+// Phase 46 — HR-managed client CRUD. `name` is required and unique-ish at
+// the UI level (the API does not enforce uniqueness — two clients named
+// "Acme" are legal because of distinct UUIDs). Industry / contact email
+// stay optional. Status defaults to PROSPECT for new records so the
+// roster doesn't auto-populate active counts before HR confirms.
+export const ClientCreateInputSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  industry: z.string().trim().max(80).nullable().optional(),
+  status: ClientStatusSchema.optional(),
+  contactEmail: z.string().trim().email().max(254).nullable().optional(),
+  state: z.string().length(2).nullable().optional(),
+});
+export type ClientCreateInput = z.infer<typeof ClientCreateInputSchema>;
+
+// Partial update — every field is optional; sending null clears the
+// nullable ones. Use the dedicated /:id/state and /:id/geofence routes
+// for state and geofence (they have side-effects on policy enforcement).
+export const ClientUpdateInputSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  industry: z.string().trim().max(80).nullable().optional(),
+  status: ClientStatusSchema.optional(),
+  contactEmail: z.string().trim().email().max(254).nullable().optional(),
+});
+export type ClientUpdateInput = z.infer<typeof ClientUpdateInputSchema>;
+
 export const ClientListResponseSchema = z.object({
   clients: z.array(ClientSummarySchema),
 });

@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Building2, MapPin } from 'lucide-react';
+import { Building2, MapPin, Plus } from 'lucide-react';
 import type { ClientSummary } from '@alto-people/shared';
 import { listClients } from '@/lib/clientsApi';
 import { ApiError } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SkeletonRows } from '@/components/ui/Skeleton';
@@ -16,6 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/Table';
+import { NewClientDialog } from './NewClientDialog';
 
 const STATUS_VARIANT: Record<
   string,
@@ -27,31 +30,43 @@ const STATUS_VARIANT: Record<
 };
 
 export function ClientsHome() {
+  const { can } = useAuth();
+  const canManage = can('manage:clients');
+
   const [items, setItems] = useState<ClientSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showNew, setShowNew] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const res = await listClients();
+      setItems(res.clients);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to load.');
+    }
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    listClients()
-      .then((res) => !cancelled && setItems(res.clients))
-      .catch((err) => {
-        if (cancelled) return;
-        setError(err instanceof ApiError ? err.message : 'Failed to load.');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    refresh();
+  }, [refresh]);
 
   return (
     <div className="max-w-6xl mx-auto">
-      <header className="mb-6">
-        <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
-          Clients
-        </h1>
-        <p className="text-silver">
-          Configure work-site state, geofence, and per-client jobs.
-        </p>
+      <header className="mb-6 flex items-end justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
+            Clients
+          </h1>
+          <p className="text-silver">
+            Configure work-site state, geofence, and per-client jobs.
+          </p>
+        </div>
+        {canManage && (
+          <Button onClick={() => setShowNew(true)}>
+            <Plus className="h-4 w-4" />
+            New client
+          </Button>
+        )}
       </header>
 
       {error && (
@@ -75,7 +90,11 @@ export function ClientsHome() {
         <EmptyState
           icon={Building2}
           title="No clients yet"
-          description="Once a client account is created, it'll appear here."
+          description={
+            canManage
+              ? 'Click "New client" above to add your first one.'
+              : "Once a client account is created, it'll appear here."
+          }
         />
       )}
 
@@ -125,6 +144,12 @@ export function ClientsHome() {
           </Table>
         </Card>
       )}
+
+      <NewClientDialog
+        open={showNew}
+        onOpenChange={setShowNew}
+        onCreated={() => refresh()}
+      />
     </div>
   );
 }

@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { Crosshair, MapPin, Save, Trash2 } from 'lucide-react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Archive, Building2, Crosshair, MapPin, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { ClientSummary } from '@alto-people/shared';
+import type { ClientStatus, ClientSummary } from '@alto-people/shared';
 import {
+  archiveClient,
   getClient,
   getClientGeofence,
   setClientGeofence,
   setClientState,
+  updateClient,
   type ClientGeofence,
 } from '@/lib/clientsApi';
 import { ApiError } from '@/lib/api';
@@ -29,6 +31,8 @@ import { JobsSection } from './JobsSection';
 import { BenefitsPlansSection } from './BenefitsPlansSection';
 import { QuickbooksSection } from './QuickbooksSection';
 
+const STATUSES: ClientStatus[] = ['PROSPECT', 'ACTIVE', 'INACTIVE'];
+
 // Two-letter US state codes that have either OT/break rules in Phase 23
 // or predictive scheduling in Phase 25. The select doubles as a shortcut
 // for the states the engine actually does something with.
@@ -39,12 +43,30 @@ const POLICY_STATES = [
 
 export function ClientDetail() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const { can } = useAuth();
   const canManage = can('manage:clients');
 
   const [client, setClient] = useState<ClientSummary | null>(null);
   const [geofence, setGeofence] = useState<ClientGeofence | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [archiving, setArchiving] = useState(false);
+
+  const onArchive = async () => {
+    if (!client) return;
+    if (!confirm(`Archive "${client.name}"? They'll be hidden from the clients list. Open applications, payroll, and associates aren't deleted.`)) return;
+    setArchiving(true);
+    try {
+      await archiveClient(client.id);
+      toast.success(`"${client.name}" archived.`);
+      navigate('/clients');
+    } catch (err) {
+      toast.error('Could not archive', {
+        description: err instanceof ApiError ? err.message : String(err),
+      });
+      setArchiving(false);
+    }
+  };
 
   const refresh = useCallback(async () => {
     if (!id) return;
@@ -91,16 +113,30 @@ export function ClientDetail() {
         ← All clients
       </Link>
 
-      <header>
-        <h1 className="font-display text-3xl md:text-4xl text-white mb-1">
-          {client.name}
-        </h1>
-        <div className="flex items-center gap-2 text-sm text-silver">
-          <Badge>{client.status}</Badge>
-          {client.industry && <span>· {client.industry}</span>}
-          {client.contactEmail && <span>· {client.contactEmail}</span>}
+      <header className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="font-display text-3xl md:text-4xl text-white mb-1">
+            {client.name}
+          </h1>
+          <div className="flex items-center gap-2 text-sm text-silver">
+            <Badge>{client.status}</Badge>
+            {client.industry && <span>· {client.industry}</span>}
+            {client.contactEmail && <span>· {client.contactEmail}</span>}
+          </div>
         </div>
+        {canManage && (
+          <Button variant="ghost" onClick={onArchive} loading={archiving}>
+            <Archive className="h-4 w-4" />
+            Archive
+          </Button>
+        )}
       </header>
+
+      <BasicsEditor
+        client={client}
+        canManage={canManage}
+        onSaved={(updated) => setClient(updated)}
+      />
 
       <StateEditor
         client={client}
@@ -121,6 +157,140 @@ export function ClientDetail() {
 
       <QuickbooksSection clientId={client.id} />
     </div>
+  );
+}
+
+/* ----------------------------- Basics editor ----------------------------- */
+
+function BasicsEditor({
+  client,
+  canManage,
+  onSaved,
+}: {
+  client: ClientSummary;
+  canManage: boolean;
+  onSaved: (c: ClientSummary) => void;
+}) {
+  const [name, setName] = useState(client.name);
+  const [industry, setIndustry] = useState(client.industry ?? '');
+  const [status, setStatus] = useState<ClientStatus>(client.status);
+  const [contactEmail, setContactEmail] = useState(client.contactEmail ?? '');
+  const [saving, setSaving] = useState(false);
+
+  // Re-sync local state when the parent reloads the client (e.g. after a
+  // sibling section's save flips status from PROSPECT to ACTIVE).
+  useEffect(() => {
+    setName(client.name);
+    setIndustry(client.industry ?? '');
+    setStatus(client.status);
+    setContactEmail(client.contactEmail ?? '');
+  }, [client.name, client.industry, client.status, client.contactEmail]);
+
+  const dirty =
+    name.trim() !== client.name ||
+    (industry.trim() || null) !== (client.industry || null) ||
+    status !== client.status ||
+    (contactEmail.trim() || null) !== (client.contactEmail || null);
+
+  const submit = async () => {
+    const trimmed = name.trim();
+    if (trimmed.length === 0) {
+      toast.error('Name is required.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const updated = await updateClient(client.id, {
+        name: trimmed,
+        industry: industry.trim() || null,
+        status,
+        contactEmail: contactEmail.trim() || null,
+      });
+      onSaved(updated);
+      toast.success('Client saved.');
+    } catch (err) {
+      toast.error('Could not save', {
+        description: err instanceof ApiError ? err.message : String(err),
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Building2 className="h-4 w-4 text-gold" />
+          Basics
+        </CardTitle>
+        <CardDescription>
+          Name, industry, account status, and a primary contact email.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <Label htmlFor="cl-name" required>
+              Name
+            </Label>
+            <Input
+              id="cl-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              maxLength={120}
+              disabled={!canManage}
+            />
+          </div>
+          <div>
+            <Label htmlFor="cl-industry">Industry</Label>
+            <Input
+              id="cl-industry"
+              value={industry}
+              onChange={(e) => setIndustry(e.target.value)}
+              maxLength={80}
+              disabled={!canManage}
+            />
+          </div>
+          <div>
+            <Label htmlFor="cl-status">Status</Label>
+            <select
+              id="cl-status"
+              disabled={!canManage}
+              value={status}
+              onChange={(e) => setStatus(e.target.value as ClientStatus)}
+              className="mt-1 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 text-white px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright disabled:opacity-50"
+            >
+              {STATUSES.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <Label htmlFor="cl-email">Contact email</Label>
+            <Input
+              id="cl-email"
+              type="email"
+              value={contactEmail}
+              onChange={(e) => setContactEmail(e.target.value)}
+              maxLength={254}
+              disabled={!canManage}
+            />
+            <FormHint>Leave blank if there's no primary point of contact.</FormHint>
+          </div>
+        </div>
+        {canManage && (
+          <div className="mt-4">
+            <Button onClick={submit} disabled={!dirty} loading={saving}>
+              <Save className="h-4 w-4" />
+              Save
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

@@ -1,8 +1,10 @@
 import type {
+  ClientCreateInput,
   ClientGeofenceInput,
   ClientListResponse,
   ClientStateInput,
   ClientSummary,
+  ClientUpdateInput,
 } from '@alto-people/shared';
 import { apiFetch } from './api';
 
@@ -39,4 +41,19 @@ export function setClientGeofence(
     method: 'PUT',
     body,
   });
+}
+
+export function createClient(body: ClientCreateInput): Promise<ClientSummary> {
+  return apiFetch<ClientSummary>('/clients', { method: 'POST', body });
+}
+
+export function updateClient(
+  id: string,
+  body: ClientUpdateInput
+): Promise<ClientSummary> {
+  return apiFetch<ClientSummary>(`/clients/${id}`, { method: 'PATCH', body });
+}
+
+export function archiveClient(id: string): Promise<void> {
+  return apiFetch<void>(`/clients/${id}`, { method: 'DELETE' });
 }
