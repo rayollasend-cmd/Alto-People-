@@ -1047,9 +1047,20 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         <MonthCalendarView
           shifts={filteredShifts}
           monthAnchor={monthAnchor}
+          canManage={canManage}
           onDayClick={(d) => {
             setDayAnchor(d);
             setView('day');
+          }}
+          onShiftClick={(s) => {
+            if (s.status === 'OPEN' || s.status === 'DRAFT' || s.status === 'ASSIGNED') {
+              setAssignTarget(s);
+            }
+          }}
+          onCellCreate={(dayStart) => {
+            setCreateInitialDate(dayStart);
+            setCreateInitialAssociateId(null);
+            setShowCreate(true);
           }}
         />
       )}
