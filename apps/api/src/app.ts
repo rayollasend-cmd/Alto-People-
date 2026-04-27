@@ -30,6 +30,7 @@ import { workflowsRouter } from './routes/workflows.js';
 import { customFieldsRouter } from './routes/customFields.js';
 import { selfServiceRouter } from './routes/selfService.js';
 import { compensationRouter } from './routes/compensation.js';
+import { qualificationsRouter } from './routes/qualifications.js';
 import { attachUser, requireCapability } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 
@@ -119,6 +120,11 @@ export function createApp() {
   // Phase 83 — compensation: routes self-gate per-handler with view:comp
   // / manage:comp.
   app.use('/comp', compensationRouter);
+  // Phase 85 — qualifications + open-shift marketplace. Routes self-gate
+  // per-handler and the /shifts/* paths sit alongside Phase 24's /scheduling
+  // namespace deliberately — open shifts are inherently cross-client for
+  // associates with multi-client visibility.
+  app.use('/', qualificationsRouter);
   // QuickBooks router self-gates each route — the OAuth callback must accept
   // an unauthenticated browser redirect from Intuit, so we cannot apply a
   // capability check at this mount point.

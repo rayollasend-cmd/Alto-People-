@@ -37,7 +37,8 @@ export type ModuleKey =
   | 'team'
   | 'workflows'
   | 'me'
-  | 'compensation';
+  | 'compensation'
+  | 'marketplace';
 
 /**
  * Phase 67 — sidebar groupings, F500-style. Modules with the same `group`
@@ -90,7 +91,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -211,6 +212,16 @@ export const MODULES: ModuleNav[] = [
       'Multi-state payroll, anomaly detection, Branch cards, and Wise transfers.',
     requires: 'view:payroll',
     icon: DollarSign,
+    group: 'time-and-pay',
+  },
+  {
+    key: 'marketplace',
+    path: '/marketplace',
+    label: 'Open shifts',
+    description:
+      'Marketplace of open shifts qualified associates can pick up. Managers approve claims.',
+    requires: 'view:scheduling',
+    icon: StoreIcon,
     group: 'time-and-pay',
   },
   {

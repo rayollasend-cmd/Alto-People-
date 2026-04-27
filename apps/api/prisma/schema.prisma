@@ -281,6 +281,8 @@ model User {
   pipsAsManager                Pip[]                          @relation("PipManager")
   reviews360Requested          Review360[]                    @relation("Review360Requester")
   reviews360FeedbackGiven      Review360Feedback[]            @relation("Review360FeedbackFrom")
+  // Phase 85 — claim decisions.
+  shiftClaimsDecided           OpenShiftClaim[]               @relation("OpenShiftClaimDecider")
 
   @@index([role])
   @@index([clientId])
@@ -331,6 +333,8 @@ model Client {
   // Phase 83 — compensation bands + merit cycles.
   compBands              CompBand[]
   meritCycles            MeritCycle[]
+  // Phase 85 — qualifications catalog.
+  qualifications         Qualification[]
 
   @@index([status])
   @@index([deletedAt])
@@ -412,6 +416,9 @@ model Associate {
   kudosReceived     Kudo[]            @relation("KudoRecipient")
   pips              Pip[]
   reviews360Subject Review360[]       @relation("Review360Subject")
+  // Phase 85 — qualifications + claimed open shifts.
+  qualifications    AssociateQualification[]
+  shiftClaims       OpenShiftClaim[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -796,6 +803,9 @@ model Shift {
   assignedAssociate    Associate?  @relation(fields: [assignedAssociateId], references: [id], onDelete: SetNull)
   createdBy            User?       @relation("ShiftCreator", fields: [createdById], references: [id], onDelete: SetNull)
   swapRequests         ShiftSwapRequest[]
+  // Phase 85 — qualification gates + open-shift claims.
+  qualReqs             ShiftQualificationRequirement[]
+  claims               OpenShiftClaim[]
   createdAt            DateTime    @default(now()) @db.Timestamptz(6)
   updatedAt            DateTime    @updatedAt @db.Timestamptz(6)
 
@@ -2091,4 +2101,79 @@ model Review360Feedback {
   fromUser User?     @relation("Review360FeedbackFrom", fields: [fromUserId], references: [id], onDelete: SetNull)
 
   @@index([reviewId])
+}
+
+// ===== Phase 85 — Qualifications + open-shift marketplace =================
+
+enum OpenShiftClaimStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
+  EXPIRED
+}
+
+model Qualification {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId    String?   @db.Uuid
+  code        String
+  name        String
+  description String?
+  isCert      Boolean   @default(false)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+
+  client                   Client?                         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  associateQualifications  AssociateQualification[]
+  shiftRequirements        ShiftQualificationRequirement[]
+
+  @@index([clientId])
+}
+
+model AssociateQualification {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId     String    @db.Uuid
+  qualificationId String    @db.Uuid
+  acquiredAt      DateTime? @db.Date
+  expiresAt       DateTime? @db.Date
+  evidenceKey     String?
+  createdAt       DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt       DateTime? @db.Timestamptz(6)
+
+  associate     Associate     @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  qualification Qualification @relation(fields: [qualificationId], references: [id], onDelete: Cascade)
+}
+
+model ShiftQualificationRequirement {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  shiftId         String   @db.Uuid
+  qualificationId String   @db.Uuid
+  createdAt       DateTime @default(now()) @db.Timestamptz(6)
+
+  shift         Shift         @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  qualification Qualification @relation(fields: [qualificationId], references: [id], onDelete: Cascade)
+
+  @@unique([shiftId, qualificationId])
+  @@index([shiftId])
+}
+
+model OpenShiftClaim {
+  id           String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  shiftId      String               @db.Uuid
+  associateId  String               @db.Uuid
+  status       OpenShiftClaimStatus @default(PENDING)
+  decidedById  String?              @db.Uuid
+  decidedAt    DateTime?            @db.Timestamptz(6)
+  decisionNote String?
+  createdAt    DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime             @updatedAt @db.Timestamptz(6)
+
+  shift     Shift     @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  decidedBy User?     @relation("OpenShiftClaimDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  @@index([shiftId, status])
+  @@index([associateId, status])
 }

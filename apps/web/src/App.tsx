@@ -42,6 +42,7 @@ import { WorkflowsHome } from '@/pages/workflows/WorkflowsHome';
 import { MeHome } from '@/pages/me/MeHome';
 import { CompensationHome } from '@/pages/compensation/CompensationHome';
 import { PerformanceExtras } from '@/pages/performance/PerformanceExtras';
+import { MarketplaceHome } from '@/pages/marketplace/MarketplaceHome';
 import { RouterErrorPage } from '@/pages/RouterErrorPage';
 
 const ONBOARDING_ROUTES = [
@@ -118,7 +119,8 @@ const PLACEHOLDER_MODULES = MODULES.filter(
     m.key !== 'team' &&
     m.key !== 'workflows' &&
     m.key !== 'me' &&
-    m.key !== 'compensation'
+    m.key !== 'compensation' &&
+    m.key !== 'marketplace'
 );
 
 export const router = createBrowserRouter([
@@ -159,6 +161,7 @@ export const router = createBrowserRouter([
       { path: 'me', element: <MeHome /> },
       { path: 'compensation', element: <CompensationHome /> },
       { path: 'performance/extras', element: <PerformanceExtras /> },
+      { path: 'marketplace', element: <MarketplaceHome /> },
       ...ONBOARDING_ROUTES,
       ...PLACEHOLDER_MODULES.map((m) => ({
         path: m.path.replace(/^\//, ''),
