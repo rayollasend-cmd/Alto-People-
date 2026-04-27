@@ -337,7 +337,21 @@ const PunchInputSchema = z.object({
     .length(128)
     .optional()
     .nullable(),
+  // Phase 102 — offline queue support. Both optional: a kiosk that's
+  // never been offline doesn't need to send either.
+  idempotencyKey: z.string().uuid().optional().nullable(),
+  clientPunchedAt: z
+    .string()
+    .datetime({ offset: true })
+    .optional()
+    .nullable(),
 });
+
+// Phase 102 — bound how far in the past a queued punch can be replayed.
+// 7 days is generous for a long offline stretch; older than that is
+// almost certainly a clock-skew bug or replay attack and HR should
+// re-enter manually. Future-dated punches are always rejected.
+const MAX_PUNCH_BACKDATE_MS = 7 * 24 * 60 * 60 * 1000;
 
 const SELFIE_MAX_BYTES = 1_000_000; // 1MB
 
@@ -388,6 +402,59 @@ function decodeSelfie(s: string | null | undefined): Buffer | null {
 kiosk99Router.post('/kiosk/punch', async (req, res) => {
   const input = PunchInputSchema.parse(req.body);
 
+  // 0. Idempotency short-circuit. If the kiosk is replaying a punch it
+  // sent before (e.g., the previous response timed out), we don't want
+  // to double-clock. Look up the original by idempotencyKey.
+  if (input.idempotencyKey) {
+    const prior = await prisma.kioskPunch.findUnique({
+      where: { idempotencyKey: input.idempotencyKey },
+      include: {
+        timeEntry: { select: { id: true, updatedAt: true } },
+        associate: { select: { firstName: true, lastName: true } },
+      },
+    });
+    if (prior) {
+      if (prior.action === 'REJECTED') {
+        throw new HttpError(
+          409,
+          'previously_rejected',
+          `This punch was previously rejected: ${prior.rejectReason ?? 'unknown'}`,
+        );
+      }
+      res.json({
+        action: prior.action,
+        associateName: prior.associate
+          ? `${prior.associate.firstName} ${prior.associate.lastName}`
+          : 'unknown',
+        at: (prior.timeEntry?.updatedAt ?? prior.createdAt).toISOString(),
+        punchId: prior.id,
+      });
+      return;
+    }
+  }
+
+  // Validate clientPunchedAt: not future, not absurdly old.
+  let clientPunchedAt: Date | null = null;
+  if (input.clientPunchedAt) {
+    const d = new Date(input.clientPunchedAt);
+    const now = Date.now();
+    if (d.getTime() > now + 60_000) {
+      throw new HttpError(
+        400,
+        'clock_skew',
+        'Kiosk clock is set to the future. Sync the device clock.',
+      );
+    }
+    if (now - d.getTime() > MAX_PUNCH_BACKDATE_MS) {
+      throw new HttpError(
+        400,
+        'punch_too_old',
+        'This punch is older than the offline-queue limit. HR must enter it manually.',
+      );
+    }
+    clientPunchedAt = d;
+  }
+
   // 1. Resolve device token. We don't index by token (would defeat bcrypt),
   // so we look up active devices for any client and verify against each.
   // For typical deployments that's a few dozen rows — cheap. If this ever
@@ -428,6 +495,8 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
           kioskDeviceId: device.id,
           action: 'REJECTED',
           rejectReason: 'location_required',
+          idempotencyKey: input.idempotencyKey ?? null,
+          clientPunchedAt,
         },
       });
       throw new HttpError(
@@ -455,6 +524,8 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
           punchLat,
           punchLng,
           distanceMeters: dist,
+          idempotencyKey: input.idempotencyKey ?? null,
+          clientPunchedAt,
         },
       });
       await prisma.kioskDevice.update({
@@ -497,6 +568,8 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
         punchLat,
         punchLng,
         distanceMeters: dist,
+        idempotencyKey: input.idempotencyKey ?? null,
+        clientPunchedAt,
       },
     });
     await prisma.kioskDevice.update({
@@ -534,13 +607,16 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
   });
 
   const result = await prisma.$transaction(async (tx) => {
+    // Phase 102 — when the kiosk supplies a wall-clock timestamp (queued
+    // punch replayed later), use it for the TimeEntry. Otherwise server now().
+    const at = clientPunchedAt ?? new Date();
     let timeEntry;
     let action: 'CLOCK_IN' | 'CLOCK_OUT';
     if (open) {
       timeEntry = await tx.timeEntry.update({
         where: { id: open.id },
         data: {
-          clockOutAt: new Date(),
+          clockOutAt: at,
           status: 'COMPLETED',
           // Snapshot coords on the time entry too, for downstream audit
           // reports without joining KioskPunch.
@@ -555,7 +631,7 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
         data: {
           associateId: pinRow.associateId,
           clientId: device.clientId,
-          clockInAt: new Date(),
+          clockInAt: at,
           status: 'ACTIVE',
           ...(punchLat != null && punchLng != null
             ? { clockInLat: punchLat, clockInLng: punchLng }
@@ -578,6 +654,8 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
         distanceMeters: dist,
         faceDistance,
         faceMismatch,
+        idempotencyKey: input.idempotencyKey ?? null,
+        clientPunchedAt,
       },
     });
     if (shouldEnrollFace && input.faceDescriptor) {

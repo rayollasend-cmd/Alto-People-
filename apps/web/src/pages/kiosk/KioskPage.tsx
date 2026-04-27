@@ -2,6 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '@/lib/api';
 import { kioskPunch } from '@/lib/kiosk99Api';
 import { extractDescriptor, loadFaceModels } from '@/lib/faceMatch';
+import {
+  drainQueue,
+  enqueuePunch,
+  newIdempotencyKey,
+  queueSize,
+} from '@/lib/kioskQueue';
 
 /**
  * Phase 99 — Public kiosk page. No auth, no Layout — full-screen UI a
@@ -21,6 +27,8 @@ interface PunchResult {
   action: 'CLOCK_IN' | 'CLOCK_OUT';
   associateName: string;
   at: string;
+  /** True when the punch was queued offline rather than sent live. */
+  queued?: boolean;
 }
 
 export function KioskPage() {
@@ -30,6 +38,7 @@ export function KioskPage() {
   const [result, setResult] = useState<PunchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
+  const [queued, setQueued] = useState<number>(() => queueSize());
 
   // Boot: read token from localStorage, otherwise show setup.
   useEffect(() => {
@@ -50,6 +59,33 @@ export function KioskPage() {
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
+  }, []);
+
+  // Phase 102 — drain the queue: on first idle, on browser online event,
+  // and on a 30s timer (handles flaky networks where 'online' doesn't
+  // fire because the radio thinks it's connected to a captive portal).
+  useEffect(() => {
+    let cancelled = false;
+    const tick = () => {
+      if (cancelled) return;
+      void drainQueue()
+        .then((r) => {
+          if (cancelled) return;
+          setQueued(r.remaining);
+        })
+        .catch(() => {
+          /* swallow — next tick retries */
+        });
+    };
+    tick();
+    const onOnline = () => tick();
+    window.addEventListener('online', onOnline);
+    const t = window.setInterval(tick, 30_000);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('online', onOnline);
+      window.clearInterval(t);
+    };
   }, []);
 
   const reset = () => {
@@ -86,16 +122,21 @@ export function KioskPage() {
       setStage('setup');
       return;
     }
+    const idempotencyKey = newIdempotencyKey();
+    const capturedAt = new Date().toISOString();
+    const loc = await tryGetLocation();
+    const payload = {
+      deviceToken: token,
+      pin,
+      selfie: selfieData,
+      latitude: loc?.lat ?? null,
+      longitude: loc?.lng ?? null,
+      faceDescriptor,
+      idempotencyKey,
+      clientPunchedAt: capturedAt,
+    };
     try {
-      const loc = await tryGetLocation();
-      const r = await kioskPunch({
-        deviceToken: token,
-        pin,
-        selfie: selfieData,
-        latitude: loc?.lat ?? null,
-        longitude: loc?.lng ?? null,
-        faceDescriptor,
-      });
+      const r = await kioskPunch(payload);
       setResult({
         action: r.action,
         associateName: r.associateName,
@@ -104,10 +145,35 @@ export function KioskPage() {
       setStage('result');
       window.setTimeout(reset, 4000);
     } catch (err) {
-      const msg = err instanceof ApiError ? err.message : 'Network error.';
-      setError(msg);
-      setStage('error');
-      window.setTimeout(reset, 3000);
+      // Server rejected (4xx) → real error, show it. Network failure →
+      // queue and tell the user "saved offline".
+      if (err instanceof ApiError && err.status >= 400 && err.status < 500) {
+        setError(err.message);
+        setStage('error');
+        window.setTimeout(reset, 3000);
+        return;
+      }
+      enqueuePunch({
+        idempotencyKey,
+        deviceToken: token,
+        pin,
+        selfie: selfieData,
+        faceDescriptor,
+        latitude: loc?.lat ?? null,
+        longitude: loc?.lng ?? null,
+        capturedAt,
+      });
+      setQueued(queueSize());
+      // Optimistic display — we don't actually know CLOCK_IN vs CLOCK_OUT
+      // until the server resolves it, so use a neutral verb.
+      setResult({
+        action: 'CLOCK_IN',
+        associateName: 'Saved',
+        at: capturedAt,
+        queued: true,
+      });
+      setStage('result');
+      window.setTimeout(reset, 4000);
     }
   };
 
@@ -151,6 +217,13 @@ export function KioskPage() {
         <div className="text-center">
           <div className="text-6xl mb-6">⚠️</div>
           <div className="text-3xl text-red-400">{error}</div>
+        </div>
+      )}
+      {/* Phase 102 — queued punch indicator. Only shown when there's a
+          backlog so the normal idle screen stays clean. */}
+      {queued > 0 && (
+        <div className="fixed top-4 left-4 px-3 py-1.5 bg-amber-500/20 border border-amber-500/40 rounded-full text-amber-300 text-xs">
+          {queued} punch{queued === 1 ? '' : 'es'} waiting to sync
         </div>
       )}
       {/* Reset hidden affordance: triple-tap top-right corner unlocks setup. */}
@@ -441,12 +514,26 @@ function SelfieCapture({
 }
 
 function ResultScreen({ result }: { result: PunchResult }) {
-  const verb = result.action === 'CLOCK_IN' ? 'Clocked in' : 'Clocked out';
-  const color = result.action === 'CLOCK_IN' ? 'text-emerald-400' : 'text-cyan-400';
   const time = new Date(result.at).toLocaleTimeString('en-US', {
     hour: 'numeric',
     minute: '2-digit',
   });
+  if (result.queued) {
+    // We can't show the real CLOCK_IN/OUT distinction until the server
+    // resolves; show a neutral confirmation that the punch is saved.
+    return (
+      <div className="text-center">
+        <div className="text-9xl mb-6 text-amber-400">⏱</div>
+        <div className="text-5xl font-serif mb-3">Saved offline</div>
+        <div className="text-2xl text-silver">
+          We'll sync your punch when the network comes back.
+        </div>
+        <div className="text-xl text-silver mt-2">at {time}</div>
+      </div>
+    );
+  }
+  const verb = result.action === 'CLOCK_IN' ? 'Clocked in' : 'Clocked out';
+  const color = result.action === 'CLOCK_IN' ? 'text-emerald-400' : 'text-cyan-400';
   return (
     <div className="text-center">
       <div className={`text-9xl mb-6 ${color}`}>✓</div>

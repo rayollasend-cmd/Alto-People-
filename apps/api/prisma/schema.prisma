@@ -3441,6 +3441,13 @@ model KioskPunch {
   // distance exceeded the threshold; HR reviews — we don't auto-reject.
   faceDistance   Float?
   faceMismatch   Boolean?
+  // Phase 102 — offline queue support. idempotencyKey dedupes retries
+  // (unique partial index — NULL allowed for direct online punches that
+  // skipped the queue). clientPunchedAt is the wall-clock time the user
+  // pressed the button; used as TimeEntry.clockInAt/clockOutAt when
+  // provided, so a punch queued at 8am and synced at 11am still logs 8am.
+  idempotencyKey  String?  @unique
+  clientPunchedAt DateTime? @db.Timestamptz(6)
   createdAt     DateTime         @default(now()) @db.Timestamptz(6)
 
   device    KioskDevice @relation(fields: [kioskDeviceId], references: [id], onDelete: Cascade)

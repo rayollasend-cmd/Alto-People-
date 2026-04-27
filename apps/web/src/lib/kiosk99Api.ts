@@ -140,6 +140,8 @@ export const kioskPunch = (input: {
   latitude?: number | null;
   longitude?: number | null;
   faceDescriptor?: number[] | null;
+  idempotencyKey?: string | null;
+  clientPunchedAt?: string | null;
 }) =>
   apiFetch<KioskPunchResult>('/kiosk/punch', {
     method: 'POST',
