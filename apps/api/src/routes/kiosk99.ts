@@ -6,6 +6,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { hashPassword, verifyPassword } from '../lib/passwords.js';
 import {
+  distanceMeters,
   generateDeviceToken,
   generatePin,
   hmacPin,
@@ -41,9 +42,18 @@ const MANAGE = requireCapability('manage:time');
 
 // ----- Admin: KioskDevice ------------------------------------------------
 
+const GeofenceSchema = z
+  .object({
+    latitude: z.number().min(-90).max(90),
+    longitude: z.number().min(-180).max(180),
+    radiusMeters: z.number().int().positive().max(50_000),
+  })
+  .nullable();
+
 const DeviceInputSchema = z.object({
   clientId: z.string().uuid(),
   name: z.string().min(1).max(120),
+  geofence: GeofenceSchema.optional(),
 });
 
 kiosk99Router.get('/kiosk-devices', VIEW, async (req, res) => {
@@ -65,6 +75,14 @@ kiosk99Router.get('/kiosk-devices', VIEW, async (req, res) => {
       isActive: d.isActive,
       lastSeenAt: d.lastSeenAt?.toISOString() ?? null,
       punchCount: d._count.punches,
+      geofence:
+        d.latitude && d.longitude && d.radiusMeters
+          ? {
+              latitude: Number(d.latitude),
+              longitude: Number(d.longitude),
+              radiusMeters: d.radiusMeters,
+            }
+          : null,
       createdAt: d.createdAt.toISOString(),
     })),
   });
@@ -79,11 +97,29 @@ kiosk99Router.post('/kiosk-devices', MANAGE, async (req, res) => {
       clientId: input.clientId,
       name: input.name,
       tokenHash,
+      latitude: input.geofence?.latitude ?? null,
+      longitude: input.geofence?.longitude ?? null,
+      radiusMeters: input.geofence?.radiusMeters ?? null,
       createdById: req.user!.id,
     },
   });
   // Plaintext is shown ONCE — paste it into the kiosk's setup screen.
   res.status(201).json({ id: created.id, deviceToken: plaintext });
+});
+
+// Update geofence (or clear it). Other device fields aren't editable
+// for v1 — the device token is identity, and HR can revoke + re-pair.
+kiosk99Router.put('/kiosk-devices/:id/geofence', MANAGE, async (req, res) => {
+  const geofence = GeofenceSchema.parse(req.body?.geofence);
+  await prisma.kioskDevice.update({
+    where: { id: req.params.id },
+    data: {
+      latitude: geofence?.latitude ?? null,
+      longitude: geofence?.longitude ?? null,
+      radiusMeters: geofence?.radiusMeters ?? null,
+    },
+  });
+  res.json({ ok: true });
 });
 
 kiosk99Router.post('/kiosk-devices/:id/revoke', MANAGE, async (req, res) => {
@@ -220,6 +256,7 @@ kiosk99Router.get('/kiosk-punches', VIEW, async (req, res) => {
       action: p.action,
       hasSelfie: p.selfie != null,
       rejectReason: p.rejectReason,
+      distanceMeters: p.distanceMeters,
       createdAt: p.createdAt.toISOString(),
     })),
   });
@@ -247,6 +284,11 @@ const PunchInputSchema = z.object({
   // Selfie as a base64 data URL or raw base64. Optional but strongly
   // encouraged — we surface it in HR for buddy-punching disputes.
   selfie: z.string().max(2_000_000).optional().nullable(),
+  // Phase 100 — geofence inputs. Required when the device has a geofence
+  // configured; ignored otherwise. Browser geolocation reports lat/lng
+  // as JS numbers.
+  latitude: z.number().min(-90).max(90).optional().nullable(),
+  longitude: z.number().min(-180).max(180).optional().nullable(),
 });
 
 const SELFIE_MAX_BYTES = 1_000_000; // 1MB
@@ -277,12 +319,19 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
   // becomes hot, add a token-prefix index column.
   const devices = await prisma.kioskDevice.findMany({
     where: { isActive: true },
-    select: { id: true, clientId: true, tokenHash: true },
+    select: {
+      id: true,
+      clientId: true,
+      tokenHash: true,
+      latitude: true,
+      longitude: true,
+      radiusMeters: true,
+    },
   });
-  let device: { id: string; clientId: string } | null = null;
+  let device: typeof devices[number] | null = null;
   for (const d of devices) {
     if (await verifyPassword(d.tokenHash, input.deviceToken)) {
-      device = { id: d.id, clientId: d.clientId };
+      device = d;
       break;
     }
   }
@@ -291,10 +340,64 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     throw new HttpError(401, 'invalid_device', 'Device not registered.');
   }
 
-  // 2. Decode selfie up front so a bad upload doesn't waste a PIN lookup.
+  // 2. Geofence check. If device has a geofence, location is required
+  // and must be within radius. Distance is recorded on every punch
+  // (even accepted ones) so HR can see drift.
+  let punchLat: number | null = null;
+  let punchLng: number | null = null;
+  let dist: number | null = null;
+  if (device.latitude && device.longitude && device.radiusMeters) {
+    if (input.latitude == null || input.longitude == null) {
+      await prisma.kioskPunch.create({
+        data: {
+          kioskDeviceId: device.id,
+          action: 'REJECTED',
+          rejectReason: 'location_required',
+        },
+      });
+      throw new HttpError(
+        400,
+        'location_required',
+        'This kiosk requires location. Allow location access and try again.',
+      );
+    }
+    punchLat = input.latitude;
+    punchLng = input.longitude;
+    dist = Math.round(
+      distanceMeters(
+        Number(device.latitude),
+        Number(device.longitude),
+        punchLat,
+        punchLng,
+      ),
+    );
+    if (dist > device.radiusMeters) {
+      await prisma.kioskPunch.create({
+        data: {
+          kioskDeviceId: device.id,
+          action: 'REJECTED',
+          rejectReason: `geofence_violation (${dist}m vs ${device.radiusMeters}m)`,
+          punchLat,
+          punchLng,
+          distanceMeters: dist,
+        },
+      });
+      await prisma.kioskDevice.update({
+        where: { id: device.id },
+        data: { lastSeenAt: new Date() },
+      });
+      throw new HttpError(
+        403,
+        'geofence_violation',
+        'This kiosk is outside its allowed location.',
+      );
+    }
+  }
+
+  // 3. Decode selfie up front so a bad upload doesn't waste a PIN lookup.
   const selfie = decodeSelfie(input.selfie ?? null);
 
-  // 3. Look up the PIN. HMAC the input and join on (clientId, pinHmac).
+  // 4. Look up the PIN. HMAC the input and join on (clientId, pinHmac).
   const pinHmac = hmacPin(input.pin);
   const pinRow = await prisma.kioskPin.findUnique({
     where: {
@@ -316,6 +419,9 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
         action: 'REJECTED',
         rejectReason: 'pin_not_found',
         selfie,
+        punchLat,
+        punchLng,
+        distanceMeters: dist,
       },
     });
     await prisma.kioskDevice.update({
@@ -325,7 +431,7 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     throw new HttpError(401, 'invalid_pin', 'PIN not recognized.');
   }
 
-  // 4. Decide CLOCK_IN vs CLOCK_OUT by looking for an open entry.
+  // 5. Decide CLOCK_IN vs CLOCK_OUT by looking for an open entry.
   const open = await prisma.timeEntry.findFirst({
     where: { associateId: pinRow.associateId, status: 'ACTIVE' },
     orderBy: { clockInAt: 'desc' },
@@ -337,7 +443,15 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     if (open) {
       timeEntry = await tx.timeEntry.update({
         where: { id: open.id },
-        data: { clockOutAt: new Date(), status: 'COMPLETED' },
+        data: {
+          clockOutAt: new Date(),
+          status: 'COMPLETED',
+          // Snapshot coords on the time entry too, for downstream audit
+          // reports without joining KioskPunch.
+          ...(punchLat != null && punchLng != null
+            ? { clockOutLat: punchLat, clockOutLng: punchLng }
+            : {}),
+        },
       });
       action = 'CLOCK_OUT';
     } else {
@@ -347,6 +461,9 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
           clientId: device.clientId,
           clockInAt: new Date(),
           status: 'ACTIVE',
+          ...(punchLat != null && punchLng != null
+            ? { clockInLat: punchLat, clockInLng: punchLng }
+            : {}),
         },
       });
       action = 'CLOCK_IN';
@@ -360,6 +477,9 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
         timeEntryId: timeEntry.id,
         action,
         selfie,
+        punchLat,
+        punchLng,
+        distanceMeters: dist,
       },
     });
     await tx.kioskDevice.update({

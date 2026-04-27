@@ -2,6 +2,12 @@ import { apiFetch } from './api';
 
 // ----- Admin ------------------------------------------------------------
 
+export interface KioskGeofence {
+  latitude: number;
+  longitude: number;
+  radiusMeters: number;
+}
+
 export interface KioskDevice {
   id: string;
   clientId: string;
@@ -10,6 +16,7 @@ export interface KioskDevice {
   isActive: boolean;
   lastSeenAt: string | null;
   punchCount: number;
+  geofence: KioskGeofence | null;
   createdAt: string;
 }
 
@@ -32,6 +39,7 @@ export interface KioskPunchSummary {
   action: 'CLOCK_IN' | 'CLOCK_OUT' | 'REJECTED';
   hasSelfie: boolean;
   rejectReason: string | null;
+  distanceMeters: number | null;
   createdAt: string;
 }
 
@@ -40,10 +48,23 @@ export const listKioskDevices = (clientId?: string) =>
     clientId ? `/kiosk-devices?clientId=${clientId}` : '/kiosk-devices',
   );
 
-export const createKioskDevice = (input: { clientId: string; name: string }) =>
+export const createKioskDevice = (input: {
+  clientId: string;
+  name: string;
+  geofence?: KioskGeofence | null;
+}) =>
   apiFetch<{ id: string; deviceToken: string }>('/kiosk-devices', {
     method: 'POST',
     body: input,
+  });
+
+export const updateKioskGeofence = (
+  id: string,
+  geofence: KioskGeofence | null,
+) =>
+  apiFetch<{ ok: true }>(`/kiosk-devices/${id}/geofence`, {
+    method: 'PUT',
+    body: { geofence },
   });
 
 export const revokeKioskDevice = (id: string) =>
@@ -94,6 +115,8 @@ export const kioskPunch = (input: {
   deviceToken: string;
   pin: string;
   selfie: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
 }) =>
   apiFetch<KioskPunchResult>('/kiosk/punch', {
     method: 'POST',

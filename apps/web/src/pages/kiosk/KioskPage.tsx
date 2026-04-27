@@ -58,13 +58,39 @@ export function KioskPage() {
     setStage('idle');
   };
 
+  // Best-effort geolocation. We try once per punch (not cached at boot)
+  // so a kiosk that gets moved doesn't punch with stale coords. If the
+  // browser denies or it times out, we send null and let the server
+  // decide — the server enforces required-or-not based on the device's
+  // configured geofence.
+  const tryGetLocation = (): Promise<{ lat: number; lng: number } | null> =>
+    new Promise((resolve) => {
+      if (!('geolocation' in navigator)) return resolve(null);
+      navigator.geolocation.getCurrentPosition(
+        (pos) =>
+          resolve({
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+          }),
+        () => resolve(null),
+        { enableHighAccuracy: true, timeout: 6000, maximumAge: 60_000 },
+      );
+    });
+
   const submit = async (selfieData: string | null) => {
     if (!token) {
       setStage('setup');
       return;
     }
     try {
-      const r = await kioskPunch({ deviceToken: token, pin, selfie: selfieData });
+      const loc = await tryGetLocation();
+      const r = await kioskPunch({
+        deviceToken: token,
+        pin,
+        selfie: selfieData,
+        latitude: loc?.lat ?? null,
+        longitude: loc?.lng ?? null,
+      });
       setResult({
         action: r.action,
         associateName: r.associateName,

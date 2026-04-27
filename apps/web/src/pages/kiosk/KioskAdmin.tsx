@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Copy, Key, Plus, Tablet } from 'lucide-react';
+import { Copy, Key, MapPin, Plus, Tablet } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
   assignKioskPin,
@@ -10,7 +10,9 @@ import {
   listKioskPins,
   listKioskPunches,
   revokeKioskDevice,
+  updateKioskGeofence,
   type KioskDevice,
+  type KioskGeofence,
   type KioskPin,
   type KioskPunchSummary,
 } from '@/lib/kiosk99Api';
@@ -80,6 +82,7 @@ function DevicesTab({ canManage }: { canManage: boolean }) {
   const [rows, setRows] = useState<KioskDevice[] | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [showToken, setShowToken] = useState<string | null>(null);
+  const [editGeofence, setEditGeofence] = useState<KioskDevice | null>(null);
 
   const refresh = () => {
     setRows(null);
@@ -117,6 +120,7 @@ function DevicesTab({ canManage }: { canManage: boolean }) {
                   <TableHead>Name</TableHead>
                   <TableHead>Client</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Geofence</TableHead>
                   <TableHead>Last seen</TableHead>
                   <TableHead>Punches</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
@@ -135,12 +139,28 @@ function DevicesTab({ canManage }: { canManage: boolean }) {
                       )}
                     </TableCell>
                     <TableCell>
+                      {d.geofence ? (
+                        <Badge variant="success">{d.geofence.radiusMeters}m</Badge>
+                      ) : (
+                        <span className="text-silver text-xs">Off</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
                       {d.lastSeenAt
                         ? new Date(d.lastSeenAt).toLocaleString()
                         : '—'}
                     </TableCell>
                     <TableCell>{d.punchCount}</TableCell>
                     <TableCell className="text-right space-x-2">
+                      {canManage && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setEditGeofence(d)}
+                        >
+                          <MapPin className="mr-1 h-3 w-3" /> Geofence
+                        </Button>
+                      )}
                       {canManage && d.isActive && (
                         <Button
                           size="sm"
@@ -190,6 +210,16 @@ function DevicesTab({ canManage }: { canManage: boolean }) {
         />
       )}
       {showToken && <TokenRevealDrawer token={showToken} onClose={() => setShowToken(null)} />}
+      {editGeofence && (
+        <GeofenceDrawer
+          device={editGeofence}
+          onClose={() => setEditGeofence(null)}
+          onSaved={() => {
+            setEditGeofence(null);
+            refresh();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -281,6 +311,147 @@ function TokenRevealDrawer({ token, onClose }: { token: string; onClose: () => v
       </DrawerBody>
       <DrawerFooter>
         <Button onClick={onClose}>I've paired it</Button>
+      </DrawerFooter>
+    </Drawer>
+  );
+}
+
+function GeofenceDrawer({
+  device,
+  onClose,
+  onSaved,
+}: {
+  device: KioskDevice;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [enabled, setEnabled] = useState<boolean>(device.geofence != null);
+  const [lat, setLat] = useState(
+    device.geofence?.latitude.toString() ?? '',
+  );
+  const [lng, setLng] = useState(
+    device.geofence?.longitude.toString() ?? '',
+  );
+  const [radius, setRadius] = useState(
+    device.geofence?.radiusMeters.toString() ?? '100',
+  );
+  const [saving, setSaving] = useState(false);
+
+  const useMyLocation = () => {
+    if (!('geolocation' in navigator)) {
+      toast.error('This browser doesn\'t support geolocation.');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLat(pos.coords.latitude.toFixed(7));
+        setLng(pos.coords.longitude.toFixed(7));
+      },
+      (err) => toast.error(err.message),
+      { enableHighAccuracy: true, timeout: 10_000 },
+    );
+  };
+
+  const onSubmit = async () => {
+    setSaving(true);
+    try {
+      let geofence: KioskGeofence | null = null;
+      if (enabled) {
+        const latN = Number(lat);
+        const lngN = Number(lng);
+        const radN = Math.round(Number(radius));
+        if (!Number.isFinite(latN) || latN < -90 || latN > 90) {
+          toast.error('Latitude must be -90 to 90.');
+          setSaving(false);
+          return;
+        }
+        if (!Number.isFinite(lngN) || lngN < -180 || lngN > 180) {
+          toast.error('Longitude must be -180 to 180.');
+          setSaving(false);
+          return;
+        }
+        if (!Number.isFinite(radN) || radN <= 0 || radN > 50_000) {
+          toast.error('Radius must be 1 to 50000 meters.');
+          setSaving(false);
+          return;
+        }
+        geofence = { latitude: latN, longitude: lngN, radiusMeters: radN };
+      }
+      await updateKioskGeofence(device.id, geofence);
+      toast.success(geofence ? 'Geofence updated.' : 'Geofence cleared.');
+      onSaved();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+      <DrawerHeader>
+        <DrawerTitle>Geofence — {device.name}</DrawerTitle>
+      </DrawerHeader>
+      <DrawerBody className="space-y-4">
+        <div className="text-sm text-silver">
+          When enabled, punches must report coordinates within the radius.
+          Out-of-range punches are rejected and logged.
+        </div>
+        <div className="flex items-center gap-3">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => setEnabled(e.target.checked)}
+          />
+          <Label>Require location for punches</Label>
+        </div>
+        {enabled && (
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Latitude</Label>
+                <Input
+                  className="mt-1 font-mono text-xs"
+                  value={lat}
+                  onChange={(e) => setLat(e.target.value)}
+                  placeholder="40.7128"
+                />
+              </div>
+              <div>
+                <Label>Longitude</Label>
+                <Input
+                  className="mt-1 font-mono text-xs"
+                  value={lng}
+                  onChange={(e) => setLng(e.target.value)}
+                  placeholder="-74.0060"
+                />
+              </div>
+            </div>
+            <Button variant="ghost" size="sm" onClick={useMyLocation}>
+              <MapPin className="mr-1 h-3 w-3" /> Use my current location
+            </Button>
+            <div>
+              <Label>Radius (meters)</Label>
+              <Input
+                type="number"
+                className="mt-1"
+                value={radius}
+                onChange={(e) => setRadius(e.target.value)}
+              />
+              <div className="text-xs text-silver mt-1">
+                Typical: 50-200m for a single building, 500m+ for a campus.
+              </div>
+            </div>
+          </>
+        )}
+      </DrawerBody>
+      <DrawerFooter>
+        <Button variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button onClick={onSubmit} disabled={saving}>
+          {saving ? 'Saving…' : 'Save'}
+        </Button>
       </DrawerFooter>
     </Drawer>
   );
@@ -534,6 +705,7 @@ function LogTab() {
                 <TableHead>Device</TableHead>
                 <TableHead>Associate</TableHead>
                 <TableHead>Action</TableHead>
+                <TableHead>Distance</TableHead>
                 <TableHead>Selfie</TableHead>
                 <TableHead>Notes</TableHead>
               </TableRow>
@@ -556,6 +728,9 @@ function LogTab() {
                     >
                       {p.action}
                     </Badge>
+                  </TableCell>
+                  <TableCell className="text-xs">
+                    {p.distanceMeters != null ? `${p.distanceMeters}m` : '—'}
                   </TableCell>
                   <TableCell>
                     {p.hasSelfie ? (

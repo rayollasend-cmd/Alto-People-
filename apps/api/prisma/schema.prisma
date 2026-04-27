@@ -3385,6 +3385,12 @@ model KioskDevice {
   tokenHash   String
   lastSeenAt  DateTime? @db.Timestamptz(6)
   isActive    Boolean   @default(true)
+  // Phase 100 — optional geofence. All three set together or all NULL
+  // (CHECK constraint). When set, punches must report coords within
+  // radiusMeters or get rejected.
+  latitude     Decimal? @db.Decimal(10, 7)
+  longitude    Decimal? @db.Decimal(10, 7)
+  radiusMeters Int?
   createdById String?   @db.Uuid
   createdAt   DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
@@ -3423,6 +3429,11 @@ model KioskPunch {
   action        KioskPunchAction
   selfie        Bytes?
   rejectReason  String?
+  // Phase 100 — coords reported by the kiosk + computed distance from
+  // the device's geofence center. NULL when device has no geofence.
+  punchLat       Decimal? @db.Decimal(10, 7)
+  punchLng       Decimal? @db.Decimal(10, 7)
+  distanceMeters Int?
   createdAt     DateTime         @default(now()) @db.Timestamptz(6)
 
   device    KioskDevice @relation(fields: [kioskDeviceId], references: [id], onDelete: Cascade)
