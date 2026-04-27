@@ -314,6 +314,8 @@ model User {
   // Phase 94 — LMS course authorship + enrollment assignment.
   coursesCreated               Course[]                       @relation("CourseCreator")
   enrollmentsAssigned          CourseEnrollment[]             @relation("EnrollmentAssigner")
+  // Phase 95 — worktag assignments authored.
+  worktagAssignmentsAuthored   WorktagAssignment[]            @relation("WorktagAssigner")
 
   @@index([role])
   @@index([clientId])
@@ -3180,4 +3182,57 @@ model CourseEnrollment {
 
   @@index([associateId, status])
   @@index([expiresAt])
+}
+
+// Phase 95 — Worktags: Workday-style multi-dimensional tags on transactions.
+
+enum WorktagEntityKind {
+  TIME_ENTRY
+  PAYROLL_ITEM
+  EXPENSE
+  PURCHASE_ORDER
+}
+
+model WorktagCategory {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key         String   @unique @db.VarChar(80)
+  label       String
+  description String?
+  isRequired  Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
+
+  worktags Worktag[]
+}
+
+model Worktag {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  categoryId String   @db.Uuid
+  value      String
+  code       String?  @db.VarChar(80)
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(6)
+
+  category    WorktagCategory      @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  assignments WorktagAssignment[]
+
+  @@unique([categoryId, value])
+  @@index([categoryId, isActive])
+}
+
+model WorktagAssignment {
+  id          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  worktagId   String            @db.Uuid
+  entityKind  WorktagEntityKind
+  entityId    String            @db.Uuid
+  createdById String?           @db.Uuid
+  createdAt   DateTime          @default(now()) @db.Timestamptz(6)
+
+  worktag   Worktag @relation(fields: [worktagId], references: [id], onDelete: Cascade)
+  createdBy User?   @relation("WorktagAssigner", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([entityKind, entityId])
+  @@index([worktagId])
 }

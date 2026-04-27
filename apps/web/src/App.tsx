@@ -52,6 +52,7 @@ import { PayrollTaxHome } from '@/pages/payrollTax/PayrollTaxHome';
 import { BenefitsLifecycle } from '@/pages/benefits/BenefitsLifecycle';
 import { IntegrationsHome } from '@/pages/integrations/IntegrationsHome';
 import { LearningHome } from '@/pages/learning/LearningHome';
+import { WorktagsHome } from '@/pages/worktags/WorktagsHome';
 import { RouterErrorPage } from '@/pages/RouterErrorPage';
 
 const ONBOARDING_ROUTES = [
@@ -182,6 +183,7 @@ export const router = createBrowserRouter([
       { path: 'benefits/lifecycle', element: <BenefitsLifecycle /> },
       { path: 'integrations', element: <IntegrationsHome /> },
       { path: 'learning', element: <LearningHome /> },
+      { path: 'worktags', element: <WorktagsHome /> },
       ...ONBOARDING_ROUTES,
       ...PLACEHOLDER_MODULES.map((m) => ({
         path: m.path.replace(/^\//, ''),
