@@ -55,7 +55,9 @@ export type Capability =
   | 'view:my-team'
   | 'manage:team-time'
   | 'manage:team-time-off'
-  | 'view:org' | 'manage:org';
+  | 'view:org' | 'manage:org'
+  // Phase 83 — compensation: history, bands, merit cycles.
+  | 'view:comp' | 'manage:comp';
 
 const ALL_VIEWS: Capability[] = [
   'view:dashboard',
@@ -72,6 +74,7 @@ const ALL_VIEWS: Capability[] = [
   'view:recruiting',
   'view:my-team',
   'view:org',
+  'view:comp',
 ];
 
 const ALL_MANAGE: Capability[] = [
@@ -88,6 +91,7 @@ const ALL_MANAGE: Capability[] = [
   'manage:performance',
   'manage:recruiting',
   'manage:org',
+  'manage:comp',
 ];
 
 export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
@@ -107,6 +111,7 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'manage:performance',
     'manage:recruiting',
     'manage:org',
+    'manage:comp',
   ]),
   LIVE_ASN: new Set<Capability>(),
   ASSOCIATE: new Set<Capability>([
@@ -152,6 +157,7 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'view:onboarding',
     'view:communications',
     'view:org',
+    'view:comp',
   ]),
 };
 

@@ -40,6 +40,7 @@ import { OrgHome } from '@/pages/org/OrgHome';
 import { TeamHome } from '@/pages/team/TeamHome';
 import { WorkflowsHome } from '@/pages/workflows/WorkflowsHome';
 import { MeHome } from '@/pages/me/MeHome';
+import { CompensationHome } from '@/pages/compensation/CompensationHome';
 import { RouterErrorPage } from '@/pages/RouterErrorPage';
 
 const ONBOARDING_ROUTES = [
@@ -115,7 +116,8 @@ const PLACEHOLDER_MODULES = MODULES.filter(
     m.key !== 'org' &&
     m.key !== 'team' &&
     m.key !== 'workflows' &&
-    m.key !== 'me'
+    m.key !== 'me' &&
+    m.key !== 'compensation'
 );
 
 export const router = createBrowserRouter([
@@ -154,6 +156,7 @@ export const router = createBrowserRouter([
       { path: 'team', element: <TeamHome /> },
       { path: 'workflows', element: <WorkflowsHome /> },
       { path: 'me', element: <MeHome /> },
+      { path: 'compensation', element: <CompensationHome /> },
       ...ONBOARDING_ROUTES,
       ...PLACEHOLDER_MODULES.map((m) => ({
         path: m.path.replace(/^\//, ''),

@@ -270,6 +270,10 @@ model User {
   associateHistoryEntries      AssociateHistory[]             @relation("AssociateHistoryActor")
   workflowDefinitions          WorkflowDefinition[]           @relation("WorkflowDefinitionCreator")
   reviewedLifeEvents           LifeEvent[]                    @relation("LifeEventReviewer")
+  // Phase 83 — compensation back-relations.
+  compRecordsActed             CompensationRecord[]           @relation("CompRecordActor")
+  meritProposalsProposed       MeritProposal[]                @relation("MeritProposalProposer")
+  meritProposalsDecided        MeritProposal[]                @relation("MeritProposalDecider")
 
   @@index([role])
   @@index([clientId])
@@ -317,6 +321,9 @@ model Client {
   workflows    WorkflowDefinition[]
   // Phase 81 — custom field definitions can be client-scoped.
   customFieldDefinitions CustomFieldDefinition[]
+  // Phase 83 — compensation bands + merit cycles.
+  compBands              CompBand[]
+  meritCycles            MeritCycle[]
 
   @@index([status])
   @@index([deletedAt])
@@ -389,6 +396,9 @@ model Associate {
   beneficiaries     Beneficiary[]
   lifeEvents        LifeEvent[]
   taxDocuments      TaxDocument[]
+  // Phase 83 — compensation history + merit-cycle proposals.
+  compRecords       CompensationRecord[]
+  meritProposals    MeritProposal[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -1410,6 +1420,7 @@ model JobProfile {
   client      Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
   associates  Associate[]
   positions   Position[]
+  compBands   CompBand[]
 
   @@index([clientId, family])
   @@index([clientId, deletedAt])
@@ -1779,4 +1790,125 @@ model TaxDocument {
 
   @@unique([associateId, taxYear, kind])
   @@index([associateId, taxYear(sort: Desc)])
+}
+
+// ===== Phase 83 — Compensation: history, bands, merit cycles =============
+
+enum PayType {
+  HOURLY
+  SALARY
+}
+
+enum CompChangeReason {
+  HIRE
+  MERIT
+  PROMOTION
+  MARKET_ADJUSTMENT
+  CORRECTION
+  OTHER
+}
+
+enum MeritCycleStatus {
+  DRAFT
+  OPEN
+  APPLIED
+  CLOSED
+}
+
+enum MeritProposalStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  APPLIED
+}
+
+model CompensationRecord {
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId     String           @db.Uuid
+  effectiveFrom   DateTime         @db.Timestamptz(6)
+  effectiveTo     DateTime?        @db.Timestamptz(6)
+  payType         PayType
+  amount          Decimal          @db.Decimal(12, 2)
+  currency        String           @default("USD") @db.VarChar(3)
+  reason          CompChangeReason
+  notes           String?
+  actorUserId     String?          @db.Uuid
+  meritProposalId String?          @db.Uuid
+  createdAt       DateTime         @default(now()) @db.Timestamptz(6)
+
+  associate     Associate      @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  actor         User?          @relation("CompRecordActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  meritProposal MeritProposal? @relation(fields: [meritProposalId], references: [id], onDelete: SetNull)
+
+  @@index([associateId, effectiveFrom(sort: Desc)])
+}
+
+model CompBand {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId      String    @db.Uuid
+  jobProfileId  String?   @db.Uuid
+  name          String
+  level         String?
+  payType       PayType
+  minAmount     Decimal   @db.Decimal(12, 2)
+  midAmount     Decimal   @db.Decimal(12, 2)
+  maxAmount     Decimal   @db.Decimal(12, 2)
+  currency      String    @default("USD") @db.VarChar(3)
+  effectiveFrom DateTime  @default(now()) @db.Timestamptz(6)
+  effectiveTo   DateTime? @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt     DateTime? @db.Timestamptz(6)
+
+  client     Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  jobProfile JobProfile? @relation(fields: [jobProfileId], references: [id], onDelete: SetNull)
+
+  @@index([clientId])
+  @@index([jobProfileId])
+}
+
+model MeritCycle {
+  id                String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId          String           @db.Uuid
+  name              String
+  status            MeritCycleStatus @default(DRAFT)
+  reviewPeriodStart DateTime         @db.Date
+  reviewPeriodEnd   DateTime         @db.Date
+  effectiveDate     DateTime         @db.Date
+  budget            Decimal?         @db.Decimal(12, 2)
+  appliedAt         DateTime?        @db.Timestamptz(6)
+  createdAt         DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime         @updatedAt @db.Timestamptz(6)
+
+  client    Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  proposals MeritProposal[]
+
+  @@index([clientId, status])
+}
+
+model MeritProposal {
+  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cycleId         String              @db.Uuid
+  associateId     String              @db.Uuid
+  currentAmount   Decimal             @db.Decimal(12, 2)
+  currentPayType  PayType
+  proposedAmount  Decimal             @db.Decimal(12, 2)
+  proposedNotes   String?
+  status          MeritProposalStatus @default(DRAFT)
+  proposedById    String?             @db.Uuid
+  decidedById     String?             @db.Uuid
+  decidedAt       DateTime?           @db.Timestamptz(6)
+  decisionNote    String?
+  createdAt       DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime            @updatedAt @db.Timestamptz(6)
+
+  cycle      MeritCycle           @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  associate  Associate            @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  proposedBy User?                @relation("MeritProposalProposer", fields: [proposedById], references: [id], onDelete: SetNull)
+  decidedBy  User?                @relation("MeritProposalDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  records    CompensationRecord[]
+
+  @@unique([cycleId, associateId])
+  @@index([cycleId, status])
 }

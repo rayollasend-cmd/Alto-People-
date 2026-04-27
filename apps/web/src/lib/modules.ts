@@ -36,7 +36,8 @@ export type ModuleKey =
   | 'org'
   | 'team'
   | 'workflows'
-  | 'me';
+  | 'me'
+  | 'compensation';
 
 /**
  * Phase 67 — sidebar groupings, F500-style. Modules with the same `group`
@@ -89,7 +90,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -210,6 +211,16 @@ export const MODULES: ModuleNav[] = [
       'Multi-state payroll, anomaly detection, Branch cards, and Wise transfers.',
     requires: 'view:payroll',
     icon: DollarSign,
+    group: 'time-and-pay',
+  },
+  {
+    key: 'compensation',
+    path: '/compensation',
+    label: 'Compensation',
+    description:
+      'Pay bands, effective-dated comp history, and merit cycles — plan and apply pay changes for an entire population at once.',
+    requires: 'view:comp',
+    icon: WalletIcon,
     group: 'time-and-pay',
   },
   {
