@@ -40,3 +40,6 @@ Desktop.ini
 
 # Document storage (Phase 9 — local fs; S3 in production)
 apps/api/uploads/
+
+# Local Claude Code agent state
+.claude/
