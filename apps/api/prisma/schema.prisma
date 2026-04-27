@@ -344,6 +344,7 @@ model User {
   agreementsIssued             Agreement[]
   hrCasesAssigned              HrCase[]
   hrCaseCommentsAuthored       HrCaseComment[]                @relation("HrCaseCommentUserAuthor")
+  kbArticlesAuthored           KbArticle[]
 
   @@index([role])
   @@index([clientId])
@@ -398,6 +399,8 @@ model Client {
   qualifications         Qualification[]
   // Phase 117 — client-specific holidays.
   holidays               Holiday[]
+  // Phase 124 — client-specific KB articles.
+  kbArticles             KbArticle[]
   // Phase 86 — projects, premium-pay rules, tip pools.
   projects               Project[]
   premiumPayRules        PremiumPayRule[]
@@ -560,6 +563,8 @@ model Associate {
   // Phase 123 — HR cases filed by this associate + comments authored.
   hrCasesFiled          HrCase[]
   hrCaseCommentsAuthored HrCaseComment[] @relation("HrCaseCommentAssociateAuthor")
+  // Phase 124 — KB feedback votes.
+  kbFeedback            KbFeedback[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -4242,4 +4247,57 @@ model HrCaseComment {
   authorAssociate Associate? @relation("HrCaseCommentAssociateAuthor", fields: [authorAssociateId], references: [id], onDelete: SetNull)
 
   @@index([caseId])
+}
+
+// ===== Phase 124 — Knowledge base / FAQ ===================================
+//
+// Per-client OR company-wide (clientId NULL) self-service articles.
+// View counts and helpful/notHelpful tallies are denormalized on the
+// row and updated via dedicated endpoints to dodge contention. KbFeedback
+// is the per-associate vote — unique on (articleId, associateId) so each
+// person can vote at most once.
+enum KbStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+model KbArticle {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId    String?   @db.Uuid
+  title       String
+  slug        String
+  body        String
+  category    String
+  tags        String[]  @default([])
+  status      KbStatus  @default(DRAFT)
+  views       Int       @default(0)
+  helpful     Int       @default(0)
+  notHelpful  Int       @default(0)
+  publishedAt DateTime? @db.Timestamptz(6)
+  authorId    String?   @db.Uuid
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+
+  client   Client?      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  author   User?        @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  feedback KbFeedback[]
+
+  @@index([status])
+  @@index([category])
+}
+
+model KbFeedback {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  articleId   String   @db.Uuid
+  associateId String   @db.Uuid
+  helpful     Boolean
+  comment     String?
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+
+  article   KbArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@unique([articleId, associateId])
+  @@index([articleId])
 }

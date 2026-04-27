@@ -52,6 +52,7 @@ export type ModuleKey =
   | 'vaccinations'
   | 'agreements'
   | 'hr-cases'
+  | 'help-center'
   | 'team'
   | 'workflows'
   | 'me'
@@ -111,7 +112,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon, LogOut as SeparationIcon, Briefcase as InternalJobsIcon, Syringe as VaccinationsIcon, FileSignature as AgreementsIcon, MessageCircle as HrCasesIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon, LogOut as SeparationIcon, Briefcase as InternalJobsIcon, Syringe as VaccinationsIcon, FileSignature as AgreementsIcon, MessageCircle as HrCasesIcon, BookOpen as KbIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -332,6 +333,16 @@ export const MODULES: ModuleNav[] = [
       'Ticketing for HR. File a question or concern, HR triages and replies. Internal notes stay hidden from the requester.',
     requires: 'view:dashboard',
     icon: HrCasesIcon,
+    group: 'workforce',
+  },
+  {
+    key: 'help-center',
+    path: '/help-center',
+    label: 'Help center',
+    description:
+      'Self-service knowledge base. Search articles by category and tag; vote helpful / not helpful. Deflects HR cases.',
+    requires: 'view:dashboard',
+    icon: KbIcon,
     group: 'workforce',
   },
   {
