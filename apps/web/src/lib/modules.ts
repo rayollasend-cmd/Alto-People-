@@ -38,6 +38,7 @@ export type ModuleKey =
   | 'celebrations'
   | 'assets'
   | 'pulse'
+  | 'headcount'
   | 'team'
   | 'workflows'
   | 'me'
@@ -97,7 +98,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -178,6 +179,16 @@ export const MODULES: ModuleNav[] = [
       'Anonymous one-question check-ins for engagement signal. Score distributions and verbatim comments — never the responder.',
     requires: 'view:dashboard',
     icon: PulseIcon,
+    group: 'workforce',
+  },
+  {
+    key: 'headcount',
+    path: '/headcount',
+    label: 'Headcount',
+    description:
+      'Active associates across the company, hires & separations over the last 30 / 90 / 365 days, annualized turnover.',
+    requires: 'view:org',
+    icon: HeadcountIcon,
     group: 'workforce',
   },
   {
