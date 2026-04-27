@@ -39,6 +39,29 @@ export function listShifts(filters: ShiftListFilters = {}): Promise<ShiftListRes
   return apiFetch<ShiftListResponse>(`/scheduling/shifts${qs(filters)}`);
 }
 
+export interface SchedulingKpis {
+  from: string;
+  to: string;
+  openShifts: number;
+  assignedShifts: number;
+  draftShifts: number;
+  completedShifts: number;
+  totalShifts: number;
+  fillRatePercent: number;
+  totalScheduledMinutes: number;
+}
+
+export function getSchedulingKpis(
+  filters: { from?: string; to?: string; clientId?: string } = {}
+): Promise<SchedulingKpis> {
+  const p = new URLSearchParams();
+  if (filters.from) p.set('from', filters.from);
+  if (filters.to) p.set('to', filters.to);
+  if (filters.clientId) p.set('clientId', filters.clientId);
+  const s = p.toString();
+  return apiFetch<SchedulingKpis>(`/scheduling/kpis${s ? `?${s}` : ''}`);
+}
+
 export function listMyShifts(): Promise<ShiftListResponse> {
   return apiFetch<ShiftListResponse>('/scheduling/me/shifts');
 }

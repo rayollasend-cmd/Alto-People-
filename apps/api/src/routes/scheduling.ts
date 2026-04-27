@@ -112,6 +112,87 @@ schedulingRouter.get('/shifts', MANAGE, async (req, res, next) => {
   }
 });
 
+/**
+ * GET /scheduling/kpis?from=ISO&to=ISO[&clientId=UUID]
+ *
+ * Phase 50 — top-of-page signal strip. Defaults to the current
+ * Sunday→Saturday calendar week if from/to are missing. Returns:
+ *   - openShifts        — count of OPEN status (unfilled, published)
+ *   - assignedShifts    — count of ASSIGNED + COMPLETED
+ *   - totalShifts       — non-cancelled count in the window
+ *   - fillRatePercent   — assigned ÷ (assigned + open), 0-100
+ *   - totalScheduledMinutes — sum of (endsAt - startsAt) for non-cancelled
+ *
+ * groupBy keeps this O(1 query) regardless of the window size.
+ */
+schedulingRouter.get('/kpis', MANAGE, async (req, res, next) => {
+  try {
+    const clientId = req.query.clientId?.toString();
+    const fromParam = req.query.from?.toString();
+    const toParam = req.query.to?.toString();
+    const now = new Date();
+    // Default window: Sunday 00:00 → next Sunday 00:00 (local time).
+    const defaultFrom = new Date(now);
+    defaultFrom.setHours(0, 0, 0, 0);
+    defaultFrom.setDate(defaultFrom.getDate() - defaultFrom.getDay());
+    const defaultTo = new Date(defaultFrom);
+    defaultTo.setDate(defaultTo.getDate() + 7);
+    const from = fromParam ? new Date(fromParam) : defaultFrom;
+    const to = toParam ? new Date(toParam) : defaultTo;
+
+    const where: Prisma.ShiftWhereInput = {
+      ...scopeShifts(req.user!),
+      ...(clientId ? { clientId } : {}),
+      startsAt: { gte: from, lt: to },
+      status: { not: 'CANCELLED' },
+    };
+
+    const grouped = await prisma.shift.groupBy({
+      by: ['status'],
+      where,
+      _count: { _all: true },
+    });
+
+    // For total scheduled minutes we need the rows (no SQL helper for
+    // computed durations in Prisma). Pull just the two columns and sum.
+    const rows = await prisma.shift.findMany({
+      where,
+      select: { startsAt: true, endsAt: true },
+    });
+    const totalScheduledMinutes = rows.reduce((acc, r) => {
+      return acc + Math.max(0, Math.round((r.endsAt.getTime() - r.startsAt.getTime()) / 60_000));
+    }, 0);
+
+    let openShifts = 0;
+    let assignedShifts = 0;
+    let draftShifts = 0;
+    let completedShifts = 0;
+    for (const g of grouped) {
+      if (g.status === 'OPEN') openShifts = g._count._all;
+      else if (g.status === 'ASSIGNED') assignedShifts = g._count._all;
+      else if (g.status === 'DRAFT') draftShifts = g._count._all;
+      else if (g.status === 'COMPLETED') completedShifts = g._count._all;
+    }
+    const filled = assignedShifts + completedShifts;
+    const fillBase = filled + openShifts;
+    const fillRatePercent = fillBase === 0 ? 0 : Math.round((filled / fillBase) * 100);
+
+    res.json({
+      from: from.toISOString(),
+      to: to.toISOString(),
+      openShifts,
+      assignedShifts,
+      draftShifts,
+      completedShifts,
+      totalShifts: openShifts + assignedShifts + draftShifts + completedShifts,
+      fillRatePercent,
+      totalScheduledMinutes,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 schedulingRouter.post('/shifts', MANAGE, async (req, res, next) => {
   try {
     const parsed = ShiftCreateInputSchema.safeParse(req.body);

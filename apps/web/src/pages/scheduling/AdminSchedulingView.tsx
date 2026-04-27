@@ -25,12 +25,14 @@ import {
   cancelShift,
   createShift,
   getAutoFillCandidates,
+  getSchedulingKpis,
   getShiftConflicts,
   listAdminSwaps,
   listShifts,
   managerApproveSwap,
   managerRejectSwap,
   unassignShift,
+  type SchedulingKpis,
 } from '@/lib/schedulingApi';
 import { apiFetch, ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
@@ -127,6 +129,15 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // Week-view state. weekStart is always a Monday at 00:00 local.
   const [weekStart, setWeekStart] = useState<Date>(() => startOfWeekMonday(new Date()));
   const weekEnd = useMemo(() => endOfWeekMonday(weekStart), [weekStart]);
+
+  // KPI strip — always pulls the *current* week regardless of which week
+  // the calendar is showing, so the "right now" signal stays consistent.
+  const [kpis, setKpis] = useState<SchedulingKpis | null>(null);
+  useEffect(() => {
+    getSchedulingKpis().then(setKpis).catch(() => setKpis(null));
+    // shifts changing is a proxy for "something happened" — refresh KPIs
+    // after assigns / cancels / publishes so the strip doesn't go stale.
+  }, [shifts]);
 
   // Dialog state — replaces window.prompt + window.confirm.
   const [assignTarget, setAssignTarget] = useState<Shift | null>(null);
@@ -232,6 +243,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           </Button>
         )}
       </header>
+
+      {canManage && <KpiStrip kpis={kpis} />}
 
       {canManage && (
         <CreateShiftDialog
@@ -515,7 +528,51 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   );
 }
 
+/* ===== KPI strip ========================================================== */
+
+function KpiStrip({ kpis }: { kpis: SchedulingKpis | null }) {
+  if (!kpis) {
+    return (
+      <div className="mb-5">
+        <Skeleton className="h-14" />
+      </div>
+    );
+  }
+  const hours = kpis.totalScheduledMinutes / 60;
+  const fillTone =
+    kpis.fillRatePercent >= 90
+      ? 'text-success'
+      : kpis.fillRatePercent >= 70
+        ? 'text-warning'
+        : 'text-alert';
+  return (
+    <div className="mb-5 flex flex-wrap gap-x-6 gap-y-2 px-4 py-3 rounded-md border border-navy-secondary bg-navy-secondary/30">
+      <Kpi label="Open shifts" value={String(kpis.openShifts)} tone={kpis.openShifts > 0 ? 'text-warning' : 'text-silver'} />
+      <Kpi label="Filled" value={String(kpis.assignedShifts + kpis.completedShifts)} />
+      <Kpi label="Fill rate" value={`${kpis.fillRatePercent}%`} tone={fillTone} />
+      <Kpi label="Hours scheduled" value={hours.toFixed(0)} />
+      {kpis.draftShifts > 0 && (
+        <Kpi label="Draft" value={String(kpis.draftShifts)} tone="text-silver" />
+      )}
+      <div className="text-[10px] uppercase tracking-wider text-silver/40 self-end ml-auto">
+        this week
+      </div>
+    </div>
+  );
+}
+
+function Kpi({ label, value, tone = 'text-white' }: { label: string; value: string; tone?: string }) {
+  return (
+    <div className="min-w-[6rem]">
+      <div className="text-[10px] uppercase tracking-wider text-silver">{label}</div>
+      <div className={cn('text-xl font-semibold tabular-nums', tone)}>{value}</div>
+    </div>
+  );
+}
+
 /* ===== Assign dialog ====================================================== */
+
+type ConflictRow = { position: string; client: string | null; startsAt: string };
 
 function AssignDialog({
   target,
@@ -527,9 +584,8 @@ function AssignDialog({
   onAssigned: () => void;
 }) {
   const [associateId, setAssociateId] = useState('');
-  const [conflicts, setConflicts] = useState<
-    null | Array<{ position: string; client: string | null; startsAt: string }>
-  >(null);
+  const [conflicts, setConflicts] = useState<ConflictRow[] | null>(null);
+  const [checking, setChecking] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   // Reset on open.
@@ -538,27 +594,50 @@ function AssignDialog({
       setAssociateId('');
       setConflicts(null);
       setSubmitting(false);
+      setChecking(false);
     }
   }, [target]);
 
-  const submit = async (force = false) => {
+  // Live conflict check — debounced. The /conflicts endpoint accepts any
+  // string for associateId (returns 400 on a bad UUID) so we naively
+  // hit it whenever the value looks plausible.
+  useEffect(() => {
+    if (!target) return;
+    const id = associateId.trim();
+    // UUID-ish gate so we don't hammer the API on every keystroke.
+    if (id.length < 32) {
+      setConflicts(null);
+      return;
+    }
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      setChecking(true);
+      try {
+        const c = await getShiftConflicts(target.id, id);
+        if (cancelled) return;
+        setConflicts(
+          c.conflicts.map((cf) => ({
+            position: cf.conflictingPosition,
+            client: cf.conflictingClientName,
+            startsAt: cf.conflictingStartsAt,
+          }))
+        );
+      } catch {
+        if (!cancelled) setConflicts(null);
+      } finally {
+        if (!cancelled) setChecking(false);
+      }
+    }, 350);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [associateId, target]);
+
+  const submit = async () => {
     if (!target || !associateId.trim()) return;
     setSubmitting(true);
     try {
-      if (!force) {
-        const c = await getShiftConflicts(target.id, associateId).catch(() => null);
-        if (c && c.conflicts.length > 0) {
-          setConflicts(
-            c.conflicts.map((cf) => ({
-              position: cf.conflictingPosition,
-              client: cf.conflictingClientName,
-              startsAt: cf.conflictingStartsAt,
-            }))
-          );
-          setSubmitting(false);
-          return;
-        }
-      }
       await assignShift(target.id, { associateId });
       onAssigned();
     } catch (err) {
@@ -566,6 +645,8 @@ function AssignDialog({
       setSubmitting(false);
     }
   };
+
+  const hasConflicts = !!(conflicts && conflicts.length > 0);
 
   return (
     <Dialog open={target !== null} onOpenChange={(o) => !o && onClose()}>
@@ -582,49 +663,46 @@ function AssignDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {!conflicts && (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              submit(false);
-            }}
-            className="space-y-3"
-          >
-            <div>
-              <Label htmlFor="assign-id" required>
-                Associate ID
-              </Label>
-              <Input
-                id="assign-id"
-                value={associateId}
-                onChange={(e) => setAssociateId(e.target.value)}
-                placeholder="UUID"
-                autoFocus
-                required
-              />
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="secondary" onClick={onClose}>
-                Cancel
-              </Button>
-              <Button type="submit" loading={submitting} disabled={!associateId.trim()}>
-                Assign
-              </Button>
-            </DialogFooter>
-          </form>
-        )}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            submit();
+          }}
+          className="space-y-3"
+        >
+          <div>
+            <Label htmlFor="assign-id" required>
+              Associate ID
+            </Label>
+            <Input
+              id="assign-id"
+              value={associateId}
+              onChange={(e) => setAssociateId(e.target.value)}
+              placeholder="UUID"
+              autoFocus
+              required
+            />
+            {checking && (
+              <div className="text-[11px] text-silver/60 mt-1">Checking conflicts…</div>
+            )}
+            {!checking && conflicts && conflicts.length === 0 && (
+              <div className="text-[11px] text-success mt-1 inline-flex items-center gap-1">
+                <CheckCircle2 className="h-3 w-3" />
+                No conflicts
+              </div>
+            )}
+          </div>
 
-        {conflicts && (
-          <div className="space-y-3">
+          {hasConflicts && (
             <div className="flex items-start gap-2 p-3 rounded-md border border-warning/40 bg-warning/10 text-sm">
               <AlertTriangle className="h-4 w-4 text-warning mt-0.5 shrink-0" />
               <div>
                 <div className="font-medium text-white">
-                  This associate has {conflicts.length} overlapping shift
-                  {conflicts.length === 1 ? '' : 's'}.
+                  Overlaps {conflicts!.length} existing shift
+                  {conflicts!.length === 1 ? '' : 's'}:
                 </div>
                 <ul className="mt-2 space-y-1 text-silver">
-                  {conflicts.map((c, i) => (
+                  {conflicts!.map((c, i) => (
                     <li key={i} className="text-xs">
                       • {c.position} @ {c.client ?? '—'} ·{' '}
                       <span className="tabular-nums">{fmt(c.startsAt)}</span>
@@ -633,21 +711,22 @@ function AssignDialog({
                 </ul>
               </div>
             </div>
-            <DialogFooter>
-              <Button type="button" variant="secondary" onClick={onClose}>
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                variant="destructive"
-                loading={submitting}
-                onClick={() => submit(true)}
-              >
-                Assign anyway
-              </Button>
-            </DialogFooter>
-          </div>
-        )}
+          )}
+
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant={hasConflicts ? 'destructive' : 'primary'}
+              loading={submitting}
+              disabled={!associateId.trim()}
+            >
+              {hasConflicts ? 'Assign anyway' : 'Assign'}
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
