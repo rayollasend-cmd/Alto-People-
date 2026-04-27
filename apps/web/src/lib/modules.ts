@@ -39,6 +39,7 @@ export type ModuleKey =
   | 'assets'
   | 'pulse'
   | 'headcount'
+  | 'skills'
   | 'team'
   | 'workflows'
   | 'me'
@@ -98,7 +99,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -189,6 +190,16 @@ export const MODULES: ModuleNav[] = [
       'Active associates across the company, hires & separations over the last 30 / 90 / 365 days, annualized turnover.',
     requires: 'view:org',
     icon: HeadcountIcon,
+    group: 'workforce',
+  },
+  {
+    key: 'skills',
+    path: '/skills',
+    label: 'Skills',
+    description:
+      'Catalog of competencies and per-associate skill claims with proficiency level. Search the company by skill — useful for staffing and internal mobility.',
+    requires: 'view:org',
+    icon: SkillsIcon,
     group: 'workforce',
   },
   {

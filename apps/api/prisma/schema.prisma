@@ -327,6 +327,7 @@ model User {
   assetAssignmentsAssigned     AssetAssignment[]              @relation("AssetAssigner")
   assetAssignmentsReturned     AssetAssignment[]              @relation("AssetReturner")
   pulseSurveysCreated          PulseSurvey[]                  @relation("PulseSurveyCreator")
+  associateSkillsVerified      AssociateSkill[]               @relation("AssociateSkillVerifier")
 
   @@index([role])
   @@index([clientId])
@@ -515,6 +516,8 @@ model Associate {
   kioskFaceReference KioskFaceReference?
   // Phase 108 — physical asset assignments (laptops, badges, keys…).
   assetAssignments   AssetAssignment[]
+  // Phase 111 — skills + competencies.
+  skills             AssociateSkill[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -3626,4 +3629,49 @@ model PulseResponse {
 
   @@unique([surveyId, responderHash])
   @@index([surveyId])
+}
+
+
+// Phase 111 — Skills & competencies. Skill is the catalog (Python,
+// Forklift, Spanish, etc). AssociateSkill is the join with level +
+// optional verification by a manager.
+
+enum SkillLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}
+
+model Skill {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String
+  category  String?
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  associateSkills AssociateSkill[]
+
+  @@index([category])
+}
+
+model AssociateSkill {
+  id              String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId     String     @db.Uuid
+  skillId         String     @db.Uuid
+  level           SkillLevel
+  verifiedById    String?    @db.Uuid
+  verifiedAt      DateTime?  @db.Timestamptz(6)
+  yearsExperience Int?       @db.SmallInt
+  notes           String?
+  createdAt       DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime   @updatedAt @db.Timestamptz(6)
+
+  associate  Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  skill      Skill     @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  verifiedBy User?     @relation("AssociateSkillVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
+
+  @@unique([associateId, skillId])
+  @@index([skillId])
+  @@index([level])
 }
