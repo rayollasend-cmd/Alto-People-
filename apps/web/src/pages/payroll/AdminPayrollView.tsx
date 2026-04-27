@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, FileText, Plus, Send } from 'lucide-react';
+import { CheckCircle2, Download, FileText, Plus, Send } from 'lucide-react';
 import type {
   PayrollRunDetail,
   PayrollRunStatus,
@@ -298,7 +298,7 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
                 )}
 
                 {canProcess && (
-                  <div className="flex gap-2 mt-4 pt-3 border-t border-navy-secondary">
+                  <div className="flex flex-wrap gap-2 mt-4 pt-3 border-t border-navy-secondary">
                     {selected.status === 'DRAFT' && (
                       <Button onClick={onFinalize} loading={busy} disabled={busy}>
                         <CheckCircle2 className="h-4 w-4" />
@@ -315,6 +315,21 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
                         Disburse
                       </Button>
                     )}
+                    {(selected.status === 'FINALIZED' || selected.status === 'DISBURSED') &&
+                      selected.items.length > 0 && (
+                        // Direct anchor — the endpoint streams a ZIP and the
+                        // session cookie rides along on same-origin requests.
+                        // Phase 22 stamps paystubHash on first generation.
+                        <Button asChild variant="secondary">
+                          <a
+                            href={`/api/payroll/runs/${selected.id}/paystubs.zip`}
+                            download
+                          >
+                            <Download className="h-4 w-4" />
+                            Download all paystubs
+                          </a>
+                        </Button>
+                      )}
                   </div>
                 )}
               </div>
