@@ -59,6 +59,7 @@ import { discipline118Router } from './routes/discipline118.js';
 import { separation119Router } from './routes/separation119.js';
 import { internalMobility120Router } from './routes/internalMobility120.js';
 import { vaccination121Router } from './routes/vaccination121.js';
+import { agreements122Router } from './routes/agreements122.js';
 import { attachUser, requireCapability } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 
@@ -212,6 +213,7 @@ export function createApp() {
   app.use('/', separation119Router);
   app.use('/', internalMobility120Router);
   app.use('/', vaccination121Router);
+  app.use('/', agreements122Router);
   // QuickBooks router self-gates each route — the OAuth callback must accept
   // an unauthenticated browser redirect from Intuit, so we cannot apply a
   // capability check at this mount point.

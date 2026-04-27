@@ -50,6 +50,7 @@ export type ModuleKey =
   | 'separations'
   | 'internal-jobs'
   | 'vaccinations'
+  | 'agreements'
   | 'team'
   | 'workflows'
   | 'me'
@@ -109,7 +110,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon, LogOut as SeparationIcon, Briefcase as InternalJobsIcon, Syringe as VaccinationsIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon, LogOut as SeparationIcon, Briefcase as InternalJobsIcon, Syringe as VaccinationsIcon, FileSignature as AgreementsIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -310,6 +311,16 @@ export const MODULES: ModuleNav[] = [
       'Vaccination + TB-test records. Required by many client SLAs. Coverage % per kind, expiring-soon feed.',
     requires: 'view:compliance',
     icon: VaccinationsIcon,
+    group: 'compliance',
+  },
+  {
+    key: 'agreements',
+    path: '/agreements',
+    label: 'Agreements',
+    description:
+      'NDAs, non-competes, IP assignments, equity grants — per-associate one-off legal agreements with electronic signature.',
+    requires: 'view:dashboard',
+    icon: AgreementsIcon,
     group: 'compliance',
   },
   {

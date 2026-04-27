@@ -341,6 +341,7 @@ model User {
   exitInterviewsConducted      Separation[]                   @relation("SeparationExitInterviewer")
   internalApplicationsReviewed InternalJobApplication[]       @relation("InternalApplicationReviewer")
   vaccinationRecordsCreated    VaccinationRecord[]
+  agreementsIssued             Agreement[]
 
   @@index([role])
   @@index([clientId])
@@ -552,6 +553,8 @@ model Associate {
   internalApplications  InternalJobApplication[]
   // Phase 121 — vaccination + medical records.
   vaccinationRecords    VaccinationRecord[]
+  // Phase 122 — per-associate legal agreements (NDA, non-compete, etc.).
+  agreements            Agreement[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -4108,5 +4111,56 @@ model VaccinationRecord {
 
   @@index([associateId])
   @@index([kind])
+  @@index([expiresOn])
+}
+
+// ===== Phase 122 — Per-associate legal agreements ==========================
+//
+// One-off agreements (NDA, non-compete, IP assignment, arbitration, equity
+// grants) that are signed by the individual associate. Distinct from
+// PolicyAck (company-wide policies). supersedesId points at an older
+// agreement the new one replaces — useful when an NDA is updated mid-tenure.
+enum AgreementKind {
+  NDA
+  NON_COMPETE
+  IP_ASSIGNMENT
+  ARBITRATION
+  EMPLOYMENT_OFFER
+  SEPARATION_AGREEMENT
+  EQUITY_GRANT
+  OTHER
+}
+
+enum AgreementStatus {
+  PENDING_SIGNATURE
+  SIGNED
+  EXPIRED
+  SUPERSEDED
+}
+
+model Agreement {
+  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId   String          @db.Uuid
+  kind          AgreementKind
+  customLabel   String?
+  status        AgreementStatus @default(PENDING_SIGNATURE)
+  documentUrl   String?
+  effectiveDate DateTime?       @db.Date
+  expiresOn     DateTime?       @db.Date
+  signedAt      DateTime?       @db.Timestamptz(6)
+  signature     String?
+  supersedesId  String?         @db.Uuid
+  notes         String?
+  issuedById    String?         @db.Uuid
+  createdAt     DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime        @updatedAt @db.Timestamptz(6)
+
+  associate    Associate    @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  supersedes   Agreement?   @relation("AgreementSupersedes", fields: [supersedesId], references: [id], onDelete: SetNull)
+  supersededBy Agreement[]  @relation("AgreementSupersedes")
+  issuedBy     User?        @relation(fields: [issuedById], references: [id], onDelete: SetNull)
+
+  @@index([associateId])
+  @@index([status])
   @@index([expiresOn])
 }
