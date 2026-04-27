@@ -350,6 +350,8 @@ model User {
   careerLaddersCreated         CareerLadder[]
   tuitionRequestsReviewed      TuitionRequest[]               @relation("TuitionReviewer")
   tuitionRequestsPaid          TuitionRequest[]               @relation("TuitionPayer")
+  anonymousReportsAssigned     AnonymousReport[]              @relation("AnonReportAssignee")
+  anonymousReportUpdates       AnonymousReportUpdate[]        @relation("AnonReportAuthor")
 
   @@index([role])
   @@index([clientId])
@@ -4461,4 +4463,58 @@ model TuitionRequest {
 
   @@index([associateId])
   @@index([status])
+}
+
+enum ReportCategory {
+  HARASSMENT
+  DISCRIMINATION
+  ETHICS_VIOLATION
+  FRAUD
+  SAFETY
+  RETALIATION
+  OTHER
+}
+
+enum ReportStatus {
+  RECEIVED
+  TRIAGING
+  INVESTIGATING
+  RESOLVED
+  CLOSED
+}
+
+model AnonymousReport {
+  id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  trackingCode String         @unique
+  category     ReportCategory
+  subject      String
+  description  String
+  status       ReportStatus   @default(RECEIVED)
+  contactEmail String?
+  assignedToId String?        @db.Uuid
+  resolution   String?
+  resolvedAt   DateTime?      @db.Timestamptz(6)
+  createdAt    DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime       @updatedAt @db.Timestamptz(6)
+
+  assignedTo User?                   @relation("AnonReportAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  updates    AnonymousReportUpdate[]
+
+  @@index([status])
+  @@index([category])
+}
+
+model AnonymousReportUpdate {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reportId       String   @db.Uuid
+  body           String
+  authorUserId   String?  @db.Uuid
+  isFromReporter Boolean  @default(false)
+  internalOnly   Boolean  @default(false)
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  report     AnonymousReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  authorUser User?           @relation("AnonReportAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
+
+  @@index([reportId])
 }

@@ -56,6 +56,7 @@ export type ModuleKey =
   | 'ramp'
   | 'career'
   | 'tuition'
+  | 'hotline'
   | 'team'
   | 'workflows'
   | 'me'
@@ -115,7 +116,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon, LogOut as SeparationIcon, Briefcase as InternalJobsIcon, Syringe as VaccinationsIcon, FileSignature as AgreementsIcon, MessageCircle as HrCasesIcon, BookOpen as KbIcon, Target as RampIcon, TrendingUp as CareerIcon, GraduationCap as TuitionIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon, LogOut as SeparationIcon, Briefcase as InternalJobsIcon, Syringe as VaccinationsIcon, FileSignature as AgreementsIcon, MessageCircle as HrCasesIcon, BookOpen as KbIcon, Target as RampIcon, TrendingUp as CareerIcon, GraduationCap as TuitionIcon, Siren as HotlineIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -377,6 +378,16 @@ export const MODULES: ModuleNav[] = [
     requires: 'view:dashboard',
     icon: TuitionIcon,
     group: 'time-and-pay',
+  },
+  {
+    key: 'hotline',
+    path: '/hotline-admin',
+    label: 'Hotline queue',
+    description:
+      'Anonymous reports filed via the public hotline. Triage, assign, and respond. Public reporters never see internal notes.',
+    requires: 'manage:performance',
+    icon: HotlineIcon,
+    group: 'compliance',
   },
   {
     key: 'team',

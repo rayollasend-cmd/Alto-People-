@@ -59,6 +59,8 @@ import { KbHome } from '@/pages/kb/KbHome';
 import { RampHome } from '@/pages/ramp/RampHome';
 import { CareerHome } from '@/pages/career/CareerHome';
 import { TuitionHome } from '@/pages/tuition/TuitionHome';
+import { HotlinePage } from '@/pages/hotline/HotlinePage';
+import { HotlineAdmin } from '@/pages/hotline/HotlineAdmin';
 import { TeamHome } from '@/pages/team/TeamHome';
 import { WorkflowsHome } from '@/pages/workflows/WorkflowsHome';
 import { MeHome } from '@/pages/me/MeHome';
@@ -171,7 +173,8 @@ const PLACEHOLDER_MODULES = MODULES.filter(
     m.key !== 'help-center' &&
     m.key !== 'ramp' &&
     m.key !== 'career' &&
-    m.key !== 'tuition'
+    m.key !== 'tuition' &&
+    m.key !== 'hotline'
 );
 
 export const router = createBrowserRouter([
@@ -183,6 +186,13 @@ export const router = createBrowserRouter([
   },
   // Phase 99 — public kiosk page. No auth, no Layout — full-screen.
   { path: '/kiosk', element: <KioskPage />, errorElement: <RouterErrorPage /> },
+  // Phase 128 — public anonymous reporting / hotline. No auth, no Layout —
+  // shoulder-surfing privacy: nothing on screen identifies the reporter.
+  {
+    path: '/hotline',
+    element: <HotlinePage />,
+    errorElement: <RouterErrorPage />,
+  },
   {
     path: '/',
     element: (
@@ -231,6 +241,7 @@ export const router = createBrowserRouter([
       { path: 'ramp', element: <RampHome /> },
       { path: 'career', element: <CareerHome /> },
       { path: 'tuition', element: <TuitionHome /> },
+      { path: 'hotline-admin', element: <HotlineAdmin /> },
       { path: 'team', element: <TeamHome /> },
       { path: 'workflows', element: <WorkflowsHome /> },
       { path: 'me', element: <MeHome /> },
