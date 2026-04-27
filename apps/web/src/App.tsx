@@ -26,6 +26,7 @@ import { ComplianceHome } from '@/pages/compliance/ComplianceHome';
 import { CommunicationsHome } from '@/pages/communications/CommunicationsHome';
 import { PerformanceHome } from '@/pages/performance/PerformanceHome';
 import { RecruitingHome } from '@/pages/recruiting/RecruitingHome';
+import { AnalyticsHome } from '@/pages/analytics/AnalyticsHome';
 
 const ONBOARDING_ROUTES = [
   { path: 'onboarding', element: <OnboardingHome /> },
@@ -72,7 +73,8 @@ const PLACEHOLDER_MODULES = MODULES.filter(
     m.key !== 'communications' &&
     m.key !== 'performance' &&
     m.key !== 'recruiting' &&
-    m.key !== 'clients'
+    m.key !== 'clients' &&
+    m.key !== 'analytics'
 );
 
 export const router = createBrowserRouter([
@@ -98,6 +100,7 @@ export const router = createBrowserRouter([
       { path: 'communications', element: <CommunicationsHome /> },
       { path: 'performance', element: <PerformanceHome /> },
       { path: 'recruiting', element: <RecruitingHome /> },
+      { path: 'analytics', element: <AnalyticsHome /> },
       ...ONBOARDING_ROUTES,
       ...PLACEHOLDER_MODULES.map((m) => ({
         path: m.path.replace(/^\//, ''),
