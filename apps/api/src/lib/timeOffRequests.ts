@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient, TimeOffCategory } from '@prisma/client';
+import { ensureEntitlementApplied } from './timeOffEntitlement.js';
 
 /**
  * Phase 30 — request/approval workflow helpers for time-off.
@@ -96,6 +97,11 @@ export async function approveRequest(
     if (req.ledgerEntry) {
       throw new IllegalStateError('Request already has a ledger entry');
     }
+
+    // Phase 43 — make sure any pending annual grant for this category is
+    // applied before we read balance. Otherwise an associate's first
+    // request after the year boundary would fail until they hit /balance.
+    await ensureEntitlementApplied(tx, req.associateId, req.category);
 
     const balance = await tx.timeOffBalance.findUnique({
       where: {

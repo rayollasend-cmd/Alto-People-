@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import {
   TimeOffAdminListQuerySchema,
+  TimeOffEntitlementListResponseSchema,
+  TimeOffEntitlementUpsertInputSchema,
   TimeOffMyBalanceResponseSchema,
   TimeOffRequestCreateInputSchema,
   TimeOffRequestDecisionInputSchema,
@@ -8,6 +10,7 @@ import {
   TimeOffRequestListResponseSchema,
   TimeOffRequestResponseSchema,
   type TimeOffBalance,
+  type TimeOffEntitlement as TimeOffEntitlementDTO,
   type TimeOffLedgerEntry,
   type TimeOffRequest as TimeOffRequestDTO,
 } from '@alto-people/shared';
@@ -23,6 +26,7 @@ import {
   InsufficientBalanceError,
   parseDateUTC,
 } from '../lib/timeOffRequests.js';
+import { ensureEntitlementApplied } from '../lib/timeOffEntitlement.js';
 
 export const timeOffRouter = Router();
 
@@ -72,6 +76,20 @@ timeOffRouter.get('/me/balance', async (req, res, next) => {
     const user = req.user!;
     if (!user.associateId) {
       throw new HttpError(403, 'not_an_associate', 'Only associates have time-off balances');
+    }
+
+    // Phase 43 — fire annual lump-sum grants if the entitlement clock
+    // has rolled over since the last read. Idempotent.
+    const entitlements = await prisma.timeOffEntitlement.findMany({
+      where: { associateId: user.associateId },
+      select: { category: true },
+    });
+    if (entitlements.length > 0) {
+      await prisma.$transaction(async (tx) => {
+        for (const e of entitlements) {
+          await ensureEntitlementApplied(tx, user.associateId!, e.category);
+        }
+      }, { timeout: 30_000 });
     }
 
     const [balances, ledger] = await Promise.all([
@@ -300,6 +318,95 @@ timeOffRouter.post('/admin/requests/:id/deny', MANAGE, async (req, res, next) =>
     res.json(
       TimeOffRequestResponseSchema.parse({ request: toRequestDTO(updated) })
     );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ----------- Phase 43 — entitlements (annual lump-sum config) ----------- */
+
+timeOffRouter.get('/admin/entitlements', MANAGE, async (req, res, next) => {
+  try {
+    const associateIdFilter =
+      typeof req.query.associateId === 'string' ? req.query.associateId : undefined;
+    const rows = await prisma.timeOffEntitlement.findMany({
+      where: associateIdFilter ? { associateId: associateIdFilter } : undefined,
+      orderBy: [{ associateId: 'asc' }, { category: 'asc' }],
+      include: {
+        associate: { select: { firstName: true, lastName: true } },
+      },
+    });
+    const entitlements: TimeOffEntitlementDTO[] = rows.map((r) => ({
+      id: r.id,
+      associateId: r.associateId,
+      associateName: `${r.associate.firstName} ${r.associate.lastName}`,
+      category: r.category,
+      annualMinutes: r.annualMinutes,
+      carryoverMaxMinutes: r.carryoverMaxMinutes,
+      policyAnchorMonth: r.policyAnchorDate.getUTCMonth() + 1,
+      policyAnchorDay: r.policyAnchorDate.getUTCDate(),
+      lastGrantedAt: r.lastGrantedAt ? r.lastGrantedAt.toISOString() : null,
+    }));
+    res.json(
+      TimeOffEntitlementListResponseSchema.parse({ entitlements })
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+timeOffRouter.put('/admin/entitlements', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = TimeOffEntitlementUpsertInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const input = parsed.data;
+    const associate = await prisma.associate.findUnique({
+      where: { id: input.associateId },
+      select: { id: true },
+    });
+    if (!associate) {
+      throw new HttpError(404, 'associate_not_found', 'Associate not found');
+    }
+    const anchor = new Date(
+      Date.UTC(2000, input.policyAnchorMonth - 1, input.policyAnchorDay)
+    );
+    const upserted = await prisma.timeOffEntitlement.upsert({
+      where: {
+        associateId_category: {
+          associateId: input.associateId,
+          category: input.category,
+        },
+      },
+      create: {
+        associateId: input.associateId,
+        category: input.category,
+        annualMinutes: input.annualMinutes,
+        carryoverMaxMinutes: input.carryoverMaxMinutes,
+        policyAnchorDate: anchor,
+      },
+      update: {
+        annualMinutes: input.annualMinutes,
+        carryoverMaxMinutes: input.carryoverMaxMinutes,
+        policyAnchorDate: anchor,
+      },
+      include: { associate: { select: { firstName: true, lastName: true } } },
+    });
+    const dto: TimeOffEntitlementDTO = {
+      id: upserted.id,
+      associateId: upserted.associateId,
+      associateName: `${upserted.associate.firstName} ${upserted.associate.lastName}`,
+      category: upserted.category,
+      annualMinutes: upserted.annualMinutes,
+      carryoverMaxMinutes: upserted.carryoverMaxMinutes,
+      policyAnchorMonth: upserted.policyAnchorDate.getUTCMonth() + 1,
+      policyAnchorDay: upserted.policyAnchorDate.getUTCDate(),
+      lastGrantedAt: upserted.lastGrantedAt
+        ? upserted.lastGrantedAt.toISOString()
+        : null,
+    };
+    res.json(dto);
   } catch (err) {
     next(err);
   }

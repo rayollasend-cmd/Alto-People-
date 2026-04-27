@@ -331,6 +331,38 @@ export const AuditLogListResponseSchema = z.object({
 export type AuditLogListResponse = z.infer<typeof AuditLogListResponseSchema>;
 
 /* -------------------------------------------------------------------------- *
+ *  Phase 43 — Time-off entitlements (annual lump-sum + carryover cap)
+ * -------------------------------------------------------------------------- */
+
+export const TimeOffEntitlementSchema = z.object({
+  id: UuidSchema,
+  associateId: UuidSchema,
+  associateName: z.string(),
+  category: z.enum(['SICK', 'VACATION', 'PTO', 'BEREAVEMENT', 'JURY_DUTY', 'OTHER']),
+  annualMinutes: z.number().int().nonnegative(),
+  carryoverMaxMinutes: z.number().int().nonnegative(),
+  policyAnchorMonth: z.number().int().min(1).max(12),
+  policyAnchorDay: z.number().int().min(1).max(31),
+  lastGrantedAt: z.string().datetime().nullable(),
+});
+export type TimeOffEntitlement = z.infer<typeof TimeOffEntitlementSchema>;
+
+export const TimeOffEntitlementListResponseSchema = z.object({
+  entitlements: z.array(TimeOffEntitlementSchema),
+});
+export type TimeOffEntitlementListResponse = z.infer<typeof TimeOffEntitlementListResponseSchema>;
+
+export const TimeOffEntitlementUpsertInputSchema = z.object({
+  associateId: UuidSchema,
+  category: z.enum(['SICK', 'VACATION', 'PTO', 'BEREAVEMENT', 'JURY_DUTY', 'OTHER']),
+  annualMinutes: z.number().int().nonnegative(),
+  carryoverMaxMinutes: z.number().int().nonnegative(),
+  policyAnchorMonth: z.number().int().min(1).max(12).default(1),
+  policyAnchorDay: z.number().int().min(1).max(31).default(1),
+});
+export type TimeOffEntitlementUpsertInput = z.infer<typeof TimeOffEntitlementUpsertInputSchema>;
+
+/* -------------------------------------------------------------------------- *
  *  Phase 42 — Benefits enrollment
  * -------------------------------------------------------------------------- */
 
@@ -1403,6 +1435,8 @@ export const TimeOffLedgerReasonSchema = z.enum([
   'ACCRUAL',
   'USE',
   'ADJUSTMENT',
+  'CARRYOVER_FORFEIT',
+  'ANNUAL_GRANT',
   'PAYOUT',
 ]);
 export type TimeOffLedgerReason = z.infer<typeof TimeOffLedgerReasonSchema>;

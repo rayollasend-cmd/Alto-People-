@@ -333,6 +333,7 @@ model Associate {
   timeOffLedger      TimeOffLedgerEntry[]
   timeOffRequests    TimeOffRequest[]
   benefitsEnrollments BenefitsEnrollment[]
+  timeOffEntitlements TimeOffEntitlement[]
 
   @@index([deletedAt])
 }
@@ -772,6 +773,37 @@ enum TimeOffLedgerReason {
   USE
   ADJUSTMENT
   PAYOUT
+  // Phase 43 — at the annual reset boundary, balance above
+  // carryoverMaxMinutes is forfeited. Negative deltaMinutes.
+  CARRYOVER_FORFEIT
+  // Phase 43 — annual lump-sum grant for entitlements like VACATION /
+  // PTO. Positive deltaMinutes.
+  ANNUAL_GRANT
+}
+
+// Phase 43 — annual entitlements for VACATION / PTO / etc. SICK accrual
+// is per-worked-hour (Phase 26) and doesn't need this model. The reset
+// pattern: at the start of each entitlement year, current balance is
+// capped at carryoverMaxMinutes, then annualMinutes is granted on top.
+// `lastGrantedAt` makes the grant idempotent — running the helper twice
+// in the same window is a no-op. `policyAnchorDate` lets HR pick the
+// reset month (e.g. Jan 1 vs hire-anniversary).
+model TimeOffEntitlement {
+  id                   String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId          String           @db.Uuid
+  category             TimeOffCategory
+  annualMinutes        Int
+  carryoverMaxMinutes  Int              @default(0)
+  // Anchor for the annual reset. Resets happen on the same MM-DD each
+  // year. Default = Jan 1.
+  policyAnchorDate     DateTime         @default(dbgenerated("DATE '2000-01-01'")) @db.Date
+  lastGrantedAt        DateTime?        @db.Date
+  createdAt            DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime         @updatedAt @db.Timestamptz(6)
+  associate            Associate        @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@unique([associateId, category])
+  @@index([associateId])
 }
 
 model TimeOffBalance {

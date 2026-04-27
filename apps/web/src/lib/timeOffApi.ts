@@ -1,4 +1,7 @@
 import type {
+  TimeOffEntitlement,
+  TimeOffEntitlementListResponse,
+  TimeOffEntitlementUpsertInput,
   TimeOffMyBalanceResponse,
   TimeOffRequestCreateInput,
   TimeOffRequestDenyInput,
@@ -53,4 +56,18 @@ export function denyAdminRequest(id: string, input: TimeOffRequestDenyInput) {
       body: input,
     }
   );
+}
+
+export function listAdminEntitlements(associateId?: string) {
+  const qs = associateId ? `?associateId=${encodeURIComponent(associateId)}` : '';
+  return apiFetch<TimeOffEntitlementListResponse>(
+    `/time-off/admin/entitlements${qs}`
+  );
+}
+
+export function upsertAdminEntitlement(input: TimeOffEntitlementUpsertInput) {
+  return apiFetch<TimeOffEntitlement>('/time-off/admin/entitlements', {
+    method: 'PUT',
+    body: input,
+  });
 }
