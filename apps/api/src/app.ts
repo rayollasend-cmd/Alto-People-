@@ -20,6 +20,7 @@ import { recruitingRouter } from './routes/recruiting.js';
 import { jobsRouter } from './routes/jobs.js';
 import { auditRouter } from './routes/audit.js';
 import { benefitsRouter } from './routes/benefits.js';
+import { quickbooksRouter } from './routes/quickbooks.js';
 import { attachUser, requireCapability } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 
@@ -86,6 +87,10 @@ export function createApp() {
   app.use('/jobs', requireCapability('view:scheduling'), jobsRouter);
   app.use('/audit', requireCapability('view:audit'), auditRouter);
   app.use('/benefits', requireCapability('view:payroll'), benefitsRouter);
+  // QuickBooks router self-gates each route — the OAuth callback must accept
+  // an unauthenticated browser redirect from Intuit, so we cannot apply a
+  // capability check at this mount point.
+  app.use('/quickbooks', quickbooksRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

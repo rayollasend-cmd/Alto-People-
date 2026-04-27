@@ -286,6 +286,7 @@ model Client {
   payrollRuns  PayrollRun[]
   jobs         Job[]
   benefitsPlans BenefitsPlan[]
+  quickbooksConnection QuickbooksConnection?
 
   @@index([status])
   @@index([deletedAt])
@@ -943,6 +944,12 @@ model PayrollRun {
   finalizedAt   DateTime?        @db.Timestamptz(6)
   disbursedAt   DateTime?        @db.Timestamptz(6)
   cancelledAt   DateTime?        @db.Timestamptz(6)
+  // Phase 44 — QuickBooks Online journal-entry sync. Set to the QBO
+  // JournalEntry.Id on first successful sync; qboSyncError carries the
+  // last failure reason so HR can retry from the UI.
+  qboJournalEntryId String?      @db.VarChar(64)
+  qboSyncedAt   DateTime?        @db.Timestamptz(6)
+  qboSyncError  String?
   client        Client?          @relation(fields: [clientId], references: [id], onDelete: SetNull)
   createdBy     User?            @relation("PayrollRunCreator", fields: [createdById], references: [id], onDelete: SetNull)
   items         PayrollItem[]
@@ -1219,4 +1226,38 @@ model BenefitsEnrollment {
   @@unique([associateId, planId, effectiveDate])
   @@index([associateId, terminationDate])
   @@index([planId])
+}
+
+// ===== Phase 44 — QuickBooks Online integration ===========================
+//
+// Per-client OAuth 2.0 connection to Intuit QuickBooks Online. One row per
+// Client (single connection). accessToken / refreshToken are encrypted at
+// rest with the same crypto used for SSN / bank accounts (lib/crypto.ts).
+// On payroll finalize/disburse, lib/quickbooks.ts builds a JournalEntry
+// payload and (when env-configured) posts it via the v3 API; the resulting
+// JE id is stamped on PayrollRun.qboJournalEntryId.
+model QuickbooksConnection {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId        String   @unique @db.Uuid
+  realmId         String   // Intuit company / realm identifier
+  accessTokenEnc  Bytes
+  refreshTokenEnc Bytes
+  expiresAt       DateTime @db.Timestamptz(6)
+  // Intuit may rotate refresh tokens; track the last refresh timestamp
+  // so we can warn if it's been > 100 days (their TTL).
+  lastRefreshedAt DateTime @default(now()) @db.Timestamptz(6)
+  // Account ref IDs in QBO that the journal-entry posting needs. HR
+  // configures these once per company. NULL = use defaults derived from
+  // QBO chart-of-accounts lookup (best-effort, may fail).
+  accountSalariesExpense    String?
+  accountFederalTaxPayable  String?
+  accountStateTaxPayable    String?
+  accountFicaPayable        String?
+  accountMedicarePayable    String?
+  accountBenefitsPayable    String?
+  accountNetPayPayable      String?
+  createdAt       DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(6)
+
+  client          Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
 }

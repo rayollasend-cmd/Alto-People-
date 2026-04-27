@@ -28,6 +28,10 @@ import {
 import { hashPdf, renderPaystubPdf, type PaystubData } from '../lib/paystub.js';
 import { pickAdapter } from '../lib/disbursement.js';
 import { recordPayrollEvent } from '../lib/audit.js';
+import {
+  isStubMode as qboIsStubMode,
+  postPayrollJournalEntry,
+} from '../lib/quickbooks.js';
 import archiver from 'archiver';
 
 export const payrollRouter = Router();
@@ -96,6 +100,9 @@ function toSummary(r: RawRun): PayrollRunSummary {
     finalizedAt: r.finalizedAt ? r.finalizedAt.toISOString() : null,
     disbursedAt: r.disbursedAt ? r.disbursedAt.toISOString() : null,
     createdAt: r.createdAt.toISOString(),
+    qboJournalEntryId: r.qboJournalEntryId,
+    qboSyncedAt: r.qboSyncedAt ? r.qboSyncedAt.toISOString() : null,
+    qboSyncError: r.qboSyncError,
   };
 }
 
@@ -513,11 +520,110 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
       req,
     });
 
+    // Best-effort QBO journal-entry sync. Only attempt when the run fully
+    // disbursed against a single client AND a QuickbooksConnection exists.
+    // Failures are stamped on the run (qboSyncError) and audited but never
+    // block the disbursement response — accounting drift is a workable
+    // problem, a 502 from /disburse is not.
+    if (allSucceeded && updated.clientId) {
+      const conn = await prisma.quickbooksConnection.findUnique({
+        where: { clientId: updated.clientId },
+      });
+      if (conn) {
+        const allItems = await prisma.payrollItem.findMany({
+          where: { payrollRunId: updated.id },
+        });
+        const totals = aggregateForQbo(allItems);
+        try {
+          const result = await postPayrollJournalEntry(prisma, updated.clientId, {
+            txnDate: updated.disbursedAt ?? now,
+            memo: `Payroll ${updated.periodStart.toISOString().slice(0, 10)} – ${updated.periodEnd
+              .toISOString()
+              .slice(0, 10)}`,
+            ...totals,
+          });
+          await prisma.payrollRun.update({
+            where: { id: updated.id },
+            data: {
+              qboJournalEntryId: result.journalEntryId,
+              qboSyncedAt: new Date(),
+              qboSyncError: null,
+            },
+          });
+          await recordPayrollEvent({
+            actorUserId: req.user!.id,
+            action: 'payroll.qbo_synced',
+            payrollRunId: updated.id,
+            clientId: updated.clientId,
+            metadata: {
+              journalEntryId: result.journalEntryId,
+              stubMode: qboIsStubMode(),
+              auto: true,
+            },
+            req,
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await prisma.payrollRun.update({
+            where: { id: updated.id },
+            data: { qboSyncError: msg.slice(0, 500) },
+          });
+        }
+      }
+    }
+
     res.json(toDetail(updated));
   } catch (err) {
     next(err);
   }
 });
+
+function aggregateForQbo(items: Array<{
+  grossPay: Prisma.Decimal;
+  federalWithholding: Prisma.Decimal;
+  stateWithholding: Prisma.Decimal;
+  fica: Prisma.Decimal;
+  medicare: Prisma.Decimal;
+  preTaxDeductions: Prisma.Decimal;
+  netPay: Prisma.Decimal;
+  employerFica: Prisma.Decimal;
+  employerMedicare: Prisma.Decimal;
+  employerFuta: Prisma.Decimal;
+  employerSuta: Prisma.Decimal;
+}>) {
+  let totalGross = 0;
+  let totalFederal = 0;
+  let totalState = 0;
+  let totalFica = 0;
+  let totalMedicare = 0;
+  let totalBenefits = 0;
+  let totalNet = 0;
+  let totalEmployerTax = 0;
+  for (const i of items) {
+    totalGross += Number(i.grossPay);
+    totalFederal += Number(i.federalWithholding);
+    totalState += Number(i.stateWithholding);
+    totalFica += Number(i.fica) + Number(i.employerFica);
+    totalMedicare += Number(i.medicare) + Number(i.employerMedicare);
+    totalBenefits += Number(i.preTaxDeductions);
+    totalNet += Number(i.netPay);
+    totalEmployerTax +=
+      Number(i.employerFica) +
+      Number(i.employerMedicare) +
+      Number(i.employerFuta) +
+      Number(i.employerSuta);
+  }
+  return {
+    totalGross,
+    totalEmployerTax,
+    totalFederal,
+    totalState,
+    totalFica,
+    totalMedicare,
+    totalBenefits,
+    totalNet,
+  };
+}
 
 /* ===== Bulk paystubs ZIP (HR/Finance) ================================ */
 //

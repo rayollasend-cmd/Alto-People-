@@ -331,6 +331,53 @@ export const AuditLogListResponseSchema = z.object({
 export type AuditLogListResponse = z.infer<typeof AuditLogListResponseSchema>;
 
 /* -------------------------------------------------------------------------- *
+ *  Phase 44 — QuickBooks Online integration (per-client OAuth + JE sync)
+ * -------------------------------------------------------------------------- */
+
+export const QboStatusSchema = z.object({
+  connected: z.boolean(),
+  realmId: z.string().nullable(),
+  expiresAt: z.string().datetime().nullable(),
+  lastRefreshedAt: z.string().datetime().nullable(),
+  // True when the integration is in stub mode (no Intuit creds configured).
+  // The UI uses this to badge the connection card.
+  stubMode: z.boolean(),
+  // Account-ref configuration HR can fill in to map JE lines onto their
+  // QBO chart-of-accounts. All seven default to null.
+  accountSalariesExpense: z.string().nullable(),
+  accountFederalTaxPayable: z.string().nullable(),
+  accountStateTaxPayable: z.string().nullable(),
+  accountFicaPayable: z.string().nullable(),
+  accountMedicarePayable: z.string().nullable(),
+  accountBenefitsPayable: z.string().nullable(),
+  accountNetPayPayable: z.string().nullable(),
+});
+export type QboStatus = z.infer<typeof QboStatusSchema>;
+
+export const QboAuthorizeStartResponseSchema = z.object({
+  authorizeUrl: z.string().url(),
+  state: z.string(),
+});
+export type QboAuthorizeStartResponse = z.infer<typeof QboAuthorizeStartResponseSchema>;
+
+export const QboAccountConfigInputSchema = z.object({
+  accountSalariesExpense: z.string().trim().min(1).max(64).nullable().optional(),
+  accountFederalTaxPayable: z.string().trim().min(1).max(64).nullable().optional(),
+  accountStateTaxPayable: z.string().trim().min(1).max(64).nullable().optional(),
+  accountFicaPayable: z.string().trim().min(1).max(64).nullable().optional(),
+  accountMedicarePayable: z.string().trim().min(1).max(64).nullable().optional(),
+  accountBenefitsPayable: z.string().trim().min(1).max(64).nullable().optional(),
+  accountNetPayPayable: z.string().trim().min(1).max(64).nullable().optional(),
+});
+export type QboAccountConfigInput = z.infer<typeof QboAccountConfigInputSchema>;
+
+export const QboSyncResponseSchema = z.object({
+  journalEntryId: z.string(),
+  syncedAt: z.string().datetime(),
+});
+export type QboSyncResponse = z.infer<typeof QboSyncResponseSchema>;
+
+/* -------------------------------------------------------------------------- *
  *  Phase 43 — Time-off entitlements (annual lump-sum + carryover cap)
  * -------------------------------------------------------------------------- */
 
@@ -700,6 +747,10 @@ export const PayrollRunSummarySchema = z.object({
   finalizedAt: z.string().datetime().nullable(),
   disbursedAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
+  // Phase 44 — QuickBooks Online sync state.
+  qboJournalEntryId: z.string().nullable(),
+  qboSyncedAt: z.string().datetime().nullable(),
+  qboSyncError: z.string().nullable(),
 });
 export type PayrollRunSummary = z.infer<typeof PayrollRunSummarySchema>;
 

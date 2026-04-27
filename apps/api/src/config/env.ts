@@ -46,6 +46,18 @@ const EnvSchema = z.object({
   PAYROLL_DISBURSEMENT_PROVIDER: z.enum(['STUB', 'WISE', 'BRANCH']).default('STUB'),
   WISE_API_KEY: z.string().optional(),
   BRANCH_API_KEY: z.string().optional(),
+  // Phase 44 — QuickBooks Online (Intuit). When both client id and secret
+  // are set, OAuth is wired and JournalEntry POSTs hit Intuit's v3 API.
+  // Otherwise the integration runs in stub mode: connect/disconnect work
+  // for the UI flow but actual posting just logs the would-be JE payload
+  // to the API console (and stamps a STUB-QBO-... id on the run).
+  // Sandbox vs production routing is controlled by INTUIT_ENV; sandbox
+  // hits the apidev URL, production hits the prod URL. The OAuth redirect
+  // URI must be registered in the Intuit developer dashboard and equal to
+  // {APP_BASE_URL}/api/quickbooks/connect/callback.
+  INTUIT_CLIENT_ID: z.string().optional(),
+  INTUIT_CLIENT_SECRET: z.string().optional(),
+  INTUIT_ENV: z.enum(['sandbox', 'production']).default('sandbox'),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

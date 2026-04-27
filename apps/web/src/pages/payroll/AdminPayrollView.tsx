@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, Download, FileText, Plus, Send } from 'lucide-react';
+import { CheckCircle2, Download, FileText, Link as LinkIcon, Plus, Send } from 'lucide-react';
 import type {
   PayrollRunDetail,
   PayrollRunStatus,
@@ -12,6 +12,7 @@ import {
   getPayrollRun,
   listPayrollRuns,
 } from '@/lib/payrollApi';
+import { syncRun as syncRunToQbo } from '@/lib/quickbooksApi';
 import { ApiError } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -120,6 +121,22 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
       refresh();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Disburse failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onSyncQbo = async () => {
+    if (!selected || busy) return;
+    setBusy(true);
+    try {
+      await syncRunToQbo(selected.id);
+      // Re-fetch the run so qboJournalEntryId / qboSyncedAt land on the UI.
+      const updated = await getPayrollRun(selected.id);
+      setSelected(updated);
+      toast.success('Posted to QuickBooks.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'QuickBooks sync failed.');
     } finally {
       setBusy(false);
     }
@@ -330,6 +347,33 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
                           </a>
                         </Button>
                       )}
+                    {(selected.status === 'FINALIZED' || selected.status === 'DISBURSED') &&
+                      selected.clientId && (
+                        <Button variant="secondary" onClick={onSyncQbo} loading={busy}>
+                          <LinkIcon className="h-4 w-4" />
+                          {selected.qboJournalEntryId ? 'Re-sync to QuickBooks' : 'Sync to QuickBooks'}
+                        </Button>
+                      )}
+                  </div>
+                )}
+                {(selected.qboJournalEntryId || selected.qboSyncError) && (
+                  <div className="mt-3 text-xs text-silver">
+                    {selected.qboJournalEntryId && (
+                      <div>
+                        QBO JournalEntry{' '}
+                        <span className="font-mono text-white">
+                          {selected.qboJournalEntryId}
+                        </span>
+                        {selected.qboSyncedAt && (
+                          <> — synced {new Date(selected.qboSyncedAt).toLocaleString()}</>
+                        )}
+                      </div>
+                    )}
+                    {selected.qboSyncError && (
+                      <div className="text-alert">
+                        Last QBO sync error: {selected.qboSyncError}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
