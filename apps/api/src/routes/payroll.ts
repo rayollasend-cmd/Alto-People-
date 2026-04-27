@@ -26,7 +26,9 @@ import {
   type PayFrequency,
 } from '../lib/payrollTax.js';
 import { hashPdf, renderPaystubPdf, type PaystubData } from '../lib/paystub.js';
-import { pickAdapter } from '../lib/disbursement.js';
+import { pickAdapter, type DisbursementInput } from '../lib/disbursement.js';
+import { decryptString } from '../lib/crypto.js';
+import type { PayoutMethod } from '@prisma/client';
 import { recordPayrollEvent } from '../lib/audit.js';
 import {
   isStubMode as qboIsStubMode,
@@ -458,11 +460,7 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
       const result = await adapter.disburse({
         amount: Number(item.netPay),
         currency: 'USD',
-        recipient: {
-          associateId: item.associateId,
-          fullName: `${item.associate.firstName} ${item.associate.lastName}`,
-          branchCardId: primary?.branchCardId ?? null,
-        },
+        recipient: recipientFromPayoutMethod(item.associate, primary),
         idempotencyKey: item.id,
         memo: `Payroll ${ymd(run.periodStart)}–${ymd(run.periodEnd)}`,
       }).catch((err: unknown) => ({
@@ -634,11 +632,7 @@ payrollRouter.post('/runs/:id/retry-failures', PROCESS, async (req, res, next) =
       const result = await adapter.disburse({
         amount: Number(item.netPay),
         currency: 'USD',
-        recipient: {
-          associateId: item.associateId,
-          fullName: `${item.associate.firstName} ${item.associate.lastName}`,
-          branchCardId: primary?.branchCardId ?? null,
-        },
+        recipient: recipientFromPayoutMethod(item.associate, primary),
         idempotencyKey: item.id,
         memo: `Payroll ${ymd(run.periodStart)}–${ymd(run.periodEnd)}`,
       }).catch((err: unknown) => ({
@@ -710,6 +704,40 @@ payrollRouter.post('/runs/:id/retry-failures', PROCESS, async (req, res, next) =
     next(err);
   }
 });
+
+/**
+ * Build the adapter recipient block from an associate's primary payout
+ * method. Decrypts the routing/account ciphertext only at the call site
+ * (never store decrypted bank numbers in any object that lingers). When
+ * the BRANCH_CARD branchCardId is set it wins; otherwise we forward the
+ * BANK_ACCOUNT details so Branch can push ACH to their own bank.
+ */
+function recipientFromPayoutMethod(
+  associate: { id: string; firstName: string; lastName: string },
+  pm: PayoutMethod | null
+): DisbursementInput['recipient'] {
+  const fullName = `${associate.firstName} ${associate.lastName}`;
+  if (!pm) {
+    return { associateId: associate.id, fullName };
+  }
+  if (pm.branchCardId) {
+    return {
+      associateId: associate.id,
+      fullName,
+      branchCardId: pm.branchCardId,
+    };
+  }
+  if (pm.routingNumberEnc && pm.accountNumberEnc) {
+    return {
+      associateId: associate.id,
+      fullName,
+      routingNumber: decryptString(pm.routingNumberEnc),
+      accountNumber: decryptString(pm.accountNumberEnc),
+      accountType: pm.accountType === 'SAVINGS' ? 'SAVINGS' : 'CHECKING',
+    };
+  }
+  return { associateId: associate.id, fullName };
+}
 
 function aggregateForQbo(items: Array<{
   grossPay: Prisma.Decimal;

@@ -3,6 +3,7 @@ import {
   createPayment as branchCreatePayment,
   isBranchConfigured,
   mapBranchStatus,
+  type BranchBankRail,
 } from './branch.js';
 
 /**
@@ -34,8 +35,15 @@ export interface DisbursementInput {
   recipient: {
     associateId: string;
     fullName: string;
-    routingNumber?: string;
-    accountNumberLast4?: string;
+    /**
+     * For BANK_ACCOUNT direct deposit: the decrypted ABA routing number
+     * and full account number, plus the account type. For BRANCH_CARD
+     * load: leave bank fields null and pass branchCardId. The adapter
+     * picks the rail based on which set is populated.
+     */
+    routingNumber?: string | null;
+    accountNumber?: string | null;
+    accountType?: 'CHECKING' | 'SAVINGS' | null;
     branchCardId?: string | null;
   };
   /** Idempotency key — the route passes PayrollItem.id so duplicate calls don't double-pay. */
@@ -96,20 +104,6 @@ class WiseAdapter implements DisbursementAdapter {
 class BranchAdapter implements DisbursementAdapter {
   readonly provider: DisbursementProvider = 'BRANCH';
   async disburse(input: DisbursementInput): Promise<DisbursementResult> {
-    // Branch addresses recipients by their Branch-side employee/card id.
-    // If we don't have one, we cannot send — the associate must be
-    // enrolled in Branch's portal first and their id stored on
-    // PayoutMethod.branchCardId. Fail loudly so HR fixes the enrollment
-    // rather than the run silently sitting in PENDING.
-    const employeeRef = input.recipient.branchCardId;
-    if (!employeeRef) {
-      return {
-        provider: 'BRANCH',
-        externalRef: '',
-        status: 'FAILED',
-        failureReason: 'associate_not_enrolled: missing branchCardId on primary payout method',
-      };
-    }
     if (input.currency !== 'USD') {
       return {
         provider: 'BRANCH',
@@ -118,10 +112,36 @@ class BranchAdapter implements DisbursementAdapter {
         failureReason: `unsupported_currency: Branch is US-domestic only, got ${input.currency}`,
       };
     }
+    // Two rails per associate:
+    //   1) BRANCH_CARD — populated branchCardId; Branch loads the funds
+    //      onto the card.
+    //   2) BANK_ACCOUNT — populated routing + account; Branch pushes ACH
+    //      to the associate's own bank.
+    // Card takes priority when both are set so newly-issued Branch cards
+    // are exercised.
+    let bankRail: BranchBankRail | undefined;
+    if (!input.recipient.branchCardId) {
+      if (!input.recipient.routingNumber || !input.recipient.accountNumber) {
+        return {
+          provider: 'BRANCH',
+          externalRef: '',
+          status: 'FAILED',
+          failureReason:
+            'no_payout_rail: associate has neither a Branch card nor a bank account on file',
+        };
+      }
+      bankRail = {
+        routingNumber: input.recipient.routingNumber,
+        accountNumber: input.recipient.accountNumber,
+        accountType: input.recipient.accountType ?? 'CHECKING',
+        accountHolder: input.recipient.fullName,
+      };
+    }
     const result = await branchCreatePayment({
       amount: input.amount,
       currency: input.currency,
-      employeeRef,
+      employeeRef: input.recipient.branchCardId ?? null,
+      bankRail,
       idempotencyKey: input.idempotencyKey,
       memo: input.memo,
     });

@@ -28,17 +28,32 @@ export type BranchPaymentStatus =
   | 'CANCELLED'
   | 'UNKNOWN';
 
+export interface BranchBankRail {
+  /** 9-digit ABA routing number (decrypted from PayoutMethod.routingNumberEnc). */
+  routingNumber: string;
+  /** Full account number (decrypted from PayoutMethod.accountNumberEnc). */
+  accountNumber: string;
+  accountType: 'CHECKING' | 'SAVINGS';
+  /** Account holder name as it appears on the bank account. */
+  accountHolder: string;
+}
+
 export interface CreatePaymentInput {
   /** Dollars (decimal). */
   amount: number;
   /** ISO 4217. We only call BRANCH for USD; non-USD is rejected upstream. */
   currency: string;
   /**
-   * Stable identifier Branch uses to address the recipient. For our model
-   * this is PayoutMethod.branchCardId for BRANCH_CARD payouts, or a
-   * Branch-side employee id we'd provision separately for ACH payouts.
+   * Branch-side employee/card identifier. Required for the BRANCH_CARD
+   * rail; null when paying directly to the associate's bank account, in
+   * which case `bankRail` must be populated.
    */
-  employeeRef: string;
+  employeeRef: string | null;
+  /**
+   * Bank-account details for the ACH rail. Required when employeeRef is
+   * null; ignored when employeeRef is set (the card rail wins).
+   */
+  bankRail?: BranchBankRail;
   /**
    * PayrollItem.id — passed both as the body's customer-side reference AND
    * as the Idempotency-Key header so a retried POST is collapsed into a
@@ -101,9 +116,24 @@ export async function createPayment(
   if (!env.BRANCH_API_KEY) {
     throw new Error('BRANCH_API_KEY missing — caller should fall back to stub');
   }
+  if (!input.employeeRef && !input.bankRail) {
+    throw new Error('createPayment requires either employeeRef or bankRail');
+  }
   const url = `${env.BRANCH_API_BASE_URL}/v1/payments`;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  // Build the recipient envelope. Card rail addresses by Branch's
+  // employee id; ACH rail carries the routing/account so Branch can push
+  // to the associate's own bank.
+  const destination: Record<string, unknown> = input.employeeRef
+    ? { kind: 'BRANCH_CARD', employee_id: input.employeeRef }
+    : {
+        kind: 'BANK_ACCOUNT',
+        routing_number: input.bankRail!.routingNumber,
+        account_number: input.bankRail!.accountNumber,
+        account_type: input.bankRail!.accountType,
+        account_holder_name: input.bankRail!.accountHolder,
+      };
   let resp: Response;
   try {
     resp = await fetch(url, {
@@ -119,7 +149,7 @@ export async function createPayment(
       body: JSON.stringify({
         amount: input.amount,
         currency: input.currency,
-        employee_id: input.employeeRef,
+        destination,
         external_reference: input.idempotencyKey,
         memo: input.memo ?? null,
       }),
