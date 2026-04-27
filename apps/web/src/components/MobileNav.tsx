@@ -1,9 +1,22 @@
 import { useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
-import { X, type LucideIcon } from 'lucide-react';
-import { DASHBOARD_NAV, MODULES } from '@/lib/modules';
+import { Briefcase, X, type LucideIcon } from 'lucide-react';
+import {
+  DASHBOARD_NAV,
+  GROUP_LABEL,
+  MODULES,
+  type ModuleGroup,
+  type ModuleNav,
+} from '@/lib/modules';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
+
+const GROUP_ORDER: Array<Exclude<ModuleGroup, 'core'>> = [
+  'workforce',
+  'time-and-pay',
+  'compliance',
+  'insights',
+];
 
 interface MobileNavProps {
   open: boolean;
@@ -13,6 +26,11 @@ interface MobileNavProps {
 export function MobileNav({ open, onClose }: MobileNavProps) {
   const { can } = useAuth();
   const visible = MODULES.filter((m) => can(m.requires));
+
+  const grouped: Partial<Record<ModuleGroup, ModuleNav[]>> = {};
+  for (const m of visible) {
+    (grouped[m.group] ??= []).push(m);
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -38,12 +56,17 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
         aria-hidden="true"
       />
       <aside className="absolute left-0 top-0 h-full w-72 bg-navy border-r border-navy-secondary flex flex-col animate-slide-in-from-right">
-        <div className="px-6 py-5 border-b border-navy-secondary flex items-start justify-between gap-3">
-          <div>
-            <h1 className="font-display text-2xl text-gold leading-none">Alto People</h1>
-            <p className="text-xs text-silver mt-1 tracking-widest uppercase">
-              Workforce Management
-            </p>
+        <div className="px-4 h-14 flex items-center justify-between gap-3 border-b border-navy-secondary">
+          <div className="flex items-center gap-2 min-w-0">
+            <div
+              className="h-7 w-7 rounded-md bg-gold/15 border border-gold/40 grid place-items-center shrink-0"
+              aria-hidden="true"
+            >
+              <Briefcase className="h-3.5 w-3.5 text-gold" />
+            </div>
+            <span className="font-display text-lg text-white leading-none tracking-tight truncate">
+              Alto <span className="text-gold">People</span>
+            </span>
           </div>
           <button
             type="button"
@@ -55,11 +78,22 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
           </button>
         </div>
 
-        <nav className="flex-1 overflow-y-auto py-3" onClick={onClose}>
+        <nav className="flex-1 overflow-y-auto py-2" onClick={onClose}>
           <MobileLink to={DASHBOARD_NAV.path} end label={DASHBOARD_NAV.label} icon={DASHBOARD_NAV.icon} />
-          {visible.map((m) => (
-            <MobileLink key={m.key} to={m.path} label={m.label} icon={m.icon} />
-          ))}
+          {GROUP_ORDER.map((group) => {
+            const items = grouped[group];
+            if (!items || items.length === 0) return null;
+            return (
+              <div key={group} className="mt-3">
+                <div className="px-4 py-1 text-[10px] font-semibold uppercase tracking-widest text-silver/60">
+                  {GROUP_LABEL[group]}
+                </div>
+                {items.map((m) => (
+                  <MobileLink key={m.key} to={m.path} label={m.label} icon={m.icon} />
+                ))}
+              </div>
+            );
+          })}
         </nav>
       </aside>
     </div>
@@ -80,15 +114,15 @@ function MobileLink({ to, label, icon: Icon, end }: MobileLinkProps) {
       end={end}
       className={({ isActive }) =>
         cn(
-          'flex items-center gap-3 px-6 py-3 text-sm border-l-2',
+          'mx-2 my-0.5 flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm transition-colors',
           isActive
-            ? 'bg-navy-secondary text-gold border-gold'
-            : 'border-transparent text-silver'
+            ? 'bg-navy-secondary text-white'
+            : 'text-silver hover:text-white hover:bg-navy-secondary/50'
         )
       }
     >
       <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-      <span>{label}</span>
+      <span className="truncate">{label}</span>
     </NavLink>
   );
 }

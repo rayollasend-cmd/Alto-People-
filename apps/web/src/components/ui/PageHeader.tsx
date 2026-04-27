@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { cn } from '@/lib/cn';
+import { usePublishPageTitle } from '@/lib/pageTitle';
 import { Breadcrumb, type BreadcrumbSegment } from './Breadcrumb';
 
 /**
@@ -40,6 +41,10 @@ export function PageHeader({
   children,
   className,
 }: PageHeaderProps) {
+  // Publish the title to the topbar context so chrome can show it after scroll.
+  // Only string titles can roundtrip; anything richer just falls back.
+  usePublishPageTitle(typeof title === 'string' ? title : null);
+
   return (
     <header className={cn('mb-6', className)}>
       {breadcrumbs && breadcrumbs.length > 0 && (
