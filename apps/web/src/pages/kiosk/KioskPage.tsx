@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '@/lib/api';
 import { kioskPunch } from '@/lib/kiosk99Api';
+import { extractDescriptor, loadFaceModels } from '@/lib/faceMatch';
 
 /**
  * Phase 99 — Public kiosk page. No auth, no Layout — full-screen UI a
@@ -77,7 +78,10 @@ export function KioskPage() {
       );
     });
 
-  const submit = async (selfieData: string | null) => {
+  const submit = async (
+    selfieData: string | null,
+    faceDescriptor: number[] | null,
+  ) => {
     if (!token) {
       setStage('setup');
       return;
@@ -90,6 +94,7 @@ export function KioskPage() {
         selfie: selfieData,
         latitude: loc?.lat ?? null,
         longitude: loc?.lng ?? null,
+        faceDescriptor,
       });
       setResult({
         action: r.action,
@@ -112,7 +117,20 @@ export function KioskPage() {
 
   return (
     <div className="fixed inset-0 bg-midnight text-white flex flex-col items-center justify-center select-none">
-      {stage === 'idle' && <IdleScreen now={now} onTap={() => setStage('pin')} />}
+      {stage === 'idle' && (
+        <IdleScreen
+          now={now}
+          onTap={() => {
+            // Warm up face-api models in the background while the user
+            // taps in their PIN — usually fully loaded by the time the
+            // selfie stage opens.
+            void loadFaceModels().catch(() => {
+              /* ignore — face match becomes optional */
+            });
+            setStage('pin');
+          }}
+        />
+      )}
       {stage === 'pin' && (
         <PinPad
           pin={pin}
@@ -123,8 +141,8 @@ export function KioskPage() {
       )}
       {stage === 'selfie' && (
         <SelfieCapture
-          onCaptured={(data) => void submit(data)}
-          onSkip={() => void submit(null)}
+          onCaptured={(data, descriptor) => void submit(data, descriptor)}
+          onSkip={() => void submit(null, null)}
           onCancel={reset}
         />
       )}
@@ -297,7 +315,7 @@ function SelfieCapture({
   onSkip,
   onCancel,
 }: {
-  onCaptured: (dataUrl: string) => void;
+  onCaptured: (dataUrl: string, descriptor: number[] | null) => void;
   onSkip: () => void;
   onCancel: () => void;
 }) {
@@ -305,6 +323,7 @@ function SelfieCapture({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [streamErr, setStreamErr] = useState<string | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
 
   useEffect(() => {
     let stream: MediaStream | null = null;
@@ -344,7 +363,20 @@ function SelfieCapture({
       if (!ctx) return;
       ctx.drawImage(v, 0, 0);
       const data = c.toDataURL('image/jpeg', 0.7);
-      onCaptured(data);
+      // Extract descriptor from the captured frame. Best-effort — if the
+      // models didn't load (offline kiosk) or no face is found, we still
+      // submit the punch with descriptor=null.
+      setAnalyzing(true);
+      (async () => {
+        let descriptor: number[] | null = null;
+        try {
+          await loadFaceModels();
+          descriptor = await extractDescriptor(c);
+        } catch {
+          /* swallow — face match is optional */
+        }
+        onCaptured(data, descriptor);
+      })();
       return;
     }
     const t = window.setTimeout(() => setCountdown(countdown - 1), 1000);
@@ -376,7 +408,9 @@ function SelfieCapture({
 
   return (
     <div className="flex flex-col items-center">
-      <div className="text-xl text-silver mb-4">Smile for the camera</div>
+      <div className="text-xl text-silver mb-4">
+        {analyzing ? 'Verifying…' : 'Smile for the camera'}
+      </div>
       <div className="relative">
         <video
           ref={videoRef}
@@ -387,6 +421,11 @@ function SelfieCapture({
         {countdown !== null && countdown > 0 && (
           <div className="absolute inset-0 flex items-center justify-center text-9xl font-bold text-white drop-shadow-[0_4px_8px_rgba(0,0,0,0.8)]">
             {countdown}
+          </div>
+        )}
+        {analyzing && (
+          <div className="absolute inset-0 flex items-center justify-center bg-midnight/60 rounded-2xl">
+            <div className="text-cyan-400 text-2xl animate-pulse">⋯</div>
           </div>
         )}
       </div>

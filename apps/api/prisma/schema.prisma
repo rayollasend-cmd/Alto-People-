@@ -505,6 +505,8 @@ model Associate {
   // Phase 99 — kiosk PINs (one per client) + punch history.
   kioskPins          KioskPin[]
   kioskPunches       KioskPunch[]
+  // Phase 101 — face descriptor for kiosk match-on-punch.
+  kioskFaceReference KioskFaceReference?
 
   @@index([deletedAt])
   @@index([managerId])
@@ -3434,14 +3436,34 @@ model KioskPunch {
   punchLat       Decimal? @db.Decimal(10, 7)
   punchLng       Decimal? @db.Decimal(10, 7)
   distanceMeters Int?
+  // Phase 101 — face match telemetry. NULL when no descriptor was sent
+  // (camera denied / models still loading). faceMismatch=true means the
+  // distance exceeded the threshold; HR reviews — we don't auto-reject.
+  faceDistance   Float?
+  faceMismatch   Boolean?
   createdAt     DateTime         @default(now()) @db.Timestamptz(6)
 
   device    KioskDevice @relation(fields: [kioskDeviceId], references: [id], onDelete: Cascade)
   pin       KioskPin?   @relation(fields: [kioskPinId], references: [id], onDelete: SetNull)
   associate Associate?  @relation(fields: [associateId], references: [id], onDelete: SetNull)
   timeEntry TimeEntry?  @relation(fields: [timeEntryId], references: [id], onDelete: SetNull)
+  enrolledFaceRefs KioskFaceReference[] @relation("KioskFaceEnrolledByPunch")
 
   @@index([kioskDeviceId])
   @@index([associateId])
   @@index([createdAt])
+}
+
+// Phase 101 — One face descriptor per associate, captured on first
+// successful kiosk punch (or HR-reset). 128-dim Float32 → 512 bytes.
+model KioskFaceReference {
+  id                String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId       String      @unique @db.Uuid
+  descriptor        Bytes
+  enrolledByPunchId String?     @db.Uuid
+  enrolledAt        DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime    @updatedAt @db.Timestamptz(6)
+
+  associate         Associate   @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  enrolledByPunch   KioskPunch? @relation("KioskFaceEnrolledByPunch", fields: [enrolledByPunchId], references: [id], onDelete: SetNull)
 }

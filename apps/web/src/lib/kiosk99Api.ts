@@ -40,7 +40,19 @@ export interface KioskPunchSummary {
   hasSelfie: boolean;
   rejectReason: string | null;
   distanceMeters: number | null;
+  faceDistance: number | null;
+  faceMismatch: boolean | null;
   createdAt: string;
+}
+
+export interface KioskFaceReferenceSummary {
+  id: string;
+  associateId: string;
+  associateName: string;
+  associateEmail: string;
+  enrolledByPunchId: string | null;
+  enrolledAt: string;
+  updatedAt: string;
 }
 
 export const listKioskDevices = (clientId?: string) =>
@@ -102,6 +114,16 @@ export const listKioskPunches = (params?: {
   return apiFetch<{ punches: KioskPunchSummary[] }>(`/kiosk-punches${suffix}`);
 };
 
+// ----- Face references (Phase 101) ---------------------------------------
+
+export const listKioskFaceReferences = () =>
+  apiFetch<{ references: KioskFaceReferenceSummary[] }>(
+    '/kiosk-face-references',
+  );
+
+export const resetKioskFaceReference = (associateId: string) =>
+  apiFetch<void>(`/kiosk-face-references/${associateId}`, { method: 'DELETE' });
+
 // ----- Public kiosk endpoint ---------------------------------------------
 
 export interface KioskPunchResult {
@@ -117,6 +139,7 @@ export const kioskPunch = (input: {
   selfie: string | null;
   latitude?: number | null;
   longitude?: number | null;
+  faceDescriptor?: number[] | null;
 }) =>
   apiFetch<KioskPunchResult>('/kiosk/punch', {
     method: 'POST',

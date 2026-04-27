@@ -257,10 +257,49 @@ kiosk99Router.get('/kiosk-punches', VIEW, async (req, res) => {
       hasSelfie: p.selfie != null,
       rejectReason: p.rejectReason,
       distanceMeters: p.distanceMeters,
+      faceDistance: p.faceDistance,
+      faceMismatch: p.faceMismatch,
       createdAt: p.createdAt.toISOString(),
     })),
   });
 });
+
+// ----- Face references (Phase 101) ---------------------------------------
+
+kiosk99Router.get('/kiosk-face-references', VIEW, async (_req, res) => {
+  const rows = await prisma.kioskFaceReference.findMany({
+    include: {
+      associate: { select: { firstName: true, lastName: true, email: true } },
+    },
+    orderBy: { enrolledAt: 'desc' },
+  });
+  res.json({
+    references: rows.map((r) => ({
+      id: r.id,
+      associateId: r.associateId,
+      associateName: `${r.associate.firstName} ${r.associate.lastName}`,
+      associateEmail: r.associate.email,
+      enrolledByPunchId: r.enrolledByPunchId,
+      enrolledAt: r.enrolledAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
+    })),
+  });
+});
+
+// HR can wipe a reference to force re-enrollment on the next punch — useful
+// after a haircut, glasses change, or if HR suspects the original enrollment
+// wasn't actually the right person.
+kiosk99Router.delete(
+  '/kiosk-face-references/:associateId',
+  MANAGE,
+  async (req, res) => {
+    const associateId = z.string().uuid().parse(req.params.associateId);
+    await prisma.kioskFaceReference.deleteMany({
+      where: { associateId },
+    });
+    res.status(204).end();
+  },
+);
 
 // Serve the selfie image. Inline so HR can audit visually.
 kiosk99Router.get('/kiosk-punches/:id/selfie', VIEW, async (req, res) => {
@@ -289,9 +328,45 @@ const PunchInputSchema = z.object({
   // as JS numbers.
   latitude: z.number().min(-90).max(90).optional().nullable(),
   longitude: z.number().min(-180).max(180).optional().nullable(),
+  // Phase 101 — 128-dim face descriptor extracted in-browser by face-api.js.
+  // Optional: kiosks running on devices without WebGL or with denied camera
+  // skip face matching gracefully. Each value is a Float32 in roughly
+  // [-1, 1]; we don't enforce that range, just length + finiteness.
+  faceDescriptor: z
+    .array(z.number().finite())
+    .length(128)
+    .optional()
+    .nullable(),
 });
 
 const SELFIE_MAX_BYTES = 1_000_000; // 1MB
+
+// Phase 101 — face match threshold. face-api.js suggests 0.6 as the
+// canonical "same face" cutoff; lower = stricter. We use it for flagging
+// only (not rejection), so a slightly looser 0.6 keeps false-positive
+// flags low for HR.
+const FACE_MATCH_THRESHOLD = 0.6;
+
+function descriptorToBytes(d: number[]): Buffer {
+  const buf = Buffer.alloc(128 * 4);
+  for (let i = 0; i < 128; i++) buf.writeFloatLE(d[i], i * 4);
+  return buf;
+}
+
+function bytesToDescriptor(buf: Buffer): Float32Array {
+  const out = new Float32Array(128);
+  for (let i = 0; i < 128; i++) out[i] = buf.readFloatLE(i * 4);
+  return out;
+}
+
+function euclideanDistance(a: Float32Array, b: number[]): number {
+  let sum = 0;
+  for (let i = 0; i < 128; i++) {
+    const d = a[i] - b[i];
+    sum += d * d;
+  }
+  return Math.sqrt(sum);
+}
 
 function decodeSelfie(s: string | null | undefined): Buffer | null {
   if (!s) return null;
@@ -431,7 +506,28 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     throw new HttpError(401, 'invalid_pin', 'PIN not recognized.');
   }
 
-  // 5. Decide CLOCK_IN vs CLOCK_OUT by looking for an open entry.
+  // 5. Phase 101 — face match (flag-only, never reject). If we have a
+  // descriptor and a reference, compute Euclidean distance. If we have a
+  // descriptor but no reference, we'll enroll inside the transaction
+  // below (so enrollment ties to the punch row).
+  let faceDistance: number | null = null;
+  let faceMismatch: boolean | null = null;
+  let shouldEnrollFace = false;
+  if (input.faceDescriptor) {
+    const ref = await prisma.kioskFaceReference.findUnique({
+      where: { associateId: pinRow.associateId },
+      select: { descriptor: true },
+    });
+    if (ref) {
+      const refVec = bytesToDescriptor(ref.descriptor);
+      faceDistance = euclideanDistance(refVec, input.faceDescriptor);
+      faceMismatch = faceDistance > FACE_MATCH_THRESHOLD;
+    } else {
+      shouldEnrollFace = true;
+    }
+  }
+
+  // 6. Decide CLOCK_IN vs CLOCK_OUT by looking for an open entry.
   const open = await prisma.timeEntry.findFirst({
     where: { associateId: pinRow.associateId, status: 'ACTIVE' },
     orderBy: { clockInAt: 'desc' },
@@ -480,8 +576,19 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
         punchLat,
         punchLng,
         distanceMeters: dist,
+        faceDistance,
+        faceMismatch,
       },
     });
+    if (shouldEnrollFace && input.faceDescriptor) {
+      await tx.kioskFaceReference.create({
+        data: {
+          associateId: pinRow.associateId,
+          descriptor: descriptorToBytes(input.faceDescriptor),
+          enrolledByPunchId: punch.id,
+        },
+      });
+    }
     await tx.kioskDevice.update({
       where: { id: device.id },
       data: { lastSeenAt: new Date() },

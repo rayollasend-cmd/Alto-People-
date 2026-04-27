@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Copy, Key, MapPin, Plus, Tablet } from 'lucide-react';
+import { Copy, Key, MapPin, Plus, ScanFace, Tablet } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
   assignKioskPin,
@@ -7,11 +7,14 @@ import {
   deleteKioskDevice,
   deleteKioskPin,
   listKioskDevices,
+  listKioskFaceReferences,
   listKioskPins,
   listKioskPunches,
+  resetKioskFaceReference,
   revokeKioskDevice,
   updateKioskGeofence,
   type KioskDevice,
+  type KioskFaceReferenceSummary,
   type KioskGeofence,
   type KioskPin,
   type KioskPunchSummary,
@@ -46,7 +49,7 @@ import {
 import { Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
 
-type Tab = 'devices' | 'pins' | 'log';
+type Tab = 'devices' | 'pins' | 'log' | 'faces';
 
 export function KioskAdmin() {
   const { user } = useAuth();
@@ -69,10 +72,14 @@ export function KioskAdmin() {
             <Key className="mr-2 h-4 w-4" /> PINs
           </TabsTrigger>
           <TabsTrigger value="log">Punch log</TabsTrigger>
+          <TabsTrigger value="faces">
+            <ScanFace className="mr-2 h-4 w-4" /> Face refs
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="devices"><DevicesTab canManage={canManage} /></TabsContent>
         <TabsContent value="pins"><PinsTab canManage={canManage} /></TabsContent>
         <TabsContent value="log"><LogTab /></TabsContent>
+        <TabsContent value="faces"><FacesTab canManage={canManage} /></TabsContent>
       </Tabs>
     </div>
   );
@@ -706,6 +713,7 @@ function LogTab() {
                 <TableHead>Associate</TableHead>
                 <TableHead>Action</TableHead>
                 <TableHead>Distance</TableHead>
+                <TableHead>Face</TableHead>
                 <TableHead>Selfie</TableHead>
                 <TableHead>Notes</TableHead>
               </TableRow>
@@ -732,6 +740,19 @@ function LogTab() {
                   <TableCell className="text-xs">
                     {p.distanceMeters != null ? `${p.distanceMeters}m` : '—'}
                   </TableCell>
+                  <TableCell className="text-xs">
+                    {p.faceDistance == null ? (
+                      '—'
+                    ) : p.faceMismatch ? (
+                      <Badge variant="destructive">
+                        Mismatch ({p.faceDistance.toFixed(2)})
+                      </Badge>
+                    ) : (
+                      <Badge variant="success">
+                        Match ({p.faceDistance.toFixed(2)})
+                      </Badge>
+                    )}
+                  </TableCell>
                   <TableCell>
                     {p.hasSelfie ? (
                       <a
@@ -748,6 +769,88 @@ function LogTab() {
                   </TableCell>
                   <TableCell className="text-xs text-silver">
                     {p.rejectReason ?? ''}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function FacesTab({ canManage }: { canManage: boolean }) {
+  const [rows, setRows] = useState<KioskFaceReferenceSummary[] | null>(null);
+
+  const refresh = () => {
+    setRows(null);
+    listKioskFaceReferences()
+      .then((r) => setRows(r.references))
+      .catch(() => setRows([]));
+  };
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  return (
+    <Card>
+      <CardContent className="p-0">
+        {rows === null ? (
+          <div className="p-6"><SkeletonRows count={3} /></div>
+        ) : rows.length === 0 ? (
+          <EmptyState
+            icon={ScanFace}
+            title="No face references"
+            description="The first kiosk punch with face matching enabled enrolls each associate automatically."
+          />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Associate</TableHead>
+                <TableHead>Email</TableHead>
+                <TableHead>Enrolled</TableHead>
+                <TableHead>Updated</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((r) => (
+                <TableRow key={r.id} className="group">
+                  <TableCell className="font-medium text-white">
+                    {r.associateName}
+                  </TableCell>
+                  <TableCell className="text-silver">{r.associateEmail}</TableCell>
+                  <TableCell className="text-xs">
+                    {new Date(r.enrolledAt).toLocaleString()}
+                  </TableCell>
+                  <TableCell className="text-xs text-silver">
+                    {new Date(r.updatedAt).toLocaleDateString()}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {canManage && (
+                      <button
+                        onClick={async () => {
+                          if (
+                            !window.confirm(
+                              'Reset this face reference? The next kiosk punch will re-enroll.',
+                            )
+                          )
+                            return;
+                          try {
+                            await resetKioskFaceReference(r.associateId);
+                            refresh();
+                            toast.success('Reference cleared.');
+                          } catch (err) {
+                            toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                          }
+                        }}
+                        className="opacity-0 group-hover:opacity-100 text-silver hover:text-destructive transition text-xs"
+                      >
+                        Reset
+                      </button>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}
