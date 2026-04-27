@@ -1,4 +1,14 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  Coffee,
+  ListChecks,
+  MapPinOff,
+  Search,
+  X,
+} from 'lucide-react';
 import type {
   ActiveDashboardEntry,
   TimeEntry,
@@ -6,12 +16,39 @@ import type {
 } from '@alto-people/shared';
 import {
   approveTimeEntry,
+  bulkApproveTimeEntries,
+  bulkRejectTimeEntries,
   getActiveDashboard,
   listAdminTimeEntries,
   rejectTimeEntry,
 } from '@/lib/timeApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import {
+  Badge,
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  EmptyState,
+  Input,
+  Skeleton,
+  SkeletonRows,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  Textarea,
+} from '@/components/ui';
 
 const STATUS_FILTERS: Array<{ value: TimeEntryStatus | 'ALL'; label: string }> = [
   { value: 'COMPLETED', label: 'Pending review' },
@@ -28,6 +65,16 @@ function formatHM(mins: number): string {
   return `${h}h ${m.toString().padStart(2, '0')}m`;
 }
 
+function statusVariant(s: TimeEntryStatus): 'success' | 'pending' | 'destructive' | 'accent' | 'default' {
+  switch (s) {
+    case 'APPROVED': return 'success';
+    case 'COMPLETED': return 'pending';
+    case 'REJECTED': return 'destructive';
+    case 'ACTIVE': return 'accent';
+    default: return 'default';
+  }
+}
+
 interface AdminTimeViewProps {
   canManage: boolean;
 }
@@ -39,8 +86,13 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
   const [filter, setFilter] = useState<TimeEntryStatus | 'ALL'>('COMPLETED');
   const [entries, setEntries] = useState<TimeEntry[] | null>(null);
   const [active, setActive] = useState<ActiveDashboardEntry[] | null>(null);
+  const [pendingCount, setPendingCount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [rejectOpen, setRejectOpen] = useState<null | { mode: 'one'; id: string } | { mode: 'bulk' }>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -49,6 +101,8 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
         filter === 'ALL' ? {} : { status: filter }
       );
       setEntries(res.entries);
+      // Selection only valid on the COMPLETED filter; clear when refreshing.
+      setSelected(new Set());
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load.');
     }
@@ -64,10 +118,24 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     }
   }, []);
 
+  const refreshPendingCount = useCallback(async () => {
+    try {
+      const res = await listAdminTimeEntries({ status: 'COMPLETED' });
+      setPendingCount(res.entries.length);
+    } catch {
+      // KPI is best-effort; leave previous value.
+    }
+  }, []);
+
   useEffect(() => {
     if (tab === 'queue') refresh();
     else refreshActive();
   }, [tab, refresh, refreshActive]);
+
+  // KPI: pending count loads independent of which tab is open.
+  useEffect(() => {
+    refreshPendingCount();
+  }, [refreshPendingCount]);
 
   // Auto-refresh the live tab every 30s while it's open.
   useEffect(() => {
@@ -81,7 +149,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     setPendingId(id);
     try {
       await approveTimeEntry(id);
-      await refresh();
+      await Promise.all([refresh(), refreshPendingCount()]);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Approve failed.');
     } finally {
@@ -89,19 +157,101 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     }
   };
 
-  const onReject = async (id: string) => {
-    if (pendingId) return;
-    const reason = window.prompt('Reason for rejection?');
-    if (!reason) return;
-    setPendingId(id);
-    try {
-      await rejectTimeEntry(id, { reason });
-      await refresh();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Reject failed.');
-    } finally {
-      setPendingId(null);
+  const onSubmitReject = async (reason: string) => {
+    if (!rejectOpen) return;
+    if (rejectOpen.mode === 'one') {
+      const id = rejectOpen.id;
+      setPendingId(id);
+      try {
+        await rejectTimeEntry(id, { reason });
+        setRejectOpen(null);
+        await Promise.all([refresh(), refreshPendingCount()]);
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : 'Reject failed.');
+      } finally {
+        setPendingId(null);
+      }
+      return;
     }
+    // Bulk reject.
+    if (selected.size === 0) return;
+    setBulkBusy(true);
+    try {
+      const res = await bulkRejectTimeEntries({
+        entryIds: Array.from(selected),
+        reason,
+      });
+      setRejectOpen(null);
+      if (res.failed > 0) {
+        setError(`${res.failed} of ${selected.size} entries could not be rejected.`);
+      }
+      await Promise.all([refresh(), refreshPendingCount()]);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Bulk reject failed.');
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const onBulkApprove = async () => {
+    if (selected.size === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    try {
+      const res = await bulkApproveTimeEntries({
+        entryIds: Array.from(selected),
+      });
+      if (res.failed > 0) {
+        setError(`${res.failed} of ${selected.size} entries could not be approved.`);
+      }
+      await Promise.all([refresh(), refreshPendingCount()]);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Bulk approve failed.');
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const liveStats = useMemo(() => {
+    if (!active) return { total: null, onBreak: null, offSite: null };
+    const onBreak = active.filter((e) => e.onBreak).length;
+    const offSite = active.filter((e) => e.geofenceOk === false).length;
+    return { total: active.length, onBreak, offSite };
+  }, [active]);
+
+  const filteredActive = useMemo(() => {
+    if (!active) return null;
+    const q = search.trim().toLowerCase();
+    if (!q) return active;
+    return active.filter(
+      (e) =>
+        e.associateName.toLowerCase().includes(q) ||
+        (e.clientName ?? '').toLowerCase().includes(q) ||
+        (e.jobName ?? '').toLowerCase().includes(q)
+    );
+  }, [active, search]);
+
+  const selectableIds = useMemo(() => {
+    if (!entries) return [] as string[];
+    // Only COMPLETED rows are bulk-actionable on the Pending review tab.
+    return entries.filter((e) => e.status === 'COMPLETED').map((e) => e.id);
+  }, [entries]);
+
+  const allSelected =
+    selectableIds.length > 0 && selectableIds.every((id) => selected.has(id));
+  const someSelected = selected.size > 0 && !allSelected;
+
+  const toggleAll = () => {
+    if (allSelected) setSelected(new Set());
+    else setSelected(new Set(selectableIds));
+  };
+
+  const toggleOne = (id: string) => {
+    setSelected((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
   return (
@@ -116,6 +266,34 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
             : 'Read-only view of time entries.'}
         </p>
       </header>
+
+      {/* KPI strip — mirrors the onboarding analytics pattern. */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+        <KpiCard
+          icon={Activity}
+          label="Clocked in"
+          value={liveStats.total === null ? '—' : String(liveStats.total)}
+          tone="default"
+        />
+        <KpiCard
+          icon={Coffee}
+          label="On break"
+          value={liveStats.onBreak === null ? '—' : String(liveStats.onBreak)}
+          tone="warning"
+        />
+        <KpiCard
+          icon={MapPinOff}
+          label="Off-site"
+          value={liveStats.offSite === null ? '—' : String(liveStats.offSite)}
+          tone={liveStats.offSite && liveStats.offSite > 0 ? 'alert' : 'silver'}
+        />
+        <KpiCard
+          icon={ListChecks}
+          label="Pending review"
+          value={pendingCount === null ? '—' : String(pendingCount)}
+          tone={pendingCount && pendingCount > 0 ? 'warning' : 'success'}
+        />
+      </div>
 
       <div role="tablist" className="flex gap-2 mb-5 border-b border-navy-secondary">
         {(['live', 'queue'] as const).map((t) => (
@@ -138,173 +316,401 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
       </div>
 
       {error && (
-        <p role="alert" className="text-sm text-alert mb-4">
-          {error}
-        </p>
+        <div
+          role="alert"
+          className="flex items-start gap-2 mb-4 px-3 py-2 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
+        >
+          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+          <span className="flex-1">{error}</span>
+          <button
+            type="button"
+            onClick={() => setError(null)}
+            className="text-alert/60 hover:text-alert"
+            aria-label="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
       )}
 
       {tab === 'live' && (
-        <>
-          {!active && <p className="text-silver">Loading…</p>}
-          {active && active.length === 0 && (
-            <p className="text-silver">No associates currently clocked in.</p>
-          )}
-          {active && active.length > 0 && (
-            <div className="bg-navy border border-navy-secondary rounded-lg overflow-hidden">
-              <table className="w-full text-sm">
-                <thead className="bg-navy-secondary/40 text-silver text-xs uppercase tracking-widest">
-                  <tr>
-                    <th className="px-4 py-3 text-left">Associate</th>
-                    <th className="px-4 py-3 text-left">Client</th>
-                    <th className="px-4 py-3 text-left">Job</th>
-                    <th className="px-4 py-3 text-left">Since</th>
-                    <th className="px-4 py-3 text-left">Elapsed</th>
-                    <th className="px-4 py-3 text-left">Status</th>
-                    <th className="px-4 py-3 text-left">Geofence</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {active.map((e) => (
-                    <tr key={e.id} className="border-t border-navy-secondary/60 text-white">
-                      <td className="px-4 py-3">{e.associateName}</td>
-                      <td className="px-4 py-3 text-silver">{e.clientName ?? '—'}</td>
-                      <td className="px-4 py-3 text-silver">{e.jobName ?? '—'}</td>
-                      <td className="px-4 py-3 tabular-nums text-silver">
-                        {new Date(e.clockInAt).toLocaleTimeString()}
-                      </td>
-                      <td className="px-4 py-3 tabular-nums">{formatHM(e.minutesElapsed)}</td>
-                      <td className="px-4 py-3 text-xs uppercase tracking-widest">
-                        {e.onBreak ? (
-                          <span className="text-gold">On break</span>
-                        ) : (
-                          <span className="text-emerald-300">Working</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-xs uppercase tracking-widest">
-                        {e.geofenceOk === null && <span className="text-silver/60">N/A</span>}
-                        {e.geofenceOk === true && <span className="text-emerald-300">OK</span>}
-                        {e.geofenceOk === false && <span className="text-alert">Off-site</span>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <div className="px-4 py-2 text-[10px] uppercase tracking-widest text-silver/60 border-t border-navy-secondary/60">
-                Auto-refreshes every 30s
-              </div>
+        <Card>
+          <CardHeader className="flex-row items-center justify-between">
+            <CardTitle className="text-base">Currently clocked in</CardTitle>
+            <div className="relative w-64">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-silver/60 pointer-events-none" />
+              <Input
+                placeholder="Search associate, client, job…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-8 h-9 text-sm"
+              />
             </div>
-          )}
-        </>
+          </CardHeader>
+          <CardContent className="pt-0">
+            {!active && <SkeletonRows count={5} rowHeight="h-12" />}
+            {active && active.length === 0 && (
+              <EmptyState
+                title="No one is clocked in"
+                description="Active sessions will appear here in real time."
+              />
+            )}
+            {active && active.length > 0 && filteredActive && (
+              <>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Associate</TableHead>
+                      <TableHead>Client</TableHead>
+                      <TableHead>Job</TableHead>
+                      <TableHead>Since</TableHead>
+                      <TableHead>Elapsed</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Geofence</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredActive.map((e) => (
+                      <TableRow key={e.id}>
+                        <TableCell className="font-medium">{e.associateName}</TableCell>
+                        <TableCell className="text-silver">{e.clientName ?? '—'}</TableCell>
+                        <TableCell className="text-silver">{e.jobName ?? '—'}</TableCell>
+                        <TableCell className="tabular-nums text-silver">
+                          {new Date(e.clockInAt).toLocaleTimeString()}
+                        </TableCell>
+                        <TableCell className="tabular-nums">
+                          {formatHM(e.minutesElapsed)}
+                        </TableCell>
+                        <TableCell>
+                          {e.onBreak ? (
+                            <Badge variant="pending">On break</Badge>
+                          ) : (
+                            <Badge variant="success">Working</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {e.geofenceOk === null && (
+                            <span className="text-xs text-silver/60">N/A</span>
+                          )}
+                          {e.geofenceOk === true && <Badge variant="success">OK</Badge>}
+                          {e.geofenceOk === false && (
+                            <Badge variant="destructive">Off-site</Badge>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {filteredActive.length === 0 && (
+                  <p className="text-sm text-silver mt-3">
+                    No matches for &ldquo;{search}&rdquo;.
+                  </p>
+                )}
+                <div className="mt-3 text-[10px] uppercase tracking-widest text-silver/60">
+                  Auto-refreshes every 30s
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
       )}
 
       {tab === 'queue' && (
-        <>
-      <div className="flex flex-wrap gap-2 mb-5">
-        {STATUS_FILTERS.map((f) => (
-          <button
-            key={f.value}
-            type="button"
-            onClick={() => setFilter(f.value)}
-            className={cn(
-              'px-3 py-1.5 rounded text-sm border transition',
-              filter === f.value
-                ? 'border-gold text-gold bg-gold/10'
-                : 'border-navy-secondary text-silver hover:text-white'
-            )}
-          >
-            {f.label}
-          </button>
-        ))}
-      </div>
-
-      {!entries && <p className="text-silver">Loading…</p>}
-      {entries && entries.length === 0 && (
-        <p className="text-silver">No entries match this filter.</p>
-      )}
-
-      {entries && entries.length > 0 && (
-        <div className="bg-navy border border-navy-secondary rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-navy-secondary/40 text-silver text-xs uppercase tracking-widest">
-              <tr>
-                <th className="px-4 py-3 text-left">Associate</th>
-                <th className="px-4 py-3 text-left">Client</th>
-                <th className="px-4 py-3 text-left">In</th>
-                <th className="px-4 py-3 text-left">Out</th>
-                <th className="px-4 py-3 text-left">Duration</th>
-                <th className="px-4 py-3 text-left">Status</th>
-                {canManage && <th className="px-4 py-3 text-right">Actions</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {entries.map((e) => (
-                <tr
-                  key={e.id}
-                  className="border-t border-navy-secondary/60 text-white"
-                >
-                  <td className="px-4 py-3">{e.associateName ?? '—'}</td>
-                  <td className="px-4 py-3 text-silver">{e.clientName ?? '—'}</td>
-                  <td className="px-4 py-3 tabular-nums">
-                    {new Date(e.clockInAt).toLocaleString()}
-                  </td>
-                  <td className="px-4 py-3 tabular-nums">
-                    {e.clockOutAt
-                      ? new Date(e.clockOutAt).toLocaleTimeString()
-                      : '—'}
-                  </td>
-                  <td className="px-4 py-3 tabular-nums">
-                    {formatHM(e.minutesElapsed)}
-                  </td>
-                  <td className="px-4 py-3 text-xs uppercase tracking-widest text-silver">
-                    {e.status}
-                    {e.rejectionReason && (
-                      <div className="text-alert text-[10px] normal-case tracking-normal mt-1">
-                        {e.rejectionReason}
-                      </div>
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <CardTitle className="text-base">Time entries</CardTitle>
+              <div className="flex flex-wrap gap-2">
+                {STATUS_FILTERS.map((f) => (
+                  <button
+                    key={f.value}
+                    type="button"
+                    onClick={() => setFilter(f.value)}
+                    className={cn(
+                      'px-3 py-1.5 rounded text-xs uppercase tracking-wider border transition',
+                      filter === f.value
+                        ? 'border-gold text-gold bg-gold/10'
+                        : 'border-navy-secondary text-silver hover:text-white'
                     )}
-                  </td>
-                  {canManage && (
-                    <td className="px-4 py-3 text-right whitespace-nowrap">
-                      {e.status === 'COMPLETED' || e.status === 'REJECTED' ? (
-                        <button
-                          type="button"
-                          onClick={() => onApprove(e.id)}
-                          disabled={pendingId === e.id}
-                          className={cn(
-                            'text-xs px-2 py-1 rounded border mr-2',
-                            pendingId === e.id
-                              ? 'border-navy-secondary text-silver/50'
-                              : 'border-gold/40 text-gold hover:bg-gold/10'
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </CardHeader>
+
+          {/* Bulk-action toolbar — only shown when rows are selectable & any selected. */}
+          {canManage && filter === 'COMPLETED' && selected.size > 0 && (
+            <div className="mx-5 mb-3 flex items-center justify-between gap-3 px-3 py-2 rounded-md border border-gold/40 bg-gold/10">
+              <div className="text-sm text-gold">
+                <span className="font-medium tabular-nums">{selected.size}</span>{' '}
+                selected
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={onBulkApprove}
+                  loading={bulkBusy}
+                  disabled={bulkBusy}
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  Approve {selected.size}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={() => setRejectOpen({ mode: 'bulk' })}
+                  disabled={bulkBusy}
+                >
+                  Reject {selected.size}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setSelected(new Set())}
+                  disabled={bulkBusy}
+                >
+                  Clear
+                </Button>
+              </div>
+            </div>
+          )}
+
+          <CardContent className="pt-0">
+            {!entries && <SkeletonRows count={6} rowHeight="h-12" />}
+            {entries && entries.length === 0 && (
+              <EmptyState
+                title="Nothing to review"
+                description="No time entries match this filter."
+              />
+            )}
+            {entries && entries.length > 0 && (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    {canManage && filter === 'COMPLETED' && (
+                      <TableHead className="w-8">
+                        <input
+                          type="checkbox"
+                          aria-label="Select all"
+                          checked={allSelected}
+                          ref={(el) => {
+                            if (el) el.indeterminate = someSelected;
+                          }}
+                          onChange={toggleAll}
+                          className="h-4 w-4 rounded border-navy-secondary bg-navy-secondary/40 text-gold focus:ring-gold"
+                        />
+                      </TableHead>
+                    )}
+                    <TableHead>Associate</TableHead>
+                    <TableHead>Client</TableHead>
+                    <TableHead>In</TableHead>
+                    <TableHead>Out</TableHead>
+                    <TableHead>Duration</TableHead>
+                    <TableHead>Status</TableHead>
+                    {canManage && <TableHead className="text-right">Actions</TableHead>}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {entries.map((e) => {
+                    const isSelectable = canManage && filter === 'COMPLETED' && e.status === 'COMPLETED';
+                    return (
+                      <TableRow
+                        key={e.id}
+                        data-state={selected.has(e.id) ? 'selected' : undefined}
+                      >
+                        {canManage && filter === 'COMPLETED' && (
+                          <TableCell className="w-8">
+                            {isSelectable && (
+                              <input
+                                type="checkbox"
+                                aria-label={`Select entry for ${e.associateName ?? 'associate'}`}
+                                checked={selected.has(e.id)}
+                                onChange={() => toggleOne(e.id)}
+                                className="h-4 w-4 rounded border-navy-secondary bg-navy-secondary/40 text-gold focus:ring-gold"
+                              />
+                            )}
+                          </TableCell>
+                        )}
+                        <TableCell className="font-medium">{e.associateName ?? '—'}</TableCell>
+                        <TableCell className="text-silver">{e.clientName ?? '—'}</TableCell>
+                        <TableCell className="tabular-nums">
+                          {new Date(e.clockInAt).toLocaleString()}
+                        </TableCell>
+                        <TableCell className="tabular-nums">
+                          {e.clockOutAt
+                            ? new Date(e.clockOutAt).toLocaleTimeString()
+                            : '—'}
+                        </TableCell>
+                        <TableCell className="tabular-nums">
+                          {formatHM(e.minutesElapsed)}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={statusVariant(e.status)}>{e.status}</Badge>
+                          {e.rejectionReason && (
+                            <div className="text-alert text-[10px] mt-1">
+                              {e.rejectionReason}
+                            </div>
                           )}
-                        >
-                          Approve
-                        </button>
-                      ) : null}
-                      {e.status === 'COMPLETED' || e.status === 'APPROVED' ? (
-                        <button
-                          type="button"
-                          onClick={() => onReject(e.id)}
-                          disabled={pendingId === e.id}
-                          className={cn(
-                            'text-xs px-2 py-1 rounded border',
-                            pendingId === e.id
-                              ? 'border-navy-secondary text-silver/50'
-                              : 'border-alert/40 text-alert hover:bg-alert/10'
-                          )}
-                        >
-                          Reject
-                        </button>
-                      ) : null}
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                        </TableCell>
+                        {canManage && (
+                          <TableCell className="text-right whitespace-nowrap">
+                            {(e.status === 'COMPLETED' || e.status === 'REJECTED') && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="mr-2"
+                                onClick={() => onApprove(e.id)}
+                                loading={pendingId === e.id}
+                                disabled={pendingId === e.id || bulkBusy}
+                              >
+                                Approve
+                              </Button>
+                            )}
+                            {(e.status === 'COMPLETED' || e.status === 'APPROVED') && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="text-alert hover:text-alert hover:bg-alert/10"
+                                onClick={() => setRejectOpen({ mode: 'one', id: e.id })}
+                                disabled={pendingId === e.id || bulkBusy}
+                              >
+                                Reject
+                              </Button>
+                            )}
+                          </TableCell>
+                        )}
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
       )}
-        </>
-      )}
+
+      <RejectTimeDialog
+        open={rejectOpen !== null}
+        onOpenChange={(o) => !o && setRejectOpen(null)}
+        count={rejectOpen?.mode === 'bulk' ? selected.size : 1}
+        busy={bulkBusy || pendingId !== null}
+        onSubmit={onSubmitReject}
+      />
     </div>
+  );
+}
+
+interface KpiCardProps {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: string;
+  tone: 'success' | 'warning' | 'alert' | 'default' | 'silver';
+}
+
+const TONE_TEXT: Record<KpiCardProps['tone'], string> = {
+  success: 'text-success',
+  warning: 'text-warning',
+  alert: 'text-alert',
+  default: 'text-gold',
+  silver: 'text-silver',
+};
+
+function KpiCard({ icon: Icon, label, value, tone }: KpiCardProps) {
+  if (value === '—') {
+    return (
+      <Card className="p-4">
+        <div className="flex items-start justify-between mb-1">
+          <div className="text-[10px] uppercase tracking-wider text-silver">
+            {label}
+          </div>
+          <Icon className="h-3.5 w-3.5 text-silver/60" />
+        </div>
+        <Skeleton className="h-9 w-12 mt-1" />
+      </Card>
+    );
+  }
+  return (
+    <Card className="p-4">
+      <div className="flex items-start justify-between mb-1">
+        <div className="text-[10px] uppercase tracking-wider text-silver">
+          {label}
+        </div>
+        <Icon className="h-3.5 w-3.5 text-silver/60" />
+      </div>
+      <div className={cn('text-3xl font-display tabular-nums', TONE_TEXT[tone])}>
+        {value}
+      </div>
+    </Card>
+  );
+}
+
+interface RejectTimeDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  count: number;
+  busy: boolean;
+  onSubmit: (reason: string) => void;
+}
+
+function RejectTimeDialog({ open, onOpenChange, count, busy, onSubmit }: RejectTimeDialogProps) {
+  const [reason, setReason] = useState('');
+
+  // Clear the field whenever the dialog opens so old text doesn't leak.
+  useEffect(() => {
+    if (open) setReason('');
+  }, [open]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = reason.trim();
+    if (!trimmed) return;
+    onSubmit(trimmed);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            Reject {count > 1 ? `${count} time entries` : 'time entry'}
+          </DialogTitle>
+          <DialogDescription>
+            The associate will see this reason. They can re-submit a corrected entry.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="grid gap-3">
+          <Textarea
+            autoFocus
+            required
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="e.g., Forgot to clock out — please re-submit with the correct end time."
+            maxLength={500}
+            rows={4}
+          />
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => onOpenChange(false)}
+              disabled={busy}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="destructive"
+              loading={busy}
+              disabled={busy || !reason.trim()}
+            >
+              Reject {count > 1 ? `${count}` : ''}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

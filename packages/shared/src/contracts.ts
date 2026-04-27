@@ -849,6 +849,34 @@ export const ActiveTimeEntryResponseSchema = z.object({
 });
 export type ActiveTimeEntryResponse = z.infer<typeof ActiveTimeEntryResponseSchema>;
 
+/* ===== Phase 64 — bulk approve/reject for time entries ================= */
+
+export const BulkTimeApproveInputSchema = z.object({
+  entryIds: z.array(UuidSchema).min(1).max(200),
+});
+export type BulkTimeApproveInput = z.infer<typeof BulkTimeApproveInputSchema>;
+
+export const BulkTimeRejectInputSchema = z.object({
+  entryIds: z.array(UuidSchema).min(1).max(200),
+  reason: z.string().min(1).max(500),
+});
+export type BulkTimeRejectInput = z.infer<typeof BulkTimeRejectInputSchema>;
+
+export const BulkTimeResultRowSchema = z.object({
+  entryId: UuidSchema,
+  ok: z.boolean(),
+  errorCode: z.string().nullable(),
+  errorMessage: z.string().nullable(),
+});
+export type BulkTimeResultRow = z.infer<typeof BulkTimeResultRowSchema>;
+
+export const BulkTimeResponseSchema = z.object({
+  succeeded: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  results: z.array(BulkTimeResultRowSchema),
+});
+export type BulkTimeResponse = z.infer<typeof BulkTimeResponseSchema>;
+
 /* -------------------------------------------------------------------------- *
  *  Scheduling — Phase 7
  * -------------------------------------------------------------------------- */

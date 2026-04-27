@@ -3,6 +3,9 @@ import type {
   ActiveTimeEntryResponse,
   BreakEntry,
   BreakType,
+  BulkTimeApproveInput,
+  BulkTimeRejectInput,
+  BulkTimeResponse,
   ClockInInputV2,
   ClockOutInputV2,
   TimeApproveInput,
@@ -109,6 +112,24 @@ export function rejectTimeEntry(
   body: TimeRejectInput
 ): Promise<TimeEntry> {
   return apiFetch<TimeEntry>(`/time/admin/entries/${id}/reject`, {
+    method: 'POST',
+    body,
+  });
+}
+
+export function bulkApproveTimeEntries(
+  body: BulkTimeApproveInput
+): Promise<BulkTimeResponse> {
+  return apiFetch<BulkTimeResponse>('/time/admin/bulk-approve', {
+    method: 'POST',
+    body,
+  });
+}
+
+export function bulkRejectTimeEntries(
+  body: BulkTimeRejectInput
+): Promise<BulkTimeResponse> {
+  return apiFetch<BulkTimeResponse>('/time/admin/bulk-reject', {
     method: 'POST',
     body,
   });

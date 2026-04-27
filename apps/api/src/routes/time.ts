@@ -3,6 +3,8 @@ import { Prisma } from '@prisma/client';
 import {
   ActiveDashboardResponseSchema,
   ActiveTimeEntryResponseSchema,
+  BulkTimeApproveInputSchema,
+  BulkTimeRejectInputSchema,
   ClockInInputV2Schema,
   ClockOutInputV2Schema,
   StartBreakInputSchema,
@@ -11,6 +13,8 @@ import {
   TimeRejectInputSchema,
   type ActiveDashboardEntry,
   type ActiveTimeEntryResponse,
+  type BulkTimeResponse,
+  type BulkTimeResultRow,
   type TimeAnomaly,
   type TimeEntry,
   type TimeEntryListResponse,
@@ -651,6 +655,160 @@ timeRouter.post('/admin/entries/:id/reject', MANAGE, async (req, res, next) => {
     });
 
     res.json(await toEntry(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Phase 64 — bulk approve / bulk reject ============================ */
+// Mirrors the bulk-invite pattern from onboarding Phase 58: per-row try/catch,
+// stable error codes, response with succeeded/failed counts + per-row results.
+
+type TimeUser = NonNullable<import('express').Request['user']>;
+
+async function approveOneEntry(
+  user: TimeUser,
+  entryId: string,
+  req: import('express').Request,
+): Promise<void> {
+  const existing = await prisma.timeEntry.findFirst({
+    where: { id: entryId, ...scopeTimeEntries(user) },
+  });
+  if (!existing) {
+    throw new HttpError(404, 'time_entry_not_found', 'Time entry not found');
+  }
+  if (existing.status === 'ACTIVE') {
+    throw new HttpError(409, 'still_active', 'Cannot approve an entry that has not been clocked out');
+  }
+  if (existing.status === 'APPROVED') {
+    return; // idempotent
+  }
+
+  const updated = await prisma.timeEntry.update({
+    where: { id: existing.id },
+    data: {
+      status: 'APPROVED',
+      approvedById: user.id,
+      approvedAt: new Date(),
+      rejectionReason: null,
+    },
+    include: ENTRY_INCLUDE,
+  });
+
+  const accrual = await accrueSickLeaveForEntry(prisma, updated.id);
+
+  await recordTimeEvent({
+    actorUserId: user.id,
+    action: 'time.approved',
+    timeEntryId: updated.id,
+    associateId: updated.associateId,
+    clientId: updated.clientId,
+    metadata: {
+      minutes: minutesElapsed(updated),
+      bulk: true,
+      ...(accrual.accrued
+        ? { sickAccrualMinutes: accrual.earnedMinutes, state: accrual.state }
+        : {}),
+    },
+    req,
+  });
+}
+
+async function rejectOneEntry(
+  user: TimeUser,
+  entryId: string,
+  reason: string,
+  req: import('express').Request,
+): Promise<void> {
+  const existing = await prisma.timeEntry.findFirst({
+    where: { id: entryId, ...scopeTimeEntries(user) },
+  });
+  if (!existing) {
+    throw new HttpError(404, 'time_entry_not_found', 'Time entry not found');
+  }
+  if (existing.status === 'ACTIVE') {
+    throw new HttpError(409, 'still_active', 'Cannot reject an entry that has not been clocked out');
+  }
+  if (existing.status === 'REJECTED') {
+    return; // idempotent
+  }
+
+  const updated = await prisma.timeEntry.update({
+    where: { id: existing.id },
+    data: {
+      status: 'REJECTED',
+      rejectionReason: reason,
+      approvedById: user.id,
+      approvedAt: new Date(),
+    },
+    include: ENTRY_INCLUDE,
+  });
+
+  await recordTimeEvent({
+    actorUserId: user.id,
+    action: 'time.rejected',
+    timeEntryId: updated.id,
+    associateId: updated.associateId,
+    clientId: updated.clientId,
+    metadata: { reason, bulk: true },
+    req,
+  });
+}
+
+timeRouter.post('/admin/bulk-approve', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = BulkTimeApproveInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const user = req.user!;
+    const results: BulkTimeResultRow[] = [];
+    let succeeded = 0;
+    let failed = 0;
+    for (const entryId of parsed.data.entryIds) {
+      try {
+        await approveOneEntry(user, entryId, req);
+        results.push({ entryId, ok: true, errorCode: null, errorMessage: null });
+        succeeded++;
+      } catch (err) {
+        const errorCode = err instanceof HttpError ? err.code : 'approve_failed';
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        results.push({ entryId, ok: false, errorCode, errorMessage });
+        failed++;
+      }
+    }
+    const response: BulkTimeResponse = { succeeded, failed, results };
+    res.status(200).json(response);
+  } catch (err) {
+    next(err);
+  }
+});
+
+timeRouter.post('/admin/bulk-reject', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = BulkTimeRejectInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const user = req.user!;
+    const { entryIds, reason } = parsed.data;
+    const results: BulkTimeResultRow[] = [];
+    let succeeded = 0;
+    let failed = 0;
+    for (const entryId of entryIds) {
+      try {
+        await rejectOneEntry(user, entryId, reason, req);
+        results.push({ entryId, ok: true, errorCode: null, errorMessage: null });
+        succeeded++;
+      } catch (err) {
+        const errorCode = err instanceof HttpError ? err.code : 'reject_failed';
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        results.push({ entryId, ok: false, errorCode, errorMessage });
+        failed++;
+      }
+    }
+    const response: BulkTimeResponse = { succeeded, failed, results };
+    res.status(200).json(response);
   } catch (err) {
     next(err);
   }
