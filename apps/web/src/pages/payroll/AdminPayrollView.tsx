@@ -28,6 +28,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
+import {
+  Drawer,
+  DrawerBody,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+} from '@/components/ui/Drawer';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
@@ -218,91 +226,93 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {/* Run list */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Runs</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {!runs && (
-              <div className="space-y-2">
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <Skeleton key={i} className="h-16" />
-                ))}
+      {/* Phase 75 — runs list is full-width; clicking a row opens a Drawer
+          with the run detail (replaces the older 2-col layout). */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Runs</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {!runs && (
+            <div className="space-y-2">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} className="h-16" />
+              ))}
+            </div>
+          )}
+          {runs && runs.length === 0 && (
+            <EmptyState
+              icon={FileText}
+              title="No runs match this filter"
+              description="Switch to a different status, or create a new run."
+            />
+          )}
+          {runs && runs.length > 0 && (
+            <ul className="space-y-2">
+              {runs.map((r) => (
+                <li key={r.id}>
+                  <button
+                    type="button"
+                    onClick={() => openRun(r.id)}
+                    className={cn(
+                      'w-full text-left p-3 rounded-md border transition-colors',
+                      'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                      selected?.id === r.id
+                        ? 'border-gold/60 bg-gold/5'
+                        : 'border-navy-secondary hover:border-silver/40 hover:bg-navy-secondary/30'
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-white font-medium">
+                        {r.periodStart} → {r.periodEnd}
+                      </div>
+                      <Badge variant={RUN_STATUS_VARIANT[r.status]}>{r.status}</Badge>
+                    </div>
+                    <div className="text-xs text-silver mt-1 tabular-nums">
+                      {r.itemCount} paystubs · gross {fmtMoney(r.totalGross)} · net{' '}
+                      {fmtMoney(r.totalNet)}
+                    </div>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+
+      <Drawer
+        open={selected !== null}
+        onOpenChange={(o) => !o && setSelected(null)}
+        width="max-w-3xl"
+      >
+        {selected && (
+          <>
+            <DrawerHeader>
+              <DrawerTitle>
+                {selected.periodStart} → {selected.periodEnd}
+              </DrawerTitle>
+              <DrawerDescription>
+                <Badge variant={RUN_STATUS_VARIANT[selected.status]}>
+                  {selected.status}
+                </Badge>
+                <span className="ml-2 text-xs">
+                  {selected.items.length} paystub{selected.items.length === 1 ? '' : 's'}
+                </span>
+              </DrawerDescription>
+            </DrawerHeader>
+            <DrawerBody>
+              <div className="grid grid-cols-3 gap-3 mb-5 text-sm">
+                <Stat label="Gross" value={fmtMoney(selected.totalGross)} />
+                <Stat label="Tax" value={fmtMoney(selected.totalTax)} />
+                <Stat label="Net" value={fmtMoney(selected.totalNet)} highlight />
               </div>
-            )}
-            {runs && runs.length === 0 && (
-              <p className="text-silver text-sm">No runs match this filter.</p>
-            )}
-            {runs && runs.length > 0 && (
-              <ul className="space-y-2">
-                {runs.map((r) => (
-                  <li key={r.id}>
-                    <button
-                      type="button"
-                      onClick={() => openRun(r.id)}
-                      className={cn(
-                        'w-full text-left p-3 rounded-md border transition-colors',
-                        'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
-                        selected?.id === r.id
-                          ? 'border-gold/60 bg-gold/5'
-                          : 'border-navy-secondary hover:border-silver/40 hover:bg-navy-secondary/30'
-                      )}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-white font-medium">
-                          {r.periodStart} → {r.periodEnd}
-                        </div>
-                        <Badge variant={RUN_STATUS_VARIANT[r.status]}>{r.status}</Badge>
-                      </div>
-                      <div className="text-xs text-silver mt-1 tabular-nums">
-                        {r.itemCount} paystubs · gross {fmtMoney(r.totalGross)} · net{' '}
-                        {fmtMoney(r.totalNet)}
-                      </div>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
 
-        {/* Detail pane */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Detail</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {!selected && (
-              <EmptyState
-                icon={FileText}
-                title="Select a run"
-                description="Pick a payroll run on the left to see its paystubs and totals."
-              />
-            )}
-            {selected && (
-              <div>
-                <div className="flex items-center justify-between gap-3 mb-4">
-                  <div className="font-display text-xl text-white">
-                    {selected.periodStart} → {selected.periodEnd}
-                  </div>
-                  <Badge variant={RUN_STATUS_VARIANT[selected.status]}>
-                    {selected.status}
-                  </Badge>
-                </div>
-                <div className="grid grid-cols-3 gap-3 mb-4 text-sm">
-                  <Stat label="Gross" value={fmtMoney(selected.totalGross)} />
-                  <Stat label="Tax" value={fmtMoney(selected.totalTax)} />
-                  <Stat label="Net" value={fmtMoney(selected.totalNet)} highlight />
-                </div>
-
-                {selected.items.length === 0 && (
-                  <p className="text-sm text-silver">
-                    No approved time entries in this period — no paystubs created.
-                  </p>
-                )}
-                {selected.items.length > 0 && (
+              {selected.items.length === 0 && (
+                <p className="text-sm text-silver">
+                  No approved time entries in this period — no paystubs created.
+                </p>
+              )}
+              {selected.items.length > 0 && (
                   <Table>
                     <TableHeader>
                       <TableRow className="hover:bg-transparent">
@@ -369,80 +379,76 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
                   </Table>
                 )}
 
-                {canProcess && (
-                  <div className="flex flex-wrap gap-2 mt-4 pt-3 border-t border-navy-secondary">
-                    {selected.status === 'DRAFT' && (
-                      <Button onClick={onFinalize} loading={busy} disabled={busy}>
-                        <CheckCircle2 className="h-4 w-4" />
-                        Finalize
-                      </Button>
-                    )}
-                    {selected.status === 'FINALIZED' && (
-                      <Button
-                        variant="primary"
-                        onClick={() => setConfirmDisburse(true)}
-                        disabled={busy}
+              {(selected.qboJournalEntryId || selected.qboSyncError) && (
+                <div className="mt-4 text-xs text-silver">
+                  {selected.qboJournalEntryId && (
+                    <div>
+                      QBO JournalEntry{' '}
+                      <span className="font-mono text-white">
+                        {selected.qboJournalEntryId}
+                      </span>
+                      {selected.qboSyncedAt && (
+                        <> — synced {new Date(selected.qboSyncedAt).toLocaleString()}</>
+                      )}
+                    </div>
+                  )}
+                  {selected.qboSyncError && (
+                    <div className="text-alert">
+                      Last QBO sync error: {selected.qboSyncError}
+                    </div>
+                  )}
+                </div>
+              )}
+            </DrawerBody>
+            {canProcess && (
+              <DrawerFooter className="flex-wrap justify-start">
+                {selected.status === 'DRAFT' && (
+                  <Button onClick={onFinalize} loading={busy} disabled={busy}>
+                    <CheckCircle2 className="h-4 w-4" />
+                    Finalize
+                  </Button>
+                )}
+                {selected.status === 'FINALIZED' && (
+                  <Button
+                    variant="primary"
+                    onClick={() => setConfirmDisburse(true)}
+                    disabled={busy}
+                  >
+                    <Send className="h-4 w-4" />
+                    Disburse
+                  </Button>
+                )}
+                {(selected.status === 'FINALIZED' || selected.status === 'DISBURSED') &&
+                  selected.items.length > 0 && (
+                    <Button asChild variant="secondary">
+                      <a
+                        href={`/api/payroll/runs/${selected.id}/paystubs.zip`}
+                        download
                       >
-                        <Send className="h-4 w-4" />
-                        Disburse
-                      </Button>
-                    )}
-                    {(selected.status === 'FINALIZED' || selected.status === 'DISBURSED') &&
-                      selected.items.length > 0 && (
-                        // Direct anchor — the endpoint streams a ZIP and the
-                        // session cookie rides along on same-origin requests.
-                        // Phase 22 stamps paystubHash on first generation.
-                        <Button asChild variant="secondary">
-                          <a
-                            href={`/api/payroll/runs/${selected.id}/paystubs.zip`}
-                            download
-                          >
-                            <Download className="h-4 w-4" />
-                            Download all paystubs
-                          </a>
-                        </Button>
-                      )}
-                    {(selected.status === 'FINALIZED' || selected.status === 'DISBURSED') &&
-                      selected.items.some((it) => it.status === 'HELD') && (
-                        <Button variant="secondary" onClick={onRetryFailures} loading={busy}>
-                          <RotateCw className="h-4 w-4" />
-                          Retry failed disbursements
-                        </Button>
-                      )}
-                    {(selected.status === 'FINALIZED' || selected.status === 'DISBURSED') &&
-                      selected.clientId && (
-                        <Button variant="secondary" onClick={onSyncQbo} loading={busy}>
-                          <LinkIcon className="h-4 w-4" />
-                          {selected.qboJournalEntryId ? 'Re-sync to QuickBooks' : 'Sync to QuickBooks'}
-                        </Button>
-                      )}
-                  </div>
-                )}
-                {(selected.qboJournalEntryId || selected.qboSyncError) && (
-                  <div className="mt-3 text-xs text-silver">
-                    {selected.qboJournalEntryId && (
-                      <div>
-                        QBO JournalEntry{' '}
-                        <span className="font-mono text-white">
-                          {selected.qboJournalEntryId}
-                        </span>
-                        {selected.qboSyncedAt && (
-                          <> — synced {new Date(selected.qboSyncedAt).toLocaleString()}</>
-                        )}
-                      </div>
-                    )}
-                    {selected.qboSyncError && (
-                      <div className="text-alert">
-                        Last QBO sync error: {selected.qboSyncError}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
+                        <Download className="h-4 w-4" />
+                        Download all paystubs
+                      </a>
+                    </Button>
+                  )}
+                {(selected.status === 'FINALIZED' || selected.status === 'DISBURSED') &&
+                  selected.items.some((it) => it.status === 'HELD') && (
+                    <Button variant="secondary" onClick={onRetryFailures} loading={busy}>
+                      <RotateCw className="h-4 w-4" />
+                      Retry failed disbursements
+                    </Button>
+                  )}
+                {(selected.status === 'FINALIZED' || selected.status === 'DISBURSED') &&
+                  selected.clientId && (
+                    <Button variant="secondary" onClick={onSyncQbo} loading={busy}>
+                      <LinkIcon className="h-4 w-4" />
+                      {selected.qboJournalEntryId ? 'Re-sync to QuickBooks' : 'Sync to QuickBooks'}
+                    </Button>
+                  )}
+              </DrawerFooter>
             )}
-          </CardContent>
-        </Card>
-      </div>
+          </>
+        )}
+      </Drawer>
 
       <Dialog open={confirmDisburse} onOpenChange={setConfirmDisburse}>
         <DialogContent>
