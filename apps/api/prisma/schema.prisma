@@ -326,6 +326,7 @@ model User {
   kioskPunchesReviewed         KioskPunch[]                   @relation("KioskPunchReviewer")
   assetAssignmentsAssigned     AssetAssignment[]              @relation("AssetAssigner")
   assetAssignmentsReturned     AssetAssignment[]              @relation("AssetReturner")
+  pulseSurveysCreated          PulseSurvey[]                  @relation("PulseSurveyCreator")
 
   @@index([role])
   @@index([clientId])
@@ -403,6 +404,8 @@ model Client {
   // Phase 99 — kiosk devices + PINs registered at this client.
   kioskDevices           KioskDevice[]
   kioskPins              KioskPin[]
+  // Phase 109 — pulse surveys scoped to this client.
+  pulseSurveys           PulseSurvey[]
 
   @@index([status])
   @@index([deletedAt])
@@ -1514,6 +1517,8 @@ model Department {
   positions   Position[]
   // Phase 87 — broadcast targeting.
   broadcasts  Broadcast[]
+  // Phase 109 — pulse surveys scoped to this department.
+  pulseSurveys PulseSurvey[]
 
   @@index([clientId, deletedAt])
   @@index([parentId])
@@ -3570,4 +3575,55 @@ model AssetAssignment {
   returnedBy    User?     @relation("AssetReturner", fields: [returnedById], references: [id], onDelete: SetNull)
 
   @@index([associateId])
+}
+
+// Phase 109 — Anonymous pulse surveys. PulseResponse intentionally
+// has NO foreign key to User/Associate; the responderHash is HMAC
+// of (userId, surveyId) so duplicates are blocked but identity is
+// not recoverable from a DB dump alone.
+
+enum PulseScale {
+  SCORE_1_5
+  YES_NO
+}
+
+enum PulseAudience {
+  ALL
+  BY_DEPARTMENT
+  BY_CLIENT
+}
+
+model PulseSurvey {
+  id                    String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  question              String
+  scale                 PulseScale
+  audience              PulseAudience   @default(ALL)
+  audienceDepartmentId  String?         @db.Uuid
+  audienceClientId      String?         @db.Uuid
+  openFrom              DateTime        @default(now()) @db.Timestamptz(6)
+  openUntil             DateTime        @db.Timestamptz(6)
+  createdById           String?         @db.Uuid
+  createdAt             DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime        @updatedAt @db.Timestamptz(6)
+
+  audienceDepartment    Department?     @relation(fields: [audienceDepartmentId], references: [id], onDelete: SetNull)
+  audienceClient        Client?         @relation(fields: [audienceClientId], references: [id], onDelete: SetNull)
+  createdBy             User?           @relation("PulseSurveyCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  responses             PulseResponse[]
+
+  @@index([openFrom, openUntil])
+}
+
+model PulseResponse {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  surveyId      String      @db.Uuid
+  responderHash Bytes
+  scoreValue    Int         @db.SmallInt
+  comment       String?
+  submittedAt   DateTime    @default(now()) @db.Timestamptz(6)
+
+  survey        PulseSurvey @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+
+  @@unique([surveyId, responderHash])
+  @@index([surveyId])
 }

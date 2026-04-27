@@ -37,6 +37,7 @@ export type ModuleKey =
   | 'org-chart'
   | 'celebrations'
   | 'assets'
+  | 'pulse'
   | 'team'
   | 'workflows'
   | 'me'
@@ -96,7 +97,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -167,6 +168,16 @@ export const MODULES: ModuleNav[] = [
       'Physical items assigned to associates: laptops, phones, badges, keys, vehicles. Track who has what and when it came back.',
     requires: 'view:org',
     icon: AssetsIcon,
+    group: 'workforce',
+  },
+  {
+    key: 'pulse',
+    path: '/pulse',
+    label: 'Pulse',
+    description:
+      'Anonymous one-question check-ins for engagement signal. Score distributions and verbatim comments — never the responder.',
+    requires: 'view:dashboard',
+    icon: PulseIcon,
     group: 'workforce',
   },
   {

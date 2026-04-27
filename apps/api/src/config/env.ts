@@ -69,6 +69,9 @@ const EnvSchema = z.object({
   // PAYOUT_ENCRYPTION_KEY in dev so we don't bloat .env; production
   // should set its own (rotation invalidates all existing PINs).
   KIOSK_PIN_SECRET: z.string().min(32).optional(),
+  // Phase 109 — pulse survey responder hash secret. Defaults to
+  // PAYOUT_ENCRYPTION_KEY if unset.
+  PULSE_HASH_SECRET: z.string().min(32).optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
