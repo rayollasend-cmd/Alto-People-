@@ -1,8 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
   Calendar,
+  CalendarDays,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  List,
   Plus,
   Sparkles,
   UserPlus,
@@ -53,6 +58,12 @@ import {
 } from '@/components/ui/Table';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
+import {
+  WeekCalendarView,
+  endOfWeekMonday,
+  shiftWeek,
+  startOfWeekMonday,
+} from './WeekCalendarView';
 
 const STATUS_FILTERS: Array<{ value: ShiftStatus | 'ALL'; label: string }> = [
   { value: 'OPEN', label: 'Open' },
@@ -78,16 +89,44 @@ function fmt(iso: string): string {
   return new Date(iso).toLocaleString();
 }
 
+/**
+ * <input type="datetime-local"> wants "YYYY-MM-DDTHH:MM" in *local* time.
+ * `toISOString()` gives UTC and breaks the form. This builds the local
+ * representation manually.
+ */
+function toLocalDatetimeInput(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  );
+}
+
 interface AdminSchedulingViewProps {
   canManage: boolean;
 }
 
 export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  // View mode persists in the URL so deep links stay stable.
+  const view: 'list' | 'week' = searchParams.get('view') === 'week' ? 'week' : 'list';
+  const setView = (v: 'list' | 'week') => {
+    const next = new URLSearchParams(searchParams);
+    if (v === 'list') next.delete('view');
+    else next.set('view', 'week');
+    setSearchParams(next, { replace: true });
+  };
+
   const [filter, setFilter] = useState<ShiftStatus | 'ALL'>('OPEN');
   const [shifts, setShifts] = useState<Shift[] | null>(null);
   const [clients, setClients] = useState<ClientSummary[]>([]);
   const [showCreate, setShowCreate] = useState(false);
+  const [createInitialDate, setCreateInitialDate] = useState<Date | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
+
+  // Week-view state. weekStart is always a Monday at 00:00 local.
+  const [weekStart, setWeekStart] = useState<Date>(() => startOfWeekMonday(new Date()));
+  const weekEnd = useMemo(() => endOfWeekMonday(weekStart), [weekStart]);
 
   // Dialog state — replaces window.prompt + window.confirm.
   const [assignTarget, setAssignTarget] = useState<Shift | null>(null);
@@ -99,13 +138,21 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
 
   const refresh = useCallback(async () => {
     try {
-      const res = await listShifts(filter === 'ALL' ? {} : { status: filter });
+      // Week view always loads the visible window regardless of status
+      // filter (status filter only applies to the list view).
+      const args =
+        view === 'week'
+          ? { from: weekStart.toISOString(), to: weekEnd.toISOString() }
+          : filter === 'ALL'
+            ? {}
+            : { status: filter };
+      const res = await listShifts(args);
       setShifts(res.shifts);
     } catch (err) {
       const msg = err instanceof ApiError ? err.message : 'Failed to load shifts.';
       toast.error(msg);
     }
-  }, [filter]);
+  }, [filter, view, weekStart, weekEnd]);
 
   useEffect(() => {
     refresh();
@@ -190,32 +237,100 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         <CreateShiftDialog
           open={showCreate}
           clients={clients}
-          onOpenChange={setShowCreate}
+          initialDate={createInitialDate}
+          onOpenChange={(o) => {
+            setShowCreate(o);
+            if (!o) setCreateInitialDate(null);
+          }}
           onCreated={() => {
             setShowCreate(false);
+            setCreateInitialDate(null);
             toast.success('Shift created.');
             refresh();
           }}
         />
       )}
 
-      <div className="flex flex-wrap gap-2 mb-5">
-        {STATUS_FILTERS.map((f) => (
+      {/* View-mode toggle + (in week view) week navigator */}
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <div className="inline-flex rounded-md border border-navy-secondary p-0.5 bg-navy-secondary/30">
           <button
-            key={f.value}
             type="button"
-            onClick={() => setFilter(f.value)}
+            onClick={() => setView('list')}
             className={cn(
-              'px-3 py-1.5 rounded-md text-sm border transition-colors',
-              'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
-              filter === f.value
-                ? 'border-gold text-gold bg-gold/10'
-                : 'border-navy-secondary text-silver hover:text-white hover:border-silver/40'
+              'px-3 py-1 text-xs uppercase tracking-wider rounded-sm transition-colors inline-flex items-center gap-1.5',
+              view === 'list' ? 'bg-gold text-navy' : 'text-silver hover:text-white'
             )}
           >
-            {f.label}
+            <List className="h-3.5 w-3.5" />
+            List
           </button>
-        ))}
+          <button
+            type="button"
+            onClick={() => setView('week')}
+            className={cn(
+              'px-3 py-1 text-xs uppercase tracking-wider rounded-sm transition-colors inline-flex items-center gap-1.5',
+              view === 'week' ? 'bg-gold text-navy' : 'text-silver hover:text-white'
+            )}
+          >
+            <CalendarDays className="h-3.5 w-3.5" />
+            Week
+          </button>
+        </div>
+
+        {view === 'week' && (
+          <div className="inline-flex items-center gap-1.5">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setWeekStart((w) => shiftWeek(w, -1))}
+              aria-label="Previous week"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <button
+              type="button"
+              onClick={() => setWeekStart(startOfWeekMonday(new Date()))}
+              className="px-3 py-1 text-xs uppercase tracking-wider text-silver hover:text-white border border-navy-secondary rounded-md"
+            >
+              Today
+            </button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setWeekStart((w) => shiftWeek(w, 1))}
+              aria-label="Next week"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+            <span className="text-sm text-silver tabular-nums ml-2">
+              {weekStart.toLocaleDateString([], { month: 'short', day: 'numeric' })}
+              {' – '}
+              {new Date(weekEnd.getTime() - 1).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+            </span>
+          </div>
+        )}
+
+        {view === 'list' && (
+          <div className="flex flex-wrap gap-2">
+            {STATUS_FILTERS.map((f) => (
+              <button
+                key={f.value}
+                type="button"
+                onClick={() => setFilter(f.value)}
+                className={cn(
+                  'px-3 py-1.5 rounded-md text-sm border transition-colors',
+                  'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                  filter === f.value
+                    ? 'border-gold text-gold bg-gold/10'
+                    : 'border-navy-secondary text-silver hover:text-white hover:border-silver/40'
+                )}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {!shifts && (
@@ -227,7 +342,35 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           </div>
         </Card>
       )}
-      {shifts && shifts.length === 0 && (
+
+      {/* Week view */}
+      {shifts && view === 'week' && (
+        <WeekCalendarView
+          shifts={shifts}
+          weekStart={weekStart}
+          canManage={canManage}
+          onShiftClick={(s) => {
+            // Card click → open the appropriate dialog. OPEN/DRAFT shifts
+            // get the assign sheet (most useful action); ASSIGNED jumps
+            // straight to the cancel/unassign affordances via the same
+            // sheet that the list-view buttons trigger.
+            if (s.status === 'OPEN' || s.status === 'DRAFT') {
+              setAssignTarget(s);
+            } else if (s.status === 'ASSIGNED') {
+              setAssignTarget(s); // shows shift info; Assign Anyway re-routes
+            } else {
+              // COMPLETED / CANCELLED — read-only, no action.
+            }
+          }}
+          onCellCreate={(dayStart) => {
+            setCreateInitialDate(dayStart);
+            setShowCreate(true);
+          }}
+        />
+      )}
+
+      {/* List view: empty state */}
+      {shifts && view === 'list' && shifts.length === 0 && (
         <EmptyState
           icon={Calendar}
           title="No shifts match this filter"
@@ -247,7 +390,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         />
       )}
 
-      {shifts && shifts.length > 0 && (
+      {shifts && view === 'list' && shifts.length > 0 && (
         <Card className="overflow-hidden">
           <Table>
             <TableHeader>
@@ -794,11 +937,13 @@ function AdminSwapsPanel() {
 function CreateShiftDialog({
   open,
   clients,
+  initialDate,
   onOpenChange,
   onCreated,
 }: {
   open: boolean;
   clients: ClientSummary[];
+  initialDate?: Date | null;
   onOpenChange: (open: boolean) => void;
   onCreated: () => void;
 }) {
@@ -816,15 +961,26 @@ function CreateShiftDialog({
     if (open) {
       setClientId(clients[0]?.id ?? '');
       setPosition('');
-      setStartsAt('');
-      setEndsAt('');
+      // When opened from a calendar cell, pre-fill 9am–5pm on that day —
+      // the most common shift shape for hourly workforce, easy to edit.
+      if (initialDate) {
+        const start = new Date(initialDate);
+        start.setHours(9, 0, 0, 0);
+        const end = new Date(initialDate);
+        end.setHours(17, 0, 0, 0);
+        setStartsAt(toLocalDatetimeInput(start));
+        setEndsAt(toLocalDatetimeInput(end));
+      } else {
+        setStartsAt('');
+        setEndsAt('');
+      }
       setLocation('');
       setHourlyRate('');
       setNotes('');
       setLateNoticeReason('');
       setSubmitting(false);
     }
-  }, [open, clients]);
+  }, [open, clients, initialDate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
