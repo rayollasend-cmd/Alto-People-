@@ -30,6 +30,13 @@ const TRACK_LABEL: Record<string, string> = {
   CLIENT_SPECIFIC: 'Client-specific',
 };
 
+/** Shared <select> className — matches Input height/border/focus so the
+ *  pickers don't read as "different controls" next to each other. */
+const SELECT_CX =
+  'mt-1 w-full h-10 rounded-md border border-navy-secondary bg-navy-secondary/40 text-white px-3 py-2 text-sm appearance-none bg-no-repeat bg-right pr-8 ' +
+  'focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold ' +
+  'disabled:opacity-50 disabled:cursor-not-allowed';
+
 interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -234,7 +241,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
                 value={clientId}
                 onChange={(e) => setClientId(e.target.value)}
                 disabled={clients === null}
-                className="mt-1 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 text-white px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright disabled:opacity-50"
+                className={SELECT_CX}
               >
                 <option value="">
                   {clients === null ? 'Loading…' : 'Pick a client'}
@@ -257,7 +264,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
                 value={templateId}
                 onChange={(e) => setTemplateId(e.target.value)}
                 disabled={templates === null || !clientId}
-                className="mt-1 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 text-white px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright disabled:opacity-50"
+                className={SELECT_CX}
               >
                 <option value="">
                   {!clientId
@@ -307,7 +314,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
                 id="na-emp-type"
                 value={employmentType}
                 onChange={(e) => setEmploymentType(e.target.value as EmploymentType)}
-                className="mt-1 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 text-white px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                className={SELECT_CX}
               >
                 <option value="W2_EMPLOYEE">W-2 employee</option>
                 <option value="CONTRACTOR_1099_INDIVIDUAL">1099 contractor (individual)</option>
@@ -351,9 +358,9 @@ function InviteLinkPanel({
 }) {
   return (
     <div className="space-y-3">
-      <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-warning">
-        Email delivery isn't configured (Resend env vars missing). Copy this
-        link and send it to the associate yourself.
+      <div className="rounded-md border border-silver/30 bg-silver/[0.06] p-3 text-sm text-silver">
+        Email delivery isn't configured. Copy this link and send it to the
+        associate yourself (Slack, manual email, etc.).
       </div>
       <div className="rounded-md border border-navy-secondary bg-navy/60 p-3 break-all font-mono text-xs text-silver">
         {inviteLink}

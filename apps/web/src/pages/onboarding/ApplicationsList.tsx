@@ -20,6 +20,7 @@ import {
   TableRow,
 } from '@/components/ui/Table';
 import { NewApplicationDialog } from './NewApplicationDialog';
+import { cn } from '@/lib/cn';
 
 const STATUS_LABEL: Record<string, string> = {
   DRAFT: 'Draft',
@@ -137,16 +138,16 @@ export function ApplicationsList() {
                 <TableHead className="hidden md:table-cell">Client</TableHead>
                 <TableHead className="hidden lg:table-cell">Track</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead className="w-48">Progress</TableHead>
+                <TableHead className="w-56">Progress</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {items.map((a) => (
-                <TableRow key={a.id}>
+                <TableRow key={a.id} className="cursor-pointer">
                   <TableCell>
                     <Link
                       to={`/onboarding/applications/${a.id}`}
-                      className="text-gold hover:text-gold-bright underline-offset-4 hover:underline"
+                      className="text-gold hover:text-gold-bright underline-offset-4 hover:underline font-medium"
                     >
                       {a.associateName}
                     </Link>
@@ -161,14 +162,28 @@ export function ApplicationsList() {
                     {TRACK_LABEL[a.onboardingTrack] ?? a.onboardingTrack}
                   </TableCell>
                   <TableCell>
-                    <Badge variant={STATUS_VARIANT[a.status] ?? 'default'}>
+                    <Badge
+                      variant={STATUS_VARIANT[a.status] ?? 'default'}
+                      data-status={a.status}
+                    >
                       {STATUS_LABEL[a.status] ?? a.status}
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    <ProgressBar percent={a.percentComplete} hideLabel />
-                    <div className="text-xs text-silver mt-1 tabular-nums">
-                      {a.percentComplete}%
+                    <div className="flex items-center gap-2">
+                      <ProgressBar percent={a.percentComplete} hideLabel className="flex-1" />
+                      <span
+                        className={cn(
+                          'text-xs tabular-nums w-9 text-right',
+                          a.percentComplete === 100
+                            ? 'text-success font-medium'
+                            : a.percentComplete >= 50
+                              ? 'text-gold'
+                              : 'text-silver'
+                        )}
+                      >
+                        {a.percentComplete}%
+                      </span>
                     </div>
                   </TableCell>
                 </TableRow>

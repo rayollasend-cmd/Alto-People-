@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Copy, Send } from 'lucide-react';
+import {
+  CheckCircle2,
+  Circle,
+  Clock,
+  Copy,
+  MinusCircle,
+  Send,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import type {
   ApplicationDetail as ApplicationDetailType,
@@ -19,6 +26,13 @@ import { ProgressBar } from '@/components/ProgressBar';
 import { AuditTimeline } from '@/components/AuditTimeline';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/Card';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { EsignSection } from './EsignSection';
 import { cn } from '@/lib/cn';
 
@@ -80,13 +94,30 @@ export function ApplicationDetail() {
 
   if (error) {
     return (
-      <div className="max-w-4xl mx-auto">
-        <p className="text-alert">{error}</p>
+      <div className="max-w-5xl mx-auto">
+        <div
+          className="p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
+          role="alert"
+        >
+          {error}
+        </div>
       </div>
     );
   }
+
   if (!detail) {
-    return <p className="text-silver">Loading…</p>;
+    return (
+      <div className="max-w-5xl mx-auto space-y-6">
+        <Skeleton className="h-7 w-32" />
+        <Skeleton className="h-10 w-64" />
+        <Skeleton className="h-24" />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-28" />
+          ))}
+        </div>
+      </div>
+    );
   }
 
   const handleSkip = async (task: ChecklistTask) => {
@@ -123,6 +154,12 @@ export function ApplicationDetail() {
     }
   };
 
+  // Per-status counts for the progress card.
+  const counts = detail.tasks.reduce<Record<string, number>>((acc, t) => {
+    acc[t.status] = (acc[t.status] ?? 0) + 1;
+    return acc;
+  }, {});
+
   return (
     <div className="max-w-5xl mx-auto">
       <Link
@@ -132,41 +169,103 @@ export function ApplicationDetail() {
         ← All applications
       </Link>
 
-      <header className="mb-6 flex items-start justify-between gap-4">
-        <div>
-          <h1 className="font-display text-3xl md:text-4xl text-white mb-1">
-            {detail.associateName}
-          </h1>
-          <p className="text-silver text-sm flex flex-wrap items-center gap-2">
-            <span>
-              {detail.clientName}
-              {detail.position && ` · ${detail.position}`} · Track:{' '}
-              {detail.onboardingTrack}
-            </span>
-            <Badge
-              variant={detail.employmentType === 'W2_EMPLOYEE' ? 'default' : 'accent'}
-            >
-              {EMPLOYMENT_LABEL[detail.employmentType] ?? detail.employmentType}
-            </Badge>
-          </p>
+      {/* Header — title on its own line, metadata + actions stacked below
+          on narrow screens so the employment badge never orphans. */}
+      <header className="mb-6">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="min-w-0">
+            <h1 className="font-display text-3xl md:text-4xl text-white mb-2 leading-tight">
+              {detail.associateName}
+            </h1>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-silver text-sm">
+              <span className="text-white">{detail.clientName}</span>
+              {detail.position && (
+                <>
+                  <span className="text-silver/40">·</span>
+                  <span>{detail.position}</span>
+                </>
+              )}
+              <Badge variant="outline" className="text-[10px]">
+                {detail.onboardingTrack} TRACK
+              </Badge>
+              <Badge
+                variant={detail.employmentType === 'W2_EMPLOYEE' ? 'default' : 'accent'}
+              >
+                {EMPLOYMENT_LABEL[detail.employmentType] ?? detail.employmentType}
+              </Badge>
+            </div>
+          </div>
+          {canManage && (
+            <div className="flex gap-2 shrink-0">
+              <Button variant="outline" size="sm" onClick={handleResend}>
+                <Send className="h-4 w-4" />
+                Resend invite
+              </Button>
+            </div>
+          )}
         </div>
-        {canManage && (
-          <Button variant="outline" size="sm" onClick={handleResend}>
-            <Send className="h-4 w-4" />
-            Resend invite
-          </Button>
-        )}
       </header>
 
-      <section className="bg-navy border border-navy-secondary rounded-lg p-5 mb-6">
-        <div className="flex items-center justify-between mb-3">
-          <div className="text-sm text-silver">Checklist progress</div>
-          <div className="text-sm text-gold">{detail.percentComplete}%</div>
-        </div>
-        <ProgressBar percent={detail.percentComplete} hideLabel />
-      </section>
+      {/* Hero progress card — bigger, color-coded counts, replaces the
+          previous "small text + thin gold bar" treatment. */}
+      <Card className="mb-6 overflow-hidden">
+        <CardHeader className="pb-2">
+          <div className="flex items-baseline justify-between gap-4">
+            <CardTitle className="text-base text-silver/80 uppercase tracking-wider font-sans">
+              Checklist progress
+            </CardTitle>
+            <div
+              className={cn(
+                'tabular-nums font-display leading-none',
+                detail.percentComplete === 100 ? 'text-success' : 'text-gold',
+                'text-3xl md:text-4xl'
+              )}
+            >
+              {detail.percentComplete}%
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="pt-2">
+          <ProgressBar percent={detail.percentComplete} hideLabel />
+          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 text-[11px]">
+            <CountChip
+              icon={CheckCircle2}
+              label="Done"
+              count={(counts.DONE ?? 0) + (counts.SKIPPED ?? 0)}
+              total={detail.tasks.length}
+              tone="success"
+            />
+            <CountChip
+              icon={Clock}
+              label="In progress"
+              count={counts.IN_PROGRESS ?? 0}
+              total={detail.tasks.length}
+              tone="warning"
+            />
+            <CountChip
+              icon={Circle}
+              label="Pending"
+              count={counts.PENDING ?? 0}
+              total={detail.tasks.length}
+              tone="silver"
+            />
+            {(counts.SKIPPED ?? 0) > 0 && (
+              <CountChip
+                icon={MinusCircle}
+                label="Skipped"
+                count={counts.SKIPPED ?? 0}
+                total={detail.tasks.length}
+                tone="silver"
+              />
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
-      <section className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+      {/* Task grid — color-coded status badges, status-tinted card. HR sees
+          progress and can skip stub tasks; the actual form-filling lives on
+          the associate's /onboarding/me/... routes. */}
+      <section className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-8">
         {detail.tasks.map((t) => (
           <TaskTile
             key={t.id}
@@ -186,12 +285,47 @@ export function ApplicationDetail() {
       </section>
 
       {canManage && (
-        <section className="bg-navy border border-navy-secondary rounded-lg p-5">
-          <h2 className="font-display text-xl text-white mb-3">Activity</h2>
-          <AuditTimeline entries={audit} />
-        </section>
+        <Card>
+          <CardHeader>
+            <CardTitle>Activity</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <AuditTimeline entries={audit} />
+          </CardContent>
+        </Card>
       )}
     </div>
+  );
+}
+
+/* ===== Subcomponents ====================================================== */
+
+function CountChip({
+  icon: Icon,
+  label,
+  count,
+  total: _total,
+  tone,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  count: number;
+  total: number;
+  tone: 'success' | 'warning' | 'silver';
+}) {
+  if (count === 0 && tone === 'silver') return null;
+  const cx =
+    tone === 'success'
+      ? 'text-success'
+      : tone === 'warning'
+        ? 'text-warning'
+        : 'text-silver';
+  return (
+    <span className={cn('inline-flex items-center gap-1.5', cx)}>
+      <Icon className="h-3.5 w-3.5" />
+      <span className="tabular-nums font-medium">{count}</span>
+      <span className="text-silver/70 uppercase tracking-wider">{label}</span>
+    </span>
   );
 }
 
@@ -201,42 +335,106 @@ interface TaskTileProps {
   onSkip: () => void;
 }
 
+const STATUS_TONE: Record<
+  string,
+  {
+    bg: string;
+    border: string;
+    iconCx: string;
+    icon: React.ComponentType<{ className?: string }>;
+    badgeBg: string;
+    badgeText: string;
+    label: string;
+  }
+> = {
+  DONE: {
+    bg: 'bg-success/[0.04]',
+    border: 'border-success/40 hover:border-success/70',
+    iconCx: 'text-success',
+    icon: CheckCircle2,
+    badgeBg: 'bg-success/15',
+    badgeText: 'text-success',
+    label: 'Done',
+  },
+  SKIPPED: {
+    bg: 'bg-navy',
+    border: 'border-silver/30 hover:border-silver/50',
+    iconCx: 'text-silver',
+    icon: MinusCircle,
+    badgeBg: 'bg-silver/15',
+    badgeText: 'text-silver',
+    label: 'Skipped',
+  },
+  IN_PROGRESS: {
+    bg: 'bg-warning/[0.06]',
+    border: 'border-warning/40 hover:border-warning/70',
+    iconCx: 'text-warning',
+    icon: Clock,
+    badgeBg: 'bg-warning/15',
+    badgeText: 'text-warning',
+    label: 'In progress',
+  },
+  PENDING: {
+    bg: 'bg-navy',
+    border: 'border-navy-secondary hover:border-silver/40',
+    iconCx: 'text-silver/60',
+    icon: Circle,
+    badgeBg: 'bg-silver/10',
+    badgeText: 'text-silver',
+    label: 'Pending',
+  },
+  BLOCKED: {
+    bg: 'bg-alert/[0.06]',
+    border: 'border-alert/40 hover:border-alert/70',
+    iconCx: 'text-alert',
+    icon: Circle,
+    badgeBg: 'bg-alert/15',
+    badgeText: 'text-alert',
+    label: 'Blocked',
+  },
+};
+
 function TaskTile({ task, canSkip, onSkip }: TaskTileProps) {
+  const tone = STATUS_TONE[task.status] ?? STATUS_TONE.PENDING;
+  const Icon = tone.icon;
   const isComplete = task.status === 'DONE' || task.status === 'SKIPPED';
+
   return (
     <div
       className={cn(
-        'rounded-lg border p-4 bg-navy',
-        isComplete ? 'border-gold/40' : 'border-navy-secondary'
+        'group rounded-lg border p-4 transition-colors',
+        tone.bg,
+        tone.border
       )}
     >
       <div className="flex items-start gap-3">
-        <span
-          className={cn(
-            'inline-block w-2.5 h-2.5 rounded-full mt-1.5 shrink-0',
-            isComplete ? 'bg-gold' : 'bg-silver/40'
-          )}
-          aria-hidden="true"
-        />
+        <Icon className={cn('h-5 w-5 mt-0.5 shrink-0', tone.iconCx)} aria-hidden />
         <div className="flex-1 min-w-0">
-          <div className="font-medium text-white">
-            {TASK_LABEL[task.kind] ?? task.title}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="font-medium text-white truncate">
+              {TASK_LABEL[task.kind] ?? task.title}
+            </div>
+            <span
+              className={cn(
+                'text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0',
+                tone.badgeBg,
+                tone.badgeText
+              )}
+              data-status={task.status}
+            >
+              {tone.label}
+            </span>
           </div>
           {task.description && (
-            <div className="text-xs text-silver mt-1">{task.description}</div>
+            <div className="text-xs text-silver mt-1 line-clamp-2">
+              {task.description}
+            </div>
           )}
-          <div className="text-[11px] uppercase tracking-widest text-silver/70 mt-2">
-            {task.status}
-          </div>
         </div>
         {canSkip && !isComplete && (
-          <button
-            type="button"
-            onClick={onSkip}
-            className="text-xs text-gold hover:text-gold-bright px-2 py-1 border border-gold/30 rounded shrink-0"
-          >
-            Skip (demo)
-          </button>
+          <Button size="sm" variant="outline" onClick={onSkip} className="shrink-0">
+            Skip
+          </Button>
         )}
       </div>
     </div>
