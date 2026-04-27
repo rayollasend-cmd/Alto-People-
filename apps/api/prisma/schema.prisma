@@ -329,6 +329,7 @@ model User {
   pulseSurveysCreated          PulseSurvey[]                  @relation("PulseSurveyCreator")
   associateSkillsVerified      AssociateSkill[]               @relation("AssociateSkillVerifier")
   mentorshipsProposed          Mentorship[]                   @relation("MentorshipProposer")
+  learningPathsCreated         LearningPath[]                 @relation("LearningPathCreator")
 
   @@index([role])
   @@index([clientId])
@@ -408,6 +409,8 @@ model Client {
   kioskPins              KioskPin[]
   // Phase 109 — pulse surveys scoped to this client.
   pulseSurveys           PulseSurvey[]
+  // Phase 114 — learning paths scoped to this client.
+  learningPaths          LearningPath[]
 
   @@index([status])
   @@index([deletedAt])
@@ -522,6 +525,8 @@ model Associate {
   // Phase 112 — mentorship pairings.
   mentorshipsAsMentor Mentorship[]      @relation("MentorshipMentor")
   mentorshipsAsMentee Mentorship[]      @relation("MentorshipMentee")
+  // Phase 114 — learning path enrollments.
+  learningPathEnrollments LearningPathEnrollment[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -3181,6 +3186,8 @@ model Course {
   createdBy   User?              @relation("CourseCreator", fields: [createdById], references: [id], onDelete: SetNull)
   modules     CourseModule[]
   enrollments CourseEnrollment[]
+  // Phase 114 — appearances in learning paths.
+  pathSteps   LearningPathStep[]
 
   @@index([clientId, status])
 }
@@ -3716,4 +3723,73 @@ model Mentorship {
   @@index([mentorAssociateId])
   @@index([menteeAssociateId])
   @@index([status])
+}
+
+// Phase 114 — Learning paths. Sequence Courses into ordered tracks.
+// "Current step" = lowest-order step where the associate's
+// CourseEnrollment isn't COMPLETED/WAIVED.
+
+enum LearningPathStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum LearningPathEnrollmentStatus {
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  WITHDRAWN
+}
+
+model LearningPath {
+  id          String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId    String?            @db.Uuid
+  title       String
+  description String?
+  isRequired  Boolean            @default(false)
+  status      LearningPathStatus @default(DRAFT)
+  createdById String?            @db.Uuid
+  createdAt   DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime           @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime?          @db.Timestamptz(6)
+
+  client      Client?                 @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy   User?                   @relation("LearningPathCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  steps       LearningPathStep[]
+  enrollments LearningPathEnrollment[]
+
+  @@index([clientId, status])
+}
+
+model LearningPathStep {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  pathId    String   @db.Uuid
+  courseId  String   @db.Uuid
+  order     Int
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  path   LearningPath @relation(fields: [pathId], references: [id], onDelete: Cascade)
+  course Course       @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([pathId, courseId])
+  @@unique([pathId, order])
+}
+
+model LearningPathEnrollment {
+  id          String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  pathId      String                       @db.Uuid
+  associateId String                       @db.Uuid
+  status      LearningPathEnrollmentStatus @default(ASSIGNED)
+  assignedAt  DateTime                     @default(now()) @db.Timestamptz(6)
+  completedAt DateTime?                    @db.Timestamptz(6)
+  createdAt   DateTime                     @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime                     @updatedAt @db.Timestamptz(6)
+
+  path      LearningPath @relation(fields: [pathId], references: [id], onDelete: Cascade)
+  associate Associate    @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@unique([pathId, associateId])
+  @@index([associateId])
 }

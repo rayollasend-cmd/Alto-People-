@@ -42,6 +42,7 @@ export type ModuleKey =
   | 'skills'
   | 'mentorship'
   | 'expirations'
+  | 'learning-paths'
   | 'team'
   | 'workflows'
   | 'me'
@@ -101,7 +102,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -222,6 +223,16 @@ export const MODULES: ModuleNav[] = [
       'Qualifications and certifications expiring soon — chase renewals before they lapse. Bucketed expired / due soon / due later.',
     requires: 'view:org',
     icon: ExpirationsIcon,
+    group: 'compliance',
+  },
+  {
+    key: 'learning-paths',
+    path: '/learning-paths',
+    label: 'Learning paths',
+    description:
+      'Sequence multiple courses into ordered tracks. Associates work through them in order; status reflects the next incomplete step.',
+    requires: 'view:compliance',
+    icon: LearningPathsIcon,
     group: 'compliance',
   },
   {
