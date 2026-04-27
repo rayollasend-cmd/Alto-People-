@@ -28,6 +28,8 @@ export interface QueuedPunch {
   longitude: number | null;
   /** ISO string — when the user actually pressed the button. */
   capturedAt: string;
+  /** Phase 105 — null = clock toggle, 'BREAK' = break toggle. */
+  intent: 'BREAK' | null;
   attempts: number;
   lastError: string | null;
 }
@@ -130,6 +132,7 @@ export async function drainQueue(): Promise<{
         faceDescriptor: item.faceDescriptor,
         idempotencyKey: item.idempotencyKey,
         clientPunchedAt: item.capturedAt,
+        intent: item.intent,
       });
       synced++;
     } catch (err: unknown) {

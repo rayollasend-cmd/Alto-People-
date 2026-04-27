@@ -408,6 +408,10 @@ const PunchInputSchema = z.object({
     .datetime({ offset: true })
     .optional()
     .nullable(),
+  // Phase 105 — explicit intent. Default (null) is the original
+  // toggle: clock-in if not active, clock-out if active. 'BREAK'
+  // toggles a break (start if no open break, end if one is open).
+  intent: z.enum(['BREAK']).optional().nullable(),
 });
 
 // Phase 102 — bound how far in the past a queued punch can be replayed.
@@ -728,19 +732,68 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     }
   }
 
-  // 6. Decide CLOCK_IN vs CLOCK_OUT by looking for an open entry.
+  // 6. Decide CLOCK_IN vs CLOCK_OUT (or BREAK_START/BREAK_END when
+  // intent='BREAK') by looking for an open entry. Break path requires
+  // an ACTIVE entry — you can't break before clocking in.
   const open = await prisma.timeEntry.findFirst({
     where: { associateId: pinRow.associateId, status: 'ACTIVE' },
     orderBy: { clockInAt: 'desc' },
   });
+
+  if (input.intent === 'BREAK' && !open) {
+    throw new HttpError(
+      409,
+      'not_clocked_in',
+      'You need to clock in before starting a break.',
+    );
+  }
 
   const result = await prisma.$transaction(async (tx) => {
     // Phase 102 — when the kiosk supplies a wall-clock timestamp (queued
     // punch replayed later), use it for the TimeEntry. Otherwise server now().
     const at = clientPunchedAt ?? new Date();
     let timeEntry;
-    let action: 'CLOCK_IN' | 'CLOCK_OUT';
-    if (open) {
+    let action: 'CLOCK_IN' | 'CLOCK_OUT' | 'BREAK_START' | 'BREAK_END';
+
+    if (input.intent === 'BREAK' && open) {
+      // Phase 105 — toggle break. If there's an open break (no endedAt),
+      // close it. Otherwise start a new one. Either way, the parent
+      // TimeEntry stays ACTIVE.
+      const openBreak = await tx.breakEntry.findFirst({
+        where: { timeEntryId: open.id, endedAt: null },
+        orderBy: { startedAt: 'desc' },
+      });
+      if (openBreak) {
+        await tx.breakEntry.update({
+          where: { id: openBreak.id },
+          data: { endedAt: at },
+        });
+        action = 'BREAK_END';
+      } else {
+        await tx.breakEntry.create({
+          data: {
+            timeEntryId: open.id,
+            // Default to MEAL — REST breaks are typically tracked off-system.
+            // HR can re-classify in the timesheet view.
+            type: 'MEAL',
+            startedAt: at,
+          },
+        });
+        action = 'BREAK_START';
+      }
+      timeEntry = open;
+    } else if (open) {
+      // Don't allow clocking out while a break is open — close the break
+      // first so payable hours math stays clean.
+      const openBreak = await tx.breakEntry.findFirst({
+        where: { timeEntryId: open.id, endedAt: null },
+      });
+      if (openBreak) {
+        await tx.breakEntry.update({
+          where: { id: openBreak.id },
+          data: { endedAt: at },
+        });
+      }
       timeEntry = await tx.timeEntry.update({
         where: { id: open.id },
         data: {

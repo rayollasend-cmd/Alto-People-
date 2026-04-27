@@ -736,7 +736,9 @@ function LogTab() {
                           ? 'success'
                           : p.action === 'CLOCK_OUT'
                             ? 'accent'
-                            : 'destructive'
+                            : p.action === 'BREAK_START' || p.action === 'BREAK_END'
+                              ? 'pending'
+                              : 'destructive'
                       }
                     >
                       {p.action}

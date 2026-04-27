@@ -3379,6 +3379,10 @@ enum KioskPunchAction {
   CLOCK_IN
   CLOCK_OUT
   REJECTED
+  // Phase 105 — break in/out from a kiosk. Tied to a BreakEntry whose
+  // parent is the associate's open TimeEntry.
+  BREAK_START
+  BREAK_END
 }
 
 enum KioskPunchReviewStatus {

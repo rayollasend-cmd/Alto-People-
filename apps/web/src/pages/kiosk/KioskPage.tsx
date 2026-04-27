@@ -24,17 +24,20 @@ const TOKEN_STORAGE_KEY = 'alto.kiosk.deviceToken';
 type Stage = 'setup' | 'idle' | 'pin' | 'selfie' | 'result' | 'error';
 
 interface PunchResult {
-  action: 'CLOCK_IN' | 'CLOCK_OUT';
+  action: 'CLOCK_IN' | 'CLOCK_OUT' | 'BREAK_START' | 'BREAK_END';
   associateName: string;
   at: string;
   /** True when the punch was queued offline rather than sent live. */
   queued?: boolean;
 }
 
+type Intent = 'BREAK' | null;
+
 export function KioskPage() {
   const [stage, setStage] = useState<Stage>('idle');
   const [token, setToken] = useState<string | null>(null);
   const [pin, setPin] = useState('');
+  const [intent, setIntent] = useState<Intent>(null);
   const [result, setResult] = useState<PunchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
@@ -90,6 +93,7 @@ export function KioskPage() {
 
   const reset = () => {
     setPin('');
+    setIntent(null);
     setResult(null);
     setError(null);
     setStage('idle');
@@ -134,6 +138,7 @@ export function KioskPage() {
       faceDescriptor,
       idempotencyKey,
       clientPunchedAt: capturedAt,
+      intent,
     };
     try {
       const r = await kioskPunch(payload);
@@ -162,6 +167,7 @@ export function KioskPage() {
         latitude: loc?.lat ?? null,
         longitude: loc?.lng ?? null,
         capturedAt,
+        intent,
       });
       setQueued(queueSize());
       // Optimistic display — we don't actually know CLOCK_IN vs CLOCK_OUT
@@ -201,6 +207,8 @@ export function KioskPage() {
         <PinPad
           pin={pin}
           onChange={setPin}
+          intent={intent}
+          onIntent={setIntent}
           onSubmit={() => setStage('selfie')}
           onCancel={reset}
         />
@@ -312,11 +320,15 @@ function IdleScreen({ now, onTap }: { now: Date; onTap: () => void }) {
 function PinPad({
   pin,
   onChange,
+  intent,
+  onIntent,
   onSubmit,
   onCancel,
 }: {
   pin: string;
   onChange: (p: string) => void;
+  intent: Intent;
+  onIntent: (i: Intent) => void;
   onSubmit: () => void;
   onCancel: () => void;
 }) {
@@ -335,14 +347,30 @@ function PinPad({
 
   return (
     <div className="flex flex-col items-center w-full max-w-sm px-4">
-      <div className="text-2xl text-silver mb-6">Enter your 4-digit PIN</div>
+      <div className="text-2xl text-silver mb-3">
+        {intent === 'BREAK'
+          ? 'Break — enter your 4-digit PIN'
+          : 'Enter your 4-digit PIN'}
+      </div>
+      <button
+        onClick={() => onIntent(intent === 'BREAK' ? null : 'BREAK')}
+        className={`mb-6 px-4 py-1.5 rounded-full text-sm border transition ${
+          intent === 'BREAK'
+            ? 'bg-amber-500/20 border-amber-500/60 text-amber-300'
+            : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
+        }`}
+      >
+        {intent === 'BREAK' ? '☕ On break' : 'Going on break?'}
+      </button>
       <div className="flex gap-4 mb-10">
         {[0, 1, 2, 3].map((i) => (
           <div
             key={i}
             className={`w-16 h-20 rounded-xl border-2 flex items-center justify-center text-4xl ${
               pin.length > i
-                ? 'bg-cyan-500 border-cyan-400 text-navy-secondary'
+                ? intent === 'BREAK'
+                  ? 'bg-amber-500 border-amber-400 text-navy-secondary'
+                  : 'bg-cyan-500 border-cyan-400 text-navy-secondary'
                 : 'bg-navy-secondary/40 border-navy-secondary text-silver'
             }`}
           >
@@ -532,8 +560,20 @@ function ResultScreen({ result }: { result: PunchResult }) {
       </div>
     );
   }
-  const verb = result.action === 'CLOCK_IN' ? 'Clocked in' : 'Clocked out';
-  const color = result.action === 'CLOCK_IN' ? 'text-emerald-400' : 'text-cyan-400';
+  const verb =
+    result.action === 'CLOCK_IN'
+      ? 'Clocked in'
+      : result.action === 'CLOCK_OUT'
+        ? 'Clocked out'
+        : result.action === 'BREAK_START'
+          ? 'Break started'
+          : 'Back from break';
+  const color =
+    result.action === 'CLOCK_IN'
+      ? 'text-emerald-400'
+      : result.action === 'CLOCK_OUT'
+        ? 'text-cyan-400'
+        : 'text-amber-400';
   return (
     <div className="text-center">
       <div className={`text-9xl mb-6 ${color}`}>✓</div>

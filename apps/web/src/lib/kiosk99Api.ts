@@ -43,7 +43,7 @@ export interface KioskPunchSummary {
   associateId: string | null;
   associateName: string | null;
   timeEntryId: string | null;
-  action: 'CLOCK_IN' | 'CLOCK_OUT' | 'REJECTED';
+  action: 'CLOCK_IN' | 'CLOCK_OUT' | 'REJECTED' | 'BREAK_START' | 'BREAK_END';
   hasSelfie: boolean;
   rejectReason: string | null;
   distanceMeters: number | null;
@@ -152,7 +152,7 @@ export const resetKioskFaceReference = (associateId: string) =>
 // ----- Public kiosk endpoint ---------------------------------------------
 
 export interface KioskPunchResult {
-  action: 'CLOCK_IN' | 'CLOCK_OUT';
+  action: 'CLOCK_IN' | 'CLOCK_OUT' | 'BREAK_START' | 'BREAK_END';
   associateName: string;
   at: string;
   punchId: string;
@@ -167,6 +167,7 @@ export const kioskPunch = (input: {
   faceDescriptor?: number[] | null;
   idempotencyKey?: string | null;
   clientPunchedAt?: string | null;
+  intent?: 'BREAK' | null;
 }) =>
   apiFetch<KioskPunchResult>('/kiosk/punch', {
     method: 'POST',
