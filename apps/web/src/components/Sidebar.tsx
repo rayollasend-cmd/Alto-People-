@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   Briefcase,
@@ -8,6 +8,8 @@ import {
   LogOut,
   Monitor,
   Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
   Rows3,
   Rows4,
   Sun,
@@ -37,6 +39,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/DropdownMenu';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip';
 
 const GROUP_ORDER: Array<Exclude<ModuleGroup, 'core'>> = [
   'workforce',
@@ -45,12 +48,13 @@ const GROUP_ORDER: Array<Exclude<ModuleGroup, 'core'>> = [
   'insights',
 ];
 
-const COLLAPSED_KEY = 'alto.sidebar.collapsedGroups';
+const COLLAPSED_GROUPS_KEY = 'alto.sidebar.collapsedGroups';
+const RAIL_COLLAPSED_KEY = 'alto.sidebar.collapsed';
 
-function readCollapsed(): Set<string> {
+function readCollapsedGroups(): Set<string> {
   if (typeof window === 'undefined') return new Set();
   try {
-    const raw = window.localStorage.getItem(COLLAPSED_KEY);
+    const raw = window.localStorage.getItem(COLLAPSED_GROUPS_KEY);
     if (!raw) return new Set();
     const parsed: unknown = JSON.parse(raw);
     if (Array.isArray(parsed)) {
@@ -62,9 +66,26 @@ function readCollapsed(): Set<string> {
   return new Set();
 }
 
-function writeCollapsed(groups: Set<string>): void {
+function writeCollapsedGroups(groups: Set<string>): void {
   try {
-    window.localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...groups]));
+    window.localStorage.setItem(COLLAPSED_GROUPS_KEY, JSON.stringify([...groups]));
+  } catch {
+    /* persistence is best-effort */
+  }
+}
+
+function readRailCollapsed(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.localStorage.getItem(RAIL_COLLAPSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeRailCollapsed(value: boolean): void {
+  try {
+    window.localStorage.setItem(RAIL_COLLAPSED_KEY, value ? '1' : '0');
   } catch {
     /* persistence is best-effort */
   }
@@ -79,24 +100,51 @@ export function Sidebar() {
     (grouped[m.group] ??= []).push(m);
   }
 
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => readCollapsed());
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => readCollapsedGroups());
+  const [railCollapsed, setRailCollapsed] = useState<boolean>(() => readRailCollapsed());
 
   const toggleGroup = useCallback((group: string) => {
-    setCollapsed((prev) => {
+    setCollapsedGroups((prev) => {
       const next = new Set(prev);
       if (next.has(group)) {
         next.delete(group);
       } else {
         next.add(group);
       }
-      writeCollapsed(next);
+      writeCollapsedGroups(next);
       return next;
     });
   }, []);
 
+  const toggleRail = useCallback(() => {
+    setRailCollapsed((prev) => {
+      const next = !prev;
+      writeRailCollapsed(next);
+      return next;
+    });
+  }, []);
+
+  // Phase 70 — Cmd/Ctrl + \ toggles the rail. Power-user shortcut, mirrors
+  // VS Code / Cursor / Linear.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === '\\') {
+        e.preventDefault();
+        toggleRail();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [toggleRail]);
+
   return (
-    <aside className="hidden md:flex w-64 shrink-0 flex-col bg-navy border-r border-navy-secondary">
-      <SidebarBrand />
+    <aside
+      className={cn(
+        'hidden md:flex shrink-0 flex-col bg-navy border-r border-navy-secondary transition-[width] duration-200 ease-out',
+        railCollapsed ? 'w-14' : 'w-64',
+      )}
+    >
+      <SidebarBrand railCollapsed={railCollapsed} onToggleRail={toggleRail} />
 
       <nav className="flex-1 overflow-y-auto py-2" aria-label="Primary navigation">
         <SidebarLink
@@ -104,44 +152,91 @@ export function Sidebar() {
           end
           label={DASHBOARD_NAV.label}
           icon={DASHBOARD_NAV.icon}
+          railCollapsed={railCollapsed}
         />
 
         {GROUP_ORDER.map((group) => {
           const items = grouped[group];
           if (!items || items.length === 0) return null;
-          const isCollapsed = collapsed.has(group);
+          const isGroupCollapsed = collapsedGroups.has(group);
           return (
             <SidebarSection
               key={group}
               label={GROUP_LABEL[group]}
-              collapsed={isCollapsed}
+              collapsed={isGroupCollapsed}
               onToggle={() => toggleGroup(group)}
+              railCollapsed={railCollapsed}
             >
               {items.map((m) => (
-                <SidebarLink key={m.key} to={m.path} label={m.label} icon={m.icon} />
+                <SidebarLink
+                  key={m.key}
+                  to={m.path}
+                  label={m.label}
+                  icon={m.icon}
+                  railCollapsed={railCollapsed}
+                />
               ))}
             </SidebarSection>
           );
         })}
       </nav>
 
-      <SidebarAccount />
+      <SidebarAccount railCollapsed={railCollapsed} />
     </aside>
   );
 }
 
-function SidebarBrand() {
+interface SidebarBrandProps {
+  railCollapsed: boolean;
+  onToggleRail: () => void;
+}
+
+function SidebarBrand({ railCollapsed, onToggleRail }: SidebarBrandProps) {
   return (
-    <div className="px-4 h-14 flex items-center gap-2 border-b border-navy-secondary shrink-0">
-      <div
-        className="h-7 w-7 rounded-md bg-gold/15 border border-gold/40 grid place-items-center"
-        aria-hidden="true"
-      >
-        <Briefcase className="h-3.5 w-3.5 text-gold" />
-      </div>
-      <span className="font-display text-lg text-white leading-none tracking-tight">
-        Alto <span className="text-gold">People</span>
-      </span>
+    <div
+      className={cn(
+        'h-14 flex items-center border-b border-navy-secondary shrink-0',
+        railCollapsed ? 'justify-center px-0' : 'gap-2 px-4',
+      )}
+    >
+      {!railCollapsed && (
+        <>
+          <div
+            className="h-7 w-7 rounded-md bg-gold/15 border border-gold/40 grid place-items-center shrink-0"
+            aria-hidden="true"
+          >
+            <Briefcase className="h-3.5 w-3.5 text-gold" />
+          </div>
+          <span className="font-display text-lg text-white leading-none tracking-tight truncate">
+            Alto <span className="text-gold">People</span>
+          </span>
+        </>
+      )}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            onClick={onToggleRail}
+            aria-label={railCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-expanded={!railCollapsed}
+            aria-keyshortcuts="Control+\\ Meta+\\"
+            className={cn(
+              'p-1.5 rounded-md text-silver/70 hover:text-white hover:bg-navy-secondary/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+              !railCollapsed && 'ml-auto',
+            )}
+          >
+            {railCollapsed ? (
+              <PanelLeftOpen className="h-4 w-4" />
+            ) : (
+              <PanelLeftClose className="h-4 w-4" />
+            )}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="right">
+          {railCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          <span className="ml-2 text-silver/60">⌘\</span>
+        </TooltipContent>
+      </Tooltip>
     </div>
   );
 }
@@ -150,10 +245,27 @@ interface SidebarSectionProps {
   label: string;
   collapsed: boolean;
   onToggle: () => void;
+  railCollapsed: boolean;
   children: React.ReactNode;
 }
 
-function SidebarSection({ label, collapsed, onToggle, children }: SidebarSectionProps) {
+function SidebarSection({
+  label,
+  collapsed,
+  onToggle,
+  railCollapsed,
+  children,
+}: SidebarSectionProps) {
+  // When the rail is collapsed we drop the section header entirely and just
+  // render a thin separator between groups so the icon column stays clean.
+  if (railCollapsed) {
+    return (
+      <div className="mt-2 pt-2 border-t border-navy-secondary/60 first:mt-1 first:pt-0 first:border-t-0">
+        {children}
+      </div>
+    );
+  }
+
   return (
     <div className="mt-3 first:mt-2">
       <button
@@ -179,16 +291,21 @@ interface SidebarLinkProps {
   label: string;
   icon: LucideIcon;
   end?: boolean;
+  railCollapsed: boolean;
 }
 
-function SidebarLink({ to, label, icon: Icon, end }: SidebarLinkProps) {
-  return (
+function SidebarLink({ to, label, icon: Icon, end, railCollapsed }: SidebarLinkProps) {
+  const link = (
     <NavLink
       to={to}
       end={end}
+      aria-label={railCollapsed ? label : undefined}
       className={({ isActive }) =>
         cn(
-          'mx-2 my-0.5 flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors',
+          'my-0.5 flex items-center rounded-md text-sm transition-colors',
+          railCollapsed
+            ? 'mx-2 h-9 w-9 justify-center'
+            : 'mx-2 gap-2.5 px-3 py-2',
           isActive
             ? 'bg-navy-secondary text-white'
             : 'text-silver hover:text-white hover:bg-navy-secondary/50',
@@ -196,21 +313,35 @@ function SidebarLink({ to, label, icon: Icon, end }: SidebarLinkProps) {
       }
     >
       <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-      <span className="truncate">{label}</span>
+      {!railCollapsed && <span className="truncate">{label}</span>}
     </NavLink>
+  );
+
+  if (!railCollapsed) return link;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{link}</TooltipTrigger>
+      <TooltipContent side="right">{label}</TooltipContent>
+    </Tooltip>
   );
 }
 
-function SidebarAccount() {
+interface SidebarAccountProps {
+  railCollapsed: boolean;
+}
+
+function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
   const { user, signOut } = useAuth();
   const { theme, setTheme } = useTheme();
   const { density, setDensity } = useDensity();
   const navigate = useNavigate();
   const [signingOut, setSigningOut] = useState(false);
 
-  // Phase 70 — render a compact "v0.1.0" footer when no user is loaded yet
-  // (e.g., on the login page) so the sidebar still terminates cleanly.
   if (!user) {
+    if (railCollapsed) {
+      return <div className="h-12 border-t border-navy-secondary" />;
+    }
     return (
       <div className="px-4 py-3 border-t border-navy-secondary text-[10px] uppercase tracking-widest text-silver/50">
         Alto Etho LLC · v0.1.0
@@ -229,27 +360,46 @@ function SidebarAccount() {
     }
   };
 
-  return (
-    <div className="border-t border-navy-secondary p-2">
-      <DropdownMenu>
+  const trigger = railCollapsed ? (
+    <Tooltip>
+      <TooltipTrigger asChild>
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            className="w-full flex items-center gap-2.5 px-2 py-2 rounded-md hover:bg-navy-secondary/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+            className="h-9 w-9 mx-auto rounded-full bg-gold/15 border border-gold/30 grid place-items-center text-gold text-xs font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
             aria-label="Account menu"
           >
-            <div className="h-8 w-8 rounded-full bg-gold/15 border border-gold/30 grid place-items-center text-gold text-xs font-medium shrink-0">
-              {initials(user.email)}
-            </div>
-            <div className="min-w-0 flex-1 text-left leading-tight">
-              <div className="text-[10px] uppercase tracking-widest text-silver truncate">
-                {ROLE_LABELS[user.role]}
-              </div>
-              <div className="text-sm text-white truncate">{user.email}</div>
-            </div>
-            <ChevronsUpDown className="h-3.5 w-3.5 text-silver/70 shrink-0" aria-hidden="true" />
+            {initials(user.email)}
           </button>
         </DropdownMenuTrigger>
+      </TooltipTrigger>
+      <TooltipContent side="right">{user.email}</TooltipContent>
+    </Tooltip>
+  ) : (
+    <DropdownMenuTrigger asChild>
+      <button
+        type="button"
+        className="w-full flex items-center gap-2.5 px-2 py-2 rounded-md hover:bg-navy-secondary/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+        aria-label="Account menu"
+      >
+        <div className="h-8 w-8 rounded-full bg-gold/15 border border-gold/30 grid place-items-center text-gold text-xs font-medium shrink-0">
+          {initials(user.email)}
+        </div>
+        <div className="min-w-0 flex-1 text-left leading-tight">
+          <div className="text-[10px] uppercase tracking-widest text-silver truncate">
+            {ROLE_LABELS[user.role]}
+          </div>
+          <div className="text-sm text-white truncate">{user.email}</div>
+        </div>
+        <ChevronsUpDown className="h-3.5 w-3.5 text-silver/70 shrink-0" aria-hidden="true" />
+      </button>
+    </DropdownMenuTrigger>
+  );
+
+  return (
+    <div className={cn('border-t border-navy-secondary', railCollapsed ? 'p-2' : 'p-2')}>
+      <DropdownMenu>
+        {trigger}
         <DropdownMenuContent side="top" align="start" className="min-w-[15rem]">
           <DropdownMenuLabel>{ROLE_LABELS[user.role]}</DropdownMenuLabel>
           <div className="px-2 pb-2 text-sm text-white truncate">{user.email}</div>
@@ -355,4 +505,3 @@ function initials(email: string): string {
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
   return local.slice(0, 2).toUpperCase();
 }
-
