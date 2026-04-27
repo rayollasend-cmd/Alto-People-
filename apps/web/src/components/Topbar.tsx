@@ -108,10 +108,14 @@ export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
               <DropdownMenuLabel>{ROLE_LABELS[user.role]}</DropdownMenuLabel>
               <div className="px-2 pb-2 text-sm text-white truncate">{user.email}</div>
               <DropdownMenuSeparator />
-              <DropdownMenuItem disabled>
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  navigate('/settings');
+                }}
+              >
                 <User className="h-4 w-4" />
                 Account settings
-                <span className="ml-auto text-[10px] text-silver/60">soon</span>
               </DropdownMenuItem>
               <DropdownMenuItem
                 destructive

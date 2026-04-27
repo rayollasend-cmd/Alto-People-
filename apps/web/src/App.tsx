@@ -27,6 +27,7 @@ import { CommunicationsHome } from '@/pages/communications/CommunicationsHome';
 import { PerformanceHome } from '@/pages/performance/PerformanceHome';
 import { RecruitingHome } from '@/pages/recruiting/RecruitingHome';
 import { AnalyticsHome } from '@/pages/analytics/AnalyticsHome';
+import { Settings } from '@/pages/Settings';
 
 const ONBOARDING_ROUTES = [
   { path: 'onboarding', element: <OnboardingHome /> },
@@ -101,6 +102,7 @@ export const router = createBrowserRouter([
       { path: 'performance', element: <PerformanceHome /> },
       { path: 'recruiting', element: <RecruitingHome /> },
       { path: 'analytics', element: <AnalyticsHome /> },
+      { path: 'settings', element: <Settings /> },
       ...ONBOARDING_ROUTES,
       ...PLACEHOLDER_MODULES.map((m) => ({
         path: m.path.replace(/^\//, ''),

@@ -1246,6 +1246,27 @@ export const AcceptInviteInputSchema = z.object({
 export type AcceptInviteInput = z.infer<typeof AcceptInviteInputSchema>;
 
 /* -------------------------------------------------------------------------- *
+ *  Phase 39 — User settings (password change + display name)
+ * -------------------------------------------------------------------------- */
+
+export const ChangePasswordInputSchema = z
+  .object({
+    currentPassword: z.string().min(1).max(256),
+    newPassword: z.string().min(12).max(256),
+  })
+  .refine((d) => d.currentPassword !== d.newPassword, {
+    message: 'New password must differ from current password',
+    path: ['newPassword'],
+  });
+export type ChangePasswordInput = z.infer<typeof ChangePasswordInputSchema>;
+
+export const UpdateProfileInputSchema = z.object({
+  firstName: z.string().trim().min(1).max(100).optional(),
+  lastName: z.string().trim().min(1).max(100).optional(),
+});
+export type UpdateProfileInput = z.infer<typeof UpdateProfileInputSchema>;
+
+/* -------------------------------------------------------------------------- *
  *  Phase 26 — Time off (sick-leave accrual + ledger)
  * -------------------------------------------------------------------------- */
 

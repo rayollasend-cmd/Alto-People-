@@ -2,7 +2,9 @@ import { Router } from 'express';
 import { z } from 'zod';
 import {
   AcceptInviteInputSchema,
+  ChangePasswordInputSchema,
   HUMAN_ROLES,
+  UpdateProfileInputSchema,
   type AuthUser,
   type InviteSummary,
 } from '@alto-people/shared';
@@ -19,7 +21,7 @@ import {
   recordLoginSuccess,
   recordLogout,
 } from '../lib/audit.js';
-import { SESSION_COOKIE } from '../middleware/auth.js';
+import { requireAuth, SESSION_COOKIE } from '../middleware/auth.js';
 import {
   loginIpLimiter,
   loginEmailLimiter,
@@ -312,3 +314,104 @@ async function pickPostAcceptPath(userId: string): Promise<string> {
   });
   return app ? `/onboarding/me/${app.id}` : '/';
 }
+
+/* ===== Self-service settings (Phase 39) ================================ */
+
+/**
+ * POST /auth/change-password { currentPassword, newPassword }
+ * Authenticated. Verifies the current password, swaps the hash, bumps
+ * tokenVersion (nukes every other live session for this user), and
+ * re-issues a fresh cookie so the caller stays logged in. The
+ * tokenVersion bump is the critical bit — without it a stolen cookie
+ * would survive a password change.
+ */
+authRouter.post('/change-password', requireAuth, async (req, res, next) => {
+  try {
+    const parsed = ChangePasswordInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const { currentPassword, newPassword } = parsed.data;
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.user!.id },
+      select: { id: true, role: true, clientId: true, passwordHash: true },
+    });
+    if (!user || !user.passwordHash) {
+      throw new HttpError(401, 'invalid_credentials', 'Current password is incorrect');
+    }
+    const ok = await verifyPassword(user.passwordHash, currentPassword);
+    if (!ok) {
+      throw new HttpError(401, 'invalid_credentials', 'Current password is incorrect');
+    }
+
+    const newHash = await hashPassword(newPassword);
+    const updated = await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash: newHash,
+        tokenVersion: { increment: 1 },
+      },
+    });
+
+    const sessionToken = signSession({
+      sub: updated.id,
+      role: updated.role,
+      ver: updated.tokenVersion,
+    });
+    res.cookie(SESSION_COOKIE, sessionToken, cookieOptions());
+
+    await prisma.auditLog.create({
+      data: {
+        actorUserId: updated.id,
+        clientId: updated.clientId ?? null,
+        action: 'auth.password_changed',
+        entityType: 'User',
+        entityId: updated.id,
+        metadata: {
+          ip: req.ip ?? null,
+          userAgent: req.headers['user-agent'] ?? null,
+        },
+      },
+    });
+
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PATCH /auth/me/profile { firstName?, lastName? }
+ * Authenticated. Updates the linked Associate row's display name.
+ * Users without an Associate row (HR-only / portal accounts) get a
+ * 404 — the field doesn't apply to them, and silently no-op'ing
+ * would be confusing.
+ */
+authRouter.patch('/me/profile', requireAuth, async (req, res, next) => {
+  try {
+    const parsed = UpdateProfileInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    if (!req.user!.associateId) {
+      throw new HttpError(404, 'no_associate', 'This account has no associate profile to edit');
+    }
+    const { firstName, lastName } = parsed.data;
+    if (firstName === undefined && lastName === undefined) {
+      res.status(204).end();
+      return;
+    }
+    const updated = await prisma.associate.update({
+      where: { id: req.user!.associateId },
+      data: {
+        ...(firstName !== undefined ? { firstName } : {}),
+        ...(lastName !== undefined ? { lastName } : {}),
+      },
+      select: { firstName: true, lastName: true, email: true },
+    });
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
