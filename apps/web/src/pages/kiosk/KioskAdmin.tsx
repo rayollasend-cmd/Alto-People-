@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Copy, Key, MapPin, Plus, ScanFace, Tablet } from 'lucide-react';
+import { AlertTriangle, Copy, Key, MapPin, Plus, ScanFace, Tablet } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
   assignKioskPin,
@@ -11,6 +11,7 @@ import {
   listKioskPins,
   listKioskPunches,
   resetKioskFaceReference,
+  reviewKioskPunch,
   revokeKioskDevice,
   updateKioskGeofence,
   type KioskDevice,
@@ -49,7 +50,7 @@ import {
 import { Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
 
-type Tab = 'devices' | 'pins' | 'log' | 'faces';
+type Tab = 'devices' | 'pins' | 'review' | 'log' | 'faces';
 
 export function KioskAdmin() {
   const { user } = useAuth();
@@ -71,6 +72,9 @@ export function KioskAdmin() {
           <TabsTrigger value="pins">
             <Key className="mr-2 h-4 w-4" /> PINs
           </TabsTrigger>
+          <TabsTrigger value="review">
+            <AlertTriangle className="mr-2 h-4 w-4" /> Review
+          </TabsTrigger>
           <TabsTrigger value="log">Punch log</TabsTrigger>
           <TabsTrigger value="faces">
             <ScanFace className="mr-2 h-4 w-4" /> Face refs
@@ -78,6 +82,7 @@ export function KioskAdmin() {
         </TabsList>
         <TabsContent value="devices"><DevicesTab canManage={canManage} /></TabsContent>
         <TabsContent value="pins"><PinsTab canManage={canManage} /></TabsContent>
+        <TabsContent value="review"><ReviewTab canManage={canManage} /></TabsContent>
         <TabsContent value="log"><LogTab /></TabsContent>
         <TabsContent value="faces"><FacesTab canManage={canManage} /></TabsContent>
       </Tabs>
@@ -850,6 +855,138 @@ function FacesTab({ canManage }: { canManage: boolean }) {
                       >
                         Reset
                       </button>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ReviewTab({ canManage }: { canManage: boolean }) {
+  const [rows, setRows] = useState<KioskPunchSummary[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const refresh = () => {
+    setRows(null);
+    listKioskPunches({ reviewStatus: 'PENDING' })
+      .then((r) => setRows(r.punches))
+      .catch(() => setRows([]));
+  };
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  const decide = async (
+    id: string,
+    decision: 'APPROVED' | 'REJECTED',
+  ) => {
+    let notes: string | undefined;
+    if (decision === 'REJECTED') {
+      const v = window.prompt(
+        'Notes for rejection (will void the time entry):',
+        '',
+      );
+      if (v === null) return;
+      notes = v;
+    }
+    setBusy(id);
+    try {
+      await reviewKioskPunch(id, decision, notes);
+      toast.success(decision === 'APPROVED' ? 'Approved.' : 'Rejected & voided.');
+      refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Card>
+      <CardContent className="p-0">
+        {rows === null ? (
+          <div className="p-6"><SkeletonRows count={3} /></div>
+        ) : rows.length === 0 ? (
+          <EmptyState
+            icon={AlertTriangle}
+            title="Nothing to review"
+            description="Flagged kiosk punches (face mismatches, anomalies) appear here."
+          />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>When</TableHead>
+                <TableHead>Associate</TableHead>
+                <TableHead>Device</TableHead>
+                <TableHead>Action</TableHead>
+                <TableHead>Reason</TableHead>
+                <TableHead>Selfie</TableHead>
+                <TableHead className="text-right">Decision</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((p) => (
+                <TableRow key={p.id}>
+                  <TableCell className="text-xs">
+                    {new Date(p.createdAt).toLocaleString()}
+                  </TableCell>
+                  <TableCell className="font-medium text-white">
+                    {p.associateName ?? '—'}
+                  </TableCell>
+                  <TableCell className="text-xs">{p.deviceName}</TableCell>
+                  <TableCell>
+                    <Badge variant={p.action === 'CLOCK_IN' ? 'success' : 'accent'}>
+                      {p.action}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-xs text-amber-400">
+                    {p.faceMismatch
+                      ? `Face mismatch (${p.faceDistance?.toFixed(2) ?? '?'})`
+                      : (p.rejectReason ?? 'Anomaly')}
+                  </TableCell>
+                  <TableCell>
+                    {p.hasSelfie ? (
+                      <a
+                        href={`/api/kiosk-punches/${p.id}/selfie`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <img
+                          src={`/api/kiosk-punches/${p.id}/selfie`}
+                          alt="selfie"
+                          className="w-12 h-12 rounded object-cover border border-navy-secondary"
+                        />
+                      </a>
+                    ) : (
+                      '—'
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right space-x-2">
+                    {canManage && (
+                      <>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={busy === p.id}
+                          onClick={() => void decide(p.id, 'APPROVED')}
+                        >
+                          Approve
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          disabled={busy === p.id}
+                          onClick={() => void decide(p.id, 'REJECTED')}
+                        >
+                          Reject
+                        </Button>
+                      </>
                     )}
                   </TableCell>
                 </TableRow>

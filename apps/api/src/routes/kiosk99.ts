@@ -231,14 +231,20 @@ kiosk99Router.delete('/kiosk-pins/:id', MANAGE, async (req, res) => {
 kiosk99Router.get('/kiosk-punches', VIEW, async (req, res) => {
   const associateId = z.string().uuid().optional().parse(req.query.associateId);
   const deviceId = z.string().uuid().optional().parse(req.query.deviceId);
+  const reviewStatus = z
+    .enum(['PENDING', 'APPROVED', 'REJECTED'])
+    .optional()
+    .parse(req.query.reviewStatus);
   const rows = await prisma.kioskPunch.findMany({
     where: {
       ...(associateId ? { associateId } : {}),
       ...(deviceId ? { kioskDeviceId: deviceId } : {}),
+      ...(reviewStatus ? { reviewStatus } : {}),
     },
     include: {
       device: { select: { name: true, clientId: true } },
       associate: { select: { firstName: true, lastName: true } },
+      reviewedBy: { select: { email: true } },
     },
     orderBy: { createdAt: 'desc' },
     take: 500,
@@ -259,9 +265,64 @@ kiosk99Router.get('/kiosk-punches', VIEW, async (req, res) => {
       distanceMeters: p.distanceMeters,
       faceDistance: p.faceDistance,
       faceMismatch: p.faceMismatch,
+      reviewStatus: p.reviewStatus,
+      reviewedAt: p.reviewedAt?.toISOString() ?? null,
+      reviewedByEmail: p.reviewedBy?.email ?? null,
+      reviewNotes: p.reviewNotes,
       createdAt: p.createdAt.toISOString(),
     })),
   });
+});
+
+// Phase 103 — approve / reject a flagged punch. Reject voids the
+// associated TimeEntry (sets status=DELETED, zero hours) so it doesn't
+// count in payroll.
+const ReviewDecisionSchema = z.object({
+  decision: z.enum(['APPROVED', 'REJECTED']),
+  notes: z.string().max(2000).optional(),
+});
+
+kiosk99Router.post('/kiosk-punches/:id/review', MANAGE, async (req, res) => {
+  const { decision, notes } = ReviewDecisionSchema.parse(req.body);
+  const punch = await prisma.kioskPunch.findUnique({
+    where: { id: req.params.id },
+    select: { id: true, timeEntryId: true, reviewStatus: true },
+  });
+  if (!punch) {
+    throw new HttpError(404, 'not_found', 'Punch not found.');
+  }
+  if (punch.reviewStatus !== 'PENDING') {
+    throw new HttpError(
+      409,
+      'not_pending',
+      'This punch is not awaiting review.',
+    );
+  }
+  await prisma.$transaction(async (tx) => {
+    await tx.kioskPunch.update({
+      where: { id: punch.id },
+      data: {
+        reviewStatus: decision,
+        reviewedById: req.user!.id,
+        reviewedAt: new Date(),
+        reviewNotes: notes ?? null,
+      },
+    });
+    if (decision === 'REJECTED' && punch.timeEntryId) {
+      // Void the time entry — reviewer believes the punch was an
+      // impostor, so the time should not count for payroll. We mark it
+      // REJECTED (existing TimeEntryStatus value) — payroll skips
+      // non-APPROVED entries, and the audit trail remains intact.
+      await tx.timeEntry.update({
+        where: { id: punch.timeEntryId },
+        data: {
+          status: 'REJECTED',
+          notes: notes ? `[Voided by review: ${notes}]` : '[Voided by kiosk review]',
+        },
+      });
+    }
+  });
+  res.json({ ok: true });
 });
 
 // ----- Face references (Phase 101) ---------------------------------------
@@ -656,6 +717,10 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
         faceMismatch,
         idempotencyKey: input.idempotencyKey ?? null,
         clientPunchedAt,
+        // Phase 103 — flag for HR review when biometrics don't match.
+        // The punch still succeeds (we don't lock anyone out), but it
+        // surfaces in the review queue until a manager approves it.
+        reviewStatus: faceMismatch ? 'PENDING' : null,
       },
     });
     if (shouldEnrollFace && input.faceDescriptor) {

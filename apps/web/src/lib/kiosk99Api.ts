@@ -29,6 +29,8 @@ export interface KioskPin {
   createdAt: string;
 }
 
+export type KioskPunchReviewStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+
 export interface KioskPunchSummary {
   id: string;
   kioskDeviceId: string;
@@ -42,6 +44,10 @@ export interface KioskPunchSummary {
   distanceMeters: number | null;
   faceDistance: number | null;
   faceMismatch: boolean | null;
+  reviewStatus: KioskPunchReviewStatus | null;
+  reviewedAt: string | null;
+  reviewedByEmail: string | null;
+  reviewNotes: string | null;
   createdAt: string;
 }
 
@@ -106,13 +112,25 @@ export const deleteKioskPin = (id: string) =>
 export const listKioskPunches = (params?: {
   associateId?: string;
   deviceId?: string;
+  reviewStatus?: KioskPunchReviewStatus;
 }) => {
   const q = new URLSearchParams();
   if (params?.associateId) q.set('associateId', params.associateId);
   if (params?.deviceId) q.set('deviceId', params.deviceId);
+  if (params?.reviewStatus) q.set('reviewStatus', params.reviewStatus);
   const suffix = q.toString() ? `?${q.toString()}` : '';
   return apiFetch<{ punches: KioskPunchSummary[] }>(`/kiosk-punches${suffix}`);
 };
+
+export const reviewKioskPunch = (
+  id: string,
+  decision: 'APPROVED' | 'REJECTED',
+  notes?: string,
+) =>
+  apiFetch<{ ok: true }>(`/kiosk-punches/${id}/review`, {
+    method: 'POST',
+    body: { decision, notes },
+  });
 
 // ----- Face references (Phase 101) ---------------------------------------
 

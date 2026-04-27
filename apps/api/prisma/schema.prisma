@@ -323,6 +323,7 @@ model User {
   // Phase 99 — kiosk authorship (devices registered, PINs assigned).
   kioskDevicesCreated          KioskDevice[]                  @relation("KioskDeviceCreator")
   kioskPinsCreated             KioskPin[]                     @relation("KioskPinCreator")
+  kioskPunchesReviewed         KioskPunch[]                   @relation("KioskPunchReviewer")
 
   @@index([role])
   @@index([clientId])
@@ -3380,6 +3381,12 @@ enum KioskPunchAction {
   REJECTED
 }
 
+enum KioskPunchReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 model KioskDevice {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId    String    @db.Uuid
@@ -3448,12 +3455,20 @@ model KioskPunch {
   // provided, so a punch queued at 8am and synced at 11am still logs 8am.
   idempotencyKey  String?  @unique
   clientPunchedAt DateTime? @db.Timestamptz(6)
+  // Phase 103 — anomaly review queue. NULL = no review needed; PENDING
+  // when a flag (face mismatch, impossible travel, etc.) was raised.
+  // Approve leaves the TimeEntry intact; reject voids it.
+  reviewStatus    KioskPunchReviewStatus?
+  reviewedById    String?  @db.Uuid
+  reviewedAt      DateTime? @db.Timestamptz(6)
+  reviewNotes     String?
   createdAt     DateTime         @default(now()) @db.Timestamptz(6)
 
   device    KioskDevice @relation(fields: [kioskDeviceId], references: [id], onDelete: Cascade)
   pin       KioskPin?   @relation(fields: [kioskPinId], references: [id], onDelete: SetNull)
   associate Associate?  @relation(fields: [associateId], references: [id], onDelete: SetNull)
   timeEntry TimeEntry?  @relation(fields: [timeEntryId], references: [id], onDelete: SetNull)
+  reviewedBy User?       @relation("KioskPunchReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
   enrolledFaceRefs KioskFaceReference[] @relation("KioskFaceEnrolledByPunch")
 
   @@index([kioskDeviceId])
