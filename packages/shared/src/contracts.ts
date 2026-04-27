@@ -827,6 +827,17 @@ export const PublishWeekResponseSchema = z.object({
 });
 export type PublishWeekResponse = z.infer<typeof PublishWeekResponseSchema>;
 
+/* Phase 54.4 — schedule PDF export ======================================== */
+
+export const ScheduleExportInputSchema = z.object({
+  /** ISO timestamp; the server treats this as the inclusive start of the range. */
+  from: z.string().datetime(),
+  /** ISO timestamp; the server treats this as the EXCLUSIVE end of the range. */
+  to: z.string().datetime(),
+  clientId: UuidSchema.optional(),
+});
+export type ScheduleExportInput = z.infer<typeof ScheduleExportInputSchema>;
+
 /* -------------------------------------------------------------------------- *
  *  Payroll — Phase 8 (MVP, demo-only withholding; disbursement stubbed)
  * -------------------------------------------------------------------------- */

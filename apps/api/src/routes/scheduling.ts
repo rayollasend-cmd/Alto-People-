@@ -8,6 +8,7 @@ import {
   CopyWeekInputSchema,
   PublishWeekInputSchema,
   PublishWeekResponseSchema,
+  ScheduleExportInputSchema,
   ShiftAssignInputSchema,
   ShiftCancelInputSchema,
   ShiftConflictsResponseSchema,
@@ -42,6 +43,7 @@ import {
   evaluateShiftNotice,
   isPublishingTransition,
 } from '../lib/predictiveScheduling.js';
+import { renderSchedulePdf } from '../lib/scheduleReport.js';
 
 export const schedulingRouter = Router();
 
@@ -1576,6 +1578,82 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
 
     const body: PublishWeekResponse = { published: publishedCount, skipped };
     res.json(PublishWeekResponseSchema.parse(body));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /scheduling/export.pdf
+ * Body: { from: ISO, to: ISO (exclusive), clientId? }
+ *
+ * Phase 54.4 — chronological PDF of every shift in the range, scoped per
+ * the caller's role (HR sees all, CLIENT_PORTAL sees its own client only).
+ * Streams application/pdf so the browser triggers a download.
+ */
+schedulingRouter.post('/export.pdf', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = ScheduleExportInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const from = new Date(parsed.data.from);
+    const to = new Date(parsed.data.to);
+    if (to <= from) {
+      throw new HttpError(400, 'invalid_range', 'to must be after from');
+    }
+
+    const where: Prisma.ShiftWhereInput = {
+      ...scopeShifts(req.user!),
+      startsAt: { gte: from, lt: to },
+      ...(parsed.data.clientId ? { clientId: parsed.data.clientId } : {}),
+    };
+    const rows = await prisma.shift.findMany({
+      where,
+      orderBy: { startsAt: 'asc' },
+      include: SHIFT_INCLUDE,
+      // PDF is page-broken — we don't need the list-view 200 cap here.
+      take: 5000,
+    });
+
+    let clientName: string | null = null;
+    if (parsed.data.clientId) {
+      const c = await prisma.client.findFirst({
+        where: { id: parsed.data.clientId, deletedAt: null },
+        select: { name: true },
+      });
+      clientName = c?.name ?? null;
+    }
+
+    const pdf = await renderSchedulePdf({
+      rangeFrom: from,
+      rangeTo: to,
+      generatedAt: new Date(),
+      filters: { clientName },
+      shifts: rows.map((r) => ({
+        startsAt: r.startsAt,
+        endsAt: r.endsAt,
+        position: r.position,
+        clientName: r.client?.name ?? null,
+        location: r.location,
+        assignedAssociateName: r.assignedAssociate
+          ? `${r.assignedAssociate.firstName} ${r.assignedAssociate.lastName}`
+          : null,
+        status: r.status,
+        hourlyRate: r.hourlyRate ? Number(r.hourlyRate) : null,
+        scheduledMinutes: scheduledMinutes(r),
+      })),
+    });
+
+    const fname = `shifts-${from.toISOString().slice(0, 10)}-to-${new Date(
+      to.getTime() - 1
+    )
+      .toISOString()
+      .slice(0, 10)}.pdf`;
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+    res.send(pdf);
   } catch (err) {
     next(err);
   }

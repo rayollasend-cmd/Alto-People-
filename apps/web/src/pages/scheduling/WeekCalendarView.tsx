@@ -474,7 +474,7 @@ function ShiftChip({
       <div
         {...listeners}
         {...attributes}
-        className="absolute left-0.5 top-1.5 text-silver/30 hover:text-gold cursor-grab active:cursor-grabbing"
+        className="absolute left-0.5 top-1.5 text-silver/30 hover:text-gold cursor-grab active:cursor-grabbing no-print"
         aria-label={`Move ${shift.position}`}
       >
         <GripVertical className="h-3 w-3" />
@@ -491,6 +491,7 @@ function ShiftChip({
           <Badge
             variant={STATUS_VARIANT[shift.status] ?? 'default'}
             className="text-[9px] px-1 py-0"
+            data-status={shift.status}
           >
             {shift.status === 'ASSIGNED'
               ? '✓'

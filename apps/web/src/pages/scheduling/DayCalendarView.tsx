@@ -414,7 +414,7 @@ function DayShiftChip({
       <div
         {...listeners}
         {...attributes}
-        className="absolute left-0.5 top-1 text-silver/30 hover:text-gold cursor-grab active:cursor-grabbing"
+        className="absolute left-0.5 top-1 text-silver/30 hover:text-gold cursor-grab active:cursor-grabbing no-print"
         aria-label={`Move ${shift.position}`}
       >
         <GripVertical className="h-3 w-3" />
@@ -431,6 +431,7 @@ function DayShiftChip({
           <Badge
             variant={STATUS_VARIANT[shift.status] ?? 'default'}
             className="text-[9px] px-1 py-0 shrink-0"
+            data-status={shift.status}
           >
             {shift.status === 'ASSIGNED'
               ? '✓'
@@ -451,7 +452,7 @@ function DayShiftChip({
       {canManage && (
         <div
           onMouseDown={onResizeMouseDown}
-          className="absolute left-0 right-0 bottom-0 h-1.5 cursor-ns-resize hover:bg-gold/40 group"
+          className="absolute left-0 right-0 bottom-0 h-1.5 cursor-ns-resize hover:bg-gold/40 group no-print"
           aria-label="Drag to resize duration"
           role="slider"
           tabIndex={-1}

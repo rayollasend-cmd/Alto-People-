@@ -52,3 +52,88 @@
     border-radius: 4px;
   }
 }
+
+/* ===========================================================================
+ * Phase 54 — print stylesheet for the scheduling page.
+ *
+ * Two opt-in classes drive what survives a Ctrl+P:
+ *   .no-print  — anything wrapped in this is hidden when printing
+ *   .print-only — anything wrapped in this is hidden on screen, shown on paper
+ *   .print-area — the element to actually print (light theme, expanded)
+ *
+ * On print we also force the body to a light theme, expand any horizontally
+ * scrolling grid (the week pivot is min-w-[1200px] on screen — on paper we
+ * let it land on landscape pages), and add a clean page-break utility.
+ * =========================================================================== */
+
+@media print {
+  /* Hide everything except descendants of .print-area. */
+  body * { visibility: hidden; }
+  .print-area, .print-area * { visibility: visible; }
+  .print-area { position: absolute; left: 0; top: 0; width: 100%; }
+
+  /* Force light theme. Beats the dark navy palette regardless of which
+     classes the components used (bg-navy, text-white, text-silver, etc.). */
+  body, .print-area {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+  .print-area * {
+    background-color: transparent !important;
+    color: #000 !important;
+    border-color: #999 !important;
+    box-shadow: none !important;
+  }
+  /* Status pill backgrounds — keep a hint of color so OPEN/ASSIGNED stays
+     visually distinct on paper. */
+  .print-area [data-status='OPEN'] {
+    background-color: #fff5e0 !important; color: #6b4500 !important;
+  }
+  .print-area [data-status='ASSIGNED'],
+  .print-area [data-status='COMPLETED'] {
+    background-color: #e6f5ec !important; color: #1f6a3f !important;
+  }
+  .print-area [data-status='DRAFT'] {
+    background-color: #efefef !important; color: #444 !important;
+  }
+  .print-area [data-status='CANCELLED'] {
+    background-color: #fbe6e6 !important; color: #8a1f1f !important;
+  }
+
+  /* Hide chrome inside the printable region too. */
+  .no-print, .no-print * { display: none !important; }
+
+  /* Show print-only elements. */
+  .print-only { display: block !important; }
+
+  /* Let the week pivot grid expand horizontally onto a single page width
+     (landscape recommended). We can't override the inline grid-template-
+     columns, but we can lift the min-width so it fits whatever paper size. */
+  .print-area .overflow-x-auto { overflow: visible !important; }
+  .print-area [style*='min-width'] { min-width: 0 !important; }
+
+  /* Sticky positioning is meaningless on paper and breaks layouts in some
+     browsers — flatten it. */
+  .print-area .sticky {
+    position: static !important;
+    top: auto !important; left: auto !important;
+  }
+
+  /* Page-break helpers. */
+  .page-break-before { page-break-before: always; }
+  .page-break-avoid  { page-break-inside: avoid; }
+  table { page-break-inside: auto; }
+  tr    { page-break-inside: avoid; page-break-after: auto; }
+  thead { display: table-header-group; }
+  tfoot { display: table-footer-group; }
+
+  /* Default to landscape — the week grid fits much better that way. */
+  @page { size: landscape; margin: 0.4in; }
+
+  /* Quiet the focus rings on paper. */
+  :focus-visible { outline: none !important; }
+}
+
+/* On-screen, .print-only is hidden. */
+.print-only { display: none; }
+

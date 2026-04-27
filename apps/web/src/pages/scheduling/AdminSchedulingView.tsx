@@ -9,10 +9,13 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  Download,
+  FileText,
   Filter,
   LayoutTemplate,
   List,
   Plus,
+  Printer,
   Send,
   Sparkles,
   UserPlus,
@@ -122,6 +125,83 @@ function toLocalDatetimeInput(d: Date): string {
   );
 }
 
+/** Local YYYY-MM-DD for <input type="date"> (avoids the toISOString UTC-shift bug). */
+function ymd(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** Parse YYYY-MM-DD as a *local* midnight Date. */
+function fromYmd(s: string): Date {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, (m ?? 1) - 1, d ?? 1);
+}
+
+/* ----- CSV / file-download helpers (Phase 54.3) -------------------------- */
+
+function csvCell(v: string | number | null | undefined): string {
+  if (v === null || v === undefined) return '';
+  const s = String(v);
+  // RFC 4180: quote anything containing a delimiter, quote, or newline; double inner quotes.
+  if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function csvRow(s: Shift): Array<string | number | null> {
+  const start = new Date(s.startsAt);
+  const end = new Date(s.endsAt);
+  const hours = (s.scheduledMinutes / 60).toFixed(2);
+  return [
+    start.toLocaleDateString(),
+    start.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+    end.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+    hours,
+    s.position,
+    s.clientName ?? '',
+    s.location ?? '',
+    s.assignedAssociateName ?? '',
+    s.status,
+    s.hourlyRate ?? '',
+    s.notes ?? '',
+  ];
+}
+
+function downloadBlob(filename: string, mime: string, content: string): void {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** Human-readable single-line date range — "April 2026", "Apr 1 – Apr 7, 2026", or "Apr 12, 2026". */
+function fmtPrintRange(from: string, to: string): string {
+  const f = fromYmd(from);
+  const t = fromYmd(to);
+  if (from === to) {
+    return f.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+  }
+  // Whole-month detection: from is the 1st, to is the last day, same year+month.
+  if (
+    f.getFullYear() === t.getFullYear() &&
+    f.getMonth() === t.getMonth() &&
+    f.getDate() === 1
+  ) {
+    const lastOfMonth = new Date(f.getFullYear(), f.getMonth() + 1, 0).getDate();
+    if (t.getDate() === lastOfMonth) {
+      return f.toLocaleDateString([], { month: 'long', year: 'numeric' });
+    }
+  }
+  const sameYear = f.getFullYear() === t.getFullYear();
+  const left = f.toLocaleDateString([], { month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) });
+  const right = t.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+  return `${left} – ${right}`;
+}
+
 interface AdminSchedulingViewProps {
   canManage: boolean;
 }
@@ -180,6 +260,23 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     d.setHours(0, 0, 0, 0);
     return d;
   });
+
+  // Phase 54.2 — list-view date range (defaults to the current month). When
+  // either bound is empty the field is treated as unbounded on that side.
+  const [listFrom, setListFrom] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(1);
+    return ymd(d);
+  });
+  const [listTo, setListTo] = useState<string>(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() + 1);
+    d.setDate(0); // last day of current month
+    return ymd(d);
+  });
+
+  // Phase 54.4 — PDF export pending flag.
+  const [exportingPdf, setExportingPdf] = useState(false);
 
   // KPI strip — always pulls the *current* week regardless of which week
   // the calendar is showing, so the "right now" signal stays consistent.
@@ -243,6 +340,18 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         args = { from: monthAnchor.toISOString(), to: monthEnd.toISOString() };
       } else {
         args = filter === 'ALL' ? {} : { status: filter };
+        // Phase 54.2 — list view honors a date range alongside the status
+        // filter. Empty bounds = unbounded on that side.
+        if (listFrom) {
+          args = { ...args, from: fromYmd(listFrom).toISOString() };
+        }
+        if (listTo) {
+          // Inclusive end-of-day: bump 1 day forward and use < (server uses lte
+          // so we send the *next* day at 00:00 to capture the full last day).
+          const end = fromYmd(listTo);
+          end.setDate(end.getDate() + 1);
+          args = { ...args, to: end.toISOString() };
+        }
       }
       if (clientFilter) args = { ...args, clientId: clientFilter };
       const res = await listShifts(args);
@@ -251,7 +360,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       const msg = err instanceof ApiError ? err.message : 'Failed to load shifts.';
       toast.error(msg);
     }
-  }, [filter, view, weekStart, weekEnd, dayAnchor, monthAnchor, clientFilter]);
+  }, [filter, view, weekStart, weekEnd, dayAnchor, monthAnchor, clientFilter, listFrom, listTo]);
 
   useEffect(() => {
     refresh();
@@ -315,6 +424,95 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       return t >= startMs && t < endMs;
     }).length;
   }, [shifts, view, weekStart, weekEnd]);
+
+  // Phase 54 — print / CSV / PDF exports.
+
+  const onPrint = () => {
+    // window.print uses the @media print rules in index.css to hide chrome
+    // and force light-mode. The print-area wrapper and no-print classes
+    // do the rest.
+    window.print();
+  };
+
+  /** Range string used in filenames + the print/PDF title block. */
+  const exportRange = useMemo(() => {
+    if (view === 'list') return { from: listFrom, to: listTo };
+    if (view === 'week') return { from: ymd(weekStart), to: ymd(new Date(weekEnd.getTime() - 1)) };
+    if (view === 'day') return { from: ymd(dayAnchor), to: ymd(dayAnchor) };
+    // month
+    const last = new Date(monthAnchor);
+    last.setMonth(last.getMonth() + 1);
+    last.setDate(0);
+    return { from: ymd(monthAnchor), to: ymd(last) };
+  }, [view, listFrom, listTo, weekStart, weekEnd, dayAnchor, monthAnchor]);
+
+  const onExportCsv = () => {
+    if (!filteredShifts || filteredShifts.length === 0) {
+      toast.error('Nothing to export.');
+      return;
+    }
+    const rows = [...filteredShifts].sort(
+      (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime()
+    );
+    const header = [
+      'Date',
+      'Start',
+      'End',
+      'Hours',
+      'Position',
+      'Client',
+      'Location',
+      'Associate',
+      'Status',
+      'Hourly rate',
+      'Notes',
+    ];
+    const csv = [header, ...rows.map((s) => csvRow(s))]
+      .map((r) => r.map(csvCell).join(','))
+      .join('\r\n');
+    downloadBlob(
+      `shifts-${exportRange.from}-to-${exportRange.to}.csv`,
+      'text/csv;charset=utf-8',
+      // BOM keeps Excel from mojibake-ing UTF-8 names like "José".
+      '﻿' + csv
+    );
+  };
+
+  const onExportPdf = async () => {
+    if (exportingPdf) return;
+    setExportingPdf(true);
+    try {
+      // Always pull a server-rendered, *complete* range (not truncated by
+      // the on-screen list cap). Range comes from the active view.
+      const start = fromYmd(exportRange.from);
+      const end = fromYmd(exportRange.to);
+      end.setDate(end.getDate() + 1); // end-exclusive
+      const res = await fetch('/api/scheduling/export.pdf', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from: start.toISOString(),
+          to: end.toISOString(),
+          ...(clientFilter ? { clientId: clientFilter } : {}),
+        }),
+      });
+      if (!res.ok) throw new ApiError(res.status, 'export_failed', 'PDF export failed.');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `shifts-${exportRange.from}-to-${exportRange.to}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'PDF export failed.');
+    } finally {
+      setExportingPdf(false);
+    }
+  };
 
   const onPublishWeek = async () => {
     if (publishing) return;
@@ -431,8 +629,24 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   };
 
   return (
-    <div className="max-w-6xl mx-auto">
-      <header className="mb-6 flex items-end justify-between gap-4 flex-wrap">
+    <div className="max-w-6xl mx-auto print-area">
+      {/* Print-only header — appears on paper above the schedule, hidden on screen. */}
+      <div className="print-only mb-3">
+        <div className="text-xl font-semibold">Schedule</div>
+        <div className="text-sm text-gray-700">
+          {fmtPrintRange(exportRange.from, exportRange.to)}
+          {clientFilter && clients.find((c) => c.id === clientFilter)
+            ? ` · ${clients.find((c) => c.id === clientFilter)?.name}`
+            : ''}
+          {posFilter ? ` · position: ${posFilter}` : ''}
+          {locationFilter ? ` · location: ${locationFilter}` : ''}
+        </div>
+        <div className="text-[10px] text-gray-500 mt-1">
+          Generated {new Date().toLocaleString()}
+        </div>
+      </div>
+
+      <header className="mb-6 flex items-end justify-between gap-4 flex-wrap no-print">
         <div>
           <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
             Scheduling
@@ -444,7 +658,25 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           </p>
         </div>
         {canManage && (
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
+            <Button variant="ghost" size="sm" onClick={onPrint} title="Print the current view">
+              <Printer className="h-4 w-4" />
+              Print
+            </Button>
+            <Button variant="ghost" size="sm" onClick={onExportCsv} title="Download as CSV">
+              <Download className="h-4 w-4" />
+              CSV
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onExportPdf}
+              loading={exportingPdf}
+              title="Generate a PDF for this date range"
+            >
+              <FileText className="h-4 w-4" />
+              PDF
+            </Button>
             <Button variant="secondary" onClick={() => setShowTemplates(true)}>
               <LayoutTemplate className="h-4 w-4" />
               Templates
@@ -457,7 +689,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         )}
       </header>
 
-      {canManage && <KpiStrip kpis={kpis} />}
+      {canManage && (
+        <div className="no-print">
+          <KpiStrip kpis={kpis} />
+        </div>
+      )}
 
       {canManage && (
         <CreateShiftDialog
@@ -483,7 +719,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       )}
 
       {/* View-mode toggle + per-view navigator */}
-      <div className="flex flex-wrap items-center gap-3 mb-4">
+      <div className="flex flex-wrap items-center gap-3 mb-4 no-print">
         <div className="inline-flex rounded-md border border-navy-secondary p-0.5 bg-navy-secondary/30">
           <ViewTab current={view} value="list" onClick={setView} icon={List} label="List" />
           <ViewTab current={view} value="day" onClick={setView} icon={Calendar} label="Day" />
@@ -647,29 +883,97 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
 
       {/* Phase 53.5 — filter bar (calendar views only) */}
       {canManage && view !== 'list' && (
-        <FilterBar
-          posFilter={posFilter}
-          setPosFilter={setPosFilter}
-          clientFilter={clientFilter}
-          setClientFilter={setClientFilter}
-          locationFilter={locationFilter}
-          setLocationFilter={setLocationFilter}
-          locationOptions={locationOptions}
-          clients={clients}
-          showAllAssociates={showAllAssociates}
-          setShowAllAssociates={setShowAllAssociates}
-          showAssociateToggle={view === 'week' || view === 'day'}
-        />
+        <div className="no-print">
+          <FilterBar
+            posFilter={posFilter}
+            setPosFilter={setPosFilter}
+            clientFilter={clientFilter}
+            setClientFilter={setClientFilter}
+            locationFilter={locationFilter}
+            setLocationFilter={setLocationFilter}
+            locationOptions={locationOptions}
+            clients={clients}
+            showAllAssociates={showAllAssociates}
+            setShowAllAssociates={setShowAllAssociates}
+            showAssociateToggle={view === 'week' || view === 'day'}
+          />
+        </div>
+      )}
+
+      {/* Phase 54.2 — date range filter for the list view (lives above the
+          status filter chips). Defaults to the current month. */}
+      {view === 'list' && (
+        <div className="no-print mb-3 flex flex-wrap items-center gap-2 px-3 py-2 rounded-md border border-navy-secondary bg-navy-secondary/20">
+          <div className="text-[10px] uppercase tracking-wider text-silver/70 inline-flex items-center gap-1">
+            <Calendar className="h-3 w-3" />
+            Range
+          </div>
+          <input
+            type="date"
+            value={listFrom}
+            onChange={(e) => setListFrom(e.target.value)}
+            className="h-8 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 py-1 text-xs text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+            aria-label="From date"
+          />
+          <span className="text-silver/60 text-xs">→</span>
+          <input
+            type="date"
+            value={listTo}
+            onChange={(e) => setListTo(e.target.value)}
+            className="h-8 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 py-1 text-xs text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+            aria-label="To date"
+          />
+          <button
+            type="button"
+            onClick={() => {
+              const d = new Date();
+              setListFrom(ymd(new Date(d.getFullYear(), d.getMonth(), 1)));
+              setListTo(ymd(new Date(d.getFullYear(), d.getMonth() + 1, 0)));
+            }}
+            className="text-[10px] text-silver/70 hover:text-gold underline underline-offset-2 ml-1"
+          >
+            This month
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const d = new Date();
+              const monday = startOfWeekMonday(d);
+              setListFrom(ymd(monday));
+              const sunday = new Date(monday);
+              sunday.setDate(sunday.getDate() + 6);
+              setListTo(ymd(sunday));
+            }}
+            className="text-[10px] text-silver/70 hover:text-gold underline underline-offset-2"
+          >
+            This week
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setListFrom('');
+              setListTo('');
+            }}
+            className="text-[10px] text-silver/70 hover:text-gold underline underline-offset-2"
+          >
+            Clear
+          </button>
+          <span className="ml-auto text-[10px] text-silver/60 tabular-nums">
+            {filteredShifts ? `${filteredShifts.length} shifts` : ''}
+          </span>
+        </div>
       )}
 
       {/* Phase 53.6 — publish-week ribbon (week view only). Hides when there
           are no DRAFT shifts in the visible week. */}
       {canManage && view === 'week' && draftsInWeek > 0 && (
-        <PublishRibbon
-          count={draftsInWeek}
-          onPublish={onPublishWeek}
-          loading={publishing}
-        />
+        <div className="no-print">
+          <PublishRibbon
+            count={draftsInWeek}
+            onPublish={onPublishWeek}
+            loading={publishing}
+          />
+        </div>
       )}
 
       {!shifts && (
@@ -782,7 +1086,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                 <TableHead>Ends</TableHead>
                 <TableHead>Assigned</TableHead>
                 <TableHead>Status</TableHead>
-                {canManage && <TableHead className="text-right">Actions</TableHead>}
+                {canManage && <TableHead className="text-right no-print">Actions</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -796,7 +1100,10 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                     {s.assignedAssociateName ?? '—'}
                   </TableCell>
                   <TableCell>
-                    <Badge variant={STATUS_VARIANT[s.status] ?? 'default'}>
+                    <Badge
+                      variant={STATUS_VARIANT[s.status] ?? 'default'}
+                      data-status={s.status}
+                    >
                       {s.status}
                     </Badge>
                     {s.cancellationReason && (
@@ -806,7 +1113,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                     )}
                   </TableCell>
                   {canManage && (
-                    <TableCell className="text-right whitespace-nowrap">
+                    <TableCell className="text-right whitespace-nowrap no-print">
                       <div className="inline-flex gap-1.5">
                         {(s.status === 'OPEN' || s.status === 'DRAFT') && (
                           <>
@@ -861,7 +1168,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         </Card>
       )}
 
-      {canManage && <AdminSwapsPanel />}
+      {canManage && (
+        <div className="no-print">
+          <AdminSwapsPanel />
+        </div>
+      )}
 
       {/* Assign-with-conflicts dialog */}
       <AssignDialog
