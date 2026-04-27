@@ -25,6 +25,7 @@ import {
 import { Input } from '@/components/ui/Input';
 import { Label, FormHint } from '@/components/ui/Label';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { JobsSection } from './JobsSection';
 
 // Two-letter US state codes that have either OT/break rules in Phase 23
 // or predictive scheduling in Phase 25. The select doubles as a shortcut
@@ -111,6 +112,8 @@ export function ClientDetail() {
         canManage={canManage}
         onSaved={(updated) => setGeofence(updated)}
       />
+
+      <JobsSection clientId={client.id} />
     </div>
   );
 }
