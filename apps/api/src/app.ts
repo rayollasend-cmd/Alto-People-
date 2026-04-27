@@ -39,6 +39,7 @@ import { recruiting90Router } from './routes/recruiting90.js';
 import { payrollTax91Router } from './routes/payrollTax91.js';
 import { benefitsLifecycle92Router } from './routes/benefitsLifecycle92.js';
 import { apiKeysWebhooks93Router } from './routes/apiKeysWebhooks93.js';
+import { lms94Router } from './routes/lms94.js';
 import { attachUser, requireCapability } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 
@@ -156,6 +157,9 @@ export function createApp() {
   // Phase 93 — public API keys + outbound webhooks. Self-gates per
   // handler with view:integrations / manage:integrations.
   app.use('/', apiKeysWebhooks93Router);
+  // Phase 94 — LMS: courses, modules, enrollments, certifications.
+  // Self-gates per handler with view:compliance / manage:compliance.
+  app.use('/', lms94Router);
   // QuickBooks router self-gates each route — the OAuth callback must accept
   // an unauthenticated browser redirect from Intuit, so we cannot apply a
   // capability check at this mount point.

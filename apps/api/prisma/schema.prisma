@@ -311,6 +311,9 @@ model User {
   // Phase 93 — API keys + webhooks authorship.
   apiKeysCreated               ApiKey[]                       @relation("ApiKeyCreator")
   webhooksCreated              Webhook[]                      @relation("WebhookCreator")
+  // Phase 94 — LMS course authorship + enrollment assignment.
+  coursesCreated               Course[]                       @relation("CourseCreator")
+  enrollmentsAssigned          CourseEnrollment[]             @relation("EnrollmentAssigner")
 
   @@index([role])
   @@index([clientId])
@@ -383,6 +386,8 @@ model Client {
   // Phase 93 — public API keys + outbound webhooks scoped to this client.
   apiKeys                ApiKey[]
   webhooks               Webhook[]
+  // Phase 94 — LMS courses scoped to this client.
+  courses                Course[]
 
   @@index([status])
   @@index([deletedAt])
@@ -481,6 +486,8 @@ model Associate {
   qles               QualifyingLifeEvent[]
   cobraOffers        CobraOffer[]
   acaMonths          AcaMonth[]
+  // Phase 94 — LMS course enrollments.
+  courseEnrollments  CourseEnrollment[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -3091,4 +3098,86 @@ model WebhookDelivery {
 
   @@index([webhookId])
   @@index([status])
+}
+
+// Phase 94 — LMS: courses, modules, enrollments, certifications.
+
+enum CourseStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum EnrollmentStatus {
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  EXPIRED
+  WAIVED
+}
+
+enum CourseModuleKind {
+  VIDEO
+  READING
+  QUIZ
+  EXTERNAL_LINK
+  POLICY_ACK
+}
+
+model Course {
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId     String?      @db.Uuid
+  title        String
+  description  String?
+  isRequired   Boolean      @default(false)
+  validityDays Int?
+  status       CourseStatus @default(DRAFT)
+  createdById  String?      @db.Uuid
+  createdAt    DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime     @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime?    @db.Timestamptz(6)
+
+  client      Client?            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy   User?              @relation("CourseCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  modules     CourseModule[]
+  enrollments CourseEnrollment[]
+
+  @@index([clientId, status])
+}
+
+model CourseModule {
+  id        String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  courseId  String           @db.Uuid
+  kind      CourseModuleKind
+  title     String
+  content   Json             @default("{}")
+  order     Int              @default(0)
+  createdAt DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime         @updatedAt @db.Timestamptz(6)
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@index([courseId, order])
+}
+
+model CourseEnrollment {
+  id           String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  courseId     String           @db.Uuid
+  associateId  String           @db.Uuid
+  status       EnrollmentStatus @default(ASSIGNED)
+  completedAt  DateTime?        @db.Timestamptz(6)
+  expiresAt    DateTime?        @db.Timestamptz(6)
+  progress     Json             @default("{}")
+  score        Decimal?         @db.Decimal(5, 2)
+  assignedById String?          @db.Uuid
+  assignedAt   DateTime         @default(now()) @db.Timestamptz(6)
+  createdAt    DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime         @updatedAt @db.Timestamptz(6)
+
+  course     Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  associate  Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  assignedBy User?     @relation("EnrollmentAssigner", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@index([associateId, status])
+  @@index([expiresAt])
 }
