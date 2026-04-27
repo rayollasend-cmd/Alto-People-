@@ -62,6 +62,7 @@ import { TuitionHome } from '@/pages/tuition/TuitionHome';
 import { HotlinePage } from '@/pages/hotline/HotlinePage';
 import { HotlineAdmin } from '@/pages/hotline/HotlineAdmin';
 import { EquityHome } from '@/pages/equity/EquityHome';
+import { VtoHome } from '@/pages/vto/VtoHome';
 import { TeamHome } from '@/pages/team/TeamHome';
 import { WorkflowsHome } from '@/pages/workflows/WorkflowsHome';
 import { MeHome } from '@/pages/me/MeHome';
@@ -176,7 +177,8 @@ const PLACEHOLDER_MODULES = MODULES.filter(
     m.key !== 'career' &&
     m.key !== 'tuition' &&
     m.key !== 'hotline' &&
-    m.key !== 'equity'
+    m.key !== 'equity' &&
+    m.key !== 'volunteer'
 );
 
 export const router = createBrowserRouter([
@@ -245,6 +247,7 @@ export const router = createBrowserRouter([
       { path: 'tuition', element: <TuitionHome /> },
       { path: 'hotline-admin', element: <HotlineAdmin /> },
       { path: 'equity', element: <EquityHome /> },
+      { path: 'volunteer', element: <VtoHome /> },
       { path: 'team', element: <TeamHome /> },
       { path: 'workflows', element: <WorkflowsHome /> },
       { path: 'me', element: <MeHome /> },

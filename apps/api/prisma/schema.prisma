@@ -353,6 +353,7 @@ model User {
   anonymousReportsAssigned     AnonymousReport[]              @relation("AnonReportAssignee")
   anonymousReportUpdates       AnonymousReportUpdate[]        @relation("AnonReportAuthor")
   equityGrantsIssued           EquityGrant[]                  @relation("EquityGrantedBy")
+  volunteerEntriesReviewed     VolunteerEntry[]               @relation("VolunteerReviewer")
 
   @@index([role])
   @@index([clientId])
@@ -411,6 +412,8 @@ model Client {
   kbArticles             KbArticle[]
   // Phase 126 — career ladders defined for this client.
   careerLadders          CareerLadder[]
+  // Phase 130 — VTO policy override (one-per-client; NULL = global default).
+  vtoPolicy              VtoPolicy?
   // Phase 86 — projects, premium-pay rules, tip pools.
   projects               Project[]
   premiumPayRules        PremiumPayRule[]
@@ -581,6 +584,8 @@ model Associate {
   tuitionRequests       TuitionRequest[]
   // Phase 129 — equity grants (RSU/NSO/ISO/etc.).
   equityGrants          EquityGrant[]
+  // Phase 130 — volunteer time off entries.
+  volunteerEntries      VolunteerEntry[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -4578,4 +4583,50 @@ model EquityVestingEvent {
   @@unique([grantId, eventIndex])
   @@index([grantId])
   @@index([vestDate])
+}
+
+enum VtoStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  MATCHED
+}
+
+model VolunteerEntry {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId     String    @db.Uuid
+  activityDate    DateTime  @db.Date
+  hours           Decimal   @db.Decimal(5, 2)
+  organization    String
+  cause           String?
+  description     String
+  evidenceUrl     String?
+  matchRequested  Boolean   @default(false)
+  matchAmount     Decimal?  @db.Decimal(10, 2)
+  matchCurrency   String    @default("USD") @db.VarChar(3)
+  status          VtoStatus @default(PENDING)
+  reviewedById    String?   @db.Uuid
+  reviewedAt      DateTime? @db.Timestamptz(6)
+  reviewerNotes   String?
+  createdAt       DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(6)
+
+  associate  Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  reviewedBy User?     @relation("VolunteerReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([associateId])
+  @@index([status])
+  @@index([activityDate])
+}
+
+model VtoPolicy {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId       String?  @unique @db.Uuid
+  annualHoursCap Decimal  @default(24) @db.Decimal(6, 2)
+  matchRatio     Decimal  @default(0) @db.Decimal(4, 2)
+  matchCurrency  String   @default("USD") @db.VarChar(3)
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(6)
+
+  client Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
 }
