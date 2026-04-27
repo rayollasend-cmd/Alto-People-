@@ -569,19 +569,35 @@ schedulingRouter.get('/shifts/:id/conflicts', MANAGE, async (req, res, next) => 
       return;
     }
 
-    const overlaps = await prisma.shift.findMany({
-      where: {
-        assignedAssociateId: associateId,
-        id: { not: target.id },
-        status: { notIn: ['CANCELLED', 'COMPLETED'] },
-        // Standard overlap: existing.starts < target.ends AND existing.ends > target.starts
-        startsAt: { lt: target.endsAt },
-        endsAt: { gt: target.startsAt },
-      },
-      include: {
-        client: { select: { name: true } },
-      },
-    });
+    // Day-bound the target so we can match it against day-granular
+    // TimeOffRequest rows (startDate / endDate are DATE columns).
+    const targetStartDate = new Date(target.startsAt);
+    targetStartDate.setUTCHours(0, 0, 0, 0);
+    const targetEndDate = new Date(target.endsAt);
+    targetEndDate.setUTCHours(0, 0, 0, 0);
+
+    const [overlaps, ptoOverlaps] = await Promise.all([
+      prisma.shift.findMany({
+        where: {
+          assignedAssociateId: associateId,
+          id: { not: target.id },
+          status: { notIn: ['CANCELLED', 'COMPLETED'] },
+          // Standard overlap: existing.starts < target.ends AND existing.ends > target.starts
+          startsAt: { lt: target.endsAt },
+          endsAt: { gt: target.startsAt },
+        },
+        include: { client: { select: { name: true } } },
+      }),
+      // Phase 52 — APPROVED time-off that intersects the shift's day range.
+      prisma.timeOffRequest.findMany({
+        where: {
+          associateId,
+          status: 'APPROVED',
+          startDate: { lte: targetEndDate },
+          endDate: { gte: targetStartDate },
+        },
+      }),
+    ]);
 
     const conflicts: ShiftConflict[] = overlaps.map((s) => ({
       conflictingShiftId: s.id,
@@ -590,7 +606,13 @@ schedulingRouter.get('/shifts/:id/conflicts', MANAGE, async (req, res, next) => 
       conflictingClientName: s.client?.name ?? null,
       conflictingPosition: s.position,
     }));
-    res.json(ShiftConflictsResponseSchema.parse({ conflicts }));
+    const timeOffConflicts = ptoOverlaps.map((r) => ({
+      requestId: r.id,
+      category: r.category,
+      startDate: r.startDate.toISOString().slice(0, 10),
+      endDate: r.endDate.toISOString().slice(0, 10),
+    }));
+    res.json(ShiftConflictsResponseSchema.parse({ conflicts, timeOffConflicts }));
   } catch (err) {
     next(err);
   }
@@ -612,25 +634,45 @@ schedulingRouter.get('/shifts/:id/auto-fill', MANAGE, async (req, res, next) => 
     });
     if (!target) throw new HttpError(404, 'shift_not_found', 'Shift not found');
 
-    const associates = await prisma.associate.findMany({
-      where: { deletedAt: null },
-      include: {
-        assignedShifts: {
-          where: {
-            status: { notIn: ['CANCELLED', 'COMPLETED'] },
-            startsAt: { gte: startOfWeekUTC(target.startsAt), lt: endOfWeekUTC(target.startsAt) },
+    // Day-bound the target so we can match it against day-granular PTO rows.
+    const targetDayStart = new Date(target.startsAt);
+    targetDayStart.setUTCHours(0, 0, 0, 0);
+    const targetDayEnd = new Date(target.endsAt);
+    targetDayEnd.setUTCHours(0, 0, 0, 0);
+
+    const [associates, ptoRows] = await Promise.all([
+      prisma.associate.findMany({
+        where: { deletedAt: null },
+        include: {
+          assignedShifts: {
+            where: {
+              status: { notIn: ['CANCELLED', 'COMPLETED'] },
+              startsAt: { gte: startOfWeekUTC(target.startsAt), lt: endOfWeekUTC(target.startsAt) },
+            },
           },
-        },
-        timeEntries: {
-          where: {
-            clockInAt: { gte: startOfWeekUTC(target.startsAt), lt: endOfWeekUTC(target.startsAt) },
+          timeEntries: {
+            where: {
+              clockInAt: { gte: startOfWeekUTC(target.startsAt), lt: endOfWeekUTC(target.startsAt) },
+            },
+            include: { breaks: true },
           },
-          include: { breaks: true },
+          availability: true,
         },
-        availability: true,
-      },
-      take: 500,
-    });
+        take: 500,
+      }),
+      // Phase 52 — APPROVED PTO covering the shift's day window. One query
+      // for the whole pool; we bucket by associateId in memory.
+      prisma.timeOffRequest.findMany({
+        where: {
+          status: 'APPROVED',
+          startDate: { lte: targetDayEnd },
+          endDate: { gte: targetDayStart },
+        },
+        select: { associateId: true },
+      }),
+    ]);
+
+    const ptoAssociateIds = new Set(ptoRows.map((r) => r.associateId));
 
     const targetDOW = target.startsAt.getUTCDay();
     const startMin = target.startsAt.getUTCHours() * 60 + target.startsAt.getUTCMinutes();
@@ -646,6 +688,7 @@ schedulingRouter.get('/shifts/:id/auto-fill', MANAGE, async (req, res, next) => 
       const noConflict = !a.assignedShifts.some(
         (s) => s.startsAt < target.endsAt && s.endsAt > target.startsAt
       );
+      const onApprovedTimeOff = ptoAssociateIds.has(a.id);
       const weeklyMinutesScheduled = a.assignedShifts.reduce(
         (sum, s) => sum + Math.floor((s.endsAt.getTime() - s.startsAt.getTime()) / 60_000),
         0
@@ -663,6 +706,9 @@ schedulingRouter.get('/shifts/:id/auto-fill', MANAGE, async (req, res, next) => 
       if (matchesAvailability) score += 0.5;
       if (noConflict) score += 0.3;
       if (!wouldExceed40) score += 0.2;
+      // PTO is a deliberate plan — force these to the bottom of the list
+      // regardless of availability or weekly hours.
+      if (onApprovedTimeOff) score = 0;
 
       return {
         associateId: a.id,
@@ -671,6 +717,7 @@ schedulingRouter.get('/shifts/:id/auto-fill', MANAGE, async (req, res, next) => 
         weeklyMinutesActual,
         matchesAvailability,
         noConflict,
+        onApprovedTimeOff,
         score,
       };
     });

@@ -639,6 +639,7 @@ function Kpi({ label, value, tone = 'text-white' }: { label: string; value: stri
 /* ===== Assign dialog ====================================================== */
 
 type ConflictRow = { position: string; client: string | null; startsAt: string };
+type TimeOffRow = { category: string; startDate: string; endDate: string };
 
 function AssignDialog({
   target,
@@ -651,6 +652,7 @@ function AssignDialog({
 }) {
   const [associateId, setAssociateId] = useState('');
   const [conflicts, setConflicts] = useState<ConflictRow[] | null>(null);
+  const [timeOff, setTimeOff] = useState<TimeOffRow[] | null>(null);
   const [checking, setChecking] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
@@ -659,6 +661,7 @@ function AssignDialog({
     if (target) {
       setAssociateId('');
       setConflicts(null);
+      setTimeOff(null);
       setSubmitting(false);
       setChecking(false);
     }
@@ -673,6 +676,7 @@ function AssignDialog({
     // UUID-ish gate so we don't hammer the API on every keystroke.
     if (id.length < 32) {
       setConflicts(null);
+      setTimeOff(null);
       return;
     }
     let cancelled = false;
@@ -688,8 +692,18 @@ function AssignDialog({
             startsAt: cf.conflictingStartsAt,
           }))
         );
+        setTimeOff(
+          c.timeOffConflicts.map((t) => ({
+            category: t.category,
+            startDate: t.startDate,
+            endDate: t.endDate,
+          }))
+        );
       } catch {
-        if (!cancelled) setConflicts(null);
+        if (!cancelled) {
+          setConflicts(null);
+          setTimeOff(null);
+        }
       } finally {
         if (!cancelled) setChecking(false);
       }
@@ -713,6 +727,9 @@ function AssignDialog({
   };
 
   const hasConflicts = !!(conflicts && conflicts.length > 0);
+  const hasTimeOff = !!(timeOff && timeOff.length > 0);
+  const isClean =
+    !checking && conflicts !== null && conflicts.length === 0 && !hasTimeOff;
 
   return (
     <Dialog open={target !== null} onOpenChange={(o) => !o && onClose()}>
@@ -751,13 +768,35 @@ function AssignDialog({
             {checking && (
               <div className="text-[11px] text-silver/60 mt-1">Checking conflicts…</div>
             )}
-            {!checking && conflicts && conflicts.length === 0 && (
+            {isClean && (
               <div className="text-[11px] text-success mt-1 inline-flex items-center gap-1">
                 <CheckCircle2 className="h-3 w-3" />
                 No conflicts
               </div>
             )}
           </div>
+
+          {hasTimeOff && (
+            <div className="flex items-start gap-2 p-3 rounded-md border border-error/50 bg-error/10 text-sm">
+              <AlertTriangle className="h-4 w-4 text-error mt-0.5 shrink-0" />
+              <div>
+                <div className="font-medium text-white">
+                  Approved time off covers this shift
+                </div>
+                <ul className="mt-2 space-y-1 text-silver">
+                  {timeOff!.map((t, i) => (
+                    <li key={i} className="text-xs">
+                      • {fmtCategory(t.category)} ·{' '}
+                      <span className="tabular-nums">
+                        {t.startDate}
+                        {t.startDate !== t.endDate ? ` → ${t.endDate}` : ''}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
 
           {hasConflicts && (
             <div className="flex items-start gap-2 p-3 rounded-md border border-warning/40 bg-warning/10 text-sm">
@@ -785,17 +824,25 @@ function AssignDialog({
             </Button>
             <Button
               type="submit"
-              variant={hasConflicts ? 'destructive' : 'primary'}
+              variant={hasConflicts || hasTimeOff ? 'destructive' : 'primary'}
               loading={submitting}
               disabled={!associateId.trim()}
             >
-              {hasConflicts ? 'Assign anyway' : 'Assign'}
+              {hasConflicts || hasTimeOff ? 'Assign anyway' : 'Assign'}
             </Button>
           </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
   );
+}
+
+function fmtCategory(c: string): string {
+  return c
+    .toLowerCase()
+    .split('_')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
 }
 
 /* ===== Cancel dialog ====================================================== */

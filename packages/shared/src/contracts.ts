@@ -1495,8 +1495,20 @@ export const ShiftConflictSchema = z.object({
 });
 export type ShiftConflict = z.infer<typeof ShiftConflictSchema>;
 
+// Phase 52 — APPROVED time-off that overlaps the shift window. Surfaced
+// in the UI as a hard warning ("they're on PTO that day") so HR doesn't
+// accidentally double-book someone who's away.
+export const TimeOffConflictSchema = z.object({
+  requestId: UuidSchema,
+  category: z.string(),
+  startDate: z.string(), // YYYY-MM-DD
+  endDate: z.string(),
+});
+export type TimeOffConflict = z.infer<typeof TimeOffConflictSchema>;
+
 export const ShiftConflictsResponseSchema = z.object({
   conflicts: z.array(ShiftConflictSchema),
+  timeOffConflicts: z.array(TimeOffConflictSchema).default([]),
 });
 export type ShiftConflictsResponse = z.infer<typeof ShiftConflictsResponseSchema>;
 
@@ -1507,6 +1519,9 @@ export const AutoFillCandidateSchema = z.object({
   weeklyMinutesActual: z.number().int().nonnegative(),
   matchesAvailability: z.boolean(),
   noConflict: z.boolean(),
+  // Phase 52 — true when an APPROVED time-off request covers the shift day.
+  // Surfaced so the picker can flag them; their score is also forced to 0.
+  onApprovedTimeOff: z.boolean().default(false),
   score: z.number().min(0).max(1),
 });
 export type AutoFillCandidate = z.infer<typeof AutoFillCandidateSchema>;
