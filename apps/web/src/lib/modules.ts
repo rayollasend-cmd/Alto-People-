@@ -41,6 +41,7 @@ export type ModuleKey =
   | 'headcount'
   | 'skills'
   | 'mentorship'
+  | 'expirations'
   | 'team'
   | 'workflows'
   | 'me'
@@ -100,7 +101,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -212,6 +213,16 @@ export const MODULES: ModuleNav[] = [
     requires: 'view:org',
     icon: MentorshipIcon,
     group: 'workforce',
+  },
+  {
+    key: 'expirations',
+    path: '/expirations',
+    label: 'Expirations',
+    description:
+      'Qualifications and certifications expiring soon — chase renewals before they lapse. Bucketed expired / due soon / due later.',
+    requires: 'view:org',
+    icon: ExpirationsIcon,
+    group: 'compliance',
   },
   {
     key: 'team',

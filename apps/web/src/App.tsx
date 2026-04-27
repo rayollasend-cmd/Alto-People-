@@ -44,6 +44,7 @@ import { PulseHome } from '@/pages/pulse/PulseHome';
 import { HeadcountHome } from '@/pages/headcount/HeadcountHome';
 import { SkillsHome } from '@/pages/skills/SkillsHome';
 import { MentorshipHome } from '@/pages/mentorship/MentorshipHome';
+import { ExpirationsHome } from '@/pages/expirations/ExpirationsHome';
 import { TeamHome } from '@/pages/team/TeamHome';
 import { WorkflowsHome } from '@/pages/workflows/WorkflowsHome';
 import { MeHome } from '@/pages/me/MeHome';
@@ -188,6 +189,7 @@ export const router = createBrowserRouter([
       { path: 'headcount', element: <HeadcountHome /> },
       { path: 'skills', element: <SkillsHome /> },
       { path: 'mentorship', element: <MentorshipHome /> },
+      { path: 'expirations', element: <ExpirationsHome /> },
       { path: 'team', element: <TeamHome /> },
       { path: 'workflows', element: <WorkflowsHome /> },
       { path: 'me', element: <MeHome /> },
