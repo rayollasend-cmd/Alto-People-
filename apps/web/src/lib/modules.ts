@@ -39,7 +39,8 @@ export type ModuleKey =
   | 'me'
   | 'compensation'
   | 'marketplace'
-  | 'payrules';
+  | 'payrules'
+  | 'dircomms';
 
 /**
  * Phase 67 — sidebar groupings, F500-style. Modules with the same `group`
@@ -92,7 +93,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -284,6 +285,16 @@ export const MODULES: ModuleNav[] = [
     requires: 'view:audit',
     icon: ScrollText,
     group: 'compliance',
+  },
+  {
+    key: 'dircomms',
+    path: '/directory',
+    label: 'Directory & comms',
+    description:
+      'Search the people directory, send broadcasts, and run pulse / eNPS / open-ended surveys.',
+    requires: 'view:dashboard',
+    icon: MegaphoneIcon,
+    group: 'insights',
   },
   {
     key: 'communications',

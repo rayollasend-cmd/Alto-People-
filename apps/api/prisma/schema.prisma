@@ -285,6 +285,11 @@ model User {
   shiftClaimsDecided           OpenShiftClaim[]               @relation("OpenShiftClaimDecider")
   // Phase 86 — tip pool authorship.
   tipPoolsCreated              TipPool[]                      @relation("TipPoolCreator")
+  // Phase 87 — broadcast / survey authorship + receipts + responses.
+  broadcastsCreated            Broadcast[]                    @relation("BroadcastCreator")
+  broadcastReceipts            BroadcastReceipt[]             @relation("BroadcastReceiptUser")
+  surveysCreated               Survey[]                       @relation("SurveyCreator")
+  surveyResponses              SurveyResponse[]               @relation("SurveyRespondent")
 
   @@index([role])
   @@index([clientId])
@@ -341,6 +346,9 @@ model Client {
   projects               Project[]
   premiumPayRules        PremiumPayRule[]
   tipPools               TipPool[]
+  // Phase 87 — broadcasts + surveys (when client-scoped).
+  broadcasts             Broadcast[]
+  surveys                Survey[]
 
   @@index([status])
   @@index([deletedAt])
@@ -1416,6 +1424,8 @@ model Department {
   children    Department[] @relation("DepartmentParent")
   associates  Associate[]
   positions   Position[]
+  // Phase 87 — broadcast targeting.
+  broadcasts  Broadcast[]
 
   @@index([clientId, deletedAt])
   @@index([parentId])
@@ -1434,6 +1444,8 @@ model CostCenter {
   client      Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
   associates  Associate[]
   positions   Position[]
+  // Phase 87 — broadcast targeting.
+  broadcasts  Broadcast[]
 
   @@index([clientId, deletedAt])
 }
@@ -2284,4 +2296,140 @@ model TipPoolAllocation {
 
   @@unique([tipPoolId, associateId])
   @@index([associateId])
+}
+
+// ===== Phase 87 — Directory + broadcast + surveys =========================
+
+enum BroadcastChannel {
+  IN_APP
+  EMAIL
+  SMS
+  PUSH
+}
+
+enum BroadcastStatus {
+  DRAFT
+  SCHEDULED
+  SENT
+  CANCELLED
+}
+
+enum SurveyStatus {
+  DRAFT
+  OPEN
+  CLOSED
+}
+
+enum SurveyQuestionKind {
+  SHORT_TEXT
+  LONG_TEXT
+  SINGLE_CHOICE
+  MULTI_CHOICE
+  SCALE_1_5
+  NPS_0_10
+}
+
+model Broadcast {
+  id           String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  createdById  String?            @db.Uuid
+  title        String
+  body         String
+  channels     BroadcastChannel[] @default([IN_APP])
+  clientId     String?            @db.Uuid
+  departmentId String?            @db.Uuid
+  costCenterId String?            @db.Uuid
+  status       BroadcastStatus    @default(DRAFT)
+  scheduledFor DateTime?          @db.Timestamptz(6)
+  sentAt       DateTime?          @db.Timestamptz(6)
+  createdAt    DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime           @updatedAt @db.Timestamptz(6)
+
+  createdBy  User?              @relation("BroadcastCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  client     Client?            @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  department Department?        @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  costCenter CostCenter?        @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
+  receipts   BroadcastReceipt[]
+
+  @@index([status])
+  @@index([clientId])
+}
+
+model BroadcastReceipt {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  broadcastId String    @db.Uuid
+  userId      String    @db.Uuid
+  readAt      DateTime? @db.Timestamptz(6)
+  dismissedAt DateTime? @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+
+  broadcast Broadcast @relation(fields: [broadcastId], references: [id], onDelete: Cascade)
+  user      User      @relation("BroadcastReceiptUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([broadcastId, userId])
+  @@index([userId])
+}
+
+model Survey {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  createdById String?      @db.Uuid
+  clientId    String?      @db.Uuid
+  title       String
+  description String?
+  isAnonymous Boolean      @default(true)
+  status      SurveyStatus @default(DRAFT)
+  openedAt    DateTime?    @db.Timestamptz(6)
+  closedAt    DateTime?    @db.Timestamptz(6)
+  createdAt   DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime     @updatedAt @db.Timestamptz(6)
+
+  createdBy User?            @relation("SurveyCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  client    Client?          @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  questions SurveyQuestion[]
+  responses SurveyResponse[]
+
+  @@index([status])
+}
+
+model SurveyQuestion {
+  id         String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  surveyId   String             @db.Uuid
+  kind       SurveyQuestionKind
+  prompt     String
+  choices    Json?
+  isRequired Boolean            @default(true)
+  sortOrder  Int                @default(0)
+  createdAt  DateTime           @default(now()) @db.Timestamptz(6)
+
+  survey  Survey         @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  answers SurveyAnswer[]
+
+  @@index([surveyId])
+}
+
+model SurveyResponse {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  surveyId     String   @db.Uuid
+  respondentId String?  @db.Uuid
+  submittedAt  DateTime @default(now()) @db.Timestamptz(6)
+
+  survey     Survey         @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  respondent User?          @relation("SurveyRespondent", fields: [respondentId], references: [id], onDelete: SetNull)
+  answers    SurveyAnswer[]
+
+  @@index([surveyId])
+}
+
+model SurveyAnswer {
+  id           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  responseId   String  @db.Uuid
+  questionId   String  @db.Uuid
+  textValue    String?
+  intValue     Int?
+  choiceValues Int[]   @default([])
+
+  response SurveyResponse @relation(fields: [responseId], references: [id], onDelete: Cascade)
+  question SurveyQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([responseId, questionId])
+  @@index([questionId])
 }
