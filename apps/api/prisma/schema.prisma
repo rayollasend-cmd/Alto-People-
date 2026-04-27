@@ -305,6 +305,9 @@ model User {
   // Phase 91 — garnishments + tax forms authorship.
   garnishmentsCreated          Garnishment[]                  @relation("GarnishmentCreator")
   taxFormsFiled                TaxForm[]                      @relation("TaxFormFiler")
+  // Phase 92 — open enrollment + QLE authorship.
+  openEnrollmentsCreated       OpenEnrollmentWindow[]         @relation("OpenEnrollmentCreator")
+  qleDecisions                 QualifyingLifeEvent[]          @relation("QleDecider")
 
   @@index([role])
   @@index([clientId])
@@ -372,6 +375,8 @@ model Client {
   interviewKits          InterviewKit[]
   offers                 Offer[]
   jobPostings            JobPosting[]
+  // Phase 92 — open enrollment windows.
+  openEnrollmentWindows  OpenEnrollmentWindow[]
 
   @@index([status])
   @@index([deletedAt])
@@ -466,6 +471,10 @@ model Associate {
   // Phase 91 — garnishments + tax forms (W-2, 1099-NEC).
   garnishments       Garnishment[]
   taxForms           TaxForm[]
+  // Phase 92 — qualifying life events, COBRA offers, ACA monthly snapshots.
+  qles               QualifyingLifeEvent[]
+  cobraOffers        CobraOffer[]
+  acaMonths          AcaMonth[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -2885,4 +2894,127 @@ model TaxForm {
 
   @@index([kind, taxYear])
   @@index([associateId])
+}
+
+// Phase 92 — Open enrollment, qualifying life events, COBRA, ACA.
+
+enum OpenEnrollmentStatus {
+  DRAFT
+  OPEN
+  CLOSED
+}
+
+enum QleKind {
+  MARRIAGE
+  DIVORCE
+  BIRTH
+  ADOPTION
+  DEATH_OF_DEPENDENT
+  LOSS_OF_COVERAGE
+  GAIN_OF_COVERAGE
+  RELOCATION
+  OTHER
+}
+
+enum QleStatus {
+  PENDING
+  APPROVED
+  DENIED
+  EXPIRED
+}
+
+enum CobraStatus {
+  NOTIFIED
+  ELECTED
+  WAIVED
+  EXPIRED
+  TERMINATED
+}
+
+enum AcaCoverageOffer {
+  CODE_1A
+  CODE_1B
+  CODE_1C
+  CODE_1D
+  CODE_1E
+  CODE_1F
+  CODE_1G
+  CODE_1H
+}
+
+model OpenEnrollmentWindow {
+  id          String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId    String               @db.Uuid
+  name        String
+  startsOn    DateTime             @db.Date
+  endsOn      DateTime             @db.Date
+  effectiveOn DateTime             @db.Date
+  status      OpenEnrollmentStatus @default(DRAFT)
+  createdById String?              @db.Uuid
+  createdAt   DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime             @updatedAt @db.Timestamptz(6)
+
+  client    Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy User?  @relation("OpenEnrollmentCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([clientId, status])
+}
+
+model QualifyingLifeEvent {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId  String    @db.Uuid
+  kind         QleKind
+  eventDate    DateTime  @db.Date
+  allowedUntil DateTime  @db.Date
+  evidenceUrl  String?
+  notes        String?
+  status       QleStatus @default(PENDING)
+  decidedAt    DateTime? @db.Timestamptz(6)
+  decidedById  String?   @db.Uuid
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  decidedBy User?     @relation("QleDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  @@index([associateId])
+  @@index([status])
+}
+
+model CobraOffer {
+  id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId      String      @db.Uuid
+  qualifyingEvent  String
+  qeDate           DateTime    @db.Date
+  electionDeadline DateTime    @db.Date
+  coverageEndsOn   DateTime    @db.Date
+  noticedAt        DateTime    @default(now()) @db.Timestamptz(6)
+  electedAt        DateTime?   @db.Timestamptz(6)
+  premiumPerMonth  Decimal?    @db.Decimal(10, 2)
+  status           CobraStatus @default(NOTIFIED)
+  createdAt        DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime    @updatedAt @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@index([associateId])
+  @@index([status])
+}
+
+model AcaMonth {
+  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId        String            @db.Uuid
+  year               Int
+  month              Int
+  offerOfCoverage    AcaCoverageOffer?
+  lowestPremiumCents Int?
+  safeHarbor         String?           @db.VarChar(3)
+  isFullTime         Boolean           @default(false)
+  createdAt          DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime          @updatedAt @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@unique([associateId, year, month])
+  @@index([year])
 }
