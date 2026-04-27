@@ -8,6 +8,7 @@ import {
   NudgeInputSchema,
   PolicyAckInputSchema,
   ProfileSubmissionSchema,
+  TemplateUpsertInputSchema,
   W4SubmissionInputSchema,
   type ApplicationDetail,
   type ApplicationListResponse,
@@ -461,23 +462,179 @@ onboardingRouter.get('/templates', async (req, res, next) => {
       include: { tasks: { orderBy: { order: 'asc' } } },
       orderBy: [{ track: 'asc' }, { name: 'asc' }],
     });
-    const templates: OnboardingTemplate[] = rows.map((row) => ({
-      id: row.id,
-      clientId: row.clientId,
-      track: row.track,
-      name: row.name,
-      tasks: row.tasks.map(
-        (t): TemplateTask => ({
-          id: t.id,
-          kind: t.kind,
-          title: t.title,
-          description: t.description,
-          order: t.order,
-        })
-      ),
-    }));
+    const templates: OnboardingTemplate[] = rows.map(toTemplate);
     const payload: TemplateListResponse = { templates };
     res.json(payload);
+  } catch (err) {
+    next(err);
+  }
+});
+
+function toTemplate(row: {
+  id: string;
+  clientId: string | null;
+  track: OnboardingTemplate['track'];
+  name: string;
+  tasks: Array<{
+    id: string;
+    kind: TemplateTask['kind'];
+    title: string;
+    description: string | null;
+    order: number;
+  }>;
+}): OnboardingTemplate {
+  return {
+    id: row.id,
+    clientId: row.clientId,
+    track: row.track,
+    name: row.name,
+    tasks: row.tasks.map(
+      (t): TemplateTask => ({
+        id: t.id,
+        kind: t.kind,
+        title: t.title,
+        description: t.description,
+        order: t.order,
+      })
+    ),
+  };
+}
+
+/* ===== TEMPLATE CRUD (Phase 61, HR/Ops only) ============================ */
+
+// Validate that the chosen client exists (for client-scoped templates) and
+// enforce the (clientId, track) unique pair so we don't get two STANDARD
+// templates for the same client.
+async function validateTemplateUpsert(
+  clientId: string | null,
+  track: OnboardingTemplate['track'],
+  excludeTemplateId?: string
+): Promise<void> {
+  if (clientId) {
+    const client = await prisma.client.findFirst({
+      where: { id: clientId, deletedAt: null },
+    });
+    if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+  }
+  const existing = await prisma.onboardingTemplate.findFirst({
+    where: {
+      clientId,
+      track,
+      ...(excludeTemplateId ? { id: { not: excludeTemplateId } } : {}),
+    },
+  });
+  if (existing) {
+    throw new HttpError(
+      409,
+      'template_track_taken',
+      `A ${track} template already exists for this ${clientId ? 'client' : 'global scope'}.`
+    );
+  }
+}
+
+onboardingRouter.post('/templates', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = TemplateUpsertInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const { name, track, clientId, tasks } = parsed.data;
+    await validateTemplateUpsert(clientId, track);
+
+    const created = await prisma.onboardingTemplate.create({
+      data: {
+        name: name.trim(),
+        track,
+        clientId,
+        tasks: {
+          create: tasks.map((t, i) => ({
+            kind: t.kind,
+            title: t.title.trim(),
+            description: t.description ?? null,
+            // Normalize order by array position — clients can leave it out.
+            order: t.order ?? i,
+          })),
+        },
+      },
+      include: { tasks: { orderBy: { order: 'asc' } } },
+    });
+    res.status(201).json(toTemplate(created));
+  } catch (err) {
+    next(err);
+  }
+});
+
+onboardingRouter.put('/templates/:id', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = TemplateUpsertInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const id = req.params.id;
+    const existing = await prisma.onboardingTemplate.findUnique({ where: { id } });
+    if (!existing) {
+      throw new HttpError(404, 'template_not_found', 'Template not found');
+    }
+    const { name, track, clientId, tasks } = parsed.data;
+    await validateTemplateUpsert(clientId, track, id);
+
+    // Full-replace tasks within a transaction so a failure mid-update
+    // doesn't leave the template with a half-applied task list.
+    const updated = await prisma.$transaction(async (tx) => {
+      await tx.onboardingTemplateTask.deleteMany({ where: { templateId: id } });
+      return tx.onboardingTemplate.update({
+        where: { id },
+        data: {
+          name: name.trim(),
+          track,
+          clientId,
+          tasks: {
+            create: tasks.map((t, i) => ({
+              kind: t.kind,
+              title: t.title.trim(),
+              description: t.description ?? null,
+              order: t.order ?? i,
+            })),
+          },
+        },
+        include: { tasks: { orderBy: { order: 'asc' } } },
+      });
+    }, TX_OPTS);
+    res.json(toTemplate(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+onboardingRouter.delete('/templates/:id', MANAGE, async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    const existing = await prisma.onboardingTemplate.findUnique({ where: { id } });
+    if (!existing) {
+      throw new HttpError(404, 'template_not_found', 'Template not found');
+    }
+    // Refuse if any application was created from this template — we don't
+    // track templateId on Application directly (only the resolved
+    // OnboardingTrack), so use track + (optional) clientId as a proxy.
+    // This is conservative: it might block a delete that would technically
+    // be safe, but it matches the user-visible idea of "this template is
+    // in use." HR can re-create the template if they really want to delete.
+    const usedBy = await prisma.application.count({
+      where: {
+        clientId: existing.clientId ?? undefined,
+        onboardingTrack: existing.track,
+        deletedAt: null,
+      },
+    });
+    if (usedBy > 0) {
+      throw new HttpError(
+        409,
+        'template_in_use',
+        `Cannot delete: ${usedBy} application(s) use this track for this client.`
+      );
+    }
+    await prisma.onboardingTemplate.delete({ where: { id } });
+    res.status(204).end();
   } catch (err) {
     next(err);
   }

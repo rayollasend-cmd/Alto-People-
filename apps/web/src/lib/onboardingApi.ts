@@ -12,9 +12,11 @@ import type {
   DirectDepositInput,
   NudgeInput,
   NudgeResponse,
+  OnboardingTemplate,
   PolicyAckInput,
   ProfileSubmission,
   TemplateListResponse,
+  TemplateUpsertInput,
   W4SubmissionInput,
 } from '@alto-people/shared';
 import { apiFetch } from './api';
@@ -145,6 +147,29 @@ export function getApplication(id: string): Promise<ApplicationDetail> {
 
 export function listTemplates(): Promise<TemplateListResponse> {
   return apiFetch<TemplateListResponse>('/onboarding/templates');
+}
+
+/* ---------------------- Phase 61 — template CRUD ----------------------- */
+
+export function createTemplate(body: TemplateUpsertInput): Promise<OnboardingTemplate> {
+  return apiFetch<OnboardingTemplate>('/onboarding/templates', {
+    method: 'POST',
+    body,
+  });
+}
+
+export function updateTemplate(
+  id: string,
+  body: TemplateUpsertInput
+): Promise<OnboardingTemplate> {
+  return apiFetch<OnboardingTemplate>(`/onboarding/templates/${id}`, {
+    method: 'PUT',
+    body,
+  });
+}
+
+export function deleteTemplate(id: string): Promise<void> {
+  return apiFetch<void>(`/onboarding/templates/${id}`, { method: 'DELETE' });
 }
 
 export function getApplicationPolicies(

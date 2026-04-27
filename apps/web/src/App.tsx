@@ -9,6 +9,8 @@ import { RequireAuth } from '@/lib/auth';
 import { OnboardingHome } from '@/pages/onboarding/OnboardingHome';
 import { ApplicationDetail } from '@/pages/onboarding/ApplicationDetail';
 import { AssociateChecklist } from '@/pages/onboarding/AssociateChecklist';
+import { TemplatesList } from '@/pages/onboarding/TemplatesList';
+import { TemplateEditor } from '@/pages/onboarding/TemplateEditor';
 import { ProfileInfoTask } from '@/pages/onboarding/tasks/ProfileInfoTask';
 import { W4Task } from '@/pages/onboarding/tasks/W4Task';
 import { DirectDepositTask } from '@/pages/onboarding/tasks/DirectDepositTask';
@@ -33,6 +35,10 @@ import { BenefitsHome } from '@/pages/benefits/BenefitsHome';
 
 const ONBOARDING_ROUTES = [
   { path: 'onboarding', element: <OnboardingHome /> },
+  // Phase 61 — template manager (HR/Ops only; component enforces).
+  { path: 'onboarding/templates', element: <TemplatesList /> },
+  { path: 'onboarding/templates/new', element: <TemplateEditor /> },
+  { path: 'onboarding/templates/:id', element: <TemplateEditor /> },
   {
     path: 'onboarding/applications/:id',
     element: <ApplicationDetail />,

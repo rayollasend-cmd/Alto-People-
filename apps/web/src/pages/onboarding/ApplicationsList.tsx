@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
   ClipboardList,
+  LayoutTemplate,
   MailPlus,
   MailWarning,
   MessageCircle,
@@ -317,6 +318,12 @@ export function ApplicationsList() {
         </div>
         {canManage && (
           <div className="flex items-center gap-2">
+            <Link to="/onboarding/templates">
+              <Button variant="ghost">
+                <LayoutTemplate className="h-4 w-4" />
+                Templates
+              </Button>
+            </Link>
             <Button variant="secondary" onClick={() => setOpenBulkInvite(true)}>
               <Users className="h-4 w-4" />
               Bulk invite

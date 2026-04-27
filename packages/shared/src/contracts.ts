@@ -228,6 +228,30 @@ export const TemplateListResponseSchema = z.object({
 });
 export type TemplateListResponse = z.infer<typeof TemplateListResponseSchema>;
 
+/* ===== Phase 61 — template editor (HR CRUD) ============================ */
+
+// Tasks come without ids (server generates) and the order field is
+// optional — server normalizes by array index so HR can just reorder
+// in the array and let the API assign 0..N-1.
+export const TemplateTaskInputSchema = z.object({
+  kind: TaskKindSchema,
+  title: z.string().min(1).max(120),
+  description: z.string().max(500).nullable().optional(),
+  order: z.number().int().nonnegative().optional(),
+});
+export type TemplateTaskInput = z.infer<typeof TemplateTaskInputSchema>;
+
+export const TemplateUpsertInputSchema = z.object({
+  name: z.string().min(1).max(80),
+  track: OnboardingTrackSchema,
+  // null = global template (applies to any client). UUID = client-scoped.
+  clientId: UuidSchema.nullable(),
+  // Full-replace semantics: this list IS the new task list. Empty
+  // arrays are rejected (a checklist with no tasks is meaningless).
+  tasks: z.array(TemplateTaskInputSchema).min(1).max(30),
+});
+export type TemplateUpsertInput = z.infer<typeof TemplateUpsertInputSchema>;
+
 /* -------------------------------------------------------------------------- *
  *  Health
  * -------------------------------------------------------------------------- */
