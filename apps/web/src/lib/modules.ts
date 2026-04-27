@@ -48,6 +48,7 @@ export type ModuleKey =
   | 'holidays'
   | 'discipline'
   | 'separations'
+  | 'internal-jobs'
   | 'team'
   | 'workflows'
   | 'me'
@@ -107,7 +108,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon, LogOut as SeparationIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon, LogOut as SeparationIcon, Briefcase as InternalJobsIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -288,6 +289,16 @@ export const MODULES: ModuleNav[] = [
       'Plan, process, and complete associate departures. Capture exit-interview feedback — rating, what worked, what to change.',
     requires: 'view:onboarding',
     icon: SeparationIcon,
+    group: 'workforce',
+  },
+  {
+    key: 'internal-jobs',
+    path: '/internal-jobs',
+    label: 'Internal jobs',
+    description:
+      'Open positions across the company that current associates can apply to directly. Hiring managers review and decide.',
+    requires: 'view:dashboard',
+    icon: InternalJobsIcon,
     group: 'workforce',
   },
   {

@@ -339,6 +339,7 @@ model User {
   separationsInitiated         Separation[]                   @relation("SeparationInitiator")
   separationsCompleted         Separation[]                   @relation("SeparationCompleter")
   exitInterviewsConducted      Separation[]                   @relation("SeparationExitInterviewer")
+  internalApplicationsReviewed InternalJobApplication[]       @relation("InternalApplicationReviewer")
 
   @@index([role])
   @@index([clientId])
@@ -546,6 +547,8 @@ model Associate {
   disciplinaryActions   DisciplinaryAction[]
   // Phase 119 — separations + exit interviews.
   separations           Separation[]
+  // Phase 120 — internal mobility applications.
+  internalApplications  InternalJobApplication[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -2873,6 +2876,8 @@ model JobPosting {
 
   client    Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
   createdBy User?   @relation("JobPostingCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  // Phase 120 — internal applicants on this posting.
+  internalApplications InternalJobApplication[]
 
   @@index([status])
   @@index([clientId])
@@ -4021,4 +4026,43 @@ model Separation {
   @@index([associateId])
   @@index([status])
   @@index([lastDayWorked])
+}
+
+// ===== Phase 120 — Internal mobility =======================================
+//
+// Lets current associates apply to internal JobPostings. Distinct from
+// external Candidate-driven recruiting (Phase 25/90) — these applicants are
+// already in the workforce. Reviewer marches the row through the funnel via
+// status updates; (postingId, associateId) is unique so an associate can't
+// double-apply to the same posting without withdrawing first.
+enum InternalApplicationStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  INTERVIEWING
+  OFFERED
+  HIRED
+  REJECTED
+  WITHDRAWN
+}
+
+model InternalJobApplication {
+  id            String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  postingId     String                    @db.Uuid
+  associateId   String                    @db.Uuid
+  status        InternalApplicationStatus @default(SUBMITTED)
+  coverLetter   String?
+  resumeUrl     String?
+  reviewerNotes String?
+  reviewedById  String?                   @db.Uuid
+  reviewedAt    DateTime?                 @db.Timestamptz(6)
+  createdAt     DateTime                  @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime                  @updatedAt @db.Timestamptz(6)
+
+  posting    JobPosting @relation(fields: [postingId], references: [id], onDelete: Cascade)
+  associate  Associate  @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  reviewedBy User?      @relation("InternalApplicationReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@unique([postingId, associateId])
+  @@index([associateId])
+  @@index([postingId, status])
 }
