@@ -17,6 +17,8 @@ import { I9Task } from '@/pages/onboarding/tasks/I9Task';
 import { StubTask } from '@/pages/onboarding/tasks/StubTask';
 import { TimeHome } from '@/pages/time/TimeHome';
 import { TimeOffHome } from '@/pages/timeoff/TimeOffHome';
+import { ClientsHome } from '@/pages/clients/ClientsHome';
+import { ClientDetail } from '@/pages/clients/ClientDetail';
 import { SchedulingHome } from '@/pages/scheduling/SchedulingHome';
 import { PayrollHome } from '@/pages/payroll/PayrollHome';
 import { DocumentsHome } from '@/pages/documents/DocumentsHome';
@@ -69,7 +71,8 @@ const PLACEHOLDER_MODULES = MODULES.filter(
     m.key !== 'compliance' &&
     m.key !== 'communications' &&
     m.key !== 'performance' &&
-    m.key !== 'recruiting'
+    m.key !== 'recruiting' &&
+    m.key !== 'clients'
 );
 
 export const router = createBrowserRouter([
@@ -86,6 +89,8 @@ export const router = createBrowserRouter([
       { index: true, element: <Dashboard /> },
       { path: 'time-attendance', element: <TimeHome /> },
       { path: 'time-off', element: <TimeOffHome /> },
+      { path: 'clients', element: <ClientsHome /> },
+      { path: 'clients/:id', element: <ClientDetail /> },
       { path: 'scheduling', element: <SchedulingHome /> },
       { path: 'payroll', element: <PayrollHome /> },
       { path: 'documents', element: <DocumentsHome /> },
