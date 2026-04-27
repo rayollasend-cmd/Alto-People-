@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ClipboardList,
   MailPlus,
+  MailWarning,
   MessageCircle,
   Plus,
   Search,
@@ -173,6 +174,15 @@ export function ApplicationsList() {
       (a) => a.status !== 'APPROVED' && a.status !== 'REJECTED'
     );
     const stale = src.filter((a) => isStale(a, now));
+    // Phase 60 — apps where the most recent invite/nudge email bounced
+    // (provider returned FAILED). Excludes APPROVED/REJECTED apps where
+    // the associate already finished — bounce wouldn't matter anymore.
+    const bounced = src.filter(
+      (a) =>
+        a.lastInviteDelivery?.status === 'FAILED' &&
+        a.status !== 'APPROVED' &&
+        a.status !== 'REJECTED'
+    );
     const avgPercent =
       inFlight.length === 0
         ? 0
@@ -185,6 +195,8 @@ export function ApplicationsList() {
       byStatus,
       inFlight: inFlight.length,
       stale: stale.length,
+      bounced: bounced.length,
+      bouncedSamples: bounced.slice(0, 3),
       staleSamples: stale.slice(0, 3),
       avgPercent,
     };
@@ -339,10 +351,52 @@ export function ApplicationsList() {
             tone={stats.stale > 0 ? 'text-alert' : 'text-success'}
           />
           <Kpi
+            label="Email bounced"
+            value={String(stats.bounced)}
+            tone={stats.bounced > 0 ? 'text-alert' : 'text-silver'}
+          />
+          <Kpi
             label="Approved"
             value={String(stats.byStatus.APPROVED ?? 0)}
             tone="text-success"
           />
+        </div>
+      )}
+
+      {/* Email-bounce banner — fires when at least one in-flight invite/nudge
+          came back FAILED from the provider. Distinct from the stale banner
+          (which is just "old"); a bounce is *actionable* (fix the email). */}
+      {canManage && stats.bounced > 0 && (
+        <div className="mb-4 flex items-start gap-2 p-3 rounded-md border border-alert/40 bg-alert/[0.07] text-sm">
+          <MailWarning className="h-4 w-4 text-alert mt-0.5 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="font-medium text-white">
+              {stats.bounced} invite{stats.bounced === 1 ? '' : 's'} bounced —
+              recipient never received the email
+            </div>
+            <div className="text-silver text-xs mt-0.5">
+              {stats.bouncedSamples.map((a, i) => (
+                <span key={a.id}>
+                  {i > 0 && ' · '}
+                  <Link
+                    to={`/onboarding/applications/${a.id}`}
+                    className="text-gold hover:text-gold-bright"
+                  >
+                    {a.associateName}
+                  </Link>
+                </span>
+              ))}
+              {stats.bounced > stats.bouncedSamples.length && (
+                <span className="text-silver/60">
+                  {' '}+ {stats.bounced - stats.bouncedSamples.length} more
+                </span>
+              )}
+              <span className="text-silver/60 ml-2">
+                · Open the application to see the provider error and fix the
+                email address.
+              </span>
+            </div>
+          </div>
         </div>
       )}
 
@@ -605,11 +659,23 @@ export function ApplicationsList() {
                     )}
                     <TableCell>
                       <div className="flex items-start gap-2">
-                        {stale && (
-                          <AlertTriangle
+                        {a.lastInviteDelivery?.status === 'FAILED' ? (
+                          <MailWarning
                             className="h-3.5 w-3.5 text-alert mt-1 shrink-0"
-                            aria-label="Stuck"
+                            aria-label="Email bounced"
+                            // Title fallback for keyboard nav / no-tooltip envs.
+                            // Covers HR users who can't easily mouse-hover.
+                            data-tip={
+                              a.lastInviteDelivery.failureReason ?? 'Email bounced'
+                            }
                           />
+                        ) : (
+                          stale && (
+                            <AlertTriangle
+                              className="h-3.5 w-3.5 text-alert mt-1 shrink-0"
+                              aria-label="Stuck"
+                            />
+                          )
                         )}
                         <div className="min-w-0">
                           <Link

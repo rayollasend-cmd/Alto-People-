@@ -20,6 +20,8 @@ import {
   type BulkResendResponse,
   type BulkResendResultRow,
   type ChecklistTask,
+  type InviteDeliveryInfo,
+  type InviteDeliveryStatus,
   type NudgeResponse,
   type OnboardingTemplate,
   type PolicyForApplication,
@@ -63,6 +65,86 @@ const MANAGE = requireCapability('manage:onboarding');
 // internet) routinely exceeds that for the multi-statement writes below, so
 // every $transaction in this file passes TX_OPTS to lift it to 30 s.
 const TX_OPTS = { timeout: 30_000, maxWait: 10_000 };
+
+/* ===== Phase 60 — invite delivery surface =============================== */
+
+const INVITE_NOTIFICATION_CATEGORIES = [
+  'onboarding.invite',
+  'onboarding.nudge',
+] as const;
+
+function toDeliveryInfo(n: {
+  status: string;
+  createdAt: Date;
+  sentAt: Date | null;
+  failureReason: string | null;
+  category: string | null;
+}): InviteDeliveryInfo {
+  // Map Prisma's wider NotificationStatus enum down to the three states
+  // HR cares about. SENT = delivered to provider successfully; FAILED =
+  // provider rejected it; QUEUED = our process never got past creation
+  // (or the row was created with status QUEUED — uncommon but possible).
+  const status: InviteDeliveryStatus =
+    n.status === 'SENT' ? 'SENT' : n.status === 'FAILED' ? 'FAILED' : 'QUEUED';
+  return {
+    status,
+    attemptedAt: n.createdAt.toISOString(),
+    sentAt: n.sentAt ? n.sentAt.toISOString() : null,
+    failureReason: n.failureReason,
+    category: n.category ?? 'onboarding.invite',
+  };
+}
+
+/**
+ * Latest invite/nudge delivery info per associate, for many associates at
+ * once. Pulled in two queries (resolve user IDs, then notifications) so
+ * we don't N+1 the inbox list. Returns a Map keyed by associateId.
+ */
+async function fetchLatestInviteDeliveryByAssociate(
+  associateIds: string[]
+): Promise<Map<string, InviteDeliveryInfo>> {
+  if (associateIds.length === 0) return new Map();
+
+  const users = await prisma.user.findMany({
+    where: { associateId: { in: associateIds } },
+    select: { id: true, associateId: true },
+  });
+  if (users.length === 0) return new Map();
+
+  const userIdToAssociate = new Map<string, string>();
+  for (const u of users) {
+    if (u.associateId) userIdToAssociate.set(u.id, u.associateId);
+  }
+
+  // Pull all invite/nudge notifications for these users newest-first;
+  // the first one we see per associate wins. Bounded in practice — even
+  // a chronically nudged onboarding only generates a handful of rows.
+  const notifications = await prisma.notification.findMany({
+    where: {
+      recipientUserId: { in: Array.from(userIdToAssociate.keys()) },
+      category: { in: [...INVITE_NOTIFICATION_CATEGORIES] },
+    },
+    orderBy: { createdAt: 'desc' },
+    select: {
+      recipientUserId: true,
+      status: true,
+      createdAt: true,
+      sentAt: true,
+      failureReason: true,
+      category: true,
+    },
+  });
+
+  const byAssociate = new Map<string, InviteDeliveryInfo>();
+  for (const n of notifications) {
+    if (!n.recipientUserId) continue;
+    const associateId = userIdToAssociate.get(n.recipientUserId);
+    if (!associateId) continue;
+    if (byAssociate.has(associateId)) continue;
+    byAssociate.set(associateId, toDeliveryInfo(n));
+  }
+  return byAssociate;
+}
 
 /* ===== Phase 58 — shared invite helper used by single + bulk endpoints === */
 
@@ -293,6 +375,10 @@ onboardingRouter.get('/applications', async (req, res, next) => {
       },
     });
 
+    const deliveryByAssociate = await fetchLatestInviteDeliveryByAssociate(
+      rows.map((r) => r.associateId)
+    );
+
     const applications: ApplicationSummary[] = rows.map((row) => ({
       id: row.id,
       associateName: `${row.associate.firstName} ${row.associate.lastName}`,
@@ -304,6 +390,7 @@ onboardingRouter.get('/applications', async (req, res, next) => {
       invitedAt: row.invitedAt.toISOString(),
       submittedAt: row.submittedAt ? row.submittedAt.toISOString() : null,
       percentComplete: computePercent(row.checklist?.tasks ?? []),
+      lastInviteDelivery: deliveryByAssociate.get(row.associateId) ?? null,
     }));
 
     const payload: ApplicationListResponse = { applications };
@@ -340,6 +427,10 @@ onboardingRouter.get('/applications/:id', async (req, res, next) => {
       completedAt: t.completedAt ? t.completedAt.toISOString() : null,
     }));
 
+    const deliveryByAssociate = await fetchLatestInviteDeliveryByAssociate([
+      row.associateId,
+    ]);
+
     const detail: ApplicationDetail = {
       id: row.id,
       associateId: row.associateId,
@@ -355,6 +446,7 @@ onboardingRouter.get('/applications/:id', async (req, res, next) => {
       percentComplete: computePercent(row.checklist?.tasks ?? []),
       tasks,
       employmentType: row.associate.employmentType,
+      lastInviteDelivery: deliveryByAssociate.get(row.associateId) ?? null,
     };
     res.json(detail);
   } catch (err) {

@@ -6,6 +6,8 @@ import {
   Clock,
   Copy,
   FileDown,
+  MailCheck,
+  MailWarning,
   MinusCircle,
   Send,
 } from 'lucide-react';
@@ -14,6 +16,7 @@ import type {
   ApplicationDetail as ApplicationDetailType,
   AuditLogEntry,
   ChecklistTask,
+  InviteDeliveryInfo,
 } from '@alto-people/shared';
 import {
   compliancePacketUrl,
@@ -215,6 +218,17 @@ export function ApplicationDetail() {
             </div>
           )}
         </div>
+
+        {/* Phase 60 — invite delivery surface. Only renders when there's
+            something noteworthy to say (FAILED bounce, or a recent SENT/QUEUED
+            for HR confidence). Hides entirely once the application is APPROVED
+            since delivery state no longer matters. */}
+        {canManage &&
+          detail.lastInviteDelivery &&
+          detail.status !== 'APPROVED' &&
+          detail.status !== 'REJECTED' && (
+            <DeliverabilityStrip info={detail.lastInviteDelivery} />
+          )}
       </header>
 
       {/* Hero progress card — bigger, color-coded counts, replaces the
@@ -446,6 +460,58 @@ function TaskTile({ task, canSkip, onSkip }: TaskTileProps) {
           <Button size="sm" variant="outline" onClick={onSkip} className="shrink-0">
             Skip
           </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+function fmtAgo(iso: string): string {
+  const t = new Date(iso).getTime();
+  const days = Math.floor((Date.now() - t) / ONE_DAY_MS);
+  if (days === 0) return 'today';
+  if (days === 1) return '1 day ago';
+  return `${days} days ago`;
+}
+
+function DeliverabilityStrip({ info }: { info: InviteDeliveryInfo }) {
+  const isFailed = info.status === 'FAILED';
+  const isQueued = info.status === 'QUEUED';
+  const Icon = isFailed ? MailWarning : MailCheck;
+  const tone = isFailed
+    ? 'border-alert/40 bg-alert/[0.07] text-alert'
+    : isQueued
+      ? 'border-warning/40 bg-warning/[0.06] text-warning'
+      : 'border-success/30 bg-success/[0.05] text-success';
+  const label =
+    info.category === 'onboarding.nudge' ? 'Last nudge' : 'Last invite';
+  const verb = isFailed ? 'bounced' : isQueued ? 'queued' : 'delivered';
+  return (
+    <div
+      className={cn(
+        'mt-3 flex items-start gap-2 px-3 py-2 rounded-md border text-xs',
+        tone
+      )}
+      role={isFailed ? 'alert' : undefined}
+    >
+      <Icon className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+      <div className="flex-1 min-w-0">
+        <div>
+          <span className="font-medium">{label}</span>{' '}
+          <span>{verb}</span>{' '}
+          <span className="opacity-80">{fmtAgo(info.attemptedAt)}</span>
+        </div>
+        {isFailed && info.failureReason && (
+          <div className="mt-0.5 opacity-90 break-words">
+            Provider error: {info.failureReason}
+          </div>
+        )}
+        {isFailed && (
+          <div className="mt-0.5 opacity-80">
+            Fix the email on file and click "Resend invite", or copy the magic
+            link from the dev-stub response.
+          </div>
         )}
       </div>
     </div>

@@ -150,6 +150,26 @@ export const EmploymentTypeSchema = z.enum([
 ]);
 export type EmploymentType = z.infer<typeof EmploymentTypeSchema>;
 
+// Phase 60 — last invite/nudge email delivery status, surfaced on the
+// inbox + detail page so HR sees bounces before the associate fails to
+// log in. null = no email ever attempted (shouldn't happen in practice
+// after Phase 16, but legacy rows + tests can produce it).
+export const InviteDeliveryStatusSchema = z.enum(['QUEUED', 'SENT', 'FAILED']);
+export type InviteDeliveryStatus = z.infer<typeof InviteDeliveryStatusSchema>;
+
+export const InviteDeliveryInfoSchema = z.object({
+  status: InviteDeliveryStatusSchema,
+  // ISO when the row was created (≈ when the send was attempted).
+  attemptedAt: z.string().datetime(),
+  // ISO of successful send, null if FAILED or still QUEUED.
+  sentAt: z.string().datetime().nullable(),
+  // Provider error message, null when SENT.
+  failureReason: z.string().nullable(),
+  // What triggered this row: "onboarding.invite" or "onboarding.nudge".
+  category: z.string(),
+});
+export type InviteDeliveryInfo = z.infer<typeof InviteDeliveryInfoSchema>;
+
 export const ApplicationSummarySchema = z.object({
   id: UuidSchema,
   associateName: z.string(),
@@ -161,6 +181,10 @@ export const ApplicationSummarySchema = z.object({
   invitedAt: z.string().datetime(),
   submittedAt: z.string().datetime().nullable(),
   percentComplete: z.number().min(0).max(100),
+  // Phase 60 — most recent EMAIL Notification on this associate's user
+  // tagged onboarding.invite or onboarding.nudge. null when there's no
+  // such row yet (test fixtures, legacy data).
+  lastInviteDelivery: InviteDeliveryInfoSchema.nullable().optional(),
 });
 export type ApplicationSummary = z.infer<typeof ApplicationSummarySchema>;
 
