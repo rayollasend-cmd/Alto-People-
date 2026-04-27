@@ -340,6 +340,7 @@ model User {
   separationsCompleted         Separation[]                   @relation("SeparationCompleter")
   exitInterviewsConducted      Separation[]                   @relation("SeparationExitInterviewer")
   internalApplicationsReviewed InternalJobApplication[]       @relation("InternalApplicationReviewer")
+  vaccinationRecordsCreated    VaccinationRecord[]
 
   @@index([role])
   @@index([clientId])
@@ -549,6 +550,8 @@ model Associate {
   separations           Separation[]
   // Phase 120 — internal mobility applications.
   internalApplications  InternalJobApplication[]
+  // Phase 121 — vaccination + medical records.
+  vaccinationRecords    VaccinationRecord[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -4065,4 +4068,45 @@ model InternalJobApplication {
   @@unique([postingId, associateId])
   @@index([associateId])
   @@index([postingId, status])
+}
+
+// ===== Phase 121 — Vaccination + medical records ===========================
+//
+// Each row is one shot or test. Multi-dose vaccines (Hep B, COVID) get one
+// row per dose with doseNumber and totalDoses to track completion.
+// expiresOn drives the expirations dashboard for renewals (TB tests, flu).
+enum VaccinationKind {
+  COVID19
+  INFLUENZA_FLU
+  HEPATITIS_B
+  TDAP
+  MMR
+  TB_TEST
+  OTHER
+}
+
+model VaccinationRecord {
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId    String          @db.Uuid
+  kind           VaccinationKind
+  customLabel    String?
+  doseNumber     Int             @default(1)
+  totalDoses     Int?
+  administeredOn DateTime        @db.Date
+  administeredBy String?
+  manufacturer   String?
+  lotNumber      String?
+  documentUrl    String?
+  expiresOn      DateTime?       @db.Date
+  notes          String?
+  createdById    String?         @db.Uuid
+  createdAt      DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime        @updatedAt @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  createdBy User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([associateId])
+  @@index([kind])
+  @@index([expiresOn])
 }
