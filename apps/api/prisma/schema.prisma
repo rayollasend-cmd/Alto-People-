@@ -345,6 +345,8 @@ model User {
   hrCasesAssigned              HrCase[]
   hrCaseCommentsAuthored       HrCaseComment[]                @relation("HrCaseCommentUserAuthor")
   kbArticlesAuthored           KbArticle[]
+  rampPlansCreated             RampPlan[]                     @relation("RampPlanCreator")
+  rampPlansManaged             RampPlan[]                     @relation("RampPlanManager")
 
   @@index([role])
   @@index([clientId])
@@ -565,6 +567,8 @@ model Associate {
   hrCaseCommentsAuthored HrCaseComment[] @relation("HrCaseCommentAssociateAuthor")
   // Phase 124 — KB feedback votes.
   kbFeedback            KbFeedback[]
+  // Phase 125 — new-hire ramp plans.
+  rampPlans             RampPlan[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -4300,4 +4304,53 @@ model KbFeedback {
 
   @@unique([articleId, associateId])
   @@index([articleId])
+}
+
+// ===== Phase 125 — New-hire ramp plans (30/60/90) ==========================
+//
+// One ACTIVE ramp per associate at a time (partial unique index in the
+// migration treats archivedAt IS NULL as "active"). Each plan has many
+// RampMilestones at different day checkpoints (commonly 30, 60, 90, 180).
+// Manager nudges status as the new hire progresses.
+enum RampMilestoneStatus {
+  PENDING
+  ON_TRACK
+  ACHIEVED
+  MISSED
+}
+
+model RampPlan {
+  id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId String          @db.Uuid
+  startDate   DateTime        @db.Date
+  managerId   String?         @db.Uuid
+  notes       String?
+  archivedAt  DateTime?       @db.Timestamptz(6)
+  createdById String?         @db.Uuid
+  createdAt   DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime        @updatedAt @db.Timestamptz(6)
+
+  associate  Associate       @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  manager    User?           @relation("RampPlanManager", fields: [managerId], references: [id], onDelete: SetNull)
+  createdBy  User?           @relation("RampPlanCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  milestones RampMilestone[]
+
+  @@index([associateId])
+}
+
+model RampMilestone {
+  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  planId        String              @db.Uuid
+  dayCheckpoint Int
+  title         String
+  description   String?
+  status        RampMilestoneStatus @default(PENDING)
+  achievedAt    DateTime?           @db.Timestamptz(6)
+  notes         String?
+  createdAt     DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime            @updatedAt @db.Timestamptz(6)
+
+  plan RampPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@index([planId, dayCheckpoint])
 }
