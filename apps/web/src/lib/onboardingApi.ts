@@ -13,8 +13,21 @@ import type {
 } from '@alto-people/shared';
 import { apiFetch } from './api';
 
-export function listApplications(): Promise<ApplicationListResponse> {
-  return apiFetch<ApplicationListResponse>('/onboarding/applications');
+export interface ListApplicationsFilters {
+  status?: string;
+  q?: string;
+}
+
+export function listApplications(
+  filters: ListApplicationsFilters = {}
+): Promise<ApplicationListResponse> {
+  const p = new URLSearchParams();
+  if (filters.status && filters.status !== 'ALL') p.set('status', filters.status);
+  if (filters.q && filters.q.trim()) p.set('q', filters.q.trim());
+  const qs = p.toString();
+  return apiFetch<ApplicationListResponse>(
+    `/onboarding/applications${qs ? `?${qs}` : ''}`
+  );
 }
 
 export interface CreateApplicationResponse {

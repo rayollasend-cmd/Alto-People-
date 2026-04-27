@@ -1,8 +1,15 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { ClipboardList, Plus } from 'lucide-react';
-import type { ApplicationSummary } from '@alto-people/shared';
-import { listApplications } from '@/lib/onboardingApi';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import {
+  AlertTriangle,
+  ClipboardList,
+  Plus,
+  Search,
+  Send,
+  X,
+} from 'lucide-react';
+import type { ApplicationStatus, ApplicationSummary } from '@alto-people/shared';
+import { listApplications, resendInvite } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { ProgressBar } from '@/components/ProgressBar';
@@ -10,6 +17,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Input } from '@/components/ui/Input';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import {
   Table,
@@ -19,6 +27,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/Table';
+import { toast } from 'sonner';
 import { NewApplicationDialog } from './NewApplicationDialog';
 import { cn } from '@/lib/cn';
 
@@ -47,29 +56,151 @@ const TRACK_LABEL: Record<string, string> = {
   CLIENT_SPECIFIC: 'Client-specific',
 };
 
+const STATUS_FILTERS: Array<{ value: ApplicationStatus | 'ALL'; label: string }> = [
+  { value: 'ALL', label: 'All' },
+  { value: 'DRAFT', label: 'Draft' },
+  { value: 'SUBMITTED', label: 'Submitted' },
+  { value: 'IN_REVIEW', label: 'In review' },
+  { value: 'APPROVED', label: 'Approved' },
+  { value: 'REJECTED', label: 'Rejected' },
+];
+
+const STALE_DAYS = 7;
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+function isStale(a: ApplicationSummary, now: number): boolean {
+  if (a.status === 'APPROVED' || a.status === 'REJECTED') return false;
+  if (a.percentComplete === 100) return false;
+  const invitedMs = new Date(a.invitedAt).getTime();
+  return now - invitedMs > STALE_DAYS * ONE_DAY_MS;
+}
+
+function daysSince(iso: string, now: number): number {
+  return Math.floor((now - new Date(iso).getTime()) / ONE_DAY_MS);
+}
+
 export function ApplicationsList() {
   const { can } = useAuth();
   const canManage = can('manage:onboarding');
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const status = (searchParams.get('status') as ApplicationStatus | 'ALL' | null) ?? 'ALL';
+  const urlQ = searchParams.get('q') ?? '';
+  const [qInput, setQInput] = useState(urlQ);
+
+  // Debounce search input → URL → server fetch.
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      const next = new URLSearchParams(searchParams);
+      if (qInput.trim()) next.set('q', qInput.trim());
+      else next.delete('q');
+      setSearchParams(next, { replace: true });
+    }, 250);
+    return () => clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qInput]);
+
+  const setStatus = (s: ApplicationStatus | 'ALL') => {
+    const next = new URLSearchParams(searchParams);
+    if (s === 'ALL') next.delete('status');
+    else next.set('status', s);
+    setSearchParams(next, { replace: true });
+  };
+
+  // Counts strip pulls the *unfiltered* set so the chip counts don't change
+  // as the user filters. Cheap second fetch — both queries hit the same
+  // tenant scope and Postgres caches the heavy join in <50ms.
   const [items, setItems] = useState<ApplicationSummary[] | null>(null);
+  const [allItems, setAllItems] = useState<ApplicationSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openCreate, setOpenCreate] = useState(false);
+  const [resendingIds, setResendingIds] = useState<Set<string>>(new Set());
 
   const refresh = useCallback(() => {
     setError(null);
-    listApplications()
+    listApplications({ status, q: urlQ })
       .then((res) => setItems(res.applications))
       .catch((err) =>
         setError(err instanceof ApiError ? err.message : 'Failed to load.')
       );
+  }, [status, urlQ]);
+
+  // Refresh the unfiltered roll-up only when status/q would change what's
+  // visible. The unfiltered set itself is a single fetch on mount + when
+  // an action invalidates it (resend / create).
+  const refreshAll = useCallback(() => {
+    listApplications({})
+      .then((res) => setAllItems(res.applications))
+      .catch(() => setAllItems([]));
   }, []);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    refreshAll();
+  }, [refreshAll]);
+
+  const now = Date.now();
+  const stats = useMemo(() => {
+    const src = allItems ?? [];
+    const byStatus: Record<string, number> = {};
+    for (const a of src) {
+      byStatus[a.status] = (byStatus[a.status] ?? 0) + 1;
+    }
+    const inFlight = src.filter(
+      (a) => a.status !== 'APPROVED' && a.status !== 'REJECTED'
+    );
+    const stale = src.filter((a) => isStale(a, now));
+    const avgPercent =
+      inFlight.length === 0
+        ? 0
+        : Math.round(
+            inFlight.reduce((acc, a) => acc + a.percentComplete, 0) /
+              inFlight.length
+          );
+    return {
+      total: src.length,
+      byStatus,
+      inFlight: inFlight.length,
+      stale: stale.length,
+      staleSamples: stale.slice(0, 3),
+      avgPercent,
+    };
+  }, [allItems, now]);
+
+  const onResend = async (a: ApplicationSummary) => {
+    if (resendingIds.has(a.id)) return;
+    const next = new Set(resendingIds);
+    next.add(a.id);
+    setResendingIds(next);
+    try {
+      const res = await resendInvite(a.id);
+      if (res.inviteUrl) {
+        await navigator.clipboard.writeText(res.inviteUrl).catch(() => {});
+        toast.success('Fresh invite link copied');
+      } else {
+        toast.success('Invite re-sent');
+      }
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'user_already_active') {
+        toast.message('Already accepted', {
+          description: `${a.associateName} has already set their password.`,
+        });
+      } else {
+        toast.error('Resend failed');
+      }
+    } finally {
+      const after = new Set(resendingIds);
+      after.delete(a.id);
+      setResendingIds(after);
+    }
+  };
+
   return (
     <div className="max-w-6xl mx-auto">
-      <header className="mb-6 flex items-start justify-between gap-4">
+      <header className="mb-6 flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
             Onboarding
@@ -85,6 +216,136 @@ export function ApplicationsList() {
           </Button>
         )}
       </header>
+
+      {/* KPI strip — always visible (empty-zero state is fine). */}
+      {canManage && allItems && allItems.length > 0 && (
+        <div className="mb-5 flex flex-wrap gap-x-6 gap-y-2 px-4 py-3 rounded-md border border-navy-secondary bg-navy-secondary/30">
+          <Kpi label="Total" value={String(stats.total)} />
+          <Kpi label="In flight" value={String(stats.inFlight)} />
+          <Kpi
+            label="Avg. complete"
+            value={`${stats.avgPercent}%`}
+            tone={
+              stats.avgPercent >= 75
+                ? 'text-success'
+                : stats.avgPercent >= 50
+                  ? 'text-warning'
+                  : 'text-silver'
+            }
+          />
+          <Kpi
+            label={`Stuck > ${STALE_DAYS}d`}
+            value={String(stats.stale)}
+            tone={stats.stale > 0 ? 'text-alert' : 'text-success'}
+          />
+          <Kpi
+            label="Approved"
+            value={String(stats.byStatus.APPROVED ?? 0)}
+            tone="text-success"
+          />
+        </div>
+      )}
+
+      {/* Stale-application banner — only when there's something to nudge about. */}
+      {canManage && stats.stale > 0 && (
+        <div className="mb-4 flex items-start gap-2 p-3 rounded-md border border-alert/40 bg-alert/[0.07] text-sm">
+          <AlertTriangle className="h-4 w-4 text-alert mt-0.5 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="font-medium text-white">
+              {stats.stale} application{stats.stale === 1 ? '' : 's'} stuck for more
+              than {STALE_DAYS} days
+            </div>
+            <div className="text-silver text-xs mt-0.5">
+              {stats.staleSamples.map((a, i) => (
+                <span key={a.id}>
+                  {i > 0 && ' · '}
+                  <Link
+                    to={`/onboarding/applications/${a.id}`}
+                    className="text-gold hover:text-gold-bright"
+                  >
+                    {a.associateName}
+                  </Link>{' '}
+                  <span className="text-silver/60 tabular-nums">
+                    ({daysSince(a.invitedAt, now)}d)
+                  </span>
+                </span>
+              ))}
+              {stats.stale > stats.staleSamples.length && (
+                <span className="text-silver/60">
+                  {' '}+ {stats.stale - stats.staleSamples.length} more
+                </span>
+              )}
+            </div>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setStatus('SUBMITTED')}
+            className="shrink-0"
+          >
+            Review
+          </Button>
+        </div>
+      )}
+
+      {/* Filter row: search input + status pills */}
+      {canManage && (
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <div className="relative flex-1 min-w-[200px] max-w-xs">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-silver/60 pointer-events-none" />
+            <Input
+              type="search"
+              placeholder="Search by name or email…"
+              value={qInput}
+              onChange={(e) => setQInput(e.target.value)}
+              className="pl-8 pr-8"
+            />
+            {qInput && (
+              <button
+                type="button"
+                onClick={() => setQInput('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-silver/60 hover:text-white"
+                aria-label="Clear search"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {STATUS_FILTERS.map((f) => {
+              const count =
+                f.value === 'ALL'
+                  ? stats.total
+                  : (stats.byStatus[f.value] ?? 0);
+              const active = status === f.value;
+              return (
+                <button
+                  key={f.value}
+                  type="button"
+                  onClick={() => setStatus(f.value)}
+                  className={cn(
+                    'px-2.5 py-1 rounded-md text-xs border transition-colors inline-flex items-center gap-1.5',
+                    'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                    active
+                      ? 'border-gold text-gold bg-gold/10'
+                      : 'border-navy-secondary text-silver hover:text-white hover:border-silver/40'
+                  )}
+                >
+                  {f.label}
+                  {allItems && (
+                    <span className="text-[10px] tabular-nums text-silver/60">
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          <span className="ml-auto text-[10px] text-silver/60 tabular-nums">
+            {items ? `${items.length} shown` : ''}
+          </span>
+        </div>
+      )}
 
       {error && (
         <div
@@ -106,14 +367,30 @@ export function ApplicationsList() {
       {items && items.length === 0 && (
         <EmptyState
           icon={ClipboardList}
-          title="No active applications"
+          title={
+            urlQ || status !== 'ALL'
+              ? 'No applications match this filter'
+              : 'No active applications'
+          }
           description={
-            canManage
-              ? 'Click "New application" to invite the first associate.'
-              : 'When HR creates an onboarding application, it\'ll show up here with live checklist progress.'
+            urlQ || status !== 'ALL'
+              ? 'Clear the filter to see all applications.'
+              : canManage
+                ? 'Click "New application" to invite the first associate.'
+                : "When HR creates an onboarding application, it'll show up here with live checklist progress."
           }
           action={
-            canManage ? (
+            urlQ || status !== 'ALL' ? (
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setQInput('');
+                  setStatus('ALL');
+                }}
+              >
+                Clear filters
+              </Button>
+            ) : canManage ? (
               <Button onClick={() => setOpenCreate(true)}>
                 <Plus className="h-4 w-4" />
                 New application
@@ -126,7 +403,10 @@ export function ApplicationsList() {
       <NewApplicationDialog
         open={openCreate}
         onOpenChange={setOpenCreate}
-        onCreated={refresh}
+        onCreated={() => {
+          refresh();
+          refreshAll();
+        }}
       />
 
       {items && items.length > 0 && (
@@ -137,57 +417,94 @@ export function ApplicationsList() {
                 <TableHead>Applicant</TableHead>
                 <TableHead className="hidden md:table-cell">Client</TableHead>
                 <TableHead className="hidden lg:table-cell">Track</TableHead>
+                <TableHead className="hidden md:table-cell">Invited</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="w-56">Progress</TableHead>
+                {canManage && <TableHead className="w-24" aria-label="Actions" />}
               </TableRow>
             </TableHeader>
             <TableBody>
-              {items.map((a) => (
-                <TableRow key={a.id} className="cursor-pointer">
-                  <TableCell>
-                    <Link
-                      to={`/onboarding/applications/${a.id}`}
-                      className="text-gold hover:text-gold-bright underline-offset-4 hover:underline font-medium"
-                    >
-                      {a.associateName}
-                    </Link>
-                    {a.position && (
-                      <div className="text-xs text-silver mt-0.5">{a.position}</div>
-                    )}
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell text-silver">
-                    {a.clientName}
-                  </TableCell>
-                  <TableCell className="hidden lg:table-cell text-silver">
-                    {TRACK_LABEL[a.onboardingTrack] ?? a.onboardingTrack}
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={STATUS_VARIANT[a.status] ?? 'default'}
-                      data-status={a.status}
-                    >
-                      {STATUS_LABEL[a.status] ?? a.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <ProgressBar percent={a.percentComplete} hideLabel className="flex-1" />
-                      <span
-                        className={cn(
-                          'text-xs tabular-nums w-9 text-right',
-                          a.percentComplete === 100
-                            ? 'text-success font-medium'
-                            : a.percentComplete >= 50
-                              ? 'text-gold'
-                              : 'text-silver'
+              {items.map((a) => {
+                const stale = isStale(a, now);
+                return (
+                  <TableRow key={a.id}>
+                    <TableCell>
+                      <div className="flex items-start gap-2">
+                        {stale && (
+                          <AlertTriangle
+                            className="h-3.5 w-3.5 text-alert mt-1 shrink-0"
+                            aria-label="Stuck"
+                          />
                         )}
+                        <div className="min-w-0">
+                          <Link
+                            to={`/onboarding/applications/${a.id}`}
+                            className="text-gold hover:text-gold-bright underline-offset-4 hover:underline font-medium"
+                          >
+                            {a.associateName}
+                          </Link>
+                          {a.position && (
+                            <div className="text-xs text-silver mt-0.5">
+                              {a.position}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell text-silver">
+                      {a.clientName}
+                    </TableCell>
+                    <TableCell className="hidden lg:table-cell text-silver">
+                      {TRACK_LABEL[a.onboardingTrack] ?? a.onboardingTrack}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell text-xs text-silver tabular-nums">
+                      {daysSince(a.invitedAt, now)}d ago
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={STATUS_VARIANT[a.status] ?? 'default'}
+                        data-status={a.status}
                       >
-                        {a.percentComplete}%
-                      </span>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
+                        {STATUS_LABEL[a.status] ?? a.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <ProgressBar
+                          percent={a.percentComplete}
+                          hideLabel
+                          className="flex-1"
+                        />
+                        <span
+                          className={cn(
+                            'text-xs tabular-nums w-9 text-right',
+                            a.percentComplete === 100
+                              ? 'text-success font-medium'
+                              : a.percentComplete >= 50
+                                ? 'text-gold'
+                                : 'text-silver'
+                          )}
+                        >
+                          {a.percentComplete}%
+                        </span>
+                      </div>
+                    </TableCell>
+                    {canManage && (
+                      <TableCell className="text-right whitespace-nowrap no-print">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onResend(a)}
+                          loading={resendingIds.has(a.id)}
+                          title="Resend invite"
+                        >
+                          <Send className="h-3.5 w-3.5" />
+                        </Button>
+                      </TableCell>
+                    )}
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </Card>
@@ -196,6 +513,22 @@ export function ApplicationsList() {
   );
 }
 
-// Re-export so the existing import path keeps working if anything points
-// at this file directly.
+function Kpi({
+  label,
+  value,
+  tone = 'text-white',
+}: {
+  label: string;
+  value: string;
+  tone?: string;
+}) {
+  return (
+    <div className="min-w-[6rem]">
+      <div className="text-[10px] uppercase tracking-wider text-silver">{label}</div>
+      <div className={cn('text-xl font-semibold tabular-nums', tone)}>{value}</div>
+    </div>
+  );
+}
+
+// Re-export so the existing import path keeps working if anything points at this file.
 export { Skeleton };

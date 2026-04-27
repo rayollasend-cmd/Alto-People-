@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import type { Prisma } from '@prisma/client';
 import {
   ApplicationCreateInputSchema,
   DirectDepositInputSchema,
@@ -55,8 +56,31 @@ const TX_OPTS = { timeout: 30_000, maxWait: 10_000 };
 
 onboardingRouter.get('/applications', async (req, res, next) => {
   try {
+    const status = req.query.status?.toString();
+    const q = req.query.q?.toString().trim();
+
+    const where: Prisma.ApplicationWhereInput = {
+      ...scopeApplications(req.user!),
+      ...(status && status !== 'ALL'
+        ? { status: status as Prisma.ApplicationWhereInput['status'] }
+        : {}),
+      ...(q
+        ? {
+            associate: {
+              is: {
+                OR: [
+                  { firstName: { contains: q, mode: 'insensitive' } },
+                  { lastName: { contains: q, mode: 'insensitive' } },
+                  { email: { contains: q, mode: 'insensitive' } },
+                ],
+              },
+            },
+          }
+        : {}),
+    };
+
     const rows = await prisma.application.findMany({
-      where: scopeApplications(req.user!),
+      where,
       orderBy: { invitedAt: 'desc' },
       include: {
         associate: { select: { firstName: true, lastName: true } },
