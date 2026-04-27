@@ -46,6 +46,7 @@ import { SkillsHome } from '@/pages/skills/SkillsHome';
 import { MentorshipHome } from '@/pages/mentorship/MentorshipHome';
 import { ExpirationsHome } from '@/pages/expirations/ExpirationsHome';
 import { LearningPathsHome } from '@/pages/learningPaths/LearningPathsHome';
+import { SuccessionHome } from '@/pages/succession/SuccessionHome';
 import { TeamHome } from '@/pages/team/TeamHome';
 import { WorkflowsHome } from '@/pages/workflows/WorkflowsHome';
 import { MeHome } from '@/pages/me/MeHome';
@@ -145,7 +146,8 @@ const PLACEHOLDER_MODULES = MODULES.filter(
     m.key !== 'compensation' &&
     m.key !== 'marketplace' &&
     m.key !== 'payrules' &&
-    m.key !== 'dircomms'
+    m.key !== 'dircomms' &&
+    m.key !== 'succession'
 );
 
 export const router = createBrowserRouter([
@@ -192,6 +194,7 @@ export const router = createBrowserRouter([
       { path: 'mentorship', element: <MentorshipHome /> },
       { path: 'expirations', element: <ExpirationsHome /> },
       { path: 'learning-paths', element: <LearningPathsHome /> },
+      { path: 'succession', element: <SuccessionHome /> },
       { path: 'team', element: <TeamHome /> },
       { path: 'workflows', element: <WorkflowsHome /> },
       { path: 'me', element: <MeHome /> },

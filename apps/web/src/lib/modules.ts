@@ -43,6 +43,7 @@ export type ModuleKey =
   | 'mentorship'
   | 'expirations'
   | 'learning-paths'
+  | 'succession'
   | 'team'
   | 'workflows'
   | 'me'
@@ -102,7 +103,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -234,6 +235,16 @@ export const MODULES: ModuleNav[] = [
     requires: 'view:compliance',
     icon: LearningPathsIcon,
     group: 'compliance',
+  },
+  {
+    key: 'succession',
+    path: '/succession',
+    label: 'Succession',
+    description:
+      'Designate successors for each position with a readiness band — ready now, 1–2 years, 3+ years, or emergency cover.',
+    requires: 'view:performance',
+    icon: SuccessionIcon,
+    group: 'workforce',
   },
   {
     key: 'team',

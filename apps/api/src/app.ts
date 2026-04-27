@@ -52,6 +52,7 @@ import { skills111Router } from './routes/skills111.js';
 import { mentorship112Router } from './routes/mentorship112.js';
 import { expirations113Router } from './routes/expirations113.js';
 import { learningPaths114Router } from './routes/learningPaths114.js';
+import { succession115Router } from './routes/succession115.js';
 import { attachUser, requireCapability } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 
@@ -198,6 +199,7 @@ export function createApp() {
   app.use('/', mentorship112Router);
   app.use('/', expirations113Router);
   app.use('/', learningPaths114Router);
+  app.use('/', succession115Router);
   // QuickBooks router self-gates each route — the OAuth callback must accept
   // an unauthenticated browser redirect from Intuit, so we cannot apply a
   // capability check at this mount point.

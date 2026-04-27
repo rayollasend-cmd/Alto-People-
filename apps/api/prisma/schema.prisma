@@ -330,6 +330,7 @@ model User {
   associateSkillsVerified      AssociateSkill[]               @relation("AssociateSkillVerifier")
   mentorshipsProposed          Mentorship[]                   @relation("MentorshipProposer")
   learningPathsCreated         LearningPath[]                 @relation("LearningPathCreator")
+  successionCandidatesCreated  SuccessionCandidate[]
 
   @@index([role])
   @@index([clientId])
@@ -527,6 +528,8 @@ model Associate {
   mentorshipsAsMentee Mentorship[]      @relation("MentorshipMentee")
   // Phase 114 — learning path enrollments.
   learningPathEnrollments LearningPathEnrollment[]
+  // Phase 115 — positions for which this associate is on the bench.
+  successionCandidacies SuccessionCandidate[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -1613,6 +1616,8 @@ model Position {
   costCenter   CostCenter? @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
   manager      Associate?  @relation("PositionManager", fields: [managerAssociateId], references: [id], onDelete: SetNull)
   filledBy     Associate?  @relation("PositionFilledBy", fields: [filledByAssociateId], references: [id], onDelete: SetNull)
+  // Phase 115 — designated successors.
+  successionPlan SuccessionCandidate[]
 
   @@index([clientId, status])
   @@index([filledByAssociateId])
@@ -3792,4 +3797,36 @@ model LearningPathEnrollment {
 
   @@unique([pathId, associateId])
   @@index([associateId])
+}
+
+// ===== Phase 115 — Succession planning =====================================
+//
+// Per-position bench. Each row designates an Associate as a successor for a
+// Position with a readiness band. Forward-only data — readiness can be edited
+// or the candidate removed. Listing the same person twice on a position is
+// blocked by the unique index.
+enum SuccessionReadiness {
+  READY_NOW
+  READY_1_2_YEARS
+  READY_3_PLUS_YEARS
+  EMERGENCY_COVER
+}
+
+model SuccessionCandidate {
+  id           String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  positionId   String              @db.Uuid
+  associateId  String              @db.Uuid
+  readiness    SuccessionReadiness
+  notes        String?
+  createdById  String?             @db.Uuid
+  createdAt    DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime            @updatedAt @db.Timestamptz(6)
+
+  position  Position  @relation(fields: [positionId], references: [id], onDelete: Cascade)
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  createdBy User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([positionId, associateId])
+  @@index([associateId])
+  @@index([positionId])
 }
