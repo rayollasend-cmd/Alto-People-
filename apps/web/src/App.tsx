@@ -37,6 +37,7 @@ import { Settings } from '@/pages/Settings';
 import { AuditHome } from '@/pages/audit/AuditHome';
 import { BenefitsHome } from '@/pages/benefits/BenefitsHome';
 import { OrgHome } from '@/pages/org/OrgHome';
+import { OrgChart } from '@/pages/org/OrgChart';
 import { TeamHome } from '@/pages/team/TeamHome';
 import { WorkflowsHome } from '@/pages/workflows/WorkflowsHome';
 import { MeHome } from '@/pages/me/MeHome';
@@ -174,6 +175,7 @@ export const router = createBrowserRouter([
       { path: 'audit', element: <AuditHome /> },
       { path: 'benefits', element: <BenefitsHome /> },
       { path: 'org', element: <OrgHome /> },
+      { path: 'org/chart', element: <OrgChart /> },
       { path: 'team', element: <TeamHome /> },
       { path: 'workflows', element: <WorkflowsHome /> },
       { path: 'me', element: <MeHome /> },

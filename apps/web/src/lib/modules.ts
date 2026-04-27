@@ -34,6 +34,7 @@ export type ModuleKey =
   | 'audit'
   | 'benefits'
   | 'org'
+  | 'org-chart'
   | 'team'
   | 'workflows'
   | 'me'
@@ -132,6 +133,16 @@ export const MODULES: ModuleNav[] = [
     label: 'Org structure',
     description:
       'Departments, cost centers, job profiles, and the manager chain that holds approvals + dimensional reporting together.',
+    requires: 'view:org',
+    icon: OrgChartIcon,
+    group: 'workforce',
+  },
+  {
+    key: 'org-chart',
+    path: '/org/chart',
+    label: 'Org chart',
+    description:
+      'Visual reporting tree across the company. Search by name, title, or department to focus a chain.',
     requires: 'view:org',
     icon: OrgChartIcon,
     group: 'workforce',
