@@ -57,7 +57,9 @@ export type Capability =
   | 'manage:team-time-off'
   | 'view:org' | 'manage:org'
   // Phase 83 — compensation: history, bands, merit cycles.
-  | 'view:comp' | 'manage:comp';
+  | 'view:comp' | 'manage:comp'
+  // Phase 93 — public API keys + outbound webhooks.
+  | 'view:integrations' | 'manage:integrations';
 
 const ALL_VIEWS: Capability[] = [
   'view:dashboard',
@@ -75,6 +77,7 @@ const ALL_VIEWS: Capability[] = [
   'view:my-team',
   'view:org',
   'view:comp',
+  'view:integrations',
 ];
 
 const ALL_MANAGE: Capability[] = [
@@ -92,6 +95,7 @@ const ALL_MANAGE: Capability[] = [
   'manage:recruiting',
   'manage:org',
   'manage:comp',
+  'manage:integrations',
 ];
 
 export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {

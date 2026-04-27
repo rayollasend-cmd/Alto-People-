@@ -50,6 +50,7 @@ import { TemplatesHome } from '@/pages/templates/TemplatesHome';
 import { RecruitingExtras } from '@/pages/recruiting/RecruitingExtras';
 import { PayrollTaxHome } from '@/pages/payrollTax/PayrollTaxHome';
 import { BenefitsLifecycle } from '@/pages/benefits/BenefitsLifecycle';
+import { IntegrationsHome } from '@/pages/integrations/IntegrationsHome';
 import { RouterErrorPage } from '@/pages/RouterErrorPage';
 
 const ONBOARDING_ROUTES = [
@@ -178,6 +179,7 @@ export const router = createBrowserRouter([
       { path: 'recruiting/extras', element: <RecruitingExtras /> },
       { path: 'payroll/tax', element: <PayrollTaxHome /> },
       { path: 'benefits/lifecycle', element: <BenefitsLifecycle /> },
+      { path: 'integrations', element: <IntegrationsHome /> },
       ...ONBOARDING_ROUTES,
       ...PLACEHOLDER_MODULES.map((m) => ({
         path: m.path.replace(/^\//, ''),

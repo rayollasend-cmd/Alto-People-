@@ -308,6 +308,9 @@ model User {
   // Phase 92 — open enrollment + QLE authorship.
   openEnrollmentsCreated       OpenEnrollmentWindow[]         @relation("OpenEnrollmentCreator")
   qleDecisions                 QualifyingLifeEvent[]          @relation("QleDecider")
+  // Phase 93 — API keys + webhooks authorship.
+  apiKeysCreated               ApiKey[]                       @relation("ApiKeyCreator")
+  webhooksCreated              Webhook[]                      @relation("WebhookCreator")
 
   @@index([role])
   @@index([clientId])
@@ -377,6 +380,9 @@ model Client {
   jobPostings            JobPosting[]
   // Phase 92 — open enrollment windows.
   openEnrollmentWindows  OpenEnrollmentWindow[]
+  // Phase 93 — public API keys + outbound webhooks scoped to this client.
+  apiKeys                ApiKey[]
+  webhooks               Webhook[]
 
   @@index([status])
   @@index([deletedAt])
@@ -3017,4 +3023,72 @@ model AcaMonth {
 
   @@unique([associateId, year, month])
   @@index([year])
+}
+
+// Phase 93 — Public API keys + outbound webhooks.
+
+enum WebhookDeliveryStatus {
+  PENDING
+  DELIVERED
+  FAILED
+}
+
+model ApiKey {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId     String?   @db.Uuid
+  name         String
+  last4        String    @db.VarChar(4)
+  keyHash      String
+  capabilities String[]  @default([])
+  createdById  String    @db.Uuid
+  lastUsedAt   DateTime? @db.Timestamptz(6)
+  expiresAt    DateTime? @db.Timestamptz(6)
+  revokedAt    DateTime? @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
+
+  client    Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy User    @relation("ApiKeyCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+  @@index([revokedAt])
+}
+
+model Webhook {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId    String?  @db.Uuid
+  name        String
+  url         String
+  secret      String
+  eventTypes  String[] @default([])
+  isActive    Boolean  @default(true)
+  createdById String?  @db.Uuid
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+
+  client     Client?           @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy  User?             @relation("WebhookCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  deliveries WebhookDelivery[]
+
+  @@index([clientId, isActive])
+}
+
+model WebhookDelivery {
+  id              String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  webhookId       String                @db.Uuid
+  eventType       String
+  payload         Json
+  status          WebhookDeliveryStatus @default(PENDING)
+  attemptCount    Int                   @default(0)
+  lastAttemptAt   DateTime?             @db.Timestamptz(6)
+  responseStatus  Int?
+  responseBody    String?
+  deliveredAt     DateTime?             @db.Timestamptz(6)
+  createdAt       DateTime              @default(now()) @db.Timestamptz(6)
+
+  webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@index([webhookId])
+  @@index([status])
 }
