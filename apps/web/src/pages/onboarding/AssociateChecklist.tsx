@@ -36,12 +36,19 @@ const TASK_LABEL: Record<string, string> = {
   I9_VERIFICATION: 'I-9 verification',
 };
 
+// Tasks that route to a real associate-facing form. Anything not in
+// this set falls through to the StubTask "coming soon" placeholder
+// (currently just E_SIGN, which is launched from the HR-side detail).
 const REAL_KINDS = new Set([
   'PROFILE_INFO',
   'W4',
   'DIRECT_DEPOSIT',
   'POLICY_ACK',
   'I9_VERIFICATION',
+  // Phase 63
+  'DOCUMENT_UPLOAD',
+  'BACKGROUND_CHECK',
+  'J1_DOCS',
 ]);
 
 export function AssociateChecklist() {

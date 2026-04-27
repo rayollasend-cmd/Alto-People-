@@ -17,6 +17,9 @@ import { W4Task } from '@/pages/onboarding/tasks/W4Task';
 import { DirectDepositTask } from '@/pages/onboarding/tasks/DirectDepositTask';
 import { PolicyAckTask } from '@/pages/onboarding/tasks/PolicyAckTask';
 import { I9Task } from '@/pages/onboarding/tasks/I9Task';
+import { DocumentUploadTask } from '@/pages/onboarding/tasks/DocumentUploadTask';
+import { BackgroundCheckTask } from '@/pages/onboarding/tasks/BackgroundCheckTask';
+import { J1DocsTask } from '@/pages/onboarding/tasks/J1DocsTask';
 import { StubTask } from '@/pages/onboarding/tasks/StubTask';
 import { TimeHome } from '@/pages/time/TimeHome';
 import { TimeOffHome } from '@/pages/timeoff/TimeOffHome';
@@ -67,6 +70,21 @@ const ONBOARDING_ROUTES = [
     path: 'onboarding/me/:applicationId/tasks/i9_verification',
     element: <I9Task />,
   },
+  // Phase 63 — three previously-stubbed tasks are now real.
+  {
+    path: 'onboarding/me/:applicationId/tasks/document_upload',
+    element: <DocumentUploadTask />,
+  },
+  {
+    path: 'onboarding/me/:applicationId/tasks/background_check',
+    element: <BackgroundCheckTask />,
+  },
+  {
+    path: 'onboarding/me/:applicationId/tasks/j1_docs',
+    element: <J1DocsTask />,
+  },
+  // Catch-all for any kind we still haven't wired (E_SIGN routes through
+  // the application detail's e-sign panel, not a /me/ form).
   {
     path: 'onboarding/me/:applicationId/tasks/:taskKind',
     element: <StubTask />,

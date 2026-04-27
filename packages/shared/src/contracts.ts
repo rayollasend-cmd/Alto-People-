@@ -523,6 +523,44 @@ export const PolicyAckInputSchema = z.object({
 });
 export type PolicyAckInput = z.infer<typeof PolicyAckInputSchema>;
 
+/* ===== Phase 63 — DOCUMENT_UPLOAD / BACKGROUND_CHECK / J1_DOCS ========= */
+
+// Associate clicks "I'm done uploading" — server validates that at least
+// one DocumentRecord exists for the associate in an ID-class kind, then
+// marks the DOCUMENT_UPLOAD checklist task DONE. The actual file uploads
+// go through the existing /documents/me/upload endpoint.
+export const DocumentUploadCompleteResponseSchema = z.object({
+  ok: z.literal(true),
+  documentCount: z.number().int().nonnegative(),
+});
+export type DocumentUploadCompleteResponse = z.infer<
+  typeof DocumentUploadCompleteResponseSchema
+>;
+
+// Associate authorizes the background check by typing their full legal
+// name (acts as a wet-signature equivalent). Provider stays "stub" until
+// Phase 64+ wires Checkr; status flips to PASSED immediately so the
+// checklist can flow without a real third-party round-trip.
+export const BackgroundCheckAuthorizeInputSchema = z.object({
+  typedName: z.string().min(1).max(120),
+  authorize: z.literal(true),
+});
+export type BackgroundCheckAuthorizeInput = z.infer<
+  typeof BackgroundCheckAuthorizeInputSchema
+>;
+
+// Final marker: associate has filled out the J1 profile AND uploaded at
+// least one J1_DS2019 / J1_VISA document. Server checks both before
+// flipping the task DONE. The profile upsert itself reuses the existing
+// J1UpsertInputSchema (Phase 10 compliance route) so HR + associate
+// write the same shape.
+export const J1DocsCompleteResponseSchema = z.object({
+  ok: z.literal(true),
+  hasProfile: z.boolean(),
+  documentCount: z.number().int().nonnegative(),
+});
+export type J1DocsCompleteResponse = z.infer<typeof J1DocsCompleteResponseSchema>;
+
 export const PolicyForApplicationSchema = z.object({
   id: UuidSchema,
   title: z.string(),

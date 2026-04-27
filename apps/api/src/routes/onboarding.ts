@@ -2,9 +2,11 @@ import { Router } from 'express';
 import type { Prisma } from '@prisma/client';
 import {
   ApplicationCreateInputSchema,
+  BackgroundCheckAuthorizeInputSchema,
   BulkInviteInputSchema,
   BulkResendInputSchema,
   DirectDepositInputSchema,
+  J1UpsertInputSchema,
   NudgeInputSchema,
   PolicyAckInputSchema,
   ProfileSubmissionSchema,
@@ -1240,6 +1242,294 @@ onboardingRouter.post('/applications/:id/policy-ack', async (req, res, next) => 
     next(err);
   }
 });
+
+/* ===== Phase 63 — DOCUMENT_UPLOAD / BACKGROUND_CHECK / J1_DOCS ========= */
+
+// DOCUMENT_UPLOAD ------------------------------------------------------ */
+// Files come in via the existing /documents/me/upload pipeline. This
+// endpoint is the "I'm done" handshake: the associate clicks finish on
+// the upload screen, server confirms at least one identity-class doc
+// exists for them, then marks the DOCUMENT_UPLOAD checklist task DONE.
+const ID_CLASS_DOC_KINDS = ['ID', 'SSN_CARD', 'I9_SUPPORTING'] as const;
+
+onboardingRouter.post(
+  '/applications/:id/document-upload',
+  async (req, res, next) => {
+    try {
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+
+      const documentCount = await prisma.documentRecord.count({
+        where: {
+          associateId: app.associateId,
+          deletedAt: null,
+          kind: { in: [...ID_CLASS_DOC_KINDS] },
+        },
+      });
+      if (documentCount === 0) {
+        throw new HttpError(
+          400,
+          'no_documents',
+          'Upload at least one ID, SSN card, or I-9 supporting document before finishing.'
+        );
+      }
+
+      const checklist = await prisma.onboardingChecklist.findUnique({
+        where: { applicationId: app.id },
+      });
+      if (checklist) {
+        await markTaskDoneByKind(prisma, checklist.id, 'DOCUMENT_UPLOAD');
+      }
+
+      await recordOnboardingEvent({
+        actorUserId: req.user!.id,
+        action: 'onboarding.documents_submitted',
+        applicationId: app.id,
+        clientId: app.clientId,
+        metadata: { documentCount },
+        req,
+      });
+
+      res.json({ ok: true, documentCount });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// BACKGROUND_CHECK ----------------------------------------------------- */
+// Stub provider for now — associate types their full legal name (acts as
+// a consent signature) and the BackgroundCheck row flips straight to
+// PASSED. Phase 64+ will swap in a real Checkr / Sterling integration;
+// this endpoint's contract stays the same so the UI doesn't change.
+onboardingRouter.post(
+  '/applications/:id/background-check',
+  async (req, res, next) => {
+    try {
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+      const parsed = BackgroundCheckAuthorizeInputSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+      }
+      const { typedName } = parsed.data;
+
+      // Sanity-check that the typed name vaguely matches the associate's
+      // record. Lower-case + strip whitespace + require either first OR
+      // last name to appear. Forgiving — different from a wet signature.
+      const associate = await prisma.associate.findUniqueOrThrow({
+        where: { id: app.associateId },
+        select: { firstName: true, lastName: true },
+      });
+      const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
+      const typed = norm(typedName);
+      const matches =
+        typed.includes(norm(associate.firstName)) ||
+        typed.includes(norm(associate.lastName));
+      if (!matches) {
+        throw new HttpError(
+          400,
+          'name_mismatch',
+          'The typed name must include your first or last name as on file.'
+        );
+      }
+
+      const now = new Date();
+      const bg = await prisma.$transaction(async (tx) => {
+        // One BackgroundCheck per associate is enough for v1. Re-running
+        // the endpoint just refreshes the row so a re-applying associate
+        // gets a fresh PASSED record instead of a stale one.
+        const existing = await tx.backgroundCheck.findFirst({
+          where: { associateId: app.associateId },
+          orderBy: { initiatedAt: 'desc' },
+        });
+        const data = {
+          provider: 'stub',
+          // PASSED in the stub world; a real provider would set INITIATED
+          // here and flip to PASSED via webhook later.
+          status: 'PASSED' as const,
+          completedAt: now,
+        };
+        return existing
+          ? tx.backgroundCheck.update({ where: { id: existing.id }, data })
+          : tx.backgroundCheck.create({
+              data: {
+                ...data,
+                associateId: app.associateId,
+                clientId: app.clientId,
+                initiatedAt: now,
+              },
+            });
+      }, TX_OPTS);
+
+      const checklist = await prisma.onboardingChecklist.findUnique({
+        where: { applicationId: app.id },
+      });
+      if (checklist) {
+        await markTaskDoneByKind(prisma, checklist.id, 'BACKGROUND_CHECK');
+      }
+
+      await recordOnboardingEvent({
+        actorUserId: req.user!.id,
+        action: 'onboarding.background_check_authorized',
+        applicationId: app.id,
+        clientId: app.clientId,
+        metadata: { provider: bg.provider, status: bg.status, typedName },
+        req,
+      });
+
+      res.json({
+        id: bg.id,
+        associateId: bg.associateId,
+        provider: bg.provider,
+        status: bg.status,
+        initiatedAt: bg.initiatedAt.toISOString(),
+        completedAt: bg.completedAt ? bg.completedAt.toISOString() : null,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// J1_DOCS -------------------------------------------------------------- */
+// Two-step: associate POSTs the J1Profile (program dates, DS-2019 number,
+// sponsor, country, etc.), then uploads DS-2019 / visa scans through the
+// document vault, then POSTs `/finish` to mark the task DONE. Splitting
+// the profile from the finish lets HR see the metadata even before files
+// are uploaded.
+onboardingRouter.post(
+  '/applications/:id/j1-profile',
+  async (req, res, next) => {
+    try {
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+      const parsed = J1UpsertInputSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+      }
+      const input = parsed.data;
+      // J1UpsertInputSchema enforces YYYY-MM-DD shape and that
+      // programEndDate >= programStartDate; we still verify strict-after
+      // here so a same-day program (start == end) is rejected upstream
+      // of the date constructor (DST edge cases).
+      const start = new Date(`${input.programStartDate}T00:00:00.000Z`);
+      const end = new Date(`${input.programEndDate}T00:00:00.000Z`);
+      if (end <= start) {
+        throw new HttpError(
+          400,
+          'bad_program_dates',
+          'Program end date must be after start date.'
+        );
+      }
+
+      const profile = await prisma.j1Profile.upsert({
+        where: { associateId: app.associateId },
+        create: {
+          associateId: app.associateId,
+          programStartDate: start,
+          programEndDate: end,
+          ds2019Number: input.ds2019Number.trim(),
+          sponsorAgency: input.sponsorAgency.trim(),
+          visaNumber: input.visaNumber?.trim() || null,
+          sevisId: input.sevisId?.trim() || null,
+          country: input.country.trim(),
+        },
+        update: {
+          programStartDate: start,
+          programEndDate: end,
+          ds2019Number: input.ds2019Number.trim(),
+          sponsorAgency: input.sponsorAgency.trim(),
+          visaNumber: input.visaNumber?.trim() || null,
+          sevisId: input.sevisId?.trim() || null,
+          country: input.country.trim(),
+        },
+      });
+
+      // Flip the associate's j1Status flag so HR queries can quickly
+      // identify J-1 hires without joining J1Profile.
+      await prisma.associate.update({
+        where: { id: app.associateId },
+        data: { j1Status: true },
+      });
+
+      await recordOnboardingEvent({
+        actorUserId: req.user!.id,
+        action: 'onboarding.j1_profile_saved',
+        applicationId: app.id,
+        clientId: app.clientId,
+        metadata: { ds2019Number: profile.ds2019Number, country: profile.country },
+        req,
+      });
+
+      res.json({
+        id: profile.id,
+        associateId: profile.associateId,
+        programStartDate: profile.programStartDate.toISOString(),
+        programEndDate: profile.programEndDate.toISOString(),
+        ds2019Number: profile.ds2019Number,
+        sponsorAgency: profile.sponsorAgency,
+        visaNumber: profile.visaNumber,
+        sevisId: profile.sevisId,
+        country: profile.country,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+const J1_DOC_KINDS = ['J1_DS2019', 'J1_VISA'] as const;
+
+onboardingRouter.post(
+  '/applications/:id/j1-finish',
+  async (req, res, next) => {
+    try {
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+      const [profile, documentCount] = await Promise.all([
+        prisma.j1Profile.findUnique({ where: { associateId: app.associateId } }),
+        prisma.documentRecord.count({
+          where: {
+            associateId: app.associateId,
+            deletedAt: null,
+            kind: { in: [...J1_DOC_KINDS] },
+          },
+        }),
+      ]);
+      if (!profile) {
+        throw new HttpError(
+          400,
+          'no_profile',
+          'Save your J-1 program details before finishing.'
+        );
+      }
+      if (documentCount === 0) {
+        throw new HttpError(
+          400,
+          'no_documents',
+          'Upload at least one DS-2019 or J-1 visa scan before finishing.'
+        );
+      }
+
+      const checklist = await prisma.onboardingChecklist.findUnique({
+        where: { applicationId: app.id },
+      });
+      if (checklist) {
+        await markTaskDoneByKind(prisma, checklist.id, 'J1_DOCS');
+      }
+
+      await recordOnboardingEvent({
+        actorUserId: req.user!.id,
+        action: 'onboarding.j1_docs_submitted',
+        applicationId: app.id,
+        clientId: app.clientId,
+        metadata: { documentCount },
+        req,
+      });
+
+      res.json({ ok: true, hasProfile: true, documentCount });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 /* ===== I-9 (Phase 20) ================================================ */
 //

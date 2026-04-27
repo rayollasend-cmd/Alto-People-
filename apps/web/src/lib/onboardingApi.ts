@@ -4,12 +4,18 @@ import type {
   ApplicationListResponse,
   ApplicationPoliciesResponse,
   AuditLogListResponse,
+  BackgroundCheck,
+  BackgroundCheckAuthorizeInput,
   BulkInviteInput,
   BulkInviteResponse,
   BulkResendInput,
   BulkResendResponse,
   ClientListResponse,
   DirectDepositInput,
+  DocumentUploadCompleteResponse,
+  J1DocsCompleteResponse,
+  J1Profile,
+  J1UpsertInput,
   NudgeInput,
   NudgeResponse,
   OnboardingTemplate,
@@ -235,5 +241,45 @@ export function skipTask(
   return apiFetch<void>(
     `/onboarding/applications/${applicationId}/tasks/${taskId}/skip`,
     { method: 'POST' }
+  );
+}
+
+/* ---------------------- Phase 63 — stub task completion ---------------- */
+
+export function finishDocumentUpload(
+  applicationId: string
+): Promise<DocumentUploadCompleteResponse> {
+  return apiFetch<DocumentUploadCompleteResponse>(
+    `/onboarding/applications/${applicationId}/document-upload`,
+    { method: 'POST', body: {} }
+  );
+}
+
+export function authorizeBackgroundCheck(
+  applicationId: string,
+  body: BackgroundCheckAuthorizeInput
+): Promise<BackgroundCheck> {
+  return apiFetch<BackgroundCheck>(
+    `/onboarding/applications/${applicationId}/background-check`,
+    { method: 'POST', body }
+  );
+}
+
+export function saveJ1Profile(
+  applicationId: string,
+  body: J1UpsertInput
+): Promise<J1Profile> {
+  return apiFetch<J1Profile>(
+    `/onboarding/applications/${applicationId}/j1-profile`,
+    { method: 'POST', body }
+  );
+}
+
+export function finishJ1Docs(
+  applicationId: string
+): Promise<J1DocsCompleteResponse> {
+  return apiFetch<J1DocsCompleteResponse>(
+    `/onboarding/applications/${applicationId}/j1-finish`,
+    { method: 'POST', body: {} }
   );
 }
