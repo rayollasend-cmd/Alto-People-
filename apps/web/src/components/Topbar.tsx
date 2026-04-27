@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LogOut, Menu, Search, User, WifiOff } from 'lucide-react';
+import { LogOut, Menu, Moon, Search, Sun, User, WifiOff } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
+import { useTheme } from '@/lib/theme';
 import { ROLE_LABELS } from '@/lib/roles';
 import { Button } from '@/components/ui/Button';
 import {
@@ -22,6 +23,7 @@ interface TopbarProps {
 
 export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
   const { user, signOut, isOffline } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [signingOut, setSigningOut] = useState(false);
 
@@ -83,6 +85,25 @@ export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
 
       {user && (
         <>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={toggleTheme}
+                aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+              >
+                {theme === 'dark' ? (
+                  <Sun className="h-4 w-4" />
+                ) : (
+                  <Moon className="h-4 w-4" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {theme === 'dark' ? 'Light theme' : 'Dark theme'}
+            </TooltipContent>
+          </Tooltip>
           <NotificationsBell />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

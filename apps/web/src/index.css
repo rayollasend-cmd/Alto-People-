@@ -8,7 +8,17 @@
 
      Phase 27: bumped --color-gold from #C9A84C (≈4.0:1 on navy) to
      #D9B967 (≈4.7:1 on navy) so primary-action text + status pills meet
-     WCAG AA. The brighter --color-gold-bright stays for accents/hover. */
+     WCAG AA. The brighter --color-gold-bright stays for accents/hover.
+
+     Phase 68: tokens are now theme-aware. The names ("navy", "silver"…)
+     are kept for class-name compatibility with the existing 100+ pages,
+     even though the resolved colors flip in light mode (so `bg-navy`
+     becomes white surface in light mode, etc.). The brand foreground
+     text (`text-fg`) is a new semantic token that swaps with theme — use
+     it on new code; existing `text-white` is overridden in light mode
+     via the .text-white rule below. */
+
+  /* Default = dark theme (current Alto navy + gold). */
   --color-navy:            11  24  50;  /* #0B1832 */
   --color-navy-secondary:  14  34  68;  /* #0E2244 */
   --color-midnight:         8  15  32;  /* #080F20 */
@@ -22,6 +32,28 @@
   --color-success:         52 168 116;  /* #34A874 */
   --color-warning:        237 178  60;  /* #EDB23C */
   --color-muted:          102 102 102;  /* #666666 */
+  --color-fg:             255 255 255;  /* primary text, swaps in light */
+}
+
+:root[data-theme='light'] {
+  /* "navy" → light surface (cards, panels) */
+  --color-navy:           255 255 255;  /* #FFFFFF */
+  --color-navy-secondary: 226 232 240;  /* #E2E8F0 — borders / subtle hover */
+  --color-midnight:       248 250 252;  /* #F8FAFC — app background */
+  /* Gold dropped a step so it passes AA on white. */
+  --color-gold:           184 134  11;  /* #B8860B — ≈4.6:1 on white */
+  --color-gold-bright:    212 158  36;  /* #D49E24 */
+  /* "silver" (secondary text) becomes a dark slate. */
+  --color-silver:          71  85 105;  /* #475569 — slate-600 */
+  --color-steel:           37  99 235;  /* #2563EB */
+  --color-sky:            219 234 254;  /* #DBEAFE */
+  --color-teal:            13 148 136;  /* #0D9488 */
+  --color-alert:          220  38  38;  /* #DC2626 */
+  --color-success:          5 150 105;  /* #059669 */
+  --color-warning:        217 119   6;  /* #D97706 */
+  --color-muted:          148 163 184;  /* #94A3B8 */
+  /* Primary text in light mode. */
+  --color-fg:              15  23  42;  /* #0F172A — slate-900 */
 }
 
 @layer base {
@@ -30,7 +62,8 @@
   }
 
   body {
-    @apply bg-midnight text-white font-sans antialiased;
+    @apply bg-midnight font-sans antialiased;
+    color: rgb(var(--color-fg));
     min-height: 100vh;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -51,6 +84,28 @@
     outline-offset: 2px;
     border-radius: 4px;
   }
+}
+
+/* ---------------------------------------------------------------------------
+ * Phase 68 — light-theme remaps for hard-coded white classes.
+ *
+ * The existing ~150 pages use `text-white` to mean "primary foreground".
+ * In light mode that would mean invisible text on a white card, so we
+ * remap `text-white` (and the rare `bg-white` / `border-white`) to use
+ * the foreground / surface tokens instead. New code should prefer
+ * semantic classes; this keeps the legacy classes working in both themes
+ * without a 150-file sweep.
+ * ------------------------------------------------------------------------- */
+:root[data-theme='light'] .text-white { color: rgb(var(--color-fg)); }
+:root[data-theme='light'] .hover\:text-white:hover { color: rgb(var(--color-fg)); }
+:root[data-theme='light'] .placeholder\:text-white::placeholder { color: rgb(var(--color-fg)); }
+:root[data-theme='light'] .bg-white { background-color: rgb(var(--color-navy)); }
+:root[data-theme='light'] .border-white { border-color: rgb(var(--color-navy-secondary)); }
+
+/* Light theme has a faint shadow under cards so they don't merge with the
+   page background — the dark theme relies on contrast instead. */
+:root[data-theme='light'] .bg-navy {
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
 /* ===========================================================================
