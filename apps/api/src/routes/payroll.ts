@@ -158,6 +158,127 @@ payrollRouter.get('/runs/:id', async (req, res, next) => {
   }
 });
 
+/* ===== Branch enrollment (HR) =========================================== */
+
+/**
+ * GET /payroll/associates/:id/branch-enrollment
+ * Returns just enough payout-method state for HR to decide what to do:
+ * which rail will be used for the next disbursement, whether a bank
+ * account is on file (we never expose the actual decrypted numbers),
+ * and the Branch card id if any.
+ */
+payrollRouter.get(
+  '/associates/:id/branch-enrollment',
+  PROCESS,
+  async (req, res, next) => {
+    try {
+      const associate = await prisma.associate.findUnique({
+        where: { id: req.params.id },
+        include: { payoutMethods: { where: { isPrimary: true }, take: 1 } },
+      });
+      if (!associate) {
+        throw new HttpError(404, 'associate_not_found', 'Associate not found');
+      }
+      const pm = associate.payoutMethods[0] ?? null;
+      const hasBankAccount = !!(pm?.routingNumberEnc && pm?.accountNumberEnc);
+      const branchCardId = pm?.branchCardId ?? null;
+      let rail: 'BRANCH_CARD' | 'BANK_ACCOUNT' | 'NONE';
+      if (branchCardId) rail = 'BRANCH_CARD';
+      else if (hasBankAccount) rail = 'BANK_ACCOUNT';
+      else rail = 'NONE';
+      res.json({
+        associateId: associate.id,
+        firstName: associate.firstName,
+        lastName: associate.lastName,
+        hasBankAccount,
+        branchCardId,
+        accountType: pm?.accountType ?? null,
+        rail,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * PATCH /payroll/associates/:id/branch-enrollment
+ * Body: { branchCardId: string | null }
+ *
+ * Stores (or clears) the Branch-side card identifier on the associate's
+ * primary PayoutMethod. If no primary method exists, creates a card-only
+ * row. Sending null clears the card without touching the bank fields,
+ * so the next run falls back to ACH if available.
+ */
+payrollRouter.patch(
+  '/associates/:id/branch-enrollment',
+  PROCESS,
+  async (req, res, next) => {
+    try {
+      const associate = await prisma.associate.findUnique({
+        where: { id: req.params.id },
+        select: { id: true },
+      });
+      if (!associate) {
+        throw new HttpError(404, 'associate_not_found', 'Associate not found');
+      }
+      const raw = req.body?.branchCardId;
+      const branchCardId =
+        raw === null || raw === undefined || raw === ''
+          ? null
+          : typeof raw === 'string'
+            ? raw.trim()
+            : null;
+      if (raw && typeof raw !== 'string') {
+        throw new HttpError(400, 'invalid_body', 'branchCardId must be a string or null');
+      }
+      if (branchCardId !== null && (branchCardId.length === 0 || branchCardId.length > 64)) {
+        throw new HttpError(400, 'invalid_body', 'branchCardId length must be 1–64 chars');
+      }
+
+      const existing = await prisma.payoutMethod.findFirst({
+        where: { associateId: associate.id, isPrimary: true },
+      });
+      if (existing) {
+        await prisma.payoutMethod.update({
+          where: { id: existing.id },
+          data: { branchCardId },
+        });
+      } else if (branchCardId) {
+        await prisma.payoutMethod.create({
+          data: {
+            associateId: associate.id,
+            type: 'BRANCH_CARD',
+            branchCardId,
+            isPrimary: true,
+          },
+        });
+      }
+      // No-op when there's no primary method AND HR sent null — nothing to clear.
+
+      // Audit at the associate scope (recordPayrollEvent hardcodes
+      // entityType: 'PayrollRun' which would be wrong here).
+      await prisma.auditLog.create({
+        data: {
+          actorUserId: req.user!.id,
+          action: 'payroll.branch_enrollment_updated',
+          entityType: 'Associate',
+          entityId: associate.id,
+          metadata: {
+            ip: req.ip ?? null,
+            userAgent: req.headers['user-agent'] ?? null,
+            hasCard: branchCardId !== null,
+          },
+        },
+      });
+
+      res.json({ ok: true, branchCardId });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 /* ===== HR-only writes (process:payroll) ================================= */
 
 /**

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, Download, FileText, Link as LinkIcon, Plus, RotateCw, Send } from 'lucide-react';
+import { CheckCircle2, CreditCard, Download, FileText, Link as LinkIcon, Plus, RotateCw, Send } from 'lucide-react';
 import type {
   PayrollRunDetail,
   PayrollRunStatus,
@@ -14,6 +14,7 @@ import {
   retryRunFailures,
 } from '@/lib/payrollApi';
 import { syncRun as syncRunToQbo } from '@/lib/quickbooksApi';
+import { BranchEnrollmentDialog } from './BranchEnrollmentDialog';
 import { ApiError } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -73,6 +74,7 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
   const [showCreate, setShowCreate] = useState(false);
   const [confirmDisburse, setConfirmDisburse] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [enrollFor, setEnrollFor] = useState<{ id: string; name: string | null } | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -309,6 +311,7 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
                         <TableHead className="text-right">Rate</TableHead>
                         <TableHead className="text-right">Net</TableHead>
                         <TableHead className="text-right">Status</TableHead>
+                        {canProcess && <TableHead />}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -325,10 +328,34 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
                             {fmtMoney(it.netPay)}
                           </TableCell>
                           <TableCell className="text-right">
-                            <span className="text-xs uppercase tracking-widest text-silver">
+                            <span className={cn(
+                              'text-xs uppercase tracking-widest',
+                              it.status === 'HELD' ? 'text-alert' : 'text-silver'
+                            )}>
                               {it.status}
                             </span>
+                            {it.failureReason && (
+                              <div className="text-[11px] text-alert mt-0.5">
+                                {it.failureReason}
+                              </div>
+                            )}
                           </TableCell>
+                          {canProcess && (
+                            <TableCell className="text-right">
+                              <Button
+                                variant="ghost"
+                                onClick={() =>
+                                  setEnrollFor({
+                                    id: it.associateId,
+                                    name: it.associateName,
+                                  })
+                                }
+                              >
+                                <CreditCard className="h-4 w-4" />
+                                Branch
+                              </Button>
+                            </TableCell>
+                          )}
                         </TableRow>
                       ))}
                     </TableBody>
@@ -429,6 +456,19 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <BranchEnrollmentDialog
+        associateId={enrollFor?.id ?? null}
+        associateName={enrollFor?.name ?? null}
+        onOpenChange={(v) => {
+          if (!v) setEnrollFor(null);
+        }}
+        onSaved={() => {
+          if (selected) {
+            getPayrollRun(selected.id).then(setSelected).catch(() => {});
+          }
+        }}
+      />
     </div>
   );
 }
