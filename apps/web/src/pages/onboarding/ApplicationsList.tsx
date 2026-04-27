@@ -4,7 +4,9 @@ import {
   AlertTriangle,
   BarChart3,
   ClipboardList,
+  LayoutGrid,
   LayoutTemplate,
+  List,
   MailPlus,
   MailWarning,
   MessageCircle,
@@ -23,9 +25,17 @@ import {
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { ProgressBar } from '@/components/ProgressBar';
+import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import {
+  Drawer,
+  DrawerBody,
+  DrawerDescription,
+  DrawerHeader,
+  DrawerTitle,
+} from '@/components/ui/Drawer';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -38,11 +48,16 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/Table';
+import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
 import { toast } from 'sonner';
+import { ApplicationDetailBody } from './ApplicationDetail';
 import { BulkInviteDialog } from './BulkInviteDialog';
 import { NewApplicationDialog } from './NewApplicationDialog';
 import { NudgeDialog } from './NudgeDialog';
 import { cn } from '@/lib/cn';
+
+const VIEW_OPTIONS = ['table', 'cards'] as const;
+type ApplicationsView = (typeof VIEW_OPTIONS)[number];
 
 const STATUS_LABEL: Record<string, string> = {
   DRAFT: 'Draft',
@@ -139,6 +154,14 @@ export function ApplicationsList() {
   // Single-row nudge dialog (one applicant at a time — bulk nudge is
   // intentionally not a thing because the body is per-recipient).
   const [nudgeTarget, setNudgeTarget] = useState<ApplicationSummary | null>(null);
+
+  // Phase 72 — slide-over detail drawer. Click a row → keep the list mounted
+  // and show ApplicationDetailBody in the drawer. Direct URL still routes to
+  // the standalone page.
+  const [drawerTarget, setDrawerTarget] = useState<ApplicationSummary | null>(null);
+
+  // Phase 72 — table / cards view toggle, persisted per-user.
+  const [view, setView] = useViewMode<ApplicationsView>('applications', 'table', VIEW_OPTIONS);
 
   const refresh = useCallback(() => {
     setError(null);
@@ -510,9 +533,17 @@ export function ApplicationsList() {
               );
             })}
           </div>
-          <span className="ml-auto text-[10px] text-silver/60 tabular-nums">
+          <span className="ml-auto text-[10px] text-silver/80 tabular-nums">
             {items ? `${items.length} shown` : ''}
           </span>
+          <ViewToggle<ApplicationsView>
+            value={view}
+            onChange={setView}
+            options={[
+              { value: 'table', label: 'Table', icon: List },
+              { value: 'cards', label: 'Cards', icon: LayoutGrid },
+            ]}
+          />
         </div>
       )}
 
@@ -621,7 +652,7 @@ export function ApplicationsList() {
         </div>
       )}
 
-      {items && items.length > 0 && (
+      {items && items.length > 0 && view === 'table' && (
         <Card className="overflow-hidden">
           <Table>
             <TableHeader>
@@ -655,7 +686,18 @@ export function ApplicationsList() {
                 return (
                   <TableRow
                     key={a.id}
-                    className={cn(isSelected && 'bg-gold/[0.04]')}
+                    onClick={(e) => {
+                      // Don't intercept clicks on the inner controls (checkbox,
+                      // links, action buttons). Ignore selection drags too.
+                      const target = e.target as HTMLElement;
+                      if (target.closest('button, a, input, [data-no-row-click]')) return;
+                      if (window.getSelection()?.toString()) return;
+                      setDrawerTarget(a);
+                    }}
+                    className={cn(
+                      'group cursor-pointer',
+                      isSelected && 'bg-gold/[0.04]'
+                    )}
                   >
                     {canManage && (
                       <TableCell className="px-3 no-print">
@@ -663,6 +705,7 @@ export function ApplicationsList() {
                           type="checkbox"
                           checked={isSelected}
                           onChange={() => toggleOne(a.id)}
+                          onClick={(e) => e.stopPropagation()}
                           aria-label={
                             isSelected
                               ? `Deselect ${a.associateName}`
@@ -673,34 +716,37 @@ export function ApplicationsList() {
                       </TableCell>
                     )}
                     <TableCell>
-                      <div className="flex items-start gap-2">
-                        {a.lastInviteDelivery?.status === 'FAILED' ? (
-                          <MailWarning
-                            className="h-3.5 w-3.5 text-alert mt-1 shrink-0"
-                            aria-label="Email bounced"
-                            // Title fallback for keyboard nav / no-tooltip envs.
-                            // Covers HR users who can't easily mouse-hover.
-                            data-tip={
-                              a.lastInviteDelivery.failureReason ?? 'Email bounced'
-                            }
-                          />
-                        ) : (
-                          stale && (
-                            <AlertTriangle
-                              className="h-3.5 w-3.5 text-alert mt-1 shrink-0"
-                              aria-label="Stuck"
-                            />
-                          )
-                        )}
+                      <div className="flex items-center gap-2.5">
+                        <div className="relative">
+                          <Avatar name={a.associateName} size="sm" />
+                          {(a.lastInviteDelivery?.status === 'FAILED' || stale) && (
+                            <span
+                              className="absolute -top-0.5 -right-0.5 h-3 w-3 rounded-full bg-alert border-2 border-navy grid place-items-center"
+                              aria-label={
+                                a.lastInviteDelivery?.status === 'FAILED'
+                                  ? 'Email bounced'
+                                  : 'Stuck'
+                              }
+                              title={
+                                a.lastInviteDelivery?.status === 'FAILED'
+                                  ? a.lastInviteDelivery.failureReason ?? 'Email bounced'
+                                  : 'Stuck'
+                              }
+                            >
+                              {a.lastInviteDelivery?.status === 'FAILED' ? (
+                                <MailWarning className="h-2 w-2 text-white" aria-hidden="true" />
+                              ) : (
+                                <AlertTriangle className="h-2 w-2 text-white" aria-hidden="true" />
+                              )}
+                            </span>
+                          )}
+                        </div>
                         <div className="min-w-0">
-                          <Link
-                            to={`/onboarding/applications/${a.id}`}
-                            className="text-gold hover:text-gold-bright underline-offset-4 hover:underline font-medium"
-                          >
+                          <span className="text-white group-hover:text-gold-bright font-medium transition-colors">
                             {a.associateName}
-                          </Link>
+                          </span>
                           {a.position && (
-                            <div className="text-xs text-silver mt-0.5">
+                            <div className="text-xs text-silver mt-0.5 truncate">
                               {a.position}
                             </div>
                           )}
@@ -747,11 +793,17 @@ export function ApplicationsList() {
                     </TableCell>
                     {canManage && (
                       <TableCell className="text-right whitespace-nowrap no-print">
-                        <div className="flex items-center justify-end gap-0.5">
+                        <div
+                          className="flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
+                          data-no-row-click
+                        >
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => setNudgeTarget(a)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setNudgeTarget(a);
+                            }}
                             title="Send nudge email"
                             disabled={a.status === 'APPROVED' || a.status === 'REJECTED'}
                           >
@@ -760,7 +812,10 @@ export function ApplicationsList() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => onResend(a)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onResend(a);
+                            }}
                             loading={resendingIds.has(a.id)}
                             title="Resend invite"
                           >
@@ -775,6 +830,212 @@ export function ApplicationsList() {
             </TableBody>
           </Table>
         </Card>
+      )}
+
+      {items && items.length > 0 && view === 'cards' && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {items.map((a) => {
+            const stale = isStale(a, now);
+            const isSelected = selected.has(a.id);
+            return (
+              <ApplicationCard
+                key={a.id}
+                a={a}
+                stale={stale}
+                isSelected={isSelected}
+                canManage={canManage}
+                onOpen={() => setDrawerTarget(a)}
+                onToggleSelect={() => toggleOne(a.id)}
+                onNudge={() => setNudgeTarget(a)}
+                onResend={() => onResend(a)}
+                resending={resendingIds.has(a.id)}
+              />
+            );
+          })}
+        </div>
+      )}
+
+      <Drawer
+        open={!!drawerTarget}
+        onOpenChange={(o) => {
+          if (!o) {
+            setDrawerTarget(null);
+            // Refresh in case the drawer mutated (skip task / resend).
+            refresh();
+            refreshAll();
+          }
+        }}
+        width="max-w-2xl"
+      >
+        {drawerTarget && (
+          <>
+            <DrawerHeader>
+              <DrawerTitle>{drawerTarget.associateName}</DrawerTitle>
+              <DrawerDescription>
+                {drawerTarget.clientName}
+                {drawerTarget.position ? ` · ${drawerTarget.position}` : ''}
+              </DrawerDescription>
+            </DrawerHeader>
+            <DrawerBody>
+              <ApplicationDetailBody applicationId={drawerTarget.id} mode="drawer" />
+            </DrawerBody>
+          </>
+        )}
+      </Drawer>
+    </div>
+  );
+}
+
+interface ApplicationCardProps {
+  a: ApplicationSummary;
+  stale: boolean;
+  isSelected: boolean;
+  canManage: boolean;
+  onOpen: () => void;
+  onToggleSelect: () => void;
+  onNudge: () => void;
+  onResend: () => void;
+  resending: boolean;
+}
+
+function ApplicationCard({
+  a,
+  stale,
+  isSelected,
+  canManage,
+  onOpen,
+  onToggleSelect,
+  onNudge,
+  onResend,
+  resending,
+}: ApplicationCardProps) {
+  const bounced = a.lastInviteDelivery?.status === 'FAILED';
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={(e) => {
+        const target = e.target as HTMLElement;
+        if (target.closest('button, a, input, [data-no-row-click]')) return;
+        onOpen();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      className={cn(
+        'group relative flex flex-col gap-3 rounded-lg border bg-navy p-4 cursor-pointer transition-colors',
+        'hover:border-gold/40',
+        'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+        isSelected ? 'border-gold/60 bg-gold/[0.04]' : 'border-navy-secondary'
+      )}
+    >
+      <div className="flex items-start gap-3">
+        {canManage && (
+          <input
+            type="checkbox"
+            checked={isSelected}
+            onChange={onToggleSelect}
+            onClick={(e) => e.stopPropagation()}
+            aria-label={isSelected ? `Deselect ${a.associateName}` : `Select ${a.associateName}`}
+            className="mt-1 h-3.5 w-3.5 rounded border-navy-secondary bg-navy text-gold focus:ring-gold focus:ring-offset-0 cursor-pointer"
+          />
+        )}
+        <Avatar name={a.associateName} size="md" />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="font-medium text-white group-hover:text-gold-bright transition-colors truncate">
+              {a.associateName}
+            </span>
+            {bounced && (
+              <span title={a.lastInviteDelivery?.failureReason ?? 'Email bounced'}>
+                <MailWarning
+                  className="h-3.5 w-3.5 text-alert shrink-0"
+                  aria-label="Email bounced"
+                />
+              </span>
+            )}
+            {!bounced && stale && (
+              <AlertTriangle
+                className="h-3.5 w-3.5 text-alert shrink-0"
+                aria-label="Stuck"
+              />
+            )}
+          </div>
+          <div className="text-xs text-silver mt-0.5 truncate">
+            {a.clientName}
+            {a.position ? ` · ${a.position}` : ''}
+          </div>
+        </div>
+        <Badge
+          variant={STATUS_VARIANT[a.status] ?? 'default'}
+          data-status={a.status}
+          className="shrink-0"
+        >
+          {STATUS_LABEL[a.status] ?? a.status}
+        </Badge>
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between text-[10px] uppercase tracking-widest text-silver/80 mb-1">
+          <span>Progress</span>
+          <span
+            className={cn(
+              'tabular-nums',
+              a.percentComplete === 100
+                ? 'text-success font-medium'
+                : a.percentComplete >= 50
+                  ? 'text-gold'
+                  : 'text-silver'
+            )}
+          >
+            {a.percentComplete}%
+          </span>
+        </div>
+        <ProgressBar percent={a.percentComplete} hideLabel />
+      </div>
+
+      <div className="flex items-center justify-between text-[10px] text-silver/80">
+        <span>{TRACK_LABEL[a.onboardingTrack] ?? a.onboardingTrack} track</span>
+        <span className="tabular-nums">
+          Invited {daysSince(a.invitedAt, Date.now())}d ago
+        </span>
+      </div>
+
+      {canManage && (
+        <div
+          className="flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
+          data-no-row-click
+        >
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation();
+              onNudge();
+            }}
+            disabled={a.status === 'APPROVED' || a.status === 'REJECTED'}
+            title="Send nudge email"
+          >
+            <MessageCircle className="h-3.5 w-3.5" />
+            Nudge
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation();
+              onResend();
+            }}
+            loading={resending}
+            title="Resend invite"
+          >
+            <Send className="h-3.5 w-3.5" />
+            Resend
+          </Button>
+        </div>
       )}
     </div>
   );

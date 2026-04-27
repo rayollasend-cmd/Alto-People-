@@ -2,6 +2,7 @@
 // Page code should import from '@/components/ui' rather than each file
 // individually so the surface stays small and easy to refactor.
 
+export * from './Avatar';
 export * from './Badge';
 export * from './Breadcrumb';
 export * from './Button';
@@ -20,3 +21,4 @@ export * from './Table';
 export * from './Tabs';
 export * from './Toaster';
 export * from './Tooltip';
+export * from './ViewToggle';

@@ -72,8 +72,8 @@ clientsRouter.get('/', async (req, res, next) => {
     });
     const ids = rows.map((r) => r.id);
 
-    // Two batched aggregates regardless of N — no per-row queries.
-    const [appCounts, lastPayrolls] = ids.length
+    // Three batched aggregates regardless of N — no per-row queries.
+    const [appCounts, approvedCounts, lastPayrolls] = ids.length
       ? await Promise.all([
           prisma.application.groupBy({
             by: ['clientId'],
@@ -84,17 +84,30 @@ clientsRouter.get('/', async (req, res, next) => {
             },
             _count: { _all: true },
           }),
+          prisma.application.groupBy({
+            by: ['clientId'],
+            where: {
+              clientId: { in: ids },
+              status: 'APPROVED',
+              deletedAt: null,
+            },
+            _count: { _all: true },
+          }),
           prisma.payrollRun.groupBy({
             by: ['clientId'],
             where: { clientId: { in: ids }, disbursedAt: { not: null } },
             _max: { disbursedAt: true },
           }),
         ])
-      : [[], []];
+      : [[], [], []];
 
     const appCountByClient = new Map<string, number>();
     for (const r of appCounts) {
       if (r.clientId) appCountByClient.set(r.clientId, r._count._all);
+    }
+    const approvedCountByClient = new Map<string, number>();
+    for (const r of approvedCounts) {
+      if (r.clientId) approvedCountByClient.set(r.clientId, r._count._all);
     }
     const lastPayrollByClient = new Map<string, Date | null>();
     for (const r of lastPayrolls) {
@@ -104,6 +117,7 @@ clientsRouter.get('/', async (req, res, next) => {
     const clients: ClientListItem[] = rows.map((row) => ({
       ...toSummary(row),
       openApplications: appCountByClient.get(row.id) ?? 0,
+      activeAssociateCount: approvedCountByClient.get(row.id) ?? 0,
       lastPayrollDisbursedAt:
         lastPayrollByClient.get(row.id)?.toISOString() ?? null,
     }));

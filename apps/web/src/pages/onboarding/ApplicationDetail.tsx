@@ -67,8 +67,39 @@ const STUB_KINDS = new Set([
   'J1_DOCS',
 ]);
 
+/** Route component — the standalone page. */
 export function ApplicationDetail() {
   const { id } = useParams<{ id: string }>();
+  return (
+    <div className="max-w-5xl mx-auto">
+      <Link
+        to="/onboarding"
+        className="text-sm text-silver hover:text-gold inline-block mb-3"
+      >
+        ← All applications
+      </Link>
+      <ApplicationDetailBody applicationId={id} mode="page" />
+    </div>
+  );
+}
+
+interface ApplicationDetailBodyProps {
+  applicationId: string | undefined;
+  /**
+   * `page` — full bleed, big title, surfaces compliance + resend buttons inline.
+   * `drawer` — title is rendered by the parent Drawer header; we just paint
+   *            the body. Slightly tighter typographic scale.
+   */
+  mode: 'page' | 'drawer';
+}
+
+/**
+ * Phase 72 — extracted body so the same content can render in either the
+ * full-page route or inside a Drawer slide-over. Both modes share data
+ * loading + skip/resend handlers; they differ only in how the title row
+ * is laid out.
+ */
+export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetailBodyProps) {
   const { user } = useAuth();
   const [detail, setDetail] = useState<ApplicationDetailType | null>(null);
   const [audit, setAudit] = useState<AuditLogEntry[]>([]);
@@ -78,12 +109,12 @@ export function ApplicationDetail() {
     user?.role === 'HR_ADMINISTRATOR' || user?.role === 'OPERATIONS_MANAGER';
 
   const refresh = useCallback(async () => {
-    if (!id) return;
+    if (!applicationId) return;
     try {
       const [d, a] = await Promise.all([
-        getApplication(id),
+        getApplication(applicationId),
         canManage
-          ? getApplicationAudit(id).catch(() => ({ entries: [] }))
+          ? getApplicationAudit(applicationId).catch(() => ({ entries: [] }))
           : Promise.resolve({ entries: [] }),
       ]);
       setDetail(d);
@@ -91,29 +122,29 @@ export function ApplicationDetail() {
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load.');
     }
-  }, [id, canManage]);
+  }, [applicationId, canManage]);
 
   useEffect(() => {
+    setDetail(null);
+    setAudit([]);
+    setError(null);
     refresh();
   }, [refresh]);
 
   if (error) {
     return (
-      <div className="max-w-5xl mx-auto">
-        <div
-          className="p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-          role="alert"
-        >
-          {error}
-        </div>
+      <div
+        className="p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
+        role="alert"
+      >
+        {error}
       </div>
     );
   }
 
   if (!detail) {
     return (
-      <div className="max-w-5xl mx-auto space-y-6">
-        <Skeleton className="h-7 w-32" />
+      <div className="space-y-6">
         <Skeleton className="h-10 w-64" />
         <Skeleton className="h-24" />
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -159,70 +190,39 @@ export function ApplicationDetail() {
     }
   };
 
-  // Per-status counts for the progress card.
   const counts = detail.tasks.reduce<Record<string, number>>((acc, t) => {
     acc[t.status] = (acc[t.status] ?? 0) + 1;
     return acc;
   }, {});
 
   return (
-    <div className="max-w-5xl mx-auto">
-      <Link
-        to="/onboarding"
-        className="text-sm text-silver hover:text-gold inline-block mb-3"
-      >
-        ← All applications
-      </Link>
-
-      {/* Header — title on its own line, metadata + actions stacked below
-          on narrow screens so the employment badge never orphans. */}
+    <>
+      {/* Header. In `page` mode this is the H1 + metadata + actions row.
+          In `drawer` mode the parent Drawer paints the title, so we drop
+          the H1 and keep the metadata + actions below it. */}
       <header className="mb-6">
-        <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div className="min-w-0">
-            <h1 className="font-display text-3xl md:text-4xl text-white mb-2 leading-tight">
-              {detail.associateName}
-            </h1>
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-silver text-sm">
-              <span className="text-white">{detail.clientName}</span>
-              {detail.position && (
-                <>
-                  <span className="text-silver/40">·</span>
-                  <span>{detail.position}</span>
-                </>
-              )}
-              <Badge variant="outline" className="text-[10px]">
-                {detail.onboardingTrack} TRACK
-              </Badge>
-              <Badge
-                variant={detail.employmentType === 'W2_EMPLOYEE' ? 'default' : 'accent'}
-              >
-                {EMPLOYMENT_LABEL[detail.employmentType] ?? detail.employmentType}
-              </Badge>
+        {mode === 'page' && (
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="min-w-0">
+              <h1 className="font-display text-3xl md:text-4xl text-white mb-2 leading-tight">
+                {detail.associateName}
+              </h1>
+              <DetailMeta detail={detail} />
             </div>
+            {canManage && (
+              <DetailActions detail={detail} onResend={handleResend} />
+            )}
           </div>
-          {canManage && (
-            <div className="flex gap-2 shrink-0">
-              <a
-                href={compliancePacketUrl(detail.id)}
-                download={`compliance-packet-${detail.associateName.replace(/\s+/g, '-').toLowerCase()}.pdf`}
-                className="inline-flex items-center gap-2 px-3 h-9 text-sm rounded-md border border-navy-secondary bg-navy-secondary/40 text-white hover:border-gold/60 hover:text-gold transition-colors"
-                title="Download single-PDF audit packet for this application"
-              >
-                <FileDown className="h-4 w-4" />
-                Compliance packet
-              </a>
-              <Button variant="outline" size="sm" onClick={handleResend}>
-                <Send className="h-4 w-4" />
-                Resend invite
-              </Button>
-            </div>
-          )}
-        </div>
+        )}
+        {mode === 'drawer' && (
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <DetailMeta detail={detail} />
+            {canManage && (
+              <DetailActions detail={detail} onResend={handleResend} compact />
+            )}
+          </div>
+        )}
 
-        {/* Phase 60 — invite delivery surface. Only renders when there's
-            something noteworthy to say (FAILED bounce, or a recent SENT/QUEUED
-            for HR confidence). Hides entirely once the application is APPROVED
-            since delivery state no longer matters. */}
         {canManage &&
           detail.lastInviteDelivery &&
           detail.status !== 'APPROVED' &&
@@ -231,8 +231,6 @@ export function ApplicationDetail() {
           )}
       </header>
 
-      {/* Hero progress card — bigger, color-coded counts, replaces the
-          previous "small text + thin gold bar" treatment. */}
       <Card className="mb-6 overflow-hidden">
         <CardHeader className="pb-2">
           <div className="flex items-baseline justify-between gap-4">
@@ -243,7 +241,7 @@ export function ApplicationDetail() {
               className={cn(
                 'tabular-nums font-display leading-none',
                 detail.percentComplete === 100 ? 'text-success' : 'text-gold',
-                'text-3xl md:text-4xl'
+                mode === 'drawer' ? 'text-2xl md:text-3xl' : 'text-3xl md:text-4xl'
               )}
             >
               {detail.percentComplete}%
@@ -287,10 +285,12 @@ export function ApplicationDetail() {
         </CardContent>
       </Card>
 
-      {/* Task grid — color-coded status badges, status-tinted card. HR sees
-          progress and can skip stub tasks; the actual form-filling lives on
-          the associate's /onboarding/me/... routes. */}
-      <section className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-8">
+      <section
+        className={cn(
+          'grid grid-cols-1 gap-3 mb-8',
+          mode === 'drawer' ? '' : 'md:grid-cols-2'
+        )}
+      >
         {detail.tasks.map((t) => (
           <TaskTile
             key={t.id}
@@ -319,6 +319,70 @@ export function ApplicationDetail() {
           </CardContent>
         </Card>
       )}
+
+      {mode === 'drawer' && (
+        <div className="mt-4">
+          <Link
+            to={`/onboarding/applications/${detail.id}`}
+            className="text-sm text-silver hover:text-gold underline-offset-4 hover:underline"
+          >
+            Open full page →
+          </Link>
+        </div>
+      )}
+    </>
+  );
+}
+
+function DetailMeta({ detail }: { detail: ApplicationDetailType }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-silver text-sm">
+      <span className="text-white">{detail.clientName}</span>
+      {detail.position && (
+        <>
+          <span className="text-silver/40">·</span>
+          <span>{detail.position}</span>
+        </>
+      )}
+      <Badge variant="outline" className="text-[10px]">
+        {detail.onboardingTrack} TRACK
+      </Badge>
+      <Badge
+        variant={detail.employmentType === 'W2_EMPLOYEE' ? 'default' : 'accent'}
+      >
+        {EMPLOYMENT_LABEL[detail.employmentType] ?? detail.employmentType}
+      </Badge>
+    </div>
+  );
+}
+
+function DetailActions({
+  detail,
+  onResend,
+  compact,
+}: {
+  detail: ApplicationDetailType;
+  onResend: () => void;
+  compact?: boolean;
+}) {
+  return (
+    <div className="flex gap-2 shrink-0">
+      <a
+        href={compliancePacketUrl(detail.id)}
+        download={`compliance-packet-${detail.associateName.replace(/\s+/g, '-').toLowerCase()}.pdf`}
+        className={cn(
+          'inline-flex items-center gap-2 px-3 text-sm rounded-md border border-navy-secondary bg-navy-secondary/40 text-white hover:border-gold/60 hover:text-gold transition-colors',
+          compact ? 'h-8' : 'h-9'
+        )}
+        title="Download single-PDF audit packet for this application"
+      >
+        <FileDown className="h-4 w-4" />
+        {compact ? 'Packet' : 'Compliance packet'}
+      </a>
+      <Button variant="outline" size="sm" onClick={onResend}>
+        <Send className="h-4 w-4" />
+        Resend invite
+      </Button>
     </div>
   );
 }
