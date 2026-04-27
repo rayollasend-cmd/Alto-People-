@@ -316,6 +316,8 @@ model User {
   enrollmentsAssigned          CourseEnrollment[]             @relation("EnrollmentAssigner")
   // Phase 95 — worktag assignments authored.
   worktagAssignmentsAuthored   WorktagAssignment[]            @relation("WorktagAssigner")
+  // Phase 96 — saved reports authored.
+  reportsCreated               Report[]                       @relation("ReportCreator")
 
   @@index([role])
   @@index([clientId])
@@ -3235,4 +3237,56 @@ model WorktagAssignment {
 
   @@index([entityKind, entityId])
   @@index([worktagId])
+}
+
+// Phase 96 — Reporting builder: saved reports + scheduled deliveries.
+
+enum ReportEntity {
+  ASSOCIATE
+  TIME_ENTRY
+  PAYROLL_ITEM
+  PAYROLL_RUN
+  APPLICATION
+  EXPENSE
+  CANDIDATE
+}
+
+enum ReportScheduleCadence {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+model Report {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String
+  description String?
+  entity      ReportEntity
+  spec        Json
+  isPublic    Boolean      @default(false)
+  createdById String?      @db.Uuid
+  createdAt   DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime     @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime?    @db.Timestamptz(6)
+
+  createdBy User?           @relation("ReportCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  schedules ReportSchedule[]
+
+  @@index([entity])
+}
+
+model ReportSchedule {
+  id         String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reportId   String                @db.Uuid
+  cadence    ReportScheduleCadence
+  recipients String
+  isActive   Boolean               @default(true)
+  lastRunAt  DateTime?             @db.Timestamptz(6)
+  nextRunAt  DateTime              @db.Timestamptz(6)
+  createdAt  DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime              @updatedAt @db.Timestamptz(6)
+
+  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@index([isActive, nextRunAt])
 }

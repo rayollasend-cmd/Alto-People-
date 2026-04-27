@@ -41,6 +41,7 @@ import { benefitsLifecycle92Router } from './routes/benefitsLifecycle92.js';
 import { apiKeysWebhooks93Router } from './routes/apiKeysWebhooks93.js';
 import { lms94Router } from './routes/lms94.js';
 import { worktags95Router } from './routes/worktags95.js';
+import { reports96Router } from './routes/reports96.js';
 import { attachUser, requireCapability } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 
@@ -165,6 +166,10 @@ export function createApp() {
   // transactions. Self-gates per handler with view:payroll /
   // process:payroll.
   app.use('/', worktags95Router);
+  // Phase 96 — saved reports + scheduled deliveries. All routes
+  // require view:dashboard; spec validation prevents column/filter
+  // injection.
+  app.use('/', reports96Router);
   // QuickBooks router self-gates each route — the OAuth callback must accept
   // an unauthenticated browser redirect from Intuit, so we cannot apply a
   // capability check at this mount point.
