@@ -24,6 +24,12 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  Drawer,
+  DrawerBody,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
   EmptyState,
   Input,
   PageHeader,
@@ -60,6 +66,7 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [submitTarget, setSubmitTarget] = useState<PerformanceReview | null>(null);
+  const [drawerTarget, setDrawerTarget] = useState<PerformanceReview | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -155,7 +162,15 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
         <ul className="space-y-2">
           {reviews.map((r) => (
             <li key={r.id}>
-              <Card className="group">
+              <Card
+                className="group cursor-pointer transition-colors hover:border-gold/40"
+                onClick={(e) => {
+                  const target = e.target as HTMLElement;
+                  if (target.closest('button, a, input, [data-no-row-click]')) return;
+                  if (window.getSelection()?.toString()) return;
+                  setDrawerTarget(r);
+                }}
+              >
                 <CardContent className="p-4">
                   <div className="flex items-start justify-between gap-3 flex-wrap">
                     <div className="flex items-start gap-3 min-w-0 flex-1">
@@ -222,6 +237,104 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
         busy={pendingId !== null}
         onConfirm={onConfirmSubmit}
       />
+
+      <Drawer
+        open={!!drawerTarget}
+        onOpenChange={(o) => !o && setDrawerTarget(null)}
+        width="max-w-xl"
+      >
+        {drawerTarget && (
+          <ReviewDetailPanel
+            r={drawerTarget}
+            canManage={canManage}
+            onSubmit={() => {
+              setSubmitTarget(drawerTarget);
+              setDrawerTarget(null);
+            }}
+          />
+        )}
+      </Drawer>
+    </div>
+  );
+}
+
+function ReviewDetailPanel({
+  r,
+  canManage,
+  onSubmit,
+}: {
+  r: PerformanceReview;
+  canManage: boolean;
+  onSubmit: () => void;
+}) {
+  return (
+    <>
+      <DrawerHeader>
+        <div className="flex items-center gap-3">
+          <Avatar name={r.associateName} size="md" />
+          <div className="min-w-0">
+            <DrawerTitle className="truncate">{r.associateName}</DrawerTitle>
+            <DrawerDescription>
+              {r.periodStart} → {r.periodEnd}
+            </DrawerDescription>
+          </div>
+        </div>
+      </DrawerHeader>
+      <DrawerBody>
+        <div className="flex flex-wrap items-center gap-3 mb-4">
+          <span className="inline-flex items-center gap-1 font-display text-2xl text-gold tabular-nums">
+            <Star className="h-5 w-5" />
+            {r.overallRating}/5
+          </span>
+          <Badge variant={statusVariant(r.status)}>{r.status}</Badge>
+          {r.reviewerEmail && (
+            <span className="text-xs text-silver">by {r.reviewerEmail}</span>
+          )}
+        </div>
+
+        <ReviewSection label="Summary" body={r.summary} />
+        <ReviewSection label="Strengths" body={r.strengths} />
+        <ReviewSection label="Areas to improve" body={r.improvements} />
+        <ReviewSection label="Goals" body={r.goals} />
+
+        <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-2 text-xs text-silver">
+          <DetailRow label="Created">{new Date(r.createdAt).toLocaleString()}</DetailRow>
+          <DetailRow label="Submitted">
+            {r.submittedAt ? new Date(r.submittedAt).toLocaleString() : '—'}
+          </DetailRow>
+          <DetailRow label="Acknowledged">
+            {r.acknowledgedAt ? new Date(r.acknowledgedAt).toLocaleString() : '—'}
+          </DetailRow>
+        </dl>
+      </DrawerBody>
+      {canManage && r.status === 'DRAFT' && (
+        <DrawerFooter>
+          <Button onClick={onSubmit}>Submit review</Button>
+        </DrawerFooter>
+      )}
+    </>
+  );
+}
+
+function ReviewSection({ label, body }: { label: string; body: string | null }) {
+  if (!body) return null;
+  return (
+    <div className="mb-4">
+      <div className="text-[10px] uppercase tracking-widest text-silver/80 mb-1">
+        {label}
+      </div>
+      <div className="rounded-md border border-navy-secondary bg-navy-secondary/30 p-3 text-sm text-white whitespace-pre-wrap">
+        {body}
+      </div>
+    </div>
+  );
+}
+
+function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <dt className="text-[10px] uppercase tracking-widest text-silver/80">{label}</dt>
+      <dd className="text-white text-sm mt-0.5 tabular-nums">{children}</dd>
     </div>
   );
 }

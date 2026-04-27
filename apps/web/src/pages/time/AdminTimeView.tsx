@@ -35,6 +35,12 @@ import {
   CardContent,
   CardHeader,
   CardTitle,
+  Drawer,
+  DrawerBody,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -134,6 +140,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [rejectOpen, setRejectOpen] = useState<null | { mode: 'one'; id: string } | { mode: 'bulk' }>(null);
+  const [drawerTarget, setDrawerTarget] = useState<TimeEntry | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -658,8 +665,14 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                     return (
                       <TableRow
                         key={e.id}
-                        className="group"
+                        className="group cursor-pointer"
                         data-state={selected.has(e.id) ? 'selected' : undefined}
+                        onClick={(ev) => {
+                          const target = ev.target as HTMLElement;
+                          if (target.closest('button, a, input, [data-no-row-click]')) return;
+                          if (window.getSelection()?.toString()) return;
+                          setDrawerTarget(e);
+                        }}
                       >
                         {canManage && filter === 'COMPLETED' && (
                           <TableCell className="w-8">
@@ -745,6 +758,189 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
         busy={bulkBusy || pendingId !== null}
         onSubmit={onSubmitReject}
       />
+
+      <Drawer
+        open={!!drawerTarget}
+        onOpenChange={(o) => {
+          if (!o) {
+            setDrawerTarget(null);
+            // Mutations from the drawer's footer buttons trigger their own
+            // refresh through onApprove / setRejectOpen. No extra refresh.
+          }
+        }}
+        width="max-w-xl"
+      >
+        {drawerTarget && (
+          <TimeEntryDetailPanel
+            entry={drawerTarget}
+            canManage={canManage}
+            busy={pendingId === drawerTarget.id || bulkBusy}
+            onApprove={async () => {
+              const id = drawerTarget.id;
+              setDrawerTarget(null);
+              await onApprove(id);
+            }}
+            onReject={() => {
+              setRejectOpen({ mode: 'one', id: drawerTarget.id });
+              setDrawerTarget(null);
+            }}
+          />
+        )}
+      </Drawer>
+    </div>
+  );
+}
+
+function TimeEntryDetailPanel({
+  entry,
+  canManage,
+  busy,
+  onApprove,
+  onReject,
+}: {
+  entry: TimeEntry;
+  canManage: boolean;
+  busy: boolean;
+  onApprove: () => void;
+  onReject: () => void;
+}) {
+  const showApprove =
+    canManage && (entry.status === 'COMPLETED' || entry.status === 'REJECTED');
+  const showReject =
+    canManage && (entry.status === 'COMPLETED' || entry.status === 'APPROVED');
+  return (
+    <>
+      <DrawerHeader>
+        <div className="flex items-center gap-3">
+          <Avatar name={entry.associateName ?? '—'} size="md" />
+          <div className="min-w-0">
+            <DrawerTitle className="truncate">
+              {entry.associateName ?? '—'}
+            </DrawerTitle>
+            <DrawerDescription>
+              {entry.clientName ?? 'No client'}
+              {entry.jobName ? ` · ${entry.jobName}` : ''}
+            </DrawerDescription>
+          </div>
+        </div>
+      </DrawerHeader>
+      <DrawerBody>
+        <div className="flex flex-wrap items-center gap-2 mb-4">
+          <Badge variant={statusVariant(entry.status)}>{entry.status}</Badge>
+          {entry.anomalies && entry.anomalies.length > 0 && (
+            <Badge variant="destructive">
+              {entry.anomalies.length} anomal{entry.anomalies.length === 1 ? 'y' : 'ies'}
+            </Badge>
+          )}
+        </div>
+
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm mb-5">
+          <DetailRow label="Clock in">
+            {new Date(entry.clockInAt).toLocaleString()}
+          </DetailRow>
+          <DetailRow label="Clock out">
+            {entry.clockOutAt
+              ? new Date(entry.clockOutAt).toLocaleString()
+              : 'Still on the clock'}
+          </DetailRow>
+          <DetailRow label="Duration">{formatHM(entry.minutesElapsed)}</DetailRow>
+          <DetailRow label="Pay rate">
+            {entry.payRate != null
+              ? `$${entry.payRate.toFixed(2)}/hr`
+              : <span className="text-silver/80">—</span>}
+          </DetailRow>
+          {(entry.clockInLat != null && entry.clockInLng != null) && (
+            <DetailRow label="Clock-in geofence">
+              <span className="font-mono text-xs">
+                {entry.clockInLat.toFixed(5)}, {entry.clockInLng.toFixed(5)}
+              </span>
+            </DetailRow>
+          )}
+          {(entry.clockOutLat != null && entry.clockOutLng != null) && (
+            <DetailRow label="Clock-out geofence">
+              <span className="font-mono text-xs">
+                {entry.clockOutLat.toFixed(5)}, {entry.clockOutLng.toFixed(5)}
+              </span>
+            </DetailRow>
+          )}
+          {entry.approverEmail && (
+            <DetailRow label="Approved by">{entry.approverEmail}</DetailRow>
+          )}
+          {entry.approvedAt && (
+            <DetailRow label="Approved at">
+              {new Date(entry.approvedAt).toLocaleString()}
+            </DetailRow>
+          )}
+        </dl>
+
+        {entry.anomalies && entry.anomalies.length > 0 && (
+          <div className="mb-5 rounded-md border border-warning/40 bg-warning/[0.07] p-3 text-sm">
+            <div className="text-[10px] uppercase tracking-widest text-warning mb-1.5">
+              Anomalies
+            </div>
+            <ul className="list-disc list-inside text-warning/90 space-y-0.5">
+              {entry.anomalies.map((a) => (
+                <li key={a}>{a}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {entry.notes && (
+          <DetailSection label="Notes" body={entry.notes} />
+        )}
+
+        {entry.rejectionReason && (
+          <div
+            className="rounded-md border border-alert/40 bg-alert/[0.07] p-3 text-sm text-alert"
+            role="alert"
+          >
+            <div className="font-medium mb-0.5">Rejected</div>
+            <div className="break-words">{entry.rejectionReason}</div>
+          </div>
+        )}
+      </DrawerBody>
+      {(showApprove || showReject) && (
+        <DrawerFooter>
+          {showReject && (
+            <Button
+              variant="ghost"
+              className="text-alert hover:text-alert hover:bg-alert/10"
+              onClick={onReject}
+              disabled={busy}
+            >
+              Reject
+            </Button>
+          )}
+          {showApprove && (
+            <Button onClick={onApprove} loading={busy} disabled={busy}>
+              Approve
+            </Button>
+          )}
+        </DrawerFooter>
+      )}
+    </>
+  );
+}
+
+function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-[10px] uppercase tracking-widest text-silver/80">{label}</dt>
+      <dd className="text-white text-sm mt-0.5 break-words tabular-nums">{children}</dd>
+    </div>
+  );
+}
+
+function DetailSection({ label, body }: { label: string; body: string }) {
+  return (
+    <div className="mb-4">
+      <div className="text-[10px] uppercase tracking-widest text-silver/80 mb-1">
+        {label}
+      </div>
+      <div className="rounded-md border border-navy-secondary bg-navy-secondary/30 p-3 text-sm text-white whitespace-pre-wrap">
+        {body}
+      </div>
     </div>
   );
 }

@@ -25,6 +25,11 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  Drawer,
+  DrawerBody,
+  DrawerDescription,
+  DrawerHeader,
+  DrawerTitle,
   EmptyState,
   Input,
   PageHeader,
@@ -62,6 +67,7 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
   const [error, setError] = useState<string | null>(null);
   const [showCompose, setShowCompose] = useState(false);
   const [showBroadcast, setShowBroadcast] = useState(false);
+  const [drawerTarget, setDrawerTarget] = useState<Notification | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -147,7 +153,16 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
               </TableHeader>
               <TableBody>
                 {items.map((n) => (
-                  <TableRow key={n.id} className="group">
+                  <TableRow
+                    key={n.id}
+                    className="group cursor-pointer"
+                    onClick={(e) => {
+                      const target = e.target as HTMLElement;
+                      if (target.closest('button, a, input, [data-no-row-click]')) return;
+                      if (window.getSelection()?.toString()) return;
+                      setDrawerTarget(n);
+                    }}
+                  >
                     <TableCell className="text-silver tabular-nums whitespace-nowrap">
                       {new Date(n.createdAt).toLocaleString()}
                     </TableCell>
@@ -211,8 +226,116 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
           refresh();
         }}
       />
+
+      <Drawer
+        open={!!drawerTarget}
+        onOpenChange={(o) => !o && setDrawerTarget(null)}
+        width="max-w-xl"
+      >
+        {drawerTarget && <NotificationDetailPanel n={drawerTarget} />}
+      </Drawer>
     </div>
   );
+}
+
+function NotificationDetailPanel({ n }: { n: Notification }) {
+  const recipient =
+    n.recipientEmail ?? n.recipientPhone ?? n.recipientUserId ?? 'Unknown';
+  return (
+    <>
+      <DrawerHeader>
+        <div className="flex items-center gap-3">
+          <Avatar
+            name={recipient}
+            email={n.recipientEmail ?? undefined}
+            size="md"
+          />
+          <div className="min-w-0">
+            <DrawerTitle className="truncate">
+              {n.subject ?? '(no subject)'}
+            </DrawerTitle>
+            <DrawerDescription>
+              {recipient} · {n.channel}
+            </DrawerDescription>
+          </div>
+        </div>
+      </DrawerHeader>
+      <DrawerBody>
+        <div className="flex items-center gap-2 mb-4">
+          <Badge variant={statusVariant(n.status)}>{n.status}</Badge>
+          {n.category && (
+            <Badge variant="outline" className="text-[10px]">
+              {n.category}
+            </Badge>
+          )}
+        </div>
+
+        <div className="rounded-md border border-navy-secondary bg-navy-secondary/30 p-4 mb-5 whitespace-pre-wrap text-sm text-white">
+          {n.body}
+        </div>
+
+        {n.failureReason && (
+          <div
+            className="rounded-md border border-alert/40 bg-alert/[0.07] p-3 mb-5 text-sm text-alert"
+            role="alert"
+          >
+            <div className="font-medium mb-0.5">Delivery failed</div>
+            <div className="text-alert/90 break-words">{n.failureReason}</div>
+          </div>
+        )}
+
+        <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 text-sm">
+          <DetailRow label="Channel">{n.channel}</DetailRow>
+          <DetailRow label="Status">{n.status}</DetailRow>
+          <DetailRow label="Recipient email">
+            {n.recipientEmail ?? <Mute>—</Mute>}
+          </DetailRow>
+          <DetailRow label="Recipient phone">
+            {n.recipientPhone ?? <Mute>—</Mute>}
+          </DetailRow>
+          <DetailRow label="Sender">
+            {n.senderEmail ?? <Mute>system</Mute>}
+          </DetailRow>
+          <DetailRow label="Category">
+            {n.category ?? <Mute>—</Mute>}
+          </DetailRow>
+          <DetailRow label="Created">{fmtTs(n.createdAt)}</DetailRow>
+          <DetailRow label="Sent">
+            {n.sentAt ? fmtTs(n.sentAt) : <Mute>not sent</Mute>}
+          </DetailRow>
+          <DetailRow label="Read">
+            {n.readAt ? fmtTs(n.readAt) : <Mute>unread</Mute>}
+          </DetailRow>
+          <DetailRow label="External ref">
+            {n.externalRef ? (
+              <span className="font-mono text-xs">{n.externalRef}</span>
+            ) : (
+              <Mute>—</Mute>
+            )}
+          </DetailRow>
+        </dl>
+      </DrawerBody>
+    </>
+  );
+}
+
+function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-[10px] uppercase tracking-widest text-silver/80">
+        {label}
+      </dt>
+      <dd className="text-white text-sm mt-0.5 break-words">{children}</dd>
+    </div>
+  );
+}
+
+function Mute({ children }: { children: React.ReactNode }) {
+  return <span className="text-silver/80">{children}</span>;
+}
+
+function fmtTs(iso: string): string {
+  return new Date(iso).toLocaleString();
 }
 
 interface ComposeDialogProps {
