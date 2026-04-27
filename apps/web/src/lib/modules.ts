@@ -45,6 +45,7 @@ export type ModuleKey =
   | 'learning-paths'
   | 'succession'
   | 'probation'
+  | 'holidays'
   | 'team'
   | 'workflows'
   | 'me'
@@ -104,7 +105,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -256,6 +257,16 @@ export const MODULES: ModuleNav[] = [
     requires: 'view:onboarding',
     icon: ProbationIcon,
     group: 'workforce',
+  },
+  {
+    key: 'holidays',
+    path: '/holidays',
+    label: 'Holidays',
+    description:
+      'Federal, state, company, and client-specific holidays. Drives premium pay multipliers and shift planning.',
+    requires: 'view:scheduling',
+    icon: HolidayIcon,
+    group: 'time-and-pay',
   },
   {
     key: 'team',

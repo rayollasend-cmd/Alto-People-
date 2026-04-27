@@ -333,6 +333,7 @@ model User {
   successionCandidatesCreated  SuccessionCandidate[]
   probationsCreated            ProbationPeriod[]              @relation("ProbationCreator")
   probationsDecided            ProbationPeriod[]              @relation("ProbationDecider")
+  holidaysCreated              Holiday[]
 
   @@index([role])
   @@index([clientId])
@@ -385,6 +386,8 @@ model Client {
   meritCycles            MeritCycle[]
   // Phase 85 — qualifications catalog.
   qualifications         Qualification[]
+  // Phase 117 — client-specific holidays.
+  holidays               Holiday[]
   // Phase 86 — projects, premium-pay rules, tip pools.
   projects               Project[]
   premiumPayRules        PremiumPayRule[]
@@ -3869,4 +3872,38 @@ model ProbationPeriod {
 
   @@index([associateId])
   @@index([endDate])
+}
+
+// ===== Phase 117 — Holiday calendar ========================================
+//
+// clientId NULL → company-wide. The unique index in the migration uses
+// COALESCE on clientId so company-wide rows (NULL clientId) still
+// de-duplicate against (date, name). Federal holidays are typically seeded
+// company-wide; state holidays carry a 2-letter state code; client-specific
+// holidays carry a clientId.
+enum HolidayType {
+  FEDERAL
+  STATE
+  COMPANY
+  CLIENT_SPECIFIC
+}
+
+model Holiday {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId    String?     @db.Uuid
+  name        String
+  date        DateTime    @db.Date
+  type        HolidayType
+  state       String?     @db.VarChar(2)
+  paid        Boolean     @default(true)
+  notes       String?
+  createdById String?     @db.Uuid
+  createdAt   DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime    @updatedAt @db.Timestamptz(6)
+
+  client    Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy User?   @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([date])
+  @@index([clientId])
 }
