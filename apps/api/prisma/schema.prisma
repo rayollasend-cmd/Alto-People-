@@ -352,6 +352,7 @@ model User {
   tuitionRequestsPaid          TuitionRequest[]               @relation("TuitionPayer")
   anonymousReportsAssigned     AnonymousReport[]              @relation("AnonReportAssignee")
   anonymousReportUpdates       AnonymousReportUpdate[]        @relation("AnonReportAuthor")
+  equityGrantsIssued           EquityGrant[]                  @relation("EquityGrantedBy")
 
   @@index([role])
   @@index([clientId])
@@ -578,6 +579,8 @@ model Associate {
   rampPlans             RampPlan[]
   // Phase 127 — tuition reimbursement requests.
   tuitionRequests       TuitionRequest[]
+  // Phase 129 — equity grants (RSU/NSO/ISO/etc.).
+  equityGrants          EquityGrant[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -4517,4 +4520,62 @@ model AnonymousReportUpdate {
   authorUser User?           @relation("AnonReportAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
 
   @@index([reportId])
+}
+
+enum EquityGrantType {
+  RSU
+  NSO
+  ISO
+  PHANTOM
+  PERFORMANCE_RSU
+}
+
+enum EquityGrantStatus {
+  PROPOSED
+  GRANTED
+  CANCELLED
+  EXERCISED
+  EXPIRED
+}
+
+model EquityGrant {
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId      String            @db.Uuid
+  grantType        EquityGrantType
+  status           EquityGrantStatus @default(PROPOSED)
+  totalShares      Int
+  strikePrice      Decimal?          @db.Decimal(12, 4)
+  currency         String            @default("USD") @db.VarChar(3)
+  grantDate        DateTime          @db.Date
+  vestingStartDate DateTime          @db.Date
+  cliffMonths      Int               @default(12)
+  vestingMonths    Int               @default(48)
+  expirationDate   DateTime?         @db.Date
+  notes            String?
+  grantedById      String?           @db.Uuid
+  createdAt        DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime          @updatedAt @db.Timestamptz(6)
+
+  associate     Associate            @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  grantedBy     User?                @relation("EquityGrantedBy", fields: [grantedById], references: [id], onDelete: SetNull)
+  vestingEvents EquityVestingEvent[]
+
+  @@index([associateId])
+  @@index([status])
+}
+
+model EquityVestingEvent {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  grantId    String   @db.Uuid
+  eventIndex Int
+  vestDate   DateTime @db.Date
+  shares     Int
+  isCliff    Boolean  @default(false)
+  createdAt  DateTime @default(now()) @db.Timestamptz(6)
+
+  grant EquityGrant @relation(fields: [grantId], references: [id], onDelete: Cascade)
+
+  @@unique([grantId, eventIndex])
+  @@index([grantId])
+  @@index([vestDate])
 }
