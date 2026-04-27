@@ -317,6 +317,28 @@ export const AuditLogListResponseSchema = z.object({
 });
 export type AuditLogListResponse = z.infer<typeof AuditLogListResponseSchema>;
 
+/* ----- Phase 40 — global audit search (with entity context) ------------ */
+
+export const AuditSearchEntrySchema = z.object({
+  id: UuidSchema,
+  action: z.string(),
+  actorUserId: UuidSchema.nullable(),
+  actorEmail: z.string().email().nullable(),
+  entityType: z.string(),
+  entityId: z.string(),
+  clientId: UuidSchema.nullable(),
+  metadata: z.record(z.unknown()).nullable(),
+  createdAt: z.string().datetime(),
+});
+export type AuditSearchEntry = z.infer<typeof AuditSearchEntrySchema>;
+
+export const AuditSearchResponseSchema = z.object({
+  entries: z.array(AuditSearchEntrySchema),
+  /** Cursor — pass back via `before` to fetch the next page. Null = end. */
+  nextBefore: z.string().datetime().nullable(),
+});
+export type AuditSearchResponse = z.infer<typeof AuditSearchResponseSchema>;
+
 /* -------------------------------------------------------------------------- *
  *  Time & Attendance — Phase 6
  * -------------------------------------------------------------------------- */

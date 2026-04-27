@@ -45,7 +45,8 @@ export type Capability =
   | 'view:analytics'
   | 'view:compliance' | 'manage:compliance'
   | 'view:performance' | 'manage:performance'
-  | 'view:recruiting' | 'manage:recruiting';
+  | 'view:recruiting' | 'manage:recruiting'
+  | 'view:audit';
 
 const ALL_VIEWS: Capability[] = [
   'view:dashboard',
@@ -76,8 +77,8 @@ const ALL_MANAGE: Capability[] = [
 ];
 
 export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
-  EXECUTIVE_CHAIRMAN: new Set<Capability>(ALL_VIEWS),
-  HR_ADMINISTRATOR: new Set<Capability>([...ALL_VIEWS, ...ALL_MANAGE]),
+  EXECUTIVE_CHAIRMAN: new Set<Capability>([...ALL_VIEWS, 'view:audit']),
+  HR_ADMINISTRATOR: new Set<Capability>([...ALL_VIEWS, ...ALL_MANAGE, 'view:audit']),
   OPERATIONS_MANAGER: new Set<Capability>([
     ...ALL_VIEWS,
     'manage:onboarding',

@@ -10,6 +10,7 @@ import {
   FileText,
   LineChart,
   MessageSquare,
+  ScrollText,
   ShieldCheck,
   Timer,
   UserPlus,
@@ -28,7 +29,8 @@ export type ModuleKey =
   | 'analytics'
   | 'compliance'
   | 'performance'
-  | 'recruiting';
+  | 'recruiting'
+  | 'audit';
 
 export interface ModuleNav {
   key: ModuleKey;
@@ -52,6 +54,7 @@ export {
   FileText,
   LineChart,
   MessageSquare,
+  ScrollText,
   ShieldCheck,
   Timer,
   UserPlus,
@@ -165,6 +168,15 @@ export const MODULES: ModuleNav[] = [
       'Candidate pipeline, interviews, offers, and hire-to-onboarding handoff.',
     requires: 'view:recruiting',
     icon: UserPlus,
+  },
+  {
+    key: 'audit',
+    path: '/audit',
+    label: 'Audit Log',
+    description:
+      'Searchable, exportable feed of every auth, onboarding, payroll, and document event.',
+    requires: 'view:audit',
+    icon: ScrollText,
   },
 ];
 
