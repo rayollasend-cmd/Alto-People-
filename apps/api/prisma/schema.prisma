@@ -336,6 +336,9 @@ model User {
   holidaysCreated              Holiday[]
   disciplinaryActionsIssued    DisciplinaryAction[]           @relation("DisciplineIssuer")
   disciplinaryActionsRescinded DisciplinaryAction[]           @relation("DisciplineRescinder")
+  separationsInitiated         Separation[]                   @relation("SeparationInitiator")
+  separationsCompleted         Separation[]                   @relation("SeparationCompleter")
+  exitInterviewsConducted      Separation[]                   @relation("SeparationExitInterviewer")
 
   @@index([role])
   @@index([clientId])
@@ -541,6 +544,8 @@ model Associate {
   probationPeriods      ProbationPeriod[]
   // Phase 118 — formal disciplinary actions.
   disciplinaryActions   DisciplinaryAction[]
+  // Phase 119 — separations + exit interviews.
+  separations           Separation[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -3958,4 +3963,62 @@ model DisciplinaryAction {
   @@index([associateId])
   @@index([status])
   @@index([effectiveDate])
+}
+
+// ===== Phase 119 — Separations + exit interviews ===========================
+//
+// One in-flight separation per associate at a time (partial unique index in
+// the migration). PLANNED is "we know they're leaving", IN_PROGRESS is "last
+// day has come and we're processing", COMPLETE is "all done, off the books".
+// Exit-interview fields can be filled at any point but typically during
+// IN_PROGRESS. Re-hires get a brand new Separation row when they leave again.
+enum SeparationReason {
+  VOLUNTARY_OTHER_OPPORTUNITY
+  VOLUNTARY_PERSONAL
+  VOLUNTARY_RELOCATION
+  VOLUNTARY_RETIREMENT
+  INVOLUNTARY_PERFORMANCE
+  INVOLUNTARY_LAYOFF
+  INVOLUNTARY_MISCONDUCT
+  END_OF_CONTRACT
+  DECEASED
+  OTHER
+}
+
+enum SeparationStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETE
+}
+
+model Separation {
+  id                       String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId              String           @db.Uuid
+  reason                   SeparationReason
+  status                   SeparationStatus @default(PLANNED)
+  noticeDate               DateTime?        @db.Date
+  lastDayWorked            DateTime         @db.Date
+  finalPaycheckDate        DateTime?        @db.Date
+  rating                   Int?
+  reasonNotes              String?
+  feedbackPositive         String?
+  feedbackImprovement      String?
+  wouldRecommend           Boolean?
+  wouldReturn              Boolean?
+  exitInterviewCompletedAt DateTime?        @db.Timestamptz(6)
+  exitInterviewByUserId    String?          @db.Uuid
+  initiatedById            String?          @db.Uuid
+  completedById            String?          @db.Uuid
+  completedAt              DateTime?        @db.Timestamptz(6)
+  createdAt                DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt                DateTime         @updatedAt @db.Timestamptz(6)
+
+  associate           Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  initiatedBy         User?     @relation("SeparationInitiator", fields: [initiatedById], references: [id], onDelete: SetNull)
+  completedBy         User?     @relation("SeparationCompleter", fields: [completedById], references: [id], onDelete: SetNull)
+  exitInterviewBy     User?     @relation("SeparationExitInterviewer", fields: [exitInterviewByUserId], references: [id], onDelete: SetNull)
+
+  @@index([associateId])
+  @@index([status])
+  @@index([lastDayWorked])
 }

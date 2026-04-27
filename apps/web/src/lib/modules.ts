@@ -47,6 +47,7 @@ export type ModuleKey =
   | 'probation'
   | 'holidays'
   | 'discipline'
+  | 'separations'
   | 'team'
   | 'workflows'
   | 'me'
@@ -106,7 +107,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon, LogOut as SeparationIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -277,6 +278,16 @@ export const MODULES: ModuleNav[] = [
       'Formal warning ladder — verbal, written, final, suspension, termination. Associates can acknowledge; HR can rescind.',
     requires: 'view:performance',
     icon: DisciplineIcon,
+    group: 'workforce',
+  },
+  {
+    key: 'separations',
+    path: '/separations',
+    label: 'Separations',
+    description:
+      'Plan, process, and complete associate departures. Capture exit-interview feedback — rating, what worked, what to change.',
+    requires: 'view:onboarding',
+    icon: SeparationIcon,
     group: 'workforce',
   },
   {
