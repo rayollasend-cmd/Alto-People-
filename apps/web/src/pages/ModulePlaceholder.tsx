@@ -1,4 +1,5 @@
 import type { ModuleKey } from '@/lib/modules';
+import { PageHeader } from '@/components/ui/PageHeader';
 
 interface ModulePlaceholderProps {
   moduleKey: ModuleKey;
@@ -13,12 +14,7 @@ export function ModulePlaceholder({
 }: ModulePlaceholderProps) {
   return (
     <div className="max-w-4xl mx-auto">
-      <header className="mb-6">
-        <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
-          {title}
-        </h1>
-        <p className="text-silver">{description}</p>
-      </header>
+      <PageHeader title={title} subtitle={description} />
 
       <div className="bg-navy border border-navy-secondary rounded-lg p-8 text-center">
         <div className="inline-block px-3 py-1 rounded-full bg-gold/10 border border-gold/30 text-gold text-xs uppercase tracking-widest mb-4">

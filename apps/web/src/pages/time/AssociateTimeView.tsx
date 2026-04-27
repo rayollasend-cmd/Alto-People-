@@ -12,6 +12,7 @@ import {
 import { listJobs } from '@/lib/jobsApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { PageHeader } from '@/components/ui/PageHeader';
 
 function formatHM(mins: number): string {
   const h = Math.floor(mins / 60);
@@ -203,12 +204,10 @@ export function AssociateTimeView() {
 
   return (
     <div className="max-w-3xl mx-auto">
-      <header className="mb-6">
-        <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
-          Time & Attendance
-        </h1>
-        <p className="text-silver">Clock in when you start. Clock out when you stop.</p>
-      </header>
+      <PageHeader
+        title="Time & Attendance"
+        subtitle="Clock in when you start. Clock out when you stop."
+      />
 
       <section
         className={cn(

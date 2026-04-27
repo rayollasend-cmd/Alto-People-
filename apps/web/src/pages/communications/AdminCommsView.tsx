@@ -26,6 +26,7 @@ import {
   DialogTitle,
   EmptyState,
   Input,
+  PageHeader,
   SkeletonRows,
   Table,
   TableBody,
@@ -77,30 +78,30 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
 
   return (
     <div className="max-w-6xl mx-auto">
-      <header className="mb-6 flex items-end justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
-            Communications
-          </h1>
-          <p className="text-silver">
-            {canManage
-              ? 'Send notifications via SMS, push, email, or in-app inbox. Provider integrations are stubbed.'
-              : 'Read-only view of sent notifications.'}
-          </p>
-        </div>
-        {canManage && (
-          <div className="flex gap-2">
+      <PageHeader
+        title="Communications"
+        subtitle={
+          canManage
+            ? 'Send notifications via SMS, push, email, or in-app inbox. Provider integrations are stubbed.'
+            : 'Read-only view of sent notifications.'
+        }
+        primaryAction={
+          canManage ? (
             <Button onClick={() => setShowCompose(true)}>
               <Send className="h-4 w-4" />
               Send
             </Button>
+          ) : undefined
+        }
+        secondaryActions={
+          canManage ? (
             <Button variant="outline" onClick={() => setShowBroadcast(true)}>
               <Megaphone className="h-4 w-4" />
               Broadcast
             </Button>
-          </div>
-        )}
-      </header>
+          ) : undefined
+        }
+      />
 
       <Card>
         <CardHeader className="pb-3">

@@ -3,6 +3,7 @@ import type { Notification } from '@alto-people/shared';
 import { listMyInbox, markRead } from '@/lib/communicationsApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { PageHeader } from '@/components/ui/PageHeader';
 
 export function AssociateInboxView() {
   const [items, setItems] = useState<Notification[] | null>(null);
@@ -36,17 +37,19 @@ export function AssociateInboxView() {
 
   return (
     <div className="max-w-3xl mx-auto">
-      <header className="mb-6">
-        <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
-          Inbox{' '}
-          {unreadCount > 0 && (
-            <span className="text-base text-gold align-middle ml-2">
-              ({unreadCount} unread)
-            </span>
-          )}
-        </h1>
-        <p className="text-silver">Messages from HR and the system.</p>
-      </header>
+      <PageHeader
+        title={
+          <>
+            Inbox{' '}
+            {unreadCount > 0 && (
+              <span className="text-base text-gold align-middle ml-2">
+                ({unreadCount} unread)
+              </span>
+            )}
+          </>
+        }
+        subtitle="Messages from HR and the system."
+      />
 
       {error && (
         <p role="alert" className="text-sm text-alert mb-3">

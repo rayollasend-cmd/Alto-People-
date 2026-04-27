@@ -8,6 +8,7 @@ import { MODULES } from '@/lib/modules';
 import { getDashboardKPIs } from '@/lib/analyticsApi';
 import { ApiError } from '@/lib/api';
 import { Card, CardContent } from '@/components/ui/Card';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Badge } from '@/components/ui/Badge';
 import { cn } from '@/lib/cn';
@@ -89,15 +90,16 @@ export function AdminDashboard() {
 
   return (
     <div className="max-w-6xl mx-auto">
-      <header className="mb-8">
-        <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
-          Dashboard
-        </h1>
-        <p className="text-silver">
-          Welcome back. You are signed in as{' '}
-          <span className="text-gold">{role ? ROLE_LABELS[role] : ''}</span>.
-        </p>
-      </header>
+      <PageHeader
+        className="mb-8"
+        title="Dashboard"
+        subtitle={
+          <>
+            Welcome back. You are signed in as{' '}
+            <span className="text-gold">{role ? ROLE_LABELS[role] : ''}</span>.
+          </>
+        }
+      />
 
       {error && (
         <div className="mb-4 p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm" role="alert">

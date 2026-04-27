@@ -34,6 +34,26 @@ export type ModuleKey =
   | 'audit'
   | 'benefits';
 
+/**
+ * Phase 67 — sidebar groupings, F500-style. Modules with the same `group`
+ * are rendered under a shared header in the sidebar. Order within a group
+ * is the array order in `MODULES`. The "core" group is rendered without a
+ * header (it's the always-on stuff: dashboard, onboarding, recruiting).
+ */
+export type ModuleGroup =
+  | 'core'
+  | 'workforce'
+  | 'time-and-pay'
+  | 'compliance'
+  | 'insights';
+
+export const GROUP_LABEL: Record<Exclude<ModuleGroup, 'core'>, string> = {
+  workforce: 'Workforce',
+  'time-and-pay': 'Time & Pay',
+  compliance: 'Compliance',
+  insights: 'Insights',
+};
+
 export interface ModuleNav {
   key: ModuleKey;
   path: string;
@@ -42,6 +62,8 @@ export interface ModuleNav {
   requires: Capability;
   /** Phase 27 — icon shown in the sidebar / module launcher. */
   icon: LucideIcon;
+  /** Phase 67 — sidebar grouping. */
+  group: ModuleGroup;
 }
 
 // Re-exported so other components don't need their own lucide imports.
@@ -72,96 +94,7 @@ export const MODULES: ModuleNav[] = [
       'Digital application, document vault, e-signatures, background checks, and J-1 visa tracking.',
     requires: 'view:onboarding',
     icon: ClipboardList,
-  },
-  {
-    key: 'time-attendance',
-    path: '/time-attendance',
-    label: 'Time & Attendance',
-    description:
-      'Geofenced clock-in, timesheet approvals, and attendance auditing.',
-    requires: 'view:time',
-    icon: Timer,
-  },
-  {
-    key: 'time-off',
-    path: '/time-off',
-    label: 'Time Off',
-    description:
-      'PTO requests, sick-leave balances, and HR approval queue.',
-    requires: 'view:time',
-    icon: CalendarOff,
-  },
-  {
-    key: 'scheduling',
-    path: '/scheduling',
-    label: 'Scheduling',
-    description:
-      'Shift planning, fill rate tracking, and assignment management.',
-    requires: 'view:scheduling',
-    icon: Calendar,
-  },
-  {
-    key: 'payroll',
-    path: '/payroll',
-    label: 'Payroll',
-    description:
-      'Multi-state payroll, anomaly detection, Branch cards, and Wise transfers.',
-    requires: 'view:payroll',
-    icon: DollarSign,
-  },
-  {
-    key: 'documents',
-    path: '/documents',
-    label: 'Document Vault',
-    description:
-      'Centralized storage, e-signatures, expiration alerts, and audit trails.',
-    requires: 'view:documents',
-    icon: FileText,
-  },
-  {
-    key: 'communications',
-    path: '/communications',
-    label: 'Communications',
-    description:
-      'SMS, push notifications, broadcast messaging, and templates.',
-    requires: 'view:communications',
-    icon: MessageSquare,
-  },
-  {
-    key: 'clients',
-    path: '/clients',
-    label: 'Client Management',
-    description:
-      'CRM, contracts, SOW renewals, and client portal access.',
-    requires: 'view:clients',
-    icon: Building2,
-  },
-  {
-    key: 'analytics',
-    path: '/analytics',
-    label: 'Analytics & Reporting',
-    description:
-      'Executive dashboard, custom reports, and predictive analytics.',
-    requires: 'view:analytics',
-    icon: LineChart,
-  },
-  {
-    key: 'compliance',
-    path: '/compliance',
-    label: 'Compliance & Legal',
-    description:
-      'OSHA, I-9, J-1, multi-state labor law, and certification tracking.',
-    requires: 'view:compliance',
-    icon: ShieldCheck,
-  },
-  {
-    key: 'performance',
-    path: '/performance',
-    label: 'Performance Management',
-    description:
-      'Reviews, KPIs, PIPs, commendations, disciplinary log, and 360 feedback.',
-    requires: 'view:performance',
-    icon: Award,
+    group: 'workforce',
   },
   {
     key: 'recruiting',
@@ -171,15 +104,67 @@ export const MODULES: ModuleNav[] = [
       'Candidate pipeline, interviews, offers, and hire-to-onboarding handoff.',
     requires: 'view:recruiting',
     icon: UserPlus,
+    group: 'workforce',
   },
   {
-    key: 'audit',
-    path: '/audit',
-    label: 'Audit Log',
+    key: 'clients',
+    path: '/clients',
+    label: 'Clients',
     description:
-      'Searchable, exportable feed of every auth, onboarding, payroll, and document event.',
-    requires: 'view:audit',
-    icon: ScrollText,
+      'CRM, contracts, SOW renewals, and client portal access.',
+    requires: 'view:clients',
+    icon: Building2,
+    group: 'workforce',
+  },
+  {
+    key: 'performance',
+    path: '/performance',
+    label: 'Performance',
+    description:
+      'Reviews, KPIs, PIPs, commendations, disciplinary log, and 360 feedback.',
+    requires: 'view:performance',
+    icon: Award,
+    group: 'workforce',
+  },
+  {
+    key: 'time-attendance',
+    path: '/time-attendance',
+    label: 'Time & Attendance',
+    description:
+      'Geofenced clock-in, timesheet approvals, and attendance auditing.',
+    requires: 'view:time',
+    icon: Timer,
+    group: 'time-and-pay',
+  },
+  {
+    key: 'time-off',
+    path: '/time-off',
+    label: 'Time Off',
+    description:
+      'PTO requests, sick-leave balances, and HR approval queue.',
+    requires: 'view:time',
+    icon: CalendarOff,
+    group: 'time-and-pay',
+  },
+  {
+    key: 'scheduling',
+    path: '/scheduling',
+    label: 'Scheduling',
+    description:
+      'Shift planning, fill rate tracking, and assignment management.',
+    requires: 'view:scheduling',
+    icon: Calendar,
+    group: 'time-and-pay',
+  },
+  {
+    key: 'payroll',
+    path: '/payroll',
+    label: 'Payroll',
+    description:
+      'Multi-state payroll, anomaly detection, Branch cards, and Wise transfers.',
+    requires: 'view:payroll',
+    icon: DollarSign,
+    group: 'time-and-pay',
   },
   {
     key: 'benefits',
@@ -189,6 +174,57 @@ export const MODULES: ModuleNav[] = [
       'Health, dental, vision, 401(k), HSA/FSA — pre-tax elections that come out of every paycheck.',
     requires: 'view:payroll',
     icon: HeartPulse,
+    group: 'time-and-pay',
+  },
+  {
+    key: 'documents',
+    path: '/documents',
+    label: 'Documents',
+    description:
+      'Centralized storage, e-signatures, expiration alerts, and audit trails.',
+    requires: 'view:documents',
+    icon: FileText,
+    group: 'compliance',
+  },
+  {
+    key: 'compliance',
+    path: '/compliance',
+    label: 'Compliance',
+    description:
+      'OSHA, I-9, J-1, multi-state labor law, and certification tracking.',
+    requires: 'view:compliance',
+    icon: ShieldCheck,
+    group: 'compliance',
+  },
+  {
+    key: 'audit',
+    path: '/audit',
+    label: 'Audit log',
+    description:
+      'Searchable, exportable feed of every auth, onboarding, payroll, and document event.',
+    requires: 'view:audit',
+    icon: ScrollText,
+    group: 'compliance',
+  },
+  {
+    key: 'communications',
+    path: '/communications',
+    label: 'Communications',
+    description:
+      'SMS, push notifications, broadcast messaging, and templates.',
+    requires: 'view:communications',
+    icon: MessageSquare,
+    group: 'insights',
+  },
+  {
+    key: 'analytics',
+    path: '/analytics',
+    label: 'Analytics',
+    description:
+      'Executive dashboard, custom reports, and predictive analytics.',
+    requires: 'view:analytics',
+    icon: LineChart,
+    group: 'insights',
   },
 ];
 

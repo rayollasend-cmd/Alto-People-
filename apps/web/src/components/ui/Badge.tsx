@@ -29,10 +29,39 @@ const badgeVariants = cva(
 
 export interface BadgeProps
   extends React.HTMLAttributes<HTMLSpanElement>,
-    VariantProps<typeof badgeVariants> {}
+    VariantProps<typeof badgeVariants> {
+  /**
+   * Phase 67 — Rippling-style status dot. When true, renders a small
+   * filled circle in front of the label, color-matched to the variant.
+   * Reads more like a "status indicator" than a chip.
+   */
+  withDot?: boolean;
+}
 
-export function Badge({ className, variant, ...props }: BadgeProps) {
-  return <span className={cn(badgeVariants({ variant }), className)} {...props} />;
+const DOT_COLOR: Record<NonNullable<BadgeProps['variant']>, string> = {
+  default: 'bg-silver',
+  success: 'bg-success',
+  pending: 'bg-warning',
+  destructive: 'bg-alert',
+  accent: 'bg-gold',
+  outline: 'bg-silver',
+};
+
+export function Badge({ className, variant, withDot, children, ...props }: BadgeProps) {
+  return (
+    <span className={cn(badgeVariants({ variant }), className)} {...props}>
+      {withDot && (
+        <span
+          aria-hidden="true"
+          className={cn(
+            'inline-block h-1.5 w-1.5 rounded-full shrink-0',
+            DOT_COLOR[variant ?? 'default'],
+          )}
+        />
+      )}
+      {children}
+    </span>
+  );
 }
 
 export { badgeVariants };

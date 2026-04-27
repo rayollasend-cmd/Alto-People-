@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 import {
   Table,
@@ -111,24 +112,18 @@ export function AuditHome() {
 
   return (
     <div className="max-w-6xl mx-auto">
-      <header className="mb-6 flex items-start justify-between gap-3">
-        <div>
-          <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
-            Audit log
-          </h1>
-          <p className="text-silver">
-            Every authentication, onboarding, payroll, scheduling, and
-            document event in one searchable feed. Used for SOC 2,
-            compliance reviews, and incident forensics.
-          </p>
-        </div>
-        <Button asChild variant="secondary">
-          <a href={csvHref} download>
-            <Download className="h-4 w-4" />
-            Export CSV
-          </a>
-        </Button>
-      </header>
+      <PageHeader
+        title="Audit log"
+        subtitle="Every authentication, onboarding, payroll, scheduling, and document event in one searchable feed. Used for SOC 2, compliance reviews, and incident forensics."
+        primaryAction={
+          <Button asChild variant="secondary">
+            <a href={csvHref} download>
+              <Download className="h-4 w-4" />
+              Export CSV
+            </a>
+          </Button>
+        }
+      />
 
       <Card className="mb-4">
         <CardHeader>

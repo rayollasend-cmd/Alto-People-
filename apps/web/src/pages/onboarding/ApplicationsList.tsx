@@ -28,6 +28,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import {
   Table,
@@ -308,40 +309,40 @@ export function ApplicationsList() {
 
   return (
     <div className="max-w-6xl mx-auto">
-      <header className="mb-6 flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
-            Onboarding
-          </h1>
-          <p className="text-silver">
-            Active applications and their checklist progress.
-          </p>
-        </div>
-        {canManage && (
-          <div className="flex items-center gap-2">
-            <Link to="/onboarding/analytics">
-              <Button variant="ghost">
-                <BarChart3 className="h-4 w-4" />
-                Analytics
+      <PageHeader
+        title="Onboarding"
+        subtitle="Active applications and their checklist progress."
+        secondaryActions={
+          canManage ? (
+            <>
+              <Link to="/onboarding/analytics">
+                <Button variant="ghost">
+                  <BarChart3 className="h-4 w-4" />
+                  Analytics
+                </Button>
+              </Link>
+              <Link to="/onboarding/templates">
+                <Button variant="ghost">
+                  <LayoutTemplate className="h-4 w-4" />
+                  Templates
+                </Button>
+              </Link>
+              <Button variant="secondary" onClick={() => setOpenBulkInvite(true)}>
+                <Users className="h-4 w-4" />
+                Bulk invite
               </Button>
-            </Link>
-            <Link to="/onboarding/templates">
-              <Button variant="ghost">
-                <LayoutTemplate className="h-4 w-4" />
-                Templates
-              </Button>
-            </Link>
-            <Button variant="secondary" onClick={() => setOpenBulkInvite(true)}>
-              <Users className="h-4 w-4" />
-              Bulk invite
-            </Button>
+            </>
+          ) : undefined
+        }
+        primaryAction={
+          canManage ? (
             <Button onClick={() => setOpenCreate(true)}>
               <Plus className="h-4 w-4" />
               New application
             </Button>
-          </div>
-        )}
-      </header>
+          ) : undefined
+        }
+      />
 
       {/* KPI strip — always visible (empty-zero state is fine). */}
       {canManage && allItems && allItems.length > 0 && (

@@ -34,6 +34,7 @@ import {
 } from '@/components/ui/Dialog';
 import { Input } from '@/components/ui/Input';
 import { Label, FormHint } from '@/components/ui/Label';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { listClients } from '@/lib/onboardingApi';
 
@@ -121,16 +122,10 @@ export function BenefitsHome() {
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
-      <header>
-        <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
-          Benefits
-        </h1>
-        <p className="text-silver">
-          Pre-tax elections come out of every paycheck before federal,
-          FICA, Medicare, and state tax. Your take-home goes down by less
-          than the elected amount.
-        </p>
-      </header>
+      <PageHeader
+        title="Benefits"
+        subtitle="Pre-tax elections come out of every paycheck before federal, FICA, Medicare, and state tax. Your take-home goes down by less than the elected amount."
+      />
 
       {error && (
         <div

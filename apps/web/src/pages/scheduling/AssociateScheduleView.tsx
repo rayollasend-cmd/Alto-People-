@@ -3,6 +3,7 @@ import type { Shift } from '@alto-people/shared';
 import { listMyShifts } from '@/lib/schedulingApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { AvailabilityEditor } from './AvailabilityEditor';
 import { SwapMarketplace } from './SwapMarketplace';
 
@@ -44,12 +45,10 @@ export function AssociateScheduleView() {
 
   return (
     <div className="max-w-3xl mx-auto">
-      <header className="mb-6">
-        <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
-          My schedule
-        </h1>
-        <p className="text-silver">Upcoming shifts assigned to you.</p>
-      </header>
+      <PageHeader
+        title="My schedule"
+        subtitle="Upcoming shifts assigned to you."
+      />
 
       {error && (
         <p role="alert" className="text-sm text-alert mb-4">

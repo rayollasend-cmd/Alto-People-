@@ -31,6 +31,7 @@ import {
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import {
   Table,
@@ -197,16 +198,14 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
 
   return (
     <div className="max-w-6xl mx-auto">
-      <header className="mb-6">
-        <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
-          Document vault
-        </h1>
-        <p className="text-silver">
-          {canManage
+      <PageHeader
+        title="Document vault"
+        subtitle={
+          canManage
             ? 'Verify or reject uploaded documents.'
-            : 'Read-only view of associate documents.'}
-        </p>
-      </header>
+            : 'Read-only view of associate documents.'
+        }
+      />
 
       {/* KPI strip */}
       {canManage && allDocs && allDocs.length > 0 && (

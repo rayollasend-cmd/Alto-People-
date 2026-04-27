@@ -3,6 +3,7 @@ import type { PerformanceReview } from '@alto-people/shared';
 import { acknowledgeReview, listMyReviews } from '@/lib/performanceApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { PageHeader } from '@/components/ui/PageHeader';
 
 function ratingStars(n: number): string {
   return '★'.repeat(n) + '☆'.repeat(Math.max(0, 5 - n));
@@ -41,12 +42,10 @@ export function AssociateReviewsView() {
 
   return (
     <div className="max-w-3xl mx-auto">
-      <header className="mb-6">
-        <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
-          My reviews
-        </h1>
-        <p className="text-silver">Performance reviews from your manager.</p>
-      </header>
+      <PageHeader
+        title="My reviews"
+        subtitle="Performance reviews from your manager."
+      />
 
       {error && (
         <p role="alert" className="text-sm text-alert mb-3">

@@ -9,6 +9,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { PageHeader } from '@/components/ui/PageHeader';
 
 const KIND_OPTIONS: Array<{ value: DocumentKind; label: string }> = [
   { value: 'ID', label: 'Government ID' },
@@ -103,14 +104,10 @@ export function AssociateDocumentsView() {
 
   return (
     <div className="max-w-3xl mx-auto">
-      <header className="mb-6">
-        <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
-          My documents
-        </h1>
-        <p className="text-silver">
-          Upload identity, tax, and onboarding documents. HR will verify.
-        </p>
-      </header>
+      <PageHeader
+        title="My documents"
+        subtitle="Upload identity, tax, and onboarding documents. HR will verify."
+      />
 
       <form
         onSubmit={handleUpload}

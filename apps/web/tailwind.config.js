@@ -55,6 +55,10 @@ export default {
           from: { transform: 'translateX(100%)' },
           to: { transform: 'translateX(0)' },
         },
+        'slide-out-to-right': {
+          from: { transform: 'translateX(0)' },
+          to: { transform: 'translateX(100%)' },
+        },
         'shimmer': {
           '100%': { transform: 'translateX(100%)' },
         },
@@ -67,6 +71,7 @@ export default {
         'zoom-in': 'zoom-in 0.18s ease-out',
         'zoom-out': 'zoom-out 0.15s ease-in',
         'slide-in-from-right': 'slide-in-from-right 0.25s ease-out',
+        'slide-out-to-right': 'slide-out-to-right 0.2s ease-in',
         'shimmer': 'shimmer 1.6s infinite',
       },
     },

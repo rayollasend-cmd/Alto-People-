@@ -67,6 +67,7 @@ import {
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 import {
   Table,
@@ -646,48 +647,51 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         </div>
       </div>
 
-      <header className="mb-6 flex items-end justify-between gap-4 flex-wrap no-print">
-        <div>
-          <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
-            Scheduling
-          </h1>
-          <p className="text-silver">
-            {canManage
-              ? 'Plan shifts, assign associates, and track fill status.'
-              : 'Read-only view of scheduled shifts.'}
-          </p>
-        </div>
-        {canManage && (
-          <div className="flex gap-2 flex-wrap">
-            <Button variant="ghost" size="sm" onClick={onPrint} title="Print the current view">
-              <Printer className="h-4 w-4" />
-              Print
-            </Button>
-            <Button variant="ghost" size="sm" onClick={onExportCsv} title="Download as CSV">
-              <Download className="h-4 w-4" />
-              CSV
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onExportPdf}
-              loading={exportingPdf}
-              title="Generate a PDF for this date range"
-            >
-              <FileText className="h-4 w-4" />
-              PDF
-            </Button>
-            <Button variant="secondary" onClick={() => setShowTemplates(true)}>
-              <LayoutTemplate className="h-4 w-4" />
-              Templates
-            </Button>
+      <PageHeader
+        className="no-print"
+        title="Scheduling"
+        subtitle={
+          canManage
+            ? 'Plan shifts, assign associates, and track fill status.'
+            : 'Read-only view of scheduled shifts.'
+        }
+        secondaryActions={
+          canManage ? (
+            <>
+              <Button variant="ghost" size="sm" onClick={onPrint} title="Print the current view">
+                <Printer className="h-4 w-4" />
+                Print
+              </Button>
+              <Button variant="ghost" size="sm" onClick={onExportCsv} title="Download as CSV">
+                <Download className="h-4 w-4" />
+                CSV
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onExportPdf}
+                loading={exportingPdf}
+                title="Generate a PDF for this date range"
+              >
+                <FileText className="h-4 w-4" />
+                PDF
+              </Button>
+              <Button variant="secondary" onClick={() => setShowTemplates(true)}>
+                <LayoutTemplate className="h-4 w-4" />
+                Templates
+              </Button>
+            </>
+          ) : undefined
+        }
+        primaryAction={
+          canManage ? (
             <Button onClick={() => setShowCreate(true)}>
               <Plus className="h-4 w-4" />
               New shift
             </Button>
-          </div>
-        )}
-      </header>
+          ) : undefined
+        }
+      />
 
       {canManage && (
         <div className="no-print">

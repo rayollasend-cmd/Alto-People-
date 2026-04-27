@@ -3,6 +3,7 @@ import type { PayrollItem } from '@alto-people/shared';
 import { listMyPayrollItems } from '@/lib/payrollApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { PageHeader } from '@/components/ui/PageHeader';
 
 const fmtMoney = (n: number) =>
   n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
@@ -37,12 +38,10 @@ export function AssociatePayrollView() {
 
   return (
     <div className="max-w-3xl mx-auto">
-      <header className="mb-6">
-        <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
-          My pay
-        </h1>
-        <p className="text-silver">Recent paystubs and disbursement status.</p>
-      </header>
+      <PageHeader
+        title="My pay"
+        subtitle="Recent paystubs and disbursement status."
+      />
 
       {error && (
         <p role="alert" className="text-sm text-alert mb-4">

@@ -19,6 +19,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/Card';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 const fmtMoney = (n: number) =>
@@ -83,20 +84,16 @@ export function AnalyticsHome() {
 
   return (
     <div className="max-w-6xl mx-auto">
-      <header className="mb-6 flex items-start justify-between gap-3">
-        <div>
-          <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
-            Analytics
-          </h1>
-          <p className="text-silver">
-            Live operational and financial KPIs across all clients.
-          </p>
-        </div>
-        <Button onClick={downloadCsv} variant="secondary" disabled={!kpis}>
-          <Download className="h-4 w-4" />
-          Export CSV
-        </Button>
-      </header>
+      <PageHeader
+        title="Analytics"
+        subtitle="Live operational and financial KPIs across all clients."
+        primaryAction={
+          <Button onClick={downloadCsv} variant="secondary" disabled={!kpis}>
+            <Download className="h-4 w-4" />
+            Export CSV
+          </Button>
+        }
+      />
 
       {error && (
         <div

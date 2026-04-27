@@ -30,6 +30,7 @@ import {
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 import {
   Table,
@@ -167,24 +168,22 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
 
   return (
     <div className="max-w-6xl mx-auto">
-      <header className="mb-6 flex items-end justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
-            Payroll
-          </h1>
-          <p className="text-silver">
-            {canProcess
-              ? 'Aggregate approved time, review paystubs, and disburse.'
-              : 'Read-only view of payroll runs.'}
-          </p>
-        </div>
-        {canProcess && (
-          <Button onClick={() => setShowCreate(true)}>
-            <Plus className="h-4 w-4" />
-            New run
-          </Button>
-        )}
-      </header>
+      <PageHeader
+        title="Payroll"
+        subtitle={
+          canProcess
+            ? 'Aggregate approved time, review paystubs, and disburse.'
+            : 'Read-only view of payroll runs.'
+        }
+        primaryAction={
+          canProcess ? (
+            <Button onClick={() => setShowCreate(true)}>
+              <Plus className="h-4 w-4" />
+              New run
+            </Button>
+          ) : undefined
+        }
+      />
 
       {canProcess && (
         <CreateRunDialog

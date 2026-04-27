@@ -6,6 +6,7 @@ import { getOnboardingAnalytics } from '@/lib/analyticsApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 
@@ -86,16 +87,14 @@ export function OnboardingAnalytics() {
         </Link>
       </div>
 
-      <header className="mb-6">
-        <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
-          Onboarding analytics
-        </h1>
-        <p className="text-silver">
-          {data
+      <PageHeader
+        title="Onboarding analytics"
+        subtitle={
+          data
             ? `How long associates take to finish onboarding. Last ${data.windowDays} days unless noted.`
-            : 'Loading time-to-completion stats…'}
-        </p>
-      </header>
+            : 'Loading time-to-completion stats…'
+        }
+      />
 
       {error && (
         <div

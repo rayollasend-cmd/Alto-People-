@@ -42,6 +42,7 @@ import {
   DialogTitle,
   EmptyState,
   Input,
+  PageHeader,
   Skeleton,
   SkeletonRows,
   Table,
@@ -320,16 +321,14 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
 
   return (
     <div className="max-w-6xl mx-auto">
-      <header className="mb-6">
-        <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
-          Time & Attendance
-        </h1>
-        <p className="text-silver">
-          {canManage
+      <PageHeader
+        title="Time & Attendance"
+        subtitle={
+          canManage
             ? 'Review, approve, or reject time entries from associates.'
-            : 'Read-only view of time entries.'}
-        </p>
-      </header>
+            : 'Read-only view of time entries.'
+        }
+      />
 
       {/* KPI strip — mirrors the onboarding analytics pattern. */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">

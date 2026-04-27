@@ -3,15 +3,18 @@
 // individually so the surface stays small and easy to refactor.
 
 export * from './Badge';
+export * from './Breadcrumb';
 export * from './Button';
 export * from './Card';
 export * from './CommandPalette';
 export * from './ConfirmDialog';
 export * from './Dialog';
+export * from './Drawer';
 export * from './DropdownMenu';
 export * from './EmptyState';
 export * from './Input';
 export * from './Label';
+export * from './PageHeader';
 export * from './Skeleton';
 export * from './Table';
 export * from './Tabs';

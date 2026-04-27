@@ -34,6 +34,7 @@ import {
   DialogTitle,
   EmptyState,
   Input,
+  PageHeader,
   Skeleton,
   SkeletonRows,
   Table,
@@ -197,24 +198,22 @@ export function RecruitingHome() {
 
   return (
     <div className="max-w-6xl mx-auto">
-      <header className="mb-6 flex items-end justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
-            Recruiting
-          </h1>
-          <p className="text-silver">
-            {canManage
-              ? 'Manage candidates from application through hire.'
-              : 'Read-only view of the candidate pipeline.'}
-          </p>
-        </div>
-        {canManage && (
-          <Button onClick={() => setShowCreate(true)}>
-            <Plus className="h-4 w-4" />
-            New candidate
-          </Button>
-        )}
-      </header>
+      <PageHeader
+        title="Recruiting"
+        subtitle={
+          canManage
+            ? 'Manage candidates from application through hire.'
+            : 'Read-only view of the candidate pipeline.'
+        }
+        primaryAction={
+          canManage ? (
+            <Button onClick={() => setShowCreate(true)}>
+              <Plus className="h-4 w-4" />
+              New candidate
+            </Button>
+          ) : undefined
+        }
+      />
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         <KpiCard

@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import {
   Table,
@@ -85,22 +86,18 @@ export function ClientsHome() {
 
   return (
     <div className="max-w-6xl mx-auto">
-      <header className="mb-6 flex items-end justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
-            Clients
-          </h1>
-          <p className="text-silver">
-            Configure work-site state, geofence, and per-client jobs.
-          </p>
-        </div>
-        {canManage && (
-          <Button onClick={() => setShowNew(true)}>
-            <Plus className="h-4 w-4" />
-            New client
-          </Button>
-        )}
-      </header>
+      <PageHeader
+        title="Clients"
+        subtitle="Configure work-site state, geofence, and per-client jobs."
+        primaryAction={
+          canManage ? (
+            <Button onClick={() => setShowNew(true)}>
+              <Plus className="h-4 w-4" />
+              New client
+            </Button>
+          ) : undefined
+        }
+      />
 
       {error && (
         <div

@@ -25,6 +25,7 @@ import { listMyPayrollItems } from '@/lib/payrollApi';
 import { getMyBalance } from '@/lib/timeOffApi';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { OnboardingBanner } from '@/components/OnboardingBanner';
 import { cn } from '@/lib/cn';
@@ -102,12 +103,10 @@ export function AssociateDashboard() {
 
   return (
     <div className="max-w-6xl mx-auto">
-      <header className="mb-6">
-        <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
-          Hey {greetingName} 👋
-        </h1>
-        <p className="text-silver">Here's what's on for today.</p>
-      </header>
+      <PageHeader
+        title={<>Hey {greetingName} 👋</>}
+        subtitle="Here's what's on for today."
+      />
 
       <OnboardingBanner />
 

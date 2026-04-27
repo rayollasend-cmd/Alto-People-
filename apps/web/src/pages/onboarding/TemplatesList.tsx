@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 
@@ -122,22 +123,18 @@ export function TemplatesList() {
         </Link>
       </div>
 
-      <header className="mb-6 flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
-            Onboarding templates
-          </h1>
-          <p className="text-silver">
-            The checklists HR picks from when inviting an associate.
-          </p>
-        </div>
-        <Link to="/onboarding/templates/new">
-          <Button>
-            <Plus className="h-4 w-4" />
-            New template
-          </Button>
-        </Link>
-      </header>
+      <PageHeader
+        title="Onboarding templates"
+        subtitle="The checklists HR picks from when inviting an associate."
+        primaryAction={
+          <Link to="/onboarding/templates/new">
+            <Button>
+              <Plus className="h-4 w-4" />
+              New template
+            </Button>
+          </Link>
+        }
+      />
 
       {error && (
         <div

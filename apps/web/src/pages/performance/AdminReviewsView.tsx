@@ -25,6 +25,7 @@ import {
   DialogTitle,
   EmptyState,
   Input,
+  PageHeader,
   SkeletonRows,
   Textarea,
 } from '@/components/ui';
@@ -89,24 +90,22 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
 
   return (
     <div className="max-w-6xl mx-auto">
-      <header className="mb-6 flex items-end justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="font-display text-4xl md:text-5xl text-white mb-2 leading-tight">
-            Performance
-          </h1>
-          <p className="text-silver">
-            {canManage
-              ? 'Compose, submit, and track performance reviews.'
-              : 'Read-only view of performance reviews.'}
-          </p>
-        </div>
-        {canManage && (
-          <Button onClick={() => setShowCreate(true)}>
-            <Plus className="h-4 w-4" />
-            New review
-          </Button>
-        )}
-      </header>
+      <PageHeader
+        title="Performance"
+        subtitle={
+          canManage
+            ? 'Compose, submit, and track performance reviews.'
+            : 'Read-only view of performance reviews.'
+        }
+        primaryAction={
+          canManage ? (
+            <Button onClick={() => setShowCreate(true)}>
+              <Plus className="h-4 w-4" />
+              New review
+            </Button>
+          ) : undefined
+        }
+      />
 
       <div className="flex flex-wrap gap-2 mb-5">
         {STATUS_FILTERS.map((f) => (
