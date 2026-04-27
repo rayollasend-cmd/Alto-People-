@@ -265,6 +265,8 @@ kiosk99Router.get('/kiosk-punches', VIEW, async (req, res) => {
       distanceMeters: p.distanceMeters,
       faceDistance: p.faceDistance,
       faceMismatch: p.faceMismatch,
+      anomalyKind: p.anomalyKind,
+      anomalyDetail: p.anomalyDetail,
       reviewStatus: p.reviewStatus,
       reviewedAt: p.reviewedAt?.toISOString() ?? null,
       reviewedByEmail: p.reviewedBy?.email ?? null,
@@ -661,6 +663,71 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     }
   }
 
+  // 5b. Phase 104 — impossible-travel detection. Look at this associate's
+  // most recent prior accepted punch within the last 12 hours; if it
+  // happened on a different kiosk too far away to physically reach in
+  // the elapsed time, flag this punch for review. This catches the
+  // "buddy gives you their PIN at site A while you punch at site B"
+  // pattern that face matching alone might miss (low light, bad angle).
+  let impossibleTravel: { distKm: number; minutes: number } | null = null;
+  const TRAVEL_LOOKBACK_HOURS = 12;
+  const TRAVEL_KM_PER_HOUR = 100; // conservative "max ground travel"
+  const lookbackSince = new Date(
+    Date.now() - TRAVEL_LOOKBACK_HOURS * 3_600_000,
+  );
+  const prevPunch = await prisma.kioskPunch.findFirst({
+    where: {
+      associateId: pinRow.associateId,
+      action: { in: ['CLOCK_IN', 'CLOCK_OUT'] },
+      kioskDeviceId: { not: device.id },
+      createdAt: { gte: lookbackSince },
+    },
+    orderBy: { createdAt: 'desc' },
+    include: {
+      device: {
+        select: { latitude: true, longitude: true },
+      },
+    },
+  });
+  // Pick a coordinate for "where this punch happened": prefer the kiosk's
+  // geofence center (fixed, accurate), fall back to the punch's reported
+  // lat/lng (if the device has no geofence configured).
+  const thisLat =
+    device.latitude != null
+      ? Number(device.latitude)
+      : punchLat ?? null;
+  const thisLng =
+    device.longitude != null
+      ? Number(device.longitude)
+      : punchLng ?? null;
+  if (prevPunch && thisLat != null && thisLng != null) {
+    const prevLat =
+      prevPunch.device.latitude != null
+        ? Number(prevPunch.device.latitude)
+        : prevPunch.punchLat != null
+          ? Number(prevPunch.punchLat)
+          : null;
+    const prevLng =
+      prevPunch.device.longitude != null
+        ? Number(prevPunch.device.longitude)
+        : prevPunch.punchLng != null
+          ? Number(prevPunch.punchLng)
+          : null;
+    if (prevLat != null && prevLng != null) {
+      const km = distanceMeters(prevLat, prevLng, thisLat, thisLng) / 1000;
+      const minutes = (Date.now() - prevPunch.createdAt.getTime()) / 60_000;
+      // If you'd need to move faster than 100 km/h sustained, that's not
+      // a normal commute. Use 5km/30min floor so a within-campus walk
+      // doesn't trip on rounding.
+      if (km > 5 && minutes > 0 && km / (minutes / 60) > TRAVEL_KM_PER_HOUR) {
+        impossibleTravel = {
+          distKm: Math.round(km * 10) / 10,
+          minutes: Math.round(minutes),
+        };
+      }
+    }
+  }
+
   // 6. Decide CLOCK_IN vs CLOCK_OUT by looking for an open entry.
   const open = await prisma.timeEntry.findFirst({
     where: { associateId: pinRow.associateId, status: 'ACTIVE' },
@@ -702,6 +769,22 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
       action = 'CLOCK_IN';
     }
 
+    // Phase 104 — pick a primary anomaly classification. Impossible-travel
+    // is the stronger fraud signal (the user is provably elsewhere), so
+    // it wins over face mismatch when both fire on the same punch.
+    let anomalyKind:
+      | 'IMPOSSIBLE_TRAVEL'
+      | 'FACE_MISMATCH'
+      | null = null;
+    let anomalyDetail: string | null = null;
+    if (impossibleTravel) {
+      anomalyKind = 'IMPOSSIBLE_TRAVEL';
+      anomalyDetail = `${impossibleTravel.distKm}km from previous kiosk in ${impossibleTravel.minutes}min`;
+    } else if (faceMismatch) {
+      anomalyKind = 'FACE_MISMATCH';
+      anomalyDetail = `face distance ${faceDistance?.toFixed(3) ?? '?'} > threshold ${FACE_MATCH_THRESHOLD}`;
+    }
+
     const punch = await tx.kioskPunch.create({
       data: {
         kioskDeviceId: device.id,
@@ -717,10 +800,11 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
         faceMismatch,
         idempotencyKey: input.idempotencyKey ?? null,
         clientPunchedAt,
-        // Phase 103 — flag for HR review when biometrics don't match.
-        // The punch still succeeds (we don't lock anyone out), but it
-        // surfaces in the review queue until a manager approves it.
-        reviewStatus: faceMismatch ? 'PENDING' : null,
+        anomalyKind,
+        anomalyDetail,
+        // Surface in the review queue when any anomaly fired. The punch
+        // still succeeds (no one gets locked out), HR triages later.
+        reviewStatus: anomalyKind ? 'PENDING' : null,
       },
     });
     if (shouldEnrollFace && input.faceDescriptor) {

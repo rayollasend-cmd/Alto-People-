@@ -946,9 +946,16 @@ function ReviewTab({ canManage }: { canManage: boolean }) {
                     </Badge>
                   </TableCell>
                   <TableCell className="text-xs text-amber-400">
-                    {p.faceMismatch
-                      ? `Face mismatch (${p.faceDistance?.toFixed(2) ?? '?'})`
-                      : (p.rejectReason ?? 'Anomaly')}
+                    <div className="font-medium">
+                      {p.anomalyKind === 'IMPOSSIBLE_TRAVEL'
+                        ? 'Impossible travel'
+                        : p.anomalyKind === 'FACE_MISMATCH'
+                          ? 'Face mismatch'
+                          : (p.rejectReason ?? 'Anomaly')}
+                    </div>
+                    {p.anomalyDetail && (
+                      <div className="text-silver">{p.anomalyDetail}</div>
+                    )}
                   </TableCell>
                   <TableCell>
                     {p.hasSelfie ? (

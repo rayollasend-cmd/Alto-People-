@@ -3387,6 +3387,12 @@ enum KioskPunchReviewStatus {
   REJECTED
 }
 
+enum KioskAnomalyKind {
+  FACE_MISMATCH
+  IMPOSSIBLE_TRAVEL
+  GEOFENCE_NEAR_MISS
+}
+
 model KioskDevice {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId    String    @db.Uuid
@@ -3462,6 +3468,11 @@ model KioskPunch {
   reviewedById    String?  @db.Uuid
   reviewedAt      DateTime? @db.Timestamptz(6)
   reviewNotes     String?
+  // Phase 104 — discrete anomaly classification + free-form detail.
+  // Captured at punch-write time so the review UI knows what raised the
+  // flag (face mismatch, impossible travel, etc.) and can show context.
+  anomalyKind     KioskAnomalyKind?
+  anomalyDetail   String?
   createdAt     DateTime         @default(now()) @db.Timestamptz(6)
 
   device    KioskDevice @relation(fields: [kioskDeviceId], references: [id], onDelete: Cascade)

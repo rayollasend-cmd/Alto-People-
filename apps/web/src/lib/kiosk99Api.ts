@@ -31,6 +31,11 @@ export interface KioskPin {
 
 export type KioskPunchReviewStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
+export type KioskAnomalyKind =
+  | 'FACE_MISMATCH'
+  | 'IMPOSSIBLE_TRAVEL'
+  | 'GEOFENCE_NEAR_MISS';
+
 export interface KioskPunchSummary {
   id: string;
   kioskDeviceId: string;
@@ -44,6 +49,8 @@ export interface KioskPunchSummary {
   distanceMeters: number | null;
   faceDistance: number | null;
   faceMismatch: boolean | null;
+  anomalyKind: KioskAnomalyKind | null;
+  anomalyDetail: string | null;
   reviewStatus: KioskPunchReviewStatus | null;
   reviewedAt: string | null;
   reviewedByEmail: string | null;
