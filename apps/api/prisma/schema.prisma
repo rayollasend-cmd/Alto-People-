@@ -296,6 +296,12 @@ model User {
   documentTemplatesCreated     DocumentTemplate[]             @relation("DocTemplateCreator")
   documentTemplateVersionsPublished DocumentTemplateVersion[] @relation("DocTemplateVersionPublisher")
   documentsRendered            DocumentRender[]               @relation("DocRenderer")
+  // Phase 90 — recruiting authorship.
+  interviewKitsCreated         InterviewKit[]                 @relation("InterviewKitCreator")
+  interviewsAsInterviewer      Interview[]                    @relation("Interviewer")
+  offersCreated                Offer[]                        @relation("OfferCreator")
+  referralsMade                Referral[]                     @relation("Referrer")
+  jobPostingsCreated           JobPosting[]                   @relation("JobPostingCreator")
 
   @@index([role])
   @@index([clientId])
@@ -359,6 +365,10 @@ model Client {
   oshaIncidents          OshaIncident[]
   // Phase 89 — document templates can be client-scoped.
   documentTemplates      DocumentTemplate[]
+  // Phase 90 — recruiting catalog.
+  interviewKits          InterviewKit[]
+  offers                 Offer[]
+  jobPostings            JobPosting[]
 
   @@index([status])
   @@index([deletedAt])
@@ -1215,6 +1225,11 @@ model Candidate {
   createdAt        DateTime     @default(now()) @db.Timestamptz(6)
   updatedAt        DateTime     @updatedAt @db.Timestamptz(6)
   deletedAt        DateTime?    @db.Timestamptz(6)
+
+  // Phase 90 — recruiting back-relations.
+  interviews Interview[]
+  offers     Offer[]
+  referrals  Referral[]
 
   @@index([stage])
   @@index([deletedAt])
@@ -2624,7 +2639,145 @@ model DocumentRender {
   version    DocumentTemplateVersion @relation(fields: [versionId], references: [id], onDelete: Restrict)
   associate  Associate?              @relation(fields: [associateId], references: [id], onDelete: SetNull)
   renderedBy User?                   @relation("DocRenderer", fields: [renderedById], references: [id], onDelete: SetNull)
+  offers     Offer[]
 
   @@index([templateId])
   @@index([associateId])
+}
+
+// ===== Phase 90 — Interview kits, offers, referrals, careers =============
+
+enum OfferStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  WITHDRAWN
+}
+
+enum ReferralStatus {
+  OPEN
+  INTERVIEWING
+  HIRED
+  REJECTED
+}
+
+enum JobPostingStatus {
+  DRAFT
+  OPEN
+  CLOSED
+}
+
+model InterviewKit {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId    String?   @db.Uuid
+  name        String
+  description String?
+  questions   Json      @default("[]")
+  createdById String?   @db.Uuid
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+
+  client     Client?     @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy  User?       @relation("InterviewKitCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  interviews Interview[]
+
+  @@index([clientId])
+}
+
+model Interview {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  candidateId       String    @db.Uuid
+  kitId             String?   @db.Uuid
+  interviewerUserId String?   @db.Uuid
+  scheduledFor      DateTime  @db.Timestamptz(6)
+  completedAt       DateTime? @db.Timestamptz(6)
+  scorecard         Json?
+  rating            Int?
+  createdAt         DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @db.Timestamptz(6)
+
+  candidate   Candidate     @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  kit         InterviewKit? @relation(fields: [kitId], references: [id], onDelete: SetNull)
+  interviewer User?         @relation("Interviewer", fields: [interviewerUserId], references: [id], onDelete: SetNull)
+
+  @@index([candidateId])
+  @@index([interviewerUserId])
+}
+
+model Offer {
+  id              String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  candidateId     String       @db.Uuid
+  clientId        String       @db.Uuid
+  jobTitle        String
+  startDate       DateTime     @db.Date
+  salary          Decimal?     @db.Decimal(12, 2)
+  hourlyRate      Decimal?     @db.Decimal(8, 2)
+  currency        String       @default("USD") @db.VarChar(3)
+  letterBody      String?
+  templateRenderId String?     @db.Uuid
+  status          OfferStatus  @default(DRAFT)
+  sentAt          DateTime?    @db.Timestamptz(6)
+  decidedAt       DateTime?    @db.Timestamptz(6)
+  expiresAt       DateTime?    @db.Timestamptz(6)
+  createdById     String?      @db.Uuid
+  createdAt       DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime     @updatedAt @db.Timestamptz(6)
+
+  candidate      Candidate       @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  client         Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  templateRender DocumentRender? @relation(fields: [templateRenderId], references: [id], onDelete: SetNull)
+  createdBy      User?           @relation("OfferCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([candidateId])
+  @@index([status])
+}
+
+model Referral {
+  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  referrerUserId  String         @db.Uuid
+  candidateId     String?        @db.Uuid
+  candidateName   String
+  candidateEmail  String
+  candidatePhone  String?
+  position        String?
+  notes           String?
+  status          ReferralStatus @default(OPEN)
+  bonusAmount     Decimal?       @db.Decimal(10, 2)
+  bonusCurrency   String         @default("USD") @db.VarChar(3)
+  bonusPaidAt     DateTime?      @db.Timestamptz(6)
+  createdAt       DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime       @updatedAt @db.Timestamptz(6)
+
+  referrer  User       @relation("Referrer", fields: [referrerUserId], references: [id], onDelete: Cascade)
+  candidate Candidate? @relation(fields: [candidateId], references: [id], onDelete: SetNull)
+
+  @@index([referrerUserId])
+  @@index([status])
+}
+
+model JobPosting {
+  id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId    String?          @db.Uuid
+  title       String
+  description String
+  location    String?
+  minSalary   Decimal?         @db.Decimal(12, 2)
+  maxSalary   Decimal?         @db.Decimal(12, 2)
+  currency    String           @default("USD") @db.VarChar(3)
+  slug        String           @unique
+  status      JobPostingStatus @default(DRAFT)
+  openedAt    DateTime?        @db.Timestamptz(6)
+  closedAt    DateTime?        @db.Timestamptz(6)
+  createdById String?          @db.Uuid
+  createdAt   DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime         @updatedAt @db.Timestamptz(6)
+
+  client    Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy User?   @relation("JobPostingCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([clientId])
 }

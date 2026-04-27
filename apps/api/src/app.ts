@@ -35,6 +35,7 @@ import { projectsAndPayRouter } from './routes/projectsAndPay.js';
 import { directoryAndCommsRouter } from './routes/directoryAndComms.js';
 import { oshaWcEeoRouter } from './routes/oshaWcEeo.js';
 import { docTemplatesRouter } from './routes/docTemplates.js';
+import { recruiting90Router } from './routes/recruiting90.js';
 import { attachUser, requireCapability } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 
@@ -139,6 +140,10 @@ export function createApp() {
   app.use('/', oshaWcEeoRouter);
   // Phase 89 — versioned document templates with mail-merge rendering.
   app.use('/', docTemplatesRouter);
+  // Phase 90 — interview kits, offers, referrals, careers page. Routes
+  // self-gate per-handler with view:recruiting / manage:recruiting; the
+  // /careers/* paths are public (no capability check).
+  app.use('/', recruiting90Router);
   // QuickBooks router self-gates each route — the OAuth callback must accept
   // an unauthenticated browser redirect from Intuit, so we cannot apply a
   // capability check at this mount point.
