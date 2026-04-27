@@ -34,6 +34,7 @@ import { qualificationsRouter } from './routes/qualifications.js';
 import { projectsAndPayRouter } from './routes/projectsAndPay.js';
 import { directoryAndCommsRouter } from './routes/directoryAndComms.js';
 import { oshaWcEeoRouter } from './routes/oshaWcEeo.js';
+import { docTemplatesRouter } from './routes/docTemplates.js';
 import { attachUser, requireCapability } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 
@@ -136,6 +137,8 @@ export function createApp() {
   // Phase 88 — OSHA / WC / EEO. Routes self-gate per-handler with
   // view:compliance / manage:compliance.
   app.use('/', oshaWcEeoRouter);
+  // Phase 89 — versioned document templates with mail-merge rendering.
+  app.use('/', docTemplatesRouter);
   // QuickBooks router self-gates each route — the OAuth callback must accept
   // an unauthenticated browser redirect from Intuit, so we cannot apply a
   // capability check at this mount point.

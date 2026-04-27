@@ -292,6 +292,10 @@ model User {
   surveyResponses              SurveyResponse[]               @relation("SurveyRespondent")
   // Phase 88 — OSHA incident reporters.
   oshaIncidentsReported        OshaIncident[]                 @relation("OshaIncidentReporter")
+  // Phase 89 — document template authorship + renders.
+  documentTemplatesCreated     DocumentTemplate[]             @relation("DocTemplateCreator")
+  documentTemplateVersionsPublished DocumentTemplateVersion[] @relation("DocTemplateVersionPublisher")
+  documentsRendered            DocumentRender[]               @relation("DocRenderer")
 
   @@index([role])
   @@index([clientId])
@@ -353,6 +357,8 @@ model Client {
   surveys                Survey[]
   // Phase 88 — OSHA incidents.
   oshaIncidents          OshaIncident[]
+  // Phase 89 — document templates can be client-scoped.
+  documentTemplates      DocumentTemplate[]
 
   @@index([status])
   @@index([deletedAt])
@@ -442,6 +448,8 @@ model Associate {
   // Phase 88 — OSHA incidents (subject) + EEO record (1:1).
   oshaIncidents      OshaIncident[]
   eeo                AssociateEeo?
+  // Phase 89 — document renders targeting this associate.
+  documentRenders    DocumentRender[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -2546,4 +2554,77 @@ model AssociateEeo {
   updatedAt    DateTime     @updatedAt @db.Timestamptz(6)
 
   associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+}
+
+// ===== Phase 89 — Mail-merge document templates ===========================
+
+enum DocumentTemplateKind {
+  OFFER_LETTER
+  POLICY
+  NDA
+  PROMOTION_LETTER
+  TERMINATION_LETTER
+  WARNING_LETTER
+  GENERIC
+}
+
+model DocumentTemplate {
+  id               String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId         String?                    @db.Uuid
+  name             String
+  kind             DocumentTemplateKind       @default(GENERIC)
+  currentVersionId String?                    @db.Uuid
+  createdById      String?                    @db.Uuid
+  createdAt        DateTime                   @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime                   @updatedAt @db.Timestamptz(6)
+  deletedAt        DateTime?                  @db.Timestamptz(6)
+
+  client         Client?                   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy      User?                     @relation("DocTemplateCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  currentVersion DocumentTemplateVersion?  @relation("CurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+  versions       DocumentTemplateVersion[] @relation("TemplateVersions")
+  renders        DocumentRender[]
+
+  @@index([clientId])
+  @@index([kind])
+}
+
+model DocumentTemplateVersion {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  templateId    String    @db.Uuid
+  version       Int
+  subject       String?
+  body          String
+  variables     Json?
+  publishedAt   DateTime? @db.Timestamptz(6)
+  publishedById String?   @db.Uuid
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+
+  template       DocumentTemplate   @relation("TemplateVersions", fields: [templateId], references: [id], onDelete: Cascade)
+  currentForTemplates DocumentTemplate[] @relation("CurrentVersion")
+  publishedBy    User?              @relation("DocTemplateVersionPublisher", fields: [publishedById], references: [id], onDelete: SetNull)
+  renders        DocumentRender[]
+
+  @@unique([templateId, version])
+  @@index([templateId, version(sort: Desc)])
+}
+
+model DocumentRender {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  templateId       String   @db.Uuid
+  versionId        String   @db.Uuid
+  associateId      String?  @db.Uuid
+  renderedSubject  String?
+  renderedBody     String
+  data             Json
+  renderedById     String?  @db.Uuid
+  createdAt        DateTime @default(now()) @db.Timestamptz(6)
+
+  template   DocumentTemplate        @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  version    DocumentTemplateVersion @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  associate  Associate?              @relation(fields: [associateId], references: [id], onDelete: SetNull)
+  renderedBy User?                   @relation("DocRenderer", fields: [renderedById], references: [id], onDelete: SetNull)
+
+  @@index([templateId])
+  @@index([associateId])
 }
