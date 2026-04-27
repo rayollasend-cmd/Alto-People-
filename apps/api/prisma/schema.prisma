@@ -290,6 +290,8 @@ model User {
   broadcastReceipts            BroadcastReceipt[]             @relation("BroadcastReceiptUser")
   surveysCreated               Survey[]                       @relation("SurveyCreator")
   surveyResponses              SurveyResponse[]               @relation("SurveyRespondent")
+  // Phase 88 — OSHA incident reporters.
+  oshaIncidentsReported        OshaIncident[]                 @relation("OshaIncidentReporter")
 
   @@index([role])
   @@index([clientId])
@@ -349,6 +351,8 @@ model Client {
   // Phase 87 — broadcasts + surveys (when client-scoped).
   broadcasts             Broadcast[]
   surveys                Survey[]
+  // Phase 88 — OSHA incidents.
+  oshaIncidents          OshaIncident[]
 
   @@index([status])
   @@index([deletedAt])
@@ -435,6 +439,9 @@ model Associate {
   shiftClaims       OpenShiftClaim[]
   // Phase 86 — tip pool allocations.
   tipPoolAllocations TipPoolAllocation[]
+  // Phase 88 — OSHA incidents (subject) + EEO record (1:1).
+  oshaIncidents      OshaIncident[]
+  eeo                AssociateEeo?
 
   @@index([deletedAt])
   @@index([managerId])
@@ -1461,6 +1468,8 @@ model JobProfile {
   // overtime under federal rules; surfaced in payroll OT calc later.
   isExempt    Boolean     @default(false)
   description String?
+  // Phase 88 — Workers' Comp NCCI / state-specific class code lookup.
+  wcClassCode String?     @db.VarChar(10)
   createdAt   DateTime    @default(now()) @db.Timestamptz(6)
   updatedAt   DateTime    @updatedAt @db.Timestamptz(6)
   deletedAt   DateTime?   @db.Timestamptz(6)
@@ -2432,4 +2441,109 @@ model SurveyAnswer {
 
   @@unique([responseId, questionId])
   @@index([questionId])
+}
+
+// ===== Phase 88 — OSHA + WC class codes + EEO-1 ===========================
+
+enum OshaIncidentSeverity {
+  FIRST_AID
+  MEDICAL_TREATMENT
+  RESTRICTED_DUTY
+  DAYS_AWAY
+  FATAL
+}
+
+enum OshaIncidentStatus {
+  REPORTED
+  INVESTIGATING
+  RESOLVED
+  ESCALATED
+}
+
+enum EeoCategory {
+  EXEC_SR_OFFICIALS
+  FIRST_MID_OFFICIALS
+  PROFESSIONALS
+  TECHNICIANS
+  SALES_WORKERS
+  ADMIN_SUPPORT
+  CRAFT_WORKERS
+  OPERATIVES
+  LABORERS_HELPERS
+  SERVICE_WORKERS
+}
+
+enum EeoRace {
+  HISPANIC_LATINO
+  WHITE
+  BLACK_AFRICAN_AMERICAN
+  NATIVE_HAWAIIAN_PACIFIC_ISLANDER
+  ASIAN
+  AMERICAN_INDIAN_ALASKA_NATIVE
+  TWO_OR_MORE
+  NOT_DISCLOSED
+}
+
+enum EeoGender {
+  MALE
+  FEMALE
+  NON_BINARY
+  NOT_DISCLOSED
+}
+
+model OshaIncident {
+  id              String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId        String               @db.Uuid
+  associateId     String?              @db.Uuid
+  occurredAt      DateTime             @db.Timestamptz(6)
+  reportedAt      DateTime             @default(now()) @db.Timestamptz(6)
+  reportedById    String?              @db.Uuid
+  location        String?
+  description     String
+  bodyPart        String?
+  severity        OshaIncidentSeverity
+  daysAway        Int                  @default(0)
+  daysRestricted  Int                  @default(0)
+  isRecordable    Boolean              @default(true)
+  status          OshaIncidentStatus   @default(REPORTED)
+  resolutionNote  String?
+  resolvedAt      DateTime?            @db.Timestamptz(6)
+  createdAt       DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime             @updatedAt @db.Timestamptz(6)
+
+  client     Client     @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  associate  Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)
+  reportedBy User?      @relation("OshaIncidentReporter", fields: [reportedById], references: [id], onDelete: SetNull)
+
+  @@index([clientId, occurredAt(sort: Desc)])
+  @@index([status])
+}
+
+model WcClassCode {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  stateCode     String?   @db.VarChar(2)
+  code          String    @db.VarChar(10)
+  description   String
+  ratePer100    Decimal   @db.Decimal(10, 4)
+  effectiveFrom DateTime  @db.Date
+  effectiveTo   DateTime? @db.Date
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([stateCode, code, effectiveFrom])
+  @@index([stateCode])
+}
+
+model AssociateEeo {
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId  String       @unique @db.Uuid
+  category     EeoCategory?
+  race         EeoRace?
+  gender       EeoGender?
+  isVeteran    Boolean?
+  isDisabled   Boolean?
+  selfDeclared Boolean      @default(true)
+  createdAt    DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime     @updatedAt @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
 }

@@ -45,6 +45,7 @@ import { PerformanceExtras } from '@/pages/performance/PerformanceExtras';
 import { MarketplaceHome } from '@/pages/marketplace/MarketplaceHome';
 import { PayRulesHome } from '@/pages/payrules/PayRulesHome';
 import { DirCommsHome } from '@/pages/dirComms/DirCommsHome';
+import { OshaWcEeoHome } from '@/pages/compliance/OshaWcEeoHome';
 import { RouterErrorPage } from '@/pages/RouterErrorPage';
 
 const ONBOARDING_ROUTES = [
@@ -168,6 +169,7 @@ export const router = createBrowserRouter([
       { path: 'marketplace', element: <MarketplaceHome /> },
       { path: 'payrules', element: <PayRulesHome /> },
       { path: 'directory', element: <DirCommsHome /> },
+      { path: 'compliance/osha', element: <OshaWcEeoHome /> },
       ...ONBOARDING_ROUTES,
       ...PLACEHOLDER_MODULES.map((m) => ({
         path: m.path.replace(/^\//, ''),
