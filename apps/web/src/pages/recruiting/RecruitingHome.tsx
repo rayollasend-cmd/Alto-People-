@@ -19,6 +19,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import {
+  Avatar,
   Badge,
   Button,
   Card,
@@ -305,9 +306,16 @@ export function RecruitingHome() {
               </TableHeader>
               <TableBody>
                 {candidates.map((c) => (
-                  <TableRow key={c.id}>
+                  <TableRow key={c.id} className="group">
                     <TableCell className="font-medium">
-                      {c.firstName} {c.lastName}
+                      <div className="flex items-center gap-2.5">
+                        <Avatar
+                          name={`${c.firstName} ${c.lastName}`}
+                          email={c.email}
+                          size="sm"
+                        />
+                        <span>{c.firstName} {c.lastName}</span>
+                      </div>
                     </TableCell>
                     <TableCell className="text-silver">{c.email}</TableCell>
                     <TableCell className="text-silver">{c.position ?? '—'}</TableCell>
@@ -327,7 +335,7 @@ export function RecruitingHome() {
                     </TableCell>
                     {canManage && (
                       <TableCell className="text-right whitespace-nowrap">
-                        <div className="inline-flex gap-1.5">
+                        <div className="inline-flex gap-1.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                           {NEXT_STAGE[c.stage] && (
                             <Button
                               size="sm"

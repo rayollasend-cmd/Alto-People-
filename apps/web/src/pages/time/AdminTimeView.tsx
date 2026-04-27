@@ -28,6 +28,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import {
+  Avatar,
   Badge,
   Button,
   Card,
@@ -434,8 +435,13 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                   </TableHeader>
                   <TableBody>
                     {filteredActive.map((e) => (
-                      <TableRow key={e.id}>
-                        <TableCell className="font-medium">{e.associateName}</TableCell>
+                      <TableRow key={e.id} className="group">
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-2.5">
+                            <Avatar name={e.associateName} size="sm" />
+                            <span>{e.associateName}</span>
+                          </div>
+                        </TableCell>
                         <TableCell className="text-silver">{e.clientName ?? '—'}</TableCell>
                         <TableCell className="text-silver">{e.jobName ?? '—'}</TableCell>
                         <TableCell className="tabular-nums text-silver">
@@ -652,6 +658,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                     return (
                       <TableRow
                         key={e.id}
+                        className="group"
                         data-state={selected.has(e.id) ? 'selected' : undefined}
                       >
                         {canManage && filter === 'COMPLETED' && (
@@ -667,7 +674,12 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                             )}
                           </TableCell>
                         )}
-                        <TableCell className="font-medium">{e.associateName ?? '—'}</TableCell>
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-2.5">
+                            <Avatar name={e.associateName ?? '—'} size="sm" />
+                            <span>{e.associateName ?? '—'}</span>
+                          </div>
+                        </TableCell>
                         <TableCell className="text-silver">{e.clientName ?? '—'}</TableCell>
                         <TableCell className="tabular-nums">
                           {new Date(e.clockInAt).toLocaleString()}
@@ -690,29 +702,30 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                         </TableCell>
                         {canManage && (
                           <TableCell className="text-right whitespace-nowrap">
-                            {(e.status === 'COMPLETED' || e.status === 'REJECTED') && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="mr-2"
-                                onClick={() => onApprove(e.id)}
-                                loading={pendingId === e.id}
-                                disabled={pendingId === e.id || bulkBusy}
-                              >
-                                Approve
-                              </Button>
-                            )}
-                            {(e.status === 'COMPLETED' || e.status === 'APPROVED') && (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="text-alert hover:text-alert hover:bg-alert/10"
-                                onClick={() => setRejectOpen({ mode: 'one', id: e.id })}
-                                disabled={pendingId === e.id || bulkBusy}
-                              >
-                                Reject
-                              </Button>
-                            )}
+                            <div className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity inline-flex items-center gap-1">
+                              {(e.status === 'COMPLETED' || e.status === 'REJECTED') && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => onApprove(e.id)}
+                                  loading={pendingId === e.id}
+                                  disabled={pendingId === e.id || bulkBusy}
+                                >
+                                  Approve
+                                </Button>
+                              )}
+                              {(e.status === 'COMPLETED' || e.status === 'APPROVED') && (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="text-alert hover:text-alert hover:bg-alert/10"
+                                  onClick={() => setRejectOpen({ mode: 'one', id: e.id })}
+                                  disabled={pendingId === e.id || bulkBusy}
+                                >
+                                  Reject
+                                </Button>
+                              )}
+                            </div>
                           </TableCell>
                         )}
                       </TableRow>

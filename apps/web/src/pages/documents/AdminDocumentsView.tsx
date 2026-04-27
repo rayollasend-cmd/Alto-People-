@@ -17,6 +17,7 @@ import {
   verifyDocument,
 } from '@/lib/documentsApi';
 import { ApiError } from '@/lib/api';
+import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -379,7 +380,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
             </TableHeader>
             <TableBody>
               {visibleDocs.map((d) => (
-                <TableRow key={d.id}>
+                <TableRow key={d.id} className="group">
                   <TableCell>
                     <a
                       href={downloadDocumentUrl(d.id)}
@@ -397,7 +398,10 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                     {d.kind.replace(/_/g, ' ')}
                   </TableCell>
                   <TableCell className="text-silver">
-                    {d.associateName ?? '—'}
+                    <div className="flex items-center gap-2.5">
+                      <Avatar name={d.associateName ?? '—'} size="xs" />
+                      <span className="truncate">{d.associateName ?? '—'}</span>
+                    </div>
                   </TableCell>
                   <TableCell className="hidden md:table-cell text-silver tabular-nums text-xs">
                     {fmtSize(d.size)}
@@ -420,7 +424,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                   </TableCell>
                   {canManage && (
                     <TableCell className="text-right whitespace-nowrap">
-                      <div className="flex items-center justify-end gap-1">
+                      <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                         {(d.status === 'UPLOADED' || d.status === 'REJECTED') && (
                           <Button
                             size="sm"

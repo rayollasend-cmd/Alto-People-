@@ -12,6 +12,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import {
+  Avatar,
   Badge,
   Button,
   Card,
@@ -154,18 +155,21 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
         <ul className="space-y-2">
           {reviews.map((r) => (
             <li key={r.id}>
-              <Card>
+              <Card className="group">
                 <CardContent className="p-4">
                   <div className="flex items-start justify-between gap-3 flex-wrap">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-white font-medium">
-                        {r.associateName}
-                        <span className="text-silver text-xs ml-2 font-normal">
-                          {r.periodStart} → {r.periodEnd}
-                        </span>
-                      </div>
-                      <div className="text-sm text-silver line-clamp-1 mt-0.5">
-                        {r.summary}
+                    <div className="flex items-start gap-3 min-w-0 flex-1">
+                      <Avatar name={r.associateName} size="md" />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-white font-medium">
+                          {r.associateName}
+                          <span className="text-silver text-xs ml-2 font-normal">
+                            {r.periodStart} → {r.periodEnd}
+                          </span>
+                        </div>
+                        <div className="text-sm text-silver line-clamp-1 mt-0.5">
+                          {r.summary}
+                        </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
@@ -175,15 +179,17 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
                       </span>
                       <Badge variant={statusVariant(r.status)}>{r.status}</Badge>
                       {canManage && r.status === 'DRAFT' && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setSubmitTarget(r)}
-                          loading={pendingId === r.id}
-                          disabled={pendingId === r.id}
-                        >
-                          Submit
-                        </Button>
+                        <div className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setSubmitTarget(r)}
+                            loading={pendingId === r.id}
+                            disabled={pendingId === r.id}
+                          >
+                            Submit
+                          </Button>
+                        </div>
                       )}
                     </div>
                   </div>

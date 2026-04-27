@@ -16,6 +16,7 @@ import {
 import { syncRun as syncRunToQbo } from '@/lib/quickbooksApi';
 import { BranchEnrollmentDialog } from './BranchEnrollmentDialog';
 import { ApiError } from '@/lib/api';
+import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -315,8 +316,13 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
                     </TableHeader>
                     <TableBody>
                       {selected.items.map((it) => (
-                        <TableRow key={it.id}>
-                          <TableCell>{it.associateName ?? '—'}</TableCell>
+                        <TableRow key={it.id} className="group">
+                          <TableCell>
+                            <div className="flex items-center gap-2.5">
+                              <Avatar name={it.associateName ?? '—'} size="sm" />
+                              <span>{it.associateName ?? '—'}</span>
+                            </div>
+                          </TableCell>
                           <TableCell className="text-right tabular-nums">
                             {it.hoursWorked.toFixed(2)}
                           </TableCell>
@@ -341,18 +347,20 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
                           </TableCell>
                           {canProcess && (
                             <TableCell className="text-right">
-                              <Button
-                                variant="ghost"
-                                onClick={() =>
-                                  setEnrollFor({
-                                    id: it.associateId,
-                                    name: it.associateName,
-                                  })
-                                }
-                              >
-                                <CreditCard className="h-4 w-4" />
-                                Branch
-                              </Button>
+                              <div className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity inline-flex">
+                                <Button
+                                  variant="ghost"
+                                  onClick={() =>
+                                    setEnrollFor({
+                                      id: it.associateId,
+                                      name: it.associateName,
+                                    })
+                                  }
+                                >
+                                  <CreditCard className="h-4 w-4" />
+                                  Branch
+                                </Button>
+                              </div>
                             </TableCell>
                           )}
                         </TableRow>

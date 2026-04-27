@@ -32,6 +32,7 @@ import { Label } from '@/components/ui/Label';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Badge } from '@/components/ui/Badge';
+import { Avatar } from '@/components/ui/Avatar';
 import {
   Table,
   TableBody,
@@ -168,9 +169,12 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
               </TableHeader>
               <TableBody>
                 {items.map((r) => (
-                  <TableRow key={r.id}>
+                  <TableRow key={r.id} className="group">
                     <TableCell className="text-white">
-                      {r.associateName ?? '—'}
+                      <div className="flex items-center gap-2.5">
+                        <Avatar name={r.associateName ?? '—'} size="sm" />
+                        <span>{r.associateName ?? '—'}</span>
+                      </div>
                     </TableCell>
                     <TableCell>{r.category}</TableCell>
                     <TableCell className="tabular-nums">
@@ -188,7 +192,7 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
                     </TableCell>
                     <TableCell className="text-right">
                       {r.status === 'PENDING' && canManage ? (
-                        <div className="inline-flex gap-1">
+                        <div className="inline-flex gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                           <Button
                             size="sm"
                             variant="ghost"
@@ -207,7 +211,7 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
                           </Button>
                         </div>
                       ) : (
-                        <span className="text-silver/60 text-xs">
+                        <span className="text-silver/80 text-xs">
                           {r.reviewerEmail ?? '—'}
                         </span>
                       )}

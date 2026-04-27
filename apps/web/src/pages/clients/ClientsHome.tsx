@@ -10,6 +10,7 @@ import {
   Plus,
   Search,
   Users,
+  type LucideIcon,
 } from 'lucide-react';
 import type { ClientListItem, ClientStatus } from '@alto-people/shared';
 import { listClients } from '@/lib/clientsApi';
@@ -353,7 +354,7 @@ function KpiTile({
   tone,
   small,
 }: {
-  icon: React.ComponentType<{ className?: string; 'aria-hidden'?: boolean }>;
+  icon: LucideIcon;
   label: string;
   value: number | string;
   tone: 'gold' | 'success' | 'silver' | 'mute';
@@ -370,7 +371,7 @@ function KpiTile({
   return (
     <div className="min-w-0">
       <div className="text-[10px] uppercase tracking-widest text-silver/80 flex items-center gap-1">
-        <Icon className="h-3 w-3" aria-hidden={true} />
+        <Icon className="h-3 w-3" aria-hidden="true" />
         <span className="truncate">{label}</span>
       </div>
       <div

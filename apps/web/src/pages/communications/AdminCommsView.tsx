@@ -12,6 +12,7 @@ import {
 } from '@/lib/communicationsApi';
 import { ApiError } from '@/lib/api';
 import {
+  Avatar,
   Badge,
   Button,
   Card,
@@ -146,7 +147,7 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
               </TableHeader>
               <TableBody>
                 {items.map((n) => (
-                  <TableRow key={n.id}>
+                  <TableRow key={n.id} className="group">
                     <TableCell className="text-silver tabular-nums whitespace-nowrap">
                       {new Date(n.createdAt).toLocaleString()}
                     </TableCell>
@@ -154,7 +155,21 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
                       <Badge variant="outline">{n.channel}</Badge>
                     </TableCell>
                     <TableCell className="text-silver">
-                      {n.recipientEmail ?? n.recipientPhone ?? n.recipientUserId ?? '—'}
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <Avatar
+                          name={
+                            n.recipientEmail ??
+                            n.recipientPhone ??
+                            n.recipientUserId ??
+                            '—'
+                          }
+                          email={n.recipientEmail ?? undefined}
+                          size="xs"
+                        />
+                        <span className="truncate">
+                          {n.recipientEmail ?? n.recipientPhone ?? n.recipientUserId ?? '—'}
+                        </span>
+                      </div>
                     </TableCell>
                     <TableCell>
                       <div className="text-white truncate max-w-md font-medium">
