@@ -46,6 +46,7 @@ export type ModuleKey =
   | 'succession'
   | 'probation'
   | 'holidays'
+  | 'discipline'
   | 'team'
   | 'workflows'
   | 'me'
@@ -105,7 +106,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -267,6 +268,16 @@ export const MODULES: ModuleNav[] = [
     requires: 'view:scheduling',
     icon: HolidayIcon,
     group: 'time-and-pay',
+  },
+  {
+    key: 'discipline',
+    path: '/discipline',
+    label: 'Discipline',
+    description:
+      'Formal warning ladder — verbal, written, final, suspension, termination. Associates can acknowledge; HR can rescind.',
+    requires: 'view:performance',
+    icon: DisciplineIcon,
+    group: 'workforce',
   },
   {
     key: 'team',

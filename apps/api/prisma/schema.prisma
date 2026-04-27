@@ -334,6 +334,8 @@ model User {
   probationsCreated            ProbationPeriod[]              @relation("ProbationCreator")
   probationsDecided            ProbationPeriod[]              @relation("ProbationDecider")
   holidaysCreated              Holiday[]
+  disciplinaryActionsIssued    DisciplinaryAction[]           @relation("DisciplineIssuer")
+  disciplinaryActionsRescinded DisciplinaryAction[]           @relation("DisciplineRescinder")
 
   @@index([role])
   @@index([clientId])
@@ -537,6 +539,8 @@ model Associate {
   successionCandidacies SuccessionCandidate[]
   // Phase 116 — probation history (one ACTIVE at a time).
   probationPeriods      ProbationPeriod[]
+  // Phase 118 — formal disciplinary actions.
+  disciplinaryActions   DisciplinaryAction[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -3906,4 +3910,52 @@ model Holiday {
 
   @@index([date])
   @@index([clientId])
+}
+
+// ===== Phase 118 — Disciplinary action log =================================
+//
+// Distinct from Pip (which is a forward-looking improvement plan). This is
+// the corrective record: each row is one incident on the formal warning
+// ladder. Acknowledgment captures associate awareness; rescind unwinds an
+// action that was issued in error or later overturned.
+enum DisciplineKind {
+  VERBAL_WARNING
+  WRITTEN_WARNING
+  FINAL_WARNING
+  SUSPENSION
+  TERMINATION
+}
+
+enum DisciplineStatus {
+  ACTIVE
+  ACKNOWLEDGED
+  RESCINDED
+}
+
+model DisciplinaryAction {
+  id                String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId       String           @db.Uuid
+  kind              DisciplineKind
+  status            DisciplineStatus @default(ACTIVE)
+  incidentDate      DateTime         @db.Date
+  effectiveDate     DateTime         @db.Date
+  suspensionDays    Int?
+  description       String
+  expectedAction    String?
+  issuedById        String?          @db.Uuid
+  acknowledgedAt    DateTime?        @db.Timestamptz(6)
+  acknowledgedSig   String?
+  rescindedAt       DateTime?        @db.Timestamptz(6)
+  rescindedReason   String?
+  rescindedById     String?          @db.Uuid
+  createdAt         DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime         @updatedAt @db.Timestamptz(6)
+
+  associate   Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  issuedBy    User?     @relation("DisciplineIssuer", fields: [issuedById], references: [id], onDelete: SetNull)
+  rescindedBy User?     @relation("DisciplineRescinder", fields: [rescindedById], references: [id], onDelete: SetNull)
+
+  @@index([associateId])
+  @@index([status])
+  @@index([effectiveDate])
 }
