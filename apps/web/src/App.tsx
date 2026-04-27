@@ -54,6 +54,7 @@ import { IntegrationsHome } from '@/pages/integrations/IntegrationsHome';
 import { LearningHome } from '@/pages/learning/LearningHome';
 import { WorktagsHome } from '@/pages/worktags/WorktagsHome';
 import { ReportsHome } from '@/pages/reports/ReportsHome';
+import { ReimbursementsHome } from '@/pages/reimbursements/ReimbursementsHome';
 import { RouterErrorPage } from '@/pages/RouterErrorPage';
 
 const ONBOARDING_ROUTES = [
@@ -186,6 +187,7 @@ export const router = createBrowserRouter([
       { path: 'learning', element: <LearningHome /> },
       { path: 'worktags', element: <WorktagsHome /> },
       { path: 'reports', element: <ReportsHome /> },
+      { path: 'reimbursements', element: <ReimbursementsHome /> },
       ...ONBOARDING_ROUTES,
       ...PLACEHOLDER_MODULES.map((m) => ({
         path: m.path.replace(/^\//, ''),

@@ -42,6 +42,7 @@ import { apiKeysWebhooks93Router } from './routes/apiKeysWebhooks93.js';
 import { lms94Router } from './routes/lms94.js';
 import { worktags95Router } from './routes/worktags95.js';
 import { reports96Router } from './routes/reports96.js';
+import { reimbursements97Router } from './routes/reimbursements97.js';
 import { attachUser, requireCapability } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 
@@ -170,6 +171,10 @@ export function createApp() {
   // require view:dashboard; spec validation prevents column/filter
   // injection.
   app.use('/', reports96Router);
+  // Phase 97 — reimbursements + expense lines. Submitting routes are
+  // open to authenticated users (route checks ownership); approve/pay
+  // require process:payroll.
+  app.use('/', reimbursements97Router);
   // QuickBooks router self-gates each route — the OAuth callback must accept
   // an unauthenticated browser redirect from Intuit, so we cannot apply a
   // capability check at this mount point.

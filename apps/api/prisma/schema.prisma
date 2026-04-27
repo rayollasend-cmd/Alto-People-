@@ -318,6 +318,8 @@ model User {
   worktagAssignmentsAuthored   WorktagAssignment[]            @relation("WorktagAssigner")
   // Phase 96 — saved reports authored.
   reportsCreated               Report[]                       @relation("ReportCreator")
+  // Phase 97 — reimbursement decisions.
+  reimbursementsDecided        Reimbursement[]                @relation("ReimbursementDecider")
 
   @@index([role])
   @@index([clientId])
@@ -492,6 +494,8 @@ model Associate {
   acaMonths          AcaMonth[]
   // Phase 94 — LMS course enrollments.
   courseEnrollments  CourseEnrollment[]
+  // Phase 97 — reimbursement requests.
+  reimbursements     Reimbursement[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -1151,6 +1155,8 @@ model PayrollRun {
   items         PayrollItem[]
   // Phase 91 — garnishment deductions sourced from this run.
   garnishmentDeductions GarnishmentDeduction[]
+  // Phase 97 — reimbursements paid in this run.
+  reimbursementsPaid    Reimbursement[]
   createdAt     DateTime         @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime         @updatedAt @db.Timestamptz(6)
 
@@ -3289,4 +3295,66 @@ model ReportSchedule {
   report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@index([isActive, nextRunAt])
+}
+
+// Phase 97 — Spend management: reimbursements + expense lines.
+
+enum ReimbursementStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  PAID
+}
+
+enum ExpenseLineKind {
+  RECEIPT
+  MILEAGE
+  PER_DIEM
+  OTHER
+}
+
+model Reimbursement {
+  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId       String              @db.Uuid
+  title             String
+  description       String?
+  totalAmount       Decimal             @default(0) @db.Decimal(12, 2)
+  currency          String              @default("USD") @db.VarChar(3)
+  status            ReimbursementStatus @default(DRAFT)
+  submittedAt       DateTime?           @db.Timestamptz(6)
+  decidedAt         DateTime?           @db.Timestamptz(6)
+  decidedById       String?             @db.Uuid
+  rejectionReason   String?
+  paidPayrollRunId  String?             @db.Uuid
+  paidAt            DateTime?           @db.Timestamptz(6)
+  createdAt         DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime            @updatedAt @db.Timestamptz(6)
+
+  associate     Associate     @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  decidedBy     User?         @relation("ReimbursementDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  paidPayrollRun PayrollRun?  @relation(fields: [paidPayrollRunId], references: [id], onDelete: SetNull)
+  lines         ExpenseLine[]
+
+  @@index([associateId, status])
+  @@index([status])
+}
+
+model ExpenseLine {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reimbursementId String          @db.Uuid
+  kind            ExpenseLineKind
+  description     String
+  incurredOn      DateTime        @db.Date
+  amount          Decimal         @db.Decimal(10, 2)
+  miles           Decimal?        @db.Decimal(8, 2)
+  ratePerMile     Decimal?        @db.Decimal(6, 4)
+  receiptUrl      String?
+  merchant        String?
+  category        String?
+  createdAt       DateTime        @default(now()) @db.Timestamptz(6)
+
+  reimbursement Reimbursement @relation(fields: [reimbursementId], references: [id], onDelete: Cascade)
+
+  @@index([reimbursementId])
 }
