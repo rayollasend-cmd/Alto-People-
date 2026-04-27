@@ -41,6 +41,7 @@ import { TeamHome } from '@/pages/team/TeamHome';
 import { WorkflowsHome } from '@/pages/workflows/WorkflowsHome';
 import { MeHome } from '@/pages/me/MeHome';
 import { CompensationHome } from '@/pages/compensation/CompensationHome';
+import { PerformanceExtras } from '@/pages/performance/PerformanceExtras';
 import { RouterErrorPage } from '@/pages/RouterErrorPage';
 
 const ONBOARDING_ROUTES = [
@@ -157,6 +158,7 @@ export const router = createBrowserRouter([
       { path: 'workflows', element: <WorkflowsHome /> },
       { path: 'me', element: <MeHome /> },
       { path: 'compensation', element: <CompensationHome /> },
+      { path: 'performance/extras', element: <PerformanceExtras /> },
       ...ONBOARDING_ROUTES,
       ...PLACEHOLDER_MODULES.map((m) => ({
         path: m.path.replace(/^\//, ''),

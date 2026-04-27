@@ -16,6 +16,7 @@ import { complianceRouter } from './routes/compliance.js';
 import { analyticsRouter } from './routes/analytics.js';
 import { communicationsRouter } from './routes/communications.js';
 import { performanceRouter } from './routes/performance.js';
+import { performance84Router } from './routes/performance84.js';
 import { recruitingRouter } from './routes/recruiting.js';
 import { jobsRouter } from './routes/jobs.js';
 import { auditRouter } from './routes/audit.js';
@@ -89,7 +90,10 @@ export function createApp() {
   app.use(
     '/performance',
     requireCapability('view:performance'),
-    performanceRouter
+    performanceRouter,
+    // Phase 84 — goals/OKRs, 1:1s, kudos, PIPs, 360s. Same view:performance
+    // gate at the prefix; per-route MANAGE checks for write paths.
+    performance84Router
   );
   app.use(
     '/recruiting',

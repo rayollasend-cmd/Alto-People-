@@ -274,6 +274,13 @@ model User {
   compRecordsActed             CompensationRecord[]           @relation("CompRecordActor")
   meritProposalsProposed       MeritProposal[]                @relation("MeritProposalProposer")
   meritProposalsDecided        MeritProposal[]                @relation("MeritProposalDecider")
+  // Phase 84 — performance back-relations.
+  goalsCreated                 Goal[]                         @relation("GoalCreator")
+  oneOnOnesAsManager           OneOnOne[]                     @relation("OneOnOneManager")
+  kudosSent                    Kudo[]                         @relation("KudoSender")
+  pipsAsManager                Pip[]                          @relation("PipManager")
+  reviews360Requested          Review360[]                    @relation("Review360Requester")
+  reviews360FeedbackGiven      Review360Feedback[]            @relation("Review360FeedbackFrom")
 
   @@index([role])
   @@index([clientId])
@@ -399,6 +406,12 @@ model Associate {
   // Phase 83 — compensation history + merit-cycle proposals.
   compRecords       CompensationRecord[]
   meritProposals    MeritProposal[]
+  // Phase 84 — performance: goals, 1:1s, kudos received, PIPs, 360s.
+  goals             Goal[]
+  oneOnOnes         OneOnOne[]
+  kudosReceived     Kudo[]            @relation("KudoRecipient")
+  pips              Pip[]
+  reviews360Subject Review360[]       @relation("Review360Subject")
 
   @@index([deletedAt])
   @@index([managerId])
@@ -1911,4 +1924,171 @@ model MeritProposal {
 
   @@unique([cycleId, associateId])
   @@index([cycleId, status])
+}
+
+// ===== Phase 84 — Performance: Goals/OKRs, 1:1s, Kudos, PIPs, 360s ========
+
+enum GoalStatus {
+  DRAFT
+  ACTIVE
+  AT_RISK
+  COMPLETED
+  CANCELLED
+}
+
+enum GoalKind {
+  GOAL
+  OBJECTIVE
+}
+
+enum OneOnOneStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+enum PipStatus {
+  DRAFT
+  ACTIVE
+  PASSED
+  FAILED
+  CANCELLED
+}
+
+enum Review360Status {
+  COLLECTING
+  COMPLETED
+  CANCELLED
+}
+
+model Goal {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId  String     @db.Uuid
+  kind         GoalKind   @default(GOAL)
+  title        String
+  description  String?
+  parentGoalId String?    @db.Uuid
+  periodStart  DateTime   @db.Date
+  periodEnd    DateTime   @db.Date
+  status       GoalStatus @default(DRAFT)
+  progressPct  Int        @default(0)
+  createdById  String?    @db.Uuid
+  createdAt    DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime   @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime?  @db.Timestamptz(6)
+
+  associate  Associate   @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  parent     Goal?       @relation("GoalParent", fields: [parentGoalId], references: [id], onDelete: SetNull)
+  children   Goal[]      @relation("GoalParent")
+  createdBy  User?       @relation("GoalCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  keyResults KeyResult[]
+
+  @@index([associateId, status])
+  @@index([parentGoalId])
+}
+
+model KeyResult {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  goalId       String   @db.Uuid
+  title        String
+  targetValue  Decimal? @db.Decimal(14, 2)
+  currentValue Decimal  @default(0) @db.Decimal(14, 2)
+  unit         String?
+  progressPct  Int      @default(0)
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(6)
+
+  goal Goal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  @@index([goalId])
+}
+
+model OneOnOne {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId    String         @db.Uuid
+  managerUserId  String         @db.Uuid
+  scheduledFor   DateTime       @db.Timestamptz(6)
+  completedAt    DateTime?      @db.Timestamptz(6)
+  agenda         String?
+  managerNotes   String?
+  associateNotes String?
+  status         OneOnOneStatus @default(SCHEDULED)
+  createdAt      DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime       @updatedAt @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  manager   User      @relation("OneOnOneManager", fields: [managerUserId], references: [id], onDelete: Cascade)
+
+  @@index([associateId, scheduledFor(sort: Desc)])
+  @@index([managerUserId, scheduledFor(sort: Desc)])
+}
+
+model Kudo {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fromUserId    String   @db.Uuid
+  toAssociateId String   @db.Uuid
+  message       String
+  tags          String[] @default([])
+  isPublic      Boolean  @default(true)
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
+
+  fromUser    User      @relation("KudoSender", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toAssociate Associate @relation("KudoRecipient", fields: [toAssociateId], references: [id], onDelete: Cascade)
+
+  @@index([toAssociateId, createdAt(sort: Desc)])
+  @@index([isPublic, createdAt(sort: Desc)])
+}
+
+model Pip {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId   String    @db.Uuid
+  managerUserId String?   @db.Uuid
+  startDate     DateTime  @db.Date
+  endDate       DateTime  @db.Date
+  reason        String
+  expectations  String
+  supportPlan   String?
+  status        PipStatus @default(DRAFT)
+  outcomeNote   String?
+  decidedAt     DateTime? @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  manager   User?     @relation("PipManager", fields: [managerUserId], references: [id], onDelete: SetNull)
+
+  @@index([associateId, status])
+}
+
+model Review360 {
+  id                 String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  subjectAssociateId String          @db.Uuid
+  requestedById      String?         @db.Uuid
+  periodStart        DateTime        @db.Date
+  periodEnd          DateTime        @db.Date
+  status             Review360Status @default(COLLECTING)
+  createdAt          DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime        @updatedAt @db.Timestamptz(6)
+
+  subject     Associate           @relation("Review360Subject", fields: [subjectAssociateId], references: [id], onDelete: Cascade)
+  requestedBy User?               @relation("Review360Requester", fields: [requestedById], references: [id], onDelete: SetNull)
+  feedback    Review360Feedback[]
+
+  @@index([subjectAssociateId, status])
+}
+
+model Review360Feedback {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reviewId     String    @db.Uuid
+  fromUserId   String?   @db.Uuid
+  isAnonymous  Boolean   @default(false)
+  strengths    String?
+  improvements String?
+  rating       Int?
+  submittedAt  DateTime  @default(now()) @db.Timestamptz(6)
+
+  review   Review360 @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  fromUser User?     @relation("Review360FeedbackFrom", fields: [fromUserId], references: [id], onDelete: SetNull)
+
+  @@index([reviewId])
 }
