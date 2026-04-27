@@ -44,6 +44,7 @@ import { worktags95Router } from './routes/worktags95.js';
 import { reports96Router } from './routes/reports96.js';
 import { reimbursements97Router } from './routes/reimbursements97.js';
 import { kiosk99Router } from './routes/kiosk99.js';
+import { celebrationsRouter } from './routes/celebrations107.js';
 import { attachUser, requireCapability } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 
@@ -182,6 +183,7 @@ export function createApp() {
   // view:time / manage:time; the public /kiosk/punch endpoint authenticates
   // via the device token (no user session needed).
   app.use('/', kiosk99Router);
+  app.use('/', celebrationsRouter);
   // QuickBooks router self-gates each route — the OAuth callback must accept
   // an unauthenticated browser redirect from Intuit, so we cannot apply a
   // capability check at this mount point.

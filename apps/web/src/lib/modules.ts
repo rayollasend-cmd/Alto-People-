@@ -35,6 +35,7 @@ export type ModuleKey =
   | 'benefits'
   | 'org'
   | 'org-chart'
+  | 'celebrations'
   | 'team'
   | 'workflows'
   | 'me'
@@ -94,7 +95,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -145,6 +146,16 @@ export const MODULES: ModuleNav[] = [
       'Visual reporting tree across the company. Search by name, title, or department to focus a chain.',
     requires: 'view:org',
     icon: OrgChartIcon,
+    group: 'workforce',
+  },
+  {
+    key: 'celebrations',
+    path: '/celebrations',
+    label: 'Celebrations',
+    description:
+      'Upcoming birthdays and work anniversaries. Send a quick high-five from any row.',
+    requires: 'view:org',
+    icon: CelebrationsIcon,
     group: 'workforce',
   },
   {
