@@ -331,6 +331,8 @@ model User {
   mentorshipsProposed          Mentorship[]                   @relation("MentorshipProposer")
   learningPathsCreated         LearningPath[]                 @relation("LearningPathCreator")
   successionCandidatesCreated  SuccessionCandidate[]
+  probationsCreated            ProbationPeriod[]              @relation("ProbationCreator")
+  probationsDecided            ProbationPeriod[]              @relation("ProbationDecider")
 
   @@index([role])
   @@index([clientId])
@@ -530,6 +532,8 @@ model Associate {
   learningPathEnrollments LearningPathEnrollment[]
   // Phase 115 — positions for which this associate is on the bench.
   successionCandidacies SuccessionCandidate[]
+  // Phase 116 — probation history (one ACTIVE at a time).
+  probationPeriods      ProbationPeriod[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -3829,4 +3833,40 @@ model SuccessionCandidate {
   @@unique([positionId, associateId])
   @@index([associateId])
   @@index([positionId])
+}
+
+// ===== Phase 116 — Probation period tracking ===============================
+//
+// One ACTIVE probation per associate at any time (partial unique index in the
+// migration enforces it). Decisions are forward-only: ACTIVE → PASSED |
+// EXTENDED (endDate moves forward, status returns to ACTIVE in a new row) |
+// FAILED. The "extend" route closes the current row as EXTENDED and opens a
+// new ACTIVE one with the new end date; the partial unique index makes the
+// transaction safe.
+enum ProbationStatus {
+  ACTIVE
+  PASSED
+  EXTENDED
+  FAILED
+}
+
+model ProbationPeriod {
+  id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId  String          @db.Uuid
+  startDate    DateTime        @db.Date
+  endDate      DateTime        @db.Date
+  status       ProbationStatus @default(ACTIVE)
+  decision     String?
+  decidedById  String?         @db.Uuid
+  decidedAt    DateTime?       @db.Timestamptz(6)
+  createdById  String?         @db.Uuid
+  createdAt    DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime        @updatedAt @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  decidedBy User?     @relation("ProbationDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  createdBy User?     @relation("ProbationCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([associateId])
+  @@index([endDate])
 }

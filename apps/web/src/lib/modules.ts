@@ -44,6 +44,7 @@ export type ModuleKey =
   | 'expirations'
   | 'learning-paths'
   | 'succession'
+  | 'probation'
   | 'team'
   | 'workflows'
   | 'me'
@@ -103,7 +104,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -244,6 +245,16 @@ export const MODULES: ModuleNav[] = [
       'Designate successors for each position with a readiness band — ready now, 1–2 years, 3+ years, or emergency cover.',
     requires: 'view:performance',
     icon: SuccessionIcon,
+    group: 'workforce',
+  },
+  {
+    key: 'probation',
+    path: '/probation',
+    label: 'Probation',
+    description:
+      'New-hire probation periods. See who is active, ending soon, or overdue. Pass, extend, or fail before the end date.',
+    requires: 'view:onboarding',
+    icon: ProbationIcon,
     group: 'workforce',
   },
   {
