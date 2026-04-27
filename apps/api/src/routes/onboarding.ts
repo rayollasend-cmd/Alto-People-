@@ -48,8 +48,12 @@ import {
   markTaskSkippedById,
 } from '../lib/checklist.js';
 import multer from 'multer';
-import { encryptString } from '../lib/crypto.js';
+import { decryptString, encryptString } from '../lib/crypto.js';
 import { recordOnboardingEvent } from '../lib/audit.js';
+import {
+  renderCompliancePacket,
+  type PacketData,
+} from '../lib/compliancePacket.js';
 
 export const onboardingRouter = Router();
 
@@ -479,6 +483,224 @@ onboardingRouter.get(
 
       const payload: AuditLogListResponse = { entries };
       res.json(payload);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/* ===== COMPLIANCE PACKET (Phase 59) ===================================== */
+// Single-PDF bundle of every artifact tied to this application — what an
+// auditor or insurance carrier wants in one shot. SSN/bank fields are
+// last-4-only at render time; full values stay encrypted at rest.
+onboardingRouter.get(
+  '/applications/:id/packet.pdf',
+  MANAGE,
+  async (req, res, next) => {
+    try {
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+
+      const [
+        full,
+        w4,
+        payout,
+        i9,
+        policyAcks,
+        esignAgreements,
+        documents,
+        auditEvents,
+      ] = await Promise.all([
+        prisma.application.findUniqueOrThrow({
+          where: { id: app.id },
+          include: {
+            associate: true,
+            client: { select: { name: true } },
+            checklist: { include: { tasks: { orderBy: { order: 'asc' } } } },
+          },
+        }),
+        prisma.w4Submission.findUnique({ where: { associateId: app.associateId } }),
+        prisma.payoutMethod.findFirst({
+          where: { associateId: app.associateId, isPrimary: true },
+        }),
+        prisma.i9Verification.findUnique({
+          where: { associateId: app.associateId },
+          include: { section2Verifier: { select: { email: true } } },
+        }),
+        prisma.policyAcknowledgment.findMany({
+          where: { associateId: app.associateId },
+          include: { policy: { select: { title: true, version: true } } },
+          orderBy: { acknowledgedAt: 'asc' },
+        }),
+        prisma.esignAgreement.findMany({
+          where: { applicationId: app.id },
+          include: { signatures: { orderBy: { signedAt: 'asc' }, take: 1 } },
+          orderBy: { createdAt: 'asc' },
+        }),
+        prisma.documentRecord.findMany({
+          where: { associateId: app.associateId, deletedAt: null },
+          include: { verifiedBy: { select: { email: true } } },
+          orderBy: { createdAt: 'asc' },
+        }),
+        prisma.auditLog.findMany({
+          where: { entityType: 'Application', entityId: app.id },
+          orderBy: { createdAt: 'asc' },
+          include: { actorUser: { select: { email: true } } },
+          take: 500,
+        }),
+      ]);
+
+      const isContractor = full.associate.employmentType !== 'W2_EMPLOYEE';
+
+      const data: PacketData = {
+        meta: {
+          generatedAt: new Date().toISOString(),
+          generatedBy: req.user!.email ?? 'unknown',
+        },
+        application: {
+          id: full.id,
+          status: full.status,
+          track: full.onboardingTrack,
+          position: full.position,
+          startDate: full.startDate ? full.startDate.toISOString() : null,
+          invitedAt: full.invitedAt.toISOString(),
+          submittedAt: full.submittedAt ? full.submittedAt.toISOString() : null,
+        },
+        client: { name: full.client.name },
+        associate: {
+          firstName: full.associate.firstName,
+          lastName: full.associate.lastName,
+          email: full.associate.email,
+          employmentType: full.associate.employmentType,
+          phone: full.associate.phone,
+          dob: full.associate.dob ? full.associate.dob.toISOString() : null,
+          addressLine1: full.associate.addressLine1,
+          addressLine2: full.associate.addressLine2,
+          city: full.associate.city,
+          state: full.associate.state,
+          zip: full.associate.zip,
+        },
+        // 1099 contractors don't fill W-4. Suppress the section entirely.
+        w4:
+          !isContractor && w4
+            ? {
+                filingStatus: w4.filingStatus,
+                multipleJobs: w4.multipleJobs,
+                dependentsAmount: w4.dependentsAmount.toString(),
+                otherIncome: w4.otherIncome.toString(),
+                deductions: w4.deductions.toString(),
+                extraWithholding: w4.extraWithholding.toString(),
+                ssnLast4: full.associate.ssnLast4,
+                signedAt: w4.signedAt ? w4.signedAt.toISOString() : null,
+              }
+            : null,
+        payout: payout
+          ? (() => {
+              // Decrypt server-side (this handler is HR/Ops-only and the
+              // packet response goes straight to the auditor's download).
+              // We slice the last 4 chars of the *plaintext* and discard
+              // the rest before handing to the renderer — full numbers
+              // never reach the PDF process state past this expression.
+              let routingMasked: string | null = null;
+              let accountLast4: string | null = null;
+              try {
+                if (payout.routingNumberEnc) {
+                  const r = decryptString(payout.routingNumberEnc);
+                  routingMasked = `•••••${r.slice(-4)}`;
+                }
+                if (payout.accountNumberEnc) {
+                  const a = decryptString(payout.accountNumberEnc);
+                  accountLast4 = a.slice(-4);
+                }
+              } catch {
+                // If decryption fails (key rotation, corrupt blob), the
+                // packet still renders — just without the masked digits.
+                routingMasked = null;
+                accountLast4 = null;
+              }
+              return {
+                type:
+                  payout.type === 'BANK_ACCOUNT' || payout.type === 'BRANCH_CARD'
+                    ? payout.type
+                    : 'OTHER',
+                accountType: payout.accountType,
+                routingMasked,
+                accountLast4,
+                branchCardId: payout.branchCardId,
+                verifiedAt: payout.verifiedAt ? payout.verifiedAt.toISOString() : null,
+              };
+            })()
+          : null,
+        i9: i9
+          ? {
+              citizenshipStatus: i9.citizenshipStatus,
+              section1CompletedAt: i9.section1CompletedAt
+                ? i9.section1CompletedAt.toISOString()
+                : null,
+              section1TypedName: i9.section1TypedName,
+              section2CompletedAt: i9.section2CompletedAt
+                ? i9.section2CompletedAt.toISOString()
+                : null,
+              section2VerifierEmail: i9.section2Verifier?.email ?? null,
+              documentList: i9.documentList,
+              workAuthExpiresAt: i9.workAuthExpiresAt
+                ? i9.workAuthExpiresAt.toISOString()
+                : null,
+              hasAlienRegistrationNumber: !!i9.alienRegistrationNumberEnc,
+            }
+          : null,
+        tasks: (full.checklist?.tasks ?? []).map((t) => ({
+          kind: t.kind,
+          title: t.title,
+          status: t.status,
+          completedAt: t.completedAt ? t.completedAt.toISOString() : null,
+        })),
+        policyAcks: policyAcks.map((a) => ({
+          title: a.policy.title,
+          version: a.policy.version,
+          acknowledgedAt: a.acknowledgedAt.toISOString(),
+        })),
+        esignAgreements: esignAgreements.map((e) => {
+          const sig = e.signatures[0] ?? null;
+          return {
+            title: e.title,
+            signedAt: e.signedAt ? e.signedAt.toISOString() : null,
+            typedName: sig?.typedName ?? null,
+            pdfHashHex: sig?.pdfHash ?? null,
+          };
+        }),
+        documents: documents.map((d) => ({
+          kind: d.kind,
+          filename: d.filename,
+          status: d.status,
+          verifiedAt: d.verifiedAt ? d.verifiedAt.toISOString() : null,
+          verifiedByEmail: d.verifiedBy?.email ?? null,
+          rejectionReason: d.rejectionReason,
+        })),
+        audit: auditEvents.map((e) => ({
+          action: e.action,
+          actorEmail: e.actorUser?.email ?? null,
+          createdAt: e.createdAt.toISOString(),
+        })),
+      };
+
+      const pdf = await renderCompliancePacket(data);
+
+      await recordOnboardingEvent({
+        actorUserId: req.user!.id,
+        action: 'onboarding.packet_downloaded',
+        applicationId: app.id,
+        clientId: app.clientId,
+        metadata: { pdfBytes: pdf.length },
+        req,
+      });
+
+      const filename = `compliance-packet-${full.associate.lastName}-${full.associate.firstName}-${app.id.slice(0, 8)}.pdf`
+        .toLowerCase()
+        .replace(/[^a-z0-9.-]+/g, '-');
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Length', String(pdf.length));
+      res.end(pdf);
     } catch (err) {
       next(err);
     }

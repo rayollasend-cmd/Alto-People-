@@ -5,6 +5,7 @@ import {
   Circle,
   Clock,
   Copy,
+  FileDown,
   MinusCircle,
   Send,
 } from 'lucide-react';
@@ -15,6 +16,7 @@ import type {
   ChecklistTask,
 } from '@alto-people/shared';
 import {
+  compliancePacketUrl,
   getApplication,
   getApplicationAudit,
   resendInvite,
@@ -197,6 +199,15 @@ export function ApplicationDetail() {
           </div>
           {canManage && (
             <div className="flex gap-2 shrink-0">
+              <a
+                href={compliancePacketUrl(detail.id)}
+                download={`compliance-packet-${detail.associateName.replace(/\s+/g, '-').toLowerCase()}.pdf`}
+                className="inline-flex items-center gap-2 px-3 h-9 text-sm rounded-md border border-navy-secondary bg-navy-secondary/40 text-white hover:border-gold/60 hover:text-gold transition-colors"
+                title="Download single-PDF audit packet for this application"
+              >
+                <FileDown className="h-4 w-4" />
+                Compliance packet
+              </a>
               <Button variant="outline" size="sm" onClick={handleResend}>
                 <Send className="h-4 w-4" />
                 Resend invite

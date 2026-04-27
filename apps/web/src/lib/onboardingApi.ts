@@ -92,6 +92,18 @@ export function nudgeApplicant(
   );
 }
 
+/* ---------------------- Phase 59 — compliance packet --------------------- */
+
+/**
+ * URL of the per-application compliance packet PDF. Use as the `href` of
+ * an anchor with `download=` so the browser handles streaming + Save As.
+ * The cookie session is sent automatically because we're same-origin
+ * (Vite dev proxy keeps `/api/*` on the same origin as the SPA).
+ */
+export function compliancePacketUrl(applicationId: string): string {
+  return `/api/onboarding/applications/${applicationId}/packet.pdf`;
+}
+
 export function listClients(): Promise<ClientListResponse> {
   return apiFetch<ClientListResponse>('/clients');
 }
