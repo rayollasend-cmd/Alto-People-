@@ -2143,3 +2143,80 @@ export const AssociateOrgListResponseSchema = z.object({
   associates: z.array(AssociateOrgSummarySchema),
 });
 export type AssociateOrgListResponse = z.infer<typeof AssociateOrgListResponseSchema>;
+
+// ===== Phase 78 — Position ================================================
+
+export const PositionStatusSchema = z.enum([
+  'PLANNED',
+  'OPEN',
+  'FILLED',
+  'FROZEN',
+  'CLOSED',
+]);
+export type PositionStatus = z.infer<typeof PositionStatusSchema>;
+
+export const PositionSchema = z.object({
+  id: UuidSchema,
+  clientId: UuidSchema,
+  code: z.string(),
+  title: z.string(),
+  jobProfileId: UuidSchema.nullable(),
+  jobProfileTitle: z.string().nullable(),
+  departmentId: UuidSchema.nullable(),
+  departmentName: z.string().nullable(),
+  costCenterId: UuidSchema.nullable(),
+  costCenterCode: z.string().nullable(),
+  managerAssociateId: UuidSchema.nullable(),
+  managerName: z.string().nullable(),
+  fteAuthorized: z.string(), // serialized Decimal
+  status: PositionStatusSchema,
+  filledByAssociateId: UuidSchema.nullable(),
+  filledByName: z.string().nullable(),
+  filledAt: z.string().datetime().nullable(),
+  targetStartDate: z.string().nullable(), // YYYY-MM-DD
+  minHourlyRate: z.string().nullable(),
+  maxHourlyRate: z.string().nullable(),
+  notes: z.string().nullable(),
+});
+export type Position = z.infer<typeof PositionSchema>;
+
+export const PositionListResponseSchema = z.object({
+  positions: z.array(PositionSchema),
+});
+export type PositionListResponse = z.infer<typeof PositionListResponseSchema>;
+
+export const PositionInputSchema = z.object({
+  clientId: UuidSchema,
+  code: z.string().min(1).max(40),
+  title: z.string().min(1).max(120),
+  jobProfileId: UuidSchema.nullable().optional(),
+  departmentId: UuidSchema.nullable().optional(),
+  costCenterId: UuidSchema.nullable().optional(),
+  managerAssociateId: UuidSchema.nullable().optional(),
+  fteAuthorized: z.number().min(0.01).max(2.0).optional(),
+  status: PositionStatusSchema.optional(),
+  targetStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  minHourlyRate: z.number().min(0).max(99999.99).nullable().optional(),
+  maxHourlyRate: z.number().min(0).max(99999.99).nullable().optional(),
+  notes: z.string().max(1000).nullable().optional(),
+});
+export type PositionInput = z.infer<typeof PositionInputSchema>;
+
+export const PositionAssignInputSchema = z.object({
+  associateId: UuidSchema,
+  filledAt: z.string().datetime().optional(),
+});
+export type PositionAssignInput = z.infer<typeof PositionAssignInputSchema>;
+
+export const PositionStatusInputSchema = z.object({
+  status: PositionStatusSchema,
+});
+export type PositionStatusInput = z.infer<typeof PositionStatusInputSchema>;
+
+export const PositionHeadcountSchema = z.object({
+  total: z.number().int().nonnegative(),
+  byStatus: z.record(PositionStatusSchema, z.number().int().nonnegative()),
+  fteAuthorized: z.string(),
+  fteFilled: z.string(),
+});
+export type PositionHeadcount = z.infer<typeof PositionHeadcountSchema>;

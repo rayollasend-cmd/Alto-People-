@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Building2, FolderTree, Hash, Plus, Trash2, Users } from 'lucide-react';
+import { Briefcase, Building2, FolderTree, Hash, Plus, Trash2, Users } from 'lucide-react';
+import { PositionsTab } from './PositionsTab';
 import type {
   CostCenter,
   Department,
@@ -59,7 +60,7 @@ import {
 import { Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
 
-type Tab = 'departments' | 'cost-centers' | 'job-profiles' | 'people';
+type Tab = 'departments' | 'cost-centers' | 'job-profiles' | 'positions' | 'people';
 
 export function OrgHome() {
   const { user } = useAuth();
@@ -124,6 +125,10 @@ export function OrgHome() {
             <Building2 className="h-3.5 w-3.5" />
             Job profiles
           </TabsTrigger>
+          <TabsTrigger value="positions">
+            <Briefcase className="h-3.5 w-3.5" />
+            Positions
+          </TabsTrigger>
           <TabsTrigger value="people">
             <Users className="h-3.5 w-3.5" />
             People
@@ -137,6 +142,9 @@ export function OrgHome() {
         </TabsContent>
         <TabsContent value="job-profiles">
           <JobProfilesTab clientId={clientId} canManage={canManage} />
+        </TabsContent>
+        <TabsContent value="positions">
+          <PositionsTab clientId={clientId} canManage={canManage} />
         </TabsContent>
         <TabsContent value="people">
           <PeopleTab clientId={clientId} canManage={canManage} clients={clients} />

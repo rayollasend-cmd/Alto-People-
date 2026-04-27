@@ -23,6 +23,7 @@ import { benefitsRouter } from './routes/benefits.js';
 import { quickbooksRouter } from './routes/quickbooks.js';
 import { branchWebhookRouter } from './routes/branchWebhook.js';
 import { orgRouter } from './routes/org.js';
+import { positionsRouter } from './routes/positions.js';
 import { attachUser, requireCapability } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 
@@ -95,6 +96,8 @@ export function createApp() {
   app.use('/benefits', requireCapability('view:payroll'), benefitsRouter);
   // Phase 76 — org hierarchy. Routes self-gate read vs write capability.
   app.use('/org', orgRouter);
+  // Phase 78 — positions / req-driven hiring.
+  app.use('/positions', positionsRouter);
   // QuickBooks router self-gates each route — the OAuth callback must accept
   // an unauthenticated browser redirect from Intuit, so we cannot apply a
   // capability check at this mount point.

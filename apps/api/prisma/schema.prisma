@@ -222,6 +222,17 @@ enum ShiftSwapStatus {
   CANCELLED          // requester pulled it
 }
 
+// Phase 78 — Position is a seat-in-the-org concept distinct from a
+// person. A Position can be planned/open/filled/frozen/closed; only
+// a FILLED position has a filledByAssociateId.
+enum PositionStatus {
+  PLANNED
+  OPEN
+  FILLED
+  FROZEN
+  CLOSED
+}
+
 // =============================================================================
 // Models
 // =============================================================================
@@ -298,6 +309,8 @@ model Client {
   departments  Department[]
   costCenters  CostCenter[]
   jobProfiles  JobProfile[]
+  // Phase 78 — positions / seats.
+  positions    Position[]
 
   @@index([status])
   @@index([deletedAt])
@@ -361,6 +374,9 @@ model Associate {
   jobProfile     JobProfile? @relation(fields: [jobProfileId], references: [id], onDelete: SetNull)
   // Phase 77 — effective-dated history of tracked fields.
   history        AssociateHistory[]
+  // Phase 78 — positions filled and managed.
+  filledPositions  Position[] @relation("PositionFilledBy")
+  managedPositions Position[] @relation("PositionManager")
 
   @@index([deletedAt])
   @@index([managerId])
@@ -1341,6 +1357,7 @@ model Department {
   parent      Department?  @relation("DepartmentParent", fields: [parentId], references: [id], onDelete: SetNull)
   children    Department[] @relation("DepartmentParent")
   associates  Associate[]
+  positions   Position[]
 
   @@index([clientId, deletedAt])
   @@index([parentId])
@@ -1358,6 +1375,7 @@ model CostCenter {
 
   client      Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
   associates  Associate[]
+  positions   Position[]
 
   @@index([clientId, deletedAt])
 }
@@ -1379,9 +1397,51 @@ model JobProfile {
 
   client      Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
   associates  Associate[]
+  positions   Position[]
 
   @@index([clientId, family])
   @@index([clientId, deletedAt])
+}
+
+// ===== Phase 78 — Position ================================================
+//
+// A seat in the org. May be vacant or filled. Headcount budgeting,
+// requisition-driven hiring, and attrition reporting all operate on
+// Position, not Associate.
+model Position {
+  id                   String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId             String         @db.Uuid
+  code                 String
+  title                String
+  jobProfileId         String?        @db.Uuid
+  departmentId         String?        @db.Uuid
+  costCenterId         String?        @db.Uuid
+  managerAssociateId   String?        @db.Uuid
+  fteAuthorized        Decimal        @default(1.00) @db.Decimal(4, 2)
+  status               PositionStatus @default(PLANNED)
+  filledByAssociateId  String?        @db.Uuid
+  filledAt             DateTime?      @db.Timestamptz(6)
+  targetStartDate      DateTime?      @db.Date
+  minHourlyRate        Decimal?       @db.Decimal(8, 2)
+  maxHourlyRate        Decimal?       @db.Decimal(8, 2)
+  notes                String?
+  createdAt            DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime       @updatedAt @db.Timestamptz(6)
+  deletedAt            DateTime?      @db.Timestamptz(6)
+
+  client       Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  jobProfile   JobProfile? @relation(fields: [jobProfileId], references: [id], onDelete: SetNull)
+  department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  costCenter   CostCenter? @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
+  manager      Associate?  @relation("PositionManager", fields: [managerAssociateId], references: [id], onDelete: SetNull)
+  filledBy     Associate?  @relation("PositionFilledBy", fields: [filledByAssociateId], references: [id], onDelete: SetNull)
+
+  @@index([clientId, status])
+  @@index([filledByAssociateId])
+  @@index([departmentId])
+  @@index([costCenterId])
+  @@index([managerAssociateId])
+  @@index([deletedAt])
 }
 
 // ===== Phase 77 — Effective-dated AssociateHistory ========================
