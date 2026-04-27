@@ -18,6 +18,7 @@ import { useAuth } from '@/lib/auth';
 import { ProgressBar } from '@/components/ProgressBar';
 import { AuditTimeline } from '@/components/AuditTimeline';
 import { Button } from '@/components/ui/Button';
+import { EsignSection } from './EsignSection';
 import { cn } from '@/lib/cn';
 
 const TASK_LABEL: Record<string, string> = {
@@ -160,6 +161,14 @@ export function ApplicationDetail() {
             onSkip={() => handleSkip(t)}
           />
         ))}
+      </section>
+
+      <section className="mb-6">
+        <EsignSection
+          applicationId={detail.id}
+          canManage={canManage}
+          esignTasks={detail.tasks.filter((t) => t.kind === 'E_SIGN')}
+        />
       </section>
 
       {canManage && (

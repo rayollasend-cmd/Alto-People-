@@ -51,6 +51,37 @@ export function listClients(): Promise<ClientListResponse> {
   return apiFetch<ClientListResponse>('/clients');
 }
 
+/* ---------------------- Phase 19 / Phase 36 — e-sign --------------------- */
+
+export interface EsignAgreement {
+  id: string;
+  applicationId: string;
+  taskId: string | null;
+  title: string;
+  body: string;
+  createdAt: string;
+  signedAt: string | null;
+  signatureId: string | null;
+}
+
+export function listEsignAgreements(
+  applicationId: string
+): Promise<{ agreements: EsignAgreement[] }> {
+  return apiFetch<{ agreements: EsignAgreement[] }>(
+    `/onboarding/applications/${applicationId}/esign/agreements`
+  );
+}
+
+export function createEsignAgreement(
+  applicationId: string,
+  body: { title: string; body: string; taskId?: string | null }
+): Promise<EsignAgreement> {
+  return apiFetch<EsignAgreement>(
+    `/onboarding/applications/${applicationId}/esign/agreements`,
+    { method: 'POST', body }
+  );
+}
+
 export function getApplication(id: string): Promise<ApplicationDetail> {
   return apiFetch<ApplicationDetail>(`/onboarding/applications/${id}`);
 }

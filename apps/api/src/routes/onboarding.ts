@@ -1190,6 +1190,36 @@ onboardingRouter.post(
   }
 );
 
+// HR or the associate lists every agreement attached to an application.
+// Same scope rule as everything else under /applications/:id — the
+// assertCanModifyApplication guard handles cross-tenant + non-owner.
+onboardingRouter.get(
+  '/applications/:id/esign/agreements',
+  async (req, res, next) => {
+    try {
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+      const rows = await prisma.esignAgreement.findMany({
+        where: { applicationId: app.id },
+        orderBy: { createdAt: 'desc' },
+      });
+      res.json({
+        agreements: rows.map((a) => ({
+          id: a.id,
+          applicationId: a.applicationId,
+          taskId: a.taskId,
+          title: a.title,
+          body: a.body,
+          createdAt: a.createdAt.toISOString(),
+          signedAt: a.signedAt ? a.signedAt.toISOString() : null,
+          signatureId: a.signatureId,
+        })),
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 // Either side (HR or assigned associate) reads the agreement to display.
 onboardingRouter.get(
   '/applications/:id/esign/agreements/:agreementId',
