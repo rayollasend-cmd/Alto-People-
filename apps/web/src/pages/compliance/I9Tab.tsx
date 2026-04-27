@@ -10,10 +10,17 @@ import {
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import {
+  Avatar,
   Badge,
   Button,
   Card,
   CardContent,
+  Drawer,
+  DrawerBody,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
   EmptyState,
   SkeletonRows,
 } from '@/components/ui';
@@ -22,13 +29,16 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
   const [filter, setFilter] = useState<'pending' | 'complete' | 'all'>('pending');
   const [rows, setRows] = useState<I9Verification[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [drawerTarget, setDrawerTarget] = useState<I9Verification | null>(null);
 
   const refresh = useCallback(async () => {
     try {
       setError(null);
       const res = await listI9s(filter);
       setRows(res.i9s);
+      setDrawerTarget((prev) =>
+        prev ? res.i9s.find((r) => r.id === prev.id) ?? null : null,
+      );
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load.');
     }
@@ -37,6 +47,11 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  const closeAndRefresh = () => {
+    setDrawerTarget(null);
+    refresh();
+  };
 
   return (
     <section>
@@ -76,16 +91,29 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
           {rows.map((r) => {
             const sec1Done = !!r.section1CompletedAt;
             const sec2Done = !!r.section2CompletedAt;
-            const showVerifierCard =
-              canManage && sec1Done && !sec2Done && !!r.applicationId;
             return (
               <li key={r.id}>
-                <Card>
+                <Card
+                  className="group cursor-pointer transition-colors hover:border-gold/40"
+                  onClick={(e) => {
+                    const target = e.target as HTMLElement;
+                    if (target.closest('button, a, input, [data-no-row-click]')) return;
+                    if (window.getSelection()?.toString()) return;
+                    setDrawerTarget(r);
+                  }}
+                >
                   <CardContent className="p-4">
                     <div className="flex items-center justify-between gap-4 flex-wrap">
-                      <div className="min-w-0">
-                        <div className="text-white font-medium">{r.associateName}</div>
-                        <div className="text-xs text-silver">{r.associateEmail}</div>
+                      <div className="flex items-center gap-3 min-w-0">
+                        <Avatar name={r.associateName} email={r.associateEmail} size="md" />
+                        <div className="min-w-0">
+                          <div className="text-white font-medium truncate">
+                            {r.associateName}
+                          </div>
+                          <div className="text-xs text-silver truncate">
+                            {r.associateEmail}
+                          </div>
+                        </div>
                       </div>
                       <div className="flex items-center gap-2 flex-wrap">
                         <SectionBadge label="Sec 1" done={sec1Done} />
@@ -93,37 +121,8 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
                         {r.documentList && (
                           <Badge variant="outline">{r.documentList}</Badge>
                         )}
-                        {canManage && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() =>
-                              setOpenId(openId === r.id ? null : r.id)
-                            }
-                          >
-                            {showVerifierCard ? 'Verify Section 2' : 'Edit'}
-                          </Button>
-                        )}
                       </div>
                     </div>
-                    {openId === r.id && showVerifierCard && (
-                      <Section2VerifierCard
-                        applicationId={r.applicationId!}
-                        onDone={() => {
-                          setOpenId(null);
-                          refresh();
-                        }}
-                      />
-                    )}
-                    {openId === r.id && canManage && !showVerifierCard && (
-                      <I9EditForm
-                        current={r}
-                        onSaved={() => {
-                          setOpenId(null);
-                          refresh();
-                        }}
-                      />
-                    )}
                   </CardContent>
                 </Card>
               </li>
@@ -131,6 +130,20 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
           })}
         </ul>
       )}
+
+      <Drawer
+        open={!!drawerTarget}
+        onOpenChange={(o) => !o && setDrawerTarget(null)}
+        width="max-w-3xl"
+      >
+        {drawerTarget && (
+          <I9DetailPanel
+            current={drawerTarget}
+            canManage={canManage}
+            onDone={closeAndRefresh}
+          />
+        )}
+      </Drawer>
     </section>
   );
 }
@@ -148,7 +161,93 @@ function SectionBadge({ label, done }: { label: string; done: boolean }) {
   );
 }
 
-function Section2VerifierCard({
+function I9DetailPanel({
+  current,
+  canManage,
+  onDone,
+}: {
+  current: I9Verification;
+  canManage: boolean;
+  onDone: () => void;
+}) {
+  const sec1Done = !!current.section1CompletedAt;
+  const sec2Done = !!current.section2CompletedAt;
+  const showVerifier = canManage && sec1Done && !sec2Done && !!current.applicationId;
+  return (
+    <>
+      <DrawerHeader>
+        <div className="flex items-center gap-3">
+          <Avatar
+            name={current.associateName}
+            email={current.associateEmail}
+            size="md"
+          />
+          <div className="min-w-0">
+            <DrawerTitle className="truncate">{current.associateName}</DrawerTitle>
+            <DrawerDescription className="truncate">
+              {current.associateEmail}
+            </DrawerDescription>
+          </div>
+        </div>
+      </DrawerHeader>
+      <DrawerBody>
+        <div className="flex flex-wrap items-center gap-2 mb-5">
+          <SectionBadge label="Section 1" done={sec1Done} />
+          <SectionBadge label="Section 2" done={sec2Done} />
+          {current.documentList && (
+            <Badge variant="outline">{current.documentList}</Badge>
+          )}
+        </div>
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-xs mb-5">
+          <DetailRow label="Section 1 completed">
+            {current.section1CompletedAt
+              ? new Date(current.section1CompletedAt).toLocaleString()
+              : '—'}
+          </DetailRow>
+          <DetailRow label="Section 2 completed">
+            {current.section2CompletedAt
+              ? new Date(current.section2CompletedAt).toLocaleString()
+              : '—'}
+          </DetailRow>
+          <DetailRow label="Verifier">
+            {current.section2VerifierEmail ?? '—'}
+          </DetailRow>
+          <DetailRow label="Supporting docs">
+            {current.supportingDocIds.length
+              ? `${current.supportingDocIds.length} on file`
+              : '—'}
+          </DetailRow>
+        </dl>
+
+        {showVerifier && current.applicationId && (
+          <Section2Verifier
+            applicationId={current.applicationId}
+            onDone={onDone}
+          />
+        )}
+        {canManage && !showVerifier && (
+          <I9EditForm current={current} onSaved={onDone} />
+        )}
+        {!canManage && (
+          <p className="text-xs text-silver">
+            Read-only view. Section 2 verification is restricted to HR.
+          </p>
+        )}
+      </DrawerBody>
+    </>
+  );
+}
+
+function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <dt className="text-[10px] uppercase tracking-widest text-silver/80">{label}</dt>
+      <dd className="text-white text-sm mt-0.5">{children}</dd>
+    </div>
+  );
+}
+
+function Section2Verifier({
   applicationId,
   onDone,
 }: {
@@ -211,7 +310,10 @@ function Section2VerifierCard({
   };
 
   return (
-    <div className="mt-4 pt-3 border-t border-navy-secondary space-y-4">
+    <div className="space-y-4">
+      <div className="text-[10px] uppercase tracking-widest text-silver/80">
+        Section 2 verification
+      </div>
       <div className="flex flex-wrap gap-3 items-center">
         <span className="block text-[11px] uppercase tracking-wider text-silver">
           Document list
@@ -292,6 +394,7 @@ function Section2VerifierCard({
                         rel="noreferrer"
                         className="text-gold hover:underline"
                         onClick={(e) => e.stopPropagation()}
+                        data-no-row-click
                       >
                         Open
                       </a>
@@ -309,14 +412,16 @@ function Section2VerifierCard({
           {submitError}
         </p>
       )}
-      <Button
-        type="button"
-        onClick={handleSubmit}
-        loading={submitting}
-        disabled={!canSubmit}
-      >
-        {`Verify Section 2 (${picked.size} doc${picked.size === 1 ? '' : 's'})`}
-      </Button>
+      <DrawerFooter className="-mx-6 -mb-6 mt-2">
+        <Button
+          type="button"
+          onClick={handleSubmit}
+          loading={submitting}
+          disabled={!canSubmit}
+        >
+          {`Verify Section 2 (${picked.size} doc${picked.size === 1 ? '' : 's'})`}
+        </Button>
+      </DrawerFooter>
     </div>
   );
 }
@@ -361,10 +466,10 @@ function I9EditForm({
   };
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="mt-4 pt-3 border-t border-navy-secondary space-y-3"
-    >
+    <form onSubmit={handleSubmit} className="space-y-3">
+      <div className="text-[10px] uppercase tracking-widest text-silver/80">
+        Manual edit
+      </div>
       <div className="flex flex-wrap gap-4 items-end">
         <label className="text-sm text-white flex items-center gap-2">
           <input
@@ -404,9 +509,11 @@ function I9EditForm({
           {error}
         </p>
       )}
-      <Button type="submit" loading={submitting} disabled={submitting}>
-        Save
-      </Button>
+      <DrawerFooter className="-mx-6 -mb-6 mt-2">
+        <Button type="submit" loading={submitting} disabled={submitting}>
+          Save
+        </Button>
+      </DrawerFooter>
     </form>
   );
 }

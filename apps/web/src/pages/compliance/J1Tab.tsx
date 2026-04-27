@@ -5,6 +5,7 @@ import { listJ1Profiles, upsertJ1 } from '@/lib/complianceApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import {
+  Avatar,
   Badge,
   Button,
   Dialog,
@@ -13,6 +14,12 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  Drawer,
+  DrawerBody,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
   EmptyState,
   Input,
   SkeletonRows,
@@ -30,16 +37,38 @@ function expiryVariant(days: number): 'destructive' | 'pending' | 'default' {
   return 'default';
 }
 
+interface UpsertSeed {
+  associateId: string;
+  start: string;
+  end: string;
+  ds2019: string;
+  sponsor: string;
+  country: string;
+}
+
+const EMPTY_SEED: UpsertSeed = {
+  associateId: '',
+  start: '',
+  end: '',
+  ds2019: '',
+  sponsor: '',
+  country: '',
+};
+
 export function J1Tab({ canManage }: { canManage: boolean }) {
   const [profiles, setProfiles] = useState<J1Profile[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [showUpsert, setShowUpsert] = useState(false);
+  const [drawerTarget, setDrawerTarget] = useState<J1Profile | null>(null);
+  const [upsertSeed, setUpsertSeed] = useState<UpsertSeed | null>(null);
 
   const refresh = useCallback(async () => {
     try {
       setError(null);
       const res = await listJ1Profiles();
       setProfiles(res.profiles);
+      setDrawerTarget((prev) =>
+        prev ? res.profiles.find((p) => p.associateId === prev.associateId) ?? null : null,
+      );
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load.');
     }
@@ -49,12 +78,24 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
     refresh();
   }, [refresh]);
 
+  const openEditFromDrawer = () => {
+    if (!drawerTarget) return;
+    setUpsertSeed({
+      associateId: drawerTarget.associateId,
+      start: drawerTarget.programStartDate,
+      end: drawerTarget.programEndDate,
+      ds2019: drawerTarget.ds2019Number,
+      sponsor: drawerTarget.sponsorAgency,
+      country: drawerTarget.country,
+    });
+  };
+
   return (
     <section>
       <div className="flex items-center justify-between gap-3 mb-4">
         <h2 className="text-base font-medium text-white">J-1 program profiles</h2>
         {canManage && (
-          <Button onClick={() => setShowUpsert(true)} size="sm">
+          <Button onClick={() => setUpsertSeed(EMPTY_SEED)} size="sm">
             <Plus className="h-4 w-4" />
             Add / update profile
           </Button>
@@ -78,7 +119,7 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
           }
           action={
             canManage ? (
-              <Button onClick={() => setShowUpsert(true)} size="sm">
+              <Button onClick={() => setUpsertSeed(EMPTY_SEED)} size="sm">
                 <Plus className="h-4 w-4" />
                 Add profile
               </Button>
@@ -100,8 +141,22 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
           </TableHeader>
           <TableBody>
             {profiles.map((p) => (
-              <TableRow key={p.id}>
-                <TableCell className="font-medium">{p.associateName}</TableCell>
+              <TableRow
+                key={p.id}
+                className="group cursor-pointer"
+                onClick={(ev) => {
+                  const target = ev.target as HTMLElement;
+                  if (target.closest('button, a, input, [data-no-row-click]')) return;
+                  if (window.getSelection()?.toString()) return;
+                  setDrawerTarget(p);
+                }}
+              >
+                <TableCell className="font-medium">
+                  <div className="flex items-center gap-2.5">
+                    <Avatar name={p.associateName} email={p.associateEmail} size="sm" />
+                    <span>{p.associateName}</span>
+                  </div>
+                </TableCell>
                 <TableCell className="text-silver">{p.country}</TableCell>
                 <TableCell className="text-silver">{p.ds2019Number}</TableCell>
                 <TableCell className="text-silver">{p.sponsorAgency}</TableCell>
@@ -119,11 +174,26 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
         </Table>
       )}
 
+      <Drawer
+        open={!!drawerTarget}
+        onOpenChange={(o) => !o && setDrawerTarget(null)}
+        width="max-w-lg"
+      >
+        {drawerTarget && (
+          <J1DetailPanel
+            profile={drawerTarget}
+            canManage={canManage}
+            onEdit={openEditFromDrawer}
+          />
+        )}
+      </Drawer>
+
       <UpsertJ1Dialog
-        open={showUpsert}
-        onOpenChange={setShowUpsert}
+        open={upsertSeed !== null}
+        seed={upsertSeed}
+        onOpenChange={(o) => !o && setUpsertSeed(null)}
         onSaved={() => {
-          setShowUpsert(false);
+          setUpsertSeed(null);
           refresh();
         }}
       />
@@ -131,13 +201,76 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
   );
 }
 
+function J1DetailPanel({
+  profile,
+  canManage,
+  onEdit,
+}: {
+  profile: J1Profile;
+  canManage: boolean;
+  onEdit: () => void;
+}) {
+  return (
+    <>
+      <DrawerHeader>
+        <div className="flex items-center gap-3">
+          <Avatar
+            name={profile.associateName}
+            email={profile.associateEmail}
+            size="md"
+          />
+          <div className="min-w-0">
+            <DrawerTitle className="truncate">{profile.associateName}</DrawerTitle>
+            <DrawerDescription className="truncate">
+              {profile.associateEmail}
+            </DrawerDescription>
+          </div>
+        </div>
+      </DrawerHeader>
+      <DrawerBody>
+        <div className="flex items-center gap-3 mb-5">
+          <Badge variant={expiryVariant(profile.daysUntilEnd)}>
+            <span className="tabular-nums">{profile.daysUntilEnd}d remaining</span>
+          </Badge>
+          <span className="text-xs text-silver">{profile.country}</span>
+        </div>
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
+          <DetailRow label="Program start">{profile.programStartDate}</DetailRow>
+          <DetailRow label="Program end">{profile.programEndDate}</DetailRow>
+          <DetailRow label="DS-2019 number">{profile.ds2019Number}</DetailRow>
+          <DetailRow label="Sponsor agency">{profile.sponsorAgency}</DetailRow>
+          <DetailRow label="Visa #">{profile.visaNumber ?? '—'}</DetailRow>
+          <DetailRow label="SEVIS ID">{profile.sevisId ?? '—'}</DetailRow>
+        </dl>
+      </DrawerBody>
+      {canManage && (
+        <DrawerFooter>
+          <Button variant="outline" onClick={onEdit}>
+            Edit profile
+          </Button>
+        </DrawerFooter>
+      )}
+    </>
+  );
+}
+
+function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <dt className="text-[10px] uppercase tracking-widest text-silver/80">{label}</dt>
+      <dd className="text-white text-sm mt-0.5 break-all">{children}</dd>
+    </div>
+  );
+}
+
 interface UpsertJ1DialogProps {
   open: boolean;
+  seed: UpsertSeed | null;
   onOpenChange: (open: boolean) => void;
   onSaved: () => void;
 }
 
-function UpsertJ1Dialog({ open, onOpenChange, onSaved }: UpsertJ1DialogProps) {
+function UpsertJ1Dialog({ open, seed, onOpenChange, onSaved }: UpsertJ1DialogProps) {
   const [associateId, setAssociateId] = useState('');
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
@@ -148,16 +281,16 @@ function UpsertJ1Dialog({ open, onOpenChange, onSaved }: UpsertJ1DialogProps) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (open) {
-      setAssociateId('');
-      setStart('');
-      setEnd('');
-      setDs2019('');
-      setSponsor('');
-      setCountry('');
+    if (open && seed) {
+      setAssociateId(seed.associateId);
+      setStart(seed.start);
+      setEnd(seed.end);
+      setDs2019(seed.ds2019);
+      setSponsor(seed.sponsor);
+      setCountry(seed.country);
       setError(null);
     }
-  }, [open]);
+  }, [open, seed]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -180,14 +313,17 @@ function UpsertJ1Dialog({ open, onOpenChange, onSaved }: UpsertJ1DialogProps) {
     }
   };
 
+  const editing = !!seed?.associateId;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>J-1 profile</DialogTitle>
+          <DialogTitle>{editing ? 'Update J-1 profile' : 'Add J-1 profile'}</DialogTitle>
           <DialogDescription>
-            Upsert by associate ID — re-saving with the same ID updates the
-            existing profile.
+            {editing
+              ? 'Updating the existing profile for this associate.'
+              : 'Upsert by associate ID — re-saving with the same ID updates the existing profile.'}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="grid gap-4">
@@ -195,6 +331,7 @@ function UpsertJ1Dialog({ open, onOpenChange, onSaved }: UpsertJ1DialogProps) {
             <Field label="Associate ID" required>
               <Input
                 required
+                readOnly={editing}
                 value={associateId}
                 onChange={(e) => setAssociateId(e.target.value)}
                 placeholder="00000000-0000-4000-8000-…"

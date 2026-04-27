@@ -8,6 +8,7 @@ import {
 } from '@/lib/complianceApi';
 import { ApiError } from '@/lib/api';
 import {
+  Avatar,
   Badge,
   Button,
   Dialog,
@@ -16,6 +17,12 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  Drawer,
+  DrawerBody,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
   EmptyState,
   Input,
   SkeletonRows,
@@ -27,12 +34,11 @@ import {
   TableRow,
 } from '@/components/ui';
 
-const STATUS_OPTIONS: BgCheckStatus[] = [
-  'INITIATED',
+const TRANSITION_OPTIONS: BgCheckStatus[] = [
   'IN_PROGRESS',
+  'NEEDS_REVIEW',
   'PASSED',
   'FAILED',
-  'NEEDS_REVIEW',
 ];
 
 function statusVariant(s: BgCheckStatus): 'default' | 'pending' | 'success' | 'destructive' | 'accent' {
@@ -49,11 +55,20 @@ function statusVariant(s: BgCheckStatus): 'default' | 'pending' | 'success' | 'd
   }
 }
 
+function transitionVariant(
+  s: BgCheckStatus,
+): 'primary' | 'outline' | 'destructive' {
+  if (s === 'PASSED') return 'primary';
+  if (s === 'FAILED') return 'destructive';
+  return 'outline';
+}
+
 export function BackgroundTab({ canManage }: { canManage: boolean }) {
   const [checks, setChecks] = useState<BackgroundCheck[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [pendingId, setPendingId] = useState<string | null>(null);
   const [showInitiate, setShowInitiate] = useState(false);
+  const [drawerTarget, setDrawerTarget] = useState<BackgroundCheck | null>(null);
+  const [pendingId, setPendingId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -73,7 +88,11 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
     setPendingId(id);
     try {
       await updateBackgroundCheck(id, { status });
-      await refresh();
+      const fresh = await listBackgroundChecks();
+      setChecks(fresh.checks);
+      setDrawerTarget((prev) =>
+        prev ? fresh.checks.find((c) => c.id === prev.id) ?? null : null,
+      );
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Update failed.');
     } finally {
@@ -127,13 +146,26 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
               <TableHead>Status</TableHead>
               <TableHead>Initiated</TableHead>
               <TableHead>Completed</TableHead>
-              {canManage && <TableHead>Update</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
             {checks.map((c) => (
-              <TableRow key={c.id}>
-                <TableCell className="font-medium">{c.associateName}</TableCell>
+              <TableRow
+                key={c.id}
+                className="group cursor-pointer"
+                onClick={(ev) => {
+                  const target = ev.target as HTMLElement;
+                  if (target.closest('button, a, input, [data-no-row-click]')) return;
+                  if (window.getSelection()?.toString()) return;
+                  setDrawerTarget(c);
+                }}
+              >
+                <TableCell className="font-medium">
+                  <div className="flex items-center gap-2.5">
+                    <Avatar name={c.associateName} size="sm" />
+                    <span>{c.associateName}</span>
+                  </div>
+                </TableCell>
                 <TableCell className="text-silver">{c.provider}</TableCell>
                 <TableCell>
                   <Badge variant={statusVariant(c.status)}>{c.status}</Badge>
@@ -144,24 +176,6 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
                 <TableCell className="text-silver tabular-nums">
                   {c.completedAt ? new Date(c.completedAt).toLocaleDateString() : '—'}
                 </TableCell>
-                {canManage && (
-                  <TableCell>
-                    <select
-                      value={c.status}
-                      disabled={pendingId === c.id}
-                      onChange={(e) =>
-                        updateStatus(c.id, e.target.value as BgCheckStatus)
-                      }
-                      className="text-xs bg-navy-secondary/60 border border-navy-secondary rounded px-2 py-1 focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold disabled:opacity-50"
-                    >
-                      {STATUS_OPTIONS.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </select>
-                  </TableCell>
-                )}
               </TableRow>
             ))}
           </TableBody>
@@ -177,7 +191,122 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
         }}
         onError={setError}
       />
+
+      <Drawer
+        open={!!drawerTarget}
+        onOpenChange={(o) => !o && setDrawerTarget(null)}
+        width="max-w-lg"
+      >
+        {drawerTarget && (
+          <BackgroundCheckDetailPanel
+            check={drawerTarget}
+            canManage={canManage}
+            pending={pendingId === drawerTarget.id}
+            onTransition={(status) => updateStatus(drawerTarget.id, status)}
+          />
+        )}
+      </Drawer>
     </section>
+  );
+}
+
+function BackgroundCheckDetailPanel({
+  check,
+  canManage,
+  pending,
+  onTransition,
+}: {
+  check: BackgroundCheck;
+  canManage: boolean;
+  pending: boolean;
+  onTransition: (status: BgCheckStatus) => void;
+}) {
+  const initiated = new Date(check.initiatedAt);
+  const ageDays = Math.max(
+    0,
+    Math.floor((Date.now() - initiated.getTime()) / (1000 * 60 * 60 * 24)),
+  );
+  const finalized = check.status === 'PASSED' || check.status === 'FAILED';
+  return (
+    <>
+      <DrawerHeader>
+        <div className="flex items-center gap-3">
+          <Avatar name={check.associateName} size="md" />
+          <div className="min-w-0">
+            <DrawerTitle className="truncate">{check.associateName}</DrawerTitle>
+            <DrawerDescription>{check.provider}</DrawerDescription>
+          </div>
+        </div>
+      </DrawerHeader>
+      <DrawerBody>
+        <div className="flex items-center gap-3 mb-5">
+          <Badge variant={statusVariant(check.status)}>{check.status}</Badge>
+          {!finalized && (
+            <span className="text-xs text-silver tabular-nums">
+              {ageDays}d open
+            </span>
+          )}
+        </div>
+
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
+          <DetailRow label="Initiated">
+            {new Date(check.initiatedAt).toLocaleString()}
+          </DetailRow>
+          <DetailRow label="Completed">
+            {check.completedAt ? new Date(check.completedAt).toLocaleString() : '—'}
+          </DetailRow>
+          <DetailRow label="Provider">{check.provider}</DetailRow>
+          <DetailRow label="External ref">{check.externalId ?? '—'}</DetailRow>
+        </dl>
+
+        {finalized && (
+          <p className="mt-5 text-xs text-silver">
+            This check is finalized. Use a transition below if the result needs
+            to be revised.
+          </p>
+        )}
+      </DrawerBody>
+      {canManage && (
+        <DrawerFooter className="flex-wrap">
+          {TRANSITION_OPTIONS.filter((s) => s !== check.status).map((s) => (
+            <Button
+              key={s}
+              size="sm"
+              variant={transitionVariant(s)}
+              onClick={() => onTransition(s)}
+              disabled={pending}
+              loading={pending}
+            >
+              {labelFor(s)}
+            </Button>
+          ))}
+        </DrawerFooter>
+      )}
+    </>
+  );
+}
+
+function labelFor(s: BgCheckStatus): string {
+  switch (s) {
+    case 'IN_PROGRESS':
+      return 'Mark in progress';
+    case 'NEEDS_REVIEW':
+      return 'Needs review';
+    case 'PASSED':
+      return 'Mark passed';
+    case 'FAILED':
+      return 'Mark failed';
+    case 'INITIATED':
+      return 'Reopen';
+  }
+}
+
+function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <dt className="text-[10px] uppercase tracking-widest text-silver/80">{label}</dt>
+      <dd className="text-white text-sm mt-0.5 tabular-nums break-all">{children}</dd>
+    </div>
   );
 }
 
