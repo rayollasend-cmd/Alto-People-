@@ -10,6 +10,7 @@ import {
   StartBreakInputSchema,
   TimeApproveInputSchema,
   TimeEntryListResponseSchema,
+  TimeExportInputSchema,
   TimeRejectInputSchema,
   type ActiveDashboardEntry,
   type ActiveTimeEntryResponse,
@@ -32,6 +33,7 @@ import {
   startOfWeekUTC,
 } from '../lib/timeAnomalies.js';
 import { accrueSickLeaveForEntry } from '../lib/timeOffAccrual.js';
+import { renderTimeReportPdf } from '../lib/timeReport.js';
 
 export const timeRouter = Router();
 
@@ -123,10 +125,29 @@ timeRouter.get('/me/entries', async (req, res, next) => {
       res.json(payload);
       return;
     }
+    // Phase 65 — date range. When neither from nor to is supplied we keep
+    // the old "recent activity" behavior: last 30 days, capped at 200 rows.
+    const fromStr = req.query.from?.toString();
+    const toStr = req.query.to?.toString();
+    const hasRange = !!fromStr || !!toStr;
+    const defaultFrom = hasRange ? null : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
     const rows = await prisma.timeEntry.findMany({
-      where: { associateId: user.associateId },
+      where: {
+        associateId: user.associateId,
+        ...(hasRange
+          ? {
+              clockInAt: {
+                ...(fromStr ? { gte: new Date(fromStr) } : {}),
+                ...(toStr ? { lt: new Date(toStr) } : {}),
+              },
+            }
+          : defaultFrom
+            ? { clockInAt: { gte: defaultFrom } }
+            : {}),
+      },
       orderBy: { clockInAt: 'desc' },
-      take: 50,
+      take: 200,
       include: ENTRY_INCLUDE,
     });
     const entries = await Promise.all(rows.map(toEntry));
@@ -528,18 +549,42 @@ timeRouter.get('/admin/entries', MANAGE, async (req, res, next) => {
     const status = req.query.status?.toString();
     const associateId = req.query.associateId?.toString();
     const clientId = req.query.clientId?.toString();
+    // Phase 65 — date range + free-text associate search.
+    const fromStr = req.query.from?.toString();
+    const toStr = req.query.to?.toString();
+    const search = req.query.search?.toString().trim();
 
     const where: Prisma.TimeEntryWhereInput = {
       ...scopeTimeEntries(req.user!),
       ...(status ? { status: status as Prisma.TimeEntryWhereInput['status'] } : {}),
       ...(associateId ? { associateId } : {}),
       ...(clientId ? { clientId } : {}),
+      ...(fromStr || toStr
+        ? {
+            clockInAt: {
+              ...(fromStr ? { gte: new Date(fromStr) } : {}),
+              ...(toStr ? { lt: new Date(toStr) } : {}),
+            },
+          }
+        : {}),
+      ...(search
+        ? {
+            associate: {
+              OR: [
+                { firstName: { contains: search, mode: 'insensitive' } },
+                { lastName: { contains: search, mode: 'insensitive' } },
+              ],
+            },
+          }
+        : {}),
     };
 
     const rows = await prisma.timeEntry.findMany({
       where,
       orderBy: { clockInAt: 'desc' },
-      take: 200,
+      // Bumped from 200 → 500 once filters can scope: a date-range query
+      // legitimately wants every row in that window, not just the latest 200.
+      take: 500,
       include: ENTRY_INCLUDE,
     });
     const entries = await Promise.all(rows.map(toEntry));
@@ -809,6 +854,159 @@ timeRouter.post('/admin/bulk-reject', MANAGE, async (req, res, next) => {
     }
     const response: BulkTimeResponse = { succeeded, failed, results };
     res.status(200).json(response);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Phase 65 — exports (CSV + PDF) ==================================== */
+
+function csvEscape(v: string): string {
+  if (v === '') return '';
+  if (/[",\n\r]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
+  return v;
+}
+
+async function loadExportRows(
+  user: TimeUser,
+  input: import('@alto-people/shared').TimeExportInput,
+) {
+  const from = new Date(input.from);
+  const to = new Date(input.to);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+    throw new HttpError(400, 'invalid_range', 'from / to must be ISO timestamps');
+  }
+  if (to <= from) {
+    throw new HttpError(400, 'invalid_range', 'to must be after from');
+  }
+  const where: Prisma.TimeEntryWhereInput = {
+    ...scopeTimeEntries(user),
+    clockInAt: { gte: from, lt: to },
+    ...(input.status ? { status: input.status } : {}),
+    ...(input.clientId ? { clientId: input.clientId } : {}),
+    ...(input.associateId ? { associateId: input.associateId } : {}),
+  };
+  const rows = await prisma.timeEntry.findMany({
+    where,
+    orderBy: { clockInAt: 'asc' },
+    include: ENTRY_INCLUDE,
+    take: 5000,
+  });
+  return { from, to, rows };
+}
+
+timeRouter.post('/admin/export.csv', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = TimeExportInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const { from, to, rows } = await loadExportRows(req.user!, parsed.data);
+
+    const fname = `time-${from.toISOString().slice(0, 10)}-to-${new Date(to.getTime() - 1)
+      .toISOString()
+      .slice(0, 10)}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+
+    res.write(
+      'clockInAt,clockOutAt,minutes,associate,client,job,status,rejectionReason\n'
+    );
+    // Pre-fetch client names so we don't issue one SELECT per row.
+    const clientIds = Array.from(
+      new Set(rows.map((r) => r.clientId).filter((x): x is string => !!x)),
+    );
+    const clientMap = new Map<string, string>();
+    if (clientIds.length > 0) {
+      const cs = await prisma.client.findMany({
+        where: { id: { in: clientIds } },
+        select: { id: true, name: true },
+      });
+      for (const c of cs) clientMap.set(c.id, c.name);
+    }
+    for (const r of rows) {
+      const cols = [
+        r.clockInAt.toISOString(),
+        r.clockOutAt ? r.clockOutAt.toISOString() : '',
+        String(minutesElapsed(r)),
+        `${r.associate.firstName} ${r.associate.lastName}`,
+        r.clientId ? clientMap.get(r.clientId) ?? '' : '',
+        r.job?.name ?? '',
+        r.status,
+        r.rejectionReason ?? '',
+      ].map(csvEscape);
+      res.write(cols.join(',') + '\n');
+    }
+    res.end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+timeRouter.post('/admin/export.pdf', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = TimeExportInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const { from, to, rows } = await loadExportRows(req.user!, parsed.data);
+
+    let clientName: string | null = null;
+    if (parsed.data.clientId) {
+      const c = await prisma.client.findFirst({
+        where: { id: parsed.data.clientId, deletedAt: null },
+        select: { name: true },
+      });
+      clientName = c?.name ?? null;
+    }
+    let associateName: string | null = null;
+    if (parsed.data.associateId) {
+      const a = await prisma.associate.findFirst({
+        where: { id: parsed.data.associateId },
+        select: { firstName: true, lastName: true },
+      });
+      associateName = a ? `${a.firstName} ${a.lastName}` : null;
+    }
+
+    const clientIds = Array.from(
+      new Set(rows.map((r) => r.clientId).filter((x): x is string => !!x)),
+    );
+    const clientMap = new Map<string, string>();
+    if (clientIds.length > 0) {
+      const cs = await prisma.client.findMany({
+        where: { id: { in: clientIds } },
+        select: { id: true, name: true },
+      });
+      for (const c of cs) clientMap.set(c.id, c.name);
+    }
+
+    const pdf = await renderTimeReportPdf({
+      rangeFrom: from,
+      rangeTo: to,
+      generatedAt: new Date(),
+      filters: {
+        clientName,
+        associateName,
+        status: parsed.data.status ?? null,
+      },
+      entries: rows.map((r) => ({
+        clockInAt: r.clockInAt,
+        clockOutAt: r.clockOutAt,
+        associateName: `${r.associate.firstName} ${r.associate.lastName}`,
+        clientName: r.clientId ? clientMap.get(r.clientId) ?? null : null,
+        jobName: r.job?.name ?? null,
+        status: r.status,
+        minutes: minutesElapsed(r),
+        rejectionReason: r.rejectionReason,
+      })),
+    });
+
+    const fname = `time-${from.toISOString().slice(0, 10)}-to-${new Date(to.getTime() - 1)
+      .toISOString()
+      .slice(0, 10)}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+    res.send(pdf);
   } catch (err) {
     next(err);
   }

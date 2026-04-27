@@ -877,6 +877,19 @@ export const BulkTimeResponseSchema = z.object({
 });
 export type BulkTimeResponse = z.infer<typeof BulkTimeResponseSchema>;
 
+/* Phase 65 — time entry exports (CSV + PDF) ================================ */
+// Mirrors ScheduleExportInputSchema. `to` is end-EXCLUSIVE so the same range
+// helpers can be reused on the front end.
+
+export const TimeExportInputSchema = z.object({
+  from: z.string().datetime(),
+  to: z.string().datetime(),
+  status: TimeEntryStatusSchema.optional(),
+  clientId: UuidSchema.optional(),
+  associateId: UuidSchema.optional(),
+});
+export type TimeExportInput = z.infer<typeof TimeExportInputSchema>;
+
 /* -------------------------------------------------------------------------- *
  *  Scheduling — Phase 7
  * -------------------------------------------------------------------------- */

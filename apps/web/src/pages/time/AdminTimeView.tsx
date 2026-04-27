@@ -4,6 +4,8 @@ import {
   AlertTriangle,
   CheckCircle2,
   Coffee,
+  Download,
+  FileText,
   ListChecks,
   MapPinOff,
   Search,
@@ -18,6 +20,7 @@ import {
   approveTimeEntry,
   bulkApproveTimeEntries,
   bulkRejectTimeEntries,
+  exportTimeEntries,
   getActiveDashboard,
   listAdminTimeEntries,
   rejectTimeEntry,
@@ -75,6 +78,35 @@ function statusVariant(s: TimeEntryStatus): 'success' | 'pending' | 'destructive
   }
 }
 
+// YYYY-MM-DD in local time. Inputs and the API both treat dates as days,
+// so we convert to ISO at the boundary, not in state.
+function ymdLocal(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function defaultFromYmd(): string {
+  const d = new Date();
+  d.setDate(d.getDate() - 13); // last 14 days inclusive
+  return ymdLocal(d);
+}
+
+function defaultToYmd(): string {
+  return ymdLocal(new Date());
+}
+
+function ymdToIsoStart(ymd: string): string {
+  return new Date(`${ymd}T00:00:00`).toISOString();
+}
+
+function ymdToIsoEndExclusive(ymd: string): string {
+  const d = new Date(`${ymd}T00:00:00`);
+  d.setDate(d.getDate() + 1);
+  return d.toISOString();
+}
+
 interface AdminTimeViewProps {
   canManage: boolean;
 }
@@ -89,7 +121,14 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
   const [pendingCount, setPendingCount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
+  const [liveSearch, setLiveSearch] = useState('');
+  // Phase 65 — queue tab: server-side search + date range. Defaults give
+  // the user something useful on first load (last 14 days).
+  const [queueSearch, setQueueSearch] = useState('');
+  const [appliedSearch, setAppliedSearch] = useState('');
+  const [fromYmd, setFromYmd] = useState<string>(defaultFromYmd());
+  const [toYmd, setToYmd] = useState<string>(defaultToYmd());
+  const [exportBusy, setExportBusy] = useState<null | 'csv' | 'pdf'>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [rejectOpen, setRejectOpen] = useState<null | { mode: 'one'; id: string } | { mode: 'bulk' }>(null);
@@ -97,16 +136,19 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
   const refresh = useCallback(async () => {
     try {
       setError(null);
-      const res = await listAdminTimeEntries(
-        filter === 'ALL' ? {} : { status: filter }
-      );
+      const res = await listAdminTimeEntries({
+        ...(filter !== 'ALL' ? { status: filter } : {}),
+        from: ymdToIsoStart(fromYmd),
+        to: ymdToIsoEndExclusive(toYmd),
+        ...(appliedSearch ? { search: appliedSearch } : {}),
+      });
       setEntries(res.entries);
       // Selection only valid on the COMPLETED filter; clear when refreshing.
       setSelected(new Set());
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load.');
     }
-  }, [filter]);
+  }, [filter, fromYmd, toYmd, appliedSearch]);
 
   const refreshActive = useCallback(async () => {
     try {
@@ -136,6 +178,12 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
   useEffect(() => {
     refreshPendingCount();
   }, [refreshPendingCount]);
+
+  // Debounce free-text search so we don't refetch on every keystroke.
+  useEffect(() => {
+    const id = setTimeout(() => setAppliedSearch(queueSearch.trim()), 300);
+    return () => clearTimeout(id);
+  }, [queueSearch]);
 
   // Auto-refresh the live tab every 30s while it's open.
   useEffect(() => {
@@ -211,6 +259,22 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     }
   };
 
+  const onExport = async (format: 'csv' | 'pdf') => {
+    if (exportBusy) return;
+    setExportBusy(format);
+    try {
+      await exportTimeEntries(format, {
+        from: ymdToIsoStart(fromYmd),
+        to: ymdToIsoEndExclusive(toYmd),
+        ...(filter !== 'ALL' ? { status: filter } : {}),
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Export failed.');
+    } finally {
+      setExportBusy(null);
+    }
+  };
+
   const liveStats = useMemo(() => {
     if (!active) return { total: null, onBreak: null, offSite: null };
     const onBreak = active.filter((e) => e.onBreak).length;
@@ -220,7 +284,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
 
   const filteredActive = useMemo(() => {
     if (!active) return null;
-    const q = search.trim().toLowerCase();
+    const q = liveSearch.trim().toLowerCase();
     if (!q) return active;
     return active.filter(
       (e) =>
@@ -228,7 +292,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
         (e.clientName ?? '').toLowerCase().includes(q) ||
         (e.jobName ?? '').toLowerCase().includes(q)
     );
-  }, [active, search]);
+  }, [active, liveSearch]);
 
   const selectableIds = useMemo(() => {
     if (!entries) return [] as string[];
@@ -341,8 +405,8 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-silver/60 pointer-events-none" />
               <Input
                 placeholder="Search associate, client, job…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                value={liveSearch}
+                onChange={(e) => setLiveSearch(e.target.value)}
                 className="pl-8 h-9 text-sm"
               />
             </div>
@@ -403,7 +467,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                 </Table>
                 {filteredActive.length === 0 && (
                   <p className="text-sm text-silver mt-3">
-                    No matches for &ldquo;{search}&rdquo;.
+                    No matches for &ldquo;{liveSearch}&rdquo;.
                   </p>
                 )}
                 <div className="mt-3 text-[10px] uppercase tracking-widest text-silver/60">
@@ -417,7 +481,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
 
       {tab === 'queue' && (
         <Card>
-          <CardHeader className="pb-3">
+          <CardHeader className="pb-3 gap-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <CardTitle className="text-base">Time entries</CardTitle>
               <div className="flex flex-wrap gap-2">
@@ -437,6 +501,76 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                   </button>
                 ))}
               </div>
+            </div>
+
+            {/* Phase 65 — date range + free-text search + export buttons. */}
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex items-end gap-2">
+                <div>
+                  <label className="block text-[10px] uppercase tracking-wider text-silver mb-1">
+                    From
+                  </label>
+                  <Input
+                    type="date"
+                    value={fromYmd}
+                    max={toYmd}
+                    onChange={(e) => setFromYmd(e.target.value || defaultFromYmd())}
+                    className="h-9 text-sm w-40"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase tracking-wider text-silver mb-1">
+                    To
+                  </label>
+                  <Input
+                    type="date"
+                    value={toYmd}
+                    min={fromYmd}
+                    onChange={(e) => setToYmd(e.target.value || defaultToYmd())}
+                    className="h-9 text-sm w-40"
+                  />
+                </div>
+              </div>
+
+              <div className="relative flex-1 min-w-[200px]">
+                <label className="block text-[10px] uppercase tracking-wider text-silver mb-1">
+                  Search
+                </label>
+                <Search className="absolute left-2.5 top-[2.1rem] h-4 w-4 text-silver/60 pointer-events-none" />
+                <Input
+                  placeholder="Associate name…"
+                  value={queueSearch}
+                  onChange={(e) => setQueueSearch(e.target.value)}
+                  className="pl-8 h-9 text-sm"
+                />
+              </div>
+
+              {canManage && (
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onExport('csv')}
+                    loading={exportBusy === 'csv'}
+                    disabled={exportBusy !== null}
+                  >
+                    <Download className="h-4 w-4" />
+                    CSV
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onExport('pdf')}
+                    loading={exportBusy === 'pdf'}
+                    disabled={exportBusy !== null}
+                  >
+                    <FileText className="h-4 w-4" />
+                    PDF
+                  </Button>
+                </div>
+              )}
             </div>
           </CardHeader>
 

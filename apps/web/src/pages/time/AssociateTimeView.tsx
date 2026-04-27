@@ -53,6 +53,34 @@ function useTicker(active: boolean): number {
   return Date.now();
 }
 
+// YYYY-MM-DD in local time. Converted to ISO on the way out to the API.
+function ymdLocal(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function defaultHistoryFromYmd(): string {
+  const d = new Date();
+  d.setDate(d.getDate() - 29); // last 30 days inclusive — matches the API default
+  return ymdLocal(d);
+}
+
+function defaultHistoryToYmd(): string {
+  return ymdLocal(new Date());
+}
+
+function ymdToIsoStart(ymd: string): string {
+  return new Date(`${ymd}T00:00:00`).toISOString();
+}
+
+function ymdToIsoEndExclusive(ymd: string): string {
+  const d = new Date(`${ymd}T00:00:00`);
+  d.setDate(d.getDate() + 1);
+  return d.toISOString();
+}
+
 export function AssociateTimeView() {
   const [active, setActive] = useState<TimeEntry | null>(null);
   const [entries, setEntries] = useState<TimeEntry[] | null>(null);
@@ -62,6 +90,9 @@ export function AssociateTimeView() {
   const [breakBusy, setBreakBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  // Phase 65 — history range. Defaults to last 30 days (also the API default).
+  const [historyFromYmd, setHistoryFromYmd] = useState<string>(defaultHistoryFromYmd());
+  const [historyToYmd, setHistoryToYmd] = useState<string>(defaultHistoryToYmd());
 
   useTicker(!!active);
 
@@ -70,7 +101,10 @@ export function AssociateTimeView() {
       setError(null);
       const [a, list, jobList] = await Promise.all([
         getActiveTimeEntry(),
-        listMyTimeEntries(),
+        listMyTimeEntries({
+          from: ymdToIsoStart(historyFromYmd),
+          to: ymdToIsoEndExclusive(historyToYmd),
+        }),
         listJobs().catch(() => ({ jobs: [] as Job[] })),
       ]);
       setActive(a.active);
@@ -79,7 +113,7 @@ export function AssociateTimeView() {
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load time data.');
     }
-  }, []);
+  }, [historyFromYmd, historyToYmd]);
 
   useEffect(() => {
     refresh();
@@ -303,10 +337,44 @@ export function AssociateTimeView() {
       </section>
 
       <section aria-label="Recent time entries">
-        <h2 className="font-display text-2xl text-white mb-3">Recent entries</h2>
+        <div className="flex flex-wrap items-end justify-between gap-3 mb-3">
+          <h2 className="font-display text-2xl text-white">Recent entries</h2>
+          <div className="flex items-end gap-2">
+            <div>
+              <label className="block text-[10px] uppercase tracking-wider text-silver mb-1">
+                From
+              </label>
+              <input
+                type="date"
+                value={historyFromYmd}
+                max={historyToYmd}
+                onChange={(e) =>
+                  setHistoryFromYmd(e.target.value || defaultHistoryFromYmd())
+                }
+                className="h-9 text-sm rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold w-40"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase tracking-wider text-silver mb-1">
+                To
+              </label>
+              <input
+                type="date"
+                value={historyToYmd}
+                min={historyFromYmd}
+                onChange={(e) =>
+                  setHistoryToYmd(e.target.value || defaultHistoryToYmd())
+                }
+                className="h-9 text-sm rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold w-40"
+              />
+            </div>
+          </div>
+        </div>
         {!entries && <p className="text-silver">Loading…</p>}
         {entries && entries.length === 0 && (
-          <p className="text-silver">No entries yet — clock in to start your first.</p>
+          <p className="text-silver">
+            No entries in this range. Try widening the dates above.
+          </p>
         )}
         {entries && entries.length > 0 && (
           <ul className="space-y-2">
