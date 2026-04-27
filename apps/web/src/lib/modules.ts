@@ -33,7 +33,8 @@ export type ModuleKey =
   | 'recruiting'
   | 'audit'
   | 'benefits'
-  | 'org';
+  | 'org'
+  | 'team';
 
 /**
  * Phase 67 — sidebar groupings, F500-style. Modules with the same `group`
@@ -86,7 +87,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -117,6 +118,16 @@ export const MODULES: ModuleNav[] = [
       'Departments, cost centers, job profiles, and the manager chain that holds approvals + dimensional reporting together.',
     requires: 'view:org',
     icon: OrgChartIcon,
+    group: 'workforce',
+  },
+  {
+    key: 'team',
+    path: '/team',
+    label: 'My team',
+    description:
+      'Direct reports, timesheet reviews, and time-off decisions. Visible to anyone with at least one direct report.',
+    requires: 'view:my-team',
+    icon: UsersIcon,
     group: 'workforce',
   },
   {

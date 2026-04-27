@@ -37,6 +37,7 @@ import { Settings } from '@/pages/Settings';
 import { AuditHome } from '@/pages/audit/AuditHome';
 import { BenefitsHome } from '@/pages/benefits/BenefitsHome';
 import { OrgHome } from '@/pages/org/OrgHome';
+import { TeamHome } from '@/pages/team/TeamHome';
 import { RouterErrorPage } from '@/pages/RouterErrorPage';
 
 const ONBOARDING_ROUTES = [
@@ -109,7 +110,8 @@ const PLACEHOLDER_MODULES = MODULES.filter(
     m.key !== 'analytics' &&
     m.key !== 'audit' &&
     m.key !== 'benefits' &&
-    m.key !== 'org'
+    m.key !== 'org' &&
+    m.key !== 'team'
 );
 
 export const router = createBrowserRouter([
@@ -145,6 +147,7 @@ export const router = createBrowserRouter([
       { path: 'audit', element: <AuditHome /> },
       { path: 'benefits', element: <BenefitsHome /> },
       { path: 'org', element: <OrgHome /> },
+      { path: 'team', element: <TeamHome /> },
       ...ONBOARDING_ROUTES,
       ...PLACEHOLDER_MODULES.map((m) => ({
         path: m.path.replace(/^\//, ''),
