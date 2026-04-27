@@ -36,6 +36,7 @@ export type ModuleKey =
   | 'org'
   | 'org-chart'
   | 'celebrations'
+  | 'assets'
   | 'team'
   | 'workflows'
   | 'me'
@@ -95,7 +96,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -156,6 +157,16 @@ export const MODULES: ModuleNav[] = [
       'Upcoming birthdays and work anniversaries. Send a quick high-five from any row.',
     requires: 'view:org',
     icon: CelebrationsIcon,
+    group: 'workforce',
+  },
+  {
+    key: 'assets',
+    path: '/assets',
+    label: 'Assets',
+    description:
+      'Physical items assigned to associates: laptops, phones, badges, keys, vehicles. Track who has what and when it came back.',
+    requires: 'view:org',
+    icon: AssetsIcon,
     group: 'workforce',
   },
   {

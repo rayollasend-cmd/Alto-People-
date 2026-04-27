@@ -39,6 +39,7 @@ import { BenefitsHome } from '@/pages/benefits/BenefitsHome';
 import { OrgHome } from '@/pages/org/OrgHome';
 import { OrgChart } from '@/pages/org/OrgChart';
 import { CelebrationsHome } from '@/pages/celebrations/CelebrationsHome';
+import { AssetsHome } from '@/pages/assets/AssetsHome';
 import { TeamHome } from '@/pages/team/TeamHome';
 import { WorkflowsHome } from '@/pages/workflows/WorkflowsHome';
 import { MeHome } from '@/pages/me/MeHome';
@@ -178,6 +179,7 @@ export const router = createBrowserRouter([
       { path: 'org', element: <OrgHome /> },
       { path: 'org/chart', element: <OrgChart /> },
       { path: 'celebrations', element: <CelebrationsHome /> },
+      { path: 'assets', element: <AssetsHome /> },
       { path: 'team', element: <TeamHome /> },
       { path: 'workflows', element: <WorkflowsHome /> },
       { path: 'me', element: <MeHome /> },
