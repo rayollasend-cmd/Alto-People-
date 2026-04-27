@@ -342,6 +342,8 @@ model User {
   internalApplicationsReviewed InternalJobApplication[]       @relation("InternalApplicationReviewer")
   vaccinationRecordsCreated    VaccinationRecord[]
   agreementsIssued             Agreement[]
+  hrCasesAssigned              HrCase[]
+  hrCaseCommentsAuthored       HrCaseComment[]                @relation("HrCaseCommentUserAuthor")
 
   @@index([role])
   @@index([clientId])
@@ -555,6 +557,9 @@ model Associate {
   vaccinationRecords    VaccinationRecord[]
   // Phase 122 — per-associate legal agreements (NDA, non-compete, etc.).
   agreements            Agreement[]
+  // Phase 123 — HR cases filed by this associate + comments authored.
+  hrCasesFiled          HrCase[]
+  hrCaseCommentsAuthored HrCaseComment[] @relation("HrCaseCommentAssociateAuthor")
 
   @@index([deletedAt])
   @@index([managerId])
@@ -4163,4 +4168,78 @@ model Agreement {
   @@index([associateId])
   @@index([status])
   @@index([expiresOn])
+}
+
+// ===== Phase 123 — HR cases (ticketing) =====================================
+//
+// Associates file cases against HR — benefits questions, payroll discrepancies,
+// workplace concerns, etc. HR routes via assignedToId, advances status, leaves
+// public replies and internalNote breadcrumbs (hidden from the associate). The
+// model deliberately distinguishes user-author vs associate-author so HR
+// replies and associate replies can both be threaded into the same comment
+// stream without identity confusion.
+enum CaseCategory {
+  BENEFITS
+  PAYROLL
+  TIME_OFF
+  PERSONAL_INFO
+  WORKPLACE_CONCERN
+  HARASSMENT
+  PERFORMANCE
+  OTHER
+}
+
+enum CasePriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum CaseStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_ASSOCIATE
+  RESOLVED
+  CLOSED
+}
+
+model HrCase {
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId  String       @db.Uuid
+  category     CaseCategory
+  subject      String
+  description  String
+  priority     CasePriority @default(MEDIUM)
+  status       CaseStatus   @default(OPEN)
+  assignedToId String?      @db.Uuid
+  resolvedAt   DateTime?    @db.Timestamptz(6)
+  resolution   String?
+  createdAt    DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime     @updatedAt @db.Timestamptz(6)
+
+  associate  Associate       @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  assignedTo User?           @relation(fields: [assignedToId], references: [id], onDelete: SetNull)
+  comments   HrCaseComment[]
+
+  @@index([associateId])
+  @@index([status])
+  @@index([category])
+  @@index([assignedToId])
+}
+
+model HrCaseComment {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  caseId            String   @db.Uuid
+  authorUserId      String?  @db.Uuid
+  authorAssociateId String?  @db.Uuid
+  body              String
+  internalNote      Boolean  @default(false)
+  createdAt         DateTime @default(now()) @db.Timestamptz(6)
+
+  case            HrCase     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  authorUser      User?      @relation("HrCaseCommentUserAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
+  authorAssociate Associate? @relation("HrCaseCommentAssociateAuthor", fields: [authorAssociateId], references: [id], onDelete: SetNull)
+
+  @@index([caseId])
 }

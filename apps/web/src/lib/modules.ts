@@ -51,6 +51,7 @@ export type ModuleKey =
   | 'internal-jobs'
   | 'vaccinations'
   | 'agreements'
+  | 'hr-cases'
   | 'team'
   | 'workflows'
   | 'me'
@@ -110,7 +111,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon, LogOut as SeparationIcon, Briefcase as InternalJobsIcon, Syringe as VaccinationsIcon, FileSignature as AgreementsIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon, LogOut as SeparationIcon, Briefcase as InternalJobsIcon, Syringe as VaccinationsIcon, FileSignature as AgreementsIcon, MessageCircle as HrCasesIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -322,6 +323,16 @@ export const MODULES: ModuleNav[] = [
     requires: 'view:dashboard',
     icon: AgreementsIcon,
     group: 'compliance',
+  },
+  {
+    key: 'hr-cases',
+    path: '/hr-cases',
+    label: 'HR cases',
+    description:
+      'Ticketing for HR. File a question or concern, HR triages and replies. Internal notes stay hidden from the requester.',
+    requires: 'view:dashboard',
+    icon: HrCasesIcon,
+    group: 'workforce',
   },
   {
     key: 'team',

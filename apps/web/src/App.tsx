@@ -54,6 +54,7 @@ import { SeparationHome } from '@/pages/separation/SeparationHome';
 import { InternalJobsHome } from '@/pages/internalJobs/InternalJobsHome';
 import { VaccinationsHome } from '@/pages/vaccinations/VaccinationsHome';
 import { AgreementsHome } from '@/pages/agreements/AgreementsHome';
+import { HrCasesHome } from '@/pages/hrCases/HrCasesHome';
 import { TeamHome } from '@/pages/team/TeamHome';
 import { WorkflowsHome } from '@/pages/workflows/WorkflowsHome';
 import { MeHome } from '@/pages/me/MeHome';
@@ -161,7 +162,8 @@ const PLACEHOLDER_MODULES = MODULES.filter(
     m.key !== 'separations' &&
     m.key !== 'internal-jobs' &&
     m.key !== 'vaccinations' &&
-    m.key !== 'agreements'
+    m.key !== 'agreements' &&
+    m.key !== 'hr-cases'
 );
 
 export const router = createBrowserRouter([
@@ -216,6 +218,7 @@ export const router = createBrowserRouter([
       { path: 'internal-jobs', element: <InternalJobsHome /> },
       { path: 'vaccinations', element: <VaccinationsHome /> },
       { path: 'agreements', element: <AgreementsHome /> },
+      { path: 'hr-cases', element: <HrCasesHome /> },
       { path: 'team', element: <TeamHome /> },
       { path: 'workflows', element: <WorkflowsHome /> },
       { path: 'me', element: <MeHome /> },
