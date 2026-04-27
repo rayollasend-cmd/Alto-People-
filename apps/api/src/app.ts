@@ -26,6 +26,7 @@ import { orgRouter } from './routes/org.js';
 import { positionsRouter } from './routes/positions.js';
 import { teamRouter } from './routes/team.js';
 import { workflowsRouter } from './routes/workflows.js';
+import { customFieldsRouter } from './routes/customFields.js';
 import { attachUser, requireCapability } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 
@@ -104,6 +105,8 @@ export function createApp() {
   app.use('/team', teamRouter);
   // Phase 80 — workflow definitions + run history.
   app.use('/workflows', workflowsRouter);
+  // Phase 81 — custom field definitions + per-entity values.
+  app.use('/custom-fields', customFieldsRouter);
   // QuickBooks router self-gates each route — the OAuth callback must accept
   // an unauthenticated browser redirect from Intuit, so we cannot apply a
   // capability check at this mount point.

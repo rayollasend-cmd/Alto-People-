@@ -314,6 +314,8 @@ model Client {
   positions    Position[]
   // Phase 80 — workflow definitions can be client-scoped.
   workflows    WorkflowDefinition[]
+  // Phase 81 — custom field definitions can be client-scoped.
+  customFieldDefinitions CustomFieldDefinition[]
 
   @@index([status])
   @@index([deletedAt])
@@ -1577,4 +1579,59 @@ model WorkflowStep {
   @@unique([runId, ordinal])
   @@index([runId])
   @@index([status])
+}
+
+// ===== Phase 81 — Custom fields ===========================================
+
+enum CustomFieldType {
+  TEXT
+  NUMBER
+  DATE
+  BOOLEAN
+  SELECT
+  MULTISELECT
+}
+
+enum CustomFieldEntity {
+  ASSOCIATE
+  POSITION
+  CLIENT
+}
+
+model CustomFieldDefinition {
+  id           String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId     String?             @db.Uuid
+  entityType   CustomFieldEntity
+  key          String
+  label        String
+  type         CustomFieldType
+  isRequired   Boolean             @default(false)
+  isSensitive  Boolean             @default(false)
+  helpText     String?
+  options      Json?
+  displayOrder Int                 @default(0)
+  createdAt    DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime            @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime?           @db.Timestamptz(6)
+
+  client Client?              @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  values CustomFieldValue[]
+
+  @@index([entityType])
+  @@index([clientId, entityType])
+}
+
+model CustomFieldValue {
+  id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  definitionId String            @db.Uuid
+  entityType   CustomFieldEntity
+  entityId     String            @db.Uuid
+  value        Json
+  createdAt    DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime          @updatedAt @db.Timestamptz(6)
+
+  definition CustomFieldDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
+
+  @@unique([definitionId, entityId])
+  @@index([entityType, entityId])
 }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Briefcase, Building2, FolderTree, Hash, Plus, Trash2, Users } from 'lucide-react';
+import { Briefcase, Building2, FolderTree, Hash, Plus, Sparkles, Trash2, Users } from 'lucide-react';
 import { PositionsTab } from './PositionsTab';
+import { CustomFieldsTab } from './CustomFieldsTab';
 import type {
   CostCenter,
   Department,
@@ -60,7 +61,7 @@ import {
 import { Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
 
-type Tab = 'departments' | 'cost-centers' | 'job-profiles' | 'positions' | 'people';
+type Tab = 'departments' | 'cost-centers' | 'job-profiles' | 'positions' | 'people' | 'custom-fields';
 
 export function OrgHome() {
   const { user } = useAuth();
@@ -133,6 +134,10 @@ export function OrgHome() {
             <Users className="h-3.5 w-3.5" />
             People
           </TabsTrigger>
+          <TabsTrigger value="custom-fields">
+            <Sparkles className="h-3.5 w-3.5" />
+            Custom fields
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="departments">
           <DepartmentsTab clientId={clientId} canManage={canManage} />
@@ -148,6 +153,9 @@ export function OrgHome() {
         </TabsContent>
         <TabsContent value="people">
           <PeopleTab clientId={clientId} canManage={canManage} clients={clients} />
+        </TabsContent>
+        <TabsContent value="custom-fields">
+          <CustomFieldsTab clientId={clientId} canManage={canManage} />
         </TabsContent>
       </Tabs>
     </div>
