@@ -119,6 +119,17 @@ enum W4FilingStatus {
   HEAD_OF_HOUSEHOLD
 }
 
+// Phase 41 — distinguishes W-2 employees (subject to W-4, FICA, Medicare,
+// FUTA/SUTA, federal/state withholding) from 1099 contractors (paid gross,
+// no withholding, no employer-side payroll tax). Drives onboarding
+// checklist (1099s skip W-4) and payroll computation (1099 line items
+// have all tax fields zeroed; gross == net).
+enum EmploymentType {
+  W2_EMPLOYEE
+  CONTRACTOR_1099_INDIVIDUAL
+  CONTRACTOR_1099_BUSINESS
+}
+
 enum I9DocumentList {
   LIST_A
   LIST_B_AND_C
@@ -293,6 +304,9 @@ model Associate {
   state        String?   @db.VarChar(2)
   zip          String?   @db.VarChar(10)
   j1Status     Boolean   @default(false)
+  // Phase 41 — W-2 vs 1099. Default W2 keeps every existing record's
+  // payroll math identical; 1099 records skip W-4 / FICA / Medicare.
+  employmentType EmploymentType @default(W2_EMPLOYEE)
   createdAt    DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
   deletedAt    DateTime? @db.Timestamptz(6)

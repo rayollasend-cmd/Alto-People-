@@ -293,6 +293,24 @@ export interface PaycheckTaxBreakdown {
   employer: EmployerBreakdown;
 }
 
+/**
+ * Phase 41 — 1099 contractors are paid gross with no withholding and
+ * no employer-side payroll tax (Form 1099-NEC, Box 1 = grossPay totals).
+ * Returns a breakdown shape compatible with computePaycheckTaxes so
+ * downstream PayrollItem persistence stays uniform.
+ */
+export function zeroTaxBreakdown(grossPay: number): PaycheckTaxBreakdown {
+  return {
+    federalIncomeTax: 0,
+    socialSecurity: 0,
+    medicare: 0,
+    stateIncomeTax: 0,
+    totalEmployeeTax: 0,
+    netPay: grossPay,
+    employer: { fica: 0, medicare: 0, futa: 0, suta: 0 },
+  };
+}
+
 export function computePaycheckTaxes(input: PaycheckTaxInput): PaycheckTaxBreakdown {
   const fit = computeFederalIncomeTax(input);
   const ss = computeSocialSecurity({ grossPay: input.grossPay, ytdWages: input.ytdWages });

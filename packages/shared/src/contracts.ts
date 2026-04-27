@@ -103,6 +103,15 @@ export const ChecklistTaskSchema = z.object({
 });
 export type ChecklistTask = z.infer<typeof ChecklistTaskSchema>;
 
+// Phase 41 — drives W-4 onboarding task inclusion + payroll tax math.
+// W2_EMPLOYEE is the default for back-compat with every prior application.
+export const EmploymentTypeSchema = z.enum([
+  'W2_EMPLOYEE',
+  'CONTRACTOR_1099_INDIVIDUAL',
+  'CONTRACTOR_1099_BUSINESS',
+]);
+export type EmploymentType = z.infer<typeof EmploymentTypeSchema>;
+
 export const ApplicationSummarySchema = z.object({
   id: UuidSchema,
   associateName: z.string(),
@@ -121,6 +130,9 @@ export const ApplicationDetailSchema = ApplicationSummarySchema.extend({
   associateId: UuidSchema,
   clientId: UuidSchema,
   tasks: z.array(ChecklistTaskSchema),
+  // Phase 41 — surfaced on the detail header so HR can see at a glance
+  // whether this is a W-2 or 1099 onboarding flow (no W-4 task on 1099s).
+  employmentType: EmploymentTypeSchema,
 });
 export type ApplicationDetail = z.infer<typeof ApplicationDetailSchema>;
 
@@ -231,6 +243,7 @@ export const ApplicationCreateInputSchema = z.object({
   templateId: UuidSchema,
   position: z.string().min(1).max(120).optional(),
   startDate: z.string().datetime().optional(),
+  employmentType: EmploymentTypeSchema.optional(),
 });
 export type ApplicationCreateInput = z.infer<typeof ApplicationCreateInputSchema>;
 

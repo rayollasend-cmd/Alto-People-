@@ -120,6 +120,8 @@ describe('<NewApplicationDialog>', () => {
         templateId: TPL_GLOBAL,
         position: 'Server',
         startDate: undefined,
+        // Phase 41 — defaults to W-2 employee unless HR explicitly picks 1099.
+        employmentType: 'W2_EMPLOYEE',
       });
       expect(onCreated).toHaveBeenCalled();
     });

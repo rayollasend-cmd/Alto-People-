@@ -17,9 +17,16 @@ import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { ProgressBar } from '@/components/ProgressBar';
 import { AuditTimeline } from '@/components/AuditTimeline';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { EsignSection } from './EsignSection';
 import { cn } from '@/lib/cn';
+
+const EMPLOYMENT_LABEL: Record<string, string> = {
+  W2_EMPLOYEE: 'W-2',
+  CONTRACTOR_1099_INDIVIDUAL: '1099 (Individual)',
+  CONTRACTOR_1099_BUSINESS: '1099 (Business)',
+};
 
 const TASK_LABEL: Record<string, string> = {
   PROFILE_INFO: 'Profile information',
@@ -130,10 +137,17 @@ export function ApplicationDetail() {
           <h1 className="font-display text-3xl md:text-4xl text-white mb-1">
             {detail.associateName}
           </h1>
-          <p className="text-silver text-sm">
-            {detail.clientName}
-            {detail.position && ` · ${detail.position}`} · Track:{' '}
-            {detail.onboardingTrack}
+          <p className="text-silver text-sm flex flex-wrap items-center gap-2">
+            <span>
+              {detail.clientName}
+              {detail.position && ` · ${detail.position}`} · Track:{' '}
+              {detail.onboardingTrack}
+            </span>
+            <Badge
+              variant={detail.employmentType === 'W2_EMPLOYEE' ? 'default' : 'accent'}
+            >
+              {EMPLOYMENT_LABEL[detail.employmentType] ?? detail.employmentType}
+            </Badge>
           </p>
         </div>
         {canManage && (

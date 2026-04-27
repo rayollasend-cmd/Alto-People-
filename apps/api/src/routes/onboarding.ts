@@ -90,7 +90,9 @@ onboardingRouter.get('/applications/:id', async (req, res, next) => {
     const row = await prisma.application.findFirst({
       where: { ...scopeApplications(req.user!), id: req.params.id },
       include: {
-        associate: { select: { firstName: true, lastName: true } },
+        associate: {
+          select: { firstName: true, lastName: true, employmentType: true },
+        },
         client: { select: { name: true } },
         checklist: { include: { tasks: { orderBy: { order: 'asc' } } } },
       },
@@ -124,6 +126,7 @@ onboardingRouter.get('/applications/:id', async (req, res, next) => {
       submittedAt: row.submittedAt ? row.submittedAt.toISOString() : null,
       percentComplete: computePercent(row.checklist?.tasks ?? []),
       tasks,
+      employmentType: row.associate.employmentType,
     };
     res.json(detail);
   } catch (err) {
@@ -282,7 +285,15 @@ onboardingRouter.post('/applications', MANAGE, async (req, res, next) => {
             email,
             firstName: input.associateFirstName,
             lastName: input.associateLastName,
+            ...(input.employmentType ? { employmentType: input.employmentType } : {}),
           },
+        });
+      } else if (input.employmentType && associate.employmentType !== input.employmentType) {
+        // Re-application as a different type (e.g. converting a 1099 to W-2).
+        // Honor the explicit choice so the new checklist + payroll math match.
+        associate = await tx.associate.update({
+          where: { id: associate.id },
+          data: { employmentType: input.employmentType },
         });
       }
 
@@ -339,6 +350,13 @@ onboardingRouter.post('/applications', MANAGE, async (req, res, next) => {
         },
       });
 
+      // Phase 41 — 1099 contractors don't fill out a W-4 (they file their
+      // own taxes). Strip it from the checklist before creating the rows.
+      const isContractor = associate.employmentType !== 'W2_EMPLOYEE';
+      const tasksForChecklist = template.tasks.filter(
+        (t) => !(isContractor && t.kind === 'W4')
+      );
+
       const application = await tx.application.create({
         data: {
           associateId: associate.id,
@@ -350,7 +368,7 @@ onboardingRouter.post('/applications', MANAGE, async (req, res, next) => {
           checklist: {
             create: {
               tasks: {
-                create: template.tasks.map((t) => ({
+                create: tasksForChecklist.map((t) => ({
                   kind: t.kind,
                   title: t.title,
                   description: t.description,

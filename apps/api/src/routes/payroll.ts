@@ -20,7 +20,11 @@ import {
   round2,
   sumApprovedHours,
 } from '../lib/payroll.js';
-import { computePaycheckTaxes, type PayFrequency } from '../lib/payrollTax.js';
+import {
+  computePaycheckTaxes,
+  zeroTaxBreakdown,
+  type PayFrequency,
+} from '../lib/payrollTax.js';
 import { hashPdf, renderPaystubPdf, type PaystubData } from '../lib/paystub.js';
 import { pickAdapter } from '../lib/disbursement.js';
 import { recordPayrollEvent } from '../lib/audit.js';
@@ -190,6 +194,7 @@ payrollRouter.post('/runs', PROCESS, async (req, res, next) => {
             select: {
               id: true,
               state: true,
+              employmentType: true,
               w4Submission: {
                 select: {
                   filingStatus: true,
@@ -249,19 +254,26 @@ payrollRouter.post('/runs', PROCESS, async (req, res, next) => {
 
         const w4 = group[0].associate.w4Submission;
         const associateState = group[0].associate.state ?? null;
+        const employmentType = group[0].associate.employmentType;
 
-        const breakdown = computePaycheckTaxes({
-          grossPay,
-          filingStatus: w4?.filingStatus ?? null,
-          payFrequency,
-          state: associateState,
-          ytdWages,
-          ytdMedicareWages,
-          extraWithholding: w4?.extraWithholding ? Number(w4.extraWithholding) : 0,
-          deductions: w4?.deductions ? Number(w4.deductions) : 0,
-          otherIncome: w4?.otherIncome ? Number(w4.otherIncome) : 0,
-          dependentsAmount: w4?.dependentsAmount ? Number(w4.dependentsAmount) : 0,
-        });
+        // Phase 41 — 1099 contractors are paid gross. No federal/state
+        // withholding, no FICA/Medicare, no employer-side payroll tax.
+        // 1099-NEC reporting (Box 1 = grossPay totals) is downstream.
+        const breakdown =
+          employmentType === 'W2_EMPLOYEE'
+            ? computePaycheckTaxes({
+                grossPay,
+                filingStatus: w4?.filingStatus ?? null,
+                payFrequency,
+                state: associateState,
+                ytdWages,
+                ytdMedicareWages,
+                extraWithholding: w4?.extraWithholding ? Number(w4.extraWithholding) : 0,
+                deductions: w4?.deductions ? Number(w4.deductions) : 0,
+                otherIncome: w4?.otherIncome ? Number(w4.otherIncome) : 0,
+                dependentsAmount: w4?.dependentsAmount ? Number(w4.dependentsAmount) : 0,
+              })
+            : zeroTaxBreakdown(grossPay);
 
         await tx.payrollItem.upsert({
           where: { payrollRunId_associateId: { payrollRunId: run.id, associateId } },

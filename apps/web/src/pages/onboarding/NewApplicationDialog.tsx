@@ -3,6 +3,7 @@ import { Copy, Mail } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
   ClientSummary,
+  EmploymentType,
   OnboardingTemplate,
 } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
@@ -56,6 +57,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
   const [startDate, setStartDate] = useState('');
   const [clientId, setClientId] = useState('');
   const [templateId, setTemplateId] = useState('');
+  const [employmentType, setEmploymentType] = useState<EmploymentType>('W2_EMPLOYEE');
 
   const [submitting, setSubmitting] = useState(false);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
@@ -68,6 +70,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
     setStartDate('');
     setClientId('');
     setTemplateId('');
+    setEmploymentType('W2_EMPLOYEE');
     setInviteLink(null);
   };
 
@@ -126,6 +129,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
         associateEmail: email.trim(),
         clientId,
         templateId,
+        employmentType,
         position: position.trim() || undefined,
         startDate: startDate ? new Date(`${startDate}T00:00:00.000Z`).toISOString() : undefined,
       });
@@ -295,6 +299,25 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
                   onChange={(e) => setStartDate(e.target.value)}
                 />
               </div>
+            </div>
+
+            <div>
+              <Label htmlFor="na-emp-type">Employment type</Label>
+              <select
+                id="na-emp-type"
+                value={employmentType}
+                onChange={(e) => setEmploymentType(e.target.value as EmploymentType)}
+                className="mt-1 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 text-white px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+              >
+                <option value="W2_EMPLOYEE">W-2 employee</option>
+                <option value="CONTRACTOR_1099_INDIVIDUAL">1099 contractor (individual)</option>
+                <option value="CONTRACTOR_1099_BUSINESS">1099 contractor (business)</option>
+              </select>
+              <FormHint>
+                1099 contractors skip the W-4 task and are paid gross — no
+                federal/state withholding, no FICA/Medicare, no employer
+                payroll tax.
+              </FormHint>
             </div>
           </div>
         )}
