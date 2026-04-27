@@ -1,8 +1,19 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LogOut, Menu, Moon, Search, Sun, User, WifiOff } from 'lucide-react';
+import {
+  LogOut,
+  Menu,
+  Moon,
+  Rows3,
+  Rows4,
+  Search,
+  Sun,
+  User,
+  WifiOff,
+} from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { useTheme } from '@/lib/theme';
+import { useDensity } from '@/lib/density';
 import { ROLE_LABELS } from '@/lib/roles';
 import { Button } from '@/components/ui/Button';
 import {
@@ -24,6 +35,7 @@ interface TopbarProps {
 export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
   const { user, signOut, isOffline } = useAuth();
   const { theme, toggleTheme } = useTheme();
+  const { density, toggleDensity } = useDensity();
   const navigate = useNavigate();
   const [signingOut, setSigningOut] = useState(false);
 
@@ -85,6 +97,29 @@ export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
 
       {user && (
         <>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={toggleDensity}
+                aria-label={
+                  density === 'comfortable'
+                    ? 'Switch to compact rows'
+                    : 'Switch to comfortable rows'
+                }
+              >
+                {density === 'comfortable' ? (
+                  <Rows3 className="h-4 w-4" />
+                ) : (
+                  <Rows4 className="h-4 w-4" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {density === 'comfortable' ? 'Compact rows' : 'Comfortable rows'}
+            </TooltipContent>
+          </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button

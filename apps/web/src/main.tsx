@@ -4,6 +4,7 @@ import { RouterProvider } from 'react-router-dom';
 import { router } from './App';
 import { AuthProvider } from '@/lib/auth';
 import { ThemeProvider } from '@/lib/theme';
+import { DensityProvider } from '@/lib/density';
 import './index.css';
 
 const rootEl = document.getElementById('root');
@@ -23,12 +24,26 @@ try {
   document.documentElement.dataset.theme = 'dark';
 }
 
+// Phase 69 — same trick for density.
+try {
+  const stored = window.localStorage.getItem('alto.density');
+  if (stored === 'compact' || stored === 'comfortable') {
+    document.documentElement.dataset.density = stored;
+  } else {
+    document.documentElement.dataset.density = 'comfortable';
+  }
+} catch {
+  document.documentElement.dataset.density = 'comfortable';
+}
+
 ReactDOM.createRoot(rootEl).render(
   <React.StrictMode>
     <ThemeProvider>
-      <AuthProvider>
-        <RouterProvider router={router} />
-      </AuthProvider>
+      <DensityProvider>
+        <AuthProvider>
+          <RouterProvider router={router} />
+        </AuthProvider>
+      </DensityProvider>
     </ThemeProvider>
   </React.StrictMode>
 );

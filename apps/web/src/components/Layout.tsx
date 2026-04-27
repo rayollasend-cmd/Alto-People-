@@ -4,6 +4,10 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { TooltipProvider } from '@/components/ui/Tooltip';
 import { Toaster } from '@/components/ui/Toaster';
 import { CommandPalette, useCommandPalette } from '@/components/ui/CommandPalette';
+import {
+  KeyboardShortcutsDialog,
+  useKeyboardShortcutsHook,
+} from './KeyboardShortcutsDialog';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 import { MobileNav } from './MobileNav';
@@ -11,6 +15,7 @@ import { MobileNav } from './MobileNav';
 export function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { open: paletteOpen, setOpen: setPaletteOpen } = useCommandPalette();
+  const { open: shortcutsOpen, setOpen: setShortcutsOpen } = useKeyboardShortcutsHook();
   const location = useLocation();
 
   return (
@@ -38,6 +43,10 @@ export function Layout() {
           </main>
         </div>
         <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+        <KeyboardShortcutsDialog
+          open={shortcutsOpen}
+          onOpenChange={setShortcutsOpen}
+        />
         <Toaster />
       </div>
     </TooltipProvider>

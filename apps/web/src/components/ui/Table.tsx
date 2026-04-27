@@ -26,7 +26,14 @@ export const TableHeader = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <thead
     ref={ref}
-    className={cn('[&_tr]:border-b [&_tr]:border-navy-secondary', className)}
+    className={cn(
+      // Phase 69 — sticky to the top of any scrolling container so the
+      // column labels stay visible when the user pages through long
+      // tables. The bg shim sits *behind* the row so we don't see
+      // content bleeding through during scroll.
+      'sticky top-0 z-10 bg-navy [&_tr]:border-b [&_tr]:border-navy-secondary',
+      className,
+    )}
     {...props}
   />
 ));
