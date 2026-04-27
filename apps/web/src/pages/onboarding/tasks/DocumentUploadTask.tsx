@@ -13,6 +13,7 @@ import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { TaskShell, inputCls, Field } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 
 const ID_KIND_OPTIONS: Array<{ value: DocumentKind; label: string }> = [
   { value: 'ID', label: 'Government-issued photo ID (driver license / passport)' },
@@ -55,6 +56,8 @@ export function DocumentUploadTask() {
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [finishing, setFinishing] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<DocumentRecord | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const isAssociate = user?.role === 'ASSOCIATE';
   const backTo = isAssociate
@@ -102,16 +105,24 @@ export function DocumentUploadTask() {
     }
   };
 
-  const onDelete = async (d: DocumentRecord) => {
+  const onDelete = (d: DocumentRecord) => {
     if (d.status === 'VERIFIED') return;
-    if (!window.confirm(`Remove "${d.filename}"?`)) return;
+    setDeleteTarget(d);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
     try {
-      await deleteMyDocument(d.id);
+      await deleteMyDocument(deleteTarget.id);
+      setDeleteTarget(null);
       await refresh();
     } catch (err) {
       toast.error('Could not remove', {
         description: err instanceof ApiError ? err.message : undefined,
       });
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -278,6 +289,16 @@ export function DocumentUploadTask() {
           </Link>
         </div>
       </div>
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onOpenChange={(o) => !o && setDeleteTarget(null)}
+        title={deleteTarget ? `Remove "${deleteTarget.filename}"?` : 'Remove file'}
+        description="The upload will be removed from your record. You can re-upload before submitting for review."
+        confirmLabel="Remove"
+        destructive
+        busy={deleting}
+        onConfirm={confirmDelete}
+      />
     </TaskShell>
   );
 }

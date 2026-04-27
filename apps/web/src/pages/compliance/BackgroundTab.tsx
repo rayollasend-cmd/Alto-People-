@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Plus, ShieldCheck } from 'lucide-react';
 import type { BackgroundCheck, BgCheckStatus } from '@alto-people/shared';
 import {
   initiateBackgroundCheck,
@@ -6,7 +7,25 @@ import {
   updateBackgroundCheck,
 } from '@/lib/complianceApi';
 import { ApiError } from '@/lib/api';
-import { cn } from '@/lib/cn';
+import {
+  Badge,
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  EmptyState,
+  Input,
+  SkeletonRows,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui';
 
 const STATUS_OPTIONS: BgCheckStatus[] = [
   'INITIATED',
@@ -16,18 +35,25 @@ const STATUS_OPTIONS: BgCheckStatus[] = [
   'NEEDS_REVIEW',
 ];
 
-const statusCls: Record<BgCheckStatus, string> = {
-  INITIATED: 'text-silver',
-  IN_PROGRESS: 'text-gold',
-  PASSED: 'text-emerald-300',
-  FAILED: 'text-alert',
-  NEEDS_REVIEW: 'text-gold',
-};
+function statusVariant(s: BgCheckStatus): 'default' | 'pending' | 'success' | 'destructive' | 'accent' {
+  switch (s) {
+    case 'PASSED':
+      return 'success';
+    case 'FAILED':
+      return 'destructive';
+    case 'IN_PROGRESS':
+    case 'NEEDS_REVIEW':
+      return 'pending';
+    case 'INITIATED':
+      return 'default';
+  }
+}
 
 export function BackgroundTab({ canManage }: { canManage: boolean }) {
   const [checks, setChecks] = useState<BackgroundCheck[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const [showInitiate, setShowInitiate] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -43,18 +69,6 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
     refresh();
   }, [refresh]);
 
-  const initiate = async () => {
-    if (!canManage) return;
-    const associateId = window.prompt('Associate ID to initiate background check?');
-    if (!associateId) return;
-    try {
-      await initiateBackgroundCheck({ associateId, provider: 'alto-stub' });
-      await refresh();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Initiate failed.');
-    }
-  };
-
   const updateStatus = async (id: string, status: BgCheckStatus) => {
     setPendingId(id);
     try {
@@ -69,76 +83,181 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
 
   return (
     <section>
-      {canManage && (
-        <button
-          type="button"
-          onClick={initiate}
-          className="mb-4 px-4 py-2 rounded font-medium bg-gold text-navy hover:bg-gold-bright"
-        >
-          + Initiate check
-        </button>
-      )}
+      <div className="flex items-center justify-between gap-3 mb-4">
+        <h2 className="text-base font-medium text-white">Background checks</h2>
+        {canManage && (
+          <Button onClick={() => setShowInitiate(true)} size="sm">
+            <Plus className="h-4 w-4" />
+            Initiate check
+          </Button>
+        )}
+      </div>
 
       {error && (
         <p role="alert" className="text-sm text-alert mb-3">
           {error}
         </p>
       )}
-      {!checks && <p className="text-silver">Loading…</p>}
+      {!checks && <SkeletonRows count={4} rowHeight="h-12" />}
       {checks && checks.length === 0 && (
-        <p className="text-silver">No background checks yet.</p>
+        <EmptyState
+          icon={ShieldCheck}
+          title="No background checks yet"
+          description={
+            canManage
+              ? 'New hires should run through onboarding, which initiates a check automatically. Manual initiation is here for back-fills.'
+              : 'Background checks will appear here once they are initiated.'
+          }
+          action={
+            canManage ? (
+              <Button onClick={() => setShowInitiate(true)} size="sm">
+                <Plus className="h-4 w-4" />
+                Initiate check
+              </Button>
+            ) : undefined
+          }
+        />
       )}
       {checks && checks.length > 0 && (
-        <div className="bg-navy border border-navy-secondary rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-navy-secondary/40 text-silver text-xs uppercase tracking-widest">
-              <tr>
-                <th className="px-4 py-3 text-left">Associate</th>
-                <th className="px-4 py-3 text-left">Provider</th>
-                <th className="px-4 py-3 text-left">Status</th>
-                <th className="px-4 py-3 text-left">Initiated</th>
-                <th className="px-4 py-3 text-left">Completed</th>
-                {canManage && <th className="px-4 py-3 text-left">Update</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {checks.map((c) => (
-                <tr key={c.id} className="border-t border-navy-secondary/60 text-white">
-                  <td className="px-4 py-3">{c.associateName}</td>
-                  <td className="px-4 py-3 text-silver">{c.provider}</td>
-                  <td className={cn('px-4 py-3 text-xs uppercase tracking-widest', statusCls[c.status])}>
-                    {c.status}
-                  </td>
-                  <td className="px-4 py-3 text-silver tabular-nums">
-                    {new Date(c.initiatedAt).toLocaleDateString()}
-                  </td>
-                  <td className="px-4 py-3 text-silver tabular-nums">
-                    {c.completedAt ? new Date(c.completedAt).toLocaleDateString() : '—'}
-                  </td>
-                  {canManage && (
-                    <td className="px-4 py-3">
-                      <select
-                        value={c.status}
-                        disabled={pendingId === c.id}
-                        onChange={(e) =>
-                          updateStatus(c.id, e.target.value as BgCheckStatus)
-                        }
-                        className="text-xs bg-navy-secondary/60 border border-navy-secondary rounded px-2 py-1"
-                      >
-                        {STATUS_OPTIONS.map((s) => (
-                          <option key={s} value={s}>
-                            {s}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Associate</TableHead>
+              <TableHead>Provider</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Initiated</TableHead>
+              <TableHead>Completed</TableHead>
+              {canManage && <TableHead>Update</TableHead>}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {checks.map((c) => (
+              <TableRow key={c.id}>
+                <TableCell className="font-medium">{c.associateName}</TableCell>
+                <TableCell className="text-silver">{c.provider}</TableCell>
+                <TableCell>
+                  <Badge variant={statusVariant(c.status)}>{c.status}</Badge>
+                </TableCell>
+                <TableCell className="text-silver tabular-nums">
+                  {new Date(c.initiatedAt).toLocaleDateString()}
+                </TableCell>
+                <TableCell className="text-silver tabular-nums">
+                  {c.completedAt ? new Date(c.completedAt).toLocaleDateString() : '—'}
+                </TableCell>
+                {canManage && (
+                  <TableCell>
+                    <select
+                      value={c.status}
+                      disabled={pendingId === c.id}
+                      onChange={(e) =>
+                        updateStatus(c.id, e.target.value as BgCheckStatus)
+                      }
+                      className="text-xs bg-navy-secondary/60 border border-navy-secondary rounded px-2 py-1 focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold disabled:opacity-50"
+                    >
+                      {STATUS_OPTIONS.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  </TableCell>
+                )}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       )}
+
+      <InitiateCheckDialog
+        open={showInitiate}
+        onOpenChange={setShowInitiate}
+        onCreated={() => {
+          setShowInitiate(false);
+          refresh();
+        }}
+        onError={setError}
+      />
     </section>
+  );
+}
+
+interface InitiateCheckDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCreated: () => void;
+  onError: (msg: string) => void;
+}
+
+function InitiateCheckDialog({
+  open,
+  onOpenChange,
+  onCreated,
+  onError,
+}: InitiateCheckDialogProps) {
+  const [associateId, setAssociateId] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (open) setAssociateId('');
+  }, [open]);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = associateId.trim();
+    if (!trimmed || busy) return;
+    setBusy(true);
+    try {
+      await initiateBackgroundCheck({ associateId: trimmed, provider: 'alto-stub' });
+      onCreated();
+    } catch (err) {
+      onError(err instanceof ApiError ? err.message : 'Initiate failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Initiate background check</DialogTitle>
+          <DialogDescription>
+            Manual initiation is reserved for back-fills. New hires get a check
+            automatically when they reach the BACKGROUND_CHECK onboarding task.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit} className="grid gap-3">
+          <label className="grid gap-1">
+            <span className="text-[11px] uppercase tracking-wider text-silver">
+              Associate ID
+            </span>
+            <Input
+              autoFocus
+              required
+              placeholder="00000000-0000-4000-8000-000000000000"
+              value={associateId}
+              onChange={(e) => setAssociateId(e.target.value)}
+            />
+          </label>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => onOpenChange(false)}
+              disabled={busy}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              loading={busy}
+              disabled={busy || !associateId.trim()}
+            >
+              Initiate check
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

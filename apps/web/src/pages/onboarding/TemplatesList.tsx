@@ -16,6 +16,7 @@ import { useAuth } from '@/lib/auth';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
@@ -40,6 +41,7 @@ export function TemplatesList() {
   const [clients, setClients] = useState<ClientSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<OnboardingTemplate | null>(null);
 
   const refresh = async () => {
     try {
@@ -72,19 +74,18 @@ export function TemplatesList() {
     return out;
   }, [templates]);
 
-  const onDelete = async (t: OnboardingTemplate) => {
+  const onDelete = (t: OnboardingTemplate) => {
     if (deletingId) return;
-    if (
-      !window.confirm(
-        `Delete template "${t.name}"? Any in-flight applications using this track will keep their existing checklist.`
-      )
-    ) {
-      return;
-    }
-    setDeletingId(t.id);
+    setDeleteTarget(t);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeletingId(deleteTarget.id);
     try {
-      await deleteTemplate(t.id);
-      toast.success(`Deleted "${t.name}"`);
+      await deleteTemplate(deleteTarget.id);
+      toast.success(`Deleted "${deleteTarget.name}"`);
+      setDeleteTarget(null);
       await refresh();
     } catch (err) {
       if (err instanceof ApiError && err.code === 'template_in_use') {
@@ -243,6 +244,19 @@ export function TemplatesList() {
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onOpenChange={(o) => !o && setDeleteTarget(null)}
+        title={
+          deleteTarget ? `Delete template "${deleteTarget.name}"?` : 'Delete template'
+        }
+        description="Any in-flight applications using this track will keep their existing checklist — only future applications are affected."
+        confirmLabel="Delete template"
+        destructive
+        busy={deletingId !== null}
+        onConfirm={confirmDelete}
+      />
     </div>
   );
 }

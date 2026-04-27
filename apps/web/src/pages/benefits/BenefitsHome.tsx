@@ -16,6 +16,7 @@ import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import {
   Card,
   CardContent,
@@ -242,19 +243,17 @@ function EnrollmentRow({
   onTerminated: () => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const active = isActiveEnrollment(enrollment);
 
   const stop = async () => {
-    if (busy) return;
-    if (!window.confirm(`Stop ${enrollment.planName} on the next payroll period?`)) {
-      return;
-    }
     setBusy(true);
     try {
       await terminateMyEnrollment(enrollment.id, {
         terminationDate: new Date().toISOString(),
       });
       toast.success('Enrollment ended');
+      setShowConfirm(false);
       onTerminated();
     } catch (err) {
       toast.error('Could not stop', {
@@ -284,7 +283,12 @@ function EnrollmentRow({
         </div>
       </div>
       {active ? (
-        <Button size="sm" variant="ghost" onClick={stop} loading={busy}>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => setShowConfirm(true)}
+          loading={busy}
+        >
           <X className="h-4 w-4" />
           Stop
         </Button>
@@ -294,6 +298,17 @@ function EnrollmentRow({
           Ended
         </span>
       )}
+
+      <ConfirmDialog
+        open={showConfirm}
+        onOpenChange={setShowConfirm}
+        title={`Stop ${enrollment.planName}?`}
+        description="The enrollment will end on the next payroll period. You can re-enroll later if you change your mind."
+        confirmLabel="Stop enrollment"
+        destructive
+        busy={busy}
+        onConfirm={stop}
+      />
     </li>
   );
 }

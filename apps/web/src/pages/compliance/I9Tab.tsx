@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { CheckCircle2, FileCheck, XCircle } from 'lucide-react';
 import type { I9DocumentList, I9Verification } from '@alto-people/shared';
 import { listI9s, upsertI9 } from '@/lib/complianceApi';
 import {
@@ -8,6 +9,14 @@ import {
 } from '@/lib/i9Api';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import {
+  Badge,
+  Button,
+  Card,
+  CardContent,
+  EmptyState,
+  SkeletonRows,
+} from '@/components/ui';
 
 export function I9Tab({ canManage }: { canManage: boolean }) {
   const [filter, setFilter] = useState<'pending' | 'complete' | 'all'>('pending');
@@ -38,10 +47,10 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
             type="button"
             onClick={() => setFilter(f)}
             className={cn(
-              'px-3 py-1.5 rounded text-sm border transition capitalize',
+              'px-3 py-1.5 rounded text-xs uppercase tracking-wider border transition',
               filter === f
                 ? 'border-gold text-gold bg-gold/10'
-                : 'border-navy-secondary text-silver hover:text-white'
+                : 'border-navy-secondary text-silver hover:text-white',
             )}
           >
             {f}
@@ -54,71 +63,88 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
           {error}
         </p>
       )}
-      {!rows && <p className="text-silver">Loading…</p>}
+      {!rows && <SkeletonRows count={4} rowHeight="h-20" />}
       {rows && rows.length === 0 && (
-        <p className="text-silver">No I-9 records match this filter.</p>
+        <EmptyState
+          icon={FileCheck}
+          title="No I-9 records match this filter"
+          description="Switch to a different filter or wait for associates to complete Section 1."
+        />
       )}
       {rows && rows.length > 0 && (
         <ul className="space-y-2">
           {rows.map((r) => {
             const sec1Done = !!r.section1CompletedAt;
             const sec2Done = !!r.section2CompletedAt;
-            const showVerifierCard = canManage && sec1Done && !sec2Done && !!r.applicationId;
+            const showVerifierCard =
+              canManage && sec1Done && !sec2Done && !!r.applicationId;
             return (
-              <li
-                key={r.id}
-                className="bg-navy border border-navy-secondary rounded-lg p-4"
-              >
-                <div className="flex items-center justify-between gap-4 flex-wrap">
-                  <div className="min-w-0">
-                    <div className="text-white">{r.associateName}</div>
-                    <div className="text-xs text-silver">{r.associateEmail}</div>
-                  </div>
-                  <div className="flex items-center gap-3 text-xs text-silver">
-                    <span className={sec1Done ? 'text-emerald-300' : 'text-alert'}>
-                      Sec 1: {sec1Done ? '✓' : '✗'}
-                    </span>
-                    <span className={sec2Done ? 'text-emerald-300' : 'text-alert'}>
-                      Sec 2: {sec2Done ? '✓' : '✗'}
-                    </span>
-                    {r.documentList && (
-                      <span className="uppercase tracking-widest">{r.documentList}</span>
+              <li key={r.id}>
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between gap-4 flex-wrap">
+                      <div className="min-w-0">
+                        <div className="text-white font-medium">{r.associateName}</div>
+                        <div className="text-xs text-silver">{r.associateEmail}</div>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <SectionBadge label="Sec 1" done={sec1Done} />
+                        <SectionBadge label="Sec 2" done={sec2Done} />
+                        {r.documentList && (
+                          <Badge variant="outline">{r.documentList}</Badge>
+                        )}
+                        {canManage && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              setOpenId(openId === r.id ? null : r.id)
+                            }
+                          >
+                            {showVerifierCard ? 'Verify Section 2' : 'Edit'}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                    {openId === r.id && showVerifierCard && (
+                      <Section2VerifierCard
+                        applicationId={r.applicationId!}
+                        onDone={() => {
+                          setOpenId(null);
+                          refresh();
+                        }}
+                      />
                     )}
-                    {canManage && (
-                      <button
-                        type="button"
-                        onClick={() => setOpenId(openId === r.id ? null : r.id)}
-                        className="px-2 py-1 rounded border border-gold/40 text-gold hover:bg-gold/10"
-                      >
-                        {showVerifierCard ? 'Verify Section 2' : 'Edit'}
-                      </button>
+                    {openId === r.id && canManage && !showVerifierCard && (
+                      <I9EditForm
+                        current={r}
+                        onSaved={() => {
+                          setOpenId(null);
+                          refresh();
+                        }}
+                      />
                     )}
-                  </div>
-                </div>
-                {openId === r.id && showVerifierCard && (
-                  <Section2VerifierCard
-                    applicationId={r.applicationId!}
-                    onDone={() => {
-                      setOpenId(null);
-                      refresh();
-                    }}
-                  />
-                )}
-                {openId === r.id && canManage && !showVerifierCard && (
-                  <I9EditForm
-                    current={r}
-                    onSaved={() => {
-                      setOpenId(null);
-                      refresh();
-                    }}
-                  />
-                )}
+                  </CardContent>
+                </Card>
               </li>
             );
           })}
         </ul>
       )}
     </section>
+  );
+}
+
+function SectionBadge({ label, done }: { label: string; done: boolean }) {
+  return (
+    <Badge variant={done ? 'success' : 'destructive'}>
+      {done ? (
+        <CheckCircle2 className="h-3 w-3" />
+      ) : (
+        <XCircle className="h-3 w-3" />
+      )}
+      <span>{label}</span>
+    </Badge>
   );
 }
 
@@ -144,7 +170,9 @@ function Section2VerifierCard({
       })
       .catch((err) => {
         if (!cancelled) {
-          setLoadError(err instanceof ApiError ? err.message : 'Failed to load documents.');
+          setLoadError(
+            err instanceof ApiError ? err.message : 'Failed to load documents.',
+          );
           setDocs([]);
         }
       });
@@ -185,7 +213,7 @@ function Section2VerifierCard({
   return (
     <div className="mt-4 pt-3 border-t border-navy-secondary space-y-4">
       <div className="flex flex-wrap gap-3 items-center">
-        <span className="block text-xs uppercase tracking-widest text-silver">
+        <span className="block text-[11px] uppercase tracking-wider text-silver">
           Document list
         </span>
         {(['LIST_A', 'LIST_B_AND_C'] as const).map((opt) => (
@@ -197,7 +225,9 @@ function Section2VerifierCard({
               checked={documentList === opt}
               onChange={() => setDocumentList(opt)}
             />
-            {opt === 'LIST_A' ? 'List A (identity + work auth in one doc)' : 'Lists B + C (identity + work auth)'}
+            {opt === 'LIST_A'
+              ? 'List A (identity + work auth in one doc)'
+              : 'Lists B + C (identity + work auth)'}
           </label>
         ))}
       </div>
@@ -208,7 +238,7 @@ function Section2VerifierCard({
         </p>
       )}
 
-      {docs === null && <p className="text-silver text-sm">Loading documents…</p>}
+      {docs === null && <SkeletonRows count={2} rowHeight="h-24" />}
       {docs !== null && docs.length === 0 && !loadError && (
         <p className="text-silver text-sm">
           No supporting documents uploaded yet — the associate must upload photos
@@ -218,7 +248,7 @@ function Section2VerifierCard({
 
       {docs && docs.length > 0 && (
         <div>
-          <p className="text-xs uppercase tracking-widest text-silver mb-2">
+          <p className="text-[11px] uppercase tracking-wider text-silver mb-2">
             Pick the documents you inspected (need at least {minDocs})
           </p>
           <ul className="grid grid-cols-2 sm:grid-cols-3 gap-3">
@@ -232,7 +262,7 @@ function Section2VerifierCard({
                       'block p-2 rounded border cursor-pointer transition',
                       checked
                         ? 'border-gold bg-gold/10'
-                        : 'border-navy-secondary hover:border-silver/40'
+                        : 'border-navy-secondary hover:border-silver/40',
                     )}
                   >
                     <input
@@ -279,28 +309,29 @@ function Section2VerifierCard({
           {submitError}
         </p>
       )}
-      <button
+      <Button
         type="button"
         onClick={handleSubmit}
+        loading={submitting}
         disabled={!canSubmit}
-        className={cn(
-          'px-4 py-2 rounded text-sm font-medium transition',
-          canSubmit
-            ? 'bg-gold text-navy hover:bg-gold-bright'
-            : 'bg-navy-secondary text-silver/50 cursor-not-allowed'
-        )}
       >
-        {submitting ? 'Verifying…' : `Verify Section 2 (${picked.size} doc${picked.size === 1 ? '' : 's'})`}
-      </button>
+        {`Verify Section 2 (${picked.size} doc${picked.size === 1 ? '' : 's'})`}
+      </Button>
     </div>
   );
 }
 
-function I9EditForm({ current, onSaved }: { current: I9Verification; onSaved: () => void }) {
+function I9EditForm({
+  current,
+  onSaved,
+}: {
+  current: I9Verification;
+  onSaved: () => void;
+}) {
   const [section1Done, setSection1Done] = useState(!!current.section1CompletedAt);
   const [section2Done, setSection2Done] = useState(!!current.section2CompletedAt);
   const [documentList, setDocumentList] = useState<I9DocumentList | ''>(
-    current.documentList ?? ''
+    current.documentList ?? '',
   );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -313,8 +344,12 @@ function I9EditForm({ current, onSaved }: { current: I9Verification; onSaved: ()
     const now = new Date().toISOString();
     try {
       await upsertI9(current.associateId, {
-        section1CompletedAt: section1Done ? current.section1CompletedAt ?? now : null,
-        section2CompletedAt: section2Done ? current.section2CompletedAt ?? now : null,
+        section1CompletedAt: section1Done
+          ? current.section1CompletedAt ?? now
+          : null,
+        section2CompletedAt: section2Done
+          ? current.section2CompletedAt ?? now
+          : null,
         documentList: documentList === '' ? null : documentList,
       });
       onSaved();
@@ -325,11 +360,11 @@ function I9EditForm({ current, onSaved }: { current: I9Verification; onSaved: ()
     }
   };
 
-  const inputCls =
-    'w-full px-3 py-2 rounded bg-navy-secondary/60 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white';
-
   return (
-    <form onSubmit={handleSubmit} className="mt-4 pt-3 border-t border-navy-secondary space-y-3">
+    <form
+      onSubmit={handleSubmit}
+      className="mt-4 pt-3 border-t border-navy-secondary space-y-3"
+    >
       <div className="flex flex-wrap gap-4 items-end">
         <label className="text-sm text-white flex items-center gap-2">
           <input
@@ -348,13 +383,15 @@ function I9EditForm({ current, onSaved }: { current: I9Verification; onSaved: ()
           Section 2 complete (HR verifies)
         </label>
         <label className="block">
-          <span className="block text-xs uppercase tracking-widest text-silver mb-1">
+          <span className="block text-[11px] uppercase tracking-wider text-silver mb-1">
             Document list
           </span>
           <select
             value={documentList}
-            onChange={(e) => setDocumentList(e.target.value as I9DocumentList | '')}
-            className={inputCls}
+            onChange={(e) =>
+              setDocumentList(e.target.value as I9DocumentList | '')
+            }
+            className="w-48 h-10 px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
           >
             <option value="">—</option>
             <option value="LIST_A">List A</option>
@@ -367,18 +404,9 @@ function I9EditForm({ current, onSaved }: { current: I9Verification; onSaved: ()
           {error}
         </p>
       )}
-      <button
-        type="submit"
-        disabled={submitting}
-        className={cn(
-          'px-4 py-2 rounded text-sm font-medium transition',
-          submitting
-            ? 'bg-navy-secondary text-silver/50 cursor-not-allowed'
-            : 'bg-gold text-navy hover:bg-gold-bright'
-        )}
-      >
-        {submitting ? 'Saving…' : 'Save'}
-      </button>
+      <Button type="submit" loading={submitting} disabled={submitting}>
+        Save
+      </Button>
     </form>
   );
 }

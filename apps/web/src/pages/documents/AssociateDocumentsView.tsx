@@ -8,6 +8,7 @@ import {
 } from '@/lib/documentsApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 
 const KIND_OPTIONS: Array<{ value: DocumentKind; label: string }> = [
   { value: 'ID', label: 'Government ID' },
@@ -46,6 +47,8 @@ export function AssociateDocumentsView() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DocumentRecord | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -81,13 +84,17 @@ export function AssociateDocumentsView() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm('Delete this document?')) return;
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
     try {
-      await deleteMyDocument(id);
+      await deleteMyDocument(deleteTarget.id);
+      setDeleteTarget(null);
       await refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Delete failed.');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -203,7 +210,7 @@ export function AssociateDocumentsView() {
                 {d.status !== 'VERIFIED' && (
                   <button
                     type="button"
-                    onClick={() => handleDelete(d.id)}
+                    onClick={() => setDeleteTarget(d)}
                     className="text-xs text-silver/60 hover:text-alert"
                     title="Delete"
                   >
@@ -215,6 +222,21 @@ export function AssociateDocumentsView() {
           })}
         </ul>
       )}
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onOpenChange={(o) => !o && setDeleteTarget(null)}
+        title={
+          deleteTarget
+            ? `Delete "${deleteTarget.filename}"?`
+            : 'Delete document'
+        }
+        description="The document will be removed from your record. If HR hasn't reviewed it yet, you can re-upload."
+        confirmLabel="Delete"
+        destructive
+        busy={deleting}
+        onConfirm={confirmDelete}
+      />
     </div>
   );
 }
