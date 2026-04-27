@@ -34,7 +34,8 @@ export type ModuleKey =
   | 'audit'
   | 'benefits'
   | 'org'
-  | 'team';
+  | 'team'
+  | 'workflows';
 
 /**
  * Phase 67 — sidebar groupings, F500-style. Modules with the same `group`
@@ -87,7 +88,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -129,6 +130,16 @@ export const MODULES: ModuleNav[] = [
     requires: 'view:my-team',
     icon: UsersIcon,
     group: 'workforce',
+  },
+  {
+    key: 'workflows',
+    path: '/workflows',
+    label: 'Workflows',
+    description:
+      'Trigger-condition-action automation that fires on hires, time-off decisions, position changes, and other events.',
+    requires: 'view:org',
+    icon: WorkflowIcon,
+    group: 'insights',
   },
   {
     key: 'clients',

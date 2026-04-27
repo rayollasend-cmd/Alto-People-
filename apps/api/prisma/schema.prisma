@@ -268,6 +268,7 @@ model User {
   timeOffLedgerEntriesAuthored TimeOffLedgerEntry[]
   timeOffReviews               TimeOffRequest[]               @relation("TimeOffReviewer")
   associateHistoryEntries      AssociateHistory[]             @relation("AssociateHistoryActor")
+  workflowDefinitions          WorkflowDefinition[]           @relation("WorkflowDefinitionCreator")
 
   @@index([role])
   @@index([clientId])
@@ -311,6 +312,8 @@ model Client {
   jobProfiles  JobProfile[]
   // Phase 78 — positions / seats.
   positions    Position[]
+  // Phase 80 — workflow definitions can be client-scoped.
+  workflows    WorkflowDefinition[]
 
   @@index([status])
   @@index([deletedAt])
@@ -1469,4 +1472,109 @@ model AssociateHistory {
   actor     User?     @relation("AssociateHistoryActor", fields: [actorUserId], references: [id], onDelete: SetNull)
 
   @@index([associateId, effectiveFrom(sort: Desc)])
+}
+
+// ===== Phase 80 — Workflow engine =========================================
+
+enum WorkflowTrigger {
+  ASSOCIATE_HIRED
+  ASSOCIATE_TERMINATED
+  TIME_OFF_REQUESTED
+  TIME_OFF_APPROVED
+  TIME_OFF_DENIED
+  POSITION_OPENED
+  POSITION_FILLED
+  PAYROLL_FINALIZED
+  ONBOARDING_COMPLETED
+  COMPLIANCE_EXPIRING
+}
+
+enum WorkflowActionKind {
+  SEND_NOTIFICATION
+  SET_FIELD
+  ASSIGN_TASK
+  CREATE_AUDIT_LOG
+  WEBHOOK
+}
+
+enum WorkflowRunStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum WorkflowStepStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  SKIPPED
+}
+
+model WorkflowDefinition {
+  id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId    String?         @db.Uuid
+  name        String
+  description String?
+  trigger     WorkflowTrigger
+  // {} = always run; supports { and: [{ field, op, value }] }
+  conditions  Json            @default("{}")
+  // [{ kind, params }, ...]
+  actions     Json            @default("[]")
+  isActive    Boolean         @default(true)
+  createdById String?         @db.Uuid
+  createdAt   DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime        @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime?       @db.Timestamptz(6)
+
+  client    Client?       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy User?         @relation("WorkflowDefinitionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  runs      WorkflowRun[]
+
+  @@index([trigger, isActive])
+  @@index([clientId])
+}
+
+model WorkflowRun {
+  id            String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  definitionId  String            @db.Uuid
+  trigger       WorkflowTrigger
+  entityType    String
+  entityId      String
+  context       Json              @default("{}")
+  status        WorkflowRunStatus @default(PENDING)
+  startedAt     DateTime?         @db.Timestamptz(6)
+  completedAt   DateTime?         @db.Timestamptz(6)
+  failureReason String?
+  createdAt     DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime          @updatedAt @db.Timestamptz(6)
+
+  definition WorkflowDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
+  steps      WorkflowStep[]
+
+  @@index([definitionId, status])
+  @@index([entityType, entityId])
+  @@index([status, createdAt(sort: Desc)])
+}
+
+model WorkflowStep {
+  id            String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId         String             @db.Uuid
+  ordinal       Int
+  kind          WorkflowActionKind
+  params        Json               @default("{}")
+  status        WorkflowStepStatus @default(PENDING)
+  result        Json?
+  failureReason String?
+  startedAt     DateTime?          @db.Timestamptz(6)
+  completedAt   DateTime?          @db.Timestamptz(6)
+  createdAt     DateTime           @default(now()) @db.Timestamptz(6)
+
+  run WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, ordinal])
+  @@index([runId])
+  @@index([status])
 }

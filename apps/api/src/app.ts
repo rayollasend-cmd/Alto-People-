@@ -25,6 +25,7 @@ import { branchWebhookRouter } from './routes/branchWebhook.js';
 import { orgRouter } from './routes/org.js';
 import { positionsRouter } from './routes/positions.js';
 import { teamRouter } from './routes/team.js';
+import { workflowsRouter } from './routes/workflows.js';
 import { attachUser, requireCapability } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 
@@ -101,6 +102,8 @@ export function createApp() {
   app.use('/positions', positionsRouter);
   // Phase 79 — manager-scoped approval queues.
   app.use('/team', teamRouter);
+  // Phase 80 — workflow definitions + run history.
+  app.use('/workflows', workflowsRouter);
   // QuickBooks router self-gates each route — the OAuth callback must accept
   // an unauthenticated browser redirect from Intuit, so we cannot apply a
   // capability check at this mount point.

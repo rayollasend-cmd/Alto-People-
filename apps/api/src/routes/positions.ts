@@ -12,6 +12,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { emit as emitWorkflow } from '../lib/workflow.js';
 
 export const positionsRouter = Router();
 
@@ -283,6 +284,17 @@ positionsRouter.post(
       include: POS_INCLUDE,
     });
     await audit(req, 'position.status', id, { from: existing.status, to: status });
+    if (status === 'OPEN') {
+      await emitWorkflow({
+        trigger: 'POSITION_OPENED',
+        entityType: 'Position',
+        entityId: id,
+        clientId: updated.clientId,
+        context: {
+          position: { id: updated.id, code: updated.code, title: updated.title },
+        },
+      });
+    }
     res.json(shape(updated));
   },
 );
@@ -322,6 +334,17 @@ positionsRouter.post(
     });
     await audit(req, 'position.assign', id, {
       associateId: input.associateId,
+    });
+    // Phase 80 — fire workflows.
+    await emitWorkflow({
+      trigger: 'POSITION_FILLED',
+      entityType: 'Position',
+      entityId: id,
+      clientId: updated.clientId,
+      context: {
+        position: { id: updated.id, code: updated.code, title: updated.title },
+        associateId: input.associateId,
+      },
     });
     res.json(shape(updated));
   },
