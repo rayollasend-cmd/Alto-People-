@@ -328,6 +328,7 @@ model User {
   assetAssignmentsReturned     AssetAssignment[]              @relation("AssetReturner")
   pulseSurveysCreated          PulseSurvey[]                  @relation("PulseSurveyCreator")
   associateSkillsVerified      AssociateSkill[]               @relation("AssociateSkillVerifier")
+  mentorshipsProposed          Mentorship[]                   @relation("MentorshipProposer")
 
   @@index([role])
   @@index([clientId])
@@ -518,6 +519,9 @@ model Associate {
   assetAssignments   AssetAssignment[]
   // Phase 111 — skills + competencies.
   skills             AssociateSkill[]
+  // Phase 112 — mentorship pairings.
+  mentorshipsAsMentor Mentorship[]      @relation("MentorshipMentor")
+  mentorshipsAsMentee Mentorship[]      @relation("MentorshipMentee")
 
   @@index([deletedAt])
   @@index([managerId])
@@ -3651,6 +3655,8 @@ model Skill {
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
 
   associateSkills AssociateSkill[]
+  // Phase 112 — mentorships focused on this skill.
+  mentorships     Mentorship[]
 
   @@index([category])
 }
@@ -3674,4 +3680,40 @@ model AssociateSkill {
   @@unique([associateId, skillId])
   @@index([skillId])
   @@index([level])
+}
+
+// Phase 112 — Mentorship pairings. Directed: mentor teaches mentee.
+// Optional focusSkillId ties into Phase 111 skills for "I want to
+// grow at X" matching.
+
+enum MentorshipStatus {
+  PROPOSED
+  ACTIVE
+  COMPLETED
+  DECLINED
+  CANCELLED
+}
+
+model Mentorship {
+  id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  mentorAssociateId  String           @db.Uuid
+  menteeAssociateId  String           @db.Uuid
+  focusSkillId       String?          @db.Uuid
+  goals              String?
+  status             MentorshipStatus @default(PROPOSED)
+  startedAt          DateTime?        @db.Timestamptz(6)
+  endedAt            DateTime?        @db.Timestamptz(6)
+  endedReason        String?
+  proposedById       String?          @db.Uuid
+  createdAt          DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime         @updatedAt @db.Timestamptz(6)
+
+  mentor    Associate @relation("MentorshipMentor", fields: [mentorAssociateId], references: [id], onDelete: Cascade)
+  mentee    Associate @relation("MentorshipMentee", fields: [menteeAssociateId], references: [id], onDelete: Cascade)
+  focusSkill Skill?   @relation(fields: [focusSkillId], references: [id], onDelete: SetNull)
+  proposedBy User?    @relation("MentorshipProposer", fields: [proposedById], references: [id], onDelete: SetNull)
+
+  @@index([mentorAssociateId])
+  @@index([menteeAssociateId])
+  @@index([status])
 }

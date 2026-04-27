@@ -40,6 +40,7 @@ export type ModuleKey =
   | 'pulse'
   | 'headcount'
   | 'skills'
+  | 'mentorship'
   | 'team'
   | 'workflows'
   | 'me'
@@ -99,7 +100,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -200,6 +201,16 @@ export const MODULES: ModuleNav[] = [
       'Catalog of competencies and per-associate skill claims with proficiency level. Search the company by skill — useful for staffing and internal mobility.',
     requires: 'view:org',
     icon: SkillsIcon,
+    group: 'workforce',
+  },
+  {
+    key: 'mentorship',
+    path: '/mentorship',
+    label: 'Mentorship',
+    description:
+      'Pair experienced associates with juniors. Suggestions use skills data to recommend ADVANCED+ mentors for a target growth skill.',
+    requires: 'view:org',
+    icon: MentorshipIcon,
     group: 'workforce',
   },
   {
