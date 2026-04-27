@@ -95,10 +95,20 @@ function Kbd({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** Custom event other components dispatch to ask the overlay to open. */
+export const OPEN_KEYBOARD_SHORTCUTS_EVENT = 'alto:open-keyboard-shortcuts';
+
+/** Helper that dispatches the open event from anywhere in the tree. */
+export function openKeyboardShortcuts(): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new Event(OPEN_KEYBOARD_SHORTCUTS_EVENT));
+}
+
 /**
  * Hook: wires the global `?` keydown handler. Skips when the user is
  * typing in an input/textarea/contenteditable (so `?` in a Reason field
- * doesn't pop the overlay).
+ * doesn't pop the overlay). Also listens for the custom open event so
+ * menu items elsewhere can pop the overlay without prop-drilling.
  */
 export function useKeyboardShortcutsHook() {
   const [open, setOpen] = useState(false);
@@ -118,8 +128,13 @@ export function useKeyboardShortcutsHook() {
       e.preventDefault();
       setOpen(true);
     };
+    const onOpenEvent = () => setOpen(true);
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    window.addEventListener(OPEN_KEYBOARD_SHORTCUTS_EVENT, onOpenEvent);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener(OPEN_KEYBOARD_SHORTCUTS_EVENT, onOpenEvent);
+    };
   }, []);
 
   return { open, setOpen };

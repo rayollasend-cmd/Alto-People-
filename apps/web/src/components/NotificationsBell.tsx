@@ -193,7 +193,7 @@ export function NotificationsBell() {
                         >
                           {n.body}
                         </div>
-                        <div className="text-[10px] text-silver/50 mt-0.5 tabular-nums">
+                        <div className="text-[10px] text-silver/80 mt-0.5 tabular-nums">
                           {fmt(n.createdAt)}
                           {n.category && (
                             <span className="ml-2 uppercase tracking-widest">

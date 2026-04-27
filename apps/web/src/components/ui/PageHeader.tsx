@@ -41,9 +41,10 @@ export function PageHeader({
   children,
   className,
 }: PageHeaderProps) {
-  // Publish the title to the topbar context so chrome can show it after scroll.
-  // Only string titles can roundtrip; anything richer just falls back.
-  usePublishPageTitle(typeof title === 'string' ? title : null);
+  // Publish the title + breadcrumbs to the topbar context so chrome can
+  // show "you are here" wayfinding after the user scrolls past this header.
+  // Only string titles can roundtrip; richer ReactNodes just fall back.
+  usePublishPageTitle(typeof title === 'string' ? title : null, breadcrumbs ?? null);
 
   return (
     <header className={cn('mb-6', className)}>

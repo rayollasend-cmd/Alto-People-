@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronUp,
   ChevronsUpDown,
+  Keyboard,
   LogOut,
   Monitor,
   Moon,
@@ -40,6 +41,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/DropdownMenu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip';
+import { openKeyboardShortcuts } from './KeyboardShortcutsDialog';
 
 const GROUP_ORDER: Array<Exclude<ModuleGroup, 'core'>> = [
   'workforce',
@@ -272,7 +274,7 @@ function SidebarSection({
         type="button"
         onClick={onToggle}
         aria-expanded={!collapsed}
-        className="w-full flex items-center justify-between px-4 py-1 text-[10px] font-semibold uppercase tracking-widest text-silver/60 hover:text-silver transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded-md"
+        className="w-full flex items-center justify-between px-4 py-1 text-[10px] font-semibold uppercase tracking-widest text-silver/80 hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded-md"
       >
         <span>{label}</span>
         {collapsed ? (
@@ -481,6 +483,19 @@ function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
               </DropdownMenuItem>
             </DropdownMenuSubContent>
           </DropdownMenuSub>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onSelect={(e) => {
+              e.preventDefault();
+              openKeyboardShortcuts();
+            }}
+          >
+            <Keyboard className="h-4 w-4" />
+            Keyboard shortcuts
+            <span className="ml-auto text-[10px] font-mono text-silver/80 border border-navy-secondary rounded px-1">
+              ?
+            </span>
+          </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem
             destructive

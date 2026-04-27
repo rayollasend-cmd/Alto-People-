@@ -20,6 +20,12 @@ export function Layout() {
 
   return (
     <TooltipProvider delayDuration={250}>
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-gold focus:px-3 focus:py-2 focus:text-navy focus:font-medium focus:shadow-lg"
+      >
+        Skip to main content
+      </a>
       <div className="min-h-screen flex bg-midnight text-white">
         <Sidebar />
         <MobileNav open={mobileOpen} onClose={() => setMobileOpen(false)} />
@@ -28,7 +34,11 @@ export function Layout() {
             onOpenMobileNav={() => setMobileOpen(true)}
             onOpenCommandPalette={() => setPaletteOpen(true)}
           />
-          <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
+          <main
+            id="main-content"
+            tabIndex={-1}
+            className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 focus:outline-none"
+          >
             <AnimatePresence mode="wait" initial={false}>
               <motion.div
                 key={location.pathname}

@@ -31,9 +31,14 @@ export interface BadgeProps
   extends React.HTMLAttributes<HTMLSpanElement>,
     VariantProps<typeof badgeVariants> {
   /**
-   * Phase 67 — Rippling-style status dot. When true, renders a small
-   * filled circle in front of the label, color-matched to the variant.
-   * Reads more like a "status indicator" than a chip.
+   * Phase 67 — Rippling-style status dot. Renders a small filled circle in
+   * front of the label, color-matched to the variant.
+   *
+   * Phase 71 — defaults to TRUE for status variants (success / pending /
+   * destructive) so every "APPROVED" / "PENDING" / "REJECTED" chip in the
+   * app reads as a real status indicator. Defaults to FALSE for the
+   * neutral "default" / "outline" / "accent" variants which are typically
+   * filter chips or feature tags. Pass `withDot={false}` to opt out.
    */
   withDot?: boolean;
 }
@@ -47,16 +52,24 @@ const DOT_COLOR: Record<NonNullable<BadgeProps['variant']>, string> = {
   outline: 'bg-silver',
 };
 
+const DOT_DEFAULT: Record<NonNullable<BadgeProps['variant']>, boolean> = {
+  default: false,
+  success: true,
+  pending: true,
+  destructive: true,
+  accent: false,
+  outline: false,
+};
+
 export function Badge({ className, variant, withDot, children, ...props }: BadgeProps) {
+  const v = variant ?? 'default';
+  const showDot = withDot ?? DOT_DEFAULT[v];
   return (
     <span className={cn(badgeVariants({ variant }), className)} {...props}>
-      {withDot && (
+      {showDot && (
         <span
           aria-hidden="true"
-          className={cn(
-            'inline-block h-1.5 w-1.5 rounded-full shrink-0',
-            DOT_COLOR[variant ?? 'default'],
-          )}
+          className={cn('inline-block h-1.5 w-1.5 rounded-full shrink-0', DOT_COLOR[v])}
         />
       )}
       {children}

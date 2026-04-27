@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LogOut, Menu, Search, User, WifiOff } from 'lucide-react';
+import { ChevronRight, LogOut, Menu, Search, User, WifiOff } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { ROLE_LABELS } from '@/lib/roles';
-import { usePageTitle } from '@/lib/pageTitle';
+import { usePageBreadcrumbs, usePageTitle } from '@/lib/pageTitle';
+import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
 import {
   DropdownMenu,
@@ -25,6 +27,7 @@ export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
   const { user, signOut, isOffline } = useAuth();
   const navigate = useNavigate();
   const pageTitle = usePageTitle();
+  const breadcrumbs = usePageBreadcrumbs();
   const [signingOut, setSigningOut] = useState(false);
 
   const handleSignOut = async () => {
@@ -50,11 +53,49 @@ export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
         <Menu className="h-5 w-5" />
       </Button>
 
-      {/* Page title — sticks in chrome so the page name stays visible after
-          users scroll past the in-page PageHeader. Sourced from PageTitleProvider. */}
-      <h2 className="font-display text-base md:text-lg text-white truncate min-w-0">
-        {pageTitle ?? 'Alto People'}
-      </h2>
+      {/* Page title / breadcrumbs — sticks in chrome so wayfinding survives
+          scroll. Prefer the breadcrumb trail when the page provided one;
+          otherwise fall back to the title alone. Sourced from PageTitleProvider. */}
+      {breadcrumbs && breadcrumbs.length > 0 ? (
+        <nav
+          aria-label="Breadcrumb"
+          className="flex items-center gap-1 min-w-0 text-sm overflow-hidden"
+        >
+          {breadcrumbs.map((seg, i) => {
+            const isLast = i === breadcrumbs.length - 1;
+            const segClasses = cn(
+              'truncate',
+              isLast ? 'font-display text-base md:text-lg text-white' : 'text-silver'
+            );
+            return (
+              <span key={`${seg.label}-${i}`} className="flex items-center gap-1 min-w-0">
+                {seg.to && !isLast ? (
+                  <Link
+                    to={seg.to}
+                    className={cn(segClasses, 'hover:text-white transition-colors')}
+                  >
+                    {seg.label}
+                  </Link>
+                ) : (
+                  <span aria-current={isLast ? 'page' : undefined} className={segClasses}>
+                    {seg.label}
+                  </span>
+                )}
+                {!isLast && (
+                  <ChevronRight
+                    className="h-3.5 w-3.5 text-silver/60 shrink-0"
+                    aria-hidden="true"
+                  />
+                )}
+              </span>
+            );
+          })}
+        </nav>
+      ) : (
+        <h2 className="font-display text-base md:text-lg text-white truncate min-w-0">
+          {pageTitle ?? 'Alto People'}
+        </h2>
+      )}
 
       <div className="flex-1 min-w-0" />
 

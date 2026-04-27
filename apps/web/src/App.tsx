@@ -36,6 +36,7 @@ import { AnalyticsHome } from '@/pages/analytics/AnalyticsHome';
 import { Settings } from '@/pages/Settings';
 import { AuditHome } from '@/pages/audit/AuditHome';
 import { BenefitsHome } from '@/pages/benefits/BenefitsHome';
+import { RouterErrorPage } from '@/pages/RouterErrorPage';
 
 const ONBOARDING_ROUTES = [
   { path: 'onboarding', element: <OnboardingHome /> },
@@ -110,8 +111,12 @@ const PLACEHOLDER_MODULES = MODULES.filter(
 );
 
 export const router = createBrowserRouter([
-  { path: '/login', element: <Login /> },
-  { path: '/accept-invite/:token', element: <AcceptInvite /> },
+  { path: '/login', element: <Login />, errorElement: <RouterErrorPage /> },
+  {
+    path: '/accept-invite/:token',
+    element: <AcceptInvite />,
+    errorElement: <RouterErrorPage />,
+  },
   {
     path: '/',
     element: (
@@ -119,6 +124,7 @@ export const router = createBrowserRouter([
         <Layout />
       </RequireAuth>
     ),
+    errorElement: <RouterErrorPage />,
     children: [
       { index: true, element: <Dashboard /> },
       { path: 'time-attendance', element: <TimeHome /> },
