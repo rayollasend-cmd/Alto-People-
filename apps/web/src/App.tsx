@@ -11,6 +11,7 @@ import { ApplicationDetail } from '@/pages/onboarding/ApplicationDetail';
 import { AssociateChecklist } from '@/pages/onboarding/AssociateChecklist';
 import { TemplatesList } from '@/pages/onboarding/TemplatesList';
 import { TemplateEditor } from '@/pages/onboarding/TemplateEditor';
+import { OnboardingAnalytics } from '@/pages/onboarding/OnboardingAnalytics';
 import { ProfileInfoTask } from '@/pages/onboarding/tasks/ProfileInfoTask';
 import { W4Task } from '@/pages/onboarding/tasks/W4Task';
 import { DirectDepositTask } from '@/pages/onboarding/tasks/DirectDepositTask';
@@ -39,6 +40,8 @@ const ONBOARDING_ROUTES = [
   { path: 'onboarding/templates', element: <TemplatesList /> },
   { path: 'onboarding/templates/new', element: <TemplateEditor /> },
   { path: 'onboarding/templates/:id', element: <TemplateEditor /> },
+  // Phase 62 — time-to-completion analytics (view:dashboard required).
+  { path: 'onboarding/analytics', element: <OnboardingAnalytics /> },
   {
     path: 'onboarding/applications/:id',
     element: <ApplicationDetail />,

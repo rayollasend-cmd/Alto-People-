@@ -252,6 +252,65 @@ export const TemplateUpsertInputSchema = z.object({
 });
 export type TemplateUpsertInput = z.infer<typeof TemplateUpsertInputSchema>;
 
+/* ===== Phase 62 — onboarding analytics ================================= */
+
+// Distribution of completion days for the chosen population (whole org,
+// one client, one track). Days are floats since hours matter at the low end
+// of the curve. `sample` = how many completed applications fed the math
+// (medianDays/p90Days are null when sample = 0).
+export const OnboardingCompletionStatsSchema = z.object({
+  medianDays: z.number().nullable(),
+  p90Days: z.number().nullable(),
+  sample: z.number().int().nonnegative(),
+});
+export type OnboardingCompletionStats = z.infer<
+  typeof OnboardingCompletionStatsSchema
+>;
+
+export const OnboardingTrackBreakdownSchema = z.object({
+  track: OnboardingTrackSchema,
+  count: z.number().int().nonnegative(),
+  medianDays: z.number().nullable(),
+});
+export type OnboardingTrackBreakdown = z.infer<
+  typeof OnboardingTrackBreakdownSchema
+>;
+
+export const OnboardingClientBreakdownSchema = z.object({
+  clientId: UuidSchema,
+  clientName: z.string(),
+  count: z.number().int().nonnegative(),
+  medianDays: z.number().nullable(),
+});
+export type OnboardingClientBreakdown = z.infer<
+  typeof OnboardingClientBreakdownSchema
+>;
+
+export const OnboardingMonthlyPointSchema = z.object({
+  // YYYY-MM (UTC, inclusive of the whole month)
+  month: z.string(),
+  invited: z.number().int().nonnegative(),
+  completed: z.number().int().nonnegative(),
+});
+export type OnboardingMonthlyPoint = z.infer<typeof OnboardingMonthlyPointSchema>;
+
+export const OnboardingAnalyticsResponseSchema = z.object({
+  // Lookback window in days for medianDays / p90Days / breakdown stats.
+  windowDays: z.number().int().positive(),
+  // Snapshot of all non-deleted applications by status.
+  byStatus: z.record(z.number().int().nonnegative()),
+  // Org-wide completion stats over the lookback window.
+  completion: OnboardingCompletionStatsSchema,
+  byTrack: z.array(OnboardingTrackBreakdownSchema),
+  // Top N clients by application count over the lookback window.
+  byClient: z.array(OnboardingClientBreakdownSchema),
+  // Last 6 months of invited vs completed counts, oldest-first.
+  monthly: z.array(OnboardingMonthlyPointSchema),
+});
+export type OnboardingAnalyticsResponse = z.infer<
+  typeof OnboardingAnalyticsResponseSchema
+>;
+
 /* -------------------------------------------------------------------------- *
  *  Health
  * -------------------------------------------------------------------------- */

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
+  BarChart3,
   ClipboardList,
   LayoutTemplate,
   MailPlus,
@@ -318,6 +319,12 @@ export function ApplicationsList() {
         </div>
         {canManage && (
           <div className="flex items-center gap-2">
+            <Link to="/onboarding/analytics">
+              <Button variant="ghost">
+                <BarChart3 className="h-4 w-4" />
+                Analytics
+              </Button>
+            </Link>
             <Link to="/onboarding/templates">
               <Button variant="ghost">
                 <LayoutTemplate className="h-4 w-4" />
