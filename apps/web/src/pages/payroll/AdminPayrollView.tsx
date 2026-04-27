@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, Download, FileText, Link as LinkIcon, Plus, Send } from 'lucide-react';
+import { CheckCircle2, Download, FileText, Link as LinkIcon, Plus, RotateCw, Send } from 'lucide-react';
 import type {
   PayrollRunDetail,
   PayrollRunStatus,
@@ -11,6 +11,7 @@ import {
   finalizePayrollRun,
   getPayrollRun,
   listPayrollRuns,
+  retryRunFailures,
 } from '@/lib/payrollApi';
 import { syncRun as syncRunToQbo } from '@/lib/quickbooksApi';
 import { ApiError } from '@/lib/api';
@@ -121,6 +122,26 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
       refresh();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Disburse failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onRetryFailures = async () => {
+    if (!selected || busy) return;
+    setBusy(true);
+    try {
+      const result = await retryRunFailures(selected.id);
+      const updated = await getPayrollRun(selected.id);
+      setSelected(updated);
+      refresh();
+      if (result.retried === 0) {
+        toast.success('No failed items to retry.');
+      } else {
+        toast.success(`Retried ${result.retried} — ${result.succeeded} succeeded.`);
+      }
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Retry failed.');
     } finally {
       setBusy(false);
     }
@@ -345,6 +366,13 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
                             <Download className="h-4 w-4" />
                             Download all paystubs
                           </a>
+                        </Button>
+                      )}
+                    {(selected.status === 'FINALIZED' || selected.status === 'DISBURSED') &&
+                      selected.items.some((it) => it.status === 'HELD') && (
+                        <Button variant="secondary" onClick={onRetryFailures} loading={busy}>
+                          <RotateCw className="h-4 w-4" />
+                          Retry failed disbursements
                         </Button>
                       )}
                     {(selected.status === 'FINALIZED' || selected.status === 'DISBURSED') &&

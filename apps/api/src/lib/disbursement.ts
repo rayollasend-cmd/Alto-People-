@@ -1,4 +1,9 @@
 import { env } from '../config/env.js';
+import {
+  createPayment as branchCreatePayment,
+  isBranchConfigured,
+  mapBranchStatus,
+} from './branch.js';
 
 /**
  * Disbursement adapter (Phase 22).
@@ -35,6 +40,8 @@ export interface DisbursementInput {
   };
   /** Idempotency key — the route passes PayrollItem.id so duplicate calls don't double-pay. */
   idempotencyKey: string;
+  /** Human-readable memo surfaced on the recipient's transaction history. */
+  memo?: string;
 }
 
 export interface DisbursementResult {
@@ -88,18 +95,41 @@ class WiseAdapter implements DisbursementAdapter {
 
 class BranchAdapter implements DisbursementAdapter {
   readonly provider: DisbursementProvider = 'BRANCH';
-  constructor(private readonly apiKey: string) {}
   async disburse(input: DisbursementInput): Promise<DisbursementResult> {
-    // Real call shape:
-    //   POST https://api.branchapp.com/v1/payments
-    //   Authorization: Bearer ${this.apiKey}
-    //   { amount, currency, employee_id, payment_method, idempotency_key }
-    void this.apiKey;
+    // Branch addresses recipients by their Branch-side employee/card id.
+    // If we don't have one, we cannot send — the associate must be
+    // enrolled in Branch's portal first and their id stored on
+    // PayoutMethod.branchCardId. Fail loudly so HR fixes the enrollment
+    // rather than the run silently sitting in PENDING.
+    const employeeRef = input.recipient.branchCardId;
+    if (!employeeRef) {
+      return {
+        provider: 'BRANCH',
+        externalRef: '',
+        status: 'FAILED',
+        failureReason: 'associate_not_enrolled: missing branchCardId on primary payout method',
+      };
+    }
+    if (input.currency !== 'USD') {
+      return {
+        provider: 'BRANCH',
+        externalRef: '',
+        status: 'FAILED',
+        failureReason: `unsupported_currency: Branch is US-domestic only, got ${input.currency}`,
+      };
+    }
+    const result = await branchCreatePayment({
+      amount: input.amount,
+      currency: input.currency,
+      employeeRef,
+      idempotencyKey: input.idempotencyKey,
+      memo: input.memo,
+    });
     return {
       provider: 'BRANCH',
-      externalRef: `STUB-BRANCH-${input.idempotencyKey.slice(0, 8)}`,
-      status: 'SUCCESS',
-      failureReason: null,
+      externalRef: result.paymentId,
+      status: mapBranchStatus(result.status),
+      failureReason: result.failureReason,
     };
   }
 }
@@ -125,8 +155,8 @@ export function pickAdapter(): DisbursementAdapter {
   let chosen: DisbursementAdapter;
   if (want === 'WISE' && env.WISE_API_KEY) {
     chosen = new WiseAdapter(env.WISE_API_KEY);
-  } else if (want === 'BRANCH' && env.BRANCH_API_KEY) {
-    chosen = new BranchAdapter(env.BRANCH_API_KEY);
+  } else if (want === 'BRANCH' && isBranchConfigured()) {
+    chosen = new BranchAdapter();
   } else {
     chosen = new StubAdapter();
   }

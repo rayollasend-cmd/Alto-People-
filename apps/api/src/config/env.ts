@@ -46,6 +46,13 @@ const EnvSchema = z.object({
   PAYROLL_DISBURSEMENT_PROVIDER: z.enum(['STUB', 'WISE', 'BRANCH']).default('STUB'),
   WISE_API_KEY: z.string().optional(),
   BRANCH_API_KEY: z.string().optional(),
+  // Phase 45 — Branch payments rail. BRANCH_API_BASE_URL lets ops point
+  // at sandbox vs production without a code change; BRANCH_WEBHOOK_SECRET
+  // is the shared HMAC secret Branch signs status-change webhooks with.
+  // When the secret is missing, the webhook endpoint refuses every
+  // request — never run unauthenticated in any environment.
+  BRANCH_API_BASE_URL: z.string().url().default('https://api.branchapp.com'),
+  BRANCH_WEBHOOK_SECRET: z.string().optional(),
   // Phase 44 — QuickBooks Online (Intuit). When both client id and secret
   // are set, OAuth is wired and JournalEntry POSTs hit Intuit's v3 API.
   // Otherwise the integration runs in stub mode: connect/disconnect work

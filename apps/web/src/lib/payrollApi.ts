@@ -30,6 +30,15 @@ export function disbursePayrollRun(id: string): Promise<PayrollRunDetail> {
   return apiFetch<PayrollRunDetail>(`/payroll/runs/${id}/disburse`, { method: 'POST' });
 }
 
+export function retryRunFailures(
+  id: string
+): Promise<{ retried: number; succeeded: number }> {
+  return apiFetch<{ retried: number; succeeded: number }>(
+    `/payroll/runs/${id}/retry-failures`,
+    { method: 'POST' }
+  );
+}
+
 export function listMyPayrollItems(): Promise<PayrollItemListResponse> {
   return apiFetch<PayrollItemListResponse>('/payroll/me/items');
 }

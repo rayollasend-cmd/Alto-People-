@@ -21,6 +21,7 @@ import { jobsRouter } from './routes/jobs.js';
 import { auditRouter } from './routes/audit.js';
 import { benefitsRouter } from './routes/benefits.js';
 import { quickbooksRouter } from './routes/quickbooks.js';
+import { branchWebhookRouter } from './routes/branchWebhook.js';
 import { attachUser, requireCapability } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 
@@ -34,6 +35,10 @@ export function createApp() {
 
   app.use(helmet());
   app.use(cors({ origin: env.CORS_ORIGIN, credentials: true }));
+  // Branch webhook MUST be mounted before express.json() so the raw body
+  // bytes survive for HMAC verification (the global parser would consume
+  // the stream and re-serialization breaks signatures on whitespace).
+  app.use('/branch/webhook', branchWebhookRouter);
   app.use(express.json({ limit: '1mb' }));
   app.use(cookieParser());
   app.use(attachUser);

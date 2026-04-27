@@ -440,20 +440,31 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
     const adapter = pickAdapter();
     const items = await prisma.payrollItem.findMany({
       where: { payrollRunId: run.id, status: 'PENDING' },
-      include: { associate: true },
+      include: {
+        associate: {
+          include: {
+            // Pull the primary payout method so the adapter can address
+            // the right rail per associate (Branch card vs ACH bank).
+            payoutMethods: { where: { isPrimary: true }, take: 1 },
+          },
+        },
+      },
     });
 
     let allSucceeded = true;
     const now = new Date();
     for (const item of items) {
+      const primary = item.associate.payoutMethods[0] ?? null;
       const result = await adapter.disburse({
         amount: Number(item.netPay),
         currency: 'USD',
         recipient: {
           associateId: item.associateId,
           fullName: `${item.associate.firstName} ${item.associate.lastName}`,
+          branchCardId: primary?.branchCardId ?? null,
         },
         idempotencyKey: item.id,
+        memo: `Payroll ${ymd(run.periodStart)}–${ymd(run.periodEnd)}`,
       }).catch((err: unknown) => ({
         provider: adapter.provider,
         externalRef: '',
@@ -573,6 +584,128 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
     }
 
     res.json(toDetail(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /payroll/runs/:id/retry-failures
+ *
+ * Retry every PayrollItem in HELD status for a run. The disburse handler
+ * marks items HELD when the provider rejected them (FAILED) — this is the
+ * HR-driven recovery path after they fix the underlying issue (rotated
+ * a Branch enrollment, corrected a routing number, topped up the source
+ * account, etc.). Idempotent on the Branch side because we keep using
+ * PayrollItem.id as the idempotency key.
+ */
+payrollRouter.post('/runs/:id/retry-failures', PROCESS, async (req, res, next) => {
+  try {
+    const run = await prisma.payrollRun.findFirst({
+      where: { id: req.params.id, ...scopePayrollRuns(req.user!) },
+    });
+    if (!run) throw new HttpError(404, 'run_not_found', 'Payroll run not found');
+    if (run.status !== 'FINALIZED' && run.status !== 'DISBURSED') {
+      throw new HttpError(
+        409,
+        'wrong_status',
+        'Only FINALIZED or DISBURSED runs can have failures retried'
+      );
+    }
+    const adapter = pickAdapter();
+    const held = await prisma.payrollItem.findMany({
+      where: { payrollRunId: run.id, status: 'HELD' },
+      include: {
+        associate: {
+          include: {
+            payoutMethods: { where: { isPrimary: true }, take: 1 },
+          },
+        },
+      },
+    });
+    if (held.length === 0) {
+      res.json({ retried: 0, succeeded: 0 });
+      return;
+    }
+    let succeeded = 0;
+    const now = new Date();
+    for (const item of held) {
+      const primary = item.associate.payoutMethods[0] ?? null;
+      const result = await adapter.disburse({
+        amount: Number(item.netPay),
+        currency: 'USD',
+        recipient: {
+          associateId: item.associateId,
+          fullName: `${item.associate.firstName} ${item.associate.lastName}`,
+          branchCardId: primary?.branchCardId ?? null,
+        },
+        idempotencyKey: item.id,
+        memo: `Payroll ${ymd(run.periodStart)}–${ymd(run.periodEnd)}`,
+      }).catch((err: unknown) => ({
+        provider: adapter.provider,
+        externalRef: '',
+        status: 'FAILED' as const,
+        failureReason: err instanceof Error ? err.message : String(err),
+      }));
+      await prisma.payrollDisbursementAttempt.create({
+        data: {
+          payrollItemId: item.id,
+          provider: result.provider,
+          status: result.status,
+          externalRef: result.externalRef || null,
+          failureReason: result.failureReason ?? null,
+          attemptedById: req.user!.id,
+        },
+      });
+      if (result.status === 'SUCCESS') {
+        await prisma.payrollItem.update({
+          where: { id: item.id },
+          data: {
+            status: 'DISBURSED',
+            disbursementRef: result.externalRef,
+            disbursedAt: now,
+            failureReason: null,
+          },
+        });
+        succeeded++;
+      } else if (result.status === 'PENDING') {
+        await prisma.payrollItem.update({
+          where: { id: item.id },
+          data: {
+            status: 'PENDING',
+            disbursementRef: result.externalRef,
+            failureReason: null,
+          },
+        });
+      } else {
+        await prisma.payrollItem.update({
+          where: { id: item.id },
+          data: { failureReason: result.failureReason ?? 'unknown' },
+        });
+      }
+    }
+
+    // If every item is now DISBURSED, flip the run.
+    const stillOpen = await prisma.payrollItem.count({
+      where: { payrollRunId: run.id, status: { not: 'DISBURSED' } },
+    });
+    if (stillOpen === 0 && run.status !== 'DISBURSED') {
+      await prisma.payrollRun.update({
+        where: { id: run.id },
+        data: { status: 'DISBURSED', disbursedAt: now },
+      });
+    }
+
+    await recordPayrollEvent({
+      actorUserId: req.user!.id,
+      action: 'payroll.failures_retried',
+      payrollRunId: run.id,
+      clientId: run.clientId,
+      metadata: { provider: adapter.provider, retried: held.length, succeeded },
+      req,
+    });
+
+    res.json({ retried: held.length, succeeded });
   } catch (err) {
     next(err);
   }
