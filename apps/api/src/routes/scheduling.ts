@@ -25,6 +25,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopeShifts } from '../lib/scope.js';
 import { recordShiftEvent } from '../lib/audit.js';
+import { formatShiftLine, notifyShift } from '../lib/notifyShift.js';
 import { netWorkedMinutes, startOfWeekUTC, endOfWeekUTC } from '../lib/timeAnomalies.js';
 import {
   evaluateShiftNotice,
@@ -246,6 +247,24 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
       req,
     });
 
+    // Notify the assignee on a DRAFT→OPEN/ASSIGNED publish transition.
+    // We don't notify on every PATCH — that would spam associates with
+    // "your shift was edited" for trivial location/notes tweaks.
+    if (data.publishedAt && updated.assignedAssociateId) {
+      await notifyShift(prisma, {
+        associateId: updated.assignedAssociateId,
+        subject: 'Shift published',
+        body: `Now on your schedule: ${formatShiftLine({
+          position: updated.position,
+          clientName: updated.client?.name ?? null,
+          startsAt: updated.startsAt,
+          endsAt: updated.endsAt,
+        })}`,
+        category: 'shift_published',
+        senderUserId: req.user!.id,
+      });
+    }
+
     res.json(toShift(updated));
   } catch (err) {
     next(err);
@@ -296,6 +315,19 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
       req,
     });
 
+    await notifyShift(prisma, {
+      associateId: associate.id,
+      subject: 'New shift assigned',
+      body: `You've been assigned: ${formatShiftLine({
+        position: updated.position,
+        clientName: updated.client?.name ?? null,
+        startsAt: updated.startsAt,
+        endsAt: updated.endsAt,
+      })}`,
+      category: 'shift_assigned',
+      senderUserId: req.user!.id,
+    });
+
     res.json(toShift(updated));
   } catch (err) {
     next(err);
@@ -330,6 +362,19 @@ schedulingRouter.post('/shifts/:id/unassign', MANAGE, async (req, res, next) => 
       clientId: updated.clientId,
       metadata: { previousAssociateId },
       req,
+    });
+
+    await notifyShift(prisma, {
+      associateId: previousAssociateId,
+      subject: 'Shift removed from your schedule',
+      body: `Removed: ${formatShiftLine({
+        position: updated.position,
+        clientName: updated.client?.name ?? null,
+        startsAt: updated.startsAt,
+        endsAt: updated.endsAt,
+      })}`,
+      category: 'shift_unassigned',
+      senderUserId: req.user!.id,
     });
 
     res.json(toShift(updated));
@@ -370,6 +415,21 @@ schedulingRouter.post('/shifts/:id/cancel', MANAGE, async (req, res, next) => {
       metadata: { reason: parsed.data.reason },
       req,
     });
+
+    if (shift.assignedAssociateId) {
+      await notifyShift(prisma, {
+        associateId: shift.assignedAssociateId,
+        subject: 'Shift cancelled',
+        body: `Cancelled: ${formatShiftLine({
+          position: updated.position,
+          clientName: updated.client?.name ?? null,
+          startsAt: updated.startsAt,
+          endsAt: updated.endsAt,
+        })}\nReason: ${parsed.data.reason}`,
+        category: 'shift_cancelled',
+        senderUserId: req.user!.id,
+      });
+    }
 
     res.json(toShift(updated));
   } catch (err) {
@@ -679,6 +739,22 @@ schedulingRouter.post('/swap-requests', async (req, res, next) => {
       },
       include: SWAP_INCLUDE,
     });
+
+    await notifyShift(prisma, {
+      associateId: counterpartyAssociateId,
+      subject: 'New swap request',
+      body: `${created.requester.firstName} ${created.requester.lastName} is asking you to take their shift: ${formatShiftLine(
+        {
+          position: created.shift.position,
+          clientName: created.shift.client?.name ?? null,
+          startsAt: created.shift.startsAt,
+          endsAt: created.shift.endsAt,
+        }
+      )}${note ? `\nNote: ${note}` : ''}`,
+      category: 'swap_peer_request',
+      senderUserId: req.user!.id,
+    });
+
     res.status(201).json(toSwap(created));
   } catch (err) {
     next(err);
@@ -740,6 +816,22 @@ schedulingRouter.post('/swap-requests/:id/peer-accept', async (req, res, next) =
       data: { status: 'PEER_ACCEPTED' },
       include: SWAP_INCLUDE,
     });
+
+    await notifyShift(prisma, {
+      associateId: updated.requesterAssociateId,
+      subject: 'Swap accepted — pending HR approval',
+      body: `${updated.counterparty.firstName} ${updated.counterparty.lastName} accepted your swap request. Waiting on HR sign-off: ${formatShiftLine(
+        {
+          position: updated.shift.position,
+          clientName: updated.shift.client?.name ?? null,
+          startsAt: updated.shift.startsAt,
+          endsAt: updated.shift.endsAt,
+        }
+      )}`,
+      category: 'swap_peer_accepted',
+      senderUserId: req.user!.id,
+    });
+
     res.json(toSwap(updated));
   } catch (err) {
     next(err);
@@ -764,6 +856,22 @@ schedulingRouter.post('/swap-requests/:id/peer-decline', async (req, res, next) 
       data: { status: 'PEER_DECLINED' },
       include: SWAP_INCLUDE,
     });
+
+    await notifyShift(prisma, {
+      associateId: updated.requesterAssociateId,
+      subject: 'Swap declined',
+      body: `${updated.counterparty.firstName} ${updated.counterparty.lastName} declined your swap request for ${formatShiftLine(
+        {
+          position: updated.shift.position,
+          clientName: updated.shift.client?.name ?? null,
+          startsAt: updated.shift.startsAt,
+          endsAt: updated.shift.endsAt,
+        }
+      )}`,
+      category: 'swap_peer_declined',
+      senderUserId: req.user!.id,
+    });
+
     res.json(toSwap(updated));
   } catch (err) {
     next(err);
@@ -864,6 +972,30 @@ schedulingRouter.post('/swap-requests/:id/manager-approve', MANAGE, async (req, 
       where: { id: swap.id },
       include: SWAP_INCLUDE,
     });
+
+    // Both parties get notified — the new owner needs to know it's now
+    // theirs, and the original owner needs to know they're off the hook.
+    const shiftLine = formatShiftLine({
+      position: updated.shift.position,
+      clientName: updated.shift.client?.name ?? null,
+      startsAt: updated.shift.startsAt,
+      endsAt: updated.shift.endsAt,
+    });
+    await notifyShift(prisma, {
+      associateId: updated.counterpartyAssociateId,
+      subject: 'Swap approved — shift is yours',
+      body: `HR approved the swap. You're now scheduled for: ${shiftLine}`,
+      category: 'swap_manager_approved',
+      senderUserId: req.user!.id,
+    });
+    await notifyShift(prisma, {
+      associateId: updated.requesterAssociateId,
+      subject: 'Swap approved — shift handed off',
+      body: `HR approved your swap with ${updated.counterparty.firstName} ${updated.counterparty.lastName}. You're off this shift: ${shiftLine}`,
+      category: 'swap_manager_approved',
+      senderUserId: req.user!.id,
+    });
+
     res.json(toSwap(updated));
   } catch (err) {
     next(err);
@@ -887,6 +1019,30 @@ schedulingRouter.post('/swap-requests/:id/manager-reject', MANAGE, async (req, r
       data: { status: 'MANAGER_REJECTED', decidedById: user.id, decidedAt: new Date() },
       include: SWAP_INCLUDE,
     });
+
+    // Notify both parties so the requester knows to find another solution
+    // and the counterparty isn't left wondering.
+    const shiftLine = formatShiftLine({
+      position: updated.shift.position,
+      clientName: updated.shift.client?.name ?? null,
+      startsAt: updated.shift.startsAt,
+      endsAt: updated.shift.endsAt,
+    });
+    await notifyShift(prisma, {
+      associateId: updated.requesterAssociateId,
+      subject: 'Swap rejected by HR',
+      body: `HR did not approve your swap for: ${shiftLine}`,
+      category: 'swap_manager_rejected',
+      senderUserId: req.user!.id,
+    });
+    await notifyShift(prisma, {
+      associateId: updated.counterpartyAssociateId,
+      subject: 'Swap rejected by HR',
+      body: `HR did not approve the swap you accepted for: ${shiftLine}`,
+      category: 'swap_manager_rejected',
+      senderUserId: req.user!.id,
+    });
+
     res.json(toSwap(updated));
   } catch (err) {
     next(err);
