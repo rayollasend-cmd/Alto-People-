@@ -2,7 +2,10 @@ import { Router } from 'express';
 import type { Prisma } from '@prisma/client';
 import {
   ApplicationCreateInputSchema,
+  BulkInviteInputSchema,
+  BulkResendInputSchema,
   DirectDepositInputSchema,
+  NudgeInputSchema,
   PolicyAckInputSchema,
   ProfileSubmissionSchema,
   W4SubmissionInputSchema,
@@ -12,7 +15,12 @@ import {
   type ApplicationSummary,
   type AuditLogEntry,
   type AuditLogListResponse,
+  type BulkInviteResponse,
+  type BulkInviteResultRow,
+  type BulkResendResponse,
+  type BulkResendResultRow,
   type ChecklistTask,
+  type NudgeResponse,
   type OnboardingTemplate,
   type PolicyForApplication,
   type TemplateListResponse,
@@ -51,6 +59,198 @@ const MANAGE = requireCapability('manage:onboarding');
 // internet) routinely exceeds that for the multi-statement writes below, so
 // every $transaction in this file passes TX_OPTS to lift it to 30 s.
 const TX_OPTS = { timeout: 30_000, maxWait: 10_000 };
+
+/* ===== Phase 58 — shared invite helper used by single + bulk endpoints === */
+
+interface InviteApplicantInput {
+  associateFirstName: string;
+  associateLastName: string;
+  associateEmail: string;
+  clientId: string;
+  templateId: string;
+  employmentType?: 'W2_EMPLOYEE' | 'CONTRACTOR_1099_INDIVIDUAL' | 'CONTRACTOR_1099_BUSINESS';
+  position?: string;
+  startDate?: string; // ISO
+}
+
+interface InviteApplicantResult {
+  applicationId: string;
+  invitedUserId: string;
+  inviteUrl: string | null; // dev-stub only
+}
+
+/**
+ * Invite one applicant. Same flow as POST /applications, factored out so the
+ * bulk endpoint doesn't duplicate it. Throws HttpError on hard failures
+ * (duplicate ACTIVE user, missing client/template, etc.).
+ */
+async function inviteOneApplicant(
+  actorUserId: string,
+  reqForAudit: import('express').Request,
+  input: InviteApplicantInput
+): Promise<InviteApplicantResult> {
+  const email = input.associateEmail.trim().toLowerCase();
+  const invite = generateInviteToken();
+  const expiresAt = new Date(Date.now() + env.INVITE_TOKEN_TTL_SECONDS * 1000);
+
+  const result = await prisma.$transaction(async (tx) => {
+    let associate = await tx.associate.findUnique({ where: { email } });
+    if (!associate) {
+      associate = await tx.associate.create({
+        data: {
+          email,
+          firstName: input.associateFirstName,
+          lastName: input.associateLastName,
+          ...(input.employmentType ? { employmentType: input.employmentType } : {}),
+        },
+      });
+    } else if (
+      input.employmentType &&
+      associate.employmentType !== input.employmentType
+    ) {
+      associate = await tx.associate.update({
+        where: { id: associate.id },
+        data: { employmentType: input.employmentType },
+      });
+    }
+
+    const [client, template] = await Promise.all([
+      tx.client.findFirst({ where: { id: input.clientId, deletedAt: null } }),
+      tx.onboardingTemplate.findUnique({
+        where: { id: input.templateId },
+        include: { tasks: { orderBy: { order: 'asc' } } },
+      }),
+    ]);
+    if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+    if (!template) throw new HttpError(404, 'template_not_found', 'Template not found');
+
+    let user = await tx.user.findUnique({ where: { email } });
+    if (user) {
+      if (user.status === 'ACTIVE' && user.passwordHash) {
+        throw new HttpError(
+          409,
+          'user_already_active',
+          'A user with this email is already active. Cannot re-invite.'
+        );
+      }
+      if (user.associateId !== associate.id) {
+        user = await tx.user.update({
+          where: { id: user.id },
+          data: { associateId: associate.id },
+        });
+      }
+    } else {
+      user = await tx.user.create({
+        data: {
+          email,
+          role: 'ASSOCIATE',
+          status: 'INVITED',
+          associateId: associate.id,
+        },
+      });
+    }
+
+    await tx.inviteToken.create({
+      data: { tokenHash: invite.hash, userId: user.id, expiresAt },
+    });
+
+    const isContractor = associate.employmentType !== 'W2_EMPLOYEE';
+    const tasksForChecklist = template.tasks.filter(
+      (t) => !(isContractor && t.kind === 'W4')
+    );
+
+    const application = await tx.application.create({
+      data: {
+        associateId: associate.id,
+        clientId: client.id,
+        onboardingTrack: template.track,
+        status: 'DRAFT',
+        position: input.position ?? null,
+        startDate: input.startDate ? new Date(input.startDate) : null,
+        checklist: {
+          create: {
+            tasks: {
+              create: tasksForChecklist.map((t) => ({
+                kind: t.kind,
+                title: t.title,
+                description: t.description,
+                order: t.order,
+              })),
+            },
+          },
+        },
+      },
+    });
+
+    return { application, client, user, associate };
+  }, TX_OPTS);
+
+  // Email — non-fatal; HR can resend later.
+  const acceptUrl = `${env.APP_BASE_URL}/accept-invite/${invite.raw}`;
+  const subject = `You're invited to onboard with ${result.client.name}`;
+  const body = [
+    `Hi ${result.associate.firstName},`,
+    ``,
+    `${result.client.name} has invited you to complete onboarding through Alto People.`,
+    ``,
+    `Click this link to set your password and start your onboarding tasks:`,
+    acceptUrl,
+    ``,
+    `This invitation expires on ${expiresAt.toISOString()}.`,
+    ``,
+    `If you didn't expect this email, you can safely ignore it.`,
+  ].join('\n');
+
+  let emailRef: string | null = null;
+  let emailFailed: string | null = null;
+  try {
+    const r = await send({
+      channel: 'EMAIL',
+      recipient: { userId: result.user.id, phone: null, email },
+      subject,
+      body,
+    });
+    emailRef = r.externalRef;
+  } catch (err) {
+    emailFailed = err instanceof Error ? err.message : String(err);
+  }
+  await prisma.notification.create({
+    data: {
+      channel: 'EMAIL',
+      status: emailFailed ? 'FAILED' : 'SENT',
+      recipientUserId: result.user.id,
+      recipientEmail: email,
+      subject,
+      body,
+      category: 'onboarding.invite',
+      externalRef: emailRef,
+      failureReason: emailFailed,
+      sentAt: emailFailed ? null : new Date(),
+      senderUserId: actorUserId,
+    },
+  });
+
+  await recordOnboardingEvent({
+    actorUserId,
+    action: 'onboarding.application_created',
+    applicationId: result.application.id,
+    clientId: result.client.id,
+    metadata: {
+      associateEmail: email,
+      templateId: input.templateId,
+      invitedUserId: result.user.id,
+      emailQueued: emailRef !== null || emailFailed !== null,
+      emailFailed,
+    },
+    req: reqForAudit,
+  });
+
+  return {
+    applicationId: result.application.id,
+    invitedUserId: result.user.id,
+    inviteUrl: env.RESEND_API_KEY && env.RESEND_FROM ? null : acceptUrl,
+  };
+}
 
 /* ===== READ ============================================================== */
 
@@ -293,187 +493,11 @@ onboardingRouter.post('/applications', MANAGE, async (req, res, next) => {
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
-    const input = parsed.data;
-    const email = input.associateEmail.trim().toLowerCase();
-
-    // Generate the invite token raw outside the tx so we can use it after.
-    const invite = generateInviteToken();
-    const expiresAt = new Date(Date.now() + env.INVITE_TOKEN_TTL_SECONDS * 1000);
-
-    const result = await prisma.$transaction(async (tx) => {
-      // Find or create the associate
-      let associate = await tx.associate.findUnique({ where: { email } });
-      if (!associate) {
-        associate = await tx.associate.create({
-          data: {
-            email,
-            firstName: input.associateFirstName,
-            lastName: input.associateLastName,
-            ...(input.employmentType ? { employmentType: input.employmentType } : {}),
-          },
-        });
-      } else if (input.employmentType && associate.employmentType !== input.employmentType) {
-        // Re-application as a different type (e.g. converting a 1099 to W-2).
-        // Honor the explicit choice so the new checklist + payroll math match.
-        associate = await tx.associate.update({
-          where: { id: associate.id },
-          data: { employmentType: input.employmentType },
-        });
-      }
-
-      // Validate client + template exist
-      const [client, template] = await Promise.all([
-        tx.client.findFirst({
-          where: { id: input.clientId, deletedAt: null },
-        }),
-        tx.onboardingTemplate.findUnique({
-          where: { id: input.templateId },
-          include: { tasks: { orderBy: { order: 'asc' } } },
-        }),
-      ]);
-      if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
-      if (!template) throw new HttpError(404, 'template_not_found', 'Template not found');
-
-      // Find or create the User. If they already exist as ACTIVE under this
-      // email, refuse — re-inviting an active user is a sign of confused
-      // state; HR can reset password manually if needed.
-      let user = await tx.user.findUnique({ where: { email } });
-      if (user) {
-        if (user.status === 'ACTIVE' && user.passwordHash) {
-          throw new HttpError(
-            409,
-            'user_already_active',
-            'A user with this email is already active. Cannot re-invite.'
-          );
-        }
-        // Link the existing INVITED user to this Associate if missing.
-        if (user.associateId !== associate.id) {
-          user = await tx.user.update({
-            where: { id: user.id },
-            data: { associateId: associate.id },
-          });
-        }
-      } else {
-        user = await tx.user.create({
-          data: {
-            email,
-            role: 'ASSOCIATE',
-            status: 'INVITED',
-            associateId: associate.id,
-          },
-        });
-      }
-
-      // Always issue a fresh token; an old one becomes stale once the
-      // accept-invite endpoint consumes either.
-      await tx.inviteToken.create({
-        data: {
-          tokenHash: invite.hash,
-          userId: user.id,
-          expiresAt,
-        },
-      });
-
-      // Phase 41 — 1099 contractors don't fill out a W-4 (they file their
-      // own taxes). Strip it from the checklist before creating the rows.
-      const isContractor = associate.employmentType !== 'W2_EMPLOYEE';
-      const tasksForChecklist = template.tasks.filter(
-        (t) => !(isContractor && t.kind === 'W4')
-      );
-
-      const application = await tx.application.create({
-        data: {
-          associateId: associate.id,
-          clientId: client.id,
-          onboardingTrack: template.track,
-          status: 'DRAFT',
-          position: input.position ?? null,
-          startDate: input.startDate ? new Date(input.startDate) : null,
-          checklist: {
-            create: {
-              tasks: {
-                create: tasksForChecklist.map((t) => ({
-                  kind: t.kind,
-                  title: t.title,
-                  description: t.description,
-                  order: t.order,
-                })),
-              },
-            },
-          },
-        },
-      });
-
-      return { application, client, user, associate };
-    }, TX_OPTS);
-
-    // Queue + send the invitation email. Wrapped in try/catch so an email
-    // failure doesn't roll back the application — HR can resend later.
-    const acceptUrl = `${env.APP_BASE_URL}/accept-invite/${invite.raw}`;
-    const subject = `You're invited to onboard with ${result.client.name}`;
-    const body = [
-      `Hi ${result.associate.firstName},`,
-      ``,
-      `${result.client.name} has invited you to complete onboarding through Alto People.`,
-      ``,
-      `Click this link to set your password and start your onboarding tasks:`,
-      acceptUrl,
-      ``,
-      `This invitation expires on ${expiresAt.toISOString()}.`,
-      ``,
-      `If you didn't expect this email, you can safely ignore it.`,
-    ].join('\n');
-
-    let emailRef: string | null = null;
-    let emailFailed: string | null = null;
-    try {
-      const r = await send({
-        channel: 'EMAIL',
-        recipient: { userId: result.user.id, phone: null, email },
-        subject,
-        body,
-      });
-      emailRef = r.externalRef;
-    } catch (err) {
-      emailFailed = err instanceof Error ? err.message : String(err);
-    }
-    await prisma.notification.create({
-      data: {
-        channel: 'EMAIL',
-        status: emailFailed ? 'FAILED' : 'SENT',
-        recipientUserId: result.user.id,
-        recipientEmail: email,
-        subject,
-        body,
-        category: 'onboarding.invite',
-        externalRef: emailRef,
-        failureReason: emailFailed,
-        sentAt: emailFailed ? null : new Date(),
-        senderUserId: req.user!.id,
-      },
-    });
-
-    await recordOnboardingEvent({
-      actorUserId: req.user!.id,
-      action: 'onboarding.application_created',
-      applicationId: result.application.id,
-      clientId: result.client.id,
-      metadata: {
-        associateEmail: email,
-        templateId: input.templateId,
-        invitedUserId: result.user.id,
-        emailQueued: emailRef !== null || emailFailed !== null,
-        emailFailed,
-      },
-      req,
-    });
-
+    const result = await inviteOneApplicant(req.user!.id, req, parsed.data);
     res.status(201).json({
-      id: result.application.id,
-      invitedUserId: result.user.id,
-      // Returned in dev-stub mode only — gives HR a copy-pasteable link
-      // when no real Resend is configured. Hidden when Resend sent for real.
-      inviteUrl: env.RESEND_API_KEY && env.RESEND_FROM ? null : acceptUrl,
+      id: result.applicationId,
+      invitedUserId: result.invitedUserId,
+      inviteUrl: result.inviteUrl,
     });
   } catch (err) {
     next(err);
@@ -1503,6 +1527,233 @@ onboardingRouter.post(
             ? null
             : `${env.APP_BASE_URL}/accept-invite/${result.rawToken}`,
       });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/* BULK INVITE (HR/Ops only, Phase 58) ---------------------------------- */
+// Run inviteOneApplicant per row, isolated. One bad row (duplicate ACTIVE,
+// missing template, etc.) doesn't block the rest — failures are reported
+// per-row in the response so HR can fix and retry just those.
+onboardingRouter.post(
+  '/applications/bulk',
+  MANAGE,
+  async (req, res, next) => {
+    try {
+      const parsed = BulkInviteInputSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+      }
+      const { clientId, templateId, employmentType, applicants } = parsed.data;
+
+      const results: BulkInviteResultRow[] = [];
+      let succeeded = 0;
+      let failed = 0;
+
+      for (const a of applicants) {
+        try {
+          const r = await inviteOneApplicant(req.user!.id, req, {
+            associateFirstName: a.firstName,
+            associateLastName: a.lastName,
+            associateEmail: a.email,
+            clientId,
+            templateId,
+            employmentType,
+            position: a.position,
+            startDate: a.startDate,
+          });
+          results.push({
+            email: a.email,
+            ok: true,
+            applicationId: r.applicationId,
+            invitedUserId: r.invitedUserId,
+            inviteUrl: r.inviteUrl,
+            errorCode: null,
+            errorMessage: null,
+          });
+          succeeded++;
+        } catch (err) {
+          const code = err instanceof HttpError ? err.code : 'invite_failed';
+          const message = err instanceof Error ? err.message : String(err);
+          results.push({
+            email: a.email,
+            ok: false,
+            applicationId: null,
+            invitedUserId: null,
+            inviteUrl: null,
+            errorCode: code,
+            errorMessage: message,
+          });
+          failed++;
+        }
+      }
+
+      const body: BulkInviteResponse = { succeeded, failed, results };
+      // 207 Multi-Status would be more correct when both succeeded + failed
+      // are non-zero, but a flat 200 keeps client error handling simpler.
+      res.status(200).json(body);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/* BULK RESEND INVITE (HR/Ops only, Phase 58) --------------------------- */
+// Re-rotates invite tokens + sends a fresh invite email for many
+// applications at once. Same semantics per row as resend-invite — ACTIVE
+// users are skipped with a 409 in the row error.
+onboardingRouter.post(
+  '/applications/bulk-resend',
+  MANAGE,
+  async (req, res, next) => {
+    try {
+      const parsed = BulkResendInputSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+      }
+      const { applicationIds } = parsed.data;
+
+      const results: BulkResendResultRow[] = [];
+      let succeeded = 0;
+      let failed = 0;
+
+      for (const applicationId of applicationIds) {
+        try {
+          const app = await assertCanModifyApplication(prisma, req.user!, applicationId);
+          const user = await prisma.user.findFirst({
+            where: { associateId: app.associateId },
+          });
+          if (!user) {
+            throw new HttpError(404, 'no_invited_user', 'No user found for this associate');
+          }
+          if (user.status === 'ACTIVE' && user.passwordHash) {
+            throw new HttpError(
+              409,
+              'user_already_active',
+              'This associate has already accepted the invitation.'
+            );
+          }
+          if (user.status !== 'INVITED') {
+            await prisma.user.update({
+              where: { id: user.id },
+              data: { status: 'INVITED', passwordHash: null },
+            });
+          }
+          const result = await sendReminderForUser(prisma, user.id, { reason: 'manual' });
+          await recordOnboardingEvent({
+            actorUserId: req.user!.id,
+            action: 'onboarding.invite_resent',
+            applicationId: app.id,
+            clientId: app.clientId,
+            metadata: { invitedUserId: user.id, externalRef: result.externalRef, bulk: true },
+            req,
+          });
+          results.push({
+            applicationId,
+            ok: true,
+            invitedUserId: user.id,
+            errorCode: null,
+            errorMessage: null,
+          });
+          succeeded++;
+        } catch (err) {
+          const code = err instanceof HttpError ? err.code : 'resend_failed';
+          const message = err instanceof Error ? err.message : String(err);
+          results.push({
+            applicationId,
+            ok: false,
+            invitedUserId: null,
+            errorCode: code,
+            errorMessage: message,
+          });
+          failed++;
+        }
+      }
+
+      const body: BulkResendResponse = { succeeded, failed, results };
+      res.status(200).json(body);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/* NUDGE EMAIL (HR/Ops only, Phase 58) ---------------------------------- */
+// HR-composed email to an associate mid-onboarding. Different from a
+// resend (which rotates tokens) — this is a free-form prod nudge: "you
+// still owe us your W-4". Logged as category=onboarding.nudge so we can
+// rate-limit later if needed.
+onboardingRouter.post(
+  '/applications/:id/nudge',
+  MANAGE,
+  async (req, res, next) => {
+    try {
+      const parsed = NudgeInputSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+      }
+      const { subject, body } = parsed.data;
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+      const user = await prisma.user.findFirst({
+        where: { associateId: app.associateId },
+      });
+      if (!user || !user.email) {
+        throw new HttpError(404, 'no_recipient', 'No recipient found for this associate');
+      }
+
+      let emailRef: string | null = null;
+      let emailFailed: string | null = null;
+      try {
+        const r = await send({
+          channel: 'EMAIL',
+          recipient: { userId: user.id, phone: null, email: user.email },
+          subject,
+          body,
+        });
+        emailRef = r.externalRef;
+      } catch (err) {
+        emailFailed = err instanceof Error ? err.message : String(err);
+      }
+
+      const notif = await prisma.notification.create({
+        data: {
+          channel: 'EMAIL',
+          status: emailFailed ? 'FAILED' : 'SENT',
+          recipientUserId: user.id,
+          recipientEmail: user.email,
+          subject,
+          body,
+          category: 'onboarding.nudge',
+          externalRef: emailRef,
+          failureReason: emailFailed,
+          sentAt: emailFailed ? null : new Date(),
+          senderUserId: req.user!.id,
+        },
+      });
+
+      await recordOnboardingEvent({
+        actorUserId: req.user!.id,
+        action: 'onboarding.nudge_sent',
+        applicationId: app.id,
+        clientId: app.clientId,
+        metadata: {
+          recipientEmail: user.email,
+          subject,
+          notificationId: notif.id,
+          emailFailed,
+        },
+        req,
+      });
+
+      const response: NudgeResponse = {
+        ok: true,
+        recipientEmail: user.email,
+        notificationId: notif.id,
+        emailSent: emailFailed === null,
+      };
+      res.status(200).json(response);
     } catch (err) {
       next(err);
     }

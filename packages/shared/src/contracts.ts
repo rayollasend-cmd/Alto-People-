@@ -285,6 +285,85 @@ export const ApplicationCreateInputSchema = z.object({
 });
 export type ApplicationCreateInput = z.infer<typeof ApplicationCreateInputSchema>;
 
+/* ===== Phase 58 — bulk invite, bulk resend, nudge ====================== */
+
+// One row in a bulk-invite batch. firstName/lastName fall back to email if HR
+// pasted only addresses (parser will split on the local-part). The shared
+// clientId/templateId/employmentType apply to every row in the batch.
+export const BulkInviteApplicantSchema = z.object({
+  email: z.string().email(),
+  firstName: z.string().min(1).max(80),
+  lastName: z.string().min(1).max(80),
+  position: z.string().min(1).max(120).optional(),
+  startDate: z.string().datetime().optional(),
+});
+export type BulkInviteApplicant = z.infer<typeof BulkInviteApplicantSchema>;
+
+export const BulkInviteInputSchema = z.object({
+  clientId: UuidSchema,
+  templateId: UuidSchema,
+  employmentType: EmploymentTypeSchema.optional(),
+  applicants: z.array(BulkInviteApplicantSchema).min(1).max(200),
+});
+export type BulkInviteInput = z.infer<typeof BulkInviteInputSchema>;
+
+// Per-applicant outcome — succeeded rows include an applicationId; failed
+// rows include a stable error code + message so the UI can show why.
+export const BulkInviteResultRowSchema = z.object({
+  email: z.string().email(),
+  ok: z.boolean(),
+  applicationId: UuidSchema.nullable(),
+  invitedUserId: UuidSchema.nullable(),
+  inviteUrl: z.string().nullable(),
+  errorCode: z.string().nullable(),
+  errorMessage: z.string().nullable(),
+});
+export type BulkInviteResultRow = z.infer<typeof BulkInviteResultRowSchema>;
+
+export const BulkInviteResponseSchema = z.object({
+  succeeded: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  results: z.array(BulkInviteResultRowSchema),
+});
+export type BulkInviteResponse = z.infer<typeof BulkInviteResponseSchema>;
+
+export const BulkResendInputSchema = z.object({
+  applicationIds: z.array(UuidSchema).min(1).max(200),
+});
+export type BulkResendInput = z.infer<typeof BulkResendInputSchema>;
+
+export const BulkResendResultRowSchema = z.object({
+  applicationId: UuidSchema,
+  ok: z.boolean(),
+  invitedUserId: UuidSchema.nullable(),
+  errorCode: z.string().nullable(),
+  errorMessage: z.string().nullable(),
+});
+export type BulkResendResultRow = z.infer<typeof BulkResendResultRowSchema>;
+
+export const BulkResendResponseSchema = z.object({
+  succeeded: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  results: z.array(BulkResendResultRowSchema),
+});
+export type BulkResendResponse = z.infer<typeof BulkResendResponseSchema>;
+
+// HR-composed nudge email. Sent through the same Notification pipe as
+// invites, but flagged with category = "onboarding.nudge" for filtering.
+export const NudgeInputSchema = z.object({
+  subject: z.string().min(1).max(200),
+  body: z.string().min(1).max(4000),
+});
+export type NudgeInput = z.infer<typeof NudgeInputSchema>;
+
+export const NudgeResponseSchema = z.object({
+  ok: z.literal(true),
+  recipientEmail: z.string().email(),
+  notificationId: UuidSchema,
+  emailSent: z.boolean(),
+});
+export type NudgeResponse = z.infer<typeof NudgeResponseSchema>;
+
 export const ProfileSubmissionSchema = z.object({
   firstName: z.string().min(1).max(80),
   lastName: z.string().min(1).max(80),

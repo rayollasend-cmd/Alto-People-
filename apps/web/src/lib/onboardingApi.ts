@@ -4,8 +4,14 @@ import type {
   ApplicationListResponse,
   ApplicationPoliciesResponse,
   AuditLogListResponse,
+  BulkInviteInput,
+  BulkInviteResponse,
+  BulkResendInput,
+  BulkResendResponse,
   ClientListResponse,
   DirectDepositInput,
+  NudgeInput,
+  NudgeResponse,
   PolicyAckInput,
   ProfileSubmission,
   TemplateListResponse,
@@ -57,6 +63,32 @@ export function resendInvite(applicationId: string): Promise<{
   return apiFetch<{ invitedUserId: string; inviteUrl: string | null }>(
     `/onboarding/applications/${applicationId}/resend-invite`,
     { method: 'POST' }
+  );
+}
+
+/* ---------------------- Phase 58 — bulk + nudge ----------------------- */
+
+export function bulkInvite(body: BulkInviteInput): Promise<BulkInviteResponse> {
+  return apiFetch<BulkInviteResponse>('/onboarding/applications/bulk', {
+    method: 'POST',
+    body,
+  });
+}
+
+export function bulkResendInvite(body: BulkResendInput): Promise<BulkResendResponse> {
+  return apiFetch<BulkResendResponse>('/onboarding/applications/bulk-resend', {
+    method: 'POST',
+    body,
+  });
+}
+
+export function nudgeApplicant(
+  applicationId: string,
+  body: NudgeInput
+): Promise<NudgeResponse> {
+  return apiFetch<NudgeResponse>(
+    `/onboarding/applications/${applicationId}/nudge`,
+    { method: 'POST', body }
   );
 }
 

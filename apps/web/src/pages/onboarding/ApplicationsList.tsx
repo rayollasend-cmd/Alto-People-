@@ -3,13 +3,20 @@ import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
   ClipboardList,
+  MailPlus,
+  MessageCircle,
   Plus,
   Search,
   Send,
+  Users,
   X,
 } from 'lucide-react';
 import type { ApplicationStatus, ApplicationSummary } from '@alto-people/shared';
-import { listApplications, resendInvite } from '@/lib/onboardingApi';
+import {
+  bulkResendInvite,
+  listApplications,
+  resendInvite,
+} from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { ProgressBar } from '@/components/ProgressBar';
@@ -28,7 +35,9 @@ import {
   TableRow,
 } from '@/components/ui/Table';
 import { toast } from 'sonner';
+import { BulkInviteDialog } from './BulkInviteDialog';
 import { NewApplicationDialog } from './NewApplicationDialog';
+import { NudgeDialog } from './NudgeDialog';
 import { cn } from '@/lib/cn';
 
 const STATUS_LABEL: Record<string, string> = {
@@ -114,7 +123,18 @@ export function ApplicationsList() {
   const [allItems, setAllItems] = useState<ApplicationSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openCreate, setOpenCreate] = useState(false);
+  const [openBulkInvite, setOpenBulkInvite] = useState(false);
   const [resendingIds, setResendingIds] = useState<Set<string>>(new Set());
+  const [bulkResending, setBulkResending] = useState(false);
+
+  // Bulk-select state. The set holds applicationIds; "select all" applies
+  // to the *currently visible* (filtered) rows so it never spans pages
+  // worth of work the user can't see.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // Single-row nudge dialog (one applicant at a time — bulk nudge is
+  // intentionally not a thing because the body is per-recipient).
+  const [nudgeTarget, setNudgeTarget] = useState<ApplicationSummary | null>(null);
 
   const refresh = useCallback(() => {
     setError(null);
@@ -198,6 +218,80 @@ export function ApplicationsList() {
     }
   };
 
+  // Drop selections that are no longer in the visible set (e.g. user
+  // changed the status filter). Stops the toolbar from showing a count
+  // for rows that aren't on screen.
+  useEffect(() => {
+    if (!items) return;
+    const visibleIds = new Set(items.map((a) => a.id));
+    setSelected((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (visibleIds.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [items]);
+
+  const toggleOne = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const allVisibleSelected =
+    !!items && items.length > 0 && items.every((a) => selected.has(a.id));
+
+  const toggleAllVisible = () => {
+    if (!items) return;
+    setSelected((prev) => {
+      if (allVisibleSelected) {
+        const next = new Set(prev);
+        for (const a of items) next.delete(a.id);
+        return next;
+      }
+      const next = new Set(prev);
+      for (const a of items) next.add(a.id);
+      return next;
+    });
+  };
+
+  const onBulkResend = async () => {
+    if (selected.size === 0 || bulkResending) return;
+    const ids = Array.from(selected);
+    setBulkResending(true);
+    try {
+      const res = await bulkResendInvite({ applicationIds: ids });
+      if (res.failed === 0) {
+        toast.success(`Re-sent ${res.succeeded} invite${res.succeeded === 1 ? '' : 's'}`);
+      } else if (res.succeeded === 0) {
+        toast.error(`All ${res.failed} resends failed`);
+      } else {
+        // Pull the first failure as the description so HR sees actionable info.
+        const firstFail = res.results.find((r) => !r.ok);
+        toast.message(`Re-sent ${res.succeeded}, ${res.failed} failed`, {
+          description: firstFail
+            ? `e.g. ${firstFail.errorCode}: ${firstFail.errorMessage}`
+            : undefined,
+        });
+      }
+      setSelected(new Set());
+      refresh();
+      refreshAll();
+    } catch (err) {
+      const msg =
+        err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Bulk resend failed';
+      toast.error('Could not bulk resend', { description: msg });
+    } finally {
+      setBulkResending(false);
+    }
+  };
+
   return (
     <div className="max-w-6xl mx-auto">
       <header className="mb-6 flex items-start justify-between gap-4 flex-wrap">
@@ -210,10 +304,16 @@ export function ApplicationsList() {
           </p>
         </div>
         {canManage && (
-          <Button onClick={() => setOpenCreate(true)}>
-            <Plus className="h-4 w-4" />
-            New application
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" onClick={() => setOpenBulkInvite(true)}>
+              <Users className="h-4 w-4" />
+              Bulk invite
+            </Button>
+            <Button onClick={() => setOpenCreate(true)}>
+              <Plus className="h-4 w-4" />
+              New application
+            </Button>
+          </div>
         )}
       </header>
 
@@ -409,11 +509,67 @@ export function ApplicationsList() {
         }}
       />
 
+      <BulkInviteDialog
+        open={openBulkInvite}
+        onOpenChange={setOpenBulkInvite}
+        onCreated={() => {
+          refresh();
+          refreshAll();
+        }}
+      />
+
+      <NudgeDialog
+        open={!!nudgeTarget}
+        onOpenChange={(v) => !v && setNudgeTarget(null)}
+        applicationId={nudgeTarget?.id ?? null}
+        associateName={nudgeTarget?.associateName ?? ''}
+      />
+
+      {/* Bulk-actions toolbar — only visible when at least one row is selected.
+          Sits above the table so it doesn't shift row layout when it appears. */}
+      {canManage && selected.size > 0 && (
+        <div className="mb-3 flex items-center gap-3 px-3 py-2 rounded-md border border-gold/40 bg-gold/[0.06] text-sm">
+          <span className="text-white font-medium">
+            {selected.size} selected
+          </span>
+          <div className="flex-1" />
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={onBulkResend}
+            loading={bulkResending}
+          >
+            <MailPlus className="h-4 w-4" />
+            Resend invite
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setSelected(new Set())}
+          >
+            Clear
+          </Button>
+        </div>
+      )}
+
       {items && items.length > 0 && (
         <Card className="overflow-hidden">
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
+                {canManage && (
+                  <TableHead className="w-8 px-3 no-print">
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      onChange={toggleAllVisible}
+                      aria-label={
+                        allVisibleSelected ? 'Deselect all' : 'Select all visible'
+                      }
+                      className="h-3.5 w-3.5 rounded border-navy-secondary bg-navy text-gold focus:ring-gold focus:ring-offset-0 cursor-pointer"
+                    />
+                  </TableHead>
+                )}
                 <TableHead>Applicant</TableHead>
                 <TableHead className="hidden md:table-cell">Client</TableHead>
                 <TableHead className="hidden lg:table-cell">Track</TableHead>
@@ -426,8 +582,27 @@ export function ApplicationsList() {
             <TableBody>
               {items.map((a) => {
                 const stale = isStale(a, now);
+                const isSelected = selected.has(a.id);
                 return (
-                  <TableRow key={a.id}>
+                  <TableRow
+                    key={a.id}
+                    className={cn(isSelected && 'bg-gold/[0.04]')}
+                  >
+                    {canManage && (
+                      <TableCell className="px-3 no-print">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleOne(a.id)}
+                          aria-label={
+                            isSelected
+                              ? `Deselect ${a.associateName}`
+                              : `Select ${a.associateName}`
+                          }
+                          className="h-3.5 w-3.5 rounded border-navy-secondary bg-navy text-gold focus:ring-gold focus:ring-offset-0 cursor-pointer"
+                        />
+                      </TableCell>
+                    )}
                     <TableCell>
                       <div className="flex items-start gap-2">
                         {stale && (
@@ -491,15 +666,26 @@ export function ApplicationsList() {
                     </TableCell>
                     {canManage && (
                       <TableCell className="text-right whitespace-nowrap no-print">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => onResend(a)}
-                          loading={resendingIds.has(a.id)}
-                          title="Resend invite"
-                        >
-                          <Send className="h-3.5 w-3.5" />
-                        </Button>
+                        <div className="flex items-center justify-end gap-0.5">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setNudgeTarget(a)}
+                            title="Send nudge email"
+                            disabled={a.status === 'APPROVED' || a.status === 'REJECTED'}
+                          >
+                            <MessageCircle className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => onResend(a)}
+                            loading={resendingIds.has(a.id)}
+                            title="Resend invite"
+                          >
+                            <Send className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
                       </TableCell>
                     )}
                   </TableRow>
