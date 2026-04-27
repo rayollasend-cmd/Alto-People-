@@ -3,6 +3,7 @@ import type {
   ClientGeofenceInput,
   ClientListResponse,
   ClientStateInput,
+  ClientStatus,
   ClientSummary,
   ClientUpdateInput,
 } from '@alto-people/shared';
@@ -14,8 +15,14 @@ export interface ClientGeofence {
   geofenceRadiusMeters: number | null;
 }
 
-export function listClients(): Promise<ClientListResponse> {
-  return apiFetch<ClientListResponse>('/clients');
+export function listClients(
+  filters: { status?: ClientStatus; q?: string } = {}
+): Promise<ClientListResponse> {
+  const sp = new URLSearchParams();
+  if (filters.status) sp.set('status', filters.status);
+  if (filters.q && filters.q.trim()) sp.set('q', filters.q.trim());
+  const qs = sp.toString();
+  return apiFetch<ClientListResponse>(`/clients${qs ? `?${qs}` : ''}`);
 }
 
 export function getClient(id: string): Promise<ClientSummary> {

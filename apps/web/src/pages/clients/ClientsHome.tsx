@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Building2, MapPin, Plus } from 'lucide-react';
-import type { ClientSummary } from '@alto-people/shared';
+import { Building2, MapPin, Plus, Search } from 'lucide-react';
+import type { ClientListItem, ClientStatus } from '@alto-people/shared';
 import { listClients } from '@/lib/clientsApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Input } from '@/components/ui/Input';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import {
   Table,
@@ -29,22 +31,53 @@ const STATUS_VARIANT: Record<
   INACTIVE: 'default',
 };
 
+const STATUS_FILTERS: Array<{ value: ClientStatus | 'ALL'; label: string }> = [
+  { value: 'ALL', label: 'All' },
+  { value: 'ACTIVE', label: 'Active' },
+  { value: 'PROSPECT', label: 'Prospect' },
+  { value: 'INACTIVE', label: 'Inactive' },
+];
+
+function fmtRelative(iso: string | null): string {
+  if (!iso) return '—';
+  const then = new Date(iso).getTime();
+  const days = Math.floor((Date.now() - then) / 86_400_000);
+  if (days <= 0) return 'today';
+  if (days === 1) return '1 day ago';
+  if (days < 30) return `${days} days ago`;
+  if (days < 365) return `${Math.floor(days / 30)} mo ago`;
+  return `${Math.floor(days / 365)} yr ago`;
+}
+
 export function ClientsHome() {
   const { can } = useAuth();
   const canManage = can('manage:clients');
 
-  const [items, setItems] = useState<ClientSummary[] | null>(null);
+  const [items, setItems] = useState<ClientListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<ClientStatus | 'ALL'>('ALL');
+  // Two search states: `query` is what the user types, `appliedQuery` is what
+  // the server has been asked. The 250ms debounce avoids a request per
+  // keystroke while still feeling immediate.
+  const [query, setQuery] = useState('');
+  const [appliedQuery, setAppliedQuery] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setAppliedQuery(query), 250);
+    return () => clearTimeout(t);
+  }, [query]);
 
   const refresh = useCallback(async () => {
     try {
-      const res = await listClients();
+      const res = await listClients({
+        status: statusFilter === 'ALL' ? undefined : statusFilter,
+        q: appliedQuery,
+      });
       setItems(res.clients);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load.');
     }
-  }, []);
+  }, [statusFilter, appliedQuery]);
 
   useEffect(() => {
     refresh();
@@ -78,6 +111,35 @@ export function ClientsHome() {
         </div>
       )}
 
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-1 rounded-md border border-navy-secondary p-0.5 bg-navy-secondary/30">
+          {STATUS_FILTERS.map((f) => (
+            <button
+              key={f.value}
+              onClick={() => setStatusFilter(f.value)}
+              className={cn(
+                'px-3 py-1 text-xs uppercase tracking-wider rounded-sm transition-colors',
+                statusFilter === f.value
+                  ? 'bg-gold text-navy'
+                  : 'text-silver hover:text-white'
+              )}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <div className="relative flex-1 min-w-[14rem] max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search by name…"
+            className="pl-9"
+            aria-label="Search clients"
+          />
+        </div>
+      </div>
+
       {!items && !error && (
         <Card>
           <div className="p-2">
@@ -89,11 +151,17 @@ export function ClientsHome() {
       {items && items.length === 0 && (
         <EmptyState
           icon={Building2}
-          title="No clients yet"
+          title={
+            statusFilter !== 'ALL' || appliedQuery.length > 0
+              ? 'No matching clients'
+              : 'No clients yet'
+          }
           description={
-            canManage
-              ? 'Click "New client" above to add your first one.'
-              : "Once a client account is created, it'll appear here."
+            statusFilter !== 'ALL' || appliedQuery.length > 0
+              ? 'Try clearing the filter or search.'
+              : canManage
+                ? 'Click "New client" above to add your first one.'
+                : "Once a client account is created, it'll appear here."
           }
         />
       )}
@@ -107,6 +175,8 @@ export function ClientsHome() {
                 <TableHead className="hidden md:table-cell">Industry</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>State</TableHead>
+                <TableHead className="text-right hidden sm:table-cell">Open apps</TableHead>
+                <TableHead className="text-right hidden lg:table-cell">Last payroll</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -137,6 +207,15 @@ export function ClientsHome() {
                     ) : (
                       <span className="text-silver/50 italic text-xs">federal default</span>
                     )}
+                  </TableCell>
+                  <TableCell className={cn(
+                    'text-right hidden sm:table-cell tabular-nums',
+                    c.openApplications > 0 ? 'text-silver' : 'text-silver/50'
+                  )}>
+                    {c.openApplications}
+                  </TableCell>
+                  <TableCell className="text-right hidden lg:table-cell text-silver text-xs">
+                    {fmtRelative(c.lastPayrollDisbursedAt)}
                   </TableCell>
                 </TableRow>
               ))}

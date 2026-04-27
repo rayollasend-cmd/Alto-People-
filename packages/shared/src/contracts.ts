@@ -77,6 +77,19 @@ export const ClientSummarySchema = z.object({
 });
 export type ClientSummary = z.infer<typeof ClientSummarySchema>;
 
+// Phase 47 — richer shape returned only by the list endpoint. Detail /
+// create / update routes still return the lean ClientSummary so they
+// don't pay for the count queries on every write.
+//
+// openApplications counts every Application that hasn't been REJECTED.
+// lastPayrollDisbursedAt is the most recent PayrollRun that actually
+// settled for this client; null when no run has ever disbursed.
+export const ClientListItemSchema = ClientSummarySchema.extend({
+  openApplications: z.number().int().nonnegative(),
+  lastPayrollDisbursedAt: z.string().datetime().nullable(),
+});
+export type ClientListItem = z.infer<typeof ClientListItemSchema>;
+
 export const ClientStateInputSchema = z.object({
   state: z.string().length(2).nullable(),
 });
@@ -108,7 +121,7 @@ export const ClientUpdateInputSchema = z.object({
 export type ClientUpdateInput = z.infer<typeof ClientUpdateInputSchema>;
 
 export const ClientListResponseSchema = z.object({
-  clients: z.array(ClientSummarySchema),
+  clients: z.array(ClientListItemSchema),
 });
 export type ClientListResponse = z.infer<typeof ClientListResponseSchema>;
 

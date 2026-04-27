@@ -4,10 +4,13 @@ import {
   ClientCreateInputSchema,
   ClientGeofenceInputSchema,
   ClientStateInputSchema,
+  ClientStatusSchema,
   ClientUpdateInputSchema,
+  type ClientListItem,
   type ClientListResponse,
   type ClientSummary,
 } from '@alto-people/shared';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
@@ -39,13 +42,72 @@ async function auditClient(
   });
 }
 
+/**
+ * GET /clients?status=ACTIVE&q=acme
+ *
+ * Both filters are optional and combine. `q` does case-insensitive
+ * substring on name only — small enough that an index isn't worth
+ * adding. Counts (open applications, last payroll) are batched into
+ * two grouped queries no matter how many clients match.
+ */
 clientsRouter.get('/', async (req, res, next) => {
   try {
+    const where: Prisma.ClientWhereInput = scopeClients(req.user!);
+    const statusParam = typeof req.query.status === 'string' ? req.query.status : null;
+    if (statusParam) {
+      const parsedStatus = ClientStatusSchema.safeParse(statusParam);
+      if (!parsedStatus.success) {
+        throw new HttpError(400, 'invalid_query', 'status must be ACTIVE | INACTIVE | PROSPECT');
+      }
+      where.status = parsedStatus.data;
+    }
+    const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    if (q.length > 0) {
+      where.name = { contains: q, mode: 'insensitive' };
+    }
+
     const rows = await prisma.client.findMany({
-      where: scopeClients(req.user!),
+      where,
       orderBy: { name: 'asc' },
     });
-    const payload: ClientListResponse = { clients: rows.map(toSummary) };
+    const ids = rows.map((r) => r.id);
+
+    // Two batched aggregates regardless of N — no per-row queries.
+    const [appCounts, lastPayrolls] = ids.length
+      ? await Promise.all([
+          prisma.application.groupBy({
+            by: ['clientId'],
+            where: {
+              clientId: { in: ids },
+              status: { not: 'REJECTED' },
+              deletedAt: null,
+            },
+            _count: { _all: true },
+          }),
+          prisma.payrollRun.groupBy({
+            by: ['clientId'],
+            where: { clientId: { in: ids }, disbursedAt: { not: null } },
+            _max: { disbursedAt: true },
+          }),
+        ])
+      : [[], []];
+
+    const appCountByClient = new Map<string, number>();
+    for (const r of appCounts) {
+      if (r.clientId) appCountByClient.set(r.clientId, r._count._all);
+    }
+    const lastPayrollByClient = new Map<string, Date | null>();
+    for (const r of lastPayrolls) {
+      if (r.clientId) lastPayrollByClient.set(r.clientId, r._max.disbursedAt);
+    }
+
+    const clients: ClientListItem[] = rows.map((row) => ({
+      ...toSummary(row),
+      openApplications: appCountByClient.get(row.id) ?? 0,
+      lastPayrollDisbursedAt:
+        lastPayrollByClient.get(row.id)?.toISOString() ?? null,
+    }));
+    const payload: ClientListResponse = { clients };
     res.json(payload);
   } catch (err) {
     next(err);
