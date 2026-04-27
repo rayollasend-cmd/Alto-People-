@@ -36,6 +36,7 @@ import { directoryAndCommsRouter } from './routes/directoryAndComms.js';
 import { oshaWcEeoRouter } from './routes/oshaWcEeo.js';
 import { docTemplatesRouter } from './routes/docTemplates.js';
 import { recruiting90Router } from './routes/recruiting90.js';
+import { payrollTax91Router } from './routes/payrollTax91.js';
 import { attachUser, requireCapability } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 
@@ -144,6 +145,9 @@ export function createApp() {
   // self-gate per-handler with view:recruiting / manage:recruiting; the
   // /careers/* paths are public (no capability check).
   app.use('/', recruiting90Router);
+  // Phase 91 — garnishments + tax forms (941, 940, W-2, 1099-NEC).
+  // Self-gates per-handler with view:payroll / process:payroll.
+  app.use('/', payrollTax91Router);
   // QuickBooks router self-gates each route — the OAuth callback must accept
   // an unauthenticated browser redirect from Intuit, so we cannot apply a
   // capability check at this mount point.

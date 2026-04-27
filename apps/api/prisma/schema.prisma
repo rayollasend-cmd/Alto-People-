@@ -302,6 +302,9 @@ model User {
   offersCreated                Offer[]                        @relation("OfferCreator")
   referralsMade                Referral[]                     @relation("Referrer")
   jobPostingsCreated           JobPosting[]                   @relation("JobPostingCreator")
+  // Phase 91 — garnishments + tax forms authorship.
+  garnishmentsCreated          Garnishment[]                  @relation("GarnishmentCreator")
+  taxFormsFiled                TaxForm[]                      @relation("TaxFormFiler")
 
   @@index([role])
   @@index([clientId])
@@ -460,6 +463,9 @@ model Associate {
   eeo                AssociateEeo?
   // Phase 89 — document renders targeting this associate.
   documentRenders    DocumentRender[]
+  // Phase 91 — garnishments + tax forms (W-2, 1099-NEC).
+  garnishments       Garnishment[]
+  taxForms           TaxForm[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -1117,6 +1123,8 @@ model PayrollRun {
   client        Client?          @relation(fields: [clientId], references: [id], onDelete: SetNull)
   createdBy     User?            @relation("PayrollRunCreator", fields: [createdById], references: [id], onDelete: SetNull)
   items         PayrollItem[]
+  // Phase 91 — garnishment deductions sourced from this run.
+  garnishmentDeductions GarnishmentDeduction[]
   createdAt     DateTime         @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime         @updatedAt @db.Timestamptz(6)
 
@@ -2780,4 +2788,101 @@ model JobPosting {
 
   @@index([status])
   @@index([clientId])
+}
+
+// Phase 91 — Garnishments + tax forms.
+
+enum GarnishmentKind {
+  CHILD_SUPPORT
+  TAX_LEVY
+  STUDENT_LOAN
+  BANKRUPTCY
+  CREDITOR
+  OTHER
+}
+
+enum GarnishmentStatus {
+  ACTIVE
+  SUSPENDED
+  COMPLETED
+  TERMINATED
+}
+
+enum TaxFormKind {
+  F941
+  F940
+  W2
+  F1099_NEC
+}
+
+enum TaxFormStatus {
+  DRAFT
+  FILED
+  AMENDED
+  VOIDED
+}
+
+model Garnishment {
+  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId     String            @db.Uuid
+  kind            GarnishmentKind
+  caseNumber      String?
+  agencyName      String?
+  amountPerRun    Decimal?          @db.Decimal(10, 2)
+  percentOfDisp   Decimal?          @db.Decimal(5, 4)
+  totalCap        Decimal?          @db.Decimal(12, 2)
+  amountWithheld  Decimal           @default(0) @db.Decimal(12, 2)
+  remitTo         String?
+  remitAddress    String?
+  startDate       DateTime          @db.Date
+  endDate         DateTime?         @db.Date
+  status          GarnishmentStatus @default(ACTIVE)
+  priority        Int               @default(100)
+  notes           String?
+  createdById     String?           @db.Uuid
+  createdAt       DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime          @updatedAt @db.Timestamptz(6)
+  deletedAt       DateTime?         @db.Timestamptz(6)
+
+  associate   Associate              @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  createdBy   User?                  @relation("GarnishmentCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  deductions  GarnishmentDeduction[]
+
+  @@index([associateId])
+  @@index([status])
+}
+
+model GarnishmentDeduction {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  garnishmentId String    @db.Uuid
+  payrollRunId  String?   @db.Uuid
+  amount        Decimal   @db.Decimal(10, 2)
+  deductedOn    DateTime  @default(now()) @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+
+  garnishment Garnishment @relation(fields: [garnishmentId], references: [id], onDelete: Cascade)
+  payrollRun  PayrollRun? @relation(fields: [payrollRunId], references: [id], onDelete: SetNull)
+
+  @@index([garnishmentId])
+}
+
+model TaxForm {
+  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kind        TaxFormKind
+  quarter     Int?
+  taxYear     Int
+  associateId String?       @db.Uuid
+  amounts     Json
+  status      TaxFormStatus @default(DRAFT)
+  filedAt     DateTime?     @db.Timestamptz(6)
+  filedById   String?       @db.Uuid
+  ein         String?       @db.VarChar(20)
+  createdAt   DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime      @updatedAt @db.Timestamptz(6)
+
+  associate Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)
+  filedBy   User?      @relation("TaxFormFiler", fields: [filedById], references: [id], onDelete: SetNull)
+
+  @@index([kind, taxYear])
+  @@index([associateId])
 }
