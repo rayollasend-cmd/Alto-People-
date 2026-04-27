@@ -269,6 +269,7 @@ model User {
   timeOffReviews               TimeOffRequest[]               @relation("TimeOffReviewer")
   associateHistoryEntries      AssociateHistory[]             @relation("AssociateHistoryActor")
   workflowDefinitions          WorkflowDefinition[]           @relation("WorkflowDefinitionCreator")
+  reviewedLifeEvents           LifeEvent[]                    @relation("LifeEventReviewer")
 
   @@index([role])
   @@index([clientId])
@@ -382,6 +383,12 @@ model Associate {
   // Phase 78 — positions filled and managed.
   filledPositions  Position[] @relation("PositionFilledBy")
   managedPositions Position[] @relation("PositionManager")
+  // Phase 82 — self-service personal data.
+  emergencyContacts EmergencyContact[]
+  dependents        Dependent[]
+  beneficiaries     Beneficiary[]
+  lifeEvents        LifeEvent[]
+  taxDocuments      TaxDocument[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -1634,4 +1641,142 @@ model CustomFieldValue {
 
   @@unique([definitionId, entityId])
   @@index([entityType, entityId])
+}
+
+// ===== Phase 82 — Self-service post-onboarding ============================
+
+enum EmergencyContactRelation {
+  SPOUSE
+  PARENT
+  CHILD
+  SIBLING
+  FRIEND
+  OTHER
+}
+
+enum DependentRelation {
+  SPOUSE
+  CHILD
+  DOMESTIC_PARTNER
+  OTHER
+}
+
+enum BeneficiaryKind {
+  PRIMARY
+  CONTINGENT
+}
+
+enum LifeEventKind {
+  MARRIAGE
+  DIVORCE
+  BIRTH
+  ADOPTION
+  DEATH_OF_DEPENDENT
+  ADDRESS_CHANGE
+  NAME_CHANGE
+  OTHER
+}
+
+enum LifeEventStatus {
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum TaxDocumentKind {
+  W2
+  W3
+  N_1099_NEC  @map("1099_NEC")
+  N_1095_C    @map("1095_C")
+}
+
+model EmergencyContact {
+  id          String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId String                   @db.Uuid
+  name        String
+  relation    EmergencyContactRelation
+  phone       String
+  email       String?
+  isPrimary   Boolean                  @default(false)
+  createdAt   DateTime                 @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime                 @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime?                @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@index([associateId])
+}
+
+model Dependent {
+  id          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId String            @db.Uuid
+  firstName   String
+  lastName    String
+  relation    DependentRelation
+  dob         DateTime?         @db.Date
+  ssnLast4    String?           @db.VarChar(4)
+  isCovered   Boolean           @default(true)
+  createdAt   DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime          @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime?         @db.Timestamptz(6)
+
+  associate     Associate     @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  beneficiaries Beneficiary[]
+
+  @@index([associateId])
+}
+
+model Beneficiary {
+  id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId  String            @db.Uuid
+  dependentId  String?           @db.Uuid
+  name         String
+  relation     DependentRelation
+  kind         BeneficiaryKind   @default(PRIMARY)
+  percentage   Int               @default(100)
+  createdAt    DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime          @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime?         @db.Timestamptz(6)
+
+  associate Associate  @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  dependent Dependent? @relation(fields: [dependentId], references: [id], onDelete: SetNull)
+
+  @@index([associateId, kind])
+}
+
+model LifeEvent {
+  id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId  String          @db.Uuid
+  kind         LifeEventKind
+  eventDate    DateTime        @db.Date
+  notes        String?
+  status       LifeEventStatus @default(PENDING_REVIEW)
+  reviewedById String?         @db.Uuid
+  reviewedAt   DateTime?       @db.Timestamptz(6)
+  reviewNote   String?
+  createdAt    DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime        @updatedAt @db.Timestamptz(6)
+
+  associate  Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  reviewedBy User?     @relation("LifeEventReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([associateId])
+  @@index([status])
+}
+
+model TaxDocument {
+  id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId  String          @db.Uuid
+  kind         TaxDocumentKind
+  taxYear      Int
+  storageKey   String
+  fileHash     String?         @db.VarChar(64)
+  fileSize     Int?
+  issuedAt     DateTime        @default(now()) @db.Timestamptz(6)
+  createdAt    DateTime        @default(now()) @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@unique([associateId, taxYear, kind])
+  @@index([associateId, taxYear(sort: Desc)])
 }

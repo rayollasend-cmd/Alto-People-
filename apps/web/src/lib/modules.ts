@@ -35,7 +35,8 @@ export type ModuleKey =
   | 'benefits'
   | 'org'
   | 'team'
-  | 'workflows';
+  | 'workflows'
+  | 'me';
 
 /**
  * Phase 67 — sidebar groupings, F500-style. Modules with the same `group`
@@ -88,9 +89,19 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
+  {
+    key: 'me',
+    path: '/me',
+    label: 'My profile',
+    description:
+      'Personal info, emergency contacts, dependents, beneficiaries, life events, and tax documents — all the personal records you can manage yourself.',
+    requires: 'view:dashboard',
+    icon: UserCircleIcon,
+    group: 'core',
+  },
   {
     key: 'onboarding',
     path: '/onboarding',
