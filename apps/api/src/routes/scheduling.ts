@@ -1,10 +1,13 @@
 import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import {
+  AssociateListResponseSchema,
   AutoFillResponseSchema,
   AvailabilityListResponseSchema,
   AvailabilityReplaceInputSchema,
   CopyWeekInputSchema,
+  PublishWeekInputSchema,
+  PublishWeekResponseSchema,
   ShiftAssignInputSchema,
   ShiftCancelInputSchema,
   ShiftConflictsResponseSchema,
@@ -20,6 +23,8 @@ import {
   type AutoFillCandidate,
   type AvailabilityWindow,
   type CopyWeekResponse,
+  type PublishWeekResponse,
+  type PublishWeekSkip,
   type Shift,
   type ShiftConflict,
   type ShiftListResponse,
@@ -194,6 +199,46 @@ schedulingRouter.get('/kpis', MANAGE, async (req, res, next) => {
       fillRatePercent,
       totalScheduledMinutes,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /scheduling/associates
+ *
+ * Phase 53 — slim list of associates the caller is allowed to schedule
+ * for. Drives the row axis of the pivot week view (rows=people × cols=days).
+ *
+ * Scope:
+ *   - HR/Ops: every non-deleted associate
+ *   - CLIENT_PORTAL: associates who have at least one shift at the user's
+ *     client (Associate has no clientId column today, so we lean on
+ *     Shift.clientId)
+ *   - ASSOCIATE: themselves only (defense-in-depth; the picker is HR-only
+ *     in the UI but the route shouldn't leak)
+ */
+schedulingRouter.get('/associates', MANAGE, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    let where: Prisma.AssociateWhereInput = { deletedAt: null };
+
+    if (user.role === 'CLIENT_PORTAL' && user.clientId) {
+      where = {
+        deletedAt: null,
+        assignedShifts: { some: { clientId: user.clientId } },
+      };
+    } else if (user.role === 'ASSOCIATE' && user.associateId) {
+      where = { deletedAt: null, id: user.associateId };
+    }
+
+    const rows = await prisma.associate.findMany({
+      where,
+      orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
+      select: { id: true, firstName: true, lastName: true, email: true },
+      take: 500,
+    });
+    res.json(AssociateListResponseSchema.parse({ associates: rows }));
   } catch (err) {
     next(err);
   }
@@ -1430,6 +1475,107 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
 
     const body: CopyWeekResponse = { created: result.count, skipped: 0 };
     res.json(body);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /scheduling/publish-week
+ * Body: { weekStart, clientId? }
+ *
+ * Phase 53 — flips every DRAFT shift in the week to OPEN (no assignee) or
+ * ASSIGNED (assignee set). Stamps publishedAt = now and sends the same
+ * "shift_published" notification the per-shift PATCH path sends.
+ *
+ * Predictive-scheduling guard: a shift in a covered state that's inside
+ * the 14-day notice window without a documented `lateNoticeReason` is
+ * SKIPPED rather than failing the whole batch — HR can still publish the
+ * compliant ones in one click and resolve the noisy ones individually.
+ */
+schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = PublishWeekInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    // Snap to local Monday 00:00 — matches the week the UI is showing.
+    const start = new Date(parsed.data.weekStart);
+    start.setHours(0, 0, 0, 0);
+    const dow = (start.getDay() + 6) % 7; // Mon=0..Sun=6
+    start.setDate(start.getDate() - dow);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 7);
+
+    const where: Prisma.ShiftWhereInput = {
+      ...scopeShifts(req.user!),
+      status: 'DRAFT',
+      startsAt: { gte: start, lt: end },
+      ...(parsed.data.clientId ? { clientId: parsed.data.clientId } : {}),
+    };
+    const drafts = await prisma.shift.findMany({
+      where,
+      include: {
+        client: { select: { state: true, name: true } },
+        assignedAssociate: { select: { firstName: true, lastName: true } },
+      },
+    });
+
+    const now = new Date();
+    const skipped: PublishWeekSkip[] = [];
+    const publishable: typeof drafts = [];
+
+    for (const s of drafts) {
+      const evaluation = evaluateShiftNotice({
+        state: s.client.state,
+        startsAt: s.startsAt,
+        publishAt: now,
+      });
+      if (evaluation.requiresReason && !s.lateNoticeReason) {
+        skipped.push({
+          shiftId: s.id,
+          reason: 'predictive_schedule_violation',
+          detail: `Inside 14-day notice window in ${evaluation.state} — open the shift and add lateNoticeReason before publishing.`,
+        });
+        continue;
+      }
+      publishable.push(s);
+    }
+
+    let publishedCount = 0;
+    for (const s of publishable) {
+      const nextStatus = s.assignedAssociateId ? 'ASSIGNED' : 'OPEN';
+      await prisma.shift.update({
+        where: { id: s.id },
+        data: { status: nextStatus, publishedAt: now },
+      });
+      await recordShiftEvent({
+        actorUserId: req.user!.id,
+        action: 'shift.updated',
+        shiftId: s.id,
+        clientId: s.clientId,
+        metadata: { fields: ['status', 'publishedAt'], publish: 'week' },
+        req,
+      });
+      if (s.assignedAssociateId) {
+        await notifyShift(prisma, {
+          associateId: s.assignedAssociateId,
+          subject: 'Shift published',
+          body: `Now on your schedule: ${formatShiftLine({
+            position: s.position,
+            clientName: s.client?.name ?? null,
+            startsAt: s.startsAt,
+            endsAt: s.endsAt,
+          })}`,
+          category: 'shift_published',
+          senderUserId: req.user!.id,
+        });
+      }
+      publishedCount += 1;
+    }
+
+    const body: PublishWeekResponse = { published: publishedCount, skipped };
+    res.json(PublishWeekResponseSchema.parse(body));
   } catch (err) {
     next(err);
   }

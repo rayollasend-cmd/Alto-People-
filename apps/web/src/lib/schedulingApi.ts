@@ -1,9 +1,12 @@
 import type {
+  AssociateListResponse,
   AutoFillResponse,
   AvailabilityListResponse,
   AvailabilityReplaceInput,
   CopyWeekInput,
   CopyWeekResponse,
+  PublishWeekInput,
+  PublishWeekResponse,
   Shift,
   ShiftAssignInput,
   ShiftCancelInput,
@@ -203,6 +206,19 @@ export function applyShiftTemplate(
 
 export function copyWeek(body: CopyWeekInput): Promise<CopyWeekResponse> {
   return apiFetch<CopyWeekResponse>('/scheduling/copy-week', {
+    method: 'POST',
+    body,
+  });
+}
+
+/* Phase 53 — pivot week view + publish-week ============================== */
+
+export function listSchedulingAssociates(): Promise<AssociateListResponse> {
+  return apiFetch<AssociateListResponse>('/scheduling/associates');
+}
+
+export function publishWeek(body: PublishWeekInput): Promise<PublishWeekResponse> {
+  return apiFetch<PublishWeekResponse>('/scheduling/publish-week', {
     method: 'POST',
     body,
   });

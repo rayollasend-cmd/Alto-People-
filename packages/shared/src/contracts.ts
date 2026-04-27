@@ -782,6 +782,51 @@ export const CopyWeekResponseSchema = z.object({
 });
 export type CopyWeekResponse = z.infer<typeof CopyWeekResponseSchema>;
 
+/* Phase 53 — pivot week view + publish-week ===============================
+ * Slim associate list for the row-axis of the people-x-days grid; and a
+ * batch-publish endpoint so HR can flip a whole week of DRAFT shifts to
+ * OPEN/ASSIGNED in one click.
+ */
+
+export const AssociateLiteSchema = z.object({
+  id: UuidSchema,
+  firstName: z.string(),
+  lastName: z.string(),
+  email: z.string(),
+});
+export type AssociateLite = z.infer<typeof AssociateLiteSchema>;
+
+export const AssociateListResponseSchema = z.object({
+  associates: z.array(AssociateLiteSchema),
+});
+export type AssociateListResponse = z.infer<typeof AssociateListResponseSchema>;
+
+export const PublishWeekInputSchema = z.object({
+  /** ISO; server snaps to local Monday 00:00 of that week. */
+  weekStart: z.string().datetime(),
+  /** When set, only DRAFT shifts for this client are published. */
+  clientId: UuidSchema.optional(),
+});
+export type PublishWeekInput = z.infer<typeof PublishWeekInputSchema>;
+
+export const PublishWeekSkipReasonSchema = z.enum([
+  'predictive_schedule_violation',
+]);
+export type PublishWeekSkipReason = z.infer<typeof PublishWeekSkipReasonSchema>;
+
+export const PublishWeekSkipSchema = z.object({
+  shiftId: UuidSchema,
+  reason: PublishWeekSkipReasonSchema,
+  detail: z.string().nullable(),
+});
+export type PublishWeekSkip = z.infer<typeof PublishWeekSkipSchema>;
+
+export const PublishWeekResponseSchema = z.object({
+  published: z.number().int().nonnegative(),
+  skipped: z.array(PublishWeekSkipSchema),
+});
+export type PublishWeekResponse = z.infer<typeof PublishWeekResponseSchema>;
+
 /* -------------------------------------------------------------------------- *
  *  Payroll — Phase 8 (MVP, demo-only withholding; disbursement stubbed)
  * -------------------------------------------------------------------------- */
