@@ -13,6 +13,7 @@ import {
   MessageSquare,
   ScrollText,
   ShieldCheck,
+  Smartphone,
   Timer,
   UserPlus,
 } from 'lucide-react';
@@ -21,6 +22,7 @@ import type { Capability } from './roles';
 export type ModuleKey =
   | 'onboarding'
   | 'time-attendance'
+  | 'kiosk'
   | 'time-off'
   | 'scheduling'
   | 'payroll'
@@ -470,6 +472,16 @@ export const MODULES: ModuleNav[] = [
       'Geofenced clock-in, timesheet approvals, and attendance auditing.',
     requires: 'view:time',
     icon: Timer,
+    group: 'time-and-pay',
+  },
+  {
+    key: 'kiosk',
+    path: '/time-attendance/kiosk',
+    label: 'Kiosk & PINs',
+    description:
+      'Manage kiosk devices, assign 4-digit clock-in PINs, and review punches.',
+    requires: 'manage:time',
+    icon: Smartphone,
     group: 'time-and-pay',
   },
   {

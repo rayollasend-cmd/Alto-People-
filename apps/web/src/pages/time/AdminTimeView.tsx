@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Activity,
   AlertTriangle,
@@ -9,6 +10,7 @@ import {
   ListChecks,
   MapPinOff,
   Search,
+  Smartphone,
   X,
 } from 'lucide-react';
 import type {
@@ -335,6 +337,16 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
           canManage
             ? 'Review, approve, or reject time entries from associates.'
             : 'Read-only view of time entries.'
+        }
+        secondaryActions={
+          canManage ? (
+            <Button asChild variant="outline">
+              <Link to="/time-attendance/kiosk">
+                <Smartphone className="mr-2 h-4 w-4" />
+                Kiosk &amp; PINs
+              </Link>
+            </Button>
+          ) : undefined
         }
       />
 

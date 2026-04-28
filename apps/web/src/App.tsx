@@ -144,6 +144,7 @@ const PLACEHOLDER_MODULES = MODULES.filter(
   (m) =>
     m.key !== 'onboarding' &&
     m.key !== 'time-attendance' &&
+    m.key !== 'kiosk' &&
     m.key !== 'time-off' &&
     m.key !== 'scheduling' &&
     m.key !== 'payroll' &&
