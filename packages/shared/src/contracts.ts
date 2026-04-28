@@ -2151,6 +2151,58 @@ export const AssociateOrgListResponseSchema = z.object({
 });
 export type AssociateOrgListResponse = z.infer<typeof AssociateOrgListResponseSchema>;
 
+// ===== Directory =========================================================
+//
+// One-stop list of every person Alto HR knows about, with the joins HR
+// actually wants in the row: employment status (derived from applications),
+// current workplace (client), live pay rate, employment type, start date,
+// and the org-fields tile. Powers /people.
+export const DirectoryStatusSchema = z.enum([
+  'ACTIVE', // Has at least one APPROVED application not yet ended.
+  'PENDING', // Has a DRAFT/SUBMITTED/IN_REVIEW application — onboarding in flight.
+  'INACTIVE', // No live applications (rejected, ended, or none at all).
+]);
+export type DirectoryStatus = z.infer<typeof DirectoryStatusSchema>;
+
+export const DirectoryEntrySchema = z.object({
+  id: UuidSchema,
+  firstName: z.string(),
+  lastName: z.string(),
+  email: z.string(),
+  phone: z.string().nullable(),
+  employmentType: z.string(),
+  j1Status: z.boolean(),
+  status: DirectoryStatusSchema,
+  // Workplace = client of the most-recent ACTIVE application; falls back
+  // to the most-recent application overall when nothing is active.
+  workplaceClientId: UuidSchema.nullable(),
+  workplaceClientName: z.string().nullable(),
+  position: z.string().nullable(),
+  startDate: z.string().nullable(), // ISO date or null
+  // Pay rate from the latest open CompensationRecord (effectiveTo=null).
+  payAmount: z.string().nullable(), // decimal-as-string so the wire stays exact
+  payType: z.string().nullable(), // HOURLY / SALARY / COMMISSION etc.
+  payCurrency: z.string().nullable(),
+  // Org tile.
+  managerId: UuidSchema.nullable(),
+  managerName: z.string().nullable(),
+  departmentId: UuidSchema.nullable(),
+  departmentName: z.string().nullable(),
+  jobProfileId: UuidSchema.nullable(),
+  jobProfileTitle: z.string().nullable(),
+  // For pending entries — the % complete on their onboarding checklist.
+  onboardingPercent: z.number().int().min(0).max(100).nullable(),
+  // First time this associate's record was created — useful as a proxy
+  // for tenure when no formal hire date is on file.
+  createdAt: z.string().datetime(),
+});
+export type DirectoryEntry = z.infer<typeof DirectoryEntrySchema>;
+
+export const DirectoryListResponseSchema = z.object({
+  associates: z.array(DirectoryEntrySchema),
+});
+export type DirectoryListResponse = z.infer<typeof DirectoryListResponseSchema>;
+
 // ===== Phase 78 — Position ================================================
 
 export const PositionStatusSchema = z.enum([

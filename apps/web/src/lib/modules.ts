@@ -33,6 +33,7 @@ export type ModuleKey =
   | 'recruiting'
   | 'audit'
   | 'benefits'
+  | 'people'
   | 'org'
   | 'org-chart'
   | 'celebrations'
@@ -149,6 +150,16 @@ export const MODULES: ModuleNav[] = [
       'Candidate pipeline, interviews, offers, and hire-to-onboarding handoff.',
     requires: 'view:recruiting',
     icon: UserPlus,
+    group: 'workforce',
+  },
+  {
+    key: 'people',
+    path: '/people',
+    label: 'People',
+    description:
+      'Directory of every associate — active, pending onboarding, and inactive — with workplace, pay rate, employment type, manager, and contact info in one row.',
+    requires: 'view:org',
+    icon: UsersIcon,
     group: 'workforce',
   },
   {
