@@ -6,7 +6,7 @@ import { startInviteReminderCron } from './lib/inviteReminder.js';
 
 const app = createApp();
 
-app.listen(env.PORT, async () => {
+app.listen(env.PORT, '0.0.0.0', async () => {
   console.log(`[alto-people/api] listening on http://localhost:${env.PORT}`);
   console.log(`[alto-people/api] CORS origin: ${env.CORS_ORIGIN}`);
 
