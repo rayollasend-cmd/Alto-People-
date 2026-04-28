@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  ChevronRight,
   ExternalLink,
   FileText,
+  Folder,
+  LayoutList,
   ShieldCheck,
   ShieldAlert,
   Clock,
+  Users as UsersIcon,
   X,
   XCircle,
 } from 'lucide-react';
@@ -29,6 +33,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
+import {
+  Drawer,
+  DrawerBody,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+} from '@/components/ui/Drawer';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
@@ -42,6 +54,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/Table';
+import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
 import { cn } from '@/lib/cn';
 
 const STATUS_FILTERS: Array<{ value: DocumentStatus | 'ALL'; label: string }> = [
@@ -85,11 +98,19 @@ interface AdminDocumentsViewProps {
 }
 
 export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
+  // Two ways to slice the same data: a flat queue for daily HR triage, and
+  // a per-associate folder view for auditing one person's full history.
+  const [view, setView] = useViewMode<'queue' | 'associates'>(
+    'docs.adminView',
+    'queue',
+    ['queue', 'associates'],
+  );
   // Default to "Awaiting review" so HR lands on the actionable queue.
   const [filter, setFilter] = useState<DocumentStatus | 'ALL'>('UPLOADED');
   const [docs, setDocs] = useState<DocumentRecord[] | null>(null);
   // Unfiltered roll-up for the KPI / chip counts so they stay stable as
-  // the user filters. Same pattern as the onboarding inbox.
+  // the user filters. Same pattern as the onboarding inbox. Doubles as the
+  // source for the "By associate" view.
   const [allDocs, setAllDocs] = useState<DocumentRecord[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -97,6 +118,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   const [rejectTarget, setRejectTarget] = useState<DocumentRecord | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [rejectSubmitting, setRejectSubmitting] = useState(false);
+  const [selectedAssociateId, setSelectedAssociateId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -162,6 +184,91 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         d.kind.toLowerCase().includes(q)
     );
   }, [docs, search]);
+
+  // Group every doc the user can see by associate, so the "By associate"
+  // view can act as a per-person folder. We pull from `allDocs` (not the
+  // status-filtered `docs`) so the folders stay stable as filters change.
+  const associateGroups = useMemo(() => {
+    if (!allDocs) return null;
+    const map = new Map<
+      string,
+      {
+        associateId: string;
+        associateName: string;
+        total: number;
+        uploaded: number;
+        verified: number;
+        rejected: number;
+        expired: number;
+        lastActivity: number;
+        docs: DocumentRecord[];
+      }
+    >();
+    for (const d of allDocs) {
+      const id = d.associateId;
+      const created = new Date(d.createdAt).getTime();
+      const existing = map.get(id);
+      if (existing) {
+        existing.total += 1;
+        if (d.status === 'UPLOADED') existing.uploaded += 1;
+        else if (d.status === 'VERIFIED') existing.verified += 1;
+        else if (d.status === 'REJECTED') existing.rejected += 1;
+        else if (d.status === 'EXPIRED') existing.expired += 1;
+        if (created > existing.lastActivity) existing.lastActivity = created;
+        existing.docs.push(d);
+      } else {
+        map.set(id, {
+          associateId: id,
+          associateName: d.associateName ?? '—',
+          total: 1,
+          uploaded: d.status === 'UPLOADED' ? 1 : 0,
+          verified: d.status === 'VERIFIED' ? 1 : 0,
+          rejected: d.status === 'REJECTED' ? 1 : 0,
+          expired: d.status === 'EXPIRED' ? 1 : 0,
+          lastActivity: created,
+          docs: [d],
+        });
+      }
+    }
+    // Sort docs inside each folder newest → oldest, then sort folders so
+    // anyone with awaiting-review work surfaces first, then by recent activity.
+    const groups = Array.from(map.values());
+    for (const g of groups) {
+      g.docs.sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      );
+    }
+    groups.sort((a, b) => {
+      if (a.uploaded !== b.uploaded) return b.uploaded - a.uploaded;
+      return b.lastActivity - a.lastActivity;
+    });
+    return groups;
+  }, [allDocs]);
+
+  // Filter the associate folders by the same search box so HR can look up a
+  // person without flipping views.
+  const visibleAssociateGroups = useMemo(() => {
+    if (!associateGroups) return null;
+    const q = search.trim().toLowerCase();
+    if (!q) return associateGroups;
+    return associateGroups.filter(
+      (g) =>
+        g.associateName.toLowerCase().includes(q) ||
+        g.docs.some(
+          (d) =>
+            d.filename.toLowerCase().includes(q) ||
+            d.kind.toLowerCase().includes(q),
+        ),
+    );
+  }, [associateGroups, search]);
+
+  const selectedGroup = useMemo(
+    () =>
+      associateGroups?.find((g) => g.associateId === selectedAssociateId) ??
+      null,
+    [associateGroups, selectedAssociateId],
+  );
 
   const onVerify = async (d: DocumentRecord) => {
     if (pendingId) return;
@@ -268,10 +375,26 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
 
       {/* Filter row */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
+        <ViewToggle
+          value={view}
+          onChange={(v) => setView(v)}
+          options={[
+            { value: 'queue', label: 'Queue', icon: LayoutList },
+            { value: 'associates', label: 'By associate', icon: UsersIcon },
+          ]}
+          tooltips={{
+            queue: 'Flat queue — daily triage',
+            associates: 'Folder per associate — audit view',
+          }}
+        />
         <div className="relative flex-1 min-w-[200px] max-w-xs">
           <Input
             type="search"
-            placeholder="Filter by file / associate / kind…"
+            placeholder={
+              view === 'queue'
+                ? 'Filter by file / associate / kind…'
+                : 'Filter associates…'
+            }
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pr-8"
@@ -287,36 +410,46 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
             </button>
           )}
         </div>
-        <div className="flex flex-wrap gap-1.5">
-          {STATUS_FILTERS.map((f) => {
-            const count =
-              f.value === 'ALL' ? stats.total : (stats.byStatus[f.value] ?? 0);
-            const active = filter === f.value;
-            return (
-              <button
-                key={f.value}
-                type="button"
-                onClick={() => setFilter(f.value)}
-                className={cn(
-                  'px-2.5 py-1 rounded-md text-xs border transition-colors inline-flex items-center gap-1.5',
-                  'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
-                  active
-                    ? 'border-gold text-gold bg-gold/10'
-                    : 'border-navy-secondary text-silver hover:text-white hover:border-silver/40'
-                )}
-              >
-                {f.label}
-                {allDocs && (
-                  <span className="text-[10px] tabular-nums text-silver/60">
-                    {count}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
+        {/* Status chips only make sense for the flat queue. The associate
+            view shows per-status counts inline on each folder row instead. */}
+        {view === 'queue' && (
+          <div className="flex flex-wrap gap-1.5">
+            {STATUS_FILTERS.map((f) => {
+              const count =
+                f.value === 'ALL' ? stats.total : (stats.byStatus[f.value] ?? 0);
+              const active = filter === f.value;
+              return (
+                <button
+                  key={f.value}
+                  type="button"
+                  onClick={() => setFilter(f.value)}
+                  className={cn(
+                    'px-2.5 py-1 rounded-md text-xs border transition-colors inline-flex items-center gap-1.5',
+                    'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                    active
+                      ? 'border-gold text-gold bg-gold/10'
+                      : 'border-navy-secondary text-silver hover:text-white hover:border-silver/40'
+                  )}
+                >
+                  {f.label}
+                  {allDocs && (
+                    <span className="text-[10px] tabular-nums text-silver/60">
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
         <span className="ml-auto text-[10px] text-silver/60 tabular-nums">
-          {visibleDocs ? `${visibleDocs.length} shown` : ''}
+          {view === 'queue'
+            ? visibleDocs
+              ? `${visibleDocs.length} shown`
+              : ''
+            : visibleAssociateGroups
+              ? `${visibleAssociateGroups.length} associates`
+              : ''}
         </span>
       </div>
 
@@ -329,7 +462,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         </div>
       )}
 
-      {!docs && !error && (
+      {view === 'queue' && !docs && !error && (
         <Card>
           <div className="p-2">
             <SkeletonRows count={5} rowHeight="h-14" />
@@ -337,7 +470,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         </Card>
       )}
 
-      {visibleDocs && visibleDocs.length === 0 && (
+      {view === 'queue' && visibleDocs && visibleDocs.length === 0 && (
         <EmptyState
           icon={FileText}
           title={
@@ -364,7 +497,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         />
       )}
 
-      {visibleDocs && visibleDocs.length > 0 && (
+      {view === 'queue' && visibleDocs && visibleDocs.length > 0 && (
         <Card className="overflow-hidden">
           <Table>
             <TableHeader>
@@ -398,10 +531,17 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                     {d.kind.replace(/_/g, ' ')}
                   </TableCell>
                   <TableCell className="text-silver">
-                    <div className="flex items-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedAssociateId(d.associateId);
+                      }}
+                      className="flex items-center gap-2.5 text-left hover:text-white transition-colors"
+                      title="Open this associate's folder"
+                    >
                       <Avatar name={d.associateName ?? '—'} size="xs" />
                       <span className="truncate">{d.associateName ?? '—'}</span>
-                    </div>
+                    </button>
                   </TableCell>
                   <TableCell className="hidden md:table-cell text-silver tabular-nums text-xs">
                     {fmtSize(d.size)}
@@ -463,6 +603,259 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
           </Table>
         </Card>
       )}
+
+      {view === 'associates' && !allDocs && !error && (
+        <Card>
+          <div className="p-2">
+            <SkeletonRows count={6} rowHeight="h-12" />
+          </div>
+        </Card>
+      )}
+
+      {view === 'associates' &&
+        visibleAssociateGroups &&
+        visibleAssociateGroups.length === 0 && (
+          <EmptyState
+            icon={Folder}
+            title={search ? 'No associates match this search' : 'No documents yet'}
+            description={
+              search
+                ? 'Clear the search to see all associate folders.'
+                : "When associates upload documents, you'll see one folder per person here."
+            }
+            action={
+              search ? (
+                <Button variant="secondary" onClick={() => setSearch('')}>
+                  Clear search
+                </Button>
+              ) : undefined
+            }
+          />
+        )}
+
+      {view === 'associates' &&
+        visibleAssociateGroups &&
+        visibleAssociateGroups.length > 0 && (
+          <Card className="overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>Associate</TableHead>
+                  <TableHead className="w-20 text-right">Total</TableHead>
+                  <TableHead className="w-28">Awaiting</TableHead>
+                  <TableHead className="w-28 hidden md:table-cell">Verified</TableHead>
+                  <TableHead className="w-28 hidden md:table-cell">Rejected</TableHead>
+                  <TableHead className="w-28 hidden lg:table-cell">Expired</TableHead>
+                  <TableHead className="w-28 hidden lg:table-cell">Last activity</TableHead>
+                  <TableHead className="w-8" aria-label="Open" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {visibleAssociateGroups.map((g) => (
+                  <TableRow
+                    key={g.associateId}
+                    className="cursor-pointer"
+                    onClick={() => setSelectedAssociateId(g.associateId)}
+                  >
+                    <TableCell>
+                      <div className="flex items-center gap-2.5">
+                        <Avatar name={g.associateName} size="sm" />
+                        <span className="text-white font-medium truncate">
+                          {g.associateName}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-silver">
+                      {g.total}
+                    </TableCell>
+                    <TableCell>
+                      {g.uploaded > 0 ? (
+                        <Badge variant="pending">{g.uploaded}</Badge>
+                      ) : (
+                        <span className="text-silver/40 text-xs">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">
+                      {g.verified > 0 ? (
+                        <Badge variant="success">{g.verified}</Badge>
+                      ) : (
+                        <span className="text-silver/40 text-xs">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">
+                      {g.rejected > 0 ? (
+                        <Badge variant="destructive">{g.rejected}</Badge>
+                      ) : (
+                        <span className="text-silver/40 text-xs">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="hidden lg:table-cell">
+                      {g.expired > 0 ? (
+                        <Badge variant="destructive">{g.expired}</Badge>
+                      ) : (
+                        <span className="text-silver/40 text-xs">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="hidden lg:table-cell text-silver text-xs tabular-nums">
+                      {fmtAge(new Date(g.lastActivity).toISOString(), now)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <ChevronRight className="h-4 w-4 text-silver/60" />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
+        )}
+
+      {/* Per-associate folder. Opens from either view: clicking a row in the
+          associates list or clicking the avatar/name in the queue's table. */}
+      <Drawer
+        open={selectedGroup !== null}
+        onOpenChange={(o) => !o && setSelectedAssociateId(null)}
+        width="max-w-3xl"
+      >
+        {selectedGroup && (
+          <>
+            <DrawerHeader>
+              <div className="flex items-center gap-3">
+                <Avatar name={selectedGroup.associateName} size="md" />
+                <div className="min-w-0">
+                  <DrawerTitle className="truncate">
+                    {selectedGroup.associateName}
+                  </DrawerTitle>
+                  <DrawerDescription>
+                    {selectedGroup.total} document
+                    {selectedGroup.total === 1 ? '' : 's'} on file
+                  </DrawerDescription>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-1.5 mt-3">
+                {selectedGroup.uploaded > 0 && (
+                  <Badge variant="pending">
+                    {selectedGroup.uploaded} awaiting
+                  </Badge>
+                )}
+                {selectedGroup.verified > 0 && (
+                  <Badge variant="success">
+                    {selectedGroup.verified} verified
+                  </Badge>
+                )}
+                {selectedGroup.rejected > 0 && (
+                  <Badge variant="destructive">
+                    {selectedGroup.rejected} rejected
+                  </Badge>
+                )}
+                {selectedGroup.expired > 0 && (
+                  <Badge variant="destructive">
+                    {selectedGroup.expired} expired
+                  </Badge>
+                )}
+              </div>
+            </DrawerHeader>
+            <DrawerBody>
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead>File</TableHead>
+                    <TableHead className="hidden md:table-cell">Kind</TableHead>
+                    <TableHead className="w-24">Uploaded</TableHead>
+                    <TableHead className="w-28">Status</TableHead>
+                    {canManage && (
+                      <TableHead className="w-32 text-right" aria-label="Actions" />
+                    )}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {selectedGroup.docs.map((d) => (
+                    <TableRow key={d.id} className="group">
+                      <TableCell>
+                        <a
+                          href={downloadDocumentUrl(d.id)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-gold hover:text-gold-bright underline-offset-4 hover:underline font-medium inline-flex items-center gap-1.5 max-w-xs truncate"
+                          title={d.filename}
+                        >
+                          <FileText className="h-3.5 w-3.5 shrink-0" />
+                          <span className="truncate">{d.filename}</span>
+                          <ExternalLink className="h-3 w-3 shrink-0 opacity-60" />
+                        </a>
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell text-xs text-silver uppercase tracking-wider">
+                        {d.kind.replace(/_/g, ' ')}
+                      </TableCell>
+                      <TableCell className="text-silver text-xs tabular-nums">
+                        {fmtAge(d.createdAt, now)}
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={STATUS_VARIANT[d.status]}
+                          data-status={d.status}
+                        >
+                          {d.status}
+                        </Badge>
+                        {d.rejectionReason && (
+                          <div
+                            className="text-alert text-[10px] mt-1 max-w-[160px] truncate"
+                            title={d.rejectionReason}
+                          >
+                            {d.rejectionReason}
+                          </div>
+                        )}
+                      </TableCell>
+                      {canManage && (
+                        <TableCell className="text-right whitespace-nowrap">
+                          <div className="flex items-center justify-end gap-1">
+                            {(d.status === 'UPLOADED' ||
+                              d.status === 'REJECTED') && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => onVerify(d)}
+                                loading={pendingId === d.id}
+                                title="Mark verified"
+                                className="text-success hover:text-success"
+                              >
+                                <ShieldCheck className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                            {(d.status === 'UPLOADED' ||
+                              d.status === 'VERIFIED') && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => {
+                                  setRejectTarget(d);
+                                  setRejectReason('');
+                                }}
+                                disabled={pendingId === d.id}
+                                title="Reject with reason"
+                                className="text-alert hover:text-alert"
+                              >
+                                <ShieldAlert className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                          </div>
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </DrawerBody>
+            <DrawerFooter>
+              <Button
+                variant="ghost"
+                onClick={() => setSelectedAssociateId(null)}
+              >
+                Close
+              </Button>
+            </DrawerFooter>
+          </>
+        )}
+      </Drawer>
 
       {/* Rejection dialog — replaces the old window.prompt so we can capture
           a real reason with markdown line breaks etc. and surface validation. */}
