@@ -13,20 +13,21 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { emit as emitWorkflow } from '../lib/workflow.js';
+import { enqueueAudit } from '../lib/audit.js';
 
 export const positionsRouter = Router();
 
 const VIEW = requireCapability('view:org');
 const MANAGE = requireCapability('manage:org');
 
-async function audit(
+function audit(
   req: Request,
   action: string,
   entityId: string,
   metadata: Record<string, unknown> = {},
-): Promise<void> {
-  await prisma.auditLog.create({
-    data: {
+): void {
+  enqueueAudit(
+    {
       actorUserId: req.user!.id,
       action,
       entityType: 'Position',
@@ -37,7 +38,8 @@ async function audit(
         ...metadata,
       },
     },
-  });
+    `positions.${action}`
+  );
 }
 
 function shape(

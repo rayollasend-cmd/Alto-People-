@@ -29,7 +29,7 @@ import { hashPdf, renderPaystubPdf, type PaystubData } from '../lib/paystub.js';
 import { pickAdapter, type DisbursementInput } from '../lib/disbursement.js';
 import { decryptString } from '../lib/crypto.js';
 import type { PayoutMethod } from '@prisma/client';
-import { recordPayrollEvent } from '../lib/audit.js';
+import { enqueueAudit, recordPayrollEvent } from '../lib/audit.js';
 import {
   isStubMode as qboIsStubMode,
   postPayrollJournalEntry,
@@ -258,8 +258,8 @@ payrollRouter.patch(
 
       // Audit at the associate scope (recordPayrollEvent hardcodes
       // entityType: 'PayrollRun' which would be wrong here).
-      await prisma.auditLog.create({
-        data: {
+      enqueueAudit(
+        {
           actorUserId: req.user!.id,
           action: 'payroll.branch_enrollment_updated',
           entityType: 'Associate',
@@ -270,7 +270,8 @@ payrollRouter.patch(
             hasCard: branchCardId !== null,
           },
         },
-      });
+        'payroll.branch_enrollment_updated'
+      );
 
       res.json({ ok: true, branchCardId });
     } catch (err) {

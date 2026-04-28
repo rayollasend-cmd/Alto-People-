@@ -17,6 +17,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { asOf, recordChange } from '../lib/associateHistory.js';
+import { enqueueAudit } from '../lib/audit.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 
 export const orgRouter = Router();
@@ -24,15 +25,15 @@ export const orgRouter = Router();
 const VIEW = requireCapability('view:org');
 const MANAGE = requireCapability('manage:org');
 
-async function audit(
+function audit(
   req: Request,
   action: string,
   entityType: string,
   entityId: string,
   metadata: Record<string, unknown> = {},
-): Promise<void> {
-  await prisma.auditLog.create({
-    data: {
+): void {
+  enqueueAudit(
+    {
       actorUserId: req.user!.id,
       action,
       entityType,
@@ -43,7 +44,8 @@ async function audit(
         ...metadata,
       },
     },
-  });
+    `org.${action}`
+  );
 }
 
 // ----- Departments --------------------------------------------------------

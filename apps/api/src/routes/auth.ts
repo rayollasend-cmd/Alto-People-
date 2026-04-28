@@ -18,11 +18,16 @@ import {
   DUMMY_HASH,
 } from '../lib/passwords.js';
 import {
+  enqueueAudit,
   recordLoginFailure,
   recordLoginSuccess,
   recordLogout,
 } from '../lib/audit.js';
-import { requireAuth, SESSION_COOKIE } from '../middleware/auth.js';
+import {
+  invalidateUserCache,
+  requireAuth,
+  SESSION_COOKIE,
+} from '../middleware/auth.js';
 import {
   loginIpLimiter,
   loginEmailLimiter,
@@ -194,6 +199,10 @@ authRouter.post('/logout', async (req, res, next) => {
         clientId: req.user.clientId,
         req,
       });
+      // Drop any cached SessionUser so a stolen cookie can't ride a still-
+      // warm cache entry past the cookie clear. (Defense in depth — the JWT
+      // itself isn't invalidated server-side on logout in this codebase.)
+      invalidateUserCache(req.user.id);
     }
     res.clearCookie(SESSION_COOKIE, cookieOptions());
     res.status(204).end();
@@ -398,8 +407,8 @@ authRouter.post('/change-password', requireAuth, changePasswordLimiter, async (r
     });
     res.cookie(SESSION_COOKIE, sessionToken, cookieOptions());
 
-    await prisma.auditLog.create({
-      data: {
+    enqueueAudit(
+      {
         actorUserId: updated.id,
         clientId: updated.clientId ?? null,
         action: 'auth.password_changed',
@@ -410,7 +419,8 @@ authRouter.post('/change-password', requireAuth, changePasswordLimiter, async (r
           userAgent: req.headers['user-agent'] ?? null,
         },
       },
-    });
+      'auth.password_changed'
+    );
 
     res.status(204).end();
   } catch (err) {
@@ -447,6 +457,10 @@ authRouter.patch('/me/profile', requireAuth, async (req, res, next) => {
       },
       select: { firstName: true, lastName: true, email: true },
     });
+    // Drop the cached SessionUser so the new firstName/lastName surface on
+    // the very next request (chrome avatars, mentions, audit display) rather
+    // than after the 30s TTL.
+    invalidateUserCache(req.user!.id);
     res.json(updated);
   } catch (err) {
     next(err);

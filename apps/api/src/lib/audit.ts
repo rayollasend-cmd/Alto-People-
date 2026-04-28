@@ -1,5 +1,36 @@
 import type { Request } from 'express';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
+
+// ---------------------------------------------------------------------------
+// Fire-and-forget audit writes
+//
+// Every onboarding mutation, time-clock event, shift update, etc. previously
+// `await`-ed `prisma.auditLog.create(...)` before responding. At hundreds of
+// associates each making dozens of audited actions per day, the cumulative
+// 5-15ms per audit insert sat right on the request critical path. Audit rows
+// are not user-visible and not strict-consistency-critical: a 50-100ms lag
+// between the action returning and the row landing is fine for forensics.
+//
+// This helper kicks off the create synchronously, swallows the promise,
+// logs failures so they aren't silent. Each public `recordXxx` helper builds
+// its data row and calls `enqueueAudit`, so the call site signature stays
+// `async`/`Promise<void>` (existing `await recordXxx(...)` keeps working —
+// it now just resolves immediately).
+//
+// Caveat: if the Node process crashes between response and audit insert,
+// the row is lost. Acceptable for this app; if it ever isn't, swap this
+// for a durable queue (Bull, RabbitMQ) without touching call sites.
+// ---------------------------------------------------------------------------
+
+export function enqueueAudit(
+  data: Prisma.AuditLogUncheckedCreateInput,
+  where: string
+): void {
+  prisma.auditLog.create({ data }).catch((err) => {
+    console.error(`[audit] ${where} failed:`, err);
+  });
+}
 
 interface LoginContext {
   email: string;
@@ -36,8 +67,8 @@ function meta(req: Request, extra: Record<string, unknown> = {}) {
 }
 
 export async function recordLoginSuccess(ctx: LoginSuccessContext) {
-  await prisma.auditLog.create({
-    data: {
+  enqueueAudit(
+    {
       actorUserId: ctx.userId,
       clientId: ctx.clientId ?? null,
       action: 'auth.login',
@@ -45,25 +76,27 @@ export async function recordLoginSuccess(ctx: LoginSuccessContext) {
       entityId: ctx.userId,
       metadata: meta(ctx.req, { email: ctx.email }),
     },
-  });
+    'recordLoginSuccess'
+  );
 }
 
 export async function recordLoginFailure(ctx: LoginFailureContext) {
   // We don't have a user ID by definition — entityId records the attempted email.
-  await prisma.auditLog.create({
-    data: {
+  enqueueAudit(
+    {
       actorUserId: null,
       action: 'auth.login_failed',
       entityType: 'User',
       entityId: ctx.email,
       metadata: meta(ctx.req, { email: ctx.email, reason: ctx.reason }),
     },
-  });
+    'recordLoginFailure'
+  );
 }
 
 export async function recordLogout(ctx: LogoutContext) {
-  await prisma.auditLog.create({
-    data: {
+  enqueueAudit(
+    {
       actorUserId: ctx.userId,
       clientId: ctx.clientId ?? null,
       action: 'auth.logout',
@@ -71,7 +104,8 @@ export async function recordLogout(ctx: LogoutContext) {
       entityId: ctx.userId,
       metadata: meta(ctx.req),
     },
-  });
+    'recordLogout'
+  );
 }
 
 /* -------------------------------------------------------------------------- *
@@ -107,8 +141,8 @@ export async function recordComplianceEvent(ctx: ComplianceEventContext) {
   const reqMeta = ctx.req
     ? { ip: ctx.req.ip ?? null, userAgent: ctx.req.headers['user-agent'] ?? null }
     : {};
-  await prisma.auditLog.create({
-    data: {
+  enqueueAudit(
+    {
       actorUserId: ctx.actorUserId,
       clientId: ctx.clientId ?? null,
       action: ctx.action,
@@ -116,7 +150,8 @@ export async function recordComplianceEvent(ctx: ComplianceEventContext) {
       entityId: ctx.entityId,
       metadata: { associateId: ctx.associateId, ...reqMeta, ...(ctx.metadata ?? {}) },
     },
-  });
+    'recordComplianceEvent'
+  );
 }
 
 interface TimeEventContext {
@@ -143,8 +178,8 @@ export async function recordDocumentEvent(ctx: DocumentEventContext) {
   const reqMeta = ctx.req
     ? { ip: ctx.req.ip ?? null, userAgent: ctx.req.headers['user-agent'] ?? null }
     : {};
-  await prisma.auditLog.create({
-    data: {
+  enqueueAudit(
+    {
       actorUserId: ctx.actorUserId,
       clientId: ctx.clientId ?? null,
       action: ctx.action,
@@ -156,7 +191,8 @@ export async function recordDocumentEvent(ctx: DocumentEventContext) {
         ...(ctx.metadata ?? {}),
       },
     },
-  });
+    'recordDocumentEvent'
+  );
 }
 
 interface PayrollEventContext {
@@ -172,8 +208,8 @@ export async function recordPayrollEvent(ctx: PayrollEventContext) {
   const reqMeta = ctx.req
     ? { ip: ctx.req.ip ?? null, userAgent: ctx.req.headers['user-agent'] ?? null }
     : {};
-  await prisma.auditLog.create({
-    data: {
+  enqueueAudit(
+    {
       actorUserId: ctx.actorUserId,
       clientId: ctx.clientId ?? null,
       action: ctx.action,
@@ -181,7 +217,8 @@ export async function recordPayrollEvent(ctx: PayrollEventContext) {
       entityId: ctx.payrollRunId,
       metadata: { ...reqMeta, ...(ctx.metadata ?? {}) },
     },
-  });
+    'recordPayrollEvent'
+  );
 }
 
 interface ShiftEventContext {
@@ -197,8 +234,8 @@ export async function recordShiftEvent(ctx: ShiftEventContext) {
   const reqMeta = ctx.req
     ? { ip: ctx.req.ip ?? null, userAgent: ctx.req.headers['user-agent'] ?? null }
     : {};
-  await prisma.auditLog.create({
-    data: {
+  enqueueAudit(
+    {
       actorUserId: ctx.actorUserId,
       clientId: ctx.clientId,
       action: ctx.action,
@@ -206,15 +243,16 @@ export async function recordShiftEvent(ctx: ShiftEventContext) {
       entityId: ctx.shiftId,
       metadata: { ...reqMeta, ...(ctx.metadata ?? {}) },
     },
-  });
+    'recordShiftEvent'
+  );
 }
 
 export async function recordTimeEvent(ctx: TimeEventContext) {
   const reqMeta = ctx.req
     ? { ip: ctx.req.ip ?? null, userAgent: ctx.req.headers['user-agent'] ?? null }
     : {};
-  await prisma.auditLog.create({
-    data: {
+  enqueueAudit(
+    {
       actorUserId: ctx.actorUserId,
       clientId: ctx.clientId ?? null,
       action: ctx.action,
@@ -226,15 +264,16 @@ export async function recordTimeEvent(ctx: TimeEventContext) {
         ...(ctx.metadata ?? {}),
       },
     },
-  });
+    'recordTimeEvent'
+  );
 }
 
 export async function recordOnboardingEvent(ctx: OnboardingEventContext) {
   const reqMeta = ctx.req
     ? { ip: ctx.req.ip ?? null, userAgent: ctx.req.headers['user-agent'] ?? null }
     : {};
-  await prisma.auditLog.create({
-    data: {
+  enqueueAudit(
+    {
       actorUserId: ctx.actorUserId,
       clientId: ctx.clientId ?? null,
       action: ctx.action,
@@ -247,5 +286,6 @@ export async function recordOnboardingEvent(ctx: OnboardingEventContext) {
         ...(ctx.metadata ?? {}),
       },
     },
-  });
+    'recordOnboardingEvent'
+  );
 }

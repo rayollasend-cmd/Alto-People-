@@ -15,19 +15,20 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopeClients } from '../lib/scope.js';
+import { enqueueAudit } from '../lib/audit.js';
 
 export const clientsRouter = Router();
 
 const MANAGE = requireCapability('manage:clients');
 
-async function auditClient(
+function auditClient(
   req: Request,
   action: string,
   clientId: string,
   metadata: Record<string, unknown> = {}
-): Promise<void> {
-  await prisma.auditLog.create({
-    data: {
+): void {
+  enqueueAudit(
+    {
       actorUserId: req.user!.id,
       clientId,
       action,
@@ -39,7 +40,8 @@ async function auditClient(
         ...metadata,
       },
     },
-  });
+    `clients.${action}`
+  );
 }
 
 /**

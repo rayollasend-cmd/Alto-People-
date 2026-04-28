@@ -36,7 +36,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopeShifts } from '../lib/scope.js';
-import { recordShiftEvent } from '../lib/audit.js';
+import { enqueueAudit, recordShiftEvent } from '../lib/audit.js';
 import { formatShiftLine, notifyShift } from '../lib/notifyShift.js';
 import { netWorkedMinutes, startOfWeekUTC, endOfWeekUTC } from '../lib/timeAnomalies.js';
 import {
@@ -1459,8 +1459,8 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
     }));
     const result = await prisma.shift.createMany({ data });
 
-    await prisma.auditLog.create({
-      data: {
+    enqueueAudit(
+      {
         actorUserId: req.user!.id,
         action: 'scheduling.copied_week',
         entityType: 'Shift',
@@ -1473,7 +1473,8 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
           createdCount: result.count,
         },
       },
-    });
+      'scheduling.copied_week'
+    );
 
     const body: CopyWeekResponse = { created: result.count, skipped: 0 };
     res.json(body);

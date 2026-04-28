@@ -6,7 +6,7 @@ import { createReadStream, statSync } from 'node:fs';
 import { extname } from 'node:path';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { requireAuth } from '../middleware/auth.js';
+import { invalidateUserCache, requireAuth } from '../middleware/auth.js';
 import { resolveStoragePath, PROFILE_PHOTO_DIR } from '../lib/storage.js';
 
 /**
@@ -92,6 +92,11 @@ profilePhotoRouter.post(
       }
     }
 
+    // photoUrl is part of the cached SessionUser; bumping photoUpdatedAt
+    // changes the cache-bust query, so flush the cache so chrome reflects
+    // the new photo on the next request.
+    invalidateUserCache(req.user!.id);
+
     res.status(201).json({ ok: true });
   },
 );
@@ -123,6 +128,7 @@ profilePhotoRouter.delete(
         /* swallow */
       }
     }
+    invalidateUserCache(req.user!.id);
     res.status(204).end();
   },
 );
