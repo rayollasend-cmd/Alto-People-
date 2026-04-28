@@ -1,15 +1,27 @@
 import { useEffect, useState } from 'react';
 import { AlertCircle, Calendar, Clock, ShieldAlert } from 'lucide-react';
+import { toast } from 'sonner';
+import { ApiError } from '@/lib/api';
 import {
   getExpirations,
   type ExpirationItem,
   type ExpirationsResponse,
 } from '@/lib/expirations113Api';
+import { grantAssociateQual } from '@/lib/qualApi';
+import { useAuth } from '@/lib/auth';
+import { hasCapability } from '@/lib/roles';
 import {
   Badge,
+  Button,
   Card,
   CardContent,
+  Drawer,
+  DrawerBody,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
   EmptyState,
+  Input,
   PageHeader,
   SkeletonRows,
   Table,
@@ -19,6 +31,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui';
+import { Label } from '@/components/ui/Label';
 
 /**
  * Phase 113 — Expiration dashboard.
@@ -26,13 +39,21 @@ import {
  * Three buckets stacked: expired (urgent — block deployment),
  * due soon (next N days), due later (informational, capped at 365).
  * Toggle between certs only / all qualifications.
+ *
+ * Click a row to renew the qualification — upserts AssociateQualification
+ * with new acquiredAt + expiresAt. Manage:scheduling required.
  */
 export function ExpirationsHome() {
+  const { user } = useAuth();
+  const canRenew = user
+    ? hasCapability(user.role, 'manage:scheduling')
+    : false;
   const [data, setData] = useState<ExpirationsResponse | null>(null);
   const [days, setDays] = useState<30 | 60 | 90>(60);
   const [filter, setFilter] = useState<'all' | 'cert'>('all');
+  const [renewTarget, setRenewTarget] = useState<ExpirationItem | null>(null);
 
-  useEffect(() => {
+  const refresh = () => {
     setData(null);
     getExpirations({
       days,
@@ -40,6 +61,11 @@ export function ExpirationsHome() {
     })
       .then(setData)
       .catch(() => setData(null));
+  };
+
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [days, filter]);
 
   return (
@@ -98,6 +124,8 @@ export function ExpirationsHome() {
             count={data.counts.expired}
             items={data.expired}
             emptyHint="Nothing expired."
+            canRenew={canRenew}
+            onRenew={setRenewTarget}
           />
           <Bucket
             title={`Due in next ${data.days} days`}
@@ -106,6 +134,8 @@ export function ExpirationsHome() {
             count={data.counts.dueSoon}
             items={data.dueSoon}
             emptyHint="Nothing due soon."
+            canRenew={canRenew}
+            onRenew={setRenewTarget}
           />
           <Bucket
             title="Due later (within 1 year)"
@@ -114,8 +144,21 @@ export function ExpirationsHome() {
             count={data.counts.dueLater}
             items={data.dueLater}
             emptyHint="Nothing further out."
+            canRenew={canRenew}
+            onRenew={setRenewTarget}
           />
         </div>
+      )}
+
+      {renewTarget && (
+        <RenewDrawer
+          item={renewTarget}
+          onClose={() => setRenewTarget(null)}
+          onSaved={() => {
+            setRenewTarget(null);
+            refresh();
+          }}
+        />
       )}
     </div>
   );
@@ -128,6 +171,8 @@ function Bucket({
   count,
   items,
   emptyHint,
+  canRenew,
+  onRenew,
 }: {
   title: string;
   icon: React.ComponentType<{ className?: string }>;
@@ -135,6 +180,8 @@ function Bucket({
   count: number;
   items: ExpirationItem[];
   emptyHint: string;
+  canRenew: boolean;
+  onRenew: (item: ExpirationItem) => void;
 }) {
   return (
     <Card>
@@ -158,11 +205,16 @@ function Bucket({
                 <TableHead>Code</TableHead>
                 <TableHead>Expires</TableHead>
                 <TableHead>In</TableHead>
+                {canRenew && <TableHead className="text-right">Action</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
               {items.slice(0, 100).map((i) => (
-                <TableRow key={i.id}>
+                <TableRow
+                  key={i.id}
+                  className={canRenew ? 'cursor-pointer' : ''}
+                  onClick={canRenew ? () => onRenew(i) : undefined}
+                >
                   <TableCell className="font-medium text-white">
                     {i.associateName}
                   </TableCell>
@@ -184,6 +236,20 @@ function Bucket({
                       <span className="text-silver">{i.daysUntilExpiry}d</span>
                     )}
                   </TableCell>
+                  {canRenew && (
+                    <TableCell
+                      className="text-right"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => onRenew(i)}
+                      >
+                        Renew
+                      </Button>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>
@@ -191,5 +257,120 @@ function Bucket({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function RenewDrawer({
+  item,
+  onClose,
+  onSaved,
+}: {
+  item: ExpirationItem;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  // Default new expiry to one year from today — typical cert renewal cycle.
+  const oneYearOut = (() => {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() + 1);
+    return d.toISOString().slice(0, 10);
+  })();
+  const [acquiredAt, setAcquiredAt] = useState(today);
+  const [expiresAt, setExpiresAt] = useState(oneYearOut);
+  const [evidenceKey, setEvidenceKey] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (!expiresAt) {
+      toast.error('New expiration date is required.');
+      return;
+    }
+    if (expiresAt <= acquiredAt) {
+      toast.error('Expiration must be after acquired date.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await grantAssociateQual(item.associateId, {
+        qualificationId: item.qualificationId,
+        acquiredAt,
+        expiresAt,
+        evidenceKey: evidenceKey.trim() || null,
+      });
+      toast.success('Renewed.');
+      onSaved();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+      <DrawerHeader>
+        <DrawerTitle>Renew {item.qualificationName}</DrawerTitle>
+      </DrawerHeader>
+      <DrawerBody className="space-y-4">
+        <div className="text-sm">
+          <div className="text-silver">For</div>
+          <div className="font-medium text-white">{item.associateName}</div>
+          <div className="text-xs text-silver">{item.associateEmail}</div>
+        </div>
+        <div className="text-sm border-t border-navy-secondary pt-3">
+          <div className="text-silver">Currently expires</div>
+          <div className="text-white">
+            {new Date(item.expiresAt).toLocaleDateString()}
+            {item.daysUntilExpiry < 0 ? (
+              <span className="text-rose-400 ml-2">
+                ({-item.daysUntilExpiry}d ago)
+              </span>
+            ) : (
+              <span className="text-silver ml-2">
+                (in {item.daysUntilExpiry}d)
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3 pt-3 border-t border-navy-secondary">
+          <div>
+            <Label>Acquired (renewal date)</Label>
+            <Input
+              type="date"
+              className="mt-1"
+              value={acquiredAt}
+              onChange={(e) => setAcquiredAt(e.target.value)}
+            />
+          </div>
+          <div>
+            <Label>New expiration</Label>
+            <Input
+              type="date"
+              className="mt-1"
+              value={expiresAt}
+              onChange={(e) => setExpiresAt(e.target.value)}
+            />
+          </div>
+        </div>
+        <div>
+          <Label>Evidence reference (optional)</Label>
+          <Input
+            className="mt-1"
+            value={evidenceKey}
+            onChange={(e) => setEvidenceKey(e.target.value)}
+            placeholder="Document key, certificate number, file path…"
+          />
+        </div>
+      </DrawerBody>
+      <DrawerFooter>
+        <Button variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button onClick={submit} disabled={busy}>
+          {busy ? 'Saving…' : 'Mark renewed'}
+        </Button>
+      </DrawerFooter>
+    </Drawer>
   );
 }
