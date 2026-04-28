@@ -3,6 +3,7 @@ import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
 import { kioskPunch } from '@/lib/kiosk99Api';
 import { extractDescriptor, loadFaceModels } from '@/lib/faceMatch';
+import { Logo } from '@/components/Logo';
 import {
   drainQueue,
   enqueuePunch,
@@ -318,6 +319,7 @@ function IdleScreen({ now, onTap }: { now: Date; onTap: () => void }) {
       onClick={onTap}
       className="w-full h-full flex flex-col items-center justify-center"
     >
+      <Logo size="xl" className="mb-6 rounded-xl" alt="Alto HR" />
       <div className="text-cyan-400 text-sm uppercase tracking-widest mb-4">
         Alto Kiosk
       </div>

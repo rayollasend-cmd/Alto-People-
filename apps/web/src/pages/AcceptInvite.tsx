@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Label, FormHint } from '@/components/ui/Label';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { Logo } from '@/components/Logo';
 
 export function AcceptInvite() {
   const { token } = useParams<{ token: string }>();
@@ -88,6 +89,7 @@ export function AcceptInvite() {
     <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-gradient-to-br from-midnight via-navy to-navy-secondary">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
+          <Logo size="xl" className="mx-auto mb-4 rounded-xl" alt="Alto HR" />
           <h1 className="font-display text-5xl md:text-6xl text-gold mb-2 leading-none">
             Alto People
           </h1>

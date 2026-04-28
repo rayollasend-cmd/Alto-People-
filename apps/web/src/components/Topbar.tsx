@@ -18,6 +18,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip';
 import { Avatar } from '@/components/ui/Avatar';
 import { NotificationsBell } from './NotificationsBell';
+import { Logo } from '@/components/Logo';
 
 interface TopbarProps {
   onOpenMobileNav: () => void;
@@ -53,6 +54,7 @@ export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
       >
         <Menu className="h-5 w-5" />
       </Button>
+      <Logo size="xs" className="md:hidden" alt="Alto HR" />
 
       {/* Page title / breadcrumbs — sticks in chrome so wayfinding survives
           scroll. Prefer the breadcrumb trail when the page provided one;

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ShieldQuestion, FileText, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
+import { Logo } from '@/components/Logo';
 import {
   fileAnonymousReport,
   lookupReportByCode,
@@ -35,6 +36,9 @@ export function HotlinePage() {
   return (
     <div className="min-h-screen bg-midnight text-white">
       <div className="max-w-2xl mx-auto px-6 py-12">
+        <div className="flex items-center justify-center mb-6">
+          <Logo size="lg" alt="Alto HR" />
+        </div>
         <div className="flex items-center gap-3 mb-2">
           <ShieldQuestion className="h-7 w-7 text-blue-300" />
           <h1 className="text-2xl font-semibold">Confidential Reporting</h1>

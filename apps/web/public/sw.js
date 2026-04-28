@@ -9,8 +9,8 @@
 //     never cache business data, since it'd diverge from the source of
 //     truth and potentially leak across user sessions.
 
-const CACHE_NAME = 'alto-shell-v1';
-const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon-192.svg', '/icon-512.svg'];
+const CACHE_NAME = 'alto-shell-v2';
+const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/logo.png', '/icon-512.svg'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

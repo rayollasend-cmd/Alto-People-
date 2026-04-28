@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
-  Briefcase,
   ChevronDown,
   ChevronUp,
   ChevronsUpDown,
@@ -17,6 +16,7 @@ import {
   User,
   type LucideIcon,
 } from 'lucide-react';
+import { Logo } from '@/components/Logo';
 import {
   DASHBOARD_NAV,
   GROUP_LABEL,
@@ -204,12 +204,7 @@ function SidebarBrand({ railCollapsed, onToggleRail }: SidebarBrandProps) {
     >
       {!railCollapsed && (
         <>
-          <div
-            className="h-7 w-7 rounded-md bg-gold/15 border border-gold/40 grid place-items-center shrink-0"
-            aria-hidden="true"
-          >
-            <Briefcase className="h-3.5 w-3.5 text-gold" />
-          </div>
+          <Logo size="sm" alt="Alto HR" />
           <span className="font-display text-lg text-white leading-none tracking-tight truncate">
             Alto <span className="text-gold">People</span>
           </span>
