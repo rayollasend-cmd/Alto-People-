@@ -5,8 +5,9 @@ import { env } from '../config/env.js';
  * Phase 99 — kiosk auth helpers.
  *
  * PIN storage: 4-digit PIN → HMAC-SHA256 keyed with KIOSK_PIN_SECRET.
- * Lookup is by (clientId, pinHmac) so it's O(1) without leaking the PIN
- * from a DB-only dump (the secret is needed to brute-force).
+ * Lookup is by pinHmac (now globally unique per the employee-number
+ * refactor) so it's O(1) without leaking the PIN from a DB-only dump
+ * (the secret is needed to brute-force).
  *
  * Device tokens: 32-byte random token, prefixed `altokiosk_`. Stored as
  * bcrypt hash (we already use bcrypt for passwords). Plaintext shown

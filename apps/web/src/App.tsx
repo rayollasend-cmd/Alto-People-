@@ -158,6 +158,16 @@ const PLACEHOLDER_MODULES = MODULES.filter(
     m.key !== 'audit' &&
     m.key !== 'benefits' &&
     m.key !== 'org' &&
+    m.key !== 'org-chart' &&
+    m.key !== 'people' &&
+    m.key !== 'celebrations' &&
+    m.key !== 'assets' &&
+    m.key !== 'pulse' &&
+    m.key !== 'headcount' &&
+    m.key !== 'skills' &&
+    m.key !== 'mentorship' &&
+    m.key !== 'expirations' &&
+    m.key !== 'learning-paths' &&
     m.key !== 'team' &&
     m.key !== 'workflows' &&
     m.key !== 'me' &&
