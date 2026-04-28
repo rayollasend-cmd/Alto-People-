@@ -1,3 +1,4 @@
+import { lazy, Suspense, type ComponentType } from 'react';
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { Login } from '@/pages/Login';
@@ -6,85 +7,141 @@ import { Dashboard } from '@/pages/Dashboard';
 import { ModulePlaceholder } from '@/pages/ModulePlaceholder';
 import { MODULES } from '@/lib/modules';
 import { RequireAuth } from '@/lib/auth';
-import { OnboardingHome } from '@/pages/onboarding/OnboardingHome';
-import { ApplicationDetail } from '@/pages/onboarding/ApplicationDetail';
-import { AssociateChecklist } from '@/pages/onboarding/AssociateChecklist';
-import { TemplatesList } from '@/pages/onboarding/TemplatesList';
-import { TemplateEditor } from '@/pages/onboarding/TemplateEditor';
-import { OnboardingAnalytics } from '@/pages/onboarding/OnboardingAnalytics';
-import { ProfileInfoTask } from '@/pages/onboarding/tasks/ProfileInfoTask';
-import { W4Task } from '@/pages/onboarding/tasks/W4Task';
-import { DirectDepositTask } from '@/pages/onboarding/tasks/DirectDepositTask';
-import { PolicyAckTask } from '@/pages/onboarding/tasks/PolicyAckTask';
-import { I9Task } from '@/pages/onboarding/tasks/I9Task';
-import { DocumentUploadTask } from '@/pages/onboarding/tasks/DocumentUploadTask';
-import { BackgroundCheckTask } from '@/pages/onboarding/tasks/BackgroundCheckTask';
-import { J1DocsTask } from '@/pages/onboarding/tasks/J1DocsTask';
-import { StubTask } from '@/pages/onboarding/tasks/StubTask';
-import { TimeHome } from '@/pages/time/TimeHome';
-import { TimeOffHome } from '@/pages/timeoff/TimeOffHome';
-import { ClientsHome } from '@/pages/clients/ClientsHome';
-import { ClientDetail } from '@/pages/clients/ClientDetail';
-import { SchedulingHome } from '@/pages/scheduling/SchedulingHome';
-import { PayrollHome } from '@/pages/payroll/PayrollHome';
-import { DocumentsHome } from '@/pages/documents/DocumentsHome';
-import { ComplianceHome } from '@/pages/compliance/ComplianceHome';
-import { CommunicationsHome } from '@/pages/communications/CommunicationsHome';
-import { PerformanceHome } from '@/pages/performance/PerformanceHome';
-import { RecruitingHome } from '@/pages/recruiting/RecruitingHome';
-import { AnalyticsHome } from '@/pages/analytics/AnalyticsHome';
-import { Settings } from '@/pages/Settings';
-import { AuditHome } from '@/pages/audit/AuditHome';
-import { BenefitsHome } from '@/pages/benefits/BenefitsHome';
-import { OrgHome } from '@/pages/org/OrgHome';
-import { PeopleDirectory } from '@/pages/people/PeopleDirectory';
-import { OrgChart } from '@/pages/org/OrgChart';
-import { CelebrationsHome } from '@/pages/celebrations/CelebrationsHome';
-import { AssetsHome } from '@/pages/assets/AssetsHome';
-import { PulseHome } from '@/pages/pulse/PulseHome';
-import { HeadcountHome } from '@/pages/headcount/HeadcountHome';
-import { SkillsHome } from '@/pages/skills/SkillsHome';
-import { MentorshipHome } from '@/pages/mentorship/MentorshipHome';
-import { ExpirationsHome } from '@/pages/expirations/ExpirationsHome';
-import { LearningPathsHome } from '@/pages/learningPaths/LearningPathsHome';
-import { SuccessionHome } from '@/pages/succession/SuccessionHome';
-import { ProbationHome } from '@/pages/probation/ProbationHome';
-import { HolidaysHome } from '@/pages/holidays/HolidaysHome';
-import { DisciplineHome } from '@/pages/discipline/DisciplineHome';
-import { SeparationHome } from '@/pages/separation/SeparationHome';
-import { InternalJobsHome } from '@/pages/internalJobs/InternalJobsHome';
-import { VaccinationsHome } from '@/pages/vaccinations/VaccinationsHome';
-import { AgreementsHome } from '@/pages/agreements/AgreementsHome';
-import { HrCasesHome } from '@/pages/hrCases/HrCasesHome';
-import { KbHome } from '@/pages/kb/KbHome';
-import { RampHome } from '@/pages/ramp/RampHome';
-import { CareerHome } from '@/pages/career/CareerHome';
-import { TuitionHome } from '@/pages/tuition/TuitionHome';
-import { HotlinePage } from '@/pages/hotline/HotlinePage';
-import { HotlineAdmin } from '@/pages/hotline/HotlineAdmin';
-import { EquityHome } from '@/pages/equity/EquityHome';
-import { VtoHome } from '@/pages/vto/VtoHome';
-import { TeamHome } from '@/pages/team/TeamHome';
-import { WorkflowsHome } from '@/pages/workflows/WorkflowsHome';
-import { MeHome } from '@/pages/me/MeHome';
-import { CompensationHome } from '@/pages/compensation/CompensationHome';
-import { PerformanceExtras } from '@/pages/performance/PerformanceExtras';
-import { MarketplaceHome } from '@/pages/marketplace/MarketplaceHome';
-import { PayRulesHome } from '@/pages/payrules/PayRulesHome';
-import { DirCommsHome } from '@/pages/dirComms/DirCommsHome';
-import { OshaWcEeoHome } from '@/pages/compliance/OshaWcEeoHome';
-import { TemplatesHome } from '@/pages/templates/TemplatesHome';
-import { RecruitingExtras } from '@/pages/recruiting/RecruitingExtras';
-import { PayrollTaxHome } from '@/pages/payrollTax/PayrollTaxHome';
-import { BenefitsLifecycle } from '@/pages/benefits/BenefitsLifecycle';
-import { IntegrationsHome } from '@/pages/integrations/IntegrationsHome';
-import { LearningHome } from '@/pages/learning/LearningHome';
-import { WorktagsHome } from '@/pages/worktags/WorktagsHome';
-import { ReportsHome } from '@/pages/reports/ReportsHome';
-import { ReimbursementsHome } from '@/pages/reimbursements/ReimbursementsHome';
-import { KioskPage } from '@/pages/kiosk/KioskPage';
-import { KioskAdmin } from '@/pages/kiosk/KioskAdmin';
 import { RouterErrorPage } from '@/pages/RouterErrorPage';
+
+// ---------------------------------------------------------------------------
+// Code splitting
+//
+// Every page below is lazy-loaded into its own chunk so the initial JS payload
+// is just the chrome (Layout, AuthProvider, sidebar/topbar, design system) +
+// the route the user landed on. The pages eagerly imported above are the ones
+// the user is guaranteed to hit on the critical path:
+//   - Login / AcceptInvite / RouterErrorPage — first paint, must be instant
+//   - Layout / RequireAuth — chrome that wraps every authed route
+//   - Dashboard — index route, shown immediately after login
+//   - ModulePlaceholder — used by ~50 placeholder routes (not worth chunking)
+//
+// Page modules use named exports (`export function FooPage`), so we adapt them
+// for React.lazy() (which expects a default export) via `.then(m => ({ default: m.X }))`.
+// ---------------------------------------------------------------------------
+
+function lazyNamed<T extends ComponentType<any>>(
+  loader: () => Promise<Record<string, unknown>>,
+  exportName: string
+) {
+  return lazy(() =>
+    loader().then((mod) => ({ default: mod[exportName] as T }))
+  );
+}
+
+// Onboarding cluster
+const OnboardingHome = lazyNamed(() => import('@/pages/onboarding/OnboardingHome'), 'OnboardingHome');
+const ApplicationDetail = lazyNamed(() => import('@/pages/onboarding/ApplicationDetail'), 'ApplicationDetail');
+const AssociateChecklist = lazyNamed(() => import('@/pages/onboarding/AssociateChecklist'), 'AssociateChecklist');
+const TemplatesList = lazyNamed(() => import('@/pages/onboarding/TemplatesList'), 'TemplatesList');
+const TemplateEditor = lazyNamed(() => import('@/pages/onboarding/TemplateEditor'), 'TemplateEditor');
+const OnboardingAnalytics = lazyNamed(() => import('@/pages/onboarding/OnboardingAnalytics'), 'OnboardingAnalytics');
+const ProfileInfoTask = lazyNamed(() => import('@/pages/onboarding/tasks/ProfileInfoTask'), 'ProfileInfoTask');
+const W4Task = lazyNamed(() => import('@/pages/onboarding/tasks/W4Task'), 'W4Task');
+const DirectDepositTask = lazyNamed(() => import('@/pages/onboarding/tasks/DirectDepositTask'), 'DirectDepositTask');
+const PolicyAckTask = lazyNamed(() => import('@/pages/onboarding/tasks/PolicyAckTask'), 'PolicyAckTask');
+const I9Task = lazyNamed(() => import('@/pages/onboarding/tasks/I9Task'), 'I9Task');
+const DocumentUploadTask = lazyNamed(() => import('@/pages/onboarding/tasks/DocumentUploadTask'), 'DocumentUploadTask');
+const BackgroundCheckTask = lazyNamed(() => import('@/pages/onboarding/tasks/BackgroundCheckTask'), 'BackgroundCheckTask');
+const J1DocsTask = lazyNamed(() => import('@/pages/onboarding/tasks/J1DocsTask'), 'J1DocsTask');
+const StubTask = lazyNamed(() => import('@/pages/onboarding/tasks/StubTask'), 'StubTask');
+
+// Time / scheduling / payroll
+const TimeHome = lazyNamed(() => import('@/pages/time/TimeHome'), 'TimeHome');
+const TimeOffHome = lazyNamed(() => import('@/pages/timeoff/TimeOffHome'), 'TimeOffHome');
+const SchedulingHome = lazyNamed(() => import('@/pages/scheduling/SchedulingHome'), 'SchedulingHome');
+const PayrollHome = lazyNamed(() => import('@/pages/payroll/PayrollHome'), 'PayrollHome');
+const PayrollTaxHome = lazyNamed(() => import('@/pages/payrollTax/PayrollTaxHome'), 'PayrollTaxHome');
+const PayRulesHome = lazyNamed(() => import('@/pages/payrules/PayRulesHome'), 'PayRulesHome');
+const ReimbursementsHome = lazyNamed(() => import('@/pages/reimbursements/ReimbursementsHome'), 'ReimbursementsHome');
+
+// Clients / org / people
+const ClientsHome = lazyNamed(() => import('@/pages/clients/ClientsHome'), 'ClientsHome');
+const ClientDetail = lazyNamed(() => import('@/pages/clients/ClientDetail'), 'ClientDetail');
+const PeopleDirectory = lazyNamed(() => import('@/pages/people/PeopleDirectory'), 'PeopleDirectory');
+const OrgHome = lazyNamed(() => import('@/pages/org/OrgHome'), 'OrgHome');
+const OrgChart = lazyNamed(() => import('@/pages/org/OrgChart'), 'OrgChart');
+const HeadcountHome = lazyNamed(() => import('@/pages/headcount/HeadcountHome'), 'HeadcountHome');
+const TeamHome = lazyNamed(() => import('@/pages/team/TeamHome'), 'TeamHome');
+const DirCommsHome = lazyNamed(() => import('@/pages/dirComms/DirCommsHome'), 'DirCommsHome');
+
+// Documents / compliance
+const DocumentsHome = lazyNamed(() => import('@/pages/documents/DocumentsHome'), 'DocumentsHome');
+const ComplianceHome = lazyNamed(() => import('@/pages/compliance/ComplianceHome'), 'ComplianceHome');
+const OshaWcEeoHome = lazyNamed(() => import('@/pages/compliance/OshaWcEeoHome'), 'OshaWcEeoHome');
+const VaccinationsHome = lazyNamed(() => import('@/pages/vaccinations/VaccinationsHome'), 'VaccinationsHome');
+const AgreementsHome = lazyNamed(() => import('@/pages/agreements/AgreementsHome'), 'AgreementsHome');
+const ExpirationsHome = lazyNamed(() => import('@/pages/expirations/ExpirationsHome'), 'ExpirationsHome');
+
+// Communications / HR cases
+const CommunicationsHome = lazyNamed(() => import('@/pages/communications/CommunicationsHome'), 'CommunicationsHome');
+const HrCasesHome = lazyNamed(() => import('@/pages/hrCases/HrCasesHome'), 'HrCasesHome');
+const HotlineAdmin = lazyNamed(() => import('@/pages/hotline/HotlineAdmin'), 'HotlineAdmin');
+
+// Performance / recruiting / learning
+const PerformanceHome = lazyNamed(() => import('@/pages/performance/PerformanceHome'), 'PerformanceHome');
+const PerformanceExtras = lazyNamed(() => import('@/pages/performance/PerformanceExtras'), 'PerformanceExtras');
+const RecruitingHome = lazyNamed(() => import('@/pages/recruiting/RecruitingHome'), 'RecruitingHome');
+const RecruitingExtras = lazyNamed(() => import('@/pages/recruiting/RecruitingExtras'), 'RecruitingExtras');
+const InternalJobsHome = lazyNamed(() => import('@/pages/internalJobs/InternalJobsHome'), 'InternalJobsHome');
+const LearningHome = lazyNamed(() => import('@/pages/learning/LearningHome'), 'LearningHome');
+const LearningPathsHome = lazyNamed(() => import('@/pages/learningPaths/LearningPathsHome'), 'LearningPathsHome');
+const SkillsHome = lazyNamed(() => import('@/pages/skills/SkillsHome'), 'SkillsHome');
+const MentorshipHome = lazyNamed(() => import('@/pages/mentorship/MentorshipHome'), 'MentorshipHome');
+const SuccessionHome = lazyNamed(() => import('@/pages/succession/SuccessionHome'), 'SuccessionHome');
+const ProbationHome = lazyNamed(() => import('@/pages/probation/ProbationHome'), 'ProbationHome');
+const DisciplineHome = lazyNamed(() => import('@/pages/discipline/DisciplineHome'), 'DisciplineHome');
+const SeparationHome = lazyNamed(() => import('@/pages/separation/SeparationHome'), 'SeparationHome');
+const RampHome = lazyNamed(() => import('@/pages/ramp/RampHome'), 'RampHome');
+const CareerHome = lazyNamed(() => import('@/pages/career/CareerHome'), 'CareerHome');
+const TuitionHome = lazyNamed(() => import('@/pages/tuition/TuitionHome'), 'TuitionHome');
+const KbHome = lazyNamed(() => import('@/pages/kb/KbHome'), 'KbHome');
+
+// Benefits / comp / equity
+const BenefitsHome = lazyNamed(() => import('@/pages/benefits/BenefitsHome'), 'BenefitsHome');
+const BenefitsLifecycle = lazyNamed(() => import('@/pages/benefits/BenefitsLifecycle'), 'BenefitsLifecycle');
+const CompensationHome = lazyNamed(() => import('@/pages/compensation/CompensationHome'), 'CompensationHome');
+const EquityHome = lazyNamed(() => import('@/pages/equity/EquityHome'), 'EquityHome');
+const VtoHome = lazyNamed(() => import('@/pages/vto/VtoHome'), 'VtoHome');
+
+// Misc / admin / me
+const Settings = lazyNamed(() => import('@/pages/Settings'), 'Settings');
+const AuditHome = lazyNamed(() => import('@/pages/audit/AuditHome'), 'AuditHome');
+const AnalyticsHome = lazyNamed(() => import('@/pages/analytics/AnalyticsHome'), 'AnalyticsHome');
+const MeHome = lazyNamed(() => import('@/pages/me/MeHome'), 'MeHome');
+const CelebrationsHome = lazyNamed(() => import('@/pages/celebrations/CelebrationsHome'), 'CelebrationsHome');
+const AssetsHome = lazyNamed(() => import('@/pages/assets/AssetsHome'), 'AssetsHome');
+const PulseHome = lazyNamed(() => import('@/pages/pulse/PulseHome'), 'PulseHome');
+const HolidaysHome = lazyNamed(() => import('@/pages/holidays/HolidaysHome'), 'HolidaysHome');
+const WorkflowsHome = lazyNamed(() => import('@/pages/workflows/WorkflowsHome'), 'WorkflowsHome');
+const MarketplaceHome = lazyNamed(() => import('@/pages/marketplace/MarketplaceHome'), 'MarketplaceHome');
+const TemplatesHome = lazyNamed(() => import('@/pages/templates/TemplatesHome'), 'TemplatesHome');
+const IntegrationsHome = lazyNamed(() => import('@/pages/integrations/IntegrationsHome'), 'IntegrationsHome');
+const WorktagsHome = lazyNamed(() => import('@/pages/worktags/WorktagsHome'), 'WorktagsHome');
+const ReportsHome = lazyNamed(() => import('@/pages/reports/ReportsHome'), 'ReportsHome');
+
+// Public, no-Layout pages — lazy too. face-api lives in the kiosk chunk.
+const KioskPage = lazyNamed(() => import('@/pages/kiosk/KioskPage'), 'KioskPage');
+const KioskAdmin = lazyNamed(() => import('@/pages/kiosk/KioskAdmin'), 'KioskAdmin');
+const HotlinePage = lazyNamed(() => import('@/pages/hotline/HotlinePage'), 'HotlinePage');
+
+// Tiny in-page fallback for top-level (no-Layout) routes while their chunk
+// streams in. The Layout has its own Suspense around <Outlet />.
+function PublicRouteFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-midnight">
+      <div
+        className="h-10 w-10 rounded-full border-2 border-gold/30 border-t-gold animate-spin"
+        aria-label="Loading"
+      />
+    </div>
+  );
+}
 
 const ONBOARDING_ROUTES = [
   { path: 'onboarding', element: <OnboardingHome /> },
@@ -201,12 +258,25 @@ export const router = createBrowserRouter([
     errorElement: <RouterErrorPage />,
   },
   // Phase 99 — public kiosk page. No auth, no Layout — full-screen.
-  { path: '/kiosk', element: <KioskPage />, errorElement: <RouterErrorPage /> },
+  // face-api.js (~6 MB uncompressed) lives in this chunk and only loads here.
+  {
+    path: '/kiosk',
+    element: (
+      <Suspense fallback={<PublicRouteFallback />}>
+        <KioskPage />
+      </Suspense>
+    ),
+    errorElement: <RouterErrorPage />,
+  },
   // Phase 128 — public anonymous reporting / hotline. No auth, no Layout —
   // shoulder-surfing privacy: nothing on screen identifies the reporter.
   {
     path: '/hotline',
-    element: <HotlinePage />,
+    element: (
+      <Suspense fallback={<PublicRouteFallback />}>
+        <HotlinePage />
+      </Suspense>
+    ),
     errorElement: <RouterErrorPage />,
   },
   {

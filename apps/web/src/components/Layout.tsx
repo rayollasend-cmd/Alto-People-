@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { TooltipProvider } from '@/components/ui/Tooltip';
@@ -11,6 +11,21 @@ import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 import { MobileNav } from './MobileNav';
 import { InstallPrompt } from './InstallPrompt';
+
+// Per-route Suspense fallback shown while a lazy-loaded page chunk streams in.
+// Sized to roughly fill the main content region so layout doesn't jump when
+// the real page renders. The motion fade keeps the transition feeling
+// intentional rather than a flash of empty.
+function RouteFallback() {
+  return (
+    <div className="flex items-center justify-center min-h-[40vh]">
+      <div
+        className="h-8 w-8 rounded-full border-2 border-gold/30 border-t-gold animate-spin"
+        aria-label="Loading"
+      />
+    </div>
+  );
+}
 
 export function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -47,7 +62,9 @@ export function Layout() {
                 exit={{ opacity: 0, y: -4 }}
                 transition={{ duration: 0.18, ease: 'easeOut' }}
               >
-                <Outlet />
+                <Suspense fallback={<RouteFallback />}>
+                  <Outlet />
+                </Suspense>
               </motion.div>
             </AnimatePresence>
           </main>
