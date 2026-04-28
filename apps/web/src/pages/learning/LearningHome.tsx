@@ -24,6 +24,7 @@ import {
   Button,
   Card,
   CardContent,
+  ConfirmDialog,
   Drawer,
   DrawerBody,
   DrawerFooter,
@@ -383,6 +384,10 @@ const ENROLL_BADGE: Record<EnrollmentStatus, 'pending' | 'accent' | 'success' | 
 
 function EnrollmentsTab({ canManage }: { canManage: boolean }) {
   const [rows, setRows] = useState<Enrollment[] | null>(null);
+  const [completeId, setCompleteId] = useState<string | null>(null);
+  const [completing, setCompleting] = useState(false);
+  const [waiveId, setWaiveId] = useState<string | null>(null);
+  const [waiving, setWaiving] = useState(false);
 
   const refresh = () => {
     setRows(null);
@@ -394,26 +399,8 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
     refresh();
   }, []);
 
-  const onComplete = async (id: string) => {
-    const score = window.prompt('Score (0-100, optional)?');
-    try {
-      await completeEnrollment(id, score ? Number(score) : undefined);
-      toast.success('Marked complete.');
-      refresh();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
-    }
-  };
-
-  const onWaive = async (id: string) => {
-    if (!window.confirm('Waive this enrollment?')) return;
-    try {
-      await waiveEnrollment(id);
-      refresh();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
-    }
-  };
+  const onComplete = (id: string) => setCompleteId(id);
+  const onWaive = (id: string) => setWaiveId(id);
 
   return (
     <Card>
@@ -475,6 +462,59 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
           </Table>
         )}
       </CardContent>
+      <ConfirmDialog
+        open={completeId !== null}
+        onOpenChange={(o) => !o && setCompleteId(null)}
+        title="Mark complete"
+        description="Record a score if applicable. Leave blank for pass/fail courses."
+        confirmLabel="Mark complete"
+        numericInput
+        numericLabel="Score (0–100, optional)"
+        numericMin={0}
+        numericMax={100}
+        numericStep={0.1}
+        busy={completing}
+        onConfirm={async (score) => {
+          if (!completeId) return;
+          setCompleting(true);
+          try {
+            await completeEnrollment(
+              completeId,
+              score === null ? undefined : score,
+            );
+            toast.success('Marked complete.');
+            setCompleteId(null);
+            refresh();
+          } catch (err) {
+            toast.error(err instanceof ApiError ? err.message : 'Failed.');
+          } finally {
+            setCompleting(false);
+          }
+        }}
+      />
+      <ConfirmDialog
+        open={waiveId !== null}
+        onOpenChange={(o) => !o && setWaiveId(null)}
+        title="Waive enrollment"
+        description="The associate will not be required to complete this course. They can still take it voluntarily."
+        confirmLabel="Waive"
+        destructive
+        busy={waiving}
+        onConfirm={async () => {
+          if (!waiveId) return;
+          setWaiving(true);
+          try {
+            await waiveEnrollment(waiveId);
+            toast.success('Waived.');
+            setWaiveId(null);
+            refresh();
+          } catch (err) {
+            toast.error(err instanceof ApiError ? err.message : 'Failed.');
+          } finally {
+            setWaiving(false);
+          }
+        }}
+      />
     </Card>
   );
 }

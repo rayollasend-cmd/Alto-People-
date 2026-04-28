@@ -17,6 +17,7 @@ import {
   Button,
   Card,
   CardContent,
+  ConfirmDialog,
   Drawer,
   DrawerBody,
   DrawerFooter,
@@ -41,6 +42,8 @@ export function MentorshipHome() {
   const [rows, setRows] = useState<Mentorship[] | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [showSuggest, setShowSuggest] = useState(false);
+  const [completeTarget, setCompleteTarget] = useState<Mentorship | null>(null);
+  const [completing, setCompleting] = useState(false);
 
   const refresh = () => {
     setRows(null);
@@ -152,19 +155,7 @@ export function MentorshipHome() {
                         <Button
                           size="sm"
                           variant="ghost"
-                          onClick={async () => {
-                            const reason = window.prompt('Outcome notes (optional):', '');
-                            if (reason === null) return;
-                            try {
-                              await transitionMentorship(m.id, {
-                                status: 'COMPLETED',
-                                endedReason: reason || undefined,
-                              });
-                              refresh();
-                            } catch (err) {
-                              toast.error(err instanceof ApiError ? err.message : 'Failed.');
-                            }
-                          }}
+                          onClick={() => setCompleteTarget(m)}
                         >
                           Complete
                         </Button>
@@ -189,6 +180,34 @@ export function MentorshipHome() {
       {showSuggest && (
         <SuggestDrawer onClose={() => setShowSuggest(false)} />
       )}
+      <ConfirmDialog
+        open={completeTarget !== null}
+        onOpenChange={(o) => !o && setCompleteTarget(null)}
+        title="Complete mentorship"
+        description="Mark this pairing as completed. Outcome notes are optional but help future matching."
+        confirmLabel="Mark completed"
+        requireReason="optional"
+        reasonLabel="Outcome notes (what went well, what to apply next time)"
+        reasonPlaceholder="Optional"
+        busy={completing}
+        onConfirm={async (reason) => {
+          if (!completeTarget) return;
+          setCompleting(true);
+          try {
+            await transitionMentorship(completeTarget.id, {
+              status: 'COMPLETED',
+              endedReason: reason || undefined,
+            });
+            toast.success('Mentorship completed.');
+            setCompleteTarget(null);
+            refresh();
+          } catch (err) {
+            toast.error(err instanceof ApiError ? err.message : 'Failed.');
+          } finally {
+            setCompleting(false);
+          }
+        }}
+      />
     </div>
   );
 }

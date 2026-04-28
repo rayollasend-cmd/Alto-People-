@@ -18,6 +18,7 @@ import {
   Button,
   Card,
   CardContent,
+  ConfirmDialog,
   Drawer,
   DrawerBody,
   DrawerFooter,
@@ -64,6 +65,8 @@ export function AssetsHome() {
   const [rows, setRows] = useState<Asset[] | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [assignTarget, setAssignTarget] = useState<Asset | null>(null);
+  const [returnTarget, setReturnTarget] = useState<Asset | null>(null);
+  const [returning, setReturning] = useState(false);
 
   const refresh = () => {
     setRows(null);
@@ -156,19 +159,7 @@ export function AssetsHome() {
                           <Button
                             size="sm"
                             variant="ghost"
-                            onClick={async () => {
-                              const notes = window.prompt('Return notes (optional):', '');
-                              if (notes === null) return;
-                              try {
-                                await returnAsset(a.currentAssignment!.id, {
-                                  notes: notes || undefined,
-                                });
-                                toast.success('Returned.');
-                                refresh();
-                              } catch (err) {
-                                toast.error(err instanceof ApiError ? err.message : 'Failed.');
-                              }
-                            }}
+                            onClick={() => setReturnTarget(a)}
                           >
                             Return
                           </Button>
@@ -218,6 +209,41 @@ export function AssetsHome() {
           }}
         />
       )}
+      <ConfirmDialog
+        open={returnTarget !== null}
+        onOpenChange={(o) => !o && setReturnTarget(null)}
+        title={
+          returnTarget
+            ? `Return ${returnTarget.label ?? returnTarget.kind}`
+            : 'Return asset'
+        }
+        description={
+          returnTarget?.currentAssignment
+            ? `Returning from ${returnTarget.currentAssignment.associateName}.`
+            : undefined
+        }
+        confirmLabel="Mark returned"
+        requireReason="optional"
+        reasonLabel="Return notes (condition, scratches, missing accessories…)"
+        reasonPlaceholder="Optional"
+        busy={returning}
+        onConfirm={async (notes) => {
+          if (!returnTarget?.currentAssignment) return;
+          setReturning(true);
+          try {
+            await returnAsset(returnTarget.currentAssignment.id, {
+              notes: notes || undefined,
+            });
+            toast.success('Returned.');
+            setReturnTarget(null);
+            refresh();
+          } catch (err) {
+            toast.error(err instanceof ApiError ? err.message : 'Failed.');
+          } finally {
+            setReturning(false);
+          }
+        }}
+      />
     </div>
   );
 }
