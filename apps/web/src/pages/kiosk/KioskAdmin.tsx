@@ -695,40 +695,50 @@ function NewPinDrawer({
   onClose: () => void;
   onSaved: (associateName: string, employeeNumber: string) => void;
 }) {
-  const [eligible, setEligible] = useState<
-    Array<{ id: string; firstName: string; lastName: string; email: string }> | null
-  >(null);
+  type PickerEntry = {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    status: 'ACTIVE' | 'PENDING' | 'INACTIVE';
+  };
+  const [associates, setAssociates] = useState<PickerEntry[] | null>(null);
   const [associateId, setAssociateId] = useState('');
   const [pin, setPin] = useState('');
   const [saving, setSaving] = useState(false);
 
-  // Only ACTIVE (= APPROVED-application) associates are eligible. The
-  // server enforces the same gate; this picker keeps HR from picking
-  // someone mid-onboarding by accident.
+  // Show every associate at the client. The server only allows issuing
+  // to ACTIVE (= APPROVED application) associates; the picker reflects
+  // that by disabling the others so HR can see who's there and why.
   useEffect(() => {
     let cancelled = false;
-    listDirectory({ status: 'ACTIVE', clientId })
+    listDirectory({ clientId })
       .then((r) => {
-        if (!cancelled) {
-          setEligible(
-            r.associates.map((a) => ({
-              id: a.id,
-              firstName: a.firstName,
-              lastName: a.lastName,
-              email: a.email,
-            })),
-          );
-        }
+        if (cancelled) return;
+        const list = r.associates.map((a) => ({
+          id: a.id,
+          firstName: a.firstName,
+          lastName: a.lastName,
+          email: a.email,
+          status: a.status,
+        }));
+        setAssociates(list);
+        // Default to the first eligible associate so HR doesn't have to
+        // hunt for a selectable row.
+        const firstEligible = list.find((a) => a.status === 'ACTIVE');
+        if (firstEligible) setAssociateId(firstEligible.id);
       })
       .catch(() => {
-        if (!cancelled) setEligible([]);
+        if (!cancelled) setAssociates([]);
       });
     return () => {
       cancelled = true;
     };
   }, [clientId]);
 
-  const selected = eligible?.find((a) => a.id === associateId);
+  const selected = associates?.find((a) => a.id === associateId);
+  const eligibleCount =
+    associates?.filter((a) => a.status === 'ACTIVE').length ?? 0;
 
   const onSubmit = async () => {
     if (!associateId) {
@@ -763,26 +773,45 @@ function NewPinDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate (onboarding complete)</Label>
-          {eligible === null ? (
+          <Label>Associate</Label>
+          {associates === null ? (
             <div className="mt-1 text-xs text-silver">Loading…</div>
-          ) : eligible.length === 0 ? (
+          ) : associates.length === 0 ? (
             <div className="mt-1 text-xs text-silver">
-              No associates with an approved application at this client yet.
+              No associates have been added to this client yet. Start an
+              onboarding application from the Onboarding page first.
             </div>
           ) : (
-            <select
-              className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
-              value={associateId}
-              onChange={(e) => setAssociateId(e.target.value)}
-            >
-              <option value="">Select an associate…</option>
-              {eligible.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.firstName} {a.lastName} — {a.email}
-                </option>
-              ))}
-            </select>
+            <>
+              <select
+                className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+                value={associateId}
+                onChange={(e) => setAssociateId(e.target.value)}
+              >
+                <option value="">Select an associate…</option>
+                {associates.map((a) => {
+                  const label =
+                    a.status === 'ACTIVE'
+                      ? `${a.firstName} ${a.lastName} — ${a.email}`
+                      : `${a.firstName} ${a.lastName} — ${a.email} (onboarding ${a.status.toLowerCase()})`;
+                  return (
+                    <option
+                      key={a.id}
+                      value={a.id}
+                      disabled={a.status !== 'ACTIVE'}
+                    >
+                      {label}
+                    </option>
+                  );
+                })}
+              </select>
+              {eligibleCount === 0 && (
+                <div className="mt-1 text-xs text-amber-400">
+                  No associates here have an approved application yet —
+                  approve one from the Onboarding page to issue a number.
+                </div>
+              )}
+            </>
           )}
         </div>
         <div>
@@ -805,7 +834,7 @@ function NewPinDrawer({
         <Button variant="ghost" onClick={onClose}>
           Cancel
         </Button>
-        <Button onClick={onSubmit} disabled={saving || eligible === null}>
+        <Button onClick={onSubmit} disabled={saving || associates === null}>
           {saving ? 'Saving…' : 'Issue'}
         </Button>
       </DrawerFooter>
