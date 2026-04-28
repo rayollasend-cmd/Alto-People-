@@ -6,7 +6,7 @@ import {
   hasCapability,
   type Capability,
   type Role,
-} from '../roles';
+} from '../roles.js';
 
 const ALL_VIEWS: Capability[] = [
   'view:dashboard',

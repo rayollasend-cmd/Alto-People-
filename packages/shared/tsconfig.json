@@ -7,7 +7,8 @@
     "declarationMap": true,
     "sourceMap": true,
     "lib": ["ES2022"],
-    "moduleResolution": "Bundler"
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext"
   },
   "include": ["src"]
 }
