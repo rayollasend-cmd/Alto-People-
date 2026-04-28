@@ -74,7 +74,16 @@
      stay crisp at small sizes — Cormorant Garamond is fragile below ~24px.
      Pages that want the serif at smaller sizes can opt in via `font-display`. */
   h1, h2 {
-    @apply font-display tracking-tight;
+    @apply font-display tracking-tight leading-tight;
+  }
+
+  /* Tabular numerals everywhere data is presented in columns. Affects
+     digits only — letters/punctuation are unchanged — so columns of
+     currency, percentages, hours, dates, and IDs align cleanly. This is
+     the single biggest perceived-quality lift for a data-dense UI; every
+     Fortune-500 HR/payroll product gets this right. */
+  td, th {
+    font-variant-numeric: tabular-nums;
   }
 
   ::selection {
