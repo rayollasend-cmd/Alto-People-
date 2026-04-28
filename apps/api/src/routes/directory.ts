@@ -8,6 +8,7 @@ import {
 import { prisma } from '../db.js';
 import { requireCapability } from '../middleware/auth.js';
 import { computePercent } from '../lib/checklist.js';
+import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 
 /**
  * People directory.
@@ -73,6 +74,8 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
         employmentType: true,
         j1Status: true,
         createdAt: true,
+        photoS3Key: true,
+        photoUpdatedAt: true,
         managerId: true,
         manager: { select: { firstName: true, lastName: true } },
         departmentId: true,
@@ -185,6 +188,11 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
         jobProfileTitle: a.jobProfile?.title ?? null,
         onboardingPercent,
         createdAt: a.createdAt.toISOString(),
+        photoUrl: profilePhotoUrlFor({
+          id: a.id,
+          photoS3Key: a.photoS3Key,
+          photoUpdatedAt: a.photoUpdatedAt,
+        }),
       };
     });
 

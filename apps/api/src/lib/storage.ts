@@ -8,9 +8,14 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const UPLOAD_ROOT = resolve(__dirname, '../../uploads');
+export const PROFILE_PHOTO_DIR = 'profile-photos';
 
 if (!existsSync(UPLOAD_ROOT)) {
   mkdirSync(UPLOAD_ROOT, { recursive: true });
+}
+const profilePhotoFull = resolve(UPLOAD_ROOT, PROFILE_PHOTO_DIR);
+if (!existsSync(profilePhotoFull)) {
+  mkdirSync(profilePhotoFull, { recursive: true });
 }
 
 export function resolveStoragePath(relativeKey: string): string {

@@ -73,6 +73,7 @@ import { tuition127Router } from './routes/tuition127.js';
 import { anonReport128Router } from './routes/anonReport128.js';
 import { equity129Router } from './routes/equity129.js';
 import { vto130Router } from './routes/vto130.js';
+import { profilePhotoRouter } from './routes/profilePhoto.js';
 import { attachUser, requireCapability } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 
@@ -236,6 +237,9 @@ export function createApp() {
   app.use('/', anonReport128Router);
   app.use('/', equity129Router);
   app.use('/', vto130Router);
+  // Profile photo upload + stream. Self-gated with requireAuth, plus an
+  // associate-only check on the /me/profile-photo write paths.
+  app.use('/', profilePhotoRouter);
   // QuickBooks router self-gates each route — the OAuth callback must accept
   // an unauthenticated browser redirect from Intuit, so we cannot apply a
   // capability check at this mount point.

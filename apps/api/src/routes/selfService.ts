@@ -5,6 +5,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { recordChange } from '../lib/associateHistory.js';
 import { emit as emitWorkflow } from '../lib/workflow.js';
+import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 
 /**
  * Phase 82 — Self-service post-onboarding.
@@ -63,12 +64,18 @@ selfServiceRouter.get('/me/profile', async (req, res) => {
       state: true,
       zip: true,
       employmentType: true,
+      photoS3Key: true,
+      photoUpdatedAt: true,
       department: { select: { name: true } },
       jobProfile: { select: { title: true } },
     },
   });
   if (!a) throw new HttpError(404, 'not_found', 'Associate not found.');
-  res.json(a);
+  const { photoS3Key, photoUpdatedAt, ...rest } = a;
+  res.json({
+    ...rest,
+    photoUrl: profilePhotoUrlFor({ id: a.id, photoS3Key, photoUpdatedAt }),
+  });
 });
 
 selfServiceRouter.put('/me/profile', async (req, res) => {

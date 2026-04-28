@@ -1093,7 +1093,7 @@ function PeopleTab({
               >
                 <TableCell className="font-medium">
                   <div className="flex items-center gap-2.5">
-                    <Avatar name={`${a.firstName} ${a.lastName}`} email={a.email} size="sm" />
+                    <Avatar src={a.photoUrl} name={`${a.firstName} ${a.lastName}`} email={a.email} size="sm" />
                     <span>{a.firstName} {a.lastName}</span>
                   </div>
                 </TableCell>
@@ -1199,6 +1199,7 @@ function PersonOrgDrawer({
       <DrawerHeader>
         <div className="flex items-center gap-3">
           <Avatar
+            src={associate.photoUrl}
             name={`${associate.firstName} ${associate.lastName}`}
             email={associate.email}
             size="md"

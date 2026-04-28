@@ -284,6 +284,7 @@ export function PeopleDirectory() {
                   <TableCell>
                     <div className="flex items-center gap-2.5">
                       <Avatar
+                        src={r.photoUrl}
                         name={`${r.firstName} ${r.lastName}`}
                         email={r.email}
                         size="sm"
@@ -423,7 +424,7 @@ function DirectoryDrawer({
     <>
       <DrawerHeader>
         <div className="flex items-center gap-3">
-          <Avatar name={`${a.firstName} ${a.lastName}`} email={a.email} size="md" />
+          <Avatar src={a.photoUrl} name={`${a.firstName} ${a.lastName}`} email={a.email} size="md" />
           <div className="min-w-0">
             <DrawerTitle className="truncate">
               {a.firstName} {a.lastName}

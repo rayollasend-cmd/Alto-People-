@@ -472,6 +472,12 @@ model Associate {
   departmentId   String?  @db.Uuid
   costCenterId   String?  @db.Uuid
   jobProfileId   String?  @db.Uuid
+  // Profile photo. photoS3Key is the storage path under uploads/profile-photos/;
+  // photoUpdatedAt is the cache-buster the API stamps onto the photo URL so
+  // the browser refetches after an upload. Null when no photo on file —
+  // Avatar then falls back to initials.
+  photoS3Key     String?
+  photoUpdatedAt DateTime? @db.Timestamptz(6)
   createdAt    DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
   deletedAt    DateTime? @db.Timestamptz(6)

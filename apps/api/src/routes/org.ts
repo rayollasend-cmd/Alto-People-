@@ -17,6 +17,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { asOf, recordChange } from '../lib/associateHistory.js';
+import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 
 export const orgRouter = Router();
 
@@ -436,6 +437,8 @@ orgRouter.get('/associates', VIEW, async (req: Request, res: Response) => {
       firstName: true,
       lastName: true,
       email: true,
+      photoS3Key: true,
+      photoUpdatedAt: true,
       managerId: true,
       manager: { select: { firstName: true, lastName: true } },
       departmentId: true,
@@ -463,6 +466,11 @@ orgRouter.get('/associates', VIEW, async (req: Request, res: Response) => {
       costCenterCode: r.costCenter?.code ?? null,
       jobProfileId: r.jobProfileId,
       jobProfileTitle: r.jobProfile?.title ?? null,
+      photoUrl: profilePhotoUrlFor({
+        id: r.id,
+        photoS3Key: r.photoS3Key,
+        photoUpdatedAt: r.photoUpdatedAt,
+      }),
     })),
   };
   res.json(body);

@@ -1,4 +1,4 @@
-import { apiFetch } from './api';
+import { ApiError, apiFetch, NetworkError } from './api';
 
 export interface SelfProfile {
   id: string;
@@ -12,6 +12,7 @@ export interface SelfProfile {
   state: string | null;
   zip: string | null;
   employmentType: string;
+  photoUrl: string | null;
   department: { name: string } | null;
   jobProfile: { title: string } | null;
 }
@@ -126,3 +127,37 @@ export const createLifeEvent = (input: {
 
 export const listTaxDocs = () =>
   apiFetch<{ documents: TaxDoc[] }>('/self/me/tax-documents');
+
+// Profile photo upload — separate codepath because apiFetch JSON-encodes
+// the body. We post the raw FormData and rely on the browser to set the
+// multipart boundary header.
+export async function uploadProfilePhoto(file: File): Promise<void> {
+  const fd = new FormData();
+  fd.append('file', file);
+  let res: Response;
+  try {
+    res = await fetch('/api/me/profile-photo', {
+      method: 'POST',
+      credentials: 'include',
+      body: fd,
+    });
+  } catch (err) {
+    throw new NetworkError(err);
+  }
+  if (!res.ok) {
+    let parsed: { error?: { code?: string; message?: string } } | null = null;
+    try {
+      parsed = await res.json();
+    } catch {
+      /* empty body */
+    }
+    throw new ApiError(
+      res.status,
+      parsed?.error?.code ?? `http_${res.status}`,
+      parsed?.error?.message ?? 'Failed to upload photo.',
+    );
+  }
+}
+
+export const deleteProfilePhoto = () =>
+  apiFetch<void>('/me/profile-photo', { method: 'DELETE' });

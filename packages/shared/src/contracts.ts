@@ -2143,6 +2143,10 @@ export const AssociateOrgSummarySchema = z.object({
   costCenterCode: z.string().nullable(),
   jobProfileId: UuidSchema.nullable(),
   jobProfileTitle: z.string().nullable(),
+  // Cache-busted URL to the associate's profile photo, or null when no
+  // photo on file. Avatar component falls back to initials in the null
+  // case. The URL is `/associates/:id/photo?v=<photoUpdatedAt>`.
+  photoUrl: z.string().nullable(),
 });
 export type AssociateOrgSummary = z.infer<typeof AssociateOrgSummarySchema>;
 
@@ -2195,6 +2199,9 @@ export const DirectoryEntrySchema = z.object({
   // First time this associate's record was created — useful as a proxy
   // for tenure when no formal hire date is on file.
   createdAt: z.string().datetime(),
+  // Cache-busted URL to the associate's profile photo, or null. Avatar
+  // falls back to initials when null.
+  photoUrl: z.string().nullable(),
 });
 export type DirectoryEntry = z.infer<typeof DirectoryEntrySchema>;
 
