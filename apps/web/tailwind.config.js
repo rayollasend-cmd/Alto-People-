@@ -23,8 +23,10 @@ export default {
         muted: 'rgb(var(--color-muted) / <alpha-value>)',
       },
       fontFamily: {
-        display: ['"Cormorant Garamond"', 'Georgia', 'serif'],
-        sans: ['Montserrat', 'system-ui', '-apple-system', 'sans-serif'],
+        // Variable fonts loaded from @fontsource-variable/*. The "Variable"
+        // suffix is the family name those packages register.
+        display: ['"Cormorant Garamond Variable"', '"Cormorant Garamond"', 'Georgia', 'serif'],
+        sans: ['"Geist Variable"', 'Geist', 'Inter', 'system-ui', '-apple-system', 'sans-serif'],
       },
       keyframes: {
         'accordion-down': {

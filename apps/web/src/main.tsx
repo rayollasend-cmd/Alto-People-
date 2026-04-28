@@ -8,6 +8,14 @@ import { DensityProvider } from '@/lib/density';
 import { PageTitleProvider } from '@/lib/pageTitle';
 import { ConfirmProvider } from '@/lib/confirm';
 import { Toaster } from '@/components/ui/Toaster';
+
+// Self-hosted variable fonts. Both ship as a single woff2 covering the
+// full weight range, served from our own bundle — no third-party CDN
+// hop, no FOUT from Google Fonts, and the browser caches them with the
+// rest of the app.
+import '@fontsource-variable/geist';
+import '@fontsource-variable/cormorant-garamond';
+
 import './index.css';
 
 const rootEl = document.getElementById('root');
