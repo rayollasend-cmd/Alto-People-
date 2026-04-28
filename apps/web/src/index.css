@@ -69,8 +69,12 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
-  h1, h2, h3, h4 {
-    @apply font-display;
+  /* Editorial serif is reserved for the largest, most expressive headings.
+     h3/h4 inherit the body sans (Geist) so card titles and section labels
+     stay crisp at small sizes — Cormorant Garamond is fragile below ~24px.
+     Pages that want the serif at smaller sizes can opt in via `font-display`. */
+  h1, h2 {
+    @apply font-display tracking-tight;
   }
 
   ::selection {

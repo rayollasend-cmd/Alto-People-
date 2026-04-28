@@ -24,7 +24,7 @@ export default {
       },
       fontFamily: {
         display: ['"Cormorant Garamond"', 'Georgia', 'serif'],
-        sans: ['Montserrat', 'system-ui', '-apple-system', 'sans-serif'],
+        sans: ['Geist', 'Inter', 'system-ui', '-apple-system', 'sans-serif'],
       },
       keyframes: {
         'accordion-down': {
