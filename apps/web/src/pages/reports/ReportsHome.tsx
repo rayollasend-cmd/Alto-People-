@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BarChart3, Play, Plus, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, BarChart3, Play, Plus, Trash2, X } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
   createReport,
@@ -32,7 +32,6 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-  Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
@@ -174,6 +173,30 @@ export function ReportsHome() {
   );
 }
 
+type FilterOp = 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' | 'contains' | 'in';
+
+interface FilterRow {
+  column: string;
+  op: FilterOp;
+  value: string;
+}
+
+interface SortRow {
+  column: string;
+  dir: 'asc' | 'desc';
+}
+
+const FILTER_OPS: { value: FilterOp; label: string }[] = [
+  { value: 'eq', label: 'equals' },
+  { value: 'ne', label: 'not equals' },
+  { value: 'gt', label: '>' },
+  { value: 'gte', label: '>=' },
+  { value: 'lt', label: '<' },
+  { value: 'lte', label: '<=' },
+  { value: 'contains', label: 'contains' },
+  { value: 'in', label: 'in (comma-separated)' },
+];
+
 function ReportBuilder({
   onClose,
   onSaved,
@@ -186,7 +209,9 @@ function ReportBuilder({
   const [columns, setColumns] = useState<string[]>([]);
   const [allColumns, setAllColumns] = useState<string[]>([]);
   const [isPublic, setIsPublic] = useState(false);
-  const [filtersText, setFiltersText] = useState('[]');
+  const [filters, setFilters] = useState<FilterRow[]>([]);
+  const [sorts, setSorts] = useState<SortRow[]>([]);
+  const [limit, setLimit] = useState('1000');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -194,6 +219,8 @@ function ReportBuilder({
       .then((r) => setAllColumns(r.columns))
       .catch(() => setAllColumns([]));
     setColumns([]);
+    setFilters([]);
+    setSorts([]);
   }, [entity]);
 
   const toggleColumn = (col: string) => {
@@ -202,20 +229,36 @@ function ReportBuilder({
     );
   };
 
-  const parseFilters = () => {
-    try {
-      return JSON.parse(filtersText);
-    } catch {
-      throw new Error('Filters must be valid JSON.');
-    }
+  const buildSpec = () => {
+    // Convert each filter row to the API shape. `in` splits the comma-list;
+    // numeric ops coerce when the value parses cleanly so reports compare
+    // numbers as numbers, not strings.
+    const compiledFilters = filters
+      .filter((f) => f.column && f.value.trim())
+      .map((f) => {
+        let value: unknown = f.value.trim();
+        if (f.op === 'in') {
+          value = f.value
+            .split(',')
+            .map((v) => v.trim())
+            .filter(Boolean);
+        } else if (
+          ['gt', 'gte', 'lt', 'lte'].includes(f.op) &&
+          /^-?\d+(\.\d+)?$/.test(f.value.trim())
+        ) {
+          value = Number(f.value.trim());
+        }
+        return { column: f.column, op: f.op, value };
+      });
+    return {
+      columns,
+      filters: compiledFilters,
+      sort: sorts
+        .filter((s) => s.column)
+        .map((s) => ({ column: s.column, direction: s.dir })),
+      limit: Math.max(1, Math.min(10_000, parseInt(limit, 10) || 1000)),
+    };
   };
-
-  const buildSpec = () => ({
-    columns,
-    filters: parseFilters(),
-    sort: [],
-    limit: 1000,
-  });
 
   const onPreview = async () => {
     if (columns.length === 0) {
@@ -258,6 +301,32 @@ function ReportBuilder({
     }
   };
 
+  const addFilter = () =>
+    setFilters((fs) => [
+      ...fs,
+      { column: allColumns[0] ?? '', op: 'eq', value: '' },
+    ]);
+
+  const updateFilter = (idx: number, patch: Partial<FilterRow>) =>
+    setFilters((fs) =>
+      fs.map((f, i) => (i === idx ? { ...f, ...patch } : f)),
+    );
+
+  const removeFilter = (idx: number) =>
+    setFilters((fs) => fs.filter((_, i) => i !== idx));
+
+  const addSort = () =>
+    setSorts((ss) => [
+      ...ss,
+      { column: columns[0] ?? allColumns[0] ?? '', dir: 'asc' },
+    ]);
+
+  const updateSort = (idx: number, patch: Partial<SortRow>) =>
+    setSorts((ss) => ss.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
+
+  const removeSort = (idx: number) =>
+    setSorts((ss) => ss.filter((_, i) => i !== idx));
+
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()} width="max-w-3xl">
       <DrawerHeader>
@@ -287,8 +356,8 @@ function ReportBuilder({
           </select>
         </div>
         <div>
-          <Label>Columns</Label>
-          <div className="mt-2 flex flex-wrap gap-2">
+          <Label>Columns ({columns.length} selected)</Label>
+          <div className="mt-2 max-h-40 overflow-y-auto flex flex-wrap gap-2 p-2 border border-navy-secondary rounded-md bg-navy-secondary/20">
             {allColumns.map((c) => (
               <button
                 key={c}
@@ -305,18 +374,158 @@ function ReportBuilder({
             ))}
           </div>
         </div>
+
         <div>
-          <Label>Filters (JSON)</Label>
-          <Textarea
-            className="mt-1 min-h-32 font-mono text-xs"
-            value={filtersText}
-            onChange={(e) => setFiltersText(e.target.value)}
-            placeholder='[{"column":"status","op":"eq","value":"ACTIVE"}]'
+          <div className="flex items-center justify-between">
+            <Label>Filters</Label>
+            <Button
+              size="sm"
+              variant="ghost"
+              type="button"
+              onClick={addFilter}
+              disabled={allColumns.length === 0}
+            >
+              <Plus className="mr-1 h-3 w-3" /> Add filter
+            </Button>
+          </div>
+          {filters.length === 0 ? (
+            <div className="text-xs text-silver italic mt-1">
+              No filters — report returns every row of the entity.
+            </div>
+          ) : (
+            <div className="mt-2 space-y-2">
+              {filters.map((f, i) => (
+                <div key={i} className="flex gap-2 items-center">
+                  <select
+                    className="flex-1 h-8 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs font-mono text-white"
+                    value={f.column}
+                    onChange={(e) =>
+                      updateFilter(i, { column: e.target.value })
+                    }
+                  >
+                    {allColumns.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    className="h-8 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs text-white"
+                    value={f.op}
+                    onChange={(e) =>
+                      updateFilter(i, { op: e.target.value as FilterOp })
+                    }
+                  >
+                    {FILTER_OPS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                  <Input
+                    className="flex-1 h-8 text-xs"
+                    value={f.value}
+                    onChange={(e) =>
+                      updateFilter(i, { value: e.target.value })
+                    }
+                    placeholder={
+                      f.op === 'in' ? 'val1, val2, val3' : 'value'
+                    }
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeFilter(i)}
+                    className="text-silver hover:text-destructive p-1"
+                    title="Remove filter"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between">
+            <Label>Sort</Label>
+            <Button
+              size="sm"
+              variant="ghost"
+              type="button"
+              onClick={addSort}
+              disabled={allColumns.length === 0}
+            >
+              <Plus className="mr-1 h-3 w-3" /> Add sort
+            </Button>
+          </div>
+          {sorts.length === 0 ? (
+            <div className="text-xs text-silver italic mt-1">
+              No sort — order is undefined.
+            </div>
+          ) : (
+            <div className="mt-2 space-y-2">
+              {sorts.map((s, i) => (
+                <div key={i} className="flex gap-2 items-center">
+                  <select
+                    className="flex-1 h-8 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs font-mono text-white"
+                    value={s.column}
+                    onChange={(e) =>
+                      updateSort(i, { column: e.target.value })
+                    }
+                  >
+                    {allColumns.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      updateSort(i, { dir: s.dir === 'asc' ? 'desc' : 'asc' })
+                    }
+                    className="h-8 px-3 rounded-md border border-navy-secondary bg-navy-secondary/40 text-xs text-white hover:bg-navy-secondary/60 flex items-center gap-1"
+                  >
+                    {s.dir === 'asc' ? (
+                      <>
+                        <ArrowUp className="h-3 w-3" /> asc
+                      </>
+                    ) : (
+                      <>
+                        <ArrowDown className="h-3 w-3" /> desc
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeSort(i)}
+                    className="text-silver hover:text-destructive p-1"
+                    title="Remove sort"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <Label>Row limit</Label>
+          <Input
+            type="number"
+            min="1"
+            max="10000"
+            className="mt-1 max-w-[160px]"
+            value={limit}
+            onChange={(e) => setLimit(e.target.value)}
           />
           <div className="text-xs text-silver mt-1">
-            ops: eq, ne, gt, gte, lt, lte, contains, in
+            Hard cap is 10,000. Use sort to surface the rows you care about.
           </div>
         </div>
+
         <div className="flex items-center gap-3">
           <input
             type="checkbox"
