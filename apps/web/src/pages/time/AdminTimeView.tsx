@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import {
   Activity,
   AlertTriangle,
@@ -124,6 +124,7 @@ interface AdminTimeViewProps {
 type Tab = 'live' | 'queue';
 
 export function AdminTimeView({ canManage }: AdminTimeViewProps) {
+  const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>('live');
   const [filter, setFilter] = useState<TimeEntryStatus | 'ALL'>('COMPLETED');
   const [entries, setEntries] = useState<TimeEntry[] | null>(null);
@@ -340,11 +341,12 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
         }
         secondaryActions={
           canManage ? (
-            <Button asChild variant="outline">
-              <Link to="/time-attendance/kiosk">
-                <Smartphone className="mr-2 h-4 w-4" />
-                Kiosk &amp; PINs
-              </Link>
+            <Button
+              variant="outline"
+              onClick={() => navigate('/time-attendance/kiosk')}
+            >
+              <Smartphone className="mr-2 h-4 w-4" />
+              Kiosk &amp; PINs
             </Button>
           ) : undefined
         }
