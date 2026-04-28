@@ -5,7 +5,8 @@ import {
   replaceMyAvailability,
 } from '@/lib/schedulingApi';
 import { ApiError } from '@/lib/api';
-import { cn } from '@/lib/cn';
+import { Button } from '@/components/ui/Button';
+import { Skeleton } from '@/components/ui/Skeleton';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -99,7 +100,19 @@ export function AvailabilityEditor() {
         </span>
       </div>
 
-      {loading && <p className="text-silver">Loading…</p>}
+      {loading && (
+        <div className="space-y-2 mb-3">
+          {Array.from({ length: 2 }).map((_, i) => (
+            <div key={i} className="grid grid-cols-12 gap-2 items-center">
+              <Skeleton className="col-span-3 h-9" />
+              <Skeleton className="col-span-3 h-9" />
+              <span className="col-span-1" />
+              <Skeleton className="col-span-3 h-9" />
+              <Skeleton className="col-span-2 h-9" />
+            </div>
+          ))}
+        </div>
+      )}
       {!loading && (
         <>
           {drafts.length === 0 && (
@@ -159,19 +172,15 @@ export function AvailabilityEditor() {
             >
               + Add window
             </button>
-            <button
+            <Button
               type="button"
+              size="sm"
               onClick={handleSave}
+              loading={submitting}
               disabled={submitting}
-              className={cn(
-                'px-4 py-1.5 rounded text-sm font-medium transition',
-                submitting
-                  ? 'bg-navy-secondary text-silver/50 cursor-not-allowed'
-                  : 'bg-gold text-navy hover:bg-gold-bright'
-              )}
             >
               {submitting ? 'Saving…' : 'Save'}
-            </button>
+            </Button>
             {error && <span className="text-sm text-alert ml-2">{error}</span>}
             {info && <span className="text-sm text-emerald-300 ml-2">{info}</span>}
           </div>

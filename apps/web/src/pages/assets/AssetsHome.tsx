@@ -12,6 +12,7 @@ import {
   type AssetKind,
 } from '@/lib/assets108Api';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -61,6 +62,7 @@ const KIND_ICONS: Record<AssetKind, typeof Laptop> = {
 
 export function AssetsHome() {
   const { user } = useAuth();
+  const confirm = useConfirm();
   const canManage = user ? hasCapability(user.role, 'manage:org') : false;
   const [rows, setRows] = useState<Asset[] | null>(null);
   const [showNew, setShowNew] = useState(false);
@@ -167,7 +169,7 @@ export function AssetsHome() {
                         {canManage && (
                           <button
                             onClick={async () => {
-                              if (!window.confirm('Delete this asset? Assignment history will be removed.'))
+                              if (!(await confirm({ title: 'Delete this asset? Assignment history will be removed.', destructive: true })))
                                 return;
                               try {
                                 await deleteAsset(a.id);

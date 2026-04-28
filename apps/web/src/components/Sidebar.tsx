@@ -29,6 +29,7 @@ import { useTheme } from '@/lib/theme';
 import { useDensity } from '@/lib/density';
 import { ROLE_LABELS } from '@/lib/roles';
 import { cn } from '@/lib/cn';
+import { Avatar } from '@/components/ui/Avatar';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -304,12 +305,15 @@ function SidebarLink({ to, label, icon: Icon, end, railCollapsed }: SidebarLinkP
       aria-label={railCollapsed ? label : undefined}
       className={({ isActive }) =>
         cn(
-          'my-0.5 flex items-center rounded-md text-sm transition-colors',
+          'group relative my-0.5 flex items-center rounded-md text-sm transition-colors',
+          // F500 cue: thin gold bar on the left of the active item.
+          // Pseudo-element sits inside the link so it doesn't shift sibling layout.
+          'before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-0.5 before:rounded-r before:bg-gold before:opacity-0 before:transition-opacity',
           railCollapsed
             ? 'mx-2 h-9 w-9 justify-center'
             : 'mx-2 gap-2.5 px-3 py-2',
           isActive
-            ? 'bg-navy-secondary text-white'
+            ? 'bg-navy-secondary text-white before:opacity-100'
             : 'text-silver hover:text-white hover:bg-navy-secondary/50',
         )
       }
@@ -362,20 +366,31 @@ function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
     }
   };
 
+  const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
+  const displayName = fullName || user.email;
+  const avatar = (
+    <Avatar
+      src={user.photoUrl}
+      name={fullName || null}
+      email={user.email}
+      size="sm"
+    />
+  );
+
   const trigger = railCollapsed ? (
     <Tooltip>
       <TooltipTrigger asChild>
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            className="h-9 w-9 mx-auto rounded-full bg-gold/15 border border-gold/30 grid place-items-center text-gold text-xs font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+            className="grid place-items-center h-9 w-9 mx-auto rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
             aria-label="Account menu"
           >
-            {initials(user.email)}
+            {avatar}
           </button>
         </DropdownMenuTrigger>
       </TooltipTrigger>
-      <TooltipContent side="right">{user.email}</TooltipContent>
+      <TooltipContent side="right">{displayName}</TooltipContent>
     </Tooltip>
   ) : (
     <DropdownMenuTrigger asChild>
@@ -384,14 +399,12 @@ function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
         className="w-full flex items-center gap-2.5 px-2 py-2 rounded-md hover:bg-navy-secondary/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
         aria-label="Account menu"
       >
-        <div className="h-8 w-8 rounded-full bg-gold/15 border border-gold/30 grid place-items-center text-gold text-xs font-medium shrink-0">
-          {initials(user.email)}
-        </div>
+        {avatar}
         <div className="min-w-0 flex-1 text-left leading-tight">
           <div className="text-[10px] uppercase tracking-widest text-silver truncate">
             {ROLE_LABELS[user.role]}
           </div>
-          <div className="text-sm text-white truncate">{user.email}</div>
+          <div className="text-sm text-white truncate">{displayName}</div>
         </div>
         <ChevronsUpDown className="h-3.5 w-3.5 text-silver/70 shrink-0" aria-hidden="true" />
       </button>
@@ -404,7 +417,10 @@ function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
         {trigger}
         <DropdownMenuContent side="top" align="start" className="min-w-[15rem]">
           <DropdownMenuLabel>{ROLE_LABELS[user.role]}</DropdownMenuLabel>
-          <div className="px-2 pb-2 text-sm text-white truncate">{user.email}</div>
+          <div className="px-2 pb-2 leading-tight">
+            {fullName && <div className="text-sm text-white truncate">{fullName}</div>}
+            <div className="text-xs text-silver truncate">{user.email}</div>
+          </div>
           <DropdownMenuSeparator />
           <DropdownMenuItem
             onSelect={(e) => {
@@ -514,9 +530,3 @@ function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
   );
 }
 
-function initials(email: string): string {
-  const local = email.split('@')[0] ?? '';
-  const parts = local.split(/[._-]+/).filter(Boolean);
-  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
-  return local.slice(0, 2).toUpperCase();
-}

@@ -16,6 +16,7 @@ import {
   type RampPlanRow,
 } from '@/lib/ramp125Api';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -254,6 +255,7 @@ function PlanDetailDrawer({
   canManage: boolean;
   onClose: () => void;
 }) {
+  const confirm = useConfirm();
   const [plan, setPlan] = useState<RampPlan | null>(null);
   const [showAdd, setShowAdd] = useState(false);
 
@@ -348,7 +350,7 @@ function PlanDetailDrawer({
                       {canManage && (
                         <button
                           onClick={async () => {
-                            if (!window.confirm(`Delete "${m.title}"?`)) return;
+                            if (!(await confirm({ title: `Delete "${m.title}"?`, destructive: true }))) return;
                             try {
                               await deleteMilestone(m.id);
                               refresh();
@@ -391,7 +393,7 @@ function PlanDetailDrawer({
                   size="sm"
                   variant="ghost"
                   onClick={async () => {
-                    if (!window.confirm('Archive this plan?')) return;
+                    if (!(await confirm({ title: 'Archive this plan?', destructive: true }))) return;
                     try {
                       await archiveRampPlan(plan.id);
                       toast.success('Archived.');

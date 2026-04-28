@@ -10,6 +10,9 @@ import {
 import { ApiError } from '@/lib/api';
 import { TaskShell } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
+import { Button } from '@/components/ui/Button';
+import { SkeletonRows } from '@/components/ui/Skeleton';
+import { EmptyState } from '@/components/ui/EmptyState';
 
 /**
  * Phase 5 fix — the associate now reads the full policy body inline and
@@ -77,10 +80,14 @@ export function PolicyAckTask() {
         </p>
       )}
 
-      {!policies && <p className="text-silver">Loading…</p>}
+      {!policies && <SkeletonRows count={3} rowHeight="h-16" />}
 
       {policies && policies.length === 0 && (
-        <p className="text-silver">No required policies for this application.</p>
+        <EmptyState
+          icon={FileText}
+          title="No policies to acknowledge"
+          description="This application's onboarding template doesn't require any policy acknowledgments."
+        />
       )}
 
       {policies && policies.length > 0 && (
@@ -99,18 +106,13 @@ export function PolicyAckTask() {
       )}
 
       <div className="flex items-center gap-3 pt-2">
-        <button
+        <Button
           type="button"
+          variant={allAcked ? 'primary' : 'secondary'}
           onClick={() => navigate(backTo)}
-          className={cn(
-            'px-5 py-2.5 rounded font-medium',
-            allAcked
-              ? 'bg-gold text-navy hover:bg-gold-bright'
-              : 'bg-navy-secondary text-silver hover:text-white border border-navy-secondary'
-          )}
         >
           {allAcked ? 'Done — back to checklist' : 'Back'}
-        </button>
+        </Button>
         {!allAcked && policies && policies.length > 0 && (
           <span className="text-xs text-silver">
             {policies.filter((p) => p.acknowledged).length} of {policies.length} acknowledged
@@ -278,19 +280,16 @@ function PolicyBody({
               'Scroll to the bottom to enable Acknowledge'
             )}
           </span>
-          <button
+          <Button
             type="button"
+            size="sm"
             onClick={onAck}
+            loading={busy}
             disabled={busy || !scrolledToEnd}
-            className={cn(
-              'text-sm px-3 py-1.5 rounded shrink-0 transition',
-              busy || !scrolledToEnd
-                ? 'bg-navy-secondary text-silver/50 cursor-not-allowed'
-                : 'bg-gold text-navy hover:bg-gold-bright'
-            )}
+            className="shrink-0"
           >
             {busy ? 'Saving…' : 'Acknowledge'}
-          </button>
+          </Button>
         </div>
       )}
     </div>

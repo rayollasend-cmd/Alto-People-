@@ -340,6 +340,7 @@ export const RoleSchema = z.enum([
   'CLIENT_PORTAL',
   'FINANCE_ACCOUNTANT',
   'INTERNAL_RECRUITER',
+  'MANAGER',
 ]);
 
 export const UserStatusSchema = z.enum(['ACTIVE', 'DISABLED', 'INVITED']);
@@ -351,6 +352,9 @@ export const AuthUserSchema = z.object({
   status: UserStatusSchema,
   clientId: UuidSchema.nullable(),
   associateId: UuidSchema.nullable(),
+  firstName: z.string().nullable(),
+  lastName: z.string().nullable(),
+  photoUrl: z.string().nullable(),
 });
 export type AuthUser = z.infer<typeof AuthUserSchema>;
 

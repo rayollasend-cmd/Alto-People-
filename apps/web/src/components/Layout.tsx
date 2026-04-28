@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { TooltipProvider } from '@/components/ui/Tooltip';
-import { Toaster } from '@/components/ui/Toaster';
 import { CommandPalette, useCommandPalette } from '@/components/ui/CommandPalette';
 import {
   KeyboardShortcutsDialog,
@@ -58,7 +57,6 @@ export function Layout() {
           open={shortcutsOpen}
           onOpenChange={setShortcutsOpen}
         />
-        <Toaster />
         <InstallPrompt />
       </div>
     </TooltipProvider>

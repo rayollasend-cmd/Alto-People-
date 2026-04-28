@@ -25,6 +25,7 @@ import {
   type ReferralStatus,
 } from '@/lib/recruiting90Api';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -96,6 +97,7 @@ export function RecruitingExtras() {
 // ----- Kits -------------------------------------------------------------
 
 function KitsTab({ canManage }: { canManage: boolean }) {
+  const confirm = useConfirm();
   const [kits, setKits] = useState<InterviewKit[] | null>(null);
   const [showNew, setShowNew] = useState(false);
 
@@ -110,7 +112,7 @@ function KitsTab({ canManage }: { canManage: boolean }) {
   }, []);
 
   const onDelete = async (id: string) => {
-    if (!window.confirm('Delete this kit?')) return;
+    if (!(await confirm({ title: 'Delete this kit?', destructive: true }))) return;
     try {
       await deleteInterviewKit(id);
       refresh();
@@ -744,6 +746,7 @@ const POSTING_BADGE: Record<JobPostingRecord['status'], 'default' | 'success' | 
 };
 
 function PostingsTab({ canManage }: { canManage: boolean }) {
+  const confirm = useConfirm();
   const [postings, setPostings] = useState<JobPostingRecord[] | null>(null);
   const [showNew, setShowNew] = useState(false);
 
@@ -778,7 +781,7 @@ function PostingsTab({ canManage }: { canManage: boolean }) {
   };
 
   const onDelete = async (id: string) => {
-    if (!window.confirm('Delete this posting?')) return;
+    if (!(await confirm({ title: 'Delete this posting?', destructive: true }))) return;
     try {
       await deleteJobPosting(id);
       refresh();

@@ -15,6 +15,7 @@ import {
 } from '@/lib/workflowsApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -282,6 +283,7 @@ function DefinitionDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const confirm = useConfirm();
   const isNew = target === 'new';
   const initial = isNew ? null : target;
   const [name, setName] = useState(initial?.name ?? '');
@@ -333,7 +335,7 @@ function DefinitionDrawer({
 
   const remove = async () => {
     if (isNew) return;
-    if (!window.confirm(`Delete workflow "${initial!.name}"?`)) return;
+    if (!(await confirm({ title: `Delete workflow "${initial!.name}"?`, destructive: true }))) return;
     setSubmitting(true);
     try {
       await deleteWorkflow(initial!.id);

@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
+import { ClipboardCheck } from 'lucide-react';
 import type { PerformanceReview } from '@alto-people/shared';
 import { acknowledgeReview, listMyReviews } from '@/lib/performanceApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { Button } from '@/components/ui/Button';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { SkeletonRows } from '@/components/ui/Skeleton';
+import { EmptyState } from '@/components/ui/EmptyState';
 
 function ratingStars(n: number): string {
   return '★'.repeat(n) + '☆'.repeat(Math.max(0, 5 - n));
@@ -52,9 +56,13 @@ export function AssociateReviewsView() {
           {error}
         </p>
       )}
-      {!reviews && <p className="text-silver">Loading…</p>}
+      {!reviews && <SkeletonRows count={2} rowHeight="h-40" />}
       {reviews && reviews.length === 0 && (
-        <p className="text-silver">No reviews yet.</p>
+        <EmptyState
+          icon={ClipboardCheck}
+          title="No reviews yet"
+          description="When your manager submits a performance review, it'll appear here for you to read and acknowledge."
+        />
       )}
       {reviews && reviews.length > 0 && (
         <ul className="space-y-3">
@@ -93,19 +101,15 @@ export function AssociateReviewsView() {
               {r.goals && <Section label="Goals" body={r.goals} />}
               {r.status === 'SUBMITTED' && (
                 <div className="mt-4 pt-3 border-t border-navy-secondary">
-                  <button
+                  <Button
                     type="button"
+                    size="sm"
                     onClick={() => onAck(r.id)}
+                    loading={pendingId === r.id}
                     disabled={pendingId === r.id}
-                    className={cn(
-                      'px-4 py-2 rounded text-sm font-medium transition',
-                      pendingId === r.id
-                        ? 'bg-navy-secondary text-silver/50 cursor-not-allowed'
-                        : 'bg-gold text-navy hover:bg-gold-bright'
-                    )}
                   >
                     {pendingId === r.id ? 'Saving…' : 'Acknowledge'}
-                  </button>
+                  </Button>
                 </div>
               )}
               {r.reviewerEmail && (

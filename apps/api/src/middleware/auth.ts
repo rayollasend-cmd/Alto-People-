@@ -3,6 +3,7 @@ import { HUMAN_ROLES, type Capability, hasCapability } from '@alto-people/shared
 import { env } from '../config/env.js';
 import { prisma } from '../db.js';
 import { verifySession } from '../lib/jwt.js';
+import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 
 export const SESSION_COOKIE = env.NODE_ENV === 'production'
   ? '__Host-alto.session'
@@ -39,6 +40,15 @@ export async function attachUser(
         clientId: true,
         associateId: true,
         tokenVersion: true,
+        associate: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            photoS3Key: true,
+            photoUpdatedAt: true,
+          },
+        },
       },
     });
 
@@ -52,7 +62,13 @@ export async function attachUser(
       return next();
     }
 
-    req.user = user;
+    const { associate, ...rest } = user;
+    req.user = {
+      ...rest,
+      firstName: associate?.firstName ?? null,
+      lastName: associate?.lastName ?? null,
+      photoUrl: associate ? profilePhotoUrlFor(associate) : null,
+    };
     next();
   } catch (err) {
     next(err);

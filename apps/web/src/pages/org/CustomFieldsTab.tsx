@@ -10,6 +10,7 @@ import {
   type CustomFieldType,
 } from '@/lib/customFieldsApi';
 import { ApiError } from '@/lib/api';
+import { useConfirm } from '@/lib/confirm';
 import {
   Badge,
   Button,
@@ -174,6 +175,7 @@ function DefinitionDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const confirm = useConfirm();
   const isNew = target === 'new';
   const initial = isNew ? null : target;
   const [entityType, setEntityType] = useState<CustomFieldEntity>(
@@ -231,7 +233,7 @@ function DefinitionDrawer({
 
   const remove = async () => {
     if (isNew) return;
-    if (!window.confirm(`Delete "${initial!.label}"?`)) return;
+    if (!(await confirm({ title: `Delete "${initial!.label}"?`, destructive: true }))) return;
     setSubmitting(true);
     try {
       await deleteDefinition(initial!.id);

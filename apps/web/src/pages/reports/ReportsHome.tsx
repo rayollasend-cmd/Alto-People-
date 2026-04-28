@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ArrowDown, ArrowUp, BarChart3, Play, Plus, Trash2, X } from 'lucide-react';
 import { ApiError } from '@/lib/api';
+import { useConfirm } from '@/lib/confirm';
 import {
   createReport,
   deleteReport,
@@ -47,6 +48,7 @@ const ENTITIES: ReportEntity[] = [
 ];
 
 export function ReportsHome() {
+  const confirm = useConfirm();
   const [rows, setRows] = useState<ReportSummary[] | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [running, setRunning] = useState<{
@@ -79,7 +81,7 @@ export function ReportsHome() {
   };
 
   const onDelete = async (id: string) => {
-    if (!window.confirm('Delete this report?')) return;
+    if (!(await confirm({ title: 'Delete this report?', destructive: true }))) return;
     try {
       await deleteReport(id);
       refresh();

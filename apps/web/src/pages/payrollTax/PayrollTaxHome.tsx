@@ -17,6 +17,7 @@ import {
   type TaxFormKind,
 } from '@/lib/payrollTax91Api';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -410,6 +411,7 @@ const FORM_STATUS_BADGE: Record<TaxForm['status'], 'pending' | 'success' | 'defa
 };
 
 function TaxFormsTab({ canManage }: { canManage: boolean }) {
+  const confirm = useConfirm();
   const [rows, setRows] = useState<TaxForm[] | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [show941Builder, setShow941Builder] = useState(false);
@@ -425,7 +427,7 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
   }, []);
 
   const onFile = async (id: string) => {
-    if (!window.confirm('File this form? Filed forms are immutable.')) return;
+    if (!(await confirm({ title: 'File this form?', description: 'Filed forms are immutable.' }))) return;
     try {
       await fileTaxForm(id);
       toast.success('Form filed.');
@@ -436,7 +438,7 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
   };
 
   const onVoid = async (id: string) => {
-    if (!window.confirm('Void this form?')) return;
+    if (!(await confirm({ title: 'Void this form?', destructive: true }))) return;
     try {
       await voidTaxForm(id);
       toast.success('Form voided.');

@@ -11,6 +11,7 @@ import {
   type HolidayType,
 } from '@/lib/holiday117Api';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -56,6 +57,7 @@ const MONTH_NAMES = [
 
 export function HolidaysHome() {
   const { user } = useAuth();
+  const confirm = useConfirm();
   const canManage = user ? hasCapability(user.role, 'manage:scheduling') : false;
   const [year, setYear] = useState(new Date().getFullYear());
   const [rows, setRows] = useState<HolidayRow[] | null>(null);
@@ -194,7 +196,7 @@ export function HolidaysHome() {
                         {canManage && (
                           <button
                             onClick={async () => {
-                              if (!window.confirm(`Delete ${h.name}?`)) return;
+                              if (!(await confirm({ title: `Delete ${h.name}?`, destructive: true }))) return;
                               try {
                                 await deleteHoliday(h.id);
                                 refresh();

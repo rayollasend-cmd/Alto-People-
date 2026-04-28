@@ -31,6 +31,7 @@ import {
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { ApiError } from '@/lib/api';
+import { useConfirm } from '@/lib/confirm';
 import {
   Avatar,
   Badge,
@@ -59,6 +60,7 @@ import {
   TabsTrigger,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { toast } from 'sonner';
 
 type Tab = 'departments' | 'cost-centers' | 'job-profiles' | 'positions' | 'people' | 'custom-fields';
@@ -296,6 +298,7 @@ function DepartmentDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const confirm = useConfirm();
   const isNew = target === 'new';
   const initial = isNew ? null : target;
   const [name, setName] = useState(initial?.name ?? '');
@@ -338,7 +341,7 @@ function DepartmentDrawer({
 
   const remove = async () => {
     if (isNew) return;
-    if (!window.confirm(`Delete "${initial!.name}"?`)) return;
+    if (!(await confirm({ title: `Delete "${initial!.name}"?`, destructive: true }))) return;
     setSubmitting(true);
     try {
       await deleteDepartment(initial!.id);
@@ -570,6 +573,7 @@ function CostCenterDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const confirm = useConfirm();
   const isNew = target === 'new';
   const initial = isNew ? null : target;
   const [code, setCode] = useState(initial?.code ?? '');
@@ -609,7 +613,7 @@ function CostCenterDrawer({
 
   const remove = async () => {
     if (isNew) return;
-    if (!window.confirm(`Delete cost center ${initial!.code}?`)) return;
+    if (!(await confirm({ title: `Delete cost center ${initial!.code}?`, destructive: true }))) return;
     setSubmitting(true);
     try {
       await deleteCostCenter(initial!.id);
@@ -836,6 +840,7 @@ function JobProfileDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const confirm = useConfirm();
   const isNew = target === 'new';
   const initial = isNew ? null : target;
   const [code, setCode] = useState(initial?.code ?? '');
@@ -884,7 +889,7 @@ function JobProfileDrawer({
 
   const remove = async () => {
     if (isNew) return;
-    if (!window.confirm(`Delete job profile ${initial!.code}?`)) return;
+    if (!(await confirm({ title: `Delete job profile ${initial!.code}?`, destructive: true }))) return;
     setSubmitting(true);
     try {
       await deleteJobProfile(initial!.id);
@@ -1287,7 +1292,10 @@ function PersonOrgDrawer({
               Effective changes
             </div>
             {history === null && (
-              <div className="text-xs text-silver">Loading…</div>
+              <div className="space-y-1.5">
+                <Skeleton className="h-4 w-3/4" />
+                <Skeleton className="h-4 w-1/2" />
+              </div>
             )}
             {history?.length === 0 && (
               <div className="text-xs text-silver">No history yet.</div>

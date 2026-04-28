@@ -6,6 +6,8 @@ import { AuthProvider } from '@/lib/auth';
 import { ThemeProvider } from '@/lib/theme';
 import { DensityProvider } from '@/lib/density';
 import { PageTitleProvider } from '@/lib/pageTitle';
+import { ConfirmProvider } from '@/lib/confirm';
+import { Toaster } from '@/components/ui/Toaster';
 import './index.css';
 
 const rootEl = document.getElementById('root');
@@ -53,7 +55,10 @@ ReactDOM.createRoot(rootEl).render(
       <DensityProvider>
         <AuthProvider>
           <PageTitleProvider>
-            <RouterProvider router={router} />
+            <ConfirmProvider>
+              <RouterProvider router={router} />
+              <Toaster />
+            </ConfirmProvider>
           </PageTitleProvider>
         </AuthProvider>
       </DensityProvider>

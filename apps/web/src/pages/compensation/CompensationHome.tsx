@@ -21,6 +21,7 @@ import {
   type PayType,
 } from '@/lib/compApi';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -146,6 +147,7 @@ type BandDraft = {
 };
 
 function BandsTab({ clientId, canManage }: { clientId: string; canManage: boolean }) {
+  const confirm = useConfirm();
   const [rows, setRows] = useState<CompBand[] | null>(null);
   const [draft, setDraft] = useState<BandDraft | null>(null);
 
@@ -163,7 +165,7 @@ function BandsTab({ clientId, canManage }: { clientId: string; canManage: boolea
   }, [clientId]);
 
   const onDelete = async (id: string) => {
-    if (!window.confirm('Delete this pay band?')) return;
+    if (!(await confirm({ title: 'Delete this pay band?', destructive: true }))) return;
     try {
       await deleteBand(id);
       toast.success('Band deleted.');
@@ -627,6 +629,7 @@ function CycleDetailDrawer({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const confirm = useConfirm();
   const [proposals, setProposals] = useState<MeritProposal[] | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -668,7 +671,7 @@ function CycleDetailDrawer({
   };
 
   const onApply = async () => {
-    if (!window.confirm(`Apply ${cycle.name}? Approved proposals become effective ${cycle.effectiveDate}.`)) {
+    if (!(await confirm({ title: `Apply ${cycle.name}?`, description: `Approved proposals become effective ${cycle.effectiveDate}.` }))) {
       return;
     }
     setBusy(true);

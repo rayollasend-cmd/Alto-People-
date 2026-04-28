@@ -1,8 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
+import { Briefcase, AlertCircle } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { listApplications } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { ApplicationsList } from './ApplicationsList';
 
 export function OnboardingHome() {
@@ -45,26 +49,35 @@ function AssociateRedirect() {
   if (error) {
     return (
       <div className="max-w-2xl mx-auto">
-        <h1 className="font-display text-3xl text-white mb-2">Onboarding</h1>
-        <p className="text-alert">{error}</p>
+        <PageHeader title="Onboarding" />
+        <EmptyState
+          icon={AlertCircle}
+          title="Couldn't load onboarding"
+          description={error}
+        />
       </div>
     );
   }
 
   if (applicationId === undefined) {
     return (
-      <div className="max-w-2xl mx-auto text-silver">Loading…</div>
+      <div className="max-w-2xl mx-auto">
+        <PageHeader title="Onboarding" />
+        <Skeleton className="h-8 w-48 mb-4" />
+        <SkeletonRows count={4} rowHeight="h-16" />
+      </div>
     );
   }
 
   if (applicationId === null) {
     return (
       <div className="max-w-2xl mx-auto">
-        <h1 className="font-display text-3xl text-white mb-2">Onboarding</h1>
-        <p className="text-silver">
-          You don't have an active onboarding application yet. Once HR creates
-          one, it'll appear here.
-        </p>
+        <PageHeader title="Onboarding" />
+        <EmptyState
+          icon={Briefcase}
+          title="No active onboarding"
+          description="Once HR creates an application for you, it'll show up here with a checklist of what to complete."
+        />
       </div>
     );
   }

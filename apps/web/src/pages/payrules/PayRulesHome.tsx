@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Plus } from 'lucide-react';
 import { ApiError } from '@/lib/api';
+import { useConfirm } from '@/lib/confirm';
 import { listClients } from '@/lib/clientsApi';
 import type { ClientListItem } from '@alto-people/shared';
 import {
@@ -113,6 +114,7 @@ export function PayRulesHome() {
 // ============ Projects ============
 
 function ProjectsTab({ clientId }: { clientId: string }) {
+  const confirm = useConfirm();
   const [rows, setRows] = useState<Project[] | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [code, setCode] = useState('');
@@ -146,7 +148,7 @@ function ProjectsTab({ clientId }: { clientId: string }) {
   };
 
   const onDeactivate = async (id: string) => {
-    if (!window.confirm('Deactivate this project?')) return;
+    if (!(await confirm({ title: 'Deactivate this project?', destructive: true }))) return;
     try {
       await deactivateProject(id);
       refresh();
@@ -246,6 +248,7 @@ const KIND_LABEL: Record<PremiumPayKind, string> = {
 };
 
 function PremiumTab({ clientId }: { clientId: string }) {
+  const confirm = useConfirm();
   const [rows, setRows] = useState<PremiumPayRule[] | null>(null);
   const [showNew, setShowNew] = useState(false);
 
@@ -260,7 +263,7 @@ function PremiumTab({ clientId }: { clientId: string }) {
   }, [clientId]);
 
   const onDelete = async (id: string) => {
-    if (!window.confirm('Deactivate this rule?')) return;
+    if (!(await confirm({ title: 'Deactivate this rule?', destructive: true }))) return;
     try {
       await deletePremiumPayRule(id);
       refresh();

@@ -13,6 +13,8 @@ import {
 } from '@/lib/i9Api';
 import { Field, TaskShell, inputCls } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
+import { Button } from '@/components/ui/Button';
+import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 
 type I9DocumentKind = 'ID' | 'SSN_CARD' | 'I9_SUPPORTING' | 'J1_VISA' | 'J1_DS2019';
 type I9DocumentSide = 'FRONT' | 'BACK';
@@ -78,7 +80,8 @@ export function I9Task() {
   if (loading) {
     return (
       <TaskShell title="I-9 verification" backTo={backTo}>
-        <p className="text-silver">Loading…</p>
+        <Skeleton className="h-4 w-3/4 mb-5" />
+        <SkeletonRows count={3} rowHeight="h-24" />
       </TaskShell>
     );
   }
@@ -270,18 +273,9 @@ function Section1Card({
           {error && <p className="text-sm text-alert">{error}</p>}
 
           <div className="flex items-center gap-3 pt-1">
-            <button
-              type="submit"
-              disabled={submitting}
-              className={cn(
-                'px-5 py-2.5 rounded font-medium transition',
-                submitting
-                  ? 'bg-navy-secondary text-silver/50 cursor-not-allowed'
-                  : 'bg-gold text-navy hover:bg-gold-bright'
-              )}
-            >
+            <Button type="submit" loading={submitting} disabled={submitting}>
               {submitting ? 'Signing…' : 'Sign Section 1'}
-            </button>
+            </Button>
           </div>
         </form>
       )}
@@ -413,7 +407,7 @@ function DocumentsCard({
       )}
 
       {docs === null ? (
-        <p className="text-xs text-silver/60">Loading…</p>
+        <SkeletonRows count={2} rowHeight="h-10" />
       ) : docs.length > 0 ? (
         <ul className="space-y-2">
           {docs.map((d) => (

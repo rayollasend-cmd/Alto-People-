@@ -18,6 +18,7 @@ import {
   type SkillLevel,
 } from '@/lib/career126Api';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -237,6 +238,7 @@ function LadderDetailDrawer({
   canManage: boolean;
   onClose: () => void;
 }) {
+  const confirm = useConfirm();
   const [data, setData] = useState<LadderDetail | null>(null);
   const [showAddLevel, setShowAddLevel] = useState(false);
   const [skillFor, setSkillFor] = useState<Level | null>(null);
@@ -300,7 +302,7 @@ function LadderDetailDrawer({
                       {canManage && (
                         <button
                           onClick={async () => {
-                            if (!window.confirm(`Delete L${lv.rank} ${lv.title}?`))
+                            if (!(await confirm({ title: `Delete L${lv.rank} ${lv.title}?`, destructive: true })))
                               return;
                             try {
                               await deleteLevel(lv.id);
@@ -377,7 +379,7 @@ function LadderDetailDrawer({
                   size="sm"
                   variant="ghost"
                   onClick={async () => {
-                    if (!window.confirm('Archive this ladder?')) return;
+                    if (!(await confirm({ title: 'Archive this ladder?', destructive: true }))) return;
                     try {
                       await archiveLadder(data.id);
                       toast.success('Archived.');

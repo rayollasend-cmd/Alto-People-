@@ -16,6 +16,7 @@ import {
   type MyApplicationRow,
 } from '@/lib/internalMobility120Api';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -48,6 +49,7 @@ const STATUS_VARIANT: Record<
 
 export function InternalJobsHome() {
   const { user } = useAuth();
+  const confirm = useConfirm();
   const canManage = user ? hasCapability(user.role, 'manage:recruiting') : false;
   const [tab, setTab] = useState<'browse' | 'mine'>('browse');
   const [jobs, setJobs] = useState<JobRow[] | null>(null);
@@ -162,7 +164,7 @@ export function InternalJobsHome() {
                         }
                         onClick={async () => {
                           if (!j.myApplication) return;
-                          if (!window.confirm('Withdraw your application?')) return;
+                          if (!(await confirm({ title: 'Withdraw your application?', destructive: true }))) return;
                           try {
                             await withdrawApplication(j.myApplication.id);
                             toast.success('Withdrawn.');
@@ -237,7 +239,7 @@ export function InternalJobsHome() {
                       size="sm"
                       variant="ghost"
                       onClick={async () => {
-                        if (!window.confirm('Withdraw your application?')) return;
+                        if (!(await confirm({ title: 'Withdraw your application?', destructive: true }))) return;
                         try {
                           await withdrawApplication(a.id);
                           toast.success('Withdrawn.');

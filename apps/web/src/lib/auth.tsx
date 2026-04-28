@@ -29,6 +29,13 @@ interface AuthState {
   capabilities: ReadonlySet<Capability>;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
+  /**
+   * Re-fetch /auth/me. Use after self-service mutations (profile name,
+   * profile photo) so the chrome avatar/display name update without a
+   * full page reload. Network failures are swallowed — the cached user
+   * stays put and the next poll/route change can retry.
+   */
+  refreshUser: () => Promise<void>;
   can: (capability: Capability) => boolean;
 }
 
@@ -93,6 +100,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
+  const refreshUser = useCallback(async () => {
+    try {
+      const me = await apiFetch<MeResponse>('/auth/me');
+      setUser(me.user);
+      setIsOffline(false);
+    } catch {
+      // Soft fail — keep the cached user. Network/server errors here
+      // shouldn't bounce a signed-in user out of the app.
+    }
+  }, []);
+
   const value = useMemo<AuthState>(() => {
     const role = user?.role ?? null;
     const capabilities = role ? ROLE_CAPABILITIES[role] : EMPTY_CAPS;
@@ -104,9 +122,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       capabilities,
       signIn,
       signOut,
+      refreshUser,
       can: (cap) => (role ? hasCapability(role, cap) : false),
     };
-  }, [isInitializing, isOffline, user, signIn, signOut]);
+  }, [isInitializing, isOffline, user, signIn, signOut, refreshUser]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
@@ -132,10 +151,22 @@ export function RequireAuth({ children }: { children: ReactNode }) {
 
 function AuthSplash() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-midnight">
-      <div className="text-center">
-        <div className="font-display text-4xl text-gold mb-2">Alto People</div>
-        <div className="text-silver text-sm tracking-widest uppercase">Loading…</div>
+    <div
+      className="min-h-screen flex items-center justify-center bg-midnight"
+      role="status"
+      aria-live="polite"
+      aria-label="Loading"
+    >
+      <div className="flex flex-col items-center text-center">
+        <div className="font-display text-4xl text-white leading-none">
+          Alto <span className="text-gold">People</span>
+        </div>
+        <div
+          className="mt-6 h-0.5 w-32 overflow-hidden rounded-full bg-navy-secondary"
+          aria-hidden="true"
+        >
+          <div className="h-full w-1/3 rounded-full bg-gold animate-splash-sweep" />
+        </div>
       </div>
     </div>
   );

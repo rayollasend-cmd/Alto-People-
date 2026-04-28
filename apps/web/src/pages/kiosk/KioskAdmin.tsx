@@ -23,6 +23,7 @@ import {
 import { listDirectory } from '@/lib/directoryApi';
 import { listClients } from '@/lib/clientsApi';
 import { useAuth } from '@/lib/auth';
+import { useConfirm, usePrompt } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -50,6 +51,7 @@ import {
   TabsTrigger,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { toast } from 'sonner';
 
 type Tab = 'devices' | 'pins' | 'review' | 'log' | 'faces';
@@ -93,6 +95,7 @@ export function KioskAdmin() {
 }
 
 function DevicesTab({ canManage }: { canManage: boolean }) {
+  const confirm = useConfirm();
   const [rows, setRows] = useState<KioskDevice[] | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [showToken, setShowToken] = useState<string | null>(null);
@@ -180,7 +183,7 @@ function DevicesTab({ canManage }: { canManage: boolean }) {
                           size="sm"
                           variant="ghost"
                           onClick={async () => {
-                            if (!window.confirm('Revoke this kiosk? It will stop accepting punches.'))
+                            if (!(await confirm({ title: 'Revoke this kiosk?', description: 'It will stop accepting punches.', destructive: true })))
                               return;
                             await revokeKioskDevice(d.id);
                             refresh();
@@ -192,7 +195,7 @@ function DevicesTab({ canManage }: { canManage: boolean }) {
                       {canManage && (
                         <button
                           onClick={async () => {
-                            if (!window.confirm('Permanently delete?')) return;
+                            if (!(await confirm({ title: 'Permanently delete?', destructive: true }))) return;
                             try {
                               await deleteKioskDevice(d.id);
                               refresh();
@@ -293,7 +296,7 @@ function NewDeviceDrawer({
         <div>
           <Label>Client</Label>
           {clients === null ? (
-            <div className="mt-1 text-xs text-silver">Loading…</div>
+            <Skeleton className="mt-1 h-10 w-full" />
           ) : clients.length === 0 ? (
             <div className="mt-1 text-xs text-silver">
               No clients yet — create one in Clients first.
@@ -506,6 +509,7 @@ function GeofenceDrawer({
 }
 
 function PinsTab({ canManage }: { canManage: boolean }) {
+  const confirm = useConfirm();
   const [clients, setClients] = useState<
     Array<{ id: string; name: string }> | null
   >(null);
@@ -558,7 +562,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
         <div className="flex-1 max-w-md">
           <Label>Client</Label>
           {clients === null ? (
-            <div className="mt-1 text-xs text-silver">Loading…</div>
+            <Skeleton className="mt-1 h-10 w-full" />
           ) : clients.length === 0 ? (
             <div className="mt-1 text-xs text-silver">
               No clients yet — create one in Clients first.
@@ -623,7 +627,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                       {canManage && (
                         <button
                           onClick={async () => {
-                            if (!window.confirm('Revoke this employee number?')) return;
+                            if (!(await confirm({ title: 'Revoke this employee number?', destructive: true }))) return;
                             try {
                               await deleteKioskPin(p.id);
                               refresh();
@@ -775,7 +779,7 @@ function NewPinDrawer({
         <div>
           <Label>Associate</Label>
           {associates === null ? (
-            <div className="mt-1 text-xs text-silver">Loading…</div>
+            <Skeleton className="mt-1 h-10 w-full" />
           ) : associates.length === 0 ? (
             <div className="mt-1 text-xs text-silver">
               No associates have been added to this client yet. Start an
@@ -945,6 +949,7 @@ function LogTab() {
 }
 
 function FacesTab({ canManage }: { canManage: boolean }) {
+  const confirm = useConfirm();
   const [rows, setRows] = useState<KioskFaceReferenceSummary[] | null>(null);
 
   const refresh = () => {
@@ -997,9 +1002,11 @@ function FacesTab({ canManage }: { canManage: boolean }) {
                       <button
                         onClick={async () => {
                           if (
-                            !window.confirm(
-                              'Reset this face reference? The next kiosk punch will re-enroll.',
-                            )
+                            !(await confirm({
+                              title: 'Reset this face reference?',
+                              description: 'The next kiosk punch will re-enroll.',
+                              destructive: true,
+                            }))
                           )
                             return;
                           try {
@@ -1027,6 +1034,7 @@ function FacesTab({ canManage }: { canManage: boolean }) {
 }
 
 function ReviewTab({ canManage }: { canManage: boolean }) {
+  const prompt = usePrompt();
   const [rows, setRows] = useState<KioskPunchSummary[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -1046,10 +1054,13 @@ function ReviewTab({ canManage }: { canManage: boolean }) {
   ) => {
     let notes: string | undefined;
     if (decision === 'REJECTED') {
-      const v = window.prompt(
-        'Notes for rejection (will void the time entry):',
-        '',
-      );
+      const v = await prompt({
+        title: 'Reject kiosk punch',
+        description: 'Rejecting will void the associated time entry.',
+        reasonLabel: 'Notes for rejection',
+        confirmLabel: 'Reject & void',
+        destructive: true,
+      });
       if (v === null) return;
       notes = v;
     }

@@ -6,14 +6,14 @@ import { cn } from '@/lib/cn';
 
 const buttonVariants = cva(
   // base — every button gets these
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright focus-visible:ring-offset-2 focus-visible:ring-offset-midnight disabled:pointer-events-none disabled:opacity-50 select-none',
+  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-[color,background-color,border-color,box-shadow,transform] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright focus-visible:ring-offset-2 focus-visible:ring-offset-midnight disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] disabled:active:scale-100 select-none',
   {
     variants: {
       variant: {
         // Primary CTA — gold on navy, used for the single most-important
         // action on a page (Save, Submit, Approve).
         primary:
-          'bg-gold text-navy hover:bg-gold-bright shadow-sm',
+          'bg-gold text-navy hover:bg-gold-bright shadow-sm hover:shadow-md',
         // Secondary — subtle border, used for "Cancel", "Edit", row actions.
         secondary:
           'bg-navy-secondary/40 text-white border border-navy-secondary hover:border-silver/40 hover:bg-navy-secondary',
@@ -25,9 +25,9 @@ const buttonVariants = cva(
           'text-silver hover:text-white hover:bg-navy-secondary/60',
         // Destructive — irreversible actions (Delete, Cancel run, Reject).
         destructive:
-          'bg-alert/90 text-white hover:bg-alert',
+          'bg-alert text-white hover:bg-alert/90 shadow-sm',
         // Link-styled (rare — use only for inline navigation in copy).
-        link: 'text-gold underline-offset-4 hover:underline p-0 h-auto',
+        link: 'text-gold underline-offset-4 hover:underline p-0 h-auto active:scale-100',
       },
       size: {
         sm: 'h-8 px-3 text-xs',
@@ -57,14 +57,21 @@ export interface ButtonProps
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, asChild, loading, disabled, children, ...props }, ref) => {
     const Comp = asChild ? Slot : 'button';
+    // Slot enforces React.Children.only on its child, so the spinner sibling
+    // we'd normally render alongside `children` would crash when asChild is
+    // true. Suppress the inline spinner in that case — `disabled` still
+    // conveys the busy state on the underlying element. Callers that need a
+    // visible spinner with a Link should use `useNavigate` + onClick instead.
+    const showSpinner = loading && !asChild;
     return (
       <Comp
         ref={ref}
         className={cn(buttonVariants({ variant, size }), className)}
         disabled={disabled || loading}
+        aria-busy={loading || undefined}
         {...props}
       >
-        {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+        {showSpinner && <Loader2 className="h-4 w-4 animate-spin" />}
         {children}
       </Comp>
     );

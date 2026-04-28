@@ -26,6 +26,7 @@ import {
   listOrgAssociates,
 } from '@/lib/orgApi';
 import { ApiError } from '@/lib/api';
+import { useConfirm } from '@/lib/confirm';
 import {
   Avatar,
   Badge,
@@ -253,6 +254,7 @@ function PositionDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const confirm = useConfirm();
   const isNew = target === 'new';
   const initial = isNew ? null : target;
   const [code, setCode] = useState(initial?.code ?? '');
@@ -334,7 +336,7 @@ function PositionDrawer({
 
   const vacate = async () => {
     if (isNew) return;
-    if (!window.confirm('Vacate this position? Status moves to OPEN.')) return;
+    if (!(await confirm({ title: 'Vacate this position?', description: 'Status moves to OPEN.', destructive: true }))) return;
     setSubmitting(true);
     try {
       await vacatePosition(initial!.id);
@@ -348,7 +350,7 @@ function PositionDrawer({
 
   const remove = async () => {
     if (isNew) return;
-    if (!window.confirm(`Close position ${initial!.code}?`)) return;
+    if (!(await confirm({ title: `Close position ${initial!.code}?`, destructive: true }))) return;
     setSubmitting(true);
     try {
       await deletePosition(initial!.id);

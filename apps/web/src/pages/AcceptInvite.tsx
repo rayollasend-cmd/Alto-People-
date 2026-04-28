@@ -1,12 +1,16 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { Lock } from 'lucide-react';
 import type {
   AcceptInviteResponse,
   InviteSummary,
 } from '@alto-people/shared';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { cn } from '@/lib/cn';
+import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Input';
+import { Label, FormHint } from '@/components/ui/Label';
+import { Skeleton } from '@/components/ui/Skeleton';
 
 export function AcceptInvite() {
   const { token } = useParams<{ token: string }>();
@@ -93,23 +97,30 @@ export function AcceptInvite() {
         </div>
 
         <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 shadow-2xl">
-          {loading && <p className="text-silver">Loading invitation…</p>}
+          {loading && (
+            <div>
+              <Skeleton className="h-7 w-2/3 mb-3" />
+              <Skeleton className="h-4 w-full mb-2" />
+              <Skeleton className="h-4 w-1/2 mb-6" />
+              <Skeleton className="h-10 w-full mb-3" />
+              <Skeleton className="h-10 w-full" />
+            </div>
+          )}
 
           {!loading && error && !invite && (
             <>
               <h2 className="font-display text-2xl md:text-3xl text-white mb-3">
                 Invitation problem
               </h2>
-              <p role="alert" className="text-sm text-alert mb-4">
-                {error}
-              </p>
-              <button
-                type="button"
-                onClick={() => navigate('/login')}
-                className="text-sm text-silver hover:text-gold underline"
+              <div
+                role="alert"
+                className="mb-4 p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
               >
+                {error}
+              </div>
+              <Button variant="ghost" onClick={() => navigate('/login')}>
                 Go to sign in
-              </button>
+              </Button>
             </>
           )}
 
@@ -123,62 +134,73 @@ export function AcceptInvite() {
               </p>
               <p className="text-silver/60 text-xs mb-6">{invite.email}</p>
 
-              <label className="block mb-4">
-                <span className="block text-xs uppercase tracking-widest text-silver mb-1.5">
+              <div className="mb-4">
+                <Label htmlFor="invite-password" required>
                   Password
-                </span>
-                <input
-                  type="password"
-                  autoComplete="new-password"
-                  required
-                  minLength={12}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded bg-navy-secondary/60 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white"
-                />
-                <span className="block text-[10px] text-silver/60 mt-1">
-                  Minimum 12 characters.
-                </span>
-              </label>
+                </Label>
+                <div className="relative">
+                  <Lock
+                    className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/60 pointer-events-none"
+                    aria-hidden="true"
+                  />
+                  <Input
+                    id="invite-password"
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                    minLength={12}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="pl-9"
+                  />
+                </div>
+                <FormHint>Minimum 12 characters.</FormHint>
+              </div>
 
-              <label className="block mb-2">
-                <span className="block text-xs uppercase tracking-widest text-silver mb-1.5">
+              <div className="mb-2">
+                <Label htmlFor="invite-confirm" required>
                   Confirm password
-                </span>
-                <input
-                  type="password"
-                  autoComplete="new-password"
-                  required
-                  minLength={12}
-                  value={confirm}
-                  onChange={(e) => setConfirm(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded bg-navy-secondary/60 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white"
-                />
+                </Label>
+                <div className="relative">
+                  <Lock
+                    className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/60 pointer-events-none"
+                    aria-hidden="true"
+                  />
+                  <Input
+                    id="invite-confirm"
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                    minLength={12}
+                    value={confirm}
+                    invalid={!!confirm && password !== confirm}
+                    onChange={(e) => setConfirm(e.target.value)}
+                    className="pl-9"
+                  />
+                </div>
                 {confirm && password !== confirm && (
-                  <span className="block text-[10px] text-alert mt-1">
-                    Passwords don't match.
-                  </span>
+                  <FormHint variant="error">Passwords don't match.</FormHint>
                 )}
-              </label>
+              </div>
 
               {error && (
-                <p role="alert" className="text-sm text-alert mt-4 mb-2">
+                <div
+                  role="alert"
+                  className="mt-4 p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
+                >
                   {error}
-                </p>
+                </div>
               )}
 
-              <button
+              <Button
                 type="submit"
-                disabled={submitting || !passwordOk}
-                className={cn(
-                  'w-full py-3 mt-4 rounded font-medium transition',
-                  submitting || !passwordOk
-                    ? 'bg-navy-secondary text-silver/50 cursor-not-allowed'
-                    : 'bg-gold text-navy hover:bg-gold-bright'
-                )}
+                size="lg"
+                loading={submitting}
+                disabled={!passwordOk}
+                className="w-full mt-4"
               >
                 {submitting ? 'Setting up…' : 'Set password & sign in'}
-              </button>
+              </Button>
               <p className="text-[10px] text-silver/60 text-center mt-4">
                 This link expires {new Date(invite.expiresAt).toLocaleString()}.
               </p>

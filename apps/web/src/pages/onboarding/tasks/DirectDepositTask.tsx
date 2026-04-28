@@ -9,6 +9,7 @@ import {
 } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { Button } from '@/components/ui/Button';
 import { Field, SubmitRow, TaskShell, inputCls } from './ProfileInfoTask';
 
 // ABA mod-10 checksum — same one the API enforces. Keeping client-side too
@@ -272,20 +273,12 @@ function PayoutOnFileCard({
         </div>
       )}
       <div className="flex items-center gap-3 mt-3">
-        <button
-          type="button"
-          onClick={onReplace}
-          className="text-xs px-3 py-1.5 rounded border border-silver/40 text-silver hover:text-white hover:border-silver"
-        >
+        <Button type="button" variant="outline" size="sm" onClick={onReplace}>
           Replace method
-        </button>
-        <button
-          type="button"
-          onClick={() => navigate(backTo)}
-          className="text-xs px-3 py-1.5 rounded bg-gold text-navy hover:bg-gold-bright font-medium"
-        >
+        </Button>
+        <Button type="button" size="sm" onClick={() => navigate(backTo)}>
           Back to checklist
-        </button>
+        </Button>
       </div>
     </div>
   );

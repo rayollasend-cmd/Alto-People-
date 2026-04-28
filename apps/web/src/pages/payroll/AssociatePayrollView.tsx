@@ -4,6 +4,9 @@ import { listMyPayrollItems } from '@/lib/payrollApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { SkeletonRows } from '@/components/ui/Skeleton';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Wallet } from 'lucide-react';
 
 const fmtMoney = (n: number) =>
   n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
@@ -48,9 +51,13 @@ export function AssociatePayrollView() {
           {error}
         </p>
       )}
-      {!items && <p className="text-silver">Loading…</p>}
+      {!items && <SkeletonRows count={3} rowHeight="h-32" />}
       {items && items.length === 0 && (
-        <p className="text-silver">No paystubs yet.</p>
+        <EmptyState
+          icon={Wallet}
+          title="No paystubs yet"
+          description="Your first paystub will appear here after payroll runs for a period you worked."
+        />
       )}
 
       {items && items.length > 0 && (

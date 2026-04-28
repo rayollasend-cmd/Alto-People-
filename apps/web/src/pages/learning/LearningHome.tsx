@@ -18,6 +18,7 @@ import {
   type ExpiringEnrollment,
 } from '@/lib/lms94Api';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -90,6 +91,7 @@ const COURSE_BADGE: Record<Course['status'], 'pending' | 'success' | 'default'> 
 };
 
 function CoursesTab({ canManage }: { canManage: boolean }) {
+  const confirm = useConfirm();
   const [rows, setRows] = useState<Course[] | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [enrollFor, setEnrollFor] = useState<Course | null>(null);
@@ -183,7 +185,7 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
                       {canManage && (
                         <button
                           onClick={async () => {
-                            if (!window.confirm('Delete this course?')) return;
+                            if (!(await confirm({ title: 'Delete this course?', destructive: true }))) return;
                             try {
                               await deleteCourse(c.id);
                               refresh();

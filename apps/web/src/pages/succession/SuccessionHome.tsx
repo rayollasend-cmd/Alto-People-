@@ -16,6 +16,7 @@ import {
   updateSuccessionCandidate,
 } from '@/lib/succession115Api';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -328,6 +329,7 @@ function CandidateRow({
   canManage: boolean;
   onChange: () => void;
 }) {
+  const confirm = useConfirm();
   return (
     <div className="flex items-center gap-2 p-2 rounded border border-navy-secondary">
       <div className="flex-1">
@@ -370,7 +372,7 @@ function CandidateRow({
       {canManage && (
         <button
           onClick={async () => {
-            if (!window.confirm('Remove this successor?')) return;
+            if (!(await confirm({ title: 'Remove this successor?', destructive: true }))) return;
             try {
               await deleteSuccessionCandidate(candidate.id);
               onChange();

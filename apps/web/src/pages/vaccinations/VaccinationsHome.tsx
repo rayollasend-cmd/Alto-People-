@@ -15,6 +15,7 @@ import {
   type VaccinationRecord,
 } from '@/lib/vaccination121Api';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -41,6 +42,7 @@ import { Label } from '@/components/ui/Label';
 
 export function VaccinationsHome() {
   const { user } = useAuth();
+  const confirm = useConfirm();
   const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
   const [tab, setTab] = useState<'all' | 'expiring'>('all');
   const [records, setRecords] = useState<VaccinationRecord[] | null>(null);
@@ -211,7 +213,7 @@ export function VaccinationsHome() {
                         {canManage && (
                           <button
                             onClick={async () => {
-                              if (!window.confirm('Delete this record?')) return;
+                              if (!(await confirm({ title: 'Delete this record?', destructive: true }))) return;
                               try {
                                 await deleteVaccination(r.id);
                                 refresh();

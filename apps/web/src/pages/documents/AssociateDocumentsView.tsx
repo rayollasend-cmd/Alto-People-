@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Eye } from 'lucide-react';
+import { Eye, FileText } from 'lucide-react';
 import type { DocumentKind, DocumentRecord } from '@alto-people/shared';
 import {
   deleteMyDocument,
@@ -8,8 +8,11 @@ import {
 } from '@/lib/documentsApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { SkeletonRows } from '@/components/ui/Skeleton';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { DocumentPreview } from '@/components/DocumentPreview';
 
 const KIND_OPTIONS: Array<{ value: DocumentKind; label: string }> = [
@@ -150,24 +153,19 @@ export function AssociateDocumentsView() {
             {error}
           </p>
         )}
-        <button
-          type="submit"
-          disabled={busy}
-          className={cn(
-            'px-5 py-2.5 rounded font-medium transition',
-            busy
-              ? 'bg-navy-secondary text-silver/50 cursor-not-allowed'
-              : 'bg-gold text-navy hover:bg-gold-bright'
-          )}
-        >
+        <Button type="submit" loading={busy} disabled={busy}>
           {busy ? 'Uploading…' : 'Upload'}
-        </button>
+        </Button>
       </form>
 
       <h2 className="font-display text-2xl text-white mb-3">Your documents</h2>
-      {!docs && <p className="text-silver">Loading…</p>}
+      {!docs && <SkeletonRows count={4} rowHeight="h-14" />}
       {docs && docs.length === 0 && (
-        <p className="text-silver">No documents yet.</p>
+        <EmptyState
+          icon={FileText}
+          title="No documents uploaded"
+          description="Use the form above to share IDs, tax forms, or onboarding paperwork. HR will review each upload."
+        />
       )}
       {docs && docs.length > 0 && (
         <ul className="space-y-2">

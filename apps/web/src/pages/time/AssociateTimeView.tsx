@@ -12,7 +12,11 @@ import {
 import { listJobs } from '@/lib/jobsApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { Button } from '@/components/ui/Button';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { SkeletonRows } from '@/components/ui/Skeleton';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Clock, CalendarRange } from 'lucide-react';
 
 function formatHM(mins: number): string {
   const h = Math.floor(mins / 60);
@@ -307,19 +311,15 @@ export function AssociateTimeView() {
                 </select>
               </label>
             )}
-            <button
+            <Button
               type="button"
+              size="lg"
               onClick={handleClockIn}
+              loading={busy}
               disabled={busy}
-              className={cn(
-                'px-6 py-3 rounded font-medium text-base transition',
-                busy
-                  ? 'bg-navy-secondary text-silver/50 cursor-not-allowed'
-                  : 'bg-gold text-navy hover:bg-gold-bright'
-              )}
             >
               {busy ? 'Saving…' : 'Clock in'}
-            </button>
+            </Button>
             <p className="text-xs text-silver/60 mt-3">
               Your browser will ask permission to share your location for geofence verification.
             </p>
@@ -369,12 +369,25 @@ export function AssociateTimeView() {
             </div>
           </div>
         </div>
-        {!entries && <p className="text-silver">Loading…</p>}
-        {entries && entries.length === 0 && (
-          <p className="text-silver">
-            No entries in this range. Try widening the dates above.
-          </p>
-        )}
+        {!entries && <SkeletonRows count={4} rowHeight="h-20" />}
+        {entries && entries.length === 0 && (() => {
+          const isDefaultRange =
+            historyFromYmd === defaultHistoryFromYmd() &&
+            historyToYmd === defaultHistoryToYmd();
+          return isDefaultRange ? (
+            <EmptyState
+              icon={Clock}
+              title="No time entries yet"
+              description="Once you clock in for the first time, your shifts will appear here."
+            />
+          ) : (
+            <EmptyState
+              icon={CalendarRange}
+              title="Nothing in this range"
+              description="Try widening the date range above to see older entries."
+            />
+          );
+        })()}
         {entries && entries.length > 0 && (
           <ul className="space-y-2">
             {entries.map((e) => {

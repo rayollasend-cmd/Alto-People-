@@ -6,7 +6,7 @@ import { authorizeBackgroundCheck } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { TaskShell, inputCls, Field } from './ProfileInfoTask';
-import { cn } from '@/lib/cn';
+import { Button } from '@/components/ui/Button';
 
 const DISCLOSURE = [
   'As part of your onboarding, your employer will run a routine background check through a third-party consumer reporting agency. This may include a review of your criminal history, employment history, education, and identity verification.',
@@ -108,19 +108,14 @@ export function BackgroundCheckTask() {
         )}
 
         <div className="flex items-center gap-3 pt-2">
-          <button
+          <Button
             type="submit"
+            loading={submitting}
             disabled={submitting || !accepted || !typedName.trim()}
-            className={cn(
-              'inline-flex items-center gap-2 px-5 py-2.5 rounded font-medium transition',
-              submitting || !accepted || !typedName.trim()
-                ? 'bg-navy-secondary text-silver/50 cursor-not-allowed'
-                : 'bg-gold text-navy hover:bg-gold-bright'
-            )}
           >
-            <ShieldCheck className="h-4 w-4" />
+            {!submitting && <ShieldCheck className="h-4 w-4" />}
             {submitting ? 'Authorizing…' : 'Authorize background check'}
-          </button>
+          </Button>
           <Link to={backTo} className="text-sm text-silver hover:text-white">
             Cancel
           </Link>

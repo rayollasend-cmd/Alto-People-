@@ -13,7 +13,9 @@ import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { TaskShell, inputCls, Field } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
+import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { SkeletonRows } from '@/components/ui/Skeleton';
 
 const J1_KIND_OPTIONS: Array<{ value: DocumentKind; label: string }> = [
   { value: 'J1_DS2019', label: 'DS-2019 (Certificate of Eligibility)' },
@@ -282,30 +284,29 @@ export function J1DocsTask() {
             />
           </Field>
         </div>
-        <button
+        <Button
           type="submit"
+          size="sm"
+          loading={savingProfile}
           disabled={savingProfile}
           className={cn(
-            'inline-flex items-center gap-2 px-4 py-2 rounded font-medium transition text-sm',
-            savingProfile
-              ? 'bg-navy-secondary text-silver/50 cursor-not-allowed'
-              : profileSaved
-                ? 'bg-success/20 text-success border border-success/40'
-                : 'bg-gold text-navy hover:bg-gold-bright'
+            profileSaved &&
+              !savingProfile &&
+              'bg-success/20 text-success border border-success/40 hover:bg-success/25 shadow-none'
           )}
         >
-          {profileSaved ? (
+          {profileSaved && !savingProfile ? (
             <>
               <CheckCircle2 className="h-4 w-4" />
               Saved · save again
             </>
           ) : (
             <>
-              <Save className="h-4 w-4" />
+              {!savingProfile && <Save className="h-4 w-4" />}
               {savingProfile ? 'Saving…' : 'Save program details'}
             </>
           )}
-        </button>
+        </Button>
       </form>
 
       {/* ---------------------------- Step 2: documents */}
@@ -359,7 +360,7 @@ export function J1DocsTask() {
             </span>
           </div>
           {docs === null ? (
-            <p className="text-silver text-sm">Loading…</p>
+            <SkeletonRows count={2} rowHeight="h-12" />
           ) : j1Docs.length === 0 ? (
             <p className="text-silver text-sm">
               No J-1 documents yet — pick one above.
@@ -418,16 +419,11 @@ export function J1DocsTask() {
         )}
 
         <div className="flex items-center gap-3 pt-2">
-          <button
+          <Button
             type="button"
             onClick={onFinish}
+            loading={finishing}
             disabled={!hasAtLeastOneDoc || !profileSaved || finishing}
-            className={cn(
-              'px-5 py-2.5 rounded font-medium transition',
-              !hasAtLeastOneDoc || !profileSaved || finishing
-                ? 'bg-navy-secondary text-silver/50 cursor-not-allowed'
-                : 'bg-gold text-navy hover:bg-gold-bright'
-            )}
           >
             {finishing
               ? 'Submitting…'
@@ -436,7 +432,7 @@ export function J1DocsTask() {
                 : !hasAtLeastOneDoc
                   ? 'Upload at least one document'
                   : "I'm done — submit for review"}
-          </button>
+          </Button>
           <Link to={backTo} className="text-sm text-silver hover:text-white">
             Cancel
           </Link>

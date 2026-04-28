@@ -34,7 +34,7 @@ export function Drawer({ open, onOpenChange, width = 'max-w-md', children }: Dra
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
           className={cn(
-            'fixed inset-0 z-50 bg-midnight/70 backdrop-blur-sm',
+            'fixed inset-0 z-50 bg-midnight/80 backdrop-blur-sm',
             'data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out',
           )}
         />
@@ -49,7 +49,7 @@ export function Drawer({ open, onOpenChange, width = 'max-w-md', children }: Dra
           )}
         >
           <DialogPrimitive.Close
-            className="absolute right-4 top-4 rounded-sm text-silver hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+            className="absolute right-3 top-3 grid place-items-center h-8 w-8 rounded-md text-silver hover:text-white hover:bg-navy-secondary/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
             aria-label="Close"
           >
             <X className="h-4 w-4" />

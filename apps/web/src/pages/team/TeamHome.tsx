@@ -36,6 +36,7 @@ import {
   TabsTrigger,
 } from '@/components/ui';
 import { toast } from 'sonner';
+import { usePrompt } from '@/lib/confirm';
 
 export function TeamHome() {
   const [tab, setTab] = useState<'overview' | 'timesheets' | 'timeoff'>('overview');
@@ -209,6 +210,7 @@ function ReportsList({ reports }: { reports: DirectReport[] | null }) {
 }
 
 function TimesheetsTab({ onChange }: { onChange: () => void }) {
+  const prompt = usePrompt();
   const [entries, setEntries] = useState<TeamTimeEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -242,7 +244,12 @@ function TimesheetsTab({ onChange }: { onChange: () => void }) {
   };
 
   const reject = async (id: string) => {
-    const reason = window.prompt('Reason for rejection:')?.trim();
+    const reason = (await prompt({
+      title: 'Reject timesheet',
+      reasonLabel: 'Reason for rejection',
+      confirmLabel: 'Reject',
+      destructive: true,
+    }))?.trim();
     if (!reason) return;
     setPendingId(id);
     try {
@@ -323,6 +330,7 @@ function TimesheetsTab({ onChange }: { onChange: () => void }) {
 }
 
 function TimeOffTab({ onChange }: { onChange: () => void }) {
+  const prompt = usePrompt();
   const [requests, setRequests] = useState<TeamTimeOffRequest[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -356,7 +364,12 @@ function TimeOffTab({ onChange }: { onChange: () => void }) {
   };
 
   const deny = async (id: string) => {
-    const note = window.prompt('Reason for denial:')?.trim();
+    const note = (await prompt({
+      title: 'Deny time-off request',
+      reasonLabel: 'Reason for denial',
+      confirmLabel: 'Deny',
+      destructive: true,
+    }))?.trim();
     if (!note) return;
     setPendingId(id);
     try {

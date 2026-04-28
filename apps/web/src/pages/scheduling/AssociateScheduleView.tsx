@@ -4,6 +4,9 @@ import { listMyShifts } from '@/lib/schedulingApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { SkeletonRows } from '@/components/ui/Skeleton';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { CalendarDays } from 'lucide-react';
 import { AvailabilityEditor } from './AvailabilityEditor';
 import { SwapMarketplace } from './SwapMarketplace';
 
@@ -55,9 +58,13 @@ export function AssociateScheduleView() {
           {error}
         </p>
       )}
-      {!shifts && <p className="text-silver">Loading…</p>}
+      {!shifts && <SkeletonRows count={4} rowHeight="h-20" />}
       {shifts && shifts.length === 0 && (
-        <p className="text-silver">No upcoming shifts assigned to you.</p>
+        <EmptyState
+          icon={CalendarDays}
+          title="No upcoming shifts"
+          description="When a manager assigns you to a shift, it'll show up here. You can post your availability below to make scheduling easier."
+        />
       )}
 
       {shifts && shifts.length > 0 && (

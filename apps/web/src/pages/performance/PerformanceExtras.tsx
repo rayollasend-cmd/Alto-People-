@@ -23,6 +23,7 @@ import {
   type Review360,
 } from '@/lib/perf84Api';
 import { useAuth } from '@/lib/auth';
+import { useConfirm, usePrompt } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -98,6 +99,7 @@ type GoalDraft = {
 };
 
 function GoalsTab() {
+  const confirm = useConfirm();
   const [rows, setRows] = useState<Goal[] | null>(null);
   const [draft, setDraft] = useState<GoalDraft | null>(null);
 
@@ -133,7 +135,7 @@ function GoalsTab() {
   };
 
   const onDelete = async (id: string) => {
-    if (!window.confirm('Delete this goal?')) return;
+    if (!(await confirm({ title: 'Delete this goal?', destructive: true }))) return;
     try {
       await deleteGoal(id);
       refresh();
@@ -556,6 +558,7 @@ function OneOnOnesTab() {
 // ============ PIPs ============
 
 function PipsTab({ canManage }: { canManage: boolean }) {
+  const prompt = usePrompt();
   const [rows, setRows] = useState<Pip[] | null>(null);
   const [showNew, setShowNew] = useState(false);
 
@@ -570,7 +573,14 @@ function PipsTab({ canManage }: { canManage: boolean }) {
   }, []);
 
   const onDecide = async (p: Pip, status: 'PASSED' | 'FAILED') => {
-    const note = window.prompt('Outcome note (optional):') ?? null;
+    const note = await prompt({
+      title: status === 'PASSED' ? 'Mark PIP passed' : 'Mark PIP failed',
+      reasonLabel: 'Outcome note (optional)',
+      confirmLabel: status === 'PASSED' ? 'Mark passed' : 'Mark failed',
+      destructive: status === 'FAILED',
+      required: false,
+    });
+    if (note === null) return;
     try {
       await updatePip(p.id, { status, outcomeNote: note });
       refresh();
@@ -741,6 +751,7 @@ function PipDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
 // ============ 360 reviews ============
 
 function Reviews360Tab({ canManage }: { canManage: boolean }) {
+  const confirm = useConfirm();
   const [rows, setRows] = useState<Review360[] | null>(null);
   const [showNew, setShowNew] = useState(false);
 
@@ -755,7 +766,7 @@ function Reviews360Tab({ canManage }: { canManage: boolean }) {
   }, []);
 
   const onClose = async (id: string) => {
-    if (!window.confirm('Close this review? No more feedback will be accepted.')) return;
+    if (!(await confirm({ title: 'Close this review?', description: 'No more feedback will be accepted.', destructive: true }))) return;
     try {
       await closeReview360(id);
       refresh();

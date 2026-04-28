@@ -29,6 +29,7 @@ import {
   voteKbArticle,
 } from '@/lib/kb124Api';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -61,6 +62,7 @@ const STATUS_VARIANT: Record<KbStatus, 'pending' | 'success' | 'outline'> = {
 
 export function KbHome() {
   const { user } = useAuth();
+  const confirm = useConfirm();
   const canManage = user ? hasCapability(user.role, 'manage:onboarding') : false;
   const [tab, setTab] = useState<'browse' | 'admin'>('browse');
   const [q, setQ] = useState('');
@@ -291,7 +293,7 @@ export function KbHome() {
                         </Button>
                         <button
                           onClick={async () => {
-                            if (!window.confirm(`Delete "${a.title}"?`)) return;
+                            if (!(await confirm({ title: `Delete "${a.title}"?`, destructive: true }))) return;
                             try {
                               await deleteKbArticle(a.id);
                               refresh();
@@ -437,6 +439,7 @@ function EditDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const confirm = useConfirm();
   const isNew = article === null;
   const [title, setTitle] = useState(article?.title ?? '');
   const [slug, setSlug] = useState(article?.slug ?? '');
@@ -559,7 +562,7 @@ function EditDrawer({
             size="sm"
             variant="ghost"
             onClick={async () => {
-              if (!window.confirm('Archive this article?')) return;
+              if (!(await confirm({ title: 'Archive this article?', destructive: true }))) return;
               try {
                 await archiveKbArticle(article.id);
                 toast.success('Archived.');

@@ -114,9 +114,10 @@ function MobileLink({ to, label, icon: Icon, end }: MobileLinkProps) {
       end={end}
       className={({ isActive }) =>
         cn(
-          'mx-2 my-0.5 flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm transition-colors',
+          'relative mx-2 my-0.5 flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm transition-colors',
+          'before:absolute before:left-0 before:top-2 before:bottom-2 before:w-0.5 before:rounded-r before:bg-gold before:opacity-0 before:transition-opacity',
           isActive
-            ? 'bg-navy-secondary text-white'
+            ? 'bg-navy-secondary text-white before:opacity-100'
             : 'text-silver hover:text-white hover:bg-navy-secondary/50'
         )
       }

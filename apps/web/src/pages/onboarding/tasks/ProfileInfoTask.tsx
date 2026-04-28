@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { submitProfile } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
-import { cn } from '@/lib/cn';
+import { Button } from '@/components/ui/Button';
 
 const STATES = [
   'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
@@ -200,18 +200,9 @@ export function SubmitRow({
 }) {
   return (
     <div className="flex items-center gap-3 pt-2">
-      <button
-        type="submit"
-        disabled={submitting}
-        className={cn(
-          'px-5 py-2.5 rounded font-medium transition',
-          submitting
-            ? 'bg-navy-secondary text-silver/50 cursor-not-allowed'
-            : 'bg-gold text-navy hover:bg-gold-bright'
-        )}
-      >
+      <Button type="submit" loading={submitting} disabled={submitting}>
         {submitting ? 'Saving…' : label}
-      </button>
+      </Button>
       <Link to={backTo} className="text-sm text-silver hover:text-white">
         Cancel
       </Link>

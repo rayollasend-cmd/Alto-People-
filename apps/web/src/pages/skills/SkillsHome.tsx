@@ -12,6 +12,7 @@ import {
   type SkillSearchResult,
 } from '@/lib/skills111Api';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -179,6 +180,7 @@ function SearchTab() {
 }
 
 function CatalogTab({ canManage }: { canManage: boolean }) {
+  const confirm = useConfirm();
   const [rows, setRows] = useState<SkillCatalogEntry[] | null>(null);
   const [showNew, setShowNew] = useState(false);
 
@@ -231,7 +233,7 @@ function CatalogTab({ canManage }: { canManage: boolean }) {
                       <TableCell className="text-right">
                         <button
                           onClick={async () => {
-                            if (!window.confirm('Delete this skill? Associate claims will be removed.'))
+                            if (!(await confirm({ title: 'Delete this skill?', description: 'Associate claims will be removed.', destructive: true })))
                               return;
                             try {
                               await deleteSkill(s.id);

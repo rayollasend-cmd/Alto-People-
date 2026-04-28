@@ -44,7 +44,7 @@ export const DialogContent = React.forwardRef<
     >
       {children}
       <DialogPrimitive.Close
-        className="absolute right-4 top-4 rounded-sm text-silver hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+        className="absolute right-3 top-3 grid place-items-center h-8 w-8 rounded-md text-silver hover:text-white hover:bg-navy-secondary/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
         aria-label="Close"
       >
         <X className="h-4 w-4" />
@@ -57,7 +57,7 @@ DialogContent.displayName = DialogPrimitive.Content.displayName;
 export function DialogHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn('flex flex-col space-y-1.5 pr-6', className)}
+      className={cn('flex flex-col space-y-1.5 pr-11', className)}
       {...props}
     />
   );

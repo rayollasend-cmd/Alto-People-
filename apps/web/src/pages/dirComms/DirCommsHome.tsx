@@ -13,6 +13,7 @@ import {
   type Survey,
 } from '@/lib/dirCommsApi';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -140,6 +141,7 @@ function DirectoryTab() {
 }
 
 function BroadcastsTab({ canManage }: { canManage: boolean }) {
+  const confirm = useConfirm();
   const [rows, setRows] = useState<Broadcast[] | null>(null);
   const [showNew, setShowNew] = useState(false);
 
@@ -154,7 +156,7 @@ function BroadcastsTab({ canManage }: { canManage: boolean }) {
   }, []);
 
   const onSend = async (id: string) => {
-    if (!window.confirm('Send this broadcast now?')) return;
+    if (!(await confirm({ title: 'Send this broadcast now?' }))) return;
     try {
       const r = await sendBroadcast(id);
       toast.success(`Sent to ${r.recipientCount} associates.`);

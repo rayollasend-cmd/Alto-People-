@@ -15,6 +15,7 @@ import {
   type WebhookRecord,
 } from '@/lib/apiKeysWebhooks93Api';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -75,6 +76,7 @@ export function IntegrationsHome() {
 }
 
 function KeysTab({ canManage }: { canManage: boolean }) {
+  const confirm = useConfirm();
   const [keys, setKeys] = useState<ApiKeyRecord[] | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [showSecret, setShowSecret] = useState<{ plaintext: string; last4: string } | null>(
@@ -92,7 +94,7 @@ function KeysTab({ canManage }: { canManage: boolean }) {
   }, []);
 
   const onRevoke = async (id: string) => {
-    if (!window.confirm('Revoke this key? Active integrations will start failing.'))
+    if (!(await confirm({ title: 'Revoke this key?', description: 'Active integrations will start failing.', destructive: true })))
       return;
     try {
       await revokeApiKey(id);
@@ -103,7 +105,7 @@ function KeysTab({ canManage }: { canManage: boolean }) {
   };
 
   const onDelete = async (id: string) => {
-    if (!window.confirm('Permanently delete this key?')) return;
+    if (!(await confirm({ title: 'Permanently delete this key?', destructive: true }))) return;
     try {
       await deleteApiKey(id);
       refresh();
@@ -324,6 +326,7 @@ function SecretRevealDrawer({
 }
 
 function WebhooksTab({ canManage }: { canManage: boolean }) {
+  const confirm = useConfirm();
   const [rows, setRows] = useState<WebhookRecord[] | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [showSecret, setShowSecret] = useState<string | null>(null);
@@ -362,7 +365,7 @@ function WebhooksTab({ canManage }: { canManage: boolean }) {
   };
 
   const onDelete = async (id: string) => {
-    if (!window.confirm('Delete this webhook?')) return;
+    if (!(await confirm({ title: 'Delete this webhook?', destructive: true }))) return;
     try {
       await deleteWebhook(id);
       refresh();

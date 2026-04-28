@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { ArrowLeftRight } from 'lucide-react';
 import type { ShiftSwapRequest, ShiftSwapStatus } from '@alto-people/shared';
 import {
   cancelSwap,
@@ -9,6 +10,8 @@ import {
 } from '@/lib/schedulingApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { SkeletonRows } from '@/components/ui/Skeleton';
+import { EmptyState } from '@/components/ui/EmptyState';
 
 type Tab = 'incoming' | 'outgoing';
 
@@ -83,9 +86,17 @@ export function SwapMarketplace() {
           {error}
         </p>
       )}
-      {!items && <p className="text-silver">Loading…</p>}
+      {!items && <SkeletonRows count={3} rowHeight="h-16" />}
       {items && items.length === 0 && (
-        <p className="text-silver">No swap requests in this view.</p>
+        <EmptyState
+          icon={ArrowLeftRight}
+          title={tab === 'incoming' ? 'No incoming swap requests' : 'No outgoing swap requests'}
+          description={
+            tab === 'incoming'
+              ? "When a teammate asks to swap a shift with you, it'll show up here."
+              : "Request a swap from your assigned shift in the schedule above."
+          }
+        />
       )}
 
       {items && items.length > 0 && (

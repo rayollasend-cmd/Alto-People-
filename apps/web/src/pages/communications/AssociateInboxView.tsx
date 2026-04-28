@@ -4,6 +4,9 @@ import { listMyInbox, markRead } from '@/lib/communicationsApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { SkeletonRows } from '@/components/ui/Skeleton';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Inbox } from 'lucide-react';
 
 export function AssociateInboxView() {
   const [items, setItems] = useState<Notification[] | null>(null);
@@ -56,9 +59,13 @@ export function AssociateInboxView() {
           {error}
         </p>
       )}
-      {!items && <p className="text-silver">Loading…</p>}
+      {!items && <SkeletonRows count={5} rowHeight="h-24" />}
       {items && items.length === 0 && (
-        <p className="text-silver">No messages.</p>
+        <EmptyState
+          icon={Inbox}
+          title="Inbox zero"
+          description="Messages from HR and system notifications will land here."
+        />
       )}
       {items && items.length > 0 && (
         <ul className="space-y-2">

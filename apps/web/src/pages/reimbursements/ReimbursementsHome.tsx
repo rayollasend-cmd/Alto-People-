@@ -16,6 +16,7 @@ import {
   type ReimbursementSummary,
 } from '@/lib/reimbursements97Api';
 import { useAuth } from '@/lib/auth';
+import { useConfirm, usePrompt } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -234,6 +235,8 @@ function ReimbursementDrawer({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const confirm = useConfirm();
+  const prompt = usePrompt();
   const [data, setData] = useState<ReimbursementFull | null>(null);
   const [showAddLine, setShowAddLine] = useState(false);
 
@@ -261,7 +264,12 @@ function ReimbursementDrawer({
   const onDecide = async (decision: 'APPROVED' | 'REJECTED') => {
     let reason: string | undefined;
     if (decision === 'REJECTED') {
-      const r = window.prompt('Rejection reason (required)?');
+      const r = await prompt({
+        title: 'Reject reimbursement',
+        reasonLabel: 'Rejection reason',
+        confirmLabel: 'Reject',
+        destructive: true,
+      });
       if (!r) return;
       reason = r;
     }
@@ -276,7 +284,7 @@ function ReimbursementDrawer({
   };
 
   const onMarkPaid = async () => {
-    if (!window.confirm('Mark as paid?')) return;
+    if (!(await confirm({ title: 'Mark as paid?' }))) return;
     try {
       await markPaidReimbursement(summary.id);
       toast.success('Marked paid.');

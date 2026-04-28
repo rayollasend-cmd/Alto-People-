@@ -11,6 +11,12 @@ export function Toaster() {
       position="top-right"
       richColors
       closeButton
+      // 5s default reads naturally for short success messages while staying
+      // long enough to register an error before it dismisses itself.
+      duration={5000}
+      // Tighter visible stack — older toasts can be expanded on hover.
+      visibleToasts={4}
+      gap={10}
       toastOptions={{
         classNames: {
           toast:

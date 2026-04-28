@@ -52,6 +52,12 @@ export function Avatar({
   ringed,
 }: AvatarProps) {
   const [broken, setBroken] = React.useState(false);
+  // When the image src changes (e.g. user uploads a new photo, cache-buster
+  // bumps the ?v= param), retry — clear the prior broken flag so we don't
+  // show initials for a now-valid URL.
+  React.useEffect(() => {
+    setBroken(false);
+  }, [src]);
   const seed = (name ?? email ?? '?').trim();
   const text = initialsFor(seed);
   const color = PALETTE[hash(seed) % PALETTE.length];

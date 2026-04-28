@@ -16,6 +16,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/DropdownMenu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip';
+import { Avatar } from '@/components/ui/Avatar';
 import { NotificationsBell } from './NotificationsBell';
 
 interface TopbarProps {
@@ -139,15 +140,27 @@ export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="md:hidden h-8 w-8 rounded-full bg-gold/15 border border-gold/30 grid place-items-center text-gold text-xs font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                className="md:hidden grid place-items-center h-8 w-8 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
                 aria-label="Account menu"
               >
-                {initials(user.email)}
+                <Avatar
+                  src={user.photoUrl}
+                  name={[user.firstName, user.lastName].filter(Boolean).join(' ') || null}
+                  email={user.email}
+                  size="sm"
+                />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-[14rem]">
               <DropdownMenuLabel>{ROLE_LABELS[user.role]}</DropdownMenuLabel>
-              <div className="px-2 pb-2 text-sm text-white truncate">{user.email}</div>
+              <div className="px-2 pb-2 leading-tight">
+                {(user.firstName || user.lastName) && (
+                  <div className="text-sm text-white truncate">
+                    {[user.firstName, user.lastName].filter(Boolean).join(' ')}
+                  </div>
+                )}
+                <div className="text-xs text-silver truncate">{user.email}</div>
+              </div>
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onSelect={(e) => {
@@ -177,9 +190,3 @@ export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
   );
 }
 
-function initials(email: string): string {
-  const local = email.split('@')[0] ?? '';
-  const parts = local.split(/[._-]+/).filter(Boolean);
-  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
-  return local.slice(0, 2).toUpperCase();
-}

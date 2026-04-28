@@ -50,28 +50,33 @@ export function Settings() {
 }
 
 function ProfileCard() {
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
+  const { user, refreshUser } = useAuth();
+  const [firstName, setFirstName] = useState(user?.firstName ?? '');
+  const [lastName, setLastName] = useState(user?.lastName ?? '');
   const [submitting, setSubmitting] = useState(false);
+
+  const dirty =
+    firstName.trim() !== (user?.firstName ?? '') ||
+    lastName.trim() !== (user?.lastName ?? '');
 
   const submit = async () => {
     const f = firstName.trim();
     const l = lastName.trim();
-    if (!f && !l) {
-      toast.error('Enter a first or last name to update');
+    if (!dirty) {
+      toast.error('Make a change first');
       return;
     }
     setSubmitting(true);
     try {
       const updated = await updateProfile({
-        ...(f ? { firstName: f } : {}),
-        ...(l ? { lastName: l } : {}),
+        firstName: f,
+        lastName: l,
       });
       toast.success('Profile updated', {
         description: `Display name is now ${updated.firstName} ${updated.lastName}.`,
       });
-      setFirstName('');
-      setLastName('');
+      // Re-fetch /auth/me so the chrome avatar/name update without reload.
+      await refreshUser();
     } catch (err) {
       toast.error('Could not update profile', {
         description: err instanceof Error ? err.message : String(err),
@@ -90,7 +95,6 @@ function ProfileCard() {
         </CardTitle>
         <CardDescription>
           How your name appears on shifts, paystubs, and inbox messages.
-          Leave a field blank to keep it unchanged.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -102,7 +106,6 @@ function ProfileCard() {
               value={firstName}
               onChange={(e) => setFirstName(e.target.value)}
               maxLength={100}
-              placeholder="Leave blank to keep"
             />
           </div>
           <div>
@@ -112,12 +115,11 @@ function ProfileCard() {
               value={lastName}
               onChange={(e) => setLastName(e.target.value)}
               maxLength={100}
-              placeholder="Leave blank to keep"
             />
           </div>
         </div>
         <div className="mt-4 flex justify-end">
-          <Button onClick={submit} loading={submitting}>
+          <Button onClick={submit} loading={submitting} disabled={!dirty}>
             Save profile
           </Button>
         </div>

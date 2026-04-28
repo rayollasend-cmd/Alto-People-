@@ -17,6 +17,7 @@ import {
   type MyAgreement,
 } from '@/lib/agreements122Api';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -53,6 +54,7 @@ const STATUS_VARIANT: Record<
 
 export function AgreementsHome() {
   const { user } = useAuth();
+  const confirm = useConfirm();
   const canManage = user ? hasCapability(user.role, 'manage:documents') : false;
   const [tab, setTab] = useState<'all' | 'mine'>('mine');
   const [rows, setRows] = useState<AgreementRow[] | null>(null);
@@ -258,7 +260,7 @@ export function AgreementsHome() {
                           a.status !== 'SUPERSEDED' && (
                             <button
                               onClick={async () => {
-                                if (!window.confirm('Mark this agreement expired?'))
+                                if (!(await confirm({ title: 'Mark this agreement expired?', destructive: true })))
                                   return;
                                 try {
                                   await expireAgreement(a.id);
@@ -279,7 +281,7 @@ export function AgreementsHome() {
                         {canManage && (
                           <button
                             onClick={async () => {
-                              if (!window.confirm('Delete this agreement record?'))
+                              if (!(await confirm({ title: 'Delete this agreement record?', destructive: true })))
                                 return;
                               try {
                                 await deleteAgreement(a.id);

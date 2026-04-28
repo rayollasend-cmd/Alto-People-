@@ -14,6 +14,7 @@ import {
   type Qualification,
 } from '@/lib/qualApi';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -292,6 +293,7 @@ function ClaimsTab() {
 // ============ Catalog ============
 
 function CatalogTab() {
+  const confirm = useConfirm();
   const [rows, setRows] = useState<Qualification[] | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [code, setCode] = useState('');
@@ -334,7 +336,7 @@ function CatalogTab() {
   };
 
   const onDelete = async (id: string) => {
-    if (!window.confirm('Delete this qualification?')) return;
+    if (!(await confirm({ title: 'Delete this qualification?', destructive: true }))) return;
     try {
       await deleteQualification(id);
       refresh();

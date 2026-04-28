@@ -8,6 +8,9 @@ export interface SessionUser {
   clientId: string | null;
   associateId: string | null;
   tokenVersion: number;
+  firstName: string | null;
+  lastName: string | null;
+  photoUrl: string | null;
 }
 
 declare global {

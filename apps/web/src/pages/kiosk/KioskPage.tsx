@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '@/lib/api';
+import { useConfirm } from '@/lib/confirm';
 import { kioskPunch } from '@/lib/kiosk99Api';
 import { extractDescriptor, loadFaceModels } from '@/lib/faceMatch';
 import {
@@ -248,17 +249,18 @@ export function KioskPage() {
 
 function SetupScreen({ onSaved }: { onSaved: (token: string) => void }) {
   const [val, setVal] = useState('');
+  const [error, setError] = useState<string | null>(null);
   const onSave = () => {
     const t = val.trim();
     if (!t.startsWith('altokiosk_')) {
-      alert('Token should start with altokiosk_');
+      setError('Token should start with altokiosk_');
       return;
     }
     try {
       window.localStorage.setItem(TOKEN_STORAGE_KEY, t);
       onSaved(t);
     } catch {
-      alert('Could not save token. Check browser storage settings.');
+      setError('Could not save token. Check browser storage settings.');
     }
   };
   return (
@@ -275,10 +277,21 @@ function SetupScreen({ onSaved }: { onSaved: (token: string) => void }) {
         <textarea
           className="w-full h-32 bg-midnight border border-navy-secondary rounded-md p-3 font-mono text-xs text-white"
           value={val}
-          onChange={(e) => setVal(e.target.value)}
+          onChange={(e) => {
+            setVal(e.target.value);
+            if (error) setError(null);
+          }}
           placeholder="altokiosk_..."
           autoFocus
         />
+        {error && (
+          <p
+            role="alert"
+            className="mt-3 text-sm text-alert px-3 py-2 rounded-md border border-alert/40 bg-alert/10"
+          >
+            {error}
+          </p>
+        )}
         <button
           onClick={onSave}
           className="mt-4 w-full bg-cyan-600 hover:bg-cyan-500 transition rounded-md py-3 font-medium"
@@ -585,6 +598,7 @@ function ResultScreen({ result }: { result: PunchResult }) {
 }
 
 function ResetCorner({ onReset }: { onReset: () => void }) {
+  const confirm = useConfirm();
   const [count, setCount] = useState(0);
   useEffect(() => {
     if (count === 0) return;
@@ -594,10 +608,10 @@ function ResetCorner({ onReset }: { onReset: () => void }) {
   return (
     <button
       aria-label="Settings"
-      onClick={() => {
+      onClick={async () => {
         const next = count + 1;
         if (next >= 3) {
-          if (window.confirm('Unpair this kiosk and clear the device token?')) {
+          if (await confirm({ title: 'Unpair this kiosk and clear the device token?', destructive: true })) {
             onReset();
           }
           setCount(0);

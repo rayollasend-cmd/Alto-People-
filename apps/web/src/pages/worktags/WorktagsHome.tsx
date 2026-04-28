@@ -11,6 +11,7 @@ import {
   type WorktagCategory,
 } from '@/lib/worktags95Api';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -239,6 +240,7 @@ function NewCategoryDrawer({
 }
 
 function ValuesTab({ canManage }: { canManage: boolean }) {
+  const confirm = useConfirm();
   const [categories, setCategories] = useState<WorktagCategory[]>([]);
   const [categoryId, setCategoryId] = useState('');
   const [worktags, setWorktags] = useState<Worktag[] | null>(null);
@@ -264,7 +266,7 @@ function ValuesTab({ canManage }: { canManage: boolean }) {
   }, [categoryId]);
 
   const onDelete = async (id: string) => {
-    if (!window.confirm('Deactivate this worktag?')) return;
+    if (!(await confirm({ title: 'Deactivate this worktag?', destructive: true }))) return;
     try {
       await deleteWorktag(id);
       refresh();

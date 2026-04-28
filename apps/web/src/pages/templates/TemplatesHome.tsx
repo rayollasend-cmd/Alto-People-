@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { FileText, Plus } from 'lucide-react';
 import { ApiError } from '@/lib/api';
+import { useConfirm } from '@/lib/confirm';
 import {
   createTemplate,
   deleteTemplate,
@@ -49,6 +50,7 @@ const KIND_LABEL: Record<DocumentTemplateKind, string> = {
 };
 
 export function TemplatesHome() {
+  const confirm = useConfirm();
   const [rows, setRows] = useState<DocumentTemplate[] | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [active, setActive] = useState<DocumentTemplate | null>(null);
@@ -64,7 +66,7 @@ export function TemplatesHome() {
   }, []);
 
   const onDelete = async (id: string) => {
-    if (!window.confirm('Delete this template?')) return;
+    if (!(await confirm({ title: 'Delete this template?', destructive: true }))) return;
     try {
       await deleteTemplate(id);
       refresh();

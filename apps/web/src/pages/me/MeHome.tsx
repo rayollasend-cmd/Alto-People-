@@ -30,6 +30,8 @@ import {
   type SelfProfile,
   type TaxDoc,
 } from '@/lib/selfApi';
+import { useConfirm } from '@/lib/confirm';
+import { useAuth } from '@/lib/auth';
 import {
   Avatar,
   Badge,
@@ -57,6 +59,7 @@ import {
   TabsTrigger,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { toast } from 'sonner';
 
 type Tab =
@@ -355,6 +358,8 @@ function ProfilePhotoRow({
   profile: SelfProfile;
   onChange: () => void;
 }) {
+  const confirm = useConfirm();
+  const { refreshUser } = useAuth();
   const [busy, setBusy] = useState<'upload' | 'remove' | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
@@ -377,6 +382,9 @@ function ProfilePhotoRow({
       await uploadProfilePhoto(file);
       toast.success('Photo updated.');
       onChange();
+      // Re-fetch /auth/me so the chrome (sidebar/topbar) avatar swaps
+      // to the new photo without a page reload.
+      await refreshUser();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed to upload.');
     } finally {
@@ -385,12 +393,13 @@ function ProfilePhotoRow({
   };
 
   const onRemove = async () => {
-    if (!window.confirm('Remove your profile photo?')) return;
+    if (!(await confirm({ title: 'Remove your profile photo?', destructive: true }))) return;
     setBusy('remove');
     try {
       await deleteProfilePhoto();
       toast.success('Photo removed.');
       onChange();
+      await refreshUser();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed to remove.');
     } finally {
@@ -455,7 +464,7 @@ function EmployeeNumberRow({
         Employee number
       </div>
       {employeeNumber === null ? (
-        <div className="mt-1 text-sm text-silver">Loading…</div>
+        <Skeleton className="mt-1 h-9 w-56" />
       ) : employeeNumber.employeeNumber ? (
         <>
           <div className="mt-1 font-mono text-3xl tracking-[0.5em] text-white">
@@ -521,10 +530,11 @@ function EmergencyPanel({
   rows: EmergencyContact[] | null;
   onChange: () => void;
 }) {
+  const confirm = useConfirm();
   const [draft, setDraft] = useState<ContactDraft | null>(null);
 
   const onDelete = async (id: string) => {
-    if (!window.confirm('Remove this emergency contact?')) return;
+    if (!(await confirm({ title: 'Remove this emergency contact?', destructive: true }))) return;
     try {
       await deleteEmergency(id);
       toast.success('Contact removed.');
@@ -744,10 +754,11 @@ function DependentsPanel({
   rows: Dependent[] | null;
   onChange: () => void;
 }) {
+  const confirm = useConfirm();
   const [draft, setDraft] = useState<DependentDraft | null>(null);
 
   const onDelete = async (id: string) => {
-    if (!window.confirm('Remove this dependent?')) return;
+    if (!(await confirm({ title: 'Remove this dependent?', destructive: true }))) return;
     try {
       await deleteDependent(id);
       toast.success('Dependent removed.');
@@ -994,6 +1005,7 @@ function BeneficiariesPanel({
   rows: Beneficiary[] | null;
   onChange: () => void;
 }) {
+  const confirm = useConfirm();
   const [draft, setDraft] = useState<BeneficiaryDraft | null>(null);
 
   const primaryTotal = (rows ?? [])
@@ -1001,7 +1013,7 @@ function BeneficiariesPanel({
     .reduce((sum, b) => sum + b.percentage, 0);
 
   const onDelete = async (id: string) => {
-    if (!window.confirm('Remove this beneficiary?')) return;
+    if (!(await confirm({ title: 'Remove this beneficiary?', destructive: true }))) return;
     try {
       await deleteBeneficiary(id);
       toast.success('Beneficiary removed.');

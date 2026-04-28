@@ -62,6 +62,10 @@ export default {
         'shimmer': {
           '100%': { transform: 'translateX(100%)' },
         },
+        'splash-sweep': {
+          '0%': { transform: 'translateX(-100%)' },
+          '100%': { transform: 'translateX(400%)' },
+        },
       },
       animation: {
         'accordion-down': 'accordion-down 0.2s ease-out',
@@ -73,6 +77,7 @@ export default {
         'slide-in-from-right': 'slide-in-from-right 0.25s ease-out',
         'slide-out-to-right': 'slide-out-to-right 0.2s ease-in',
         'shimmer': 'shimmer 1.6s infinite',
+        'splash-sweep': 'splash-sweep 1.4s ease-in-out infinite',
       },
     },
   },

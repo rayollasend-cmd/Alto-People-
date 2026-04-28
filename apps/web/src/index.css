@@ -109,6 +109,42 @@
 }
 
 /* ---------------------------------------------------------------------------
+ * Native <select> polish — matches Input's hover + focus treatment.
+ *
+ * The app uses raw <select class="… border-navy-secondary bg-navy-secondary/40 …">
+ * in 100+ places. Tagging every site by hand to add hover/focus would be
+ * a churn fest, but every one of them already declares both of these
+ * Tailwind classes, so we can hook off them globally to add the missing
+ * affordances. The Input primitive already gets these via Tailwind classes
+ * directly; this rule is just for the legacy raw selects.
+ * ------------------------------------------------------------------------- */
+select.border-navy-secondary:hover:not(:disabled):not(:focus) {
+  border-color: rgb(var(--color-silver) / 0.4);
+}
+select.border-navy-secondary:focus {
+  outline: none;
+  border-color: rgb(var(--color-gold));
+  box-shadow: 0 0 0 2px rgb(var(--color-gold) / 0.4);
+}
+
+/* Theme native checkboxes / radios with the brand gold so the checked
+   fill matches the rest of the chrome. One line, no per-site changes. */
+input[type='checkbox'],
+input[type='radio'] {
+  accent-color: rgb(var(--color-gold));
+}
+
+/* Tell the browser the chrome is dark/light so native date pickers, file
+   buttons, scrollbars, etc. paint in the matching scheme. Without this,
+   the date input's calendar icon is black on dark navy = invisible. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
+/* ---------------------------------------------------------------------------
  * Phase 69 — compact density. Tightens Card and Table padding so power
  * users can see more rows without burying any per-component logic.
  * "comfortable" is the default, untouched. The selectors target the

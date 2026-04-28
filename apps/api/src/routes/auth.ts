@@ -11,6 +11,7 @@ import {
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
 import { signSession } from '../lib/jwt.js';
+import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import {
   hashPassword,
   verifyPassword,
@@ -58,6 +59,9 @@ function toAuthUser(u: {
   status: string;
   clientId: string | null;
   associateId: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  photoUrl?: string | null;
 }): AuthUser {
   return {
     id: u.id,
@@ -66,6 +70,36 @@ function toAuthUser(u: {
     status: u.status as AuthUser['status'],
     clientId: u.clientId,
     associateId: u.associateId,
+    firstName: u.firstName ?? null,
+    lastName: u.lastName ?? null,
+    photoUrl: u.photoUrl ?? null,
+  };
+}
+
+/**
+ * Look up profile fields (name + photo) for the linked Associate so we can
+ * surface them in `AuthUser`. Skips the query when the user has no associate
+ * row (HR-only / portal accounts) — they always carry null.
+ */
+async function loadProfileFor(associateId: string | null) {
+  if (!associateId) {
+    return { firstName: null, lastName: null, photoUrl: null };
+  }
+  const a = await prisma.associate.findUnique({
+    where: { id: associateId },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      photoS3Key: true,
+      photoUpdatedAt: true,
+    },
+  });
+  if (!a) return { firstName: null, lastName: null, photoUrl: null };
+  return {
+    firstName: a.firstName,
+    lastName: a.lastName,
+    photoUrl: profilePhotoUrlFor(a),
   };
 }
 
@@ -140,7 +174,8 @@ authRouter.post(
         clientId: user.clientId,
       });
 
-      res.json({ user: toAuthUser(user) });
+      const profile = await loadProfileFor(user.associateId);
+      res.json({ user: toAuthUser({ ...user, ...profile }) });
     } catch (err) {
       next(err);
     }
@@ -296,7 +331,8 @@ authRouter.post('/accept-invite', async (req, res, next) => {
     // they got the invite in the first place.
     const nextPath = await pickPostAcceptPath(updatedUser.id);
 
-    res.json({ user: toAuthUser(updatedUser), nextPath });
+    const profile = await loadProfileFor(updatedUser.associateId);
+    res.json({ user: toAuthUser({ ...updatedUser, ...profile }), nextPath });
   } catch (err) {
     next(err);
   }

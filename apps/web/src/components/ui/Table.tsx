@@ -69,16 +69,52 @@ TableFooter.displayName = 'TableFooter';
 export const TableRow = React.forwardRef<
   HTMLTableRowElement,
   React.HTMLAttributes<HTMLTableRowElement>
->(({ className, ...props }, ref) => (
-  <tr
-    ref={ref}
-    className={cn(
-      'border-b border-navy-secondary transition-colors hover:bg-navy-secondary/40 data-[state=selected]:bg-navy-secondary',
-      className
-    )}
-    {...props}
-  />
-));
+>(({ className, onKeyDown, tabIndex, role, ...props }, ref) => {
+  // Convention: callers mark a row interactive by adding `cursor-pointer`
+  // to className alongside an onClick. We promote those to a fully
+  // keyboard-accessible button — Enter/Space activate, tab order stops
+  // here, screen readers announce role="button". Non-interactive rows
+  // are untouched.
+  const interactive = (className ?? '').includes('cursor-pointer');
+  const handleKeyDown = interactive
+    ? (e: React.KeyboardEvent<HTMLTableRowElement>) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          // Skip if the user pressed Enter/Space inside a nested
+          // button/link/input — that nested control should handle the key.
+          const t = e.target as HTMLElement;
+          if (t !== e.currentTarget && t.closest('button, a, input, select, textarea, [contenteditable]')) {
+            onKeyDown?.(e);
+            return;
+          }
+          e.preventDefault();
+          e.currentTarget.click();
+        }
+        onKeyDown?.(e);
+      }
+    : onKeyDown;
+  return (
+    <tr
+      ref={ref}
+      onKeyDown={handleKeyDown}
+      tabIndex={interactive ? (tabIndex ?? 0) : tabIndex}
+      role={interactive ? (role ?? 'button') : role}
+      className={cn(
+        'border-b border-navy-secondary transition-colors',
+        // Default subtle hover for any row.
+        'hover:bg-navy-secondary/40',
+        // Stronger hover when the row is interactive (callers add `cursor-pointer`).
+        '[&.cursor-pointer]:hover:bg-navy-secondary/60',
+        // Keyboard focus ring for the interactive rows promoted above.
+        '[&.cursor-pointer]:focus-visible:outline-none [&.cursor-pointer]:focus-visible:ring-2 [&.cursor-pointer]:focus-visible:ring-gold-bright [&.cursor-pointer]:focus-visible:ring-inset',
+        // Selected: brighter background plus a thin gold rail on the first cell.
+        'data-[state=selected]:bg-navy-secondary',
+        '[&[data-state=selected]>td:first-child]:border-l-2 [&[data-state=selected]>td:first-child]:border-l-gold',
+        className
+      )}
+      {...props}
+    />
+  );
+});
 TableRow.displayName = 'TableRow';
 
 export const TableHead = React.forwardRef<

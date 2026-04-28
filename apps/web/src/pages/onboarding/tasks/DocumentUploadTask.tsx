@@ -13,7 +13,9 @@ import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { TaskShell, inputCls, Field } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
+import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { SkeletonRows } from '@/components/ui/Skeleton';
 
 const ID_KIND_OPTIONS: Array<{ value: DocumentKind; label: string }> = [
   { value: 'ID', label: 'Government-issued photo ID (driver license / passport)' },
@@ -220,7 +222,7 @@ export function DocumentUploadTask() {
             </span>
           </div>
           {docs === null ? (
-            <p className="text-silver text-sm">Loading…</p>
+            <SkeletonRows count={2} rowHeight="h-12" />
           ) : idDocs.length === 0 ? (
             <p className="text-silver text-sm">
               No documents yet — pick one above to start.
@@ -304,23 +306,18 @@ export function DocumentUploadTask() {
         )}
 
         <div className="flex items-center gap-3 pt-2">
-          <button
+          <Button
             type="button"
             onClick={onFinish}
+            loading={finishing}
             disabled={!hasAtLeastOne || finishing}
-            className={cn(
-              'px-5 py-2.5 rounded font-medium transition',
-              !hasAtLeastOne || finishing
-                ? 'bg-navy-secondary text-silver/50 cursor-not-allowed'
-                : 'bg-gold text-navy hover:bg-gold-bright'
-            )}
           >
             {finishing
               ? 'Submitting…'
               : hasAtLeastOne
                 ? "I'm done — submit for review"
                 : 'Upload at least one'}
-          </button>
+          </Button>
           <Link to={backTo} className="text-sm text-silver hover:text-white">
             Cancel
           </Link>
