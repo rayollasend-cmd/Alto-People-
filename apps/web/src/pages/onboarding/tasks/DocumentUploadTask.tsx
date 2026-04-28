@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { CheckCircle2, FileText, Trash2, Upload } from 'lucide-react';
+import { CheckCircle2, FileText, RotateCcw, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import type { DocumentKind, DocumentRecord } from '@alto-people/shared';
 import {
@@ -82,6 +82,11 @@ export function DocumentUploadTask() {
   );
   const hasAtLeastOne = idDocs.length > 0;
 
+  // When set, the next file picked is treated as a replacement: we upload
+  // it under the SAME kind, then delete the rejected original. One click
+  // for the associate instead of delete + re-upload.
+  const [replaceTarget, setReplaceTarget] = useState<DocumentRecord | null>(null);
+
   const onPickFile = () => fileInputRef.current?.click();
 
   const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -94,9 +99,24 @@ export function DocumentUploadTask() {
     }
     setError(null);
     setUploading(true);
+    const target = replaceTarget;
+    setReplaceTarget(null);
     try {
-      await uploadMyDocument(file, kind);
-      toast.success(`Uploaded ${file.name}`);
+      // Replacement: upload fresh under the same kind, THEN delete the old
+      // rejected doc. If the upload fails we keep the original around so HR
+      // can still see the history.
+      const uploadKind = target ? target.kind : kind;
+      await uploadMyDocument(file, uploadKind);
+      if (target) {
+        try {
+          await deleteMyDocument(target.id);
+        } catch {
+          /* best-effort — the new upload is what matters */
+        }
+        toast.success(`Replaced ${target.filename} with ${file.name}`);
+      } else {
+        toast.success(`Uploaded ${file.name}`);
+      }
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed.');
@@ -235,6 +255,23 @@ export function DocumentUploadTask() {
                   >
                     {STATUS_LABEL[d.status] ?? d.status}
                   </span>
+                  {d.status === 'REJECTED' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReplaceTarget(d);
+                        // Re-trigger the hidden file input. The handler
+                        // sees replaceTarget and does upload + delete-old
+                        // in one go.
+                        fileInputRef.current?.click();
+                      }}
+                      className="text-warning hover:opacity-80"
+                      aria-label="Replace rejected document"
+                      title="Re-upload to replace"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                   {d.status !== 'VERIFIED' && (
                     <button
                       type="button"

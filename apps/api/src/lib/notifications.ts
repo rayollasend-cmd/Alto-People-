@@ -10,11 +10,19 @@ import { env } from '../config/env.js';
  * IN_APP doesn't need an external service — the Notification row IS the
  * delivery; the inbox endpoint reads it.
  */
+export interface SendAttachment {
+  filename: string;
+  content: Buffer;
+  contentType: string;
+}
+
 export interface SendInput {
   channel: NotificationChannel;
   recipient: { userId: string | null; phone: string | null; email: string | null };
   subject: string | null;
   body: string;
+  /** EMAIL-only. Resend supports attachments; in stub mode we log size + name. */
+  attachments?: SendAttachment[];
 }
 
 export async function sendStubbed(
@@ -49,8 +57,14 @@ async function sendEmail(input: SendInput): Promise<{ externalRef: string | null
   if (!env.RESEND_API_KEY || !env.RESEND_FROM) {
     // Stubbed mode — print to the API console so the developer can copy
     // the magic link from there. Never log raw secrets in production.
+    const attachmentsLine =
+      input.attachments && input.attachments.length > 0
+        ? `\n  Attachments: ${input.attachments
+            .map((a) => `${a.filename} (${a.contentType}, ${a.content.byteLength} bytes)`)
+            .join(', ')}`
+        : '';
     console.log(
-      `\n[alto-people/api] STUBBED EMAIL → ${to}\n  Subject: ${input.subject ?? '(none)'}\n  Body:\n${input.body
+      `\n[alto-people/api] STUBBED EMAIL → ${to}\n  Subject: ${input.subject ?? '(none)'}${attachmentsLine}\n  Body:\n${input.body
         .split('\n')
         .map((l) => '    ' + l)
         .join('\n')}\n  (Set RESEND_API_KEY + RESEND_FROM in apps/api/.env to send for real.)\n`
@@ -59,18 +73,26 @@ async function sendEmail(input: SendInput): Promise<{ externalRef: string | null
   }
   // Real Resend call.
   try {
+    const payload: Record<string, unknown> = {
+      from: env.RESEND_FROM,
+      to: [to],
+      subject: input.subject ?? '(no subject)',
+      text: input.body,
+    };
+    if (input.attachments && input.attachments.length > 0) {
+      payload.attachments = input.attachments.map((a) => ({
+        filename: a.filename,
+        content: a.content.toString('base64'),
+        content_type: a.contentType,
+      }));
+    }
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${env.RESEND_API_KEY}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        from: env.RESEND_FROM,
-        to: [to],
-        subject: input.subject ?? '(no subject)',
-        text: input.body,
-      }),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');

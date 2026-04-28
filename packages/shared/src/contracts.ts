@@ -573,6 +573,9 @@ export const PolicyForApplicationSchema = z.object({
   version: z.string(),
   industry: z.string().nullable(),
   bodyUrl: z.string().nullable(),
+  // Inline policy body (markdown). Renders in PolicyAckTask so the associate
+  // actually reads what they're acknowledging.
+  body: z.string().nullable(),
   acknowledged: z.boolean(),
   acknowledgedAt: z.string().datetime().nullable(),
 });

@@ -696,6 +696,10 @@ model Policy {
   title                 String
   version               String
   bodyUrl               String?
+  // Inline policy body (markdown). The associate reads this directly in
+  // PolicyAckTask before they can acknowledge — no external file fetch.
+  // bodyUrl stays for legacy/external policies; body is preferred.
+  body                  String?
   requiredForOnboarding Boolean                @default(true)
   supersedesId          String?                @db.Uuid
   client                Client?                @relation(fields: [clientId], references: [id], onDelete: Cascade)

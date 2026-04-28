@@ -1,5 +1,6 @@
 import { PrismaClient, type Prisma } from '@prisma/client';
 import { hashPassword } from '../src/lib/passwords.js';
+import { ALTO_POLICIES, HANDBOOK_POLICY } from '../src/lib/altoHrContent.js';
 
 const prisma = new PrismaClient();
 
@@ -113,21 +114,45 @@ async function main() {
             {
               kind: 'POLICY_ACK',
               title: 'Acknowledge company policies',
-              description: 'Read and e-sign each required policy.',
+              description: 'Read each Alto HR policy and click Acknowledge.',
               order: 6,
+            },
+            {
+              kind: 'E_SIGN',
+              title: 'Sign Associate Employment Agreement',
+              description:
+                'Read and e-sign the Alto HR Associate Employment Agreement (Version 2.0).',
+              order: 7,
             },
           ],
         },
       },
     }));
 
-  // ---- Policies (global + hospitality industry) -------------------------
-  const policySpecs = [
-    { title: 'Code of Conduct', version: 'v1.0', industry: null },
-    { title: 'Food Safety Awareness', version: 'v1.0', industry: 'hospitality' },
-    { title: 'Alcohol Service Awareness', version: 'v1.0', industry: 'hospitality' },
-    { title: 'Employee Handbook', version: 'v1.0', industry: 'hospitality' },
-  ];
+  // Upgrade older templates that were created before E_SIGN was added.
+  // Idempotent — only inserts the task if it doesn't already exist.
+  const existingEsignTask = await prisma.onboardingTemplateTask.findFirst({
+    where: { templateId: standardTemplate.id, kind: 'E_SIGN' },
+  });
+  if (!existingEsignTask) {
+    await prisma.onboardingTemplateTask.create({
+      data: {
+        templateId: standardTemplate.id,
+        kind: 'E_SIGN',
+        title: 'Sign Associate Employment Agreement',
+        description:
+          'Read and e-sign the Alto HR Associate Employment Agreement (Version 2.0).',
+        order: 7,
+      },
+    });
+  }
+
+  // ---- Policies — Alto HR canonical 10 + Handbook ack -------------------
+  // Bodies live in src/lib/altoHrContent.ts so the seed is just metadata.
+  // Each is upserted by (clientId=null, title, version) — bumping a policy's
+  // version creates a brand new row instead of clobbering acknowledgments
+  // already attached to the prior version.
+  const policySpecs = [...ALTO_POLICIES, HANDBOOK_POLICY];
 
   const policies = [];
   for (const spec of policySpecs) {
@@ -138,18 +163,31 @@ async function main() {
         version: spec.version,
       },
     });
-    policies.push(
-      existing ??
-        (await prisma.policy.create({
+    if (existing) {
+      // Keep the body field in sync if seed content has been edited since
+      // the last run (no version bump needed for whitespace/typo fixes).
+      const updated =
+        existing.body === spec.body && existing.industry === spec.industry
+          ? existing
+          : await prisma.policy.update({
+              where: { id: existing.id },
+              data: { body: spec.body, industry: spec.industry },
+            });
+      policies.push(updated);
+    } else {
+      policies.push(
+        await prisma.policy.create({
           data: {
             clientId: null,
             title: spec.title,
             version: spec.version,
             industry: spec.industry,
+            body: spec.body,
             requiredForOnboarding: true,
           },
-        }))
-    );
+        })
+      );
+    }
   }
   const policy = policies[0];
 

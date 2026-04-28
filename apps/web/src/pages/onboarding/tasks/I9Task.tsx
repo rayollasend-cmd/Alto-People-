@@ -1,17 +1,43 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { Link, useParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
 import {
   getI9Status,
+  listI9Documents,
   submitI9Section1,
   uploadI9Document,
   type CitizenshipStatus,
-  type I9DocumentMeta,
+  type I9DocumentListItem,
   type I9Status,
 } from '@/lib/i9Api';
 import { Field, TaskShell, inputCls } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
+
+type I9DocumentKind = 'ID' | 'SSN_CARD' | 'I9_SUPPORTING' | 'J1_VISA' | 'J1_DS2019';
+type I9DocumentSide = 'FRONT' | 'BACK';
+
+const DOC_KIND_OPTIONS: { value: I9DocumentKind; label: string }[] = [
+  { value: 'ID', label: "Driver license / passport / state ID" },
+  { value: 'SSN_CARD', label: 'Social Security card' },
+  { value: 'I9_SUPPORTING', label: 'Other I-9 supporting document' },
+  { value: 'J1_VISA', label: 'J-1 visa' },
+  { value: 'J1_DS2019', label: 'J-1 DS-2019' },
+];
+
+const KIND_LABEL: Record<string, string> = {
+  ID: 'Driver license / passport / state ID',
+  SSN_CARD: 'Social Security card',
+  I9_SUPPORTING: 'Other I-9 supporting document',
+  J1_VISA: 'J-1 visa',
+  J1_DS2019: 'J-1 DS-2019',
+};
+
+const fmtSize = (b: number): string => {
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
+  return `${(b / 1024 / 1024).toFixed(2)} MB`;
+};
 
 const CITIZENSHIP_OPTIONS: { value: CitizenshipStatus; label: string }[] = [
   { value: 'US_CITIZEN', label: 'A citizen of the United States' },
@@ -23,7 +49,6 @@ const CITIZENSHIP_OPTIONS: { value: CitizenshipStatus; label: string }[] = [
 export function I9Task() {
   const { applicationId } = useParams<{ applicationId: string }>();
   const { user } = useAuth();
-  const navigate = useNavigate();
 
   const isAssociate = user?.role === 'ASSOCIATE';
   const backTo = isAssociate
@@ -93,9 +118,6 @@ export function I9Task() {
       </div>
     </TaskShell>
   );
-
-  // Unused but keeps the navigate import alive when the component grows.
-  void navigate;
 }
 
 /* ===== Section 1 ======================================================== */
@@ -269,10 +291,6 @@ function Section1Card({
 
 /* ===== Documents (mobile camera capture) ================================ */
 
-interface UploadedDoc extends I9DocumentMeta {
-  filename: string;
-}
-
 function DocumentsCard({
   applicationId,
   status,
@@ -282,11 +300,29 @@ function DocumentsCard({
   status: I9Status;
   onChanged: () => void;
 }) {
-  const [docs, setDocs] = useState<UploadedDoc[]>([]);
+  const [docs, setDocs] = useState<I9DocumentListItem[] | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [docKind, setDocKind] = useState<I9DocumentKind>('ID');
+  const [docSide, setDocSide] = useState<I9DocumentSide | ''>('');
   const section2Done = status.section2 !== null;
+
+  // Hydrate from the server so the list survives a page reload — fixes the
+  // "where did my upload go?" gap from the prior version that only kept
+  // uploads in local React state.
+  const refresh = useCallback(async () => {
+    try {
+      const r = await listI9Documents(applicationId);
+      setDocs(r.documents);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to load documents.');
+    }
+  }, [applicationId]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
   const handlePick = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -295,8 +331,13 @@ function DocumentsCard({
     setError(null);
     setUploading(true);
     try {
-      const result = await uploadI9Document(applicationId, file, 'I9_SUPPORTING');
-      setDocs((d) => [...d, { ...result, filename: file.name }]);
+      await uploadI9Document(
+        applicationId,
+        file,
+        docKind,
+        docSide === '' ? undefined : docSide
+      );
+      await refresh();
       onChanged();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Upload failed.');
@@ -316,46 +357,101 @@ function DocumentsCard({
       <p className="text-sm text-silver mb-4">
         Take photos of your identification (driver's license, passport,
         Social Security card, etc.). On a phone, the camera opens directly.
-        On a computer, choose the file. PDF / JPG / PNG / WEBP up to 10 MB.
+        On a computer, choose the file. Pick the document type and front/back
+        before uploading so HR can verify quickly. PDF / JPG / PNG / WEBP up
+        to 10 MB.
       </p>
 
       {!section2Done && (
-        <div className="mb-4">
-          <label className="inline-flex items-center gap-2 px-4 py-2.5 rounded bg-gold text-navy hover:bg-gold-bright cursor-pointer transition">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*,application/pdf"
-              capture="environment"
-              className="hidden"
-              onChange={handlePick}
-              disabled={uploading}
-            />
-            <span className="font-medium">
-              {uploading ? 'Uploading…' : 'Take or upload photo'}
-            </span>
-          </label>
-          {error && <p className="text-sm text-alert mt-2">{error}</p>}
-        </div>
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+            <Field label="Document type">
+              <select
+                className={inputCls}
+                value={docKind}
+                onChange={(e) => setDocKind(e.target.value as I9DocumentKind)}
+                disabled={uploading}
+              >
+                {DOC_KIND_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Side (for cards/IDs)" hint="Leave blank for single-page documents like a passport.">
+              <select
+                className={inputCls}
+                value={docSide}
+                onChange={(e) => setDocSide(e.target.value as I9DocumentSide | '')}
+                disabled={uploading}
+              >
+                <option value="">— Not applicable —</option>
+                <option value="FRONT">Front</option>
+                <option value="BACK">Back</option>
+              </select>
+            </Field>
+          </div>
+          <div className="mb-4">
+            <label className="inline-flex items-center gap-2 px-4 py-2.5 rounded bg-gold text-navy hover:bg-gold-bright cursor-pointer transition">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*,application/pdf"
+                capture="environment"
+                className="hidden"
+                onChange={handlePick}
+                disabled={uploading}
+              />
+              <span className="font-medium">
+                {uploading ? 'Uploading…' : 'Take or upload photo'}
+              </span>
+            </label>
+            {error && <p className="text-sm text-alert mt-2">{error}</p>}
+          </div>
+        </>
       )}
 
-      {docs.length > 0 ? (
+      {docs === null ? (
+        <p className="text-xs text-silver/60">Loading…</p>
+      ) : docs.length > 0 ? (
         <ul className="space-y-2">
           {docs.map((d) => (
             <li
-              key={d.documentId}
-              className="text-sm bg-navy-secondary/40 border border-navy-secondary rounded px-3 py-2"
+              key={d.id}
+              className="text-sm bg-navy-secondary/40 border border-navy-secondary rounded px-3 py-2 flex items-center gap-3"
             >
-              <div className="text-white truncate">{d.filename}</div>
-              <div className="text-xs text-silver/60 mt-0.5">
-                {(d.size / 1024).toFixed(1)} KB · {d.mimeType} · sha256 {d.sha256.slice(0, 12)}…
+              <div className="flex-1 min-w-0">
+                <div className="text-white truncate">{d.filename}</div>
+                <div className="text-xs text-silver/60 mt-0.5">
+                  {KIND_LABEL[d.kind] ?? d.kind}
+                  {d.side ? ` · ${d.side === 'FRONT' ? 'Front' : 'Back'}` : ''}
+                  {' · '}
+                  {fmtSize(d.size)}
+                </div>
               </div>
+              <span
+                className={cn(
+                  'text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border whitespace-nowrap',
+                  d.status === 'VERIFIED'
+                    ? 'text-success border-success/40 bg-success/[0.06]'
+                    : d.status === 'REJECTED'
+                      ? 'text-alert border-alert/40 bg-alert/[0.07]'
+                      : 'text-warning border-warning/40 bg-warning/[0.06]'
+                )}
+              >
+                {d.status === 'VERIFIED'
+                  ? 'Verified'
+                  : d.status === 'REJECTED'
+                    ? 'Rejected'
+                    : 'Awaiting review'}
+              </span>
             </li>
           ))}
         </ul>
       ) : (
         <p className="text-xs text-silver/60">
-          No documents uploaded yet from this device.
+          No documents uploaded yet.
         </p>
       )}
     </section>

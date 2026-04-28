@@ -59,6 +59,7 @@ import {
   renderCompliancePacket,
   type PacketData,
 } from '../lib/compliancePacket.js';
+import { AGREEMENT_BODY, AGREEMENT_TITLE } from '../lib/altoHrContent.js';
 
 export const onboardingRouter = Router();
 
@@ -269,7 +270,26 @@ async function inviteOneApplicant(
           },
         },
       },
+      include: {
+        checklist: { include: { tasks: true } },
+      },
     });
+
+    // Auto-issue the Alto HR Associate Employment Agreement on the E_SIGN
+    // task so the associate has it ready to read and sign as soon as they
+    // accept the invite. Idempotent — only one agreement per E_SIGN task.
+    const esignTask = application.checklist?.tasks.find((t) => t.kind === 'E_SIGN');
+    if (esignTask) {
+      await tx.esignAgreement.create({
+        data: {
+          applicationId: application.id,
+          taskId: esignTask.id,
+          title: AGREEMENT_TITLE,
+          body: AGREEMENT_BODY,
+          createdById: actorUserId,
+        },
+      });
+    }
 
     return { application, client, user, associate };
   }, TX_OPTS);
@@ -684,6 +704,7 @@ onboardingRouter.get('/applications/:id/policies', async (req, res, next) => {
         version: p.version,
         industry: p.industry,
         bodyUrl: p.bodyUrl,
+        body: p.body ?? null,
         acknowledged: !!ack,
         acknowledgedAt: ack ? ack.acknowledgedAt.toISOString() : null,
       };
@@ -1027,6 +1048,37 @@ onboardingRouter.post('/applications/:id/profile', async (req, res, next) => {
 });
 
 /* W4 -------------------------------------------------------------------- */
+
+// GET — what's on file (redacted). Lets the W-4 form show "•••-••-1234"
+// instead of demanding the associate retype their SSN every time they
+// re-open the page.
+onboardingRouter.get('/applications/:id/w4', async (req, res, next) => {
+  try {
+    const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+    const [w4, associate] = await Promise.all([
+      prisma.w4Submission.findUnique({ where: { associateId: app.associateId } }),
+      prisma.associate.findUniqueOrThrow({
+        where: { id: app.associateId },
+        select: { ssnLast4: true },
+      }),
+    ]);
+    res.json({
+      hasSubmission: w4 !== null,
+      filingStatus: w4?.filingStatus ?? null,
+      multipleJobs: w4?.multipleJobs ?? false,
+      dependentsAmount: w4 ? w4.dependentsAmount.toString() : null,
+      otherIncome: w4 ? w4.otherIncome.toString() : null,
+      deductions: w4 ? w4.deductions.toString() : null,
+      extraWithholding: w4 ? w4.extraWithholding.toString() : null,
+      hasSsnOnFile: w4?.ssnEncrypted != null,
+      ssnLast4: associate.ssnLast4,
+      submittedAt: w4?.signedAt ? w4.signedAt.toISOString() : null,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 onboardingRouter.post('/applications/:id/w4', async (req, res, next) => {
   try {
     const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
@@ -1035,7 +1087,25 @@ onboardingRouter.post('/applications/:id/w4', async (req, res, next) => {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
     const input = parsed.data;
-    const ssnCipher = input.ssn ? encryptString(input.ssn.replace(/-/g, '')) : null;
+    // SSN is required for an actual W-4. We accept resubmission without an
+    // SSN ONLY when there's already one encrypted on file for this
+    // associate — that's how the redacted-display flow works (the form
+    // shows "•••-••-1234" and doesn't require retype).
+    const existing = await prisma.w4Submission.findUnique({
+      where: { associateId: app.associateId },
+      select: { ssnEncrypted: true },
+    });
+    const alreadyHasSsn = existing?.ssnEncrypted != null;
+    if (!input.ssn && !alreadyHasSsn) {
+      throw new HttpError(
+        400,
+        'ssn_required',
+        'Social Security Number is required to submit a W-4.'
+      );
+    }
+    const ssnDigits = input.ssn ? input.ssn.replace(/-/g, '') : null;
+    const ssnCipher = ssnDigits ? encryptString(ssnDigits) : null;
+    const ssnLast4 = ssnDigits ? ssnDigits.slice(-4) : null;
 
     await prisma.$transaction(async (tx) => {
       await tx.w4Submission.upsert({
@@ -1049,6 +1119,7 @@ onboardingRouter.post('/applications/:id/w4', async (req, res, next) => {
           deductions: input.deductions,
           extraWithholding: input.extraWithholding,
           ssnEncrypted: ssnCipher,
+          signedAt: new Date(),
         },
         update: {
           filingStatus: input.filingStatus,
@@ -1058,8 +1129,17 @@ onboardingRouter.post('/applications/:id/w4', async (req, res, next) => {
           deductions: input.deductions,
           extraWithholding: input.extraWithholding,
           ...(ssnCipher ? { ssnEncrypted: ssnCipher } : {}),
+          signedAt: new Date(),
         },
       });
+      // Also mirror the last-4 onto the Associate so the redacted display
+      // and compliance packet can show it without decrypting.
+      if (ssnLast4) {
+        await tx.associate.update({
+          where: { id: app.associateId },
+          data: { ssnLast4 },
+        });
+      }
       const checklist = await tx.onboardingChecklist.findUnique({
         where: { applicationId: app.id },
       });
@@ -1084,6 +1164,69 @@ onboardingRouter.post('/applications/:id/w4', async (req, res, next) => {
 });
 
 /* DIRECT_DEPOSIT -------------------------------------------------------- */
+
+// ABA routing-number checksum (ANSI X9.5). The leading nine-digit number is
+// valid iff (3*(d1+d4+d7) + 7*(d2+d5+d8) + (d3+d6+d9)) is a multiple of 10.
+// Stops the obvious typo (123456789, 999999999, etc) before it lands on a
+// pay run. Routing numbers are public; this is purely format validation.
+function isValidAba(routing: string): boolean {
+  if (!/^\d{9}$/.test(routing)) return false;
+  const d = routing.split('').map(Number);
+  const sum =
+    3 * (d[0] + d[3] + d[6]) +
+    7 * (d[1] + d[4] + d[7]) +
+    1 * (d[2] + d[5] + d[8]);
+  return sum % 10 === 0;
+}
+
+// GET — what's on file (redacted). Powers the "•••• 1234" display in the
+// direct-deposit form so the associate can confirm what's there without
+// retyping. Never returns full account or routing digits.
+onboardingRouter.get(
+  '/applications/:id/direct-deposit',
+  async (req, res, next) => {
+    try {
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+      const payout = await prisma.payoutMethod.findFirst({
+        where: { associateId: app.associateId, isPrimary: true },
+      });
+      if (!payout) {
+        res.json({ hasPayoutMethod: false });
+        return;
+      }
+      let routingMasked: string | null = null;
+      let accountLast4: string | null = null;
+      try {
+        if (payout.routingNumberEnc) {
+          // Routing is stored as plain UTF-8 bytes — see the comment in the
+          // POST handler. Just decode as a string.
+          const r = payout.routingNumberEnc.toString('utf8');
+          routingMasked = `•••••${r.slice(-4)}`;
+        }
+        if (payout.accountNumberEnc) {
+          const a = decryptString(payout.accountNumberEnc);
+          accountLast4 = a.slice(-4);
+        }
+      } catch {
+        routingMasked = null;
+        accountLast4 = null;
+      }
+      res.json({
+        hasPayoutMethod: true,
+        type: payout.type,
+        accountType: payout.accountType,
+        routingMasked,
+        accountLast4,
+        branchCardId: payout.branchCardId,
+        verifiedAt: payout.verifiedAt ? payout.verifiedAt.toISOString() : null,
+        updatedAt: payout.updatedAt?.toISOString() ?? null,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 onboardingRouter.post(
   '/applications/:id/direct-deposit',
   async (req, res, next) => {
@@ -1094,6 +1237,13 @@ onboardingRouter.post(
         throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
       }
       const input = parsed.data;
+      if (input.type === 'BANK_ACCOUNT' && !isValidAba(input.routingNumber)) {
+        throw new HttpError(
+          400,
+          'invalid_routing_number',
+          'Routing number failed the ABA checksum — please double-check it on your check or bank app.'
+        );
+      }
 
       await prisma.$transaction(async (tx) => {
         const existing = await tx.payoutMethod.findFirst({
@@ -2178,6 +2328,70 @@ onboardingRouter.post(
         },
         req,
       });
+
+      // Email a copy of the signed PDF to the associate. Non-fatal — the
+      // signature itself is already persisted, and the document lives in
+      // the vault under their folder regardless. Notification row records
+      // the attempt so HR can see it landed.
+      if (associate.email) {
+        const linkUrl = `${env.APP_BASE_URL}/api/onboarding/esign/signatures/${result.sig.id}/pdf`;
+        const subject = `Signed: ${agreement.title}`;
+        const emailBody = [
+          `Hi ${associate.firstName},`,
+          ``,
+          `Thank you for signing the ${agreement.title}.`,
+          ``,
+          `A copy of the signed agreement is attached to this email and is also`,
+          `available in your Documents in Alto People at any time:`,
+          linkUrl,
+          ``,
+          `Signed on: ${signedAt.toISOString()}`,
+          `Document fingerprint (SHA-256): ${pdfHash}`,
+          ``,
+          `If you didn't sign this, contact hr@altohr.com immediately.`,
+          ``,
+          `— Alto HR`,
+        ].join('\n');
+        let emailRef: string | null = null;
+        let emailFailed: string | null = null;
+        try {
+          const r = await send({
+            channel: 'EMAIL',
+            recipient: {
+              userId: req.user!.id,
+              phone: null,
+              email: associate.email,
+            },
+            subject,
+            body: emailBody,
+            attachments: [
+              {
+                filename: `${slugify(agreement.title)}.pdf`,
+                content: pdf,
+                contentType: 'application/pdf',
+              },
+            ],
+          });
+          emailRef = r.externalRef;
+        } catch (err) {
+          emailFailed = err instanceof Error ? err.message : String(err);
+        }
+        await prisma.notification.create({
+          data: {
+            channel: 'EMAIL',
+            status: emailFailed ? 'FAILED' : 'SENT',
+            recipientUserId: req.user!.id,
+            recipientEmail: associate.email,
+            subject,
+            body: emailBody,
+            category: 'onboarding.esign_copy',
+            externalRef: emailRef,
+            failureReason: emailFailed,
+            sentAt: emailFailed ? null : new Date(),
+            senderUserId: req.user!.id,
+          },
+        });
+      }
 
       res.status(200).json({
         signatureId: result.sig.id,

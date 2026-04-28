@@ -214,6 +214,23 @@ export function submitW4(
   });
 }
 
+export interface W4Status {
+  hasSubmission: boolean;
+  filingStatus: 'SINGLE' | 'MARRIED_FILING_JOINTLY' | 'HEAD_OF_HOUSEHOLD' | null;
+  multipleJobs: boolean;
+  dependentsAmount: string | null;
+  otherIncome: string | null;
+  deductions: string | null;
+  extraWithholding: string | null;
+  hasSsnOnFile: boolean;
+  ssnLast4: string | null;
+  submittedAt: string | null;
+}
+
+export function getW4(applicationId: string): Promise<W4Status> {
+  return apiFetch<W4Status>(`/onboarding/applications/${applicationId}/w4`);
+}
+
 export function submitDirectDeposit(
   applicationId: string,
   body: DirectDepositInput
@@ -221,6 +238,25 @@ export function submitDirectDeposit(
   return apiFetch<void>(
     `/onboarding/applications/${applicationId}/direct-deposit`,
     { method: 'POST', body }
+  );
+}
+
+export interface DirectDepositStatus {
+  hasPayoutMethod: boolean;
+  type?: 'BANK_ACCOUNT' | 'BRANCH_CARD' | string | null;
+  accountType?: 'CHECKING' | 'SAVINGS' | string | null;
+  routingMasked?: string | null;
+  accountLast4?: string | null;
+  branchCardId?: string | null;
+  verifiedAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export function getDirectDeposit(
+  applicationId: string
+): Promise<DirectDepositStatus> {
+  return apiFetch<DirectDepositStatus>(
+    `/onboarding/applications/${applicationId}/direct-deposit`
   );
 }
 
