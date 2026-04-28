@@ -59,7 +59,16 @@ export type Capability =
   // Phase 83 — compensation: history, bands, merit cycles.
   | 'view:comp' | 'manage:comp'
   // Phase 93 — public API keys + outbound webhooks.
-  | 'view:integrations' | 'manage:integrations';
+  | 'view:integrations' | 'manage:integrations'
+  // ASN integration — read-only capabilities issued *only* via API keys
+  // (never granted to a human role). Power the AltoHR / ShiftReport Nexus
+  // bridge so supervisors and command desks see Alto People schedule +
+  // clock-in data inside their ops tooling. clientId on the issuing
+  // ApiKey scopes per-store; clientId=null on the key = global view.
+  | 'asn:read:schedule'
+  | 'asn:read:roster'
+  | 'asn:read:clocked-in'
+  | 'asn:read:kpis';
 
 const ALL_VIEWS: Capability[] = [
   'view:dashboard',
@@ -169,6 +178,18 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
 export function hasCapability(role: Role, capability: Capability): boolean {
   return ROLE_CAPABILITIES[role].has(capability);
 }
+
+/**
+ * The full set of ASN-namespaced capabilities. Useful when an admin UI
+ * mints an "ASN Supervisor" or "ASN Command Desk" key — preselect from
+ * this list rather than free-typing strings.
+ */
+export const ASN_CAPABILITIES: readonly Capability[] = [
+  'asn:read:schedule',
+  'asn:read:roster',
+  'asn:read:clocked-in',
+  'asn:read:kpis',
+] as const;
 
 export const HUMAN_ROLES: Role[] = (Object.keys(ROLES) as Role[]).filter(
   (r) => r !== 'LIVE_ASN'

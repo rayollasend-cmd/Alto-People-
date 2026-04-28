@@ -77,6 +77,7 @@ import { anonReport128Router } from './routes/anonReport128.js';
 import { equity129Router } from './routes/equity129.js';
 import { vto130Router } from './routes/vto130.js';
 import { profilePhotoRouter } from './routes/profilePhoto.js';
+import { integrationsV1Router } from './routes/integrationsV1.js';
 import { attachUser, requireCapability } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 
@@ -125,6 +126,12 @@ export function createApp() {
 
   app.use('/health', healthRouter);
   app.use('/auth', authRouter);
+  // Public integration API (AltoHR / ShiftReport Nexus, etc.). Authenticates
+  // via `Authorization: Bearer altop_<hex>` rather than the session cookie,
+  // so it sits outside the human-RBAC chain. Mounted early so its 401s
+  // don't get tangled with cookie-flow routes if a caller forgets the
+  // bearer header.
+  app.use('/integrations/v1', integrationsV1Router);
   app.use('/clients', requireCapability('view:clients'), clientsRouter);
   app.use(
     '/onboarding',
