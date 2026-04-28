@@ -6,6 +6,7 @@ import { HttpError } from '../middleware/error.js';
 import { recordChange } from '../lib/associateHistory.js';
 import { emit as emitWorkflow } from '../lib/workflow.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
+import { decryptString } from '../lib/crypto.js';
 
 /**
  * Phase 82 — Self-service post-onboarding.
@@ -110,6 +111,24 @@ selfServiceRouter.put('/me/profile', async (req, res) => {
     });
   }
   res.json({ ok: true });
+});
+
+// ----- Employee number ----------------------------------------------------
+
+selfServiceRouter.get('/me/employee-number', async (req, res) => {
+  const id = requireAssociate(req);
+  const pin = await prisma.kioskPin.findUnique({
+    where: { associateId: id },
+    select: { pinEncrypted: true, createdAt: true },
+  });
+  if (!pin?.pinEncrypted) {
+    res.json({ employeeNumber: null, issuedAt: null });
+    return;
+  }
+  res.json({
+    employeeNumber: decryptString(pin.pinEncrypted),
+    issuedAt: pin.createdAt.toISOString(),
+  });
 });
 
 // ----- Emergency contacts -------------------------------------------------

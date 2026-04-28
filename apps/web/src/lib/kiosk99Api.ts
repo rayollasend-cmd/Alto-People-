@@ -26,6 +26,8 @@ export interface KioskPin {
   associateName: string;
   associateEmail: string;
   clientId: string;
+  /** 4-digit number, decrypted server-side. Null on legacy pre-encryption rows. */
+  employeeNumber: string | null;
   createdAt: string;
 }
 
@@ -108,7 +110,7 @@ export const assignKioskPin = (input: {
   associateId: string;
   clientId: string;
   pin?: string;
-}) => apiFetch<{ id: string; pin: string }>('/kiosk-pins', {
+}) => apiFetch<{ id: string; employeeNumber: string }>('/kiosk-pins', {
   method: 'POST',
   body: input,
 });

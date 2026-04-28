@@ -10,6 +10,7 @@ import {
   deleteDependent,
   deleteEmergency,
   deleteProfilePhoto,
+  getEmployeeNumber,
   getProfile,
   listBeneficiaries,
   listDependents,
@@ -24,6 +25,7 @@ import {
   type Beneficiary,
   type Dependent,
   type EmergencyContact,
+  type EmployeeNumber,
   type LifeEvent,
   type SelfProfile,
   type TaxDoc,
@@ -123,6 +125,8 @@ const TAX_DOC_LABEL: Record<TaxDoc['kind'], string> = {
 export function MeHome() {
   const [tab, setTab] = useState<Tab>('profile');
   const [profile, setProfile] = useState<SelfProfile | null>(null);
+  const [employeeNumber, setEmployeeNumberState] =
+    useState<EmployeeNumber | null>(null);
   const [contacts, setContacts] = useState<EmergencyContact[] | null>(null);
   const [dependents, setDependents] = useState<Dependent[] | null>(null);
   const [beneficiaries, setBeneficiaries] = useState<Beneficiary[] | null>(null);
@@ -133,8 +137,9 @@ export function MeHome() {
   const refresh = async () => {
     try {
       setError(null);
-      const [p, c, d, b, e, t] = await Promise.all([
+      const [p, n, c, d, b, e, t] = await Promise.all([
         getProfile(),
+        getEmployeeNumber(),
         listEmergency(),
         listDependents(),
         listBeneficiaries(),
@@ -142,6 +147,7 @@ export function MeHome() {
         listTaxDocs(),
       ]);
       setProfile(p);
+      setEmployeeNumberState(n);
       setContacts(c.contacts);
       setDependents(d.dependents);
       setBeneficiaries(b.beneficiaries);
@@ -183,7 +189,11 @@ export function MeHome() {
         </TabsList>
 
         <TabsContent value="profile">
-          <ProfilePanel profile={profile} onSaved={refresh} />
+          <ProfilePanel
+            profile={profile}
+            employeeNumber={employeeNumber}
+            onSaved={refresh}
+          />
         </TabsContent>
 
         <TabsContent value="emergency">
@@ -214,9 +224,11 @@ export function MeHome() {
 
 function ProfilePanel({
   profile,
+  employeeNumber,
   onSaved,
 }: {
   profile: SelfProfile | null;
+  employeeNumber: EmployeeNumber | null;
   onSaved: () => void;
 }) {
   const [phone, setPhone] = useState('');
@@ -271,6 +283,8 @@ function ProfilePanel({
     <Card>
       <CardContent className="p-6 space-y-5">
         <ProfilePhotoRow profile={profile} onChange={onSaved} />
+
+        <EmployeeNumberRow employeeNumber={employeeNumber} />
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <ReadonlyField label="Name" value={`${profile.firstName} ${profile.lastName}`} />
@@ -426,6 +440,41 @@ function ProfilePhotoRow({
           />
         </div>
       </div>
+    </div>
+  );
+}
+
+function EmployeeNumberRow({
+  employeeNumber,
+}: {
+  employeeNumber: EmployeeNumber | null;
+}) {
+  return (
+    <div className="rounded-md border border-navy-secondary bg-navy-secondary/30 p-4">
+      <div className="text-xs uppercase tracking-widest text-silver">
+        Employee number
+      </div>
+      {employeeNumber === null ? (
+        <div className="mt-1 text-sm text-silver">Loading…</div>
+      ) : employeeNumber.employeeNumber ? (
+        <>
+          <div className="mt-1 font-mono text-3xl tracking-[0.5em] text-white">
+            {employeeNumber.employeeNumber}
+          </div>
+          <div className="mt-1 text-xs text-silver">
+            Use this number to clock in and out at the kiosk. Issued{' '}
+            {employeeNumber.issuedAt
+              ? new Date(employeeNumber.issuedAt).toLocaleDateString()
+              : '—'}
+            .
+          </div>
+        </>
+      ) : (
+        <div className="mt-1 text-sm text-silver">
+          Not yet issued. HR will assign you a 4-digit number after your
+          onboarding is approved.
+        </div>
+      )}
     </div>
   );
 }

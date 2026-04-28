@@ -20,6 +20,7 @@ import {
   type KioskPin,
   type KioskPunchSummary,
 } from '@/lib/kiosk99Api';
+import { listDirectory } from '@/lib/directoryApi';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import {
@@ -61,7 +62,7 @@ export function KioskAdmin() {
     <div className="space-y-5">
       <PageHeader
         title="Kiosk admin"
-        subtitle="Register tablets, assign 4-digit PINs to associates, and review the punch log."
+        subtitle="Register tablets, issue 4-digit employee numbers, and review the punch log."
         breadcrumbs={[{ label: 'Time' }, { label: 'Kiosk' }]}
       />
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
@@ -70,7 +71,7 @@ export function KioskAdmin() {
             <Tablet className="mr-2 h-4 w-4" /> Devices
           </TabsTrigger>
           <TabsTrigger value="pins">
-            <Key className="mr-2 h-4 w-4" /> PINs
+            <Key className="mr-2 h-4 w-4" /> Employee numbers
           </TabsTrigger>
           <TabsTrigger value="review">
             <AlertTriangle className="mr-2 h-4 w-4" /> Review
@@ -473,9 +474,10 @@ function PinsTab({ canManage }: { canManage: boolean }) {
   const [clientId, setClientId] = useState('');
   const [rows, setRows] = useState<KioskPin[] | null>(null);
   const [showNew, setShowNew] = useState(false);
-  const [showPin, setShowPin] = useState<{ associateName: string; pin: string } | null>(
-    null,
-  );
+  const [showPin, setShowPin] = useState<{
+    associateName: string;
+    employeeNumber: string;
+  } | null>(null);
 
   const refresh = () => {
     if (!clientId) {
@@ -506,7 +508,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
         </div>
         {canManage && clientId && (
           <Button onClick={() => setShowNew(true)}>
-            <Plus className="mr-2 h-4 w-4" /> Assign PIN
+            <Plus className="mr-2 h-4 w-4" /> Issue employee number
           </Button>
         )}
       </div>
@@ -514,15 +516,15 @@ function PinsTab({ canManage }: { canManage: boolean }) {
         <CardContent className="p-0">
           {!clientId ? (
             <div className="p-6 text-sm text-silver">
-              Enter a client ID to manage PINs.
+              Enter a client ID to manage employee numbers.
             </div>
           ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
               icon={Key}
-              title="No PINs"
-              description="Assign a 4-digit PIN to each associate so they can clock in via the kiosk."
+              title="No employee numbers"
+              description="Issue a 4-digit number to each associate after they finish onboarding so they can clock in via the kiosk."
             />
           ) : (
             <Table>
@@ -530,7 +532,8 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                 <TableRow>
                   <TableHead>Associate</TableHead>
                   <TableHead>Email</TableHead>
-                  <TableHead>Assigned</TableHead>
+                  <TableHead>Employee #</TableHead>
+                  <TableHead>Issued</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -541,12 +544,15 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                       {p.associateName}
                     </TableCell>
                     <TableCell className="text-silver">{p.associateEmail}</TableCell>
+                    <TableCell className="font-mono tracking-widest text-white">
+                      {p.employeeNumber ?? <span className="text-silver/50">—</span>}
+                    </TableCell>
                     <TableCell>{new Date(p.createdAt).toLocaleDateString()}</TableCell>
                     <TableCell className="text-right">
                       {canManage && (
                         <button
                           onClick={async () => {
-                            if (!window.confirm('Revoke this PIN?')) return;
+                            if (!window.confirm('Revoke this employee number?')) return;
                             try {
                               await deleteKioskPin(p.id);
                               refresh();
@@ -571,9 +577,9 @@ function PinsTab({ canManage }: { canManage: boolean }) {
         <NewPinDrawer
           clientId={clientId}
           onClose={() => setShowNew(false)}
-          onSaved={(associateName, pin) => {
+          onSaved={(associateName, employeeNumber) => {
             setShowNew(false);
-            setShowPin({ associateName, pin });
+            setShowPin({ associateName, employeeNumber });
             refresh();
           }}
         />
@@ -581,18 +587,19 @@ function PinsTab({ canManage }: { canManage: boolean }) {
       {showPin && (
         <Drawer open={true} onOpenChange={(o) => !o && setShowPin(null)}>
           <DrawerHeader>
-            <DrawerTitle>PIN assigned</DrawerTitle>
+            <DrawerTitle>Employee number issued</DrawerTitle>
           </DrawerHeader>
           <DrawerBody className="space-y-4 text-center">
-            <div className="text-sm text-amber-400">
-              Share this PIN with {showPin.associateName}. Shown ONCE.
+            <div className="text-sm text-silver">
+              {showPin.associateName} can now use this number to clock in.
+              They can also see it any time on their My profile page.
             </div>
             <div className="bg-navy-secondary/40 border border-navy-secondary rounded-md p-6 text-6xl font-mono tracking-[0.5em] text-white">
-              {showPin.pin}
+              {showPin.employeeNumber}
             </div>
             <Button
               onClick={() => {
-                void navigator.clipboard.writeText(showPin.pin);
+                void navigator.clipboard.writeText(showPin.employeeNumber);
                 toast.success('Copied.');
               }}
             >
@@ -615,29 +622,63 @@ function NewPinDrawer({
 }: {
   clientId: string;
   onClose: () => void;
-  onSaved: (associateName: string, pin: string) => void;
+  onSaved: (associateName: string, employeeNumber: string) => void;
 }) {
+  const [eligible, setEligible] = useState<
+    Array<{ id: string; firstName: string; lastName: string; email: string }> | null
+  >(null);
   const [associateId, setAssociateId] = useState('');
   const [pin, setPin] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // Only ACTIVE (= APPROVED-application) associates are eligible. The
+  // server enforces the same gate; this picker keeps HR from picking
+  // someone mid-onboarding by accident.
+  useEffect(() => {
+    let cancelled = false;
+    listDirectory({ status: 'ACTIVE', clientId })
+      .then((r) => {
+        if (!cancelled) {
+          setEligible(
+            r.associates.map((a) => ({
+              id: a.id,
+              firstName: a.firstName,
+              lastName: a.lastName,
+              email: a.email,
+            })),
+          );
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setEligible([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId]);
+
+  const selected = eligible?.find((a) => a.id === associateId);
+
   const onSubmit = async () => {
-    if (!associateId.trim()) {
-      toast.error('Associate ID required.');
+    if (!associateId) {
+      toast.error('Pick an associate.');
       return;
     }
     if (pin && !/^\d{4}$/.test(pin)) {
-      toast.error('PIN must be exactly 4 digits, or leave empty to auto-generate.');
+      toast.error('Number must be exactly 4 digits, or leave empty to auto-generate.');
       return;
     }
     setSaving(true);
     try {
       const r = await assignKioskPin({
         clientId,
-        associateId: associateId.trim(),
+        associateId,
         pin: pin || undefined,
       });
-      onSaved(associateId.slice(0, 8) + '…', r.pin);
+      const name = selected
+        ? `${selected.firstName} ${selected.lastName}`
+        : 'Associate';
+      onSaved(name, r.employeeNumber);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
     } finally {
@@ -647,19 +688,34 @@ function NewPinDrawer({
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>Assign or rotate PIN</DrawerTitle>
+        <DrawerTitle>Issue or rotate employee number</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate ID</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={associateId}
-            onChange={(e) => setAssociateId(e.target.value)}
-          />
+          <Label>Associate (onboarding complete)</Label>
+          {eligible === null ? (
+            <div className="mt-1 text-xs text-silver">Loading…</div>
+          ) : eligible.length === 0 ? (
+            <div className="mt-1 text-xs text-silver">
+              No associates with an approved application at this client yet.
+            </div>
+          ) : (
+            <select
+              className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+              value={associateId}
+              onChange={(e) => setAssociateId(e.target.value)}
+            >
+              <option value="">Select an associate…</option>
+              {eligible.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.firstName} {a.lastName} — {a.email}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
         <div>
-          <Label>PIN (optional — leave empty to auto-generate)</Label>
+          <Label>Employee number (optional — leave empty to auto-generate)</Label>
           <Input
             className="mt-1 font-mono text-2xl tracking-widest text-center"
             value={pin}
@@ -670,15 +726,16 @@ function NewPinDrawer({
           />
         </div>
         <div className="text-xs text-silver">
-          If the associate already has a PIN at this client, this rotates it.
+          If the associate already has a number, this rotates it. Numbers
+          are unique across the entire company.
         </div>
       </DrawerBody>
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>
           Cancel
         </Button>
-        <Button onClick={onSubmit} disabled={saving}>
-          {saving ? 'Saving…' : 'Assign'}
+        <Button onClick={onSubmit} disabled={saving || eligible === null}>
+          {saving ? 'Saving…' : 'Issue'}
         </Button>
       </DrawerFooter>
     </Drawer>

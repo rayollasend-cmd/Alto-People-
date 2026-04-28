@@ -11,6 +11,7 @@ import {
   generatePin,
   hmacPin,
 } from '../lib/kioskAuth.js';
+import { encryptString, decryptString } from '../lib/crypto.js';
 
 /**
  * Phase 99 — Kiosk-mode clock in/out: 4-digit PIN + selfie.
@@ -164,6 +165,12 @@ kiosk99Router.get('/kiosk-pins', VIEW, async (req, res) => {
       associateName: `${p.associate.firstName} ${p.associate.lastName}`,
       associateEmail: p.associate.email,
       clientId: p.clientId,
+      // Decrypt for HR display. Old rows pre-dating the encryption
+      // column return null — HR will need to rotate to recover the
+      // plaintext.
+      employeeNumber: p.pinEncrypted
+        ? decryptString(p.pinEncrypted)
+        : null,
       createdAt: p.createdAt.toISOString(),
     })),
   });
@@ -172,30 +179,45 @@ kiosk99Router.get('/kiosk-pins', VIEW, async (req, res) => {
 kiosk99Router.post('/kiosk-pins', MANAGE, async (req, res) => {
   const input = PinInputSchema.parse(req.body);
 
-  // Try to insert; on collision (clientId+pinHmac taken), regenerate up
-  // to a few times. With 10k slots collisions are vanishingly rare unless
-  // a client has thousands of associates.
+  // The employee number is issued AFTER onboarding completes — i.e.
+  // the associate has at least one APPROVED application. HR shouldn't
+  // be handing out clock-in identity until the hire is final.
+  const approvedApp = await prisma.application.findFirst({
+    where: {
+      associateId: input.associateId,
+      status: 'APPROVED',
+      deletedAt: null,
+    },
+    select: { id: true },
+  });
+  if (!approvedApp) {
+    throw new HttpError(
+      409,
+      'onboarding_not_complete',
+      'Employee numbers can only be issued after the associate has an approved application.',
+    );
+  }
+
+  // Try to insert; on global pinHmac collision, regenerate up to a few
+  // times. 10k slots — collisions stay rare until the workforce gets
+  // large.
   for (let attempt = 0; attempt < 6; attempt++) {
     const pin = input.pin ?? generatePin();
     const pinHmac = hmacPin(pin);
+    const pinEncrypted = encryptString(pin);
     try {
       const created = await prisma.kioskPin.upsert({
-        where: {
-          clientId_associateId: {
-            clientId: input.clientId,
-            associateId: input.associateId,
-          },
-        },
-        update: { pinHmac, createdById: req.user!.id },
+        where: { associateId: input.associateId },
+        update: { pinHmac, pinEncrypted, createdById: req.user!.id },
         create: {
           clientId: input.clientId,
           associateId: input.associateId,
           pinHmac,
+          pinEncrypted,
           createdById: req.user!.id,
         },
       });
-      // Plaintext shown ONCE.
-      res.status(201).json({ id: created.id, pin });
+      res.status(201).json({ id: created.id, employeeNumber: pin });
       return;
     } catch (err) {
       if (
@@ -205,8 +227,8 @@ kiosk99Router.post('/kiosk-pins', MANAGE, async (req, res) => {
         if (input.pin) {
           throw new HttpError(
             409,
-            'pin_taken',
-            'That PIN is already in use at this client. Try another.',
+            'number_taken',
+            'That employee number is already in use. Try another.',
           );
         }
         continue; // Auto-regenerate.
@@ -216,8 +238,8 @@ kiosk99Router.post('/kiosk-pins', MANAGE, async (req, res) => {
   }
   throw new HttpError(
     500,
-    'pin_collision_storm',
-    'Could not allocate a unique PIN after 6 attempts. Try again.',
+    'number_collision_storm',
+    'Could not allocate a unique employee number after 6 attempts. Try again.',
   );
 });
 
@@ -610,21 +632,19 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
   // 3. Decode selfie up front so a bad upload doesn't waste a PIN lookup.
   const selfie = decodeSelfie(input.selfie ?? null);
 
-  // 4. Look up the PIN. HMAC the input and join on (clientId, pinHmac).
+  // 4. Look up the employee number. HMAC the input and look up globally
+  // — numbers are unique across the company. We then check the kiosk
+  // device's clientId matches the number's home client so an associate
+  // can't punch from a tablet at a different client's site.
   const pinHmac = hmacPin(input.pin);
   const pinRow = await prisma.kioskPin.findUnique({
-    where: {
-      clientId_pinHmac: {
-        clientId: device.clientId,
-        pinHmac,
-      },
-    },
+    where: { pinHmac },
     include: {
       associate: { select: { id: true, firstName: true, lastName: true } },
     },
   });
 
-  if (!pinRow) {
+  if (!pinRow || pinRow.clientId !== device.clientId) {
     // Record a REJECTED punch so we can detect brute-force in the audit log.
     await prisma.kioskPunch.create({
       data: {

@@ -128,6 +128,14 @@ export const createLifeEvent = (input: {
 export const listTaxDocs = () =>
   apiFetch<{ documents: TaxDoc[] }>('/self/me/tax-documents');
 
+export interface EmployeeNumber {
+  employeeNumber: string | null;
+  issuedAt: string | null;
+}
+
+export const getEmployeeNumber = () =>
+  apiFetch<EmployeeNumber>('/self/me/employee-number');
+
 // Profile photo upload — separate codepath because apiFetch JSON-encodes
 // the body. We post the raw FormData and rely on the browser to set the
 // multipart boundary header.

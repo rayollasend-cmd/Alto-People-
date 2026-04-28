@@ -3524,6 +3524,10 @@ model KioskPin {
   associateId String   @db.Uuid
   clientId    String   @db.Uuid
   pinHmac     Bytes
+  // Encrypted plaintext so the associate can see their own employee
+  // number on /me/profile and HR can show it again in the directory.
+  // Encryption uses the same AES-256-GCM helper as W4/payout secrets.
+  pinEncrypted Bytes?
   createdById String?  @db.Uuid
   createdAt   DateTime @default(now()) @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @db.Timestamptz(6)
@@ -3533,8 +3537,11 @@ model KioskPin {
   createdBy User?        @relation("KioskPinCreator", fields: [createdById], references: [id], onDelete: SetNull)
   punches   KioskPunch[]
 
-  @@unique([clientId, associateId])
-  @@unique([clientId, pinHmac])
+  // One employee number per associate, unique across the entire company
+  // (not just per client). 4 digits = 10,000 max — flag once we cross
+  // ~80% to widen to 5+.
+  @@unique([associateId])
+  @@unique([pinHmac])
 }
 
 model KioskPunch {
