@@ -21,6 +21,7 @@ import {
   type KioskPunchSummary,
 } from '@/lib/kiosk99Api';
 import { listDirectory } from '@/lib/directoryApi';
+import { listClients } from '@/lib/clientsApi';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import {
@@ -244,18 +245,38 @@ function NewDeviceDrawer({
   onClose: () => void;
   onSaved: (token: string) => void;
 }) {
+  const [clients, setClients] = useState<
+    Array<{ id: string; name: string }> | null
+  >(null);
   const [clientId, setClientId] = useState('');
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
 
+  useEffect(() => {
+    let cancelled = false;
+    listClients()
+      .then((r) => {
+        if (cancelled) return;
+        const list = r.clients.map((c) => ({ id: c.id, name: c.name }));
+        setClients(list);
+        if (list.length > 0) setClientId(list[0]!.id);
+      })
+      .catch(() => {
+        if (!cancelled) setClients([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const onSubmit = async () => {
     if (!clientId || !name.trim()) {
-      toast.error('Client ID and name required.');
+      toast.error('Client and name required.');
       return;
     }
     setSaving(true);
     try {
-      const r = await createKioskDevice({ clientId: clientId.trim(), name: name.trim() });
+      const r = await createKioskDevice({ clientId, name: name.trim() });
       onSaved(r.deviceToken);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -270,12 +291,26 @@ function NewDeviceDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Client ID</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
-          />
+          <Label>Client</Label>
+          {clients === null ? (
+            <div className="mt-1 text-xs text-silver">Loading…</div>
+          ) : clients.length === 0 ? (
+            <div className="mt-1 text-xs text-silver">
+              No clients yet — create one in Clients first.
+            </div>
+          ) : (
+            <select
+              className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+            >
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
         <div>
           <Label>Kiosk name</Label>
@@ -291,7 +326,7 @@ function NewDeviceDrawer({
         <Button variant="ghost" onClick={onClose}>
           Cancel
         </Button>
-        <Button onClick={onSubmit} disabled={saving}>
+        <Button onClick={onSubmit} disabled={saving || !clientId}>
           {saving ? 'Generating…' : 'Register'}
         </Button>
       </DrawerFooter>
@@ -471,6 +506,9 @@ function GeofenceDrawer({
 }
 
 function PinsTab({ canManage }: { canManage: boolean }) {
+  const [clients, setClients] = useState<
+    Array<{ id: string; name: string }> | null
+  >(null);
   const [clientId, setClientId] = useState('');
   const [rows, setRows] = useState<KioskPin[] | null>(null);
   const [showNew, setShowNew] = useState(false);
@@ -478,6 +516,26 @@ function PinsTab({ canManage }: { canManage: boolean }) {
     associateName: string;
     employeeNumber: string;
   } | null>(null);
+
+  // Load the client picker once. Default to the first client so HR
+  // doesn't land on an empty state.
+  useEffect(() => {
+    let cancelled = false;
+    listClients()
+      .then((r) => {
+        if (cancelled) return;
+        const list = r.clients.map((c) => ({ id: c.id, name: c.name }));
+        setClients(list);
+        if (!clientId && list.length > 0) setClientId(list[0]!.id);
+      })
+      .catch(() => {
+        if (!cancelled) setClients([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const refresh = () => {
     if (!clientId) {
@@ -498,13 +556,26 @@ function PinsTab({ canManage }: { canManage: boolean }) {
     <div className="space-y-4">
       <div className="flex items-end gap-3">
         <div className="flex-1 max-w-md">
-          <Label>Client ID</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
-            placeholder="UUID"
-          />
+          <Label>Client</Label>
+          {clients === null ? (
+            <div className="mt-1 text-xs text-silver">Loading…</div>
+          ) : clients.length === 0 ? (
+            <div className="mt-1 text-xs text-silver">
+              No clients yet — create one in Clients first.
+            </div>
+          ) : (
+            <select
+              className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+            >
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
         {canManage && clientId && (
           <Button onClick={() => setShowNew(true)}>
@@ -516,7 +587,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
         <CardContent className="p-0">
           {!clientId ? (
             <div className="p-6 text-sm text-silver">
-              Enter a client ID to manage employee numbers.
+              Pick a client to manage employee numbers.
             </div>
           ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
