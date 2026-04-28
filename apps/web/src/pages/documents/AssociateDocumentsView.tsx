@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Eye } from 'lucide-react';
 import type { DocumentKind, DocumentRecord } from '@alto-people/shared';
 import {
   deleteMyDocument,
-  downloadDocumentUrl,
   listMyDocuments,
   uploadMyDocument,
 } from '@/lib/documentsApi';
@@ -10,6 +10,7 @@ import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { DocumentPreview } from '@/components/DocumentPreview';
 
 const KIND_OPTIONS: Array<{ value: DocumentKind; label: string }> = [
   { value: 'ID', label: 'Government ID' },
@@ -50,6 +51,7 @@ export function AssociateDocumentsView() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [deleteTarget, setDeleteTarget] = useState<DocumentRecord | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [previewDoc, setPreviewDoc] = useState<DocumentRecord | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -190,12 +192,15 @@ export function AssociateDocumentsView() {
                     )}
                   </div>
                 </div>
-                <a
-                  href={downloadDocumentUrl(d.id)}
-                  className="text-xs text-silver hover:text-gold underline"
+                <button
+                  type="button"
+                  onClick={() => setPreviewDoc(d)}
+                  className="text-xs text-silver hover:text-gold inline-flex items-center gap-1"
+                  title="View document"
                 >
-                  Download
-                </a>
+                  <Eye className="h-3.5 w-3.5" />
+                  View
+                </button>
                 <span
                   className={cn(
                     'shrink-0 text-xs uppercase tracking-widest px-2 py-1 rounded border',
@@ -233,6 +238,11 @@ export function AssociateDocumentsView() {
         destructive
         busy={deleting}
         onConfirm={confirmDelete}
+      />
+
+      <DocumentPreview
+        doc={previewDoc}
+        onOpenChange={(o) => !o && setPreviewDoc(null)}
       />
     </div>
   );

@@ -149,6 +149,18 @@ documentsRouter.post('/me/upload', upload.single('file'), async (req, res, next)
 
 /* ===== Download (associate of own + HR/Ops of any) ====================== */
 
+// Pass `?inline=1` to render the document in-browser (PDFs / images) for the
+// in-platform viewer. Default is `attachment` so a bare URL still downloads.
+// Only the MIME types we already accept on upload are eligible for inline —
+// anything else falls back to attachment so a stray text/html upload couldn't
+// be rendered as a same-origin page.
+const INLINEABLE_MIMES = new Set([
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+]);
+
 documentsRouter.get('/:id/download', async (req, res, next) => {
   try {
     const doc = await prisma.documentRecord.findFirst({
@@ -161,11 +173,19 @@ documentsRouter.get('/:id/download', async (req, res, next) => {
     if (!existsSync(path)) {
       throw new HttpError(410, 'document_missing', 'Underlying file is no longer available');
     }
+    const wantInline =
+      req.query.inline === '1' && INLINEABLE_MIMES.has(doc.mimeType);
+    const safeName = doc.filename.replace(/"/g, '');
     res.setHeader('Content-Type', doc.mimeType);
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="${doc.filename.replace(/"/g, '')}"`
+      `${wantInline ? 'inline' : 'attachment'}; filename="${safeName}"`
     );
+    // Belt-and-braces against framing/sniffing on the inline path.
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    if (wantInline) {
+      res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; object-src 'self'; frame-ancestors 'self'");
+    }
     res.sendFile(path);
   } catch (err) {
     next(err);

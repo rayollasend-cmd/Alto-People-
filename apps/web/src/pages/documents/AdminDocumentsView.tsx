@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ChevronRight,
-  ExternalLink,
   FileText,
   Folder,
   LayoutList,
@@ -15,12 +14,12 @@ import {
 import { toast } from 'sonner';
 import type { DocumentRecord, DocumentStatus } from '@alto-people/shared';
 import {
-  downloadDocumentUrl,
   listAdminDocuments,
   rejectDocument,
   verifyDocument,
 } from '@/lib/documentsApi';
 import { ApiError } from '@/lib/api';
+import { DocumentPreview } from '@/components/DocumentPreview';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -119,6 +118,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   const [rejectReason, setRejectReason] = useState('');
   const [rejectSubmitting, setRejectSubmitting] = useState(false);
   const [selectedAssociateId, setSelectedAssociateId] = useState<string | null>(null);
+  const [previewDoc, setPreviewDoc] = useState<DocumentRecord | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -515,17 +515,15 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
               {visibleDocs.map((d) => (
                 <TableRow key={d.id} className="group">
                   <TableCell>
-                    <a
-                      href={downloadDocumentUrl(d.id)}
-                      target="_blank"
-                      rel="noreferrer"
+                    <button
+                      type="button"
+                      onClick={() => setPreviewDoc(d)}
                       className="text-gold hover:text-gold-bright underline-offset-4 hover:underline font-medium inline-flex items-center gap-1.5 max-w-xs truncate"
-                      title={d.filename}
+                      title={`Preview ${d.filename}`}
                     >
                       <FileText className="h-3.5 w-3.5 shrink-0" />
                       <span className="truncate">{d.filename}</span>
-                      <ExternalLink className="h-3 w-3 shrink-0 opacity-60" />
-                    </a>
+                    </button>
                   </TableCell>
                   <TableCell className="hidden md:table-cell text-xs text-silver uppercase tracking-wider">
                     {d.kind.replace(/_/g, ' ')}
@@ -771,17 +769,15 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                   {selectedGroup.docs.map((d) => (
                     <TableRow key={d.id} className="group">
                       <TableCell>
-                        <a
-                          href={downloadDocumentUrl(d.id)}
-                          target="_blank"
-                          rel="noreferrer"
+                        <button
+                          type="button"
+                          onClick={() => setPreviewDoc(d)}
                           className="text-gold hover:text-gold-bright underline-offset-4 hover:underline font-medium inline-flex items-center gap-1.5 max-w-xs truncate"
-                          title={d.filename}
+                          title={`Preview ${d.filename}`}
                         >
                           <FileText className="h-3.5 w-3.5 shrink-0" />
                           <span className="truncate">{d.filename}</span>
-                          <ExternalLink className="h-3 w-3 shrink-0 opacity-60" />
-                        </a>
+                        </button>
                       </TableCell>
                       <TableCell className="hidden md:table-cell text-xs text-silver uppercase tracking-wider">
                         {d.kind.replace(/_/g, ' ')}
@@ -856,6 +852,53 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
           </>
         )}
       </Drawer>
+
+      {/* In-platform document viewer. Renders PDFs / images inline so HR can
+          audit a file without leaving the page. */}
+      <DocumentPreview
+        doc={previewDoc}
+        onOpenChange={(o) => !o && setPreviewDoc(null)}
+        actions={
+          canManage && previewDoc ? (
+            <div className="flex items-center gap-1">
+              {(previewDoc.status === 'UPLOADED' ||
+                previewDoc.status === 'REJECTED') && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={async () => {
+                    const target = previewDoc;
+                    await onVerify(target);
+                    setPreviewDoc(null);
+                  }}
+                  loading={pendingId === previewDoc.id}
+                  className="text-success hover:text-success"
+                >
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  <span className="ml-1 hidden sm:inline">Verify</span>
+                </Button>
+              )}
+              {(previewDoc.status === 'UPLOADED' ||
+                previewDoc.status === 'VERIFIED') && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setRejectTarget(previewDoc);
+                    setRejectReason('');
+                    setPreviewDoc(null);
+                  }}
+                  disabled={pendingId === previewDoc.id}
+                  className="text-alert hover:text-alert"
+                >
+                  <ShieldAlert className="h-3.5 w-3.5" />
+                  <span className="ml-1 hidden sm:inline">Reject</span>
+                </Button>
+              )}
+            </div>
+          ) : undefined
+        }
+      />
 
       {/* Rejection dialog — replaces the old window.prompt so we can capture
           a real reason with markdown line breaks etc. and surface validation. */}

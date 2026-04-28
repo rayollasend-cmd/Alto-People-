@@ -48,6 +48,18 @@ export function downloadDocumentUrl(id: string): string {
   return `/api/documents/${id}/download`;
 }
 
+// Same endpoint, but the API responds with `Content-Disposition: inline` so
+// browsers render PDFs / images in an iframe or <img> instead of downloading.
+// Only safe MIME types are allowed inline by the API.
+export function previewDocumentUrl(id: string): string {
+  return `/api/documents/${id}/download?inline=1`;
+}
+
+const PREVIEWABLE_PREFIXES = ['application/pdf', 'image/'];
+export function isPreviewable(mimeType: string): boolean {
+  return PREVIEWABLE_PREFIXES.some((p) => mimeType.startsWith(p));
+}
+
 export function deleteMyDocument(id: string): Promise<void> {
   return apiFetch<void>(`/documents/me/${id}`, { method: 'DELETE' });
 }
