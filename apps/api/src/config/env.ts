@@ -6,7 +6,19 @@ const EnvSchema = z.object({
     .enum(['development', 'test', 'production'])
     .default('development'),
   PORT: z.coerce.number().int().positive().default(3001),
-  CORS_ORIGIN: z.string().url().default('http://localhost:5173'),
+  // Comma-separated list of allowed origins. Browser sends Origin without
+  // path/query, so each entry is just scheme + host (+ optional port).
+  // Examples: "https://altohr.com,https://www.altohr.com,http://localhost:5173".
+  CORS_ORIGIN: z
+    .string()
+    .default('http://localhost:5173')
+    .transform((v) =>
+      v
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0),
+    )
+    .pipe(z.array(z.string().url()).min(1)),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
   // DIRECT_URL is consumed by Prisma migrate, not by app code — but we
   // still validate it's present so devs aren't surprised.

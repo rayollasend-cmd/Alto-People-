@@ -71,3 +71,44 @@ export const changePasswordLimiter = rateLimit({
     },
   },
 });
+
+// Public careers apply endpoint is unauthenticated and therefore the most
+// abusable surface in the API. Two limiters layered: per-IP catches a
+// botnet hammering one origin; per-email catches a single account being
+// re-submitted at scale. Tests bypass both.
+const CAREERS_APPLY_IP_LIMIT = process.env.NODE_ENV === 'test' ? 100_000 : 30;
+const CAREERS_APPLY_EMAIL_LIMIT =
+  process.env.NODE_ENV === 'test' ? 100_000 : 5;
+
+/** 30 applications / hour / IP for /careers/:slug/apply. */
+export const careersApplyIpLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: CAREERS_APPLY_IP_LIMIT,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: {
+    error: {
+      code: 'rate_limited',
+      message: 'Too many applications from this address. Try again later.',
+    },
+  },
+});
+
+/** 5 applications / hour / email for /careers/:slug/apply. */
+export const careersApplyEmailLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: CAREERS_APPLY_EMAIL_LIMIT,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => {
+    const email = (req.body?.email ?? '').toString().trim().toLowerCase();
+    if (email) return `email:${email}`;
+    return `ip:${req.ip ?? 'unknown'}`;
+  },
+  message: {
+    error: {
+      code: 'rate_limited',
+      message: 'Too many applications for this email. Try again later.',
+    },
+  },
+});

@@ -1,9 +1,14 @@
 import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
+import { CareersApplyInputSchema } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import {
+  careersApplyEmailLimiter,
+  careersApplyIpLimiter,
+} from '../middleware/rateLimit.js';
 
 /**
  * Phase 90 — Recruiting extras: interview kits + scheduled interviews,
@@ -458,14 +463,6 @@ recruiting90Router.delete('/job-postings/:id', MANAGE, async (req, res) => {
 
 // ----- Careers (PUBLIC — no auth required) -------------------------------
 
-const CareersApplySchema = z.object({
-  firstName: z.string().min(1).max(100),
-  lastName: z.string().min(1).max(100),
-  email: z.string().email(),
-  phone: z.string().max(40).optional().nullable(),
-  notes: z.string().max(4000).optional().nullable(),
-});
-
 recruiting90Router.get('/careers', async (_req, res) => {
   const rows = await prisma.jobPosting.findMany({
     where: { status: 'OPEN' },
@@ -508,33 +505,50 @@ recruiting90Router.get('/careers/:slug', async (req, res) => {
   });
 });
 
-recruiting90Router.post('/careers/:slug/apply', async (req, res) => {
-  const input = CareersApplySchema.parse(req.body);
-  const posting = await prisma.jobPosting.findUnique({
-    where: { slug: req.params.slug },
-  });
-  if (!posting || posting.status !== 'OPEN') {
-    throw new HttpError(404, 'not_found', 'Posting not found.');
-  }
-  const email = input.email.trim().toLowerCase();
-  // Reuse an existing candidate row by email if one exists; otherwise
-  // create. Either way, the application surfaces in /candidates for HR.
-  const existing = await prisma.candidate.findUnique({ where: { email } });
-  if (existing) {
-    res.status(200).json({ id: existing.id, alreadyApplied: true });
-    return;
-  }
-  const created = await prisma.candidate.create({
-    data: {
-      firstName: input.firstName,
-      lastName: input.lastName,
-      email,
-      phone: input.phone ?? null,
-      position: posting.title,
-      source: 'CAREERS_PAGE',
-      notes: input.notes ?? null,
-      stage: 'APPLIED',
-    },
-  });
-  res.status(201).json({ id: created.id, alreadyApplied: false });
-});
+recruiting90Router.post(
+  '/careers/:slug/apply',
+  careersApplyIpLimiter,
+  careersApplyEmailLimiter,
+  async (req, res) => {
+    const input = CareersApplyInputSchema.parse(req.body);
+
+    // Honeypot: bots auto-fill every input. Real users never see this
+    // field. Returning a 201-shaped success keeps the bot from realizing
+    // it was caught — but we never persist anything.
+    if (input.website && input.website.trim().length > 0) {
+      res.status(201).json({ id: 'honeypot', alreadyApplied: false });
+      return;
+    }
+
+    const posting = await prisma.jobPosting.findUnique({
+      where: { slug: req.params.slug },
+    });
+    if (!posting || posting.status !== 'OPEN') {
+      throw new HttpError(404, 'not_found', 'Posting not found.');
+    }
+    const email = input.email.trim().toLowerCase();
+
+    // Reuse an existing candidate row by email if one exists; otherwise
+    // create. Either way, the application surfaces in /candidates for HR.
+    const existing = await prisma.candidate.findUnique({ where: { email } });
+    if (existing) {
+      res.status(200).json({ id: existing.id, alreadyApplied: true });
+      return;
+    }
+    const created = await prisma.candidate.create({
+      data: {
+        firstName: input.firstName,
+        lastName: input.lastName,
+        email,
+        phone: input.phone ?? null,
+        position: posting.title,
+        source: input.source?.trim() || 'CAREERS_PAGE',
+        notes: input.notes ?? null,
+        resumeUrl: input.resumeUrl ?? null,
+        linkedinUrl: input.linkedinUrl ?? null,
+        stage: 'APPLIED',
+      },
+    });
+    res.status(201).json({ id: created.id, alreadyApplied: false });
+  },
+);

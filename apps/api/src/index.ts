@@ -8,7 +8,7 @@ const app = createApp();
 
 app.listen(env.PORT, '0.0.0.0', async () => {
   console.log(`[alto-people/api] listening on http://localhost:${env.PORT}`);
-  console.log(`[alto-people/api] CORS origin: ${env.CORS_ORIGIN}`);
+  console.log(`[alto-people/api] CORS origins: ${env.CORS_ORIGIN.join(', ')}`);
 
   // Wake the DB pool immediately so the first user request doesn't pay the
   // cold-start. Best-effort — if the DB is unreachable, we still serve

@@ -29,6 +29,8 @@ function toCandidate(row: RawCandidate): Candidate {
     source: row.source,
     stage: row.stage,
     notes: row.notes,
+    resumeUrl: row.resumeUrl,
+    linkedinUrl: row.linkedinUrl,
     hiredAssociateId: row.hiredAssociateId,
     hiredClientId: row.hiredClientId,
     hiredAt: row.hiredAt ? row.hiredAt.toISOString() : null,
@@ -89,6 +91,8 @@ recruitingRouter.post('/candidates', MANAGE, async (req, res, next) => {
           position: i.position ?? null,
           source: i.source ?? null,
           notes: i.notes ?? null,
+          resumeUrl: i.resumeUrl ?? null,
+          linkedinUrl: i.linkedinUrl ?? null,
           stage: 'APPLIED',
         },
       });

@@ -4,6 +4,8 @@ import {
   Award,
   Briefcase,
   CheckCircle2,
+  FileText,
+  Link2,
   Plus,
   UserPlus,
   Users,
@@ -315,6 +317,30 @@ export function RecruitingHome() {
                           size="sm"
                         />
                         <span>{c.firstName} {c.lastName}</span>
+                        {c.resumeUrl && (
+                          <a
+                            href={c.resumeUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title="Resume"
+                            aria-label="Open resume in a new tab"
+                            className="text-silver/70 hover:text-gold transition-colors"
+                          >
+                            <FileText className="h-3.5 w-3.5" />
+                          </a>
+                        )}
+                        {c.linkedinUrl && (
+                          <a
+                            href={c.linkedinUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title="LinkedIn"
+                            aria-label="Open LinkedIn profile in a new tab"
+                            className="text-silver/70 hover:text-gold transition-colors"
+                          >
+                            <Link2 className="h-3.5 w-3.5" />
+                          </a>
+                        )}
                       </div>
                     </TableCell>
                     <TableCell className="text-silver">{c.email}</TableCell>

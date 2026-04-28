@@ -1601,6 +1601,8 @@ export const CandidateSchema = z.object({
   source: z.string().nullable(),
   stage: CandidateStageSchema,
   notes: z.string().nullable(),
+  resumeUrl: z.string().nullable(),
+  linkedinUrl: z.string().nullable(),
   hiredAssociateId: UuidSchema.nullable(),
   hiredClientId: UuidSchema.nullable(),
   hiredAt: z.string().datetime().nullable(),
@@ -1623,8 +1625,30 @@ export const CandidateCreateInputSchema = z.object({
   position: z.string().max(120).optional(),
   source: z.string().max(80).optional(),
   notes: z.string().max(2000).optional(),
+  resumeUrl: z.string().url().max(2000).optional(),
+  linkedinUrl: z.string().url().max(2000).optional(),
 });
 export type CandidateCreateInput = z.infer<typeof CandidateCreateInputSchema>;
+
+// Public careers-site application body. A superset of the recruiter-facing
+// CandidateCreateInputSchema with two extras:
+//  - `website` is a honeypot — bots fill every visible-looking field, so a
+//    non-empty value lets us 200-OK the request without persisting.
+//  - `source` defaults to "CAREERS_PAGE" server-side; sites can override
+//    (e.g. "indeed-redirect") to track funnels.
+export const CareersApplyInputSchema = z.object({
+  firstName: z.string().min(1).max(100),
+  lastName: z.string().min(1).max(100),
+  email: z.string().email(),
+  phone: z.string().max(40).optional().nullable(),
+  notes: z.string().max(4000).optional().nullable(),
+  resumeUrl: z.string().url().max(2000).optional().nullable(),
+  linkedinUrl: z.string().url().max(2000).optional().nullable(),
+  source: z.string().max(80).optional().nullable(),
+  // Honeypot: must be empty/missing for legitimate submissions.
+  website: z.string().max(500).optional().nullable(),
+});
+export type CareersApplyInput = z.infer<typeof CareersApplyInputSchema>;
 
 export const CandidateUpdateInputSchema = z.object({
   firstName: z.string().min(1).max(80).optional(),

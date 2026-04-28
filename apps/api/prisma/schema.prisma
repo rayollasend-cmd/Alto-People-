@@ -1358,6 +1358,11 @@ model Candidate {
   source         String?        // referral, indeed, careers-page, etc.
   stage          CandidateStage @default(APPLIED)
   notes          String?
+  // External-careers applicants paste links rather than uploading files
+  // (Railway filesystem is ephemeral; direct upload waits for the S3/Volume
+  // migration). Both fields are optional and free-form.
+  resumeUrl      String?
+  linkedinUrl    String?
   // When HIRED, populated with the new Associate's id (and clientId).
   hiredAssociateId String?      @unique @db.Uuid
   hiredClientId    String?      @db.Uuid
