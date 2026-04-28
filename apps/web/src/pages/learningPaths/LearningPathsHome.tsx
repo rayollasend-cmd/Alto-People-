@@ -408,7 +408,7 @@ function PathDetailDrawer({
                           <button
                             onClick={() => void moveStep(i, -1)}
                             disabled={i === 0}
-                            className="text-silver hover:text-white disabled:opacity-30"
+                            className="text-silver hover:text-white disabled:opacity-50"
                             title="Move up"
                           >
                             <ArrowUp className="h-3 w-3" />
@@ -416,7 +416,7 @@ function PathDetailDrawer({
                           <button
                             onClick={() => void moveStep(i, 1)}
                             disabled={i === data.steps.length - 1}
-                            className="text-silver hover:text-white disabled:opacity-30"
+                            className="text-silver hover:text-white disabled:opacity-50"
                             title="Move down"
                           >
                             <ArrowDown className="h-3 w-3" />

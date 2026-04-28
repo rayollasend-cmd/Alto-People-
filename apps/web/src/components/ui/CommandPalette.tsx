@@ -130,7 +130,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
               onValueChange={setSearch}
               placeholder="Type a command or search…"
               className={cn(
-                'flex h-12 w-full bg-transparent text-sm text-white placeholder:text-silver/50',
+                'flex h-12 w-full bg-transparent text-sm text-white placeholder:text-silver/60',
                 'outline-none border-0 focus:ring-0'
               )}
             />

@@ -340,7 +340,7 @@ export function TemplateEditor() {
                   type="button"
                   onClick={() => moveTask(i, -1)}
                   disabled={i === 0}
-                  className="hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                  className="hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
                   aria-label="Move task up"
                 >
                   <ArrowUp className="h-3.5 w-3.5" />
@@ -350,7 +350,7 @@ export function TemplateEditor() {
                   type="button"
                   onClick={() => moveTask(i, 1)}
                   disabled={i === tasks.length - 1}
-                  className="hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                  className="hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
                   aria-label="Move task down"
                 >
                   <ArrowDown className="h-3.5 w-3.5" />
@@ -402,7 +402,7 @@ export function TemplateEditor() {
                 type="button"
                 onClick={() => removeTask(i)}
                 disabled={tasks.length === 1}
-                className="text-alert hover:opacity-80 disabled:opacity-30 disabled:cursor-not-allowed pt-1.5"
+                className="text-alert hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed pt-1.5"
                 aria-label="Remove task"
                 title={
                   tasks.length === 1
