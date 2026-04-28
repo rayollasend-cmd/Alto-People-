@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Activity,
   Building2,
@@ -36,18 +37,25 @@ const STATUS_VARIANT: Record<
   REJECTED: 'destructive',
 };
 
+const WINDOW_PRESETS = [7, 30, 60, 90] as const;
+type WindowDays = (typeof WINDOW_PRESETS)[number];
+
 /**
  * Phase 38 — dedicated reports view. Same data as the dashboard's KPI
- * tiles, presented denser and with a CSV export of the raw numbers.
- * Future iterations: date range, per-client breakdowns, time-series.
+ * tiles, presented denser, with CSV export, a window selector for the
+ * time-bounded metrics, and drill-in links from each KPI to its source
+ * page.
  */
 export function AnalyticsHome() {
   const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [days, setDays] = useState<WindowDays>(30);
 
   useEffect(() => {
     let cancelled = false;
-    getDashboardKPIs()
+    setKpis(null);
+    setError(null);
+    getDashboardKPIs(days)
       .then((res) => !cancelled && setKpis(res))
       .catch((err) => {
         if (cancelled) return;
@@ -56,19 +64,20 @@ export function AnalyticsHome() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [days]);
 
   const downloadCsv = () => {
     if (!kpis) return;
     const lines: string[] = [];
     lines.push('Metric,Value');
+    lines.push(`Window (days),${kpis.windowDays}`);
     lines.push(`Active associates,${kpis.activeAssociates}`);
     lines.push(`Associates clocked in,${kpis.associatesClockedIn}`);
-    lines.push(`Open shifts (next 30d),${kpis.openShiftsNext30d}`);
+    lines.push(`Open shifts (next ${kpis.windowDays}d),${kpis.openShiftsNext30d}`);
     lines.push(`Pending onboarding applications,${kpis.pendingOnboardingApplications}`);
     lines.push(`Pending I-9 Section 2,${kpis.pendingI9Section2}`);
     lines.push(`Pending document reviews,${kpis.pendingDocumentReviews}`);
-    lines.push(`Net paid (last 30d) USD,${kpis.netPaidLast30d.toFixed(2)}`);
+    lines.push(`Net paid (last ${kpis.windowDays}d) USD,${kpis.netPaidLast30d.toFixed(2)}`);
     lines.push(`Net pending disbursement USD,${kpis.netPendingDisbursement.toFixed(2)}`);
     for (const [status, count] of Object.entries(kpis.applicationStatusCounts)) {
       lines.push(`Applications: ${status},${count}`);
@@ -95,6 +104,27 @@ export function AnalyticsHome() {
         }
       />
 
+      <div className="flex items-center gap-2 mb-6 text-sm">
+        <span className="text-silver">Window:</span>
+        {WINDOW_PRESETS.map((d) => (
+          <button
+            key={d}
+            onClick={() => setDays(d)}
+            className={`px-3 py-1 rounded-full border transition ${
+              days === d
+                ? 'bg-cyan-600 border-cyan-500 text-white'
+                : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
+            }`}
+          >
+            {d}d
+          </button>
+        ))}
+        <span className="text-xs text-silver/60 ml-2">
+          (Affects scheduling & payroll metrics. Headcount, backlogs, and
+          status counts are point-in-time.)
+        </span>
+      </div>
+
       {error && (
         <div
           className="mb-4 p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
@@ -111,7 +141,11 @@ export function AnalyticsHome() {
       >
         {kpis ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Stat label="Active associates" value={kpis.activeAssociates.toString()} />
+            <Stat
+              label="Active associates"
+              value={kpis.activeAssociates.toString()}
+              link="/clients"
+            />
             <Stat
               label="Clocked in right now"
               value={kpis.associatesClockedIn.toString()}
@@ -120,6 +154,7 @@ export function AnalyticsHome() {
                   ? `${Math.round((kpis.associatesClockedIn / kpis.activeAssociates) * 100)}% of active`
                   : undefined
               }
+              link="/time-attendance"
             />
           </div>
         ) : (
@@ -131,9 +166,10 @@ export function AnalyticsHome() {
         {kpis ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Stat
-              label="Open shifts (next 30d)"
+              label={`Open shifts (next ${kpis.windowDays}d)`}
               value={kpis.openShiftsNext30d.toString()}
               hint="Shifts without an assigned associate"
+              link="/scheduling"
             />
           </div>
         ) : (
@@ -149,14 +185,16 @@ export function AnalyticsHome() {
         {kpis ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Stat
-              label="Net paid (last 30d)"
+              label={`Net paid (last ${kpis.windowDays}d)`}
               value={fmtMoney(kpis.netPaidLast30d)}
               hint="Sum of NET on every DISBURSED paystub"
+              link="/payroll"
             />
             <Stat
               label="Net pending disbursement"
               value={fmtMoney(kpis.netPendingDisbursement)}
               hint="On DRAFT + FINALIZED runs"
+              link="/payroll"
             />
           </div>
         ) : (
@@ -176,16 +214,19 @@ export function AnalyticsHome() {
                 label="Pending applications"
                 value={kpis.pendingOnboardingApplications.toString()}
                 accent={kpis.pendingOnboardingApplications > 0}
+                link="/onboarding"
               />
               <Stat
                 label="I-9 Section 2 backlog"
                 value={kpis.pendingI9Section2.toString()}
                 accent={kpis.pendingI9Section2 > 0}
+                link="/compliance"
               />
               <Stat
                 label="Documents to review"
                 value={kpis.pendingDocumentReviews.toString()}
                 accent={kpis.pendingDocumentReviews > 0}
+                link="/documents"
               />
             </div>
             {Object.keys(kpis.applicationStatusCounts).length > 0 && (
@@ -256,11 +297,18 @@ interface StatProps {
   value: string;
   hint?: string;
   accent?: boolean;
+  link?: string;
 }
 
-function Stat({ label, value, hint, accent }: StatProps) {
-  return (
-    <Card>
+function Stat({ label, value, hint, accent, link }: StatProps) {
+  const inner = (
+    <Card
+      className={
+        link
+          ? 'transition hover:border-cyan-500 hover:bg-navy-secondary/30 cursor-pointer'
+          : undefined
+      }
+    >
       <CardContent className="pt-5">
         <div className="text-[10px] uppercase tracking-widest text-silver">
           {label}
@@ -273,9 +321,15 @@ function Stat({ label, value, hint, accent }: StatProps) {
           {value}
         </div>
         {hint && <div className="text-xs text-silver/70 mt-2">{hint}</div>}
+        {link && (
+          <div className="text-[10px] text-silver/60 mt-3">
+            View details →
+          </div>
+        )}
       </CardContent>
     </Card>
   );
+  return link ? <Link to={link}>{inner}</Link> : inner;
 }
 
 function SkeletonGrid({ count = 2 }: { count?: number }) {

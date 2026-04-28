@@ -1406,12 +1406,16 @@ export const DashboardKPIsSchema = z.object({
   pendingOnboardingApplications: z.number().int().nonnegative(),
   pendingI9Section2: z.number().int().nonnegative(),
   pendingDocumentReviews: z.number().int().nonnegative(),
-  /** Sum of NET pay across all DISBURSED runs in the last 30 days. */
+  /** Sum of NET pay across all DISBURSED runs in the requested window. */
   netPaidLast30d: z.number().nonnegative(),
   /** Sum of NET pay across DRAFT + FINALIZED runs (pending disbursement). */
   netPendingDisbursement: z.number().nonnegative(),
   /** Bucketed counts for chart rendering. */
   applicationStatusCounts: z.record(z.number().int().nonnegative()),
+  /** The window (in days) the time-bounded fields above were computed for.
+   *  Default 30; overridable via ?days=N on /analytics/dashboard. The legacy
+   *  field names retain "30d"/"Next30d" for back-compat. */
+  windowDays: z.number().int().positive().default(30),
 });
 export type DashboardKPIs = z.infer<typeof DashboardKPIsSchema>;
 

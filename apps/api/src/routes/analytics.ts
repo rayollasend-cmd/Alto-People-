@@ -53,11 +53,20 @@ function monthKey(d: Date): string {
  * Promise.all parallelizes them. If any single query fails, the whole
  * response fails — that's acceptable for v1 since these queries are simple.
  */
-analyticsRouter.get('/dashboard', async (_req, res, next) => {
+analyticsRouter.get('/dashboard', async (req, res, next) => {
   try {
     const now = new Date();
-    const in30 = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-    const minus30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    // Window is symmetric: scheduling looks N days forward, payroll looks N
+    // days back. Bounded so a malformed query can't make the route do hours
+    // of date math against the whole table.
+    const requestedDays = Number(req.query.days);
+    const days =
+      Number.isFinite(requestedDays) && requestedDays >= 1 && requestedDays <= 365
+        ? Math.floor(requestedDays)
+        : 30;
+    const windowMs = days * 24 * 60 * 60 * 1000;
+    const in30 = new Date(now.getTime() + windowMs);
+    const minus30 = new Date(now.getTime() - windowMs);
 
     const [
       activeAssociates,
@@ -115,6 +124,7 @@ analyticsRouter.get('/dashboard', async (_req, res, next) => {
       netPaidLast30d: Number(paidAggregate._sum.totalNet ?? 0),
       netPendingDisbursement: Number(pendingDisbursementAggregate._sum.totalNet ?? 0),
       applicationStatusCounts,
+      windowDays: days,
     });
     res.json(payload);
   } catch (err) {
