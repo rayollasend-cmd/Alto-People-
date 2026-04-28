@@ -1,3 +1,7 @@
+// Must be imported before any route is registered. Monkey-patches Express's
+// router so async handlers that throw forward to next(err) instead of becoming
+// unhandled rejections (which would crash the process under Express 4).
+import 'express-async-errors';
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
