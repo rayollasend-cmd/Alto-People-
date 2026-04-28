@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { TrendingUp, TrendingDown, Users, Activity, ArrowDown, ArrowUp } from 'lucide-react';
 import {
   getHeadcountSnapshot,
@@ -6,24 +7,44 @@ import {
   type HeadcountSnapshot,
   type TurnoverSummary,
 } from '@/lib/headcount110Api';
+import { listOrgAssociates } from '@/lib/orgApi';
+import type { AssociateOrgSummary } from '@alto-people/shared';
 import {
+  Button,
   Card,
   CardContent,
+  Drawer,
+  DrawerBody,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
   PageHeader,
   SkeletonRows,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from '@/components/ui';
+
+type Drill =
+  | { kind: 'department'; departmentId: string | null; label: string }
+  | { kind: 'employmentType'; employmentType: string; label: string };
 
 /**
  * Phase 110 — Headcount & turnover dashboard.
  *
  * KPI cards on top (total, hires, terminations, turnover %), then
  * three breakdown panels: by department, by client, by employment
- * type. All bars are inline SVG so we don't pull in a chart lib.
+ * type. By-client rows link straight to /clients/:id; by-department
+ * and by-employment-type open a drawer that lists matching associates.
  */
 export function HeadcountHome() {
   const [snap, setSnap] = useState<HeadcountSnapshot | null>(null);
   const [turn, setTurn] = useState<TurnoverSummary | null>(null);
   const [days, setDays] = useState<30 | 90 | 365>(90);
+  const [drill, setDrill] = useState<Drill | null>(null);
 
   useEffect(() => {
     getHeadcountSnapshot().then(setSnap).catch(() => setSnap(null));
@@ -91,17 +112,43 @@ export function HeadcountHome() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <BreakdownCard
           title="By department"
-          rows={snap?.byDepartment.map((r) => ({ label: r.departmentName, count: r.count })) ?? null}
+          rows={snap?.byDepartment.map((r) => ({
+            label: r.departmentName,
+            count: r.count,
+            onClick: () =>
+              setDrill({
+                kind: 'department',
+                departmentId: r.departmentId,
+                label: r.departmentName,
+              }),
+          })) ?? null}
         />
         <BreakdownCard
           title="By client"
-          rows={snap?.byClient.map((r) => ({ label: r.clientName, count: r.count })) ?? null}
+          rows={snap?.byClient.map((r) => ({
+            label: r.clientName,
+            count: r.count,
+            href: `/clients/${r.clientId}`,
+          })) ?? null}
         />
         <BreakdownCard
           title="By employment type"
-          rows={snap?.byEmploymentType.map((r) => ({ label: r.employmentType, count: r.count })) ?? null}
+          rows={snap?.byEmploymentType.map((r) => ({
+            label: r.employmentType,
+            count: r.count,
+            onClick: () =>
+              setDrill({
+                kind: 'employmentType',
+                employmentType: r.employmentType,
+                label: r.employmentType,
+              }),
+          })) ?? null}
         />
       </div>
+
+      {drill && (
+        <DrillDrawer drill={drill} onClose={() => setDrill(null)} />
+      )}
     </div>
   );
 }
@@ -135,12 +182,19 @@ function KpiCard({
   );
 }
 
+interface BreakdownRow {
+  label: string;
+  count: number;
+  href?: string;
+  onClick?: () => void;
+}
+
 function BreakdownCard({
   title,
   rows,
 }: {
   title: string;
-  rows: { label: string; count: number }[] | null;
+  rows: BreakdownRow[] | null;
 }) {
   return (
     <Card>
@@ -157,8 +211,15 @@ function BreakdownCard({
           <div className="space-y-2">
             {rows.slice(0, 12).map((r) => {
               const max = Math.max(1, ...rows.map((x) => x.count));
-              return (
-                <div key={r.label} className="flex items-center gap-3 text-sm">
+              const interactive = r.href || r.onClick;
+              const inner = (
+                <div
+                  className={`flex items-center gap-3 text-sm rounded px-1 py-0.5 ${
+                    interactive
+                      ? 'cursor-pointer hover:bg-navy-secondary/30 transition'
+                      : ''
+                  }`}
+                >
                   <div className="w-44 truncate text-silver">{r.label}</div>
                   <div className="flex-1 h-3 rounded bg-navy-secondary/40 overflow-hidden">
                     <div
@@ -169,6 +230,25 @@ function BreakdownCard({
                   <div className="w-10 text-right text-white">{r.count}</div>
                 </div>
               );
+              if (r.href) {
+                return (
+                  <Link key={r.label} to={r.href}>
+                    {inner}
+                  </Link>
+                );
+              }
+              if (r.onClick) {
+                return (
+                  <button
+                    key={r.label}
+                    onClick={r.onClick}
+                    className="block w-full text-left"
+                  >
+                    {inner}
+                  </button>
+                );
+              }
+              return <div key={r.label}>{inner}</div>;
             })}
             {rows.length > 12 && (
               <div className="text-xs text-silver pt-1">
@@ -179,5 +259,87 @@ function BreakdownCard({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function DrillDrawer({
+  drill,
+  onClose,
+}: {
+  drill: Drill;
+  onClose: () => void;
+}) {
+  const [rows, setRows] = useState<AssociateOrgSummary[] | null>(null);
+
+  useEffect(() => {
+    listOrgAssociates()
+      .then((r) => {
+        if (drill.kind === 'department') {
+          setRows(
+            r.associates.filter((a) => a.departmentId === drill.departmentId),
+          );
+        } else {
+          // Employment type isn't in AssociateOrgSummary today, so we can't
+          // filter further client-side. Fall back to "all" with a warning.
+          setRows(r.associates);
+        }
+      })
+      .catch(() => setRows([]));
+  }, [drill]);
+
+  const subtitle =
+    drill.kind === 'department'
+      ? `Associates in ${drill.label}`
+      : `${drill.label} (showing all associates — employment-type filter not available client-side)`;
+
+  return (
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()} width="max-w-3xl">
+      <DrawerHeader>
+        <DrawerTitle>{drill.label}</DrawerTitle>
+      </DrawerHeader>
+      <DrawerBody>
+        <div className="text-xs text-silver mb-3">{subtitle}</div>
+        {rows === null ? (
+          <SkeletonRows count={4} />
+        ) : rows.length === 0 ? (
+          <div className="text-sm text-silver italic">
+            No associates in this segment.
+          </div>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Email</TableHead>
+                <TableHead>Job profile</TableHead>
+                <TableHead>Manager</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((a) => (
+                <TableRow key={a.id}>
+                  <TableCell className="font-medium text-white">
+                    {a.firstName} {a.lastName}
+                  </TableCell>
+                  <TableCell className="text-xs text-silver">{a.email}</TableCell>
+                  <TableCell className="text-sm">
+                    {a.jobProfileTitle ?? <span className="text-silver">—</span>}
+                  </TableCell>
+                  <TableCell className="text-sm">
+                    {a.managerName ?? <span className="text-silver">—</span>}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+        <div className="text-xs text-silver mt-3">
+          {rows ? `${rows.length} associates` : ''}
+        </div>
+      </DrawerBody>
+      <DrawerFooter>
+        <Button onClick={onClose}>Close</Button>
+      </DrawerFooter>
+    </Drawer>
   );
 }
