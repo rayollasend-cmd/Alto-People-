@@ -20,13 +20,34 @@ import type {
   DashboardKPIs,
 } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
-import { ROLE_LABELS } from '@/lib/roles';
+import { ROLE_LABELS, type Role } from '@/lib/roles';
 import { getDashboardKPIs } from '@/lib/analyticsApi';
 import { searchAuditLogs } from '@/lib/auditApi';
 import { ApiError } from '@/lib/api';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
+
+/**
+ * Role-tailored subtitle on the greeting strip. The same dashboard scaffold
+ * serves every non-associate role, but the framing copy and the visible
+ * sections vary based on what the user can actually act on (see
+ * ActionRequiredSection / ActivityFeed gating below).
+ */
+const SUBTITLE_BY_ROLE: Partial<Record<Role, string>> = {
+  HR_ADMINISTRATOR:
+    "Here's what's happening across your workforce today.",
+  OPERATIONS_MANAGER:
+    'Operations snapshot — schedule, time, and onboarding at a glance.',
+  EXECUTIVE_CHAIRMAN:
+    'Company-wide pulse. Read-only across every module.',
+  FINANCE_ACCOUNTANT:
+    'Financial pulse — payroll runs, disbursements, and pending tax filings.',
+  INTERNAL_RECRUITER:
+    'Recruiting pipeline and open onboarding applications.',
+  CLIENT_PORTAL: 'Your workforce snapshot.',
+  MANAGER: 'Your team — pending approvals and time-off requests.',
+};
 
 const fmtMoney = (n: number) =>
   n.toLocaleString('en-US', {
@@ -98,7 +119,7 @@ const humanizeAction = (action: string): string => {
 };
 
 export function AdminDashboard() {
-  const { user, role } = useAuth();
+  const { user, role, can } = useAuth();
   const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
   const [activity, setActivity] = useState<AuditSearchEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -110,16 +131,27 @@ export function AdminDashboard() {
     return () => clearInterval(t);
   }, []);
 
+  // Audit feed only loads when the user has audit access. Saves a
+  // pointless 403 round-trip and keeps the section out of view entirely
+  // for everyone else.
+  const canSeeAudit = can('view:audit');
+  const canSeeOnboarding = can('view:onboarding');
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const [k, a] = await Promise.all([
           getDashboardKPIs(),
-          searchAuditLogs({ limit: 8 }).catch(() => ({
-            entries: [] as AuditSearchEntry[],
-            nextBefore: null,
-          })),
+          canSeeAudit
+            ? searchAuditLogs({ limit: 8 }).catch(() => ({
+                entries: [] as AuditSearchEntry[],
+                nextBefore: null,
+              }))
+            : Promise.resolve({
+                entries: [] as AuditSearchEntry[],
+                nextBefore: null,
+              }),
         ]);
         if (cancelled) return;
         setKpis(k);
@@ -136,7 +168,7 @@ export function AdminDashboard() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [canSeeAudit]);
 
   const greetingName = user?.email
     ? firstNameFromEmail(user.email)
@@ -166,7 +198,8 @@ export function AdminDashboard() {
           {greeting}, <span className="text-gold">{greetingName}</span>.
         </h1>
         <p className="text-silver mt-2 text-sm md:text-base">
-          Here's what's happening across your workforce today.
+          {(role && SUBTITLE_BY_ROLE[role]) ??
+            "Here's what's happening across your workforce today."}
         </p>
       </header>
 
@@ -180,13 +213,19 @@ export function AdminDashboard() {
         </div>
       )}
 
-      <ActionRequiredSection kpis={kpis} />
+      <ActionRequiredSection
+        kpis={kpis}
+        canManageOnboarding={can('manage:onboarding')}
+        canManageCompliance={can('manage:compliance')}
+        canManageDocuments={can('manage:documents')}
+        canProcessPayroll={can('process:payroll')}
+      />
 
       <KpiSection kpis={kpis} />
 
-      <OnboardingFunnel kpis={kpis} />
+      {canSeeOnboarding && <OnboardingFunnel kpis={kpis} />}
 
-      <ActivityFeed entries={activity} />
+      {canSeeAudit && <ActivityFeed entries={activity} />}
     </div>
   );
 }
@@ -204,11 +243,29 @@ interface ActionItem {
   severity: 'info' | 'attention' | 'urgent';
 }
 
-function ActionRequiredSection({ kpis }: { kpis: DashboardKPIs | null }) {
+function ActionRequiredSection({
+  kpis,
+  canManageOnboarding,
+  canManageCompliance,
+  canManageDocuments,
+  canProcessPayroll,
+}: {
+  kpis: DashboardKPIs | null;
+  canManageOnboarding: boolean;
+  canManageCompliance: boolean;
+  canManageDocuments: boolean;
+  canProcessPayroll: boolean;
+}) {
+  const hasAnyActionCapability =
+    canManageOnboarding ||
+    canManageCompliance ||
+    canManageDocuments ||
+    canProcessPayroll;
+
   const items: ActionItem[] = useMemo(() => {
     if (!kpis) return [];
     const xs: ActionItem[] = [];
-    if (kpis.pendingOnboardingApplications > 0) {
+    if (canManageOnboarding && kpis.pendingOnboardingApplications > 0) {
       xs.push({
         count: kpis.pendingOnboardingApplications,
         label:
@@ -223,13 +280,10 @@ function ActionRequiredSection({ kpis }: { kpis: DashboardKPIs | null }) {
           kpis.pendingOnboardingApplications > 10 ? 'urgent' : 'attention',
       });
     }
-    if (kpis.pendingI9Section2 > 0) {
+    if (canManageCompliance && kpis.pendingI9Section2 > 0) {
       xs.push({
         count: kpis.pendingI9Section2,
-        label:
-          kpis.pendingI9Section2 === 1
-            ? 'I-9 Section 2 due'
-            : 'I-9 Section 2 due',
+        label: 'I-9 Section 2 due',
         hint: 'Federal deadline: 3 business days from hire.',
         to: '/compliance',
         cta: 'Complete Section 2',
@@ -237,7 +291,7 @@ function ActionRequiredSection({ kpis }: { kpis: DashboardKPIs | null }) {
         severity: 'urgent',
       });
     }
-    if (kpis.pendingDocumentReviews > 0) {
+    if (canManageDocuments && kpis.pendingDocumentReviews > 0) {
       xs.push({
         count: kpis.pendingDocumentReviews,
         label:
@@ -250,7 +304,7 @@ function ActionRequiredSection({ kpis }: { kpis: DashboardKPIs | null }) {
         severity: kpis.pendingDocumentReviews > 20 ? 'urgent' : 'attention',
       });
     }
-    if (kpis.netPendingDisbursement > 0) {
+    if (canProcessPayroll && kpis.netPendingDisbursement > 0) {
       xs.push({
         count: 1,
         label: `${fmtMoney(kpis.netPendingDisbursement)} pending payroll`,
@@ -262,7 +316,19 @@ function ActionRequiredSection({ kpis }: { kpis: DashboardKPIs | null }) {
       });
     }
     return xs;
-  }, [kpis]);
+  }, [
+    kpis,
+    canManageOnboarding,
+    canManageCompliance,
+    canManageDocuments,
+    canProcessPayroll,
+  ]);
+
+  // Roles with no manage capabilities at all (EXECUTIVE_CHAIRMAN,
+  // CLIENT_PORTAL view-only) never have actions to take from here —
+  // hide the whole section instead of showing a misleading "all caught
+  // up" green banner.
+  if (!hasAnyActionCapability) return null;
 
   if (!kpis) {
     return (
