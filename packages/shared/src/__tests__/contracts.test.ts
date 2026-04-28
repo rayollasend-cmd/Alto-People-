@@ -6,7 +6,7 @@ import {
   PolicyAckInputSchema,
   ProfileSubmissionSchema,
   W4SubmissionInputSchema,
-} from '../contracts';
+} from '../contracts.js';
 
 describe('LoginRequestSchema', () => {
   it('accepts a 12-character password', () => {
