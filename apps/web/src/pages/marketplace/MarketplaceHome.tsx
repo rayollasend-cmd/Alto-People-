@@ -20,6 +20,7 @@ import {
   Button,
   Card,
   CardContent,
+  ConfirmDialog,
   Drawer,
   DrawerBody,
   DrawerFooter,
@@ -165,6 +166,8 @@ function AvailableTab() {
 
 function ClaimsTab() {
   const [rows, setRows] = useState<PendingClaim[] | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<PendingClaim | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const refresh = () => {
     setRows(null);
     listPendingClaims()
@@ -175,19 +178,16 @@ function ClaimsTab() {
     refresh();
   }, []);
 
-  const onDecide = async (
-    c: PendingClaim,
-    status: 'APPROVED' | 'REJECTED',
-  ) => {
-    const note = status === 'REJECTED'
-      ? window.prompt('Reason (optional):') ?? null
-      : null;
+  const approve = async (c: PendingClaim) => {
+    setBusyId(c.id);
     try {
-      await updateClaim(c.shiftId, c.id, status, note);
-      toast.success(status === 'APPROVED' ? 'Claim approved.' : 'Claim rejected.');
+      await updateClaim(c.shiftId, c.id, 'APPROVED', null);
+      toast.success('Claim approved.');
       refresh();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setBusyId(null);
     }
   };
 
@@ -226,10 +226,20 @@ function ClaimsTab() {
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="inline-flex gap-1">
-                      <Button size="sm" variant="secondary" onClick={() => onDecide(c, 'APPROVED')}>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => approve(c)}
+                        disabled={busyId === c.id}
+                      >
                         Approve
                       </Button>
-                      <Button size="sm" variant="ghost" onClick={() => onDecide(c, 'REJECTED')}>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setRejectTarget(c)}
+                        disabled={busyId === c.id}
+                      >
                         Reject
                       </Button>
                     </div>
@@ -240,6 +250,41 @@ function ClaimsTab() {
           </Table>
         )}
       </CardContent>
+      <ConfirmDialog
+        open={rejectTarget !== null}
+        onOpenChange={(o) => !o && setRejectTarget(null)}
+        title="Reject claim"
+        description={
+          rejectTarget
+            ? `Reject ${rejectTarget.associateName}'s claim on ${rejectTarget.position}?`
+            : undefined
+        }
+        confirmLabel="Reject"
+        destructive
+        requireReason="optional"
+        reasonLabel="Reason (visible to associate)"
+        reasonPlaceholder="Optional"
+        busy={busyId === rejectTarget?.id}
+        onConfirm={async (reason) => {
+          if (!rejectTarget) return;
+          setBusyId(rejectTarget.id);
+          try {
+            await updateClaim(
+              rejectTarget.shiftId,
+              rejectTarget.id,
+              'REJECTED',
+              reason || null,
+            );
+            toast.success('Claim rejected.');
+            setRejectTarget(null);
+            refresh();
+          } catch (err) {
+            toast.error(err instanceof ApiError ? err.message : 'Failed.');
+          } finally {
+            setBusyId(null);
+          }
+        }}
+      />
     </Card>
   );
 }
