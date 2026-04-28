@@ -2,7 +2,10 @@
 // router so async handlers that throw forward to next(err) instead of becoming
 // unhandled rejections (which would crash the process under Express 4).
 import 'express-async-errors';
-import express from 'express';
+import path from 'node:path';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import express, { type Request } from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
@@ -77,6 +80,28 @@ import { profilePhotoRouter } from './routes/profilePhoto.js';
 import { attachUser, requireCapability } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 
+// In production this Express server also serves the built React SPA, so the
+// browser sends `/api/*` to disambiguate from static assets and SPA routes.
+// Existing routers are mounted at root paths (`/auth`, `/clients`, etc.),
+// so we strip the prefix here once at the top of the chain. Tests and the
+// dev workflow (Vite proxy already strips `/api/`) hit the routes directly
+// — this middleware is a no-op when there's no prefix.
+function stripApiPrefix(
+  req: Request & { isApiCall?: boolean },
+  _: express.Response,
+  next: express.NextFunction
+) {
+  if (req.url.startsWith('/api/') || req.url === '/api') {
+    req.isApiCall = true;
+    req.url = req.url.slice(4) || '/';
+  }
+  next();
+}
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// Resolves apps/api/dist/app.js → apps/web/dist
+const WEB_DIST = path.resolve(__dirname, '../../web/dist');
+
 export function createApp() {
   const app = express();
 
@@ -85,6 +110,7 @@ export function createApp() {
     app.set('trust proxy', 1);
   }
 
+  app.use(stripApiPrefix);
   app.use(helmet());
   app.use(cors({ origin: env.CORS_ORIGIN, credentials: true }));
   // Branch webhook MUST be mounted before express.json() so the raw body
@@ -244,6 +270,23 @@ export function createApp() {
   // an unauthenticated browser redirect from Intuit, so we cannot apply a
   // capability check at this mount point.
   app.use('/quickbooks', quickbooksRouter);
+
+  // Production: the same Express service hosts the built React SPA. In dev,
+  // Vite serves the SPA on its own port (5173) and proxies /api/* here, so
+  // there's no static to mount. Gated on `existsSync(WEB_DIST)` as a belt-
+  // and-braces check — running the API standalone in prod (no web build
+  // present) shouldn't 500 every request from express.static.
+  if (env.NODE_ENV === 'production' && existsSync(WEB_DIST)) {
+    // `index: false` so we explicitly hand `/` to the SPA fallback below.
+    app.use(express.static(WEB_DIST, { maxAge: '1d', index: false }));
+    app.get('*', (req, res, next) => {
+      // If the original URL was /api/*, the request was tagged by
+      // stripApiPrefix. Skip the SPA fallback so unmatched API endpoints
+      // return JSON 404 (via notFoundHandler) instead of HTML 200.
+      if ((req as Request & { isApiCall?: boolean }).isApiCall) return next();
+      res.sendFile(path.join(WEB_DIST, 'index.html'));
+    });
+  }
 
   app.use(notFoundHandler);
   app.use(errorHandler);
