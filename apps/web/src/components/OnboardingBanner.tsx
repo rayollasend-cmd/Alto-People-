@@ -18,7 +18,10 @@ export function OnboardingBanner() {
 
   useEffect(() => {
     let cancelled = false;
-    listApplications()
+    // Banner only needs the most recent few applications for this associate
+    // to find one that's still incomplete. pageSize=10 covers any realistic
+    // associate (most have one) and avoids paying for the full list.
+    listApplications({ pageSize: 10 })
       .then((res) => {
         if (cancelled) return;
         // For ASSOCIATE callers the API only returns their own apps; pick

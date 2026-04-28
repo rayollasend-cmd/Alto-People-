@@ -21,7 +21,12 @@ vi.mock('@/lib/timeOffApi', () => ({
   getMyBalance: vi.fn(),
 }));
 vi.mock('@/lib/onboardingApi', () => ({
-  listApplications: vi.fn().mockResolvedValue({ applications: [] }),
+  listApplications: vi.fn().mockResolvedValue({
+    applications: [],
+    total: 0,
+    page: 1,
+    pageSize: 50,
+  }),
 }));
 
 import { clockIn, clockOut, getActiveTimeEntry } from '@/lib/timeApi';

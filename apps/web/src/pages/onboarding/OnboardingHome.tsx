@@ -28,7 +28,11 @@ function AssociateRedirect() {
 
   useEffect(() => {
     let cancelled = false;
-    listApplications()
+    // Associates only ever have a handful of applications and we just need
+    // the most recent one to redirect into. pageSize=1 keeps the response
+    // tiny even though the API would scope this to the current associate
+    // anyway.
+    listApplications({ pageSize: 1 })
       .then((res) => {
         if (cancelled) return;
         setApplicationId(res.applications[0]?.id ?? null);

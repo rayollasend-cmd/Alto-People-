@@ -388,15 +388,33 @@ onboardingRouter.get('/applications', async (req, res, next) => {
         : {}),
     };
 
-    const rows = await prisma.application.findMany({
-      where,
-      orderBy: { invitedAt: 'desc' },
-      include: {
-        associate: { select: { firstName: true, lastName: true } },
-        client: { select: { name: true } },
-        checklist: { include: { tasks: { select: { status: true } } } },
-      },
-    });
+    // Pagination — defaults sized so most HR uses fit on one page (typical
+    // active onboarding count per client) while still capping the worst-
+    // case payload at 200 rows. Without this, every list call pulled the
+    // full table and didn't degrade gracefully past a few hundred rows.
+    const page = Math.max(1, parseInt(req.query.page?.toString() ?? '1', 10) || 1);
+    const pageSize = Math.min(
+      200,
+      Math.max(
+        1,
+        parseInt(req.query.pageSize?.toString() ?? '50', 10) || 50
+      )
+    );
+
+    const [rows, total] = await Promise.all([
+      prisma.application.findMany({
+        where,
+        orderBy: { invitedAt: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        include: {
+          associate: { select: { firstName: true, lastName: true } },
+          client: { select: { name: true } },
+          checklist: { include: { tasks: { select: { status: true } } } },
+        },
+      }),
+      prisma.application.count({ where }),
+    ]);
 
     const deliveryByAssociate = await fetchLatestInviteDeliveryByAssociate(
       rows.map((r) => r.associateId)
@@ -416,8 +434,108 @@ onboardingRouter.get('/applications', async (req, res, next) => {
       lastInviteDelivery: deliveryByAssociate.get(row.associateId) ?? null,
     }));
 
-    const payload: ApplicationListResponse = { applications };
+    const payload: ApplicationListResponse = {
+      applications,
+      total,
+      page,
+      pageSize,
+    };
     res.json(payload);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Aggregated stats for the Onboarding sidebar tiles (total / inFlight /
+// stale / bounced / avgPercent + small "samples" arrays). Replaces a
+// previous client pattern that pulled the entire (unfiltered) list just to
+// count statuses — that was the dominant cost on the page at 500+ apps.
+//
+// We use a `groupBy` for byStatus + total, and a single targeted findMany
+// for the in-flight subset to compute progress / staleness / bounced
+// samples. APPROVED / REJECTED rows are skipped from the heavy fetch since
+// they don't contribute to any tile but `total` and `byStatus`.
+const STATS_STALE_DAYS = 7;
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+onboardingRouter.get('/applications/stats', async (req, res, next) => {
+  try {
+    const where: Prisma.ApplicationWhereInput = scopeApplications(req.user!);
+
+    const [grouped, inFlightRows] = await Promise.all([
+      prisma.application.groupBy({
+        by: ['status'],
+        where,
+        _count: { _all: true },
+      }),
+      prisma.application.findMany({
+        where: { ...where, status: { notIn: ['APPROVED', 'REJECTED'] } },
+        orderBy: { invitedAt: 'desc' },
+        include: {
+          associate: { select: { firstName: true, lastName: true } },
+          client: { select: { name: true } },
+          checklist: { include: { tasks: { select: { status: true } } } },
+        },
+      }),
+    ]);
+
+    const byStatus: Record<string, number> = {};
+    let total = 0;
+    let inFlight = 0;
+    for (const g of grouped) {
+      byStatus[g.status] = g._count._all;
+      total += g._count._all;
+      if (g.status !== 'APPROVED' && g.status !== 'REJECTED') {
+        inFlight += g._count._all;
+      }
+    }
+
+    const deliveryByAssociate = await fetchLatestInviteDeliveryByAssociate(
+      inFlightRows.map((r) => r.associateId)
+    );
+
+    const inFlightSummaries: ApplicationSummary[] = inFlightRows.map((row) => ({
+      id: row.id,
+      associateName: `${row.associate.firstName} ${row.associate.lastName}`,
+      clientName: row.client.name,
+      onboardingTrack: row.onboardingTrack,
+      status: row.status,
+      position: row.position,
+      startDate: row.startDate ? row.startDate.toISOString() : null,
+      invitedAt: row.invitedAt.toISOString(),
+      submittedAt: row.submittedAt ? row.submittedAt.toISOString() : null,
+      percentComplete: computePercent(row.checklist?.tasks ?? []),
+      lastInviteDelivery: deliveryByAssociate.get(row.associateId) ?? null,
+    }));
+
+    const now = Date.now();
+    const stale = inFlightSummaries.filter(
+      (a) =>
+        a.percentComplete < 100 &&
+        now - new Date(a.invitedAt).getTime() > STATS_STALE_DAYS * ONE_DAY_MS
+    );
+    const bounced = inFlightSummaries.filter(
+      (a) => a.lastInviteDelivery?.status === 'FAILED'
+    );
+
+    const avgPercent =
+      inFlightSummaries.length === 0
+        ? 0
+        : Math.round(
+            inFlightSummaries.reduce((acc, a) => acc + a.percentComplete, 0) /
+              inFlightSummaries.length
+          );
+
+    res.json({
+      total,
+      byStatus,
+      inFlight,
+      stale: stale.length,
+      bounced: bounced.length,
+      avgPercent,
+      staleSamples: stale.slice(0, 3),
+      bouncedSamples: bounced.slice(0, 3),
+    });
   } catch (err) {
     next(err);
   }

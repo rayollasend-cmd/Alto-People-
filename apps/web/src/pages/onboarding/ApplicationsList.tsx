@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -16,9 +16,14 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import type { ApplicationStatus, ApplicationSummary } from '@alto-people/shared';
+import type {
+  ApplicationStatsResponse,
+  ApplicationStatus,
+  ApplicationSummary,
+} from '@alto-people/shared';
 import {
   bulkResendInvite,
+  getApplicationStats,
   listApplications,
   resendInvite,
 } from '@/lib/onboardingApi';
@@ -96,6 +101,19 @@ const STATUS_FILTERS: Array<{ value: ApplicationStatus | 'ALL'; label: string }>
 const STALE_DAYS = 7;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
+// Default stats while the /applications/stats request is in-flight, so the
+// KPI strip / chip-counts JSX can render without `?.` everywhere.
+const EMPTY_STATS: ApplicationStatsResponse = {
+  total: 0,
+  byStatus: {} as ApplicationStatsResponse['byStatus'],
+  inFlight: 0,
+  stale: 0,
+  bounced: 0,
+  avgPercent: 0,
+  staleSamples: [],
+  bouncedSamples: [],
+};
+
 function isStale(a: ApplicationSummary, now: number): boolean {
   if (a.status === 'APPROVED' || a.status === 'REJECTED') return false;
   if (a.percentComplete === 100) return false;
@@ -135,11 +153,18 @@ export function ApplicationsList() {
     setSearchParams(next, { replace: true });
   };
 
-  // Counts strip pulls the *unfiltered* set so the chip counts don't change
-  // as the user filters. Cheap second fetch — both queries hit the same
-  // tenant scope and Postgres caches the heavy join in <50ms.
+  // The visible (filtered, paginated) page of rows.
   const [items, setItems] = useState<ApplicationSummary[] | null>(null);
-  const [allItems, setAllItems] = useState<ApplicationSummary[] | null>(null);
+  // Total count for the *current filter* — drives the pagination footer.
+  const [filteredTotal, setFilteredTotal] = useState(0);
+  // 1-indexed page number for the visible rows. Reset on filter change.
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 50;
+  // Roll-up counts (across the whole tenant scope, ignoring active filters)
+  // returned by the dedicated stats endpoint so the KPI strip / banners /
+  // chip counts don't require pulling the entire application table to the
+  // client every load.
+  const [statsData, setStatsData] = useState<ApplicationStatsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openCreate, setOpenCreate] = useState(false);
   const [openBulkInvite, setOpenBulkInvite] = useState(false);
@@ -165,68 +190,40 @@ export function ApplicationsList() {
 
   const refresh = useCallback(() => {
     setError(null);
-    listApplications({ status, q: urlQ })
-      .then((res) => setItems(res.applications))
+    listApplications({ status, q: urlQ, page, pageSize: PAGE_SIZE })
+      .then((res) => {
+        setItems(res.applications);
+        setFilteredTotal(res.total);
+      })
       .catch((err) =>
         setError(err instanceof ApiError ? err.message : 'Failed to load.')
       );
-  }, [status, urlQ]);
+  }, [status, urlQ, page]);
 
-  // Refresh the unfiltered roll-up only when status/q would change what's
-  // visible. The unfiltered set itself is a single fetch on mount + when
-  // an action invalidates it (resend / create).
-  const refreshAll = useCallback(() => {
-    listApplications({})
-      .then((res) => setAllItems(res.applications))
-      .catch(() => setAllItems([]));
+  // Roll-up stats for KPIs / banners / chip counts. Tiny payload (counts +
+  // up to ~6 sample rows) regardless of how many applications exist.
+  const refreshStats = useCallback(() => {
+    getApplicationStats()
+      .then((res) => setStatsData(res))
+      .catch(() => setStatsData(null));
   }, []);
+
+  // Reset to page 1 whenever the filter changes — keeps "page 5 of 8" from
+  // pointing at nothing after the user narrows results.
+  useEffect(() => {
+    setPage(1);
+  }, [status, urlQ]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
 
   useEffect(() => {
-    refreshAll();
-  }, [refreshAll]);
+    refreshStats();
+  }, [refreshStats]);
 
   const now = Date.now();
-  const stats = useMemo(() => {
-    const src = allItems ?? [];
-    const byStatus: Record<string, number> = {};
-    for (const a of src) {
-      byStatus[a.status] = (byStatus[a.status] ?? 0) + 1;
-    }
-    const inFlight = src.filter(
-      (a) => a.status !== 'APPROVED' && a.status !== 'REJECTED'
-    );
-    const stale = src.filter((a) => isStale(a, now));
-    // Phase 60 — apps where the most recent invite/nudge email bounced
-    // (provider returned FAILED). Excludes APPROVED/REJECTED apps where
-    // the associate already finished — bounce wouldn't matter anymore.
-    const bounced = src.filter(
-      (a) =>
-        a.lastInviteDelivery?.status === 'FAILED' &&
-        a.status !== 'APPROVED' &&
-        a.status !== 'REJECTED'
-    );
-    const avgPercent =
-      inFlight.length === 0
-        ? 0
-        : Math.round(
-            inFlight.reduce((acc, a) => acc + a.percentComplete, 0) /
-              inFlight.length
-          );
-    return {
-      total: src.length,
-      byStatus,
-      inFlight: inFlight.length,
-      stale: stale.length,
-      bounced: bounced.length,
-      bouncedSamples: bounced.slice(0, 3),
-      staleSamples: stale.slice(0, 3),
-      avgPercent,
-    };
-  }, [allItems, now]);
+  const stats = statsData ?? EMPTY_STATS;
 
   const onResend = async (a: ApplicationSummary) => {
     if (resendingIds.has(a.id)) return;
@@ -320,7 +317,7 @@ export function ApplicationsList() {
       }
       setSelected(new Set());
       refresh();
-      refreshAll();
+      refreshStats();
     } catch (err) {
       const msg =
         err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Bulk resend failed';
@@ -368,7 +365,7 @@ export function ApplicationsList() {
       />
 
       {/* KPI strip — always visible (empty-zero state is fine). */}
-      {canManage && allItems && allItems.length > 0 && (
+      {canManage && statsData && statsData.total > 0 && (
         <div className="mb-5 flex flex-wrap gap-x-6 gap-y-2 px-4 py-3 rounded-md border border-navy-secondary bg-navy-secondary/30">
           <Kpi label="Total" value={String(stats.total)} />
           <Kpi label="In flight" value={String(stats.inFlight)} />
@@ -524,7 +521,7 @@ export function ApplicationsList() {
                   )}
                 >
                   {f.label}
-                  {allItems && (
+                  {statsData && (
                     <span className="text-[10px] tabular-nums text-silver/60">
                       {count}
                     </span>
@@ -605,7 +602,7 @@ export function ApplicationsList() {
         onOpenChange={setOpenCreate}
         onCreated={() => {
           refresh();
-          refreshAll();
+          refreshStats();
         }}
       />
 
@@ -614,7 +611,7 @@ export function ApplicationsList() {
         onOpenChange={setOpenBulkInvite}
         onCreated={() => {
           refresh();
-          refreshAll();
+          refreshStats();
         }}
       />
 
@@ -855,6 +852,43 @@ export function ApplicationsList() {
         </div>
       )}
 
+      {/* Pagination footer — hidden when the whole result set fits on one page,
+          so the common case (small client, few applications) shows nothing. */}
+      {items && items.length > 0 && filteredTotal > PAGE_SIZE && (
+        <div className="mt-4 flex items-center justify-between gap-3 text-sm text-silver">
+          <div className="tabular-nums">
+            Showing{' '}
+            <span className="text-white">
+              {(page - 1) * PAGE_SIZE + 1}
+              {'–'}
+              {Math.min(page * PAGE_SIZE, filteredTotal)}
+            </span>{' '}
+            of <span className="text-white">{filteredTotal}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+            >
+              Previous
+            </Button>
+            <span className="tabular-nums text-xs text-silver/70">
+              Page {page} of {Math.max(1, Math.ceil(filteredTotal / PAGE_SIZE))}
+            </span>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setPage((p) => p + 1)}
+              disabled={page * PAGE_SIZE >= filteredTotal}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      )}
+
       <Drawer
         open={!!drawerTarget}
         onOpenChange={(o) => {
@@ -862,7 +896,7 @@ export function ApplicationsList() {
             setDrawerTarget(null);
             // Refresh in case the drawer mutated (skip task / resend).
             refresh();
-            refreshAll();
+            refreshStats();
           }
         }}
         width="max-w-2xl"

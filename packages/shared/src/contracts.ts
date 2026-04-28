@@ -206,9 +206,29 @@ export type ApplicationDetail = z.infer<typeof ApplicationDetailSchema>;
 
 export const ApplicationListResponseSchema = z.object({
   applications: z.array(ApplicationSummarySchema),
+  total: z.number().int().nonnegative(),
+  page: z.number().int().positive(),
+  pageSize: z.number().int().positive(),
 });
 export type ApplicationListResponse = z.infer<
   typeof ApplicationListResponseSchema
+>;
+
+// Roll-up counts + sample rows for the Onboarding sidebar tiles. Decouples
+// the stats panel from the paginated list so the client doesn't have to
+// pull every row just to count statuses.
+export const ApplicationStatsResponseSchema = z.object({
+  total: z.number().int().nonnegative(),
+  byStatus: z.record(ApplicationStatusSchema, z.number().int().nonnegative()),
+  inFlight: z.number().int().nonnegative(),
+  stale: z.number().int().nonnegative(),
+  bounced: z.number().int().nonnegative(),
+  avgPercent: z.number().min(0).max(100),
+  staleSamples: z.array(ApplicationSummarySchema),
+  bouncedSamples: z.array(ApplicationSummarySchema),
+});
+export type ApplicationStatsResponse = z.infer<
+  typeof ApplicationStatsResponseSchema
 >;
 
 export const TemplateTaskSchema = z.object({

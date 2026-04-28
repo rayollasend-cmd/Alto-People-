@@ -3,6 +3,7 @@ import type {
   ApplicationDetail,
   ApplicationListResponse,
   ApplicationPoliciesResponse,
+  ApplicationStatsResponse,
   AuditLogListResponse,
   BackgroundCheck,
   BackgroundCheckAuthorizeInput,
@@ -30,6 +31,8 @@ import { apiFetch } from './api';
 export interface ListApplicationsFilters {
   status?: string;
   q?: string;
+  page?: number;
+  pageSize?: number;
 }
 
 export function listApplications(
@@ -38,10 +41,19 @@ export function listApplications(
   const p = new URLSearchParams();
   if (filters.status && filters.status !== 'ALL') p.set('status', filters.status);
   if (filters.q && filters.q.trim()) p.set('q', filters.q.trim());
+  if (filters.page && filters.page > 1) p.set('page', String(filters.page));
+  if (filters.pageSize) p.set('pageSize', String(filters.pageSize));
   const qs = p.toString();
   return apiFetch<ApplicationListResponse>(
     `/onboarding/applications${qs ? `?${qs}` : ''}`
   );
+}
+
+// Aggregated stats for the Onboarding sidebar tiles. Replaces the prior
+// pattern of fetching the entire (unfiltered) application list to count
+// statuses client-side.
+export function getApplicationStats(): Promise<ApplicationStatsResponse> {
+  return apiFetch<ApplicationStatsResponse>('/onboarding/applications/stats');
 }
 
 export interface CreateApplicationResponse {
