@@ -9,12 +9,18 @@ import {
   enrollInLearningPath,
   getLearningPath,
   listLearningPaths,
+  listPathEnrollments,
   removeLearningPathStep,
   reorderLearningPathSteps,
   updateLearningPath,
+  withdrawLearningPathEnrollment,
   type LearningPathDetail,
   type LearningPathSummary,
+  type PathEnrollment,
 } from '@/lib/learningPaths114Api';
+import { listCourses, type Course } from '@/lib/lms94Api';
+import { listOrgAssociates } from '@/lib/orgApi';
+import type { AssociateOrgSummary } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import {
@@ -22,13 +28,13 @@ import {
   Button,
   Card,
   CardContent,
+  ConfirmDialog,
   Drawer,
   DrawerBody,
   DrawerFooter,
   DrawerHeader,
   DrawerTitle,
   EmptyState,
-  Input,
   PageHeader,
   SkeletonRows,
   Table,
@@ -38,6 +44,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui';
+import { Input } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
 
 export function LearningPathsHome() {
@@ -46,6 +53,8 @@ export function LearningPathsHome() {
   const [rows, setRows] = useState<LearningPathSummary[] | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<LearningPathSummary | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const refresh = () => {
     setRows(null);
@@ -121,16 +130,7 @@ export function LearningPathsHome() {
                       </Button>
                       {canManage && (
                         <button
-                          onClick={async () => {
-                            if (!window.confirm('Delete this path? Enrollments are kept but the path is removed.'))
-                              return;
-                            try {
-                              await deleteLearningPath(p.id);
-                              refresh();
-                            } catch (err) {
-                              toast.error(err instanceof ApiError ? err.message : 'Failed.');
-                            }
-                          }}
+                          onClick={() => setDeleteTarget(p)}
                           className="opacity-0 group-hover:opacity-100 text-silver hover:text-destructive transition text-xs"
                         >
                           Delete
@@ -164,6 +164,33 @@ export function LearningPathsHome() {
           }}
         />
       )}
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onOpenChange={(o) => !o && setDeleteTarget(null)}
+        title="Delete learning path"
+        description={
+          deleteTarget
+            ? `Delete "${deleteTarget.title}"? Existing course enrollments stay; only the path wrapper is removed.`
+            : undefined
+        }
+        confirmLabel="Delete"
+        destructive
+        busy={deleting}
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          setDeleting(true);
+          try {
+            await deleteLearningPath(deleteTarget.id);
+            toast.success('Deleted.');
+            setDeleteTarget(null);
+            refresh();
+          } catch (err) {
+            toast.error(err instanceof ApiError ? err.message : 'Failed.');
+          } finally {
+            setDeleting(false);
+          }
+        }}
+      />
     </div>
   );
 }
@@ -253,15 +280,34 @@ function PathDetailDrawer({
   onClose: () => void;
 }) {
   const [data, setData] = useState<LearningPathDetail | null>(null);
+  const [enrollments, setEnrollments] = useState<PathEnrollment[] | null>(null);
+  const [courses, setCourses] = useState<Course[] | null>(null);
+  const [associates, setAssociates] = useState<AssociateOrgSummary[] | null>(null);
   const [courseId, setCourseId] = useState('');
   const [associateId, setAssociateId] = useState('');
 
   const refresh = () => {
     setData(null);
+    setEnrollments(null);
     getLearningPath(pathId).then(setData).catch(() => setData(null));
+    listPathEnrollments(pathId)
+      .then((r) => setEnrollments(r.enrollments))
+      .catch(() => setEnrollments([]));
   };
   useEffect(() => {
     refresh();
+    // Lazy-load picker sources only for managers.
+    if (canManage && courses === null) {
+      listCourses('PUBLISHED')
+        .then((r) => setCourses(r.courses))
+        .catch(() => setCourses([]));
+    }
+    if (canManage && associates === null) {
+      listOrgAssociates()
+        .then((r) => setAssociates(r.associates))
+        .catch(() => setAssociates([]));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathId]);
 
   const moveStep = async (idx: number, delta: number) => {
@@ -278,8 +324,22 @@ function PathDetailDrawer({
     }
   };
 
+  // Hide courses already in the path so HR can't add a duplicate step.
+  const usedCourseIds = new Set(data?.steps.map((s) => s.courseId) ?? []);
+  const availableCourses = (courses ?? []).filter(
+    (c) => !usedCourseIds.has(c.id),
+  );
+
+  // Hide associates already enrolled (not WITHDRAWN) so HR can see who's left.
+  const enrolledAssociateIds = new Set(
+    (enrollments ?? []).map((e) => e.associateId),
+  );
+  const availableAssociates = (associates ?? []).filter(
+    (a) => !enrolledAssociateIds.has(a.id),
+  );
+
   return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()} width="max-w-2xl">
       <DrawerHeader>
         <DrawerTitle>{data?.title ?? 'Loading…'}</DrawerTitle>
       </DrawerHeader>
@@ -322,10 +382,13 @@ function PathDetailDrawer({
               )}
             </div>
             {data.description && <div className="text-sm text-silver">{data.description}</div>}
+
             <div className="space-y-2 pt-2 border-t border-navy-secondary">
-              <div className="text-sm uppercase tracking-wider text-silver">Steps</div>
+              <div className="text-sm uppercase tracking-wider text-silver">
+                Steps ({data.steps.length})
+              </div>
               {data.steps.length === 0 ? (
-                <div className="text-sm text-silver">No steps yet.</div>
+                <div className="text-sm text-silver italic">No steps yet.</div>
               ) : (
                 <div className="space-y-1">
                   {data.steps.map((s, i) => (
@@ -334,13 +397,19 @@ function PathDetailDrawer({
                       className="flex items-center gap-2 p-2 rounded border border-navy-secondary"
                     >
                       <div className="text-xs text-silver w-6">#{s.order + 1}</div>
-                      <div className="flex-1 text-sm text-white">{s.courseTitle}</div>
+                      <div className="flex-1 text-sm text-white">
+                        {s.courseTitle}
+                        {s.courseIsRequired && (
+                          <Badge variant="accent" className="ml-2">required</Badge>
+                        )}
+                      </div>
                       {canManage && (
                         <>
                           <button
                             onClick={() => void moveStep(i, -1)}
                             disabled={i === 0}
                             className="text-silver hover:text-white disabled:opacity-30"
+                            title="Move up"
                           >
                             <ArrowUp className="h-3 w-3" />
                           </button>
@@ -348,6 +417,7 @@ function PathDetailDrawer({
                             onClick={() => void moveStep(i, 1)}
                             disabled={i === data.steps.length - 1}
                             className="text-silver hover:text-white disabled:opacity-30"
+                            title="Move down"
                           >
                             <ArrowDown className="h-3 w-3" />
                           </button>
@@ -361,6 +431,7 @@ function PathDetailDrawer({
                               }
                             }}
                             className="text-silver hover:text-destructive"
+                            title="Remove step"
                           >
                             <Trash2 className="h-3 w-3" />
                           </button>
@@ -372,21 +443,31 @@ function PathDetailDrawer({
               )}
               {canManage && (
                 <div className="flex gap-2 pt-2">
-                  <Input
-                    placeholder="Course ID"
-                    className="font-mono text-xs"
+                  <select
+                    className="flex-1 h-9 rounded-md border border-navy-secondary bg-midnight px-2 text-sm text-white"
                     value={courseId}
                     onChange={(e) => setCourseId(e.target.value)}
-                  />
+                    disabled={courses === null}
+                  >
+                    <option value="">
+                      {courses === null
+                        ? 'Loading courses…'
+                        : availableCourses.length === 0
+                          ? 'All published courses already added'
+                          : 'Select a course…'}
+                    </option>
+                    {availableCourses.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.title}
+                      </option>
+                    ))}
+                  </select>
                   <Button
                     size="sm"
+                    disabled={!courseId}
                     onClick={async () => {
-                      if (!courseId.trim()) return;
                       try {
-                        await addLearningPathStep({
-                          pathId,
-                          courseId: courseId.trim(),
-                        });
+                        await addLearningPathStep({ pathId, courseId });
                         setCourseId('');
                         refresh();
                       } catch (err) {
@@ -394,42 +475,128 @@ function PathDetailDrawer({
                       }
                     }}
                   >
-                    Add step
+                    <Plus className="mr-1 h-3 w-3" /> Add step
                   </Button>
                 </div>
               )}
             </div>
-            {canManage && (
-              <div className="space-y-2 pt-2 border-t border-navy-secondary">
-                <div className="text-sm uppercase tracking-wider text-silver">Enroll</div>
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="Associate ID"
-                    className="font-mono text-xs"
+
+            <div className="space-y-2 pt-2 border-t border-navy-secondary">
+              <div className="text-sm uppercase tracking-wider text-silver">
+                Enrollments ({enrollments?.length ?? '…'})
+              </div>
+              {enrollments === null ? (
+                <SkeletonRows count={2} />
+              ) : enrollments.length === 0 ? (
+                <div className="text-sm text-silver italic">
+                  Nobody enrolled yet.
+                </div>
+              ) : (
+                <div className="max-h-64 overflow-y-auto border border-navy-secondary rounded">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Associate</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Assigned</TableHead>
+                        {canManage && <TableHead className="text-right" />}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {enrollments.map((e) => (
+                        <TableRow key={e.id}>
+                          <TableCell>
+                            <div className="font-medium text-white">
+                              {e.associateName}
+                            </div>
+                            <div className="text-xs text-silver">
+                              {e.associateEmail}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={
+                                e.status === 'COMPLETED'
+                                  ? 'success'
+                                  : e.status === 'IN_PROGRESS'
+                                    ? 'accent'
+                                    : 'pending'
+                              }
+                            >
+                              {e.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-xs text-silver">
+                            {new Date(e.assignedAt).toLocaleDateString()}
+                          </TableCell>
+                          {canManage && (
+                            <TableCell className="text-right">
+                              <button
+                                onClick={async () => {
+                                  try {
+                                    await withdrawLearningPathEnrollment(e.id);
+                                    refresh();
+                                  } catch (err) {
+                                    toast.error(
+                                      err instanceof ApiError
+                                        ? err.message
+                                        : 'Failed.',
+                                    );
+                                  }
+                                }}
+                                className="text-silver hover:text-destructive text-xs"
+                                title="Withdraw"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+                            </TableCell>
+                          )}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+              {canManage && (
+                <div className="flex gap-2 pt-2">
+                  <select
+                    className="flex-1 h-9 rounded-md border border-navy-secondary bg-midnight px-2 text-sm text-white"
                     value={associateId}
                     onChange={(e) => setAssociateId(e.target.value)}
-                  />
+                    disabled={associates === null}
+                  >
+                    <option value="">
+                      {associates === null
+                        ? 'Loading associates…'
+                        : availableAssociates.length === 0
+                          ? 'Everyone is already enrolled'
+                          : 'Select an associate…'}
+                    </option>
+                    {availableAssociates.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.firstName} {a.lastName}
+                      </option>
+                    ))}
+                  </select>
                   <Button
                     size="sm"
+                    disabled={!associateId}
                     onClick={async () => {
-                      if (!associateId.trim()) return;
                       try {
-                        await enrollInLearningPath({
-                          pathId,
-                          associateId: associateId.trim(),
-                        });
+                        await enrollInLearningPath({ pathId, associateId });
                         toast.success('Enrolled.');
                         setAssociateId('');
+                        refresh();
                       } catch (err) {
                         toast.error(err instanceof ApiError ? err.message : 'Failed.');
                       }
                     }}
                   >
-                    Enroll
+                    <Plus className="mr-1 h-3 w-3" /> Enroll
                   </Button>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </>
         )}
       </DrawerBody>

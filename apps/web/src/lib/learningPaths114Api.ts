@@ -65,6 +65,16 @@ export interface MyLearningPath {
   completedAt: string | null;
 }
 
+export interface PathEnrollment {
+  id: string;
+  associateId: string;
+  associateName: string;
+  associateEmail: string;
+  status: LearningPathEnrollmentStatus;
+  assignedAt: string;
+  completedAt: string | null;
+}
+
 export const listLearningPaths = (status?: LearningPathStatus) =>
   apiFetch<{ paths: LearningPathSummary[] }>(
     `/learning-paths${status ? `?status=${status}` : ''}`,
@@ -135,3 +145,8 @@ export const getLearningPathStatus = (pathId: string, associateId: string) =>
 
 export const listMyLearningPaths = () =>
   apiFetch<{ paths: MyLearningPath[] }>('/my/learning-paths');
+
+export const listPathEnrollments = (pathId: string) =>
+  apiFetch<{ enrollments: PathEnrollment[] }>(
+    `/learning-paths/${pathId}/enrollments`,
+  );

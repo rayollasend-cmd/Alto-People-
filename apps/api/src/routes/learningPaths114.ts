@@ -272,6 +272,35 @@ learningPaths114Router.delete(
   },
 );
 
+// List enrollments for a path. WITHDRAWN entries are excluded so the count
+// in the parent table matches the count rendered here.
+learningPaths114Router.get(
+  '/learning-paths/:id/enrollments',
+  VIEW,
+  async (req, res) => {
+    const enrollments = await prisma.learningPathEnrollment.findMany({
+      where: { pathId: req.params.id, status: { not: 'WITHDRAWN' } },
+      include: {
+        associate: {
+          select: { id: true, firstName: true, lastName: true, email: true },
+        },
+      },
+      orderBy: { assignedAt: 'desc' },
+    });
+    res.json({
+      enrollments: enrollments.map((e) => ({
+        id: e.id,
+        associateId: e.associateId,
+        associateName: `${e.associate.firstName} ${e.associate.lastName}`,
+        associateEmail: e.associate.email,
+        status: e.status,
+        assignedAt: e.assignedAt.toISOString(),
+        completedAt: e.completedAt?.toISOString() ?? null,
+      })),
+    });
+  },
+);
+
 learningPaths114Router.get(
   '/learning-paths/:id/status',
   VIEW,
