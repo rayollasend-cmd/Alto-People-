@@ -28,7 +28,7 @@
   --color-steel:           24  95 165;  /* #185FA5 */
   --color-sky:            230 241 251;  /* #E6F1FB */
   --color-teal:            15 110  86;  /* #0F6E56 */
-  --color-alert:          232  82  68;  /* #E85244 — brightened from C0392B for AA on navy */
+  --color-alert:          233  98  85;  /* #E96255 — brightened for safer AA margin on navy (≈5.3:1) */
   --color-success:         52 168 116;  /* #34A874 */
   --color-warning:        237 178  60;  /* #EDB23C */
   --color-muted:          102 102 102;  /* #666666 */
