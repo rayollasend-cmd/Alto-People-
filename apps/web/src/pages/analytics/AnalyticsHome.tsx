@@ -12,7 +12,6 @@ import {
 import type { DashboardKPIs } from '@alto-people/shared';
 import { getDashboardKPIs } from '@/lib/analyticsApi';
 import { ApiError } from '@/lib/api';
-import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import {
   Card,
@@ -20,21 +19,38 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/Card';
+import { DonutChart, type DonutDatum } from '@/components/ui/DonutChart';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 const fmtMoney = (n: number) =>
   n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
 
-const STATUS_VARIANT: Record<
-  string,
-  'success' | 'pending' | 'destructive' | 'default' | 'accent'
-> = {
-  APPROVED: 'success',
-  SUBMITTED: 'pending',
-  IN_REVIEW: 'pending',
-  DRAFT: 'default',
-  REJECTED: 'destructive',
+/**
+ * Brand-aligned color per application status. Drives the donut chart and
+ * any legend/tooltip downstream. Order also defines display order in the
+ * donut/legend (largest-impact-on-pipeline first).
+ */
+const STATUS_ORDER: readonly string[] = [
+  'APPROVED',
+  'IN_REVIEW',
+  'SUBMITTED',
+  'DRAFT',
+  'REJECTED',
+] as const;
+const STATUS_LABELS: Record<string, string> = {
+  APPROVED: 'Approved',
+  IN_REVIEW: 'In review',
+  SUBMITTED: 'Submitted',
+  DRAFT: 'Draft',
+  REJECTED: 'Rejected',
+};
+const STATUS_COLORS: Record<string, string> = {
+  APPROVED: '#34A874', // success green
+  IN_REVIEW: '#EDB23C', // warning amber
+  SUBMITTED: '#D9B967', // brand gold
+  DRAFT: '#A8B8C8', // silver
+  REJECTED: '#E96255', // alert red
 };
 
 const WINDOW_PRESETS = [7, 30, 60, 90] as const;
@@ -238,23 +254,10 @@ export function AnalyticsHome() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                    {Object.entries(kpis.applicationStatusCounts).map(([status, count]) => (
-                      <Card key={status}>
-                        <CardContent className="pt-3 pb-3">
-                          <Badge
-                            variant={STATUS_VARIANT[status] ?? 'default'}
-                            className="mb-1"
-                          >
-                            {status.replace(/_/g, ' ')}
-                          </Badge>
-                          <div className="font-display text-xl text-gold tabular-nums">
-                            {count}
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
+                  <DonutChart
+                    centerSublabel="Applications"
+                    data={buildStatusBreakdown(kpis.applicationStatusCounts)}
+                  />
                 </CardContent>
               </Card>
             )}
@@ -330,6 +333,38 @@ function Stat({ label, value, hint, accent, link }: StatProps) {
     </Card>
   );
   return link ? <Link to={link}>{inner}</Link> : inner;
+}
+
+/**
+ * Map the API's status→count map into a donut-chart input. Statuses
+ * listed in STATUS_ORDER come first in their declared order; any
+ * unrecognized statuses get appended after with a fallback color/label
+ * so a future enum addition still renders.
+ */
+function buildStatusBreakdown(
+  counts: Record<string, number>,
+): DonutDatum[] {
+  const out: DonutDatum[] = [];
+  const seen = new Set<string>();
+  for (const status of STATUS_ORDER) {
+    const value = counts[status] ?? 0;
+    if (value > 0) {
+      out.push({
+        name: STATUS_LABELS[status] ?? status,
+        value,
+        color: STATUS_COLORS[status],
+      });
+      seen.add(status);
+    }
+  }
+  for (const [status, value] of Object.entries(counts)) {
+    if (seen.has(status) || value <= 0) continue;
+    out.push({
+      name: status.replace(/_/g, ' '),
+      value,
+    });
+  }
+  return out;
 }
 
 function SkeletonGrid({ count = 2 }: { count?: number }) {

@@ -10,6 +10,7 @@ export * from './Card';
 export * from './CommandPalette';
 export * from './ConfirmDialog';
 export * from './Dialog';
+export * from './DonutChart';
 export * from './Drawer';
 export * from './DropdownMenu';
 export * from './EmptyState';
