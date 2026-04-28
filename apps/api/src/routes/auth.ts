@@ -25,6 +25,7 @@ import { requireAuth, SESSION_COOKIE } from '../middleware/auth.js';
 import {
   loginIpLimiter,
   loginEmailLimiter,
+  changePasswordLimiter,
 } from '../middleware/rateLimit.js';
 import { hashToken } from '../lib/inviteToken.js';
 import { HttpError } from '../middleware/error.js';
@@ -325,7 +326,7 @@ async function pickPostAcceptPath(userId: string): Promise<string> {
  * tokenVersion bump is the critical bit — without it a stolen cookie
  * would survive a password change.
  */
-authRouter.post('/change-password', requireAuth, async (req, res, next) => {
+authRouter.post('/change-password', requireAuth, changePasswordLimiter, async (req, res, next) => {
   try {
     const parsed = ChangePasswordInputSchema.safeParse(req.body);
     if (!parsed.success) {

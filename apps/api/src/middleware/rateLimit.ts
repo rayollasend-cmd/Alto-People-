@@ -45,3 +45,29 @@ export const loginEmailLimiter = rateLimit({
     },
   },
 });
+
+// 10/hour/user is loose enough that a real user rotating a password they
+// can't remember won't hit it, tight enough that a stolen-session attacker
+// can't grind through guesses for the current password.
+const CHANGE_PASSWORD_LIMIT =
+  process.env.NODE_ENV === 'test' ? 100_000 : 10;
+
+/** 10 requests / hour / authenticated user for /auth/change-password. */
+export const changePasswordLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: CHANGE_PASSWORD_LIMIT,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => {
+    // requireAuth runs before this limiter, so req.user is set. Falling back
+    // to IP for safety if it isn't (e.g., misconfigured route).
+    const userId = req.user?.id;
+    return userId ? `user:${userId}` : `ip:${req.ip ?? 'unknown'}`;
+  },
+  message: {
+    error: {
+      code: 'rate_limited',
+      message: 'Too many password-change attempts. Try again later.',
+    },
+  },
+});
