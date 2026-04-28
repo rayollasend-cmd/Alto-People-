@@ -5,8 +5,10 @@ import {
   Briefcase,
   CheckCircle2,
   FileText,
+  Kanban,
   Link2,
   Plus,
+  Rows3,
   UserPlus,
   Users,
 } from 'lucide-react';
@@ -20,6 +22,7 @@ import {
 } from '@/lib/recruitingApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { CandidateBoard } from './CandidateBoard';
 import {
   Avatar,
   Badge,
@@ -83,9 +86,31 @@ type DialogState =
   | { kind: 'hire'; candidate: Candidate }
   | null;
 
+type ViewMode = 'list' | 'board';
+const VIEW_STORAGE_KEY = 'alto.recruiting.view';
+
+function readViewMode(): ViewMode {
+  if (typeof window === 'undefined') return 'board';
+  try {
+    const v = window.localStorage.getItem(VIEW_STORAGE_KEY);
+    return v === 'list' ? 'list' : 'board';
+  } catch {
+    return 'board';
+  }
+}
+
+function writeViewMode(v: ViewMode) {
+  try {
+    window.localStorage.setItem(VIEW_STORAGE_KEY, v);
+  } catch {
+    /* persistence is best-effort */
+  }
+}
+
 export function RecruitingHome() {
   const { can } = useAuth();
   const canManage = can('manage:recruiting');
+  const [view, setView] = useState<ViewMode>(() => readViewMode());
   const [filter, setFilter] = useState<CandidateStage | 'ALL'>('APPLIED');
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
   const [allCandidates, setAllCandidates] = useState<Candidate[] | null>(null);
@@ -93,6 +118,11 @@ export function RecruitingHome() {
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
+
+  const setViewPersisted = useCallback((v: ViewMode) => {
+    setView(v);
+    writeViewMode(v);
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -248,24 +278,29 @@ export function RecruitingHome() {
       <Card>
         <CardHeader className="pb-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <CardTitle className="text-base">Candidates</CardTitle>
-            <div className="flex flex-wrap gap-2">
-              {(['ALL', ...STAGES] as Array<CandidateStage | 'ALL'>).map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => setFilter(s)}
-                  className={cn(
-                    'px-3 py-1.5 rounded text-xs uppercase tracking-wider border transition',
-                    filter === s
-                      ? 'border-gold text-gold bg-gold/10'
-                      : 'border-navy-secondary text-silver hover:text-white',
-                  )}
-                >
-                  {s}
-                </button>
-              ))}
+            <div className="flex items-center gap-3">
+              <CardTitle className="text-base">Candidates</CardTitle>
+              <ViewToggle value={view} onChange={setViewPersisted} />
             </div>
+            {view === 'list' && (
+              <div className="flex flex-wrap gap-2">
+                {(['ALL', ...STAGES] as Array<CandidateStage | 'ALL'>).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setFilter(s)}
+                    className={cn(
+                      'px-3 py-1.5 rounded text-xs uppercase tracking-wider border transition',
+                      filter === s
+                        ? 'border-gold text-gold bg-gold/10'
+                        : 'border-navy-secondary text-silver hover:text-white',
+                    )}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </CardHeader>
         <CardContent className="pt-0">
@@ -274,8 +309,23 @@ export function RecruitingHome() {
               {error}
             </p>
           )}
-          {!candidates && <SkeletonRows count={5} rowHeight="h-12" />}
-          {candidates && candidates.length === 0 && (
+          {view === 'board' && (
+            <>
+              {!allCandidates && <SkeletonRows count={5} rowHeight="h-24" />}
+              {allCandidates && (
+                <CandidateBoard
+                  candidates={allCandidates}
+                  pendingId={pendingId}
+                  onAdvance={(c, target) => advance(c, target)}
+                  onRequestReject={(c) => setDialog({ kind: 'reject', candidate: c })}
+                  onRequestWithdraw={(c) => setDialog({ kind: 'withdraw', candidate: c })}
+                  onRequestHire={(c) => setDialog({ kind: 'hire', candidate: c })}
+                />
+              )}
+            </>
+          )}
+          {view === 'list' && !candidates && <SkeletonRows count={5} rowHeight="h-12" />}
+          {view === 'list' && candidates && candidates.length === 0 && (
             <EmptyState
               icon={UserPlus}
               title="No candidates match this filter"
@@ -294,7 +344,7 @@ export function RecruitingHome() {
               }
             />
           )}
-          {candidates && candidates.length > 0 && (
+          {view === 'list' && candidates && candidates.length > 0 && (
             <Table>
               <TableHeader>
                 <TableRow>
@@ -665,5 +715,63 @@ function Field({
       </span>
       {children}
     </label>
+  );
+}
+
+function ViewToggle({
+  value,
+  onChange,
+}: {
+  value: ViewMode;
+  onChange: (v: ViewMode) => void;
+}) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Switch between board and list view"
+      className="inline-flex items-center rounded-md border border-navy-secondary p-0.5"
+    >
+      <ToggleButton
+        active={value === 'board'}
+        onClick={() => onChange('board')}
+        label="Board"
+        icon={Kanban}
+      />
+      <ToggleButton
+        active={value === 'list'}
+        onClick={() => onChange('list')}
+        label="List"
+        icon={Rows3}
+      />
+    </div>
+  );
+}
+
+function ToggleButton({
+  active,
+  onClick,
+  label,
+  icon: Icon,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={active}
+      aria-label={label}
+      onClick={onClick}
+      className={cn(
+        'inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] uppercase tracking-wider transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+        active ? 'bg-gold/15 text-gold' : 'text-silver/70 hover:text-white',
+      )}
+    >
+      <Icon className="h-3.5 w-3.5" />
+      {label}
+    </button>
   );
 }
