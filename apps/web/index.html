@@ -12,14 +12,10 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Alto" />
     <title>Alto People</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Fonts are self-hosted via @fontsource-variable/* and bundled by Vite —
+         see apps/web/src/main.tsx. No Google Fonts CDN hop. -->
     <!-- Start the API socket negotiation in parallel with the JS bundle. -->
     <link rel="preconnect" href="http://localhost:3001" />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Geist:wght@400;500;600;700&display=swap"
-      rel="stylesheet"
-    />
   </head>
   <body>
     <div id="root"></div>
