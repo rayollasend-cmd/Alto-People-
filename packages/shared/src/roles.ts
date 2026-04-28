@@ -31,7 +31,7 @@ export const ROLE_DESCRIPTIONS: Record<Role, string> = {
   LIVE_ASN: 'System integration portal — not for human login',
   ASSOCIATE: 'Personal access to own profile, schedule, and pay',
   CLIENT_PORTAL: 'Read-only access scoped to one client account',
-  FINANCE_ACCOUNTANT: 'Read-only access to financial modules',
+  FINANCE_ACCOUNTANT: 'Runs payroll and reads financial modules; cannot change HR/comp data',
   INTERNAL_RECRUITER: 'Full access to recruiting pipeline',
   MANAGER:
     'Approves time, time-off, and schedule changes for direct reports; sees a "my team" view',
@@ -137,6 +137,7 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
   FINANCE_ACCOUNTANT: new Set<Capability>([
     'view:dashboard',
     'view:payroll',
+    'process:payroll',
     'view:analytics',
   ]),
   INTERNAL_RECRUITER: new Set<Capability>([
