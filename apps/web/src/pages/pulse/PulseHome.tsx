@@ -15,6 +15,9 @@ import {
   type PulseSurveyAdmin,
   type PulseSurveyOpen,
 } from '@/lib/pulseSurveys109Api';
+import { listDepartments } from '@/lib/orgApi';
+import { listClients } from '@/lib/clientsApi';
+import type { Department } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import {
@@ -22,6 +25,7 @@ import {
   Button,
   Card,
   CardContent,
+  ConfirmDialog,
   Drawer,
   DrawerBody,
   DrawerFooter,
@@ -214,6 +218,9 @@ function AdminPulseTab() {
   const [rows, setRows] = useState<PulseSurveyAdmin[] | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [resultsFor, setResultsFor] = useState<PulseSurveyAdmin | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<PulseSurveyAdmin | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [filter, setFilter] = useState<'all' | 'open' | 'closed'>('all');
 
   const refresh = () => {
     setRows(null);
@@ -225,9 +232,27 @@ function AdminPulseTab() {
     refresh();
   }, []);
 
+  const filtered = (rows ?? []).filter((s) => {
+    if (filter === 'open') return s.isOpen;
+    if (filter === 'closed') return !s.isOpen;
+    return true;
+  });
+
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
+      <div className="flex items-center justify-between">
+        <div className="flex gap-1">
+          {(['all', 'open', 'closed'] as const).map((f) => (
+            <Button
+              key={f}
+              size="sm"
+              variant={filter === f ? 'primary' : 'ghost'}
+              onClick={() => setFilter(f)}
+            >
+              {f === 'all' ? 'All' : f === 'open' ? 'Open' : 'Closed (history)'}
+            </Button>
+          ))}
+        </div>
         <Button onClick={() => setShowNew(true)}>
           <Plus className="mr-2 h-4 w-4" /> New survey
         </Button>
@@ -236,11 +261,21 @@ function AdminPulseTab() {
         <CardContent className="p-0">
           {rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
-          ) : rows.length === 0 ? (
+          ) : filtered.length === 0 ? (
             <EmptyState
               icon={MessageSquare}
-              title="No surveys"
-              description="Send a pulse to gauge how the team is doing."
+              title={
+                filter === 'closed'
+                  ? 'No closed surveys yet'
+                  : filter === 'open'
+                    ? 'No surveys are currently open'
+                    : 'No surveys'
+              }
+              description={
+                filter === 'all'
+                  ? 'Send a pulse to gauge how the team is doing.'
+                  : 'Switch filters to see other surveys.'
+              }
             />
           ) : (
             <Table>
@@ -255,7 +290,7 @@ function AdminPulseTab() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((s) => (
+                {filtered.map((s) => (
                   <TableRow key={s.id} className="group">
                     <TableCell className="font-medium text-white max-w-md truncate">
                       {s.question}
@@ -277,16 +312,7 @@ function AdminPulseTab() {
                         <BarChart3 className="mr-1 h-3 w-3" /> Results
                       </Button>
                       <button
-                        onClick={async () => {
-                          if (!window.confirm('Delete this survey? Responses will be removed.'))
-                            return;
-                          try {
-                            await deletePulseSurvey(s.id);
-                            refresh();
-                          } catch (err) {
-                            toast.error(err instanceof ApiError ? err.message : 'Failed.');
-                          }
-                        }}
+                        onClick={() => setDeleteTarget(s)}
                         className="opacity-0 group-hover:opacity-100 text-silver hover:text-destructive transition text-xs"
                       >
                         Delete
@@ -314,6 +340,33 @@ function AdminPulseTab() {
           onClose={() => setResultsFor(null)}
         />
       )}
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onOpenChange={(o) => !o && setDeleteTarget(null)}
+        title="Delete survey"
+        description={
+          deleteTarget
+            ? `Delete "${deleteTarget.question.slice(0, 80)}${deleteTarget.question.length > 80 ? '…' : ''}"? All ${deleteTarget.responseCount} responses will be permanently removed.`
+            : undefined
+        }
+        confirmLabel="Delete"
+        destructive
+        busy={deleting}
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          setDeleting(true);
+          try {
+            await deletePulseSurvey(deleteTarget.id);
+            toast.success('Deleted.');
+            setDeleteTarget(null);
+            refresh();
+          } catch (err) {
+            toast.error(err instanceof ApiError ? err.message : 'Failed.');
+          } finally {
+            setDeleting(false);
+          }
+        }}
+      />
     </div>
   );
 }
@@ -331,10 +384,40 @@ function NewSurveyDrawer({
   const [audienceId, setAudienceId] = useState('');
   const [openHours, setOpenHours] = useState(72);
   const [saving, setSaving] = useState(false);
+  const [departments, setDepartments] = useState<Department[] | null>(null);
+  const [clients, setClients] = useState<{ id: string; name: string }[] | null>(null);
+
+  // Lazy-load the picker source the first time the user picks a non-ALL
+  // audience. Most surveys go to everyone, so don't fetch upfront.
+  useEffect(() => {
+    if (audience === 'BY_DEPARTMENT' && departments === null) {
+      listDepartments()
+        .then((r) => setDepartments(r.departments))
+        .catch(() => setDepartments([]));
+    }
+    if (audience === 'BY_CLIENT' && clients === null) {
+      listClients()
+        .then((r) =>
+          setClients(r.clients.map((c) => ({ id: c.id, name: c.name }))),
+        )
+        .catch(() => setClients([]));
+    }
+    // Reset selection when the audience type changes.
+    setAudienceId('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audience]);
 
   const submit = async () => {
     if (question.trim().length < 5) {
       toast.error('Question must be at least 5 characters.');
+      return;
+    }
+    if (audience !== 'ALL' && !audienceId) {
+      toast.error(
+        audience === 'BY_DEPARTMENT'
+          ? 'Pick a department.'
+          : 'Pick a client.',
+      );
       return;
     }
     setSaving(true);
@@ -394,14 +477,49 @@ function NewSurveyDrawer({
             <option value="BY_CLIENT">By client</option>
           </select>
         </div>
-        {audience !== 'ALL' && (
+        {audience === 'BY_DEPARTMENT' && (
           <div>
-            <Label>{audience === 'BY_DEPARTMENT' ? 'Department ID' : 'Client ID'}</Label>
-            <Input
-              className="mt-1 font-mono text-xs"
+            <Label>Department</Label>
+            <select
+              className="mt-1 w-full bg-midnight border border-navy-secondary rounded-md p-2 text-white"
               value={audienceId}
               onChange={(e) => setAudienceId(e.target.value)}
-            />
+              disabled={departments === null}
+            >
+              <option value="">
+                {departments === null ? 'Loading…' : 'Select a department…'}
+              </option>
+              {(departments ?? []).map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+            {departments !== null && departments.length === 0 && (
+              <div className="text-xs text-silver mt-1">
+                No departments defined yet.
+              </div>
+            )}
+          </div>
+        )}
+        {audience === 'BY_CLIENT' && (
+          <div>
+            <Label>Client</Label>
+            <select
+              className="mt-1 w-full bg-midnight border border-navy-secondary rounded-md p-2 text-white"
+              value={audienceId}
+              onChange={(e) => setAudienceId(e.target.value)}
+              disabled={clients === null}
+            >
+              <option value="">
+                {clients === null ? 'Loading…' : 'Select a client…'}
+              </option>
+              {(clients ?? []).map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
           </div>
         )}
         <div>
