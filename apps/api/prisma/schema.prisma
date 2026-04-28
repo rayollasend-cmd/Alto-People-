@@ -1448,7 +1448,10 @@ model Notification {
   senderUser     User?               @relation("NotificationSender", fields: [senderUserId], references: [id], onDelete: SetNull)
   createdAt      DateTime            @default(now()) @db.Timestamptz(6)
 
-  @@index([recipientUserId, createdAt])
+  // Sort: Desc — invite-delivery + recent-notification queries always
+  // ORDER BY createdAt DESC. Matching index order lets the planner do an
+  // in-order index scan instead of reverse-scanning.
+  @@index([recipientUserId, createdAt(sort: Desc)])
   @@index([status])
   @@index([category])
 }
@@ -1464,7 +1467,11 @@ model AuditLog {
   createdAt    DateTime  @default(now()) @db.Timestamptz(6)
   actorUser    User?     @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
 
-  @@index([entityType, entityId])
+  // Composite covers (entityType, entityId) prefix queries AND the timeline
+  // pattern WHERE entityType=X AND entityId=Y ORDER BY createdAt DESC.
+  // Drops the previously-separate (entityType, entityId) index since this
+  // composite is a strict superset.
+  @@index([entityType, entityId, createdAt(sort: Desc)])
   @@index([actorUserId])
   @@index([clientId])
   @@index([createdAt])
