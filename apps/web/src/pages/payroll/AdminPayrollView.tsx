@@ -357,7 +357,7 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
                           </TableCell>
                           {canProcess && (
                             <TableCell className="text-right">
-                              <div className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity inline-flex">
+                              <div className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity inline-flex">
                                 <Button
                                   variant="ghost"
                                   onClick={() =>

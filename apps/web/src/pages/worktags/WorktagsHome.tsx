@@ -326,7 +326,7 @@ function ValuesTab({ canManage }: { canManage: boolean }) {
                       {canManage && (
                         <button
                           onClick={() => onDelete(w.id)}
-                          className="opacity-0 group-hover:opacity-100 text-silver hover:text-destructive transition text-xs"
+                          className="opacity-60 group-hover:opacity-100 text-silver hover:text-destructive transition text-xs"
                         >
                           Deactivate
                         </button>

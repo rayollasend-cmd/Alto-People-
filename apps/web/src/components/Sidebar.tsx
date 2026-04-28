@@ -219,7 +219,7 @@ function SidebarBrand({ railCollapsed, onToggleRail }: SidebarBrandProps) {
             aria-expanded={!railCollapsed}
             aria-keyshortcuts="Control+\\ Meta+\\"
             className={cn(
-              'p-1.5 rounded-md text-silver/70 hover:text-white hover:bg-navy-secondary/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+              'p-2.5 rounded-md text-silver/70 hover:text-white hover:bg-navy-secondary/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
               !railCollapsed && 'ml-auto',
             )}
           >

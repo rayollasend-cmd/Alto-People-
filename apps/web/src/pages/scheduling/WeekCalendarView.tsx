@@ -408,7 +408,7 @@ function Cell({
           <button
             type="button"
             onClick={onCreate}
-            className="absolute inset-0 flex items-center justify-center text-silver/30 hover:text-gold hover:bg-gold/5 transition-colors opacity-0 group-hover:opacity-100"
+            className="absolute inset-0 flex items-center justify-center text-silver/30 hover:text-gold hover:bg-gold/5 transition-colors opacity-60 group-hover:opacity-100"
             aria-label="Add shift"
           >
             <Plus className="h-4 w-4" />
@@ -428,7 +428,7 @@ function Cell({
             <button
               type="button"
               onClick={onCreate}
-              className="text-[10px] text-silver/40 hover:text-gold inline-flex items-center justify-center gap-1 mt-auto opacity-0 group-hover:opacity-100 transition-opacity"
+              className="text-[10px] text-silver/40 hover:text-gold inline-flex items-center justify-center gap-1 mt-auto opacity-60 group-hover:opacity-100 transition-opacity"
               aria-label="Add another shift"
             >
               <Plus className="h-3 w-3" />

@@ -192,7 +192,7 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
                     </TableCell>
                     <TableCell className="text-right">
                       {r.status === 'PENDING' && canManage ? (
-                        <div className="inline-flex gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+                        <div className="inline-flex gap-1 opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                           <Button
                             size="sm"
                             variant="ghost"

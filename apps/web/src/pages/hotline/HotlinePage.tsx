@@ -3,6 +3,11 @@ import { ShieldQuestion, FileText, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { Logo } from '@/components/Logo';
+import { Button } from '@/components/ui/Button';
+import { Input, Textarea } from '@/components/ui/Input';
+import { Label, FormHint } from '@/components/ui/Label';
+import { Badge } from '@/components/ui/Badge';
+import { cn } from '@/lib/cn';
 import {
   fileAnonymousReport,
   lookupReportByCode,
@@ -34,14 +39,16 @@ export function HotlinePage() {
   const [filed, setFiled] = useState<string | null>(null);
 
   return (
-    <div className="min-h-screen bg-midnight text-white">
-      <div className="max-w-2xl mx-auto px-6 py-12">
+    <div className="min-h-screen bg-gradient-to-br from-midnight via-navy to-navy-secondary text-white">
+      <div className="max-w-2xl mx-auto px-4 py-12 md:px-6">
         <div className="flex items-center justify-center mb-6">
           <Logo size="lg" alt="Alto HR" />
         </div>
         <div className="flex items-center gap-3 mb-2">
-          <ShieldQuestion className="h-7 w-7 text-blue-300" />
-          <h1 className="text-2xl font-semibold">Confidential Reporting</h1>
+          <ShieldQuestion className="h-7 w-7 text-gold" />
+          <h1 className="font-display text-2xl md:text-3xl text-white">
+            Confidential Reporting
+          </h1>
         </div>
         <p className="text-sm text-silver mb-8">
           Report concerns anonymously. We never see your identity unless you
@@ -49,32 +56,26 @@ export function HotlinePage() {
           you can follow up later.
         </p>
 
-        <div className="flex gap-2 mb-6 border-b border-navy-secondary">
-          <button
-            className={`px-4 py-2 text-sm border-b-2 -mb-px ${
-              mode === 'file'
-                ? 'border-blue-300 text-white'
-                : 'border-transparent text-silver hover:text-white'
-            }`}
+        <div
+          role="tablist"
+          aria-label="Report mode"
+          className="flex gap-2 mb-6 border-b border-navy-secondary"
+        >
+          <TabButton
+            active={mode === 'file'}
             onClick={() => {
               setMode('file');
               setFiled(null);
             }}
-          >
-            <FileText className="inline-block h-4 w-4 mr-2" />
-            File a report
-          </button>
-          <button
-            className={`px-4 py-2 text-sm border-b-2 -mb-px ${
-              mode === 'lookup'
-                ? 'border-blue-300 text-white'
-                : 'border-transparent text-silver hover:text-white'
-            }`}
+            icon={FileText}
+            label="File a report"
+          />
+          <TabButton
+            active={mode === 'lookup'}
             onClick={() => setMode('lookup')}
-          >
-            <Search className="inline-block h-4 w-4 mr-2" />
-            Look up a report
-          </button>
+            icon={Search}
+            label="Look up a report"
+          />
         </div>
 
         {mode === 'file' ? (
@@ -135,11 +136,21 @@ function FileForm({ onFiled }: { onFiled: (code: string) => void }) {
   };
 
   return (
-    <div className="space-y-4">
+    <form
+      className="space-y-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void submit();
+      }}
+      noValidate
+    >
       <div>
-        <label className="block text-sm font-medium mb-1">Category</label>
+        <Label htmlFor="report-category" required>
+          Category
+        </Label>
         <select
-          className="w-full bg-midnight border border-navy-secondary rounded p-2 text-white"
+          id="report-category"
+          className="w-full h-10 px-3 rounded-md bg-navy border border-navy-secondary text-white text-sm focus:outline-none focus:ring-2 focus:ring-gold-bright focus:border-transparent"
           value={category}
           onChange={(e) => setCategory(e.target.value as ReportCategory)}
         >
@@ -152,55 +163,63 @@ function FileForm({ onFiled }: { onFiled: (code: string) => void }) {
       </div>
 
       <div>
-        <label className="block text-sm font-medium mb-1">Subject</label>
-        <input
-          className="w-full bg-midnight border border-navy-secondary rounded p-2 text-white"
+        <Label htmlFor="report-subject" required>
+          Subject
+        </Label>
+        <Input
+          id="report-subject"
           value={subject}
           onChange={(e) => setSubject(e.target.value)}
           placeholder="Short headline of the concern"
           maxLength={200}
+          required
         />
       </div>
 
       <div>
-        <label className="block text-sm font-medium mb-1">What happened?</label>
-        <textarea
-          className="w-full h-40 bg-midnight border border-navy-secondary rounded p-2 text-white text-sm"
+        <Label htmlFor="report-description" required>
+          What happened?
+        </Label>
+        <Textarea
+          id="report-description"
+          rows={8}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="Describe the events, who was involved, when and where it happened. Be as specific as you can — but do not include your own name unless you choose to."
           maxLength={20000}
+          required
         />
-        <div className="text-xs text-silver mt-1">
-          {description.length} / 20,000 characters
-        </div>
+        <FormHint>{description.length} / 20,000 characters</FormHint>
       </div>
 
       <div>
-        <label className="block text-sm font-medium mb-1">
-          Contact email <span className="text-silver">(optional)</span>
-        </label>
-        <input
+        <Label htmlFor="report-contact">
+          Contact email <span className="text-silver/70">(optional)</span>
+        </Label>
+        <Input
+          id="report-contact"
           type="email"
-          className="w-full bg-midnight border border-navy-secondary rounded p-2 text-white"
           value={contactEmail}
           onChange={(e) => setContactEmail(e.target.value)}
           placeholder="leave blank to stay fully anonymous"
+          autoComplete="email"
         />
-        <div className="text-xs text-silver mt-1">
+        <FormHint>
           Only fill this in if you want HR to be able to reach you directly.
           You can still follow up using your tracking code without it.
-        </div>
+        </FormHint>
       </div>
 
-      <button
-        className="w-full bg-blue-600 hover:bg-blue-500 text-white rounded py-2.5 text-sm font-medium disabled:opacity-50"
-        onClick={submit}
+      <Button
+        type="submit"
+        size="lg"
+        className="w-full"
+        loading={busy}
         disabled={busy}
       >
         {busy ? 'Submitting…' : 'Submit report'}
-      </button>
-    </div>
+      </Button>
+    </form>
   );
 }
 
@@ -215,15 +234,15 @@ function FiledConfirmation({
 }) {
   return (
     <div className="space-y-4">
-      <div className="rounded border border-green-700 bg-green-900/20 p-4">
-        <div className="text-sm font-semibold text-green-300 mb-2">
+      <div className="rounded-md border border-success/40 bg-success/10 p-4">
+        <div className="text-sm font-semibold text-success mb-2">
           Report received.
         </div>
         <div className="text-sm text-white mb-3">
           Save this tracking code. It is the only way to check status or send
           follow-up messages later.
         </div>
-        <div className="font-mono text-xl tracking-wider bg-midnight border border-navy-secondary rounded p-3 text-center">
+        <div className="font-mono text-xl tracking-wider bg-navy border border-navy-secondary rounded-md p-3 text-center select-all">
           {code}
         </div>
       </div>
@@ -231,19 +250,13 @@ function FiledConfirmation({
         Write it down or screenshot this screen now. We cannot recover the code
         if you lose it.
       </div>
-      <div className="flex gap-2">
-        <button
-          className="flex-1 bg-blue-600 hover:bg-blue-500 text-white rounded py-2 text-sm"
-          onClick={onLookup}
-        >
+      <div className="flex flex-col sm:flex-row gap-2">
+        <Button onClick={onLookup} className="flex-1">
           Check status now
-        </button>
-        <button
-          className="flex-1 bg-navy-secondary hover:bg-navy text-white rounded py-2 text-sm"
-          onClick={onAnother}
-        >
+        </Button>
+        <Button variant="ghost" onClick={onAnother} className="flex-1">
           File another
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -294,27 +307,38 @@ function LookupForm() {
 
   if (!report) {
     return (
-      <div className="space-y-4">
+      <form
+        className="space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void lookup();
+        }}
+        noValidate
+      >
         <div>
-          <label className="block text-sm font-medium mb-1">
+          <Label htmlFor="tracking-code" required>
             Tracking code
-          </label>
-          <input
-            className="w-full bg-midnight border border-navy-secondary rounded p-2 text-white font-mono tracking-wider uppercase"
+          </Label>
+          <Input
+            id="tracking-code"
             value={code}
             onChange={(e) => setCode(e.target.value.toUpperCase())}
             placeholder="e.g. 7K2P9XQR3WN5HT4M"
             maxLength={32}
+            className="font-mono tracking-wider uppercase"
+            autoComplete="off"
           />
         </div>
-        <button
-          className="w-full bg-blue-600 hover:bg-blue-500 text-white rounded py-2.5 text-sm font-medium disabled:opacity-50"
-          onClick={lookup}
+        <Button
+          type="submit"
+          size="lg"
+          className="w-full"
+          loading={busy}
           disabled={busy}
         >
           {busy ? 'Looking up…' : 'Look up'}
-        </button>
-      </div>
+        </Button>
+      </form>
     );
   }
 
@@ -328,12 +352,12 @@ function LookupForm() {
           ← Back
         </button>
       </div>
-      <div className="rounded border border-navy-secondary p-4 space-y-2">
+      <div className="rounded-md border border-navy-secondary bg-navy/40 p-4 space-y-2">
         <div className="flex items-start justify-between gap-3">
           <div className="text-base font-semibold">{report.subject}</div>
-          <span className="text-xs px-2 py-1 rounded bg-blue-900/40 text-blue-200 whitespace-nowrap">
+          <Badge variant="default" className="shrink-0">
             {report.status}
-          </span>
+          </Badge>
         </div>
         <div className="text-xs text-silver">
           {CATEGORY_LABELS[report.category]} · Filed{' '}
@@ -344,7 +368,7 @@ function LookupForm() {
         </div>
         {report.resolution && (
           <div className="mt-3 pt-3 border-t border-navy-secondary">
-            <div className="text-xs font-semibold text-green-300 mb-1">
+            <div className="text-xs font-semibold text-success mb-1">
               Resolution
             </div>
             <div className="text-sm text-white whitespace-pre-wrap">
@@ -365,11 +389,12 @@ function LookupForm() {
             {report.updates.map((u) => (
               <div
                 key={u.id}
-                className={`rounded p-3 text-sm ${
+                className={cn(
+                  'rounded-md p-3 text-sm border',
                   u.isFromReporter
-                    ? 'bg-blue-900/30 border border-blue-700/30'
-                    : 'bg-navy-secondary'
-                }`}
+                    ? 'bg-gold/10 border-gold/30'
+                    : 'bg-navy-secondary border-navy-secondary',
+                )}
               >
                 <div className="text-xs text-silver mb-1">
                   {u.isFromReporter ? 'You' : 'HR'} ·{' '}
@@ -384,25 +409,51 @@ function LookupForm() {
 
       {report.status !== 'CLOSED' && (
         <div className="space-y-2 pt-4 border-t border-navy-secondary">
-          <label className="block text-sm font-medium">
-            Add a follow-up message
-          </label>
-          <textarea
-            className="w-full h-24 bg-midnight border border-navy-secondary rounded p-2 text-white text-sm"
+          <Label htmlFor="reply-body">Add a follow-up message</Label>
+          <Textarea
+            id="reply-body"
+            rows={4}
             value={reply}
             onChange={(e) => setReply(e.target.value)}
             placeholder="Additional details, questions for HR…"
             maxLength={20000}
           />
-          <button
-            className="bg-blue-600 hover:bg-blue-500 text-white rounded px-4 py-2 text-sm disabled:opacity-50"
-            onClick={sendReply}
+          <Button
+            onClick={() => void sendReply()}
+            loading={busy}
             disabled={busy || !reply.trim()}
           >
             Send
-          </button>
+          </Button>
         </div>
       )}
     </div>
+  );
+}
+
+interface TabButtonProps {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+}
+
+function TabButton({ active, onClick, icon: Icon, label }: TabButtonProps) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={cn(
+        'inline-flex items-center gap-2 px-4 py-2 text-sm border-b-2 -mb-px transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded-t',
+        active
+          ? 'border-gold text-white'
+          : 'border-transparent text-silver hover:text-white',
+      )}
+    >
+      <Icon className="h-4 w-4" />
+      {label}
+    </button>
   );
 }

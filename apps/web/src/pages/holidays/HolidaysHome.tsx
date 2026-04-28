@@ -208,7 +208,7 @@ export function HolidaysHome() {
                                 );
                               }
                             }}
-                            className="opacity-0 group-hover:opacity-100 text-silver hover:text-destructive transition"
+                            className="opacity-60 group-hover:opacity-100 text-silver hover:text-destructive transition"
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>

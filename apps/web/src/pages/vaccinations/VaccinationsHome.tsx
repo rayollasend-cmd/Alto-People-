@@ -225,7 +225,7 @@ export function VaccinationsHome() {
                                 );
                               }
                             }}
-                            className="opacity-0 group-hover:opacity-100 text-silver hover:text-destructive"
+                            className="opacity-60 group-hover:opacity-100 text-silver hover:text-destructive"
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>

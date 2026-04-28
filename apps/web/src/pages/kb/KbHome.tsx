@@ -305,7 +305,7 @@ export function KbHome() {
                               );
                             }
                           }}
-                          className="text-silver hover:text-destructive opacity-0 group-hover:opacity-100"
+                          className="text-silver hover:text-destructive opacity-60 group-hover:opacity-100"
                         >
                           <Trash2 className="h-4 w-4 inline" />
                         </button>

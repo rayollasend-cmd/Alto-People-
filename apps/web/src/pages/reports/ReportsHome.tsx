@@ -142,7 +142,7 @@ export function ReportsHome() {
                       </Button>
                       <button
                         onClick={() => onDelete(r.id)}
-                        className="opacity-0 group-hover:opacity-100 text-silver hover:text-destructive transition text-xs"
+                        className="opacity-60 group-hover:opacity-100 text-silver hover:text-destructive transition text-xs"
                       >
                         <Trash2 className="inline h-3 w-3" />
                       </button>

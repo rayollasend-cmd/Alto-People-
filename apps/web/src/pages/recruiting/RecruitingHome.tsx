@@ -345,129 +345,121 @@ export function RecruitingHome() {
             />
           )}
           {view === 'list' && candidates && candidates.length > 0 && (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Position</TableHead>
-                  <TableHead>Source</TableHead>
-                  <TableHead>Stage</TableHead>
-                  {canManage && <TableHead className="text-right">Actions</TableHead>}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+            <>
+              {/* Desktop: dense 6-col table. Hidden below lg because the
+                  combined width (Name + Email + Position + Source + Stage
+                  + Actions) becomes illegible at iPad-portrait widths. */}
+              <div className="hidden lg:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Email</TableHead>
+                      <TableHead>Position</TableHead>
+                      <TableHead>Source</TableHead>
+                      <TableHead>Stage</TableHead>
+                      {canManage && (
+                        <TableHead className="text-right">Actions</TableHead>
+                      )}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {candidates.map((c) => (
+                      <TableRow key={c.id} className="group">
+                        <TableCell className="font-medium">
+                          <CandidateNameCell c={c} />
+                        </TableCell>
+                        <TableCell className="text-silver">{c.email}</TableCell>
+                        <TableCell className="text-silver">
+                          {c.position ?? '—'}
+                        </TableCell>
+                        <TableCell className="text-silver">
+                          {c.source ?? '—'}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={STAGE_VARIANT[c.stage]}>{c.stage}</Badge>
+                          {c.rejectedReason && (
+                            <div className="text-[10px] mt-1 text-alert">
+                              {c.rejectedReason}
+                            </div>
+                          )}
+                          {c.withdrawnReason && (
+                            <div className="text-[10px] mt-1 text-silver">
+                              {c.withdrawnReason}
+                            </div>
+                          )}
+                        </TableCell>
+                        {canManage && (
+                          <TableCell className="text-right whitespace-nowrap">
+                            <CandidateActions
+                              c={c}
+                              pendingId={pendingId}
+                              onAdvance={advance}
+                              onRequest={(kind) =>
+                                setDialog({ kind, candidate: c })
+                              }
+                            />
+                          </TableCell>
+                        )}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Mobile / iPad portrait: card stack. Same data, vertical
+                  layout, action buttons always visible (no hover gating). */}
+              <ul className="lg:hidden space-y-2">
                 {candidates.map((c) => (
-                  <TableRow key={c.id} className="group">
-                    <TableCell className="font-medium">
-                      <div className="flex items-center gap-2.5">
-                        <Avatar
-                          name={`${c.firstName} ${c.lastName}`}
-                          email={c.email}
-                          size="sm"
-                        />
-                        <span>{c.firstName} {c.lastName}</span>
-                        {c.resumeUrl && (
-                          <a
-                            href={c.resumeUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            title="Resume"
-                            aria-label="Open resume in a new tab"
-                            className="text-silver/70 hover:text-gold transition-colors"
-                          >
-                            <FileText className="h-3.5 w-3.5" />
-                          </a>
-                        )}
-                        {c.linkedinUrl && (
-                          <a
-                            href={c.linkedinUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            title="LinkedIn"
-                            aria-label="Open LinkedIn profile in a new tab"
-                            className="text-silver/70 hover:text-gold transition-colors"
-                          >
-                            <Link2 className="h-3.5 w-3.5" />
-                          </a>
-                        )}
+                  <li
+                    key={c.id}
+                    className="rounded-md border border-navy-secondary bg-navy/40 p-3"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <CandidateNameCell c={c} />
+                      <Badge
+                        variant={STAGE_VARIANT[c.stage]}
+                        className="shrink-0"
+                      >
+                        {c.stage}
+                      </Badge>
+                    </div>
+                    <div className="mt-1.5 ml-[2.4rem] text-[12px] text-silver/80 truncate">
+                      {c.email}
+                    </div>
+                    {(c.position || c.source) && (
+                      <div className="mt-0.5 ml-[2.4rem] text-[11px] text-silver/70 truncate">
+                        {c.position ?? '—'}
+                        <span className="mx-1.5 text-silver/40">·</span>
+                        {c.source ?? 'manual'}
                       </div>
-                    </TableCell>
-                    <TableCell className="text-silver">{c.email}</TableCell>
-                    <TableCell className="text-silver">{c.position ?? '—'}</TableCell>
-                    <TableCell className="text-silver">{c.source ?? '—'}</TableCell>
-                    <TableCell>
-                      <Badge variant={STAGE_VARIANT[c.stage]}>{c.stage}</Badge>
-                      {c.rejectedReason && (
-                        <div className="text-[10px] mt-1 text-alert">
-                          {c.rejectedReason}
-                        </div>
-                      )}
-                      {c.withdrawnReason && (
-                        <div className="text-[10px] mt-1 text-silver">
-                          {c.withdrawnReason}
-                        </div>
-                      )}
-                    </TableCell>
-                    {canManage && (
-                      <TableCell className="text-right whitespace-nowrap">
-                        <div className="inline-flex gap-1.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
-                          {NEXT_STAGE[c.stage] && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => advance(c, NEXT_STAGE[c.stage]!)}
-                              loading={pendingId === c.id}
-                              disabled={pendingId === c.id}
-                            >
-                              {NEXT_STAGE[c.stage]}
-                              <ArrowRight className="h-3.5 w-3.5" />
-                            </Button>
-                          )}
-                          {c.stage === 'OFFER' && (
-                            <Button
-                              size="sm"
-                              variant="primary"
-                              onClick={() => setDialog({ kind: 'hire', candidate: c })}
-                              disabled={pendingId === c.id}
-                            >
-                              Hire
-                            </Button>
-                          )}
-                          {c.stage !== 'HIRED' &&
-                            c.stage !== 'REJECTED' &&
-                            c.stage !== 'WITHDRAWN' && (
-                              <>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() =>
-                                    setDialog({ kind: 'withdraw', candidate: c })
-                                  }
-                                  disabled={pendingId === c.id}
-                                >
-                                  Withdraw
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  className="text-alert hover:text-alert hover:bg-alert/10"
-                                  onClick={() =>
-                                    setDialog({ kind: 'reject', candidate: c })
-                                  }
-                                  disabled={pendingId === c.id}
-                                >
-                                  Reject
-                                </Button>
-                              </>
-                            )}
-                        </div>
-                      </TableCell>
                     )}
-                  </TableRow>
+                    {c.rejectedReason && (
+                      <div className="mt-2 ml-[2.4rem] text-[11px] text-alert/90">
+                        {c.rejectedReason}
+                      </div>
+                    )}
+                    {c.withdrawnReason && (
+                      <div className="mt-2 ml-[2.4rem] text-[11px] text-silver/70">
+                        {c.withdrawnReason}
+                      </div>
+                    )}
+                    {canManage && (
+                      <div className="mt-3 flex flex-wrap gap-2 ml-[2.4rem]">
+                        <CandidateActions
+                          c={c}
+                          pendingId={pendingId}
+                          onAdvance={advance}
+                          onRequest={(kind) =>
+                            setDialog({ kind, candidate: c })
+                          }
+                        />
+                      </div>
+                    )}
+                  </li>
                 ))}
-              </TableBody>
-            </Table>
+              </ul>
+            </>
           )}
         </CardContent>
       </Card>
@@ -528,6 +520,109 @@ export function RecruitingHome() {
         busy={pendingId !== null}
         onConfirm={onConfirmHire}
       />
+    </div>
+  );
+}
+
+function CandidateNameCell({ c }: { c: Candidate }) {
+  return (
+    <div className="flex items-center gap-2.5 min-w-0">
+      <Avatar
+        name={`${c.firstName} ${c.lastName}`}
+        email={c.email}
+        size="sm"
+      />
+      <span className="truncate">
+        {c.firstName} {c.lastName}
+      </span>
+      {c.resumeUrl && (
+        <a
+          href={c.resumeUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Resume"
+          aria-label="Open resume in a new tab"
+          className="text-silver/70 hover:text-gold transition-colors shrink-0"
+        >
+          <FileText className="h-3.5 w-3.5" />
+        </a>
+      )}
+      {c.linkedinUrl && (
+        <a
+          href={c.linkedinUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="LinkedIn"
+          aria-label="Open LinkedIn profile in a new tab"
+          className="text-silver/70 hover:text-gold transition-colors shrink-0"
+        >
+          <Link2 className="h-3.5 w-3.5" />
+        </a>
+      )}
+    </div>
+  );
+}
+
+function CandidateActions({
+  c,
+  pendingId,
+  onAdvance,
+  onRequest,
+}: {
+  c: Candidate;
+  pendingId: string | null;
+  onAdvance: (c: Candidate, target: CandidateStage) => void;
+  onRequest: (kind: 'reject' | 'withdraw' | 'hire') => void;
+}) {
+  const next = NEXT_STAGE[c.stage];
+  const isClosed =
+    c.stage === 'HIRED' || c.stage === 'REJECTED' || c.stage === 'WITHDRAWN';
+  const isPending = pendingId === c.id;
+  return (
+    <div className="inline-flex flex-wrap gap-1.5">
+      {next && (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => onAdvance(c, next)}
+          loading={isPending}
+          disabled={isPending}
+        >
+          {next}
+          <ArrowRight className="h-3.5 w-3.5" />
+        </Button>
+      )}
+      {c.stage === 'OFFER' && (
+        <Button
+          size="sm"
+          variant="primary"
+          onClick={() => onRequest('hire')}
+          disabled={isPending}
+        >
+          Hire
+        </Button>
+      )}
+      {!isClosed && (
+        <>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => onRequest('withdraw')}
+            disabled={isPending}
+          >
+            Withdraw
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-alert hover:text-alert hover:bg-alert/10"
+            onClick={() => onRequest('reject')}
+            disabled={isPending}
+          >
+            Reject
+          </Button>
+        </>
+      )}
     </div>
   );
 }

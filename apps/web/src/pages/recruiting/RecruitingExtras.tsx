@@ -160,7 +160,7 @@ function KitsTab({ canManage }: { canManage: boolean }) {
                       {canManage && (
                         <button
                           onClick={() => onDelete(k.id)}
-                          className="opacity-0 group-hover:opacity-100 text-silver hover:text-destructive transition text-xs"
+                          className="opacity-60 group-hover:opacity-100 text-silver hover:text-destructive transition text-xs"
                         >
                           Delete
                         </button>
@@ -849,7 +849,7 @@ function PostingsTab({ canManage }: { canManage: boolean }) {
                       {canManage && (
                         <button
                           onClick={() => onDelete(p.id)}
-                          className="opacity-0 group-hover:opacity-100 text-silver hover:text-destructive transition text-xs"
+                          className="opacity-60 group-hover:opacity-100 text-silver hover:text-destructive transition text-xs"
                         >
                           Delete
                         </button>

@@ -193,7 +193,7 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
                               toast.error(err instanceof ApiError ? err.message : 'Failed.');
                             }
                           }}
-                          className="opacity-0 group-hover:opacity-100 text-silver hover:text-destructive transition text-xs"
+                          className="opacity-60 group-hover:opacity-100 text-silver hover:text-destructive transition text-xs"
                         >
                           Delete
                         </button>

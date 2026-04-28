@@ -117,8 +117,8 @@ export function ProfileInfoTask() {
           />
         </Field>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <div className="col-span-2">
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+          <div className="sm:col-span-2">
             <Field label="City">
               <input
                 type="text"

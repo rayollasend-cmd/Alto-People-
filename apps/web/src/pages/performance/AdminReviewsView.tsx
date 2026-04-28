@@ -194,7 +194,7 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
                       </span>
                       <Badge variant={statusVariant(r.status)}>{r.status}</Badge>
                       {canManage && r.status === 'DRAFT' && (
-                        <div className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+                        <div className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                           <Button
                             size="sm"
                             variant="outline"

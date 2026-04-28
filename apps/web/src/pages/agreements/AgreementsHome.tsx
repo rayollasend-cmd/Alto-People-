@@ -273,7 +273,7 @@ export function AgreementsHome() {
                                   );
                                 }
                               }}
-                              className="text-xs text-silver hover:text-amber-400 opacity-0 group-hover:opacity-100"
+                              className="text-xs text-silver hover:text-amber-400 opacity-60 group-hover:opacity-100"
                             >
                               Expire
                             </button>
@@ -294,7 +294,7 @@ export function AgreementsHome() {
                                 );
                               }
                             }}
-                            className="text-silver hover:text-destructive opacity-0 group-hover:opacity-100"
+                            className="text-silver hover:text-destructive opacity-60 group-hover:opacity-100"
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>

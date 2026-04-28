@@ -176,7 +176,7 @@ function KeysTab({ canManage }: { canManage: boolean }) {
                       {canManage && (
                         <button
                           onClick={() => onDelete(k.id)}
-                          className="opacity-0 group-hover:opacity-100 text-silver hover:text-destructive transition text-xs"
+                          className="opacity-60 group-hover:opacity-100 text-silver hover:text-destructive transition text-xs"
                         >
                           Delete
                         </button>
@@ -434,7 +434,7 @@ function WebhooksTab({ canManage }: { canManage: boolean }) {
                           </Button>
                           <button
                             onClick={() => onDelete(w.id)}
-                            className="opacity-0 group-hover:opacity-100 text-silver hover:text-destructive transition text-xs"
+                            className="opacity-60 group-hover:opacity-100 text-silver hover:text-destructive transition text-xs"
                           >
                             Delete
                           </button>

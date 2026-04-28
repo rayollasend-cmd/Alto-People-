@@ -125,7 +125,7 @@ export function W4Task() {
           I have multiple jobs or my spouse works (check Step 2 box)
         </label>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Field label="Dependents amount ($)">
             <input
               type="number"

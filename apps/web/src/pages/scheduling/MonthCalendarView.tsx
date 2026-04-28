@@ -370,7 +370,7 @@ function DayCell({
             <button
               type="button"
               onClick={() => onCellCreate(date)}
-              className="text-silver/30 hover:text-gold transition-colors opacity-0 group-hover:opacity-100 no-print"
+              className="text-silver/30 hover:text-gold transition-colors opacity-60 group-hover:opacity-100 no-print"
               aria-label={`Add shift on ${date.toLocaleDateString()}`}
               title="Add shift"
             >
@@ -400,7 +400,7 @@ function DayCell({
         <button
           type="button"
           onClick={() => onCellCreate(date)}
-          className="absolute inset-x-1.5 bottom-1.5 top-7 text-silver/30 hover:text-gold flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity no-print"
+          className="absolute inset-x-1.5 bottom-1.5 top-7 text-silver/30 hover:text-gold flex items-center justify-center text-[10px] opacity-60 group-hover:opacity-100 transition-opacity no-print"
           aria-label="Add shift"
         >
           <Plus className="h-3 w-3 mr-1" />

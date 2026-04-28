@@ -100,7 +100,7 @@ export function CelebrationsHome() {
                         <Badge variant={c.kind === 'BIRTHDAY' ? 'pending' : 'accent'}>
                           {c.kind === 'BIRTHDAY' ? 'Birthday' : 'Anniversary'}
                         </Badge>
-                        <Send className="h-4 w-4 text-silver opacity-0 group-hover:opacity-100 transition" />
+                        <Send className="h-4 w-4 text-silver opacity-60 group-hover:opacity-100 transition" />
                       </button>
                     ))}
                   </div>

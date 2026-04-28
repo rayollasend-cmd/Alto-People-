@@ -68,10 +68,23 @@ export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
             const isLast = i === breadcrumbs.length - 1;
             const segClasses = cn(
               'truncate',
-              isLast ? 'font-display text-base md:text-lg text-white' : 'text-silver'
+              isLast
+                ? 'font-display text-base md:text-lg text-white'
+                : 'text-silver'
             );
+            // On phones we collapse intermediate crumbs and only show the
+            // current page (last segment). On sm+ the full trail renders.
+            // Without this, six 4-character truncated crumbs eat the whole
+            // header and nothing is readable.
+            const hideOnMobile = !isLast;
             return (
-              <span key={`${seg.label}-${i}`} className="flex items-center gap-1 min-w-0">
+              <span
+                key={`${seg.label}-${i}`}
+                className={cn(
+                  'flex items-center gap-1 min-w-0',
+                  hideOnMobile && 'hidden sm:inline-flex',
+                )}
+              >
                 {seg.to && !isLast ? (
                   <Link
                     to={seg.to}
@@ -142,7 +155,7 @@ export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="md:hidden grid place-items-center h-8 w-8 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                className="md:hidden grid place-items-center h-11 w-11 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
                 aria-label="Account menu"
               >
                 <Avatar

@@ -729,7 +729,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                         </TableCell>
                         {canManage && (
                           <TableCell className="text-right whitespace-nowrap">
-                            <div className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity inline-flex items-center gap-1">
+                            <div className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity inline-flex items-center gap-1">
                               {(e.status === 'COMPLETED' || e.status === 'REJECTED') && (
                                 <Button
                                   size="sm"

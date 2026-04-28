@@ -260,96 +260,172 @@ export function PeopleDirectory() {
       )}
 
       {rows && rows.length > 0 && (
-        <Card className="overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead>Associate</TableHead>
-                <TableHead className="w-28">Status</TableHead>
-                <TableHead>Workplace</TableHead>
-                <TableHead className="hidden md:table-cell">Position</TableHead>
-                <TableHead className="hidden lg:table-cell w-24">Type</TableHead>
-                <TableHead className="hidden lg:table-cell">Pay rate</TableHead>
-                <TableHead className="hidden xl:table-cell">Manager</TableHead>
-                <TableHead className="hidden xl:table-cell w-24">Start</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((r) => (
-                <TableRow
-                  key={r.id}
-                  className="cursor-pointer"
+        <>
+          {/* md+ : columnar table. Columns reveal progressively as
+              viewport widens (md: Position, lg: Type + Pay, xl: Manager
+              + Start). */}
+          <Card className="overflow-hidden hidden md:block">
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>Associate</TableHead>
+                  <TableHead className="w-28">Status</TableHead>
+                  <TableHead>Workplace</TableHead>
+                  <TableHead className="hidden md:table-cell">Position</TableHead>
+                  <TableHead className="hidden lg:table-cell w-24">Type</TableHead>
+                  <TableHead className="hidden lg:table-cell">Pay rate</TableHead>
+                  <TableHead className="hidden xl:table-cell">Manager</TableHead>
+                  <TableHead className="hidden xl:table-cell w-24">Start</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.map((r) => (
+                  <TableRow
+                    key={r.id}
+                    className="cursor-pointer"
+                    onClick={() => setTarget(r)}
+                  >
+                    <TableCell>
+                      <div className="flex items-center gap-2.5">
+                        <Avatar
+                          src={r.photoUrl}
+                          name={`${r.firstName} ${r.lastName}`}
+                          email={r.email}
+                          size="sm"
+                        />
+                        <div className="min-w-0">
+                          <div className="font-medium text-white truncate">
+                            {r.firstName} {r.lastName}
+                          </div>
+                          <div className="text-xs text-silver truncate">
+                            {r.email}
+                          </div>
+                        </div>
+                        {r.j1Status && (
+                          <Badge variant="default" className="ml-1 text-[10px]">
+                            J-1
+                          </Badge>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Badge variant={STATUS_VARIANT[r.status]}>
+                          {STATUS_LABEL[r.status]}
+                        </Badge>
+                        {r.status === 'PENDING' &&
+                          r.onboardingPercent !== null && (
+                            <span className="text-[10px] tabular-nums text-silver">
+                              {r.onboardingPercent}%
+                            </span>
+                          )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-silver">
+                      {r.workplaceClientId && r.workplaceClientName ? (
+                        <Link
+                          to={`/clients/${r.workplaceClientId}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="hover:text-white inline-flex items-center gap-1.5"
+                        >
+                          <Building2 className="h-3.5 w-3.5" />
+                          <span className="truncate">
+                            {r.workplaceClientName}
+                          </span>
+                        </Link>
+                      ) : (
+                        <span className="text-silver/40">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell text-silver">
+                      {r.position ?? <span className="text-silver/40">—</span>}
+                    </TableCell>
+                    <TableCell className="hidden lg:table-cell text-xs text-silver">
+                      {EMPLOYMENT_LABEL[r.employmentType] ?? r.employmentType}
+                    </TableCell>
+                    <TableCell className="hidden lg:table-cell text-silver tabular-nums">
+                      {fmtPay(r.payAmount, r.payType, r.payCurrency)}
+                    </TableCell>
+                    <TableCell className="hidden xl:table-cell text-silver">
+                      {r.managerName ?? (
+                        <span className="text-silver/40">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="hidden xl:table-cell text-silver text-xs tabular-nums">
+                      {r.startDate ?? <span className="text-silver/40">—</span>}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
+
+          {/* Phone: card stack. Tap card → drawer (same as table click). */}
+          <ul className="md:hidden space-y-2">
+            {rows.map((r) => (
+              <li key={r.id}>
+                <button
+                  type="button"
                   onClick={() => setTarget(r)}
+                  className="w-full text-left rounded-md border border-navy-secondary bg-navy/40 p-3 hover:border-silver/40 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
                 >
-                  <TableCell>
-                    <div className="flex items-center gap-2.5">
-                      <Avatar
-                        src={r.photoUrl}
-                        name={`${r.firstName} ${r.lastName}`}
-                        email={r.email}
-                        size="sm"
-                      />
-                      <div className="min-w-0">
+                  <div className="flex items-start gap-2.5">
+                    <Avatar
+                      src={r.photoUrl}
+                      name={`${r.firstName} ${r.lastName}`}
+                      email={r.email}
+                      size="sm"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start justify-between gap-2">
                         <div className="font-medium text-white truncate">
                           {r.firstName} {r.lastName}
                         </div>
-                        <div className="text-xs text-silver truncate">
-                          {r.email}
-                        </div>
+                        <Badge
+                          variant={STATUS_VARIANT[r.status]}
+                          className="shrink-0"
+                        >
+                          {STATUS_LABEL[r.status]}
+                        </Badge>
                       </div>
+                      <div className="text-xs text-silver truncate">
+                        {r.email}
+                      </div>
+                      {(r.workplaceClientName || r.position) && (
+                        <div className="mt-1 text-[11px] text-silver/80 truncate">
+                          {r.workplaceClientName && (
+                            <span className="inline-flex items-center gap-1">
+                              <Building2 className="h-3 w-3" />
+                              {r.workplaceClientName}
+                            </span>
+                          )}
+                          {r.workplaceClientName && r.position && (
+                            <span className="mx-1.5 text-silver/40">·</span>
+                          )}
+                          {r.position}
+                        </div>
+                      )}
+                      {r.status === 'PENDING' &&
+                        r.onboardingPercent !== null && (
+                          <div className="mt-1 text-[10px] tabular-nums text-silver">
+                            Onboarding {r.onboardingPercent}%
+                          </div>
+                        )}
                       {r.j1Status && (
-                        <Badge variant="default" className="ml-1 text-[10px]">
+                        <Badge
+                          variant="default"
+                          className="mt-1.5 text-[10px]"
+                        >
                           J-1
                         </Badge>
                       )}
                     </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <Badge variant={STATUS_VARIANT[r.status]}>
-                        {STATUS_LABEL[r.status]}
-                      </Badge>
-                      {r.status === 'PENDING' && r.onboardingPercent !== null && (
-                        <span className="text-[10px] tabular-nums text-silver">
-                          {r.onboardingPercent}%
-                        </span>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-silver">
-                    {r.workplaceClientId && r.workplaceClientName ? (
-                      <Link
-                        to={`/clients/${r.workplaceClientId}`}
-                        onClick={(e) => e.stopPropagation()}
-                        className="hover:text-white inline-flex items-center gap-1.5"
-                      >
-                        <Building2 className="h-3.5 w-3.5" />
-                        <span className="truncate">{r.workplaceClientName}</span>
-                      </Link>
-                    ) : (
-                      <span className="text-silver/40">—</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell text-silver">
-                    {r.position ?? <span className="text-silver/40">—</span>}
-                  </TableCell>
-                  <TableCell className="hidden lg:table-cell text-xs text-silver">
-                    {EMPLOYMENT_LABEL[r.employmentType] ?? r.employmentType}
-                  </TableCell>
-                  <TableCell className="hidden lg:table-cell text-silver tabular-nums">
-                    {fmtPay(r.payAmount, r.payType, r.payCurrency)}
-                  </TableCell>
-                  <TableCell className="hidden xl:table-cell text-silver">
-                    {r.managerName ?? <span className="text-silver/40">—</span>}
-                  </TableCell>
-                  <TableCell className="hidden xl:table-cell text-silver text-xs tabular-nums">
-                    {r.startDate ?? <span className="text-silver/40">—</span>}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </Card>
+                  </div>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
 
       <Drawer
