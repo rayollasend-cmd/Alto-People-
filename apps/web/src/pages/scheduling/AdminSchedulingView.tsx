@@ -53,6 +53,7 @@ import {
   type SchedulingKpis,
 } from '@/lib/schedulingApi';
 import { apiFetch, ApiError } from '@/lib/api';
+import { useConfirm } from '@/lib/confirm';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -216,6 +217,7 @@ function parseView(raw: string | null): ViewMode {
 }
 
 export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
+  const confirm = useConfirm();
   const [searchParams, setSearchParams] = useSearchParams();
   // View mode persists in the URL so deep links stay stable.
   const view: ViewMode = parseView(searchParams.get('view'));
@@ -288,7 +290,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
 
   const onCopyWeekToNext = async () => {
     if (copyingWeek) return;
-    if (!confirm('Copy every non-cancelled shift from this week into next week as drafts?')) return;
+    if (!window.confirm('Copy every non-cancelled shift from this week into next week as drafts?')) return;
     setCopyingWeek(true);
     try {
       const target = shiftWeek(weekStart, 1);
@@ -517,12 +519,12 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
 
   const onPublishWeek = async () => {
     if (publishing) return;
-    if (
-      !confirm(
-        `Publish ${draftsInWeek} draft shift${draftsInWeek === 1 ? '' : 's'} for this week? Drafts in fair-workweek states inside the 14-day window will be skipped — you can add a late-notice reason on those individually.`
-      )
-    )
-      return;
+    const ok = await confirm({
+      title: `Publish ${draftsInWeek} draft shift${draftsInWeek === 1 ? '' : 's'}?`,
+      description: `Assigned associates will be notified. Drafts inside a fair-workweek state's 14-day notice window will be skipped — open those individually to add a late-notice reason before publishing.`,
+      confirmLabel: 'Publish week',
+    });
+    if (!ok) return;
     setPublishing(true);
     try {
       const res = await publishWeek({

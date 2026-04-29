@@ -1564,6 +1564,11 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
       publishable.push(s);
     }
 
+    // Bucket publishable shifts by assignee so we can send ONE digest
+    // notification per associate at the end. Without this, a person with
+    // five shifts in the published week would get five push pings — fine
+    // for a single change, spammy on a batch publish.
+    const perAssociate = new Map<string, typeof publishable>();
     let publishedCount = 0;
     for (const s of publishable) {
       const nextStatus = s.assignedAssociateId ? 'ASSIGNED' : 'OPEN';
@@ -1580,20 +1585,40 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
         req,
       });
       if (s.assignedAssociateId) {
-        await notifyShift(prisma, {
-          associateId: s.assignedAssociateId,
-          subject: 'Shift published',
-          body: `Now on your schedule: ${formatShiftLine({
-            position: s.position,
-            clientName: s.client?.name ?? null,
-            startsAt: s.startsAt,
-            endsAt: s.endsAt,
-          })}`,
-          category: 'shift_published',
-          senderUserId: req.user!.id,
-        });
+        const bucket = perAssociate.get(s.assignedAssociateId) ?? [];
+        bucket.push(s);
+        perAssociate.set(s.assignedAssociateId, bucket);
       }
       publishedCount += 1;
+    }
+
+    // One digest per associate, ordered chronologically. Subject scales
+    // with the count so a single-shift batch reads naturally.
+    for (const [associateId, shifts] of perAssociate) {
+      shifts.sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
+      const lines = shifts.map((s) =>
+        formatShiftLine({
+          position: s.position,
+          clientName: s.client?.name ?? null,
+          startsAt: s.startsAt,
+          endsAt: s.endsAt,
+        }),
+      );
+      const subject =
+        shifts.length === 1
+          ? 'Shift published'
+          : `${shifts.length} shifts published`;
+      const body =
+        shifts.length === 1
+          ? `Now on your schedule: ${lines[0]}`
+          : `Now on your schedule:\n${lines.map((l) => `• ${l}`).join('\n')}`;
+      await notifyShift(prisma, {
+        associateId,
+        subject,
+        body,
+        category: 'shift_published',
+        senderUserId: req.user!.id,
+      });
     }
 
     const body: PublishWeekResponse = { published: publishedCount, skipped };
