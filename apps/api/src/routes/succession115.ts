@@ -19,7 +19,10 @@ import { requireCapability } from '../middleware/auth.js';
 
 export const succession115Router = Router();
 
-const VIEW = requireCapability('view:performance');
+// Succession plans are HR-admin org strategy — gate reads on
+// view:hr-admin so associates with view:performance can't see
+// who's been designated successor for every position.
+const VIEW = requireCapability('view:hr-admin');
 const MANAGE = requireCapability('manage:performance');
 
 const READINESS = z.enum([

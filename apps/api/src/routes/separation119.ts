@@ -14,7 +14,10 @@ import { requireCapability } from '../middleware/auth.js';
 
 export const separation119Router = Router();
 
-const VIEW = requireCapability('view:onboarding');
+// Separations + exit-interview content are org-wide HR data —
+// gate reads on view:hr-admin so associates with view:onboarding
+// can't enumerate every termination across the company.
+const VIEW = requireCapability('view:hr-admin');
 const MANAGE = requireCapability('manage:onboarding');
 
 const REASON = z.enum([

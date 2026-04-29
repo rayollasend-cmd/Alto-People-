@@ -14,7 +14,10 @@ import { requireCapability } from '../middleware/auth.js';
 
 export const ramp125Router = Router();
 
-const VIEW = requireCapability('view:onboarding');
+// Ramp plans are HR-admin data — gate reads on view:hr-admin so
+// associates with view:onboarding can't pull any associate's 30/60/90
+// plan by UUID.
+const VIEW = requireCapability('view:hr-admin');
 const MANAGE = requireCapability('manage:onboarding');
 
 const STATUS = z.enum(['PENDING', 'ON_TRACK', 'ACHIEVED', 'MISSED']);

@@ -14,7 +14,10 @@ import { requireAuth, requireCapability } from '../middleware/auth.js';
 
 export const agreements122Router = Router();
 
-const VIEW = requireCapability('view:documents');
+// VIEW gates org-wide reads on view:hr-admin so non-admin roles
+// (associate / client_portal) can't enumerate every agreement.
+// Subjects still see their own pending list via /my/agreements.
+const VIEW = requireCapability('view:hr-admin');
 const MANAGE = requireCapability('manage:documents');
 
 const KIND = z.enum([

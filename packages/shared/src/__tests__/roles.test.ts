@@ -67,6 +67,14 @@ describe('hasCapability', () => {
     expect(hasCapability('ASSOCIATE', 'view:payroll')).toBe(true);
     expect(hasCapability('ASSOCIATE', 'view:clients')).toBe(false);
     expect(hasCapability('ASSOCIATE', 'view:analytics')).toBe(false);
+    // ASSOCIATE must not see the org-wide HR admin lists (separation,
+    // discipline, succession, ramp, probation, agreements, document
+    // templates, goals/PIPs/360s).
+    expect(hasCapability('ASSOCIATE', 'view:hr-admin')).toBe(false);
+    // view:communications was a dead capability for ASSOCIATE — no
+    // route consumed it and it leaked nothing useful. Removed in the
+    // RBAC tightening pass.
+    expect(hasCapability('ASSOCIATE', 'view:communications')).toBe(false);
     for (const m of ALL_MANAGE) expect(hasCapability('ASSOCIATE', m)).toBe(false);
   });
 

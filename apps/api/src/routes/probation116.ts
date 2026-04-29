@@ -19,7 +19,10 @@ import { requireCapability } from '../middleware/auth.js';
 
 export const probation116Router = Router();
 
-const VIEW = requireCapability('view:onboarding');
+// Probation lists are org-wide HR data — gate on view:hr-admin
+// so associates with view:onboarding (their own application page)
+// can't enumerate every probation period.
+const VIEW = requireCapability('view:hr-admin');
 const MANAGE = requireCapability('manage:onboarding');
 
 // ----- Start a probation period --------------------------------------------

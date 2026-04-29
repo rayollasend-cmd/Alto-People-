@@ -51,6 +51,12 @@ export type Capability =
   | 'view:performance' | 'manage:performance'
   | 'view:recruiting' | 'manage:recruiting'
   | 'view:audit'
+  // Org-wide HR admin lists (probation, separation, ramp, succession,
+  // discipline, agreements, document templates, goals/PIPs/360s).
+  // Distinct from view:onboarding/performance/documents — those let an
+  // associate see their *own* records via /me routes, this one unlocks
+  // the cross-org HR dashboards.
+  | 'view:hr-admin'
   // Phase 76 — manager-scoped + org-hierarchy capabilities.
   | 'view:my-team'
   | 'manage:team-time'
@@ -87,6 +93,7 @@ const ALL_VIEWS: Capability[] = [
   'view:org',
   'view:comp',
   'view:integrations',
+  'view:hr-admin',
 ];
 
 const ALL_MANAGE: Capability[] = [
@@ -134,7 +141,6 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'view:scheduling',
     'view:payroll',
     'view:documents',
-    'view:communications',
     'view:performance',
   ]),
   CLIENT_PORTAL: new Set<Capability>([
@@ -157,6 +163,7 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'manage:recruiting',
     'view:communications',
     'manage:communications',
+    'view:hr-admin',
   ]),
   // Phase 76 — line manager: a small subset of HR power, scoped at
   // the call site to the manager's direct reports.
@@ -172,6 +179,7 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'view:communications',
     'view:org',
     'view:comp',
+    'view:hr-admin',
   ]),
 };
 
