@@ -19,6 +19,7 @@ import {
   Send,
   Sparkles,
   UserPlus,
+  Wand2,
   X,
 } from 'lucide-react';
 import type {
@@ -47,6 +48,7 @@ import {
   listShiftTemplates,
   managerApproveSwap,
   managerRejectSwap,
+  autoScheduleWeek,
   publishWeek,
   unassignShift,
   updateShift,
@@ -87,6 +89,9 @@ import {
   startOfWeekMonday,
 } from './WeekCalendarView';
 import { DayCalendarView } from './DayCalendarView';
+import { TimeGridWeekView } from './TimeGridWeekView';
+import { SelectionToolbar } from './SelectionToolbar';
+import { TemplatesRail } from './TemplatesRail';
 import { MonthCalendarView } from './MonthCalendarView';
 import type { LucideIcon } from 'lucide-react';
 
@@ -125,6 +130,12 @@ function toLocalDatetimeInput(d: Date): string {
     `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
     `T${pad(d.getHours())}:${pad(d.getMinutes())}`
   );
+}
+
+/** Local HH:MM for <input type="time">. */
+function toLocalTimeInput(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 /** Local YYYY-MM-DD for <input type="date"> (avoids the toISOString UTC-shift bug). */
@@ -228,6 +239,18 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     setSearchParams(next, { replace: true });
   };
 
+  // Week-view layout: time-grid (Sling/Outlook style) vs compact (text rows).
+  // Persisted in localStorage so the manager's preference sticks across visits.
+  const [weekLayout, setWeekLayout] = useState<'time-grid' | 'compact'>(() => {
+    if (typeof window === 'undefined') return 'time-grid';
+    const stored = window.localStorage.getItem('alto:scheduling.weekLayout');
+    return stored === 'compact' ? 'compact' : 'time-grid';
+  });
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('alto:scheduling.weekLayout', weekLayout);
+  }, [weekLayout]);
+
   const [filter, setFilter] = useState<ShiftStatus | 'ALL'>('OPEN');
   const [shifts, setShifts] = useState<Shift[] | null>(null);
   const [clients, setClients] = useState<ClientSummary[]>([]);
@@ -287,6 +310,19 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const [showTemplates, setShowTemplates] = useState(false);
   const [copyingWeek, setCopyingWeek] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [autoScheduling, setAutoScheduling] = useState(false);
+  // Bulk selection: shift/cmd/ctrl-click chips to add them. Stored as a
+  // Set so adds and toggles are O(1); rebuilt on every selection change.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const toggleSelection = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
   const onCopyWeekToNext = async () => {
     if (copyingWeek) return;
@@ -428,6 +464,41 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     }).length;
   }, [shifts, view, weekStart, weekEnd]);
 
+  // All drafts across the loaded data range (powers the global "Drafts" pill
+   // near the view tabs). Lets the manager find unpublished work even when
+   // they're looking at a week that doesn't contain any drafts.
+  const allDrafts = useMemo(() => {
+    if (!shifts) return [] as Shift[];
+    return shifts
+      .filter((s) => s.status === 'DRAFT')
+      .sort(
+        (a, b) =>
+          new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
+      );
+  }, [shifts]);
+
+  // Jump to the week containing the earliest draft and switch to week view
+  // so the publish ribbon is in front of the manager.
+  const jumpToFirstDraft = useCallback(() => {
+    if (allDrafts.length === 0) return;
+    const earliest = new Date(allDrafts[0].startsAt);
+    const w = startOfWeekMonday(earliest);
+    setWeekStart(w);
+    setView('week');
+  }, [allDrafts]);
+
+  // Unassigned OPEN shifts in the visible week (powers the auto-schedule ribbon).
+  const openInWeek = useMemo(() => {
+    if (!shifts || view === 'list') return 0;
+    const startMs = weekStart.getTime();
+    const endMs = weekEnd.getTime();
+    return shifts.filter((s) => {
+      if (s.status !== 'OPEN' || s.assignedAssociateId) return false;
+      const t = new Date(s.startsAt).getTime();
+      return t >= startMs && t < endMs;
+    }).length;
+  }, [shifts, view, weekStart, weekEnd]);
+
   // Phase 54 — print / CSV / PDF exports.
 
   const onPrint = () => {
@@ -550,6 +621,108 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     }
   };
 
+  const onAutoScheduleWeek = async () => {
+    if (autoScheduling) return;
+    const ok = await confirm({
+      title: `Auto-schedule ${openInWeek} open shift${openInWeek === 1 ? '' : 's'}?`,
+      description:
+        'Picks the best-scoring associate for each open shift this week (availability, no conflicts, under 40h, not on PTO). Earlier shifts get first pick. Assignments stay private until you publish the week.',
+      confirmLabel: 'Auto-schedule',
+    });
+    if (!ok) return;
+    setAutoScheduling(true);
+    try {
+      const res = await autoScheduleWeek({
+        weekStart: weekStart.toISOString(),
+        ...(clientFilter ? { clientId: clientFilter } : {}),
+      });
+      if (res.assigned > 0) {
+        const top = res.byAssociate[0];
+        const topNote = top
+          ? ` Top: ${top.associateName} (${top.shiftsAssigned}).`
+          : '';
+        toast.success(
+          `Assigned ${res.assigned} shift${res.assigned === 1 ? '' : 's'}.${
+            res.skipped.length > 0
+              ? ` Skipped ${res.skipped.length} (no eligible candidate).`
+              : ''
+          }${topNote}`,
+        );
+      } else if (res.skipped.length > 0) {
+        toast.error(
+          `All ${res.skipped.length} open shift${
+            res.skipped.length === 1 ? '' : 's'
+          } skipped — no eligible associates without conflicts or overtime.`,
+        );
+      } else {
+        toast.success('Nothing to auto-schedule.');
+      }
+      await refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Auto-schedule failed.');
+    } finally {
+      setAutoScheduling(false);
+    }
+  };
+
+  const onTemplateDrop = useCallback(
+    async (templateId: string, dayStart: Date, associateId: string | null) => {
+      try {
+        const all = await listShiftTemplates();
+        const tpl = all.templates.find((t) => t.id === templateId);
+        if (!tpl) {
+          toast.error('Template not found.');
+          return;
+        }
+        // Resolve client: template's clientId wins; else fall back to the
+        // current filter; else error (global template needs a target client).
+        const targetClientId = tpl.clientId ?? clientFilter ?? '';
+        if (!targetClientId) {
+          toast.error('Pick a client filter first — global templates need a target.');
+          return;
+        }
+        const startsAt = new Date(dayStart);
+        startsAt.setHours(0, tpl.startMinute, 0, 0);
+        const endsAt = new Date(dayStart);
+        endsAt.setHours(0, tpl.endMinute, 0, 0);
+        if (endsAt <= startsAt) endsAt.setDate(endsAt.getDate() + 1);
+
+        const created = await createShift({
+          clientId: targetClientId,
+          position: tpl.position,
+          startsAt: startsAt.toISOString(),
+          endsAt: endsAt.toISOString(),
+          ...(tpl.location ? { location: tpl.location } : {}),
+          ...(tpl.hourlyRate != null ? { hourlyRate: tpl.hourlyRate } : {}),
+          ...(tpl.payRate != null ? { payRate: tpl.payRate } : {}),
+          ...(tpl.notes ? { notes: tpl.notes } : {}),
+        });
+        if (associateId) {
+          await assignShift(created.id, { associateId });
+        }
+        toast.success(`Applied "${tpl.name}".`);
+        await refresh();
+      } catch (err) {
+        toast.error(err instanceof ApiError ? err.message : 'Apply failed.');
+      }
+    },
+    [clientFilter, refresh],
+  );
+
+  const onShiftResize = useCallback(
+    async (s: Shift, newEndsAt: Date) => {
+      try {
+        await updateShift(s.id, { endsAt: newEndsAt.toISOString() });
+        toast.success('Shift duration updated.');
+        await refresh();
+      } catch (err) {
+        toast.error(err instanceof ApiError ? err.message : 'Resize failed.');
+        await refresh();
+      }
+    },
+    [refresh],
+  );
+
   // Phase 53.7 — drag-end handler. Computes the right combination of
   // assign/unassign/updateShift to make the chip land in its new cell
   // with the same time-of-day it had before.
@@ -630,6 +803,56 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       setPendingId(null);
     }
   };
+
+  const onQuickCancel = async (s: Shift) => {
+    const ok = await confirm({
+      title: 'Cancel shift?',
+      description: `Cancel ${s.position} on ${new Date(s.startsAt).toLocaleString()}?`,
+      confirmLabel: 'Cancel shift',
+    });
+    if (!ok) return;
+    try {
+      await cancelShift(s.id, { reason: 'Cancelled from quick actions' });
+      toast.success('Shift cancelled.');
+      await refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Cancel failed.');
+    }
+  };
+
+  const onQuickDuplicate = async (s: Shift) => {
+    try {
+      await createShift({
+        clientId: s.clientId,
+        position: s.position,
+        startsAt: s.startsAt,
+        endsAt: s.endsAt,
+        ...(s.location ? { location: s.location } : {}),
+        ...(s.hourlyRate != null ? { hourlyRate: s.hourlyRate } : {}),
+        ...(s.payRate != null ? { payRate: s.payRate } : {}),
+        ...(s.notes ? { notes: s.notes } : {}),
+      });
+      toast.success('Shift duplicated.');
+      await refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Duplicate failed.');
+    }
+  };
+
+  const quickActions = useMemo(
+    () => ({
+      onEdit: (s: Shift) => setAssignTarget(s),
+      onAssign: (s: Shift) => setAssignTarget(s),
+      onUnassign,
+      onCancel: onQuickCancel,
+      onDuplicate: onQuickDuplicate,
+    }),
+    // refresh is the only thing onUnassign / onQuickCancel / onQuickDuplicate
+    // close over indirectly — including it here would over-trigger re-renders.
+    // The handlers are stable enough for the hover-card use case.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
 
   return (
     <div className="max-w-6xl mx-auto print-area">
@@ -733,6 +956,23 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           <ViewTab current={view} value="month" onClick={setView} icon={CalendarRange} label="Month" />
         </div>
 
+        {/* Persistent drafts indicator. Visible across views so the manager
+            knows unpublished work exists even when looking at a different
+            week. Click → jumps to the earliest draft's week and switches to
+            week view so the publish ribbon is in their face. */}
+        {canManage && allDrafts.length > 0 && (
+          <button
+            type="button"
+            onClick={jumpToFirstDraft}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-warning/40 bg-warning/[0.08] text-warning hover:bg-warning/15 text-xs"
+            title={`${allDrafts.length} draft shift${allDrafts.length === 1 ? '' : 's'} not yet published — click to review`}
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-warning animate-pulse" />
+            <span className="font-medium tabular-nums">{allDrafts.length}</span>
+            draft{allDrafts.length === 1 ? '' : 's'} unpublished
+          </button>
+        )}
+
         {view === 'week' && (
           <div className="inline-flex items-center gap-1.5">
             <Button
@@ -775,6 +1015,34 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                 Copy to next week
               </Button>
             )}
+            <div className="ml-auto inline-flex rounded-md border border-navy-secondary p-0.5 bg-navy-secondary/30">
+              <button
+                type="button"
+                onClick={() => setWeekLayout('time-grid')}
+                className={cn(
+                  'px-2.5 py-1 text-[11px] uppercase tracking-wider rounded',
+                  weekLayout === 'time-grid'
+                    ? 'bg-gold/15 text-gold'
+                    : 'text-silver hover:text-white',
+                )}
+                title="Time-grid layout — shifts proportional to duration"
+              >
+                Time grid
+              </button>
+              <button
+                type="button"
+                onClick={() => setWeekLayout('compact')}
+                className={cn(
+                  'px-2.5 py-1 text-[11px] uppercase tracking-wider rounded',
+                  weekLayout === 'compact'
+                    ? 'bg-gold/15 text-gold'
+                    : 'text-silver hover:text-white',
+                )}
+                title="Compact layout — text rows, denser overview"
+              >
+                Compact
+              </button>
+            </div>
           </div>
         )}
 
@@ -970,17 +1238,34 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         </div>
       )}
 
-      {/* Phase 53.6 — publish-week ribbon (week view only). Hides when there
-          are no DRAFT shifts in the visible week. */}
-      {canManage && view === 'week' && draftsInWeek > 0 && (
+      {/* Auto-schedule ribbon (week view only). Hides when there are no
+          unassigned OPEN shifts in the visible week. Stacks above the publish
+          ribbon so the manager flow reads top-to-bottom: fill, then publish. */}
+      {canManage && view === 'week' && openInWeek > 0 && (
         <div className="no-print">
-          <PublishRibbon
-            count={draftsInWeek}
-            onPublish={onPublishWeek}
-            loading={publishing}
+          <AutoScheduleRibbon
+            count={openInWeek}
+            onAutoSchedule={onAutoScheduleWeek}
+            loading={autoScheduling}
           />
         </div>
       )}
+
+      {/* Publish-week ribbon. Visible across week/day/month views so the
+          manager always knows when there's unpublished work, regardless of
+          which calendar layout they're in. (List view has its own scope so
+          we keep the ribbon on the calendar views.) */}
+      {canManage &&
+        (view === 'week' || view === 'day' || view === 'month') &&
+        draftsInWeek > 0 && (
+          <div className="no-print">
+            <PublishRibbon
+              count={draftsInWeek}
+              onPublish={onPublishWeek}
+              loading={publishing}
+            />
+          </div>
+        )}
 
       {!shifts && (
         <Card>
@@ -995,14 +1280,47 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       {/* Calendar shift-click router — shared by day/week views */}
       {/* eslint-disable react-hooks/rules-of-hooks */}
       {/* Week view */}
-      {filteredShifts && view === 'week' && (
+      {filteredShifts && view === 'week' && weekLayout === 'time-grid' && (
+        <TimeGridWeekView
+          shifts={filteredShifts}
+          associates={associates}
+          weekStart={weekStart}
+          canManage={canManage}
+          showAllAssociates={showAllAssociates}
+          onShiftClick={(s, e) => {
+            // Modifier-click → bulk-select. Bare click → existing edit dialog.
+            if (e.shiftKey || e.metaKey || e.ctrlKey) {
+              toggleSelection(s.id);
+              return;
+            }
+            if (s.status === 'OPEN' || s.status === 'DRAFT' || s.status === 'ASSIGNED') {
+              setAssignTarget(s);
+            }
+          }}
+          onCellCreate={(start, associateId) => {
+            setCreateInitialDate(start);
+            setCreateInitialAssociateId(associateId);
+            setShowCreate(true);
+          }}
+          onShiftMove={onShiftMove}
+          onShiftResize={onShiftResize}
+          quickActions={quickActions}
+          selectedIds={selectedIds}
+          onTemplateDrop={onTemplateDrop}
+        />
+      )}
+      {filteredShifts && view === 'week' && weekLayout === 'compact' && (
         <WeekCalendarView
           shifts={filteredShifts}
           associates={associates}
           weekStart={weekStart}
           canManage={canManage}
           showAllAssociates={showAllAssociates}
-          onShiftClick={(s) => {
+          onShiftClick={(s, e) => {
+            if (e.shiftKey || e.metaKey || e.ctrlKey) {
+              toggleSelection(s.id);
+              return;
+            }
             if (s.status === 'OPEN' || s.status === 'DRAFT' || s.status === 'ASSIGNED') {
               setAssignTarget(s);
             }
@@ -1013,6 +1331,10 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             setShowCreate(true);
           }}
           onShiftMove={onShiftMove}
+          onShiftResize={onShiftResize}
+          quickActions={quickActions}
+          selectedIds={selectedIds}
+          onTemplateDrop={onTemplateDrop}
         />
       )}
 
@@ -1035,16 +1357,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             setShowCreate(true);
           }}
           onShiftMove={onShiftMove}
-          onShiftResize={async (s, newEndsAt) => {
-            try {
-              await updateShift(s.id, { endsAt: newEndsAt.toISOString() });
-              toast.success('Shift duration updated.');
-              await refresh();
-            } catch (err) {
-              toast.error(err instanceof ApiError ? err.message : 'Resize failed.');
-              await refresh();
-            }
-          }}
+          onShiftResize={onShiftResize}
+          quickActions={quickActions}
         />
       )}
 
@@ -1194,6 +1508,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       {/* Assign-with-conflicts dialog */}
       <AssignDialog
         target={assignTarget}
+        associates={associates}
         onClose={() => setAssignTarget(null)}
         onAssigned={() => {
           setAssignTarget(null);
@@ -1234,6 +1549,25 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           }}
         />
       )}
+
+      {/* Bulk selection toolbar — fixed bottom-center, only visible while
+          one or more chips are selected. Lives at the page level so it
+          floats over both week-view layouts. */}
+      <SelectionToolbar
+        selected={(filteredShifts ?? []).filter((s) => selectedIds.has(s.id))}
+        onClear={clearSelection}
+        onAfterAction={refresh}
+      />
+
+      {/* Templates rail — fixed right-side panel; only relevant on the
+          schedule-editing views (not list/month). Drop a template on a
+          cell to apply. */}
+      {canManage && (view === 'week' || view === 'day') && (
+        <TemplatesRail
+          clientId={clientFilter || null}
+          onManage={() => setShowTemplates(true)}
+        />
+      )}
     </div>
   );
 }
@@ -1255,12 +1589,24 @@ function KpiStrip({ kpis }: { kpis: SchedulingKpis | null }) {
       : kpis.fillRatePercent >= 70
         ? 'text-warning'
         : 'text-alert';
+  // Compact currency: $1.2k / $24k / $1.4M — keeps the strip readable on
+  // 13" laptops without giving up signal on six-figure weeks.
+  const cost = formatCompactUsd(kpis.projectedLaborCost);
+  const costSuffix =
+    kpis.shiftsWithoutRate > 0
+      ? `${kpis.shiftsWithoutRate} no rate`
+      : null;
   return (
     <div className="mb-5 flex flex-wrap gap-x-6 gap-y-2 px-4 py-3 rounded-md border border-navy-secondary bg-navy-secondary/30">
       <Kpi label="Open shifts" value={String(kpis.openShifts)} tone={kpis.openShifts > 0 ? 'text-warning' : 'text-silver'} />
       <Kpi label="Filled" value={String(kpis.assignedShifts + kpis.completedShifts)} />
       <Kpi label="Fill rate" value={`${kpis.fillRatePercent}%`} tone={fillTone} />
       <Kpi label="Hours scheduled" value={hours.toFixed(0)} />
+      <Kpi
+        label="Projected labor"
+        value={cost}
+        suffix={costSuffix}
+      />
       {kpis.draftShifts > 0 && (
         <Kpi label="Draft" value={String(kpis.draftShifts)} tone="text-silver" />
       )}
@@ -1271,11 +1617,32 @@ function KpiStrip({ kpis }: { kpis: SchedulingKpis | null }) {
   );
 }
 
-function Kpi({ label, value, tone = 'text-white' }: { label: string; value: string; tone?: string }) {
+function formatCompactUsd(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return '$0';
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
+  if (n >= 10_000) return `$${Math.round(n / 1000)}k`;
+  if (n >= 1_000) return `$${(n / 1000).toFixed(1)}k`;
+  return `$${Math.round(n)}`;
+}
+
+function Kpi({
+  label,
+  value,
+  tone = 'text-white',
+  suffix,
+}: {
+  label: string;
+  value: string;
+  tone?: string;
+  suffix?: string | null;
+}) {
   return (
     <div className="min-w-[6rem]">
       <div className="text-[10px] uppercase tracking-wider text-silver">{label}</div>
       <div className={cn('text-xl font-semibold tabular-nums', tone)}>{value}</div>
+      {suffix ? (
+        <div className="text-[10px] text-warning/80 tabular-nums">{suffix}</div>
+      ) : null}
     </div>
   );
 }
@@ -1287,38 +1654,40 @@ type TimeOffRow = { category: string; startDate: string; endDate: string };
 
 function AssignDialog({
   target,
+  associates,
   onClose,
   onAssigned,
 }: {
   target: Shift | null;
+  associates: AssociateLite[];
   onClose: () => void;
   onAssigned: () => void;
 }) {
-  const [associateId, setAssociateId] = useState('');
+  const [picked, setPicked] = useState<AssociateLite | null>(null);
+  const [query, setQuery] = useState('');
   const [conflicts, setConflicts] = useState<ConflictRow[] | null>(null);
   const [timeOff, setTimeOff] = useState<TimeOffRow[] | null>(null);
   const [checking, setChecking] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // Keyboard navigation index in the suggestion list.
+  const [highlight, setHighlight] = useState(0);
 
   // Reset on open.
   useEffect(() => {
     if (target) {
-      setAssociateId('');
+      setPicked(null);
+      setQuery('');
       setConflicts(null);
       setTimeOff(null);
       setSubmitting(false);
       setChecking(false);
+      setHighlight(0);
     }
   }, [target]);
 
-  // Live conflict check — debounced. The /conflicts endpoint accepts any
-  // string for associateId (returns 400 on a bad UUID) so we naively
-  // hit it whenever the value looks plausible.
+  // Live conflict check on the picked associate — debounced.
   useEffect(() => {
-    if (!target) return;
-    const id = associateId.trim();
-    // UUID-ish gate so we don't hammer the API on every keystroke.
-    if (id.length < 32) {
+    if (!target || !picked) {
       setConflicts(null);
       setTimeOff(null);
       return;
@@ -1327,7 +1696,7 @@ function AssignDialog({
     const handle = setTimeout(async () => {
       setChecking(true);
       try {
-        const c = await getShiftConflicts(target.id, id);
+        const c = await getShiftConflicts(target.id, picked.id);
         if (cancelled) return;
         setConflicts(
           c.conflicts.map((cf) => ({
@@ -1351,22 +1720,59 @@ function AssignDialog({
       } finally {
         if (!cancelled) setChecking(false);
       }
-    }, 350);
+    }, 250);
     return () => {
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [associateId, target]);
+  }, [picked, target]);
 
   const submit = async () => {
-    if (!target || !associateId.trim()) return;
+    if (!target || !picked) return;
     setSubmitting(true);
     try {
-      await assignShift(target.id, { associateId });
+      await assignShift(target.id, { associateId: picked.id });
       onAssigned();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Assign failed.');
       setSubmitting(false);
+    }
+  };
+
+  // Substring match across "first last" and email. Lowercase once per
+  // query so we're not normalizing per-row on every keystroke.
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return associates.slice(0, 10);
+    return associates
+      .filter((a) => {
+        const full = `${a.firstName} ${a.lastName}`.toLowerCase();
+        return (
+          full.includes(q) ||
+          a.lastName.toLowerCase().includes(q) ||
+          a.email.toLowerCase().includes(q)
+        );
+      })
+      .slice(0, 12);
+  }, [query, associates]);
+
+  // Keep highlight in range when results change.
+  useEffect(() => {
+    if (highlight >= matches.length) setHighlight(0);
+  }, [matches.length, highlight]);
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (picked) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlight((h) => Math.min(h + 1, Math.max(0, matches.length - 1)));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlight((h) => Math.max(0, h - 1));
+    } else if (e.key === 'Enter' && matches[highlight]) {
+      e.preventDefault();
+      setPicked(matches[highlight]);
+      setQuery('');
     }
   };
 
@@ -1398,17 +1804,99 @@ function AssignDialog({
           className="space-y-3"
         >
           <div>
-            <Label htmlFor="assign-id" required>
-              Associate ID
+            <Label htmlFor="assign-name" required>
+              Associate
             </Label>
-            <Input
-              id="assign-id"
-              value={associateId}
-              onChange={(e) => setAssociateId(e.target.value)}
-              placeholder="UUID"
-              autoFocus
-              required
-            />
+            {picked ? (
+              <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-gold/40 bg-gold/[0.06]">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="h-7 w-7 rounded-full bg-gold/15 text-gold text-[10px] font-semibold flex items-center justify-center shrink-0">
+                    {picked.firstName[0]}
+                    {picked.lastName[0]}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-sm text-white truncate">
+                      {picked.firstName} {picked.lastName}
+                    </div>
+                    <div className="text-[11px] text-silver/70 truncate">
+                      {picked.email}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPicked(null);
+                    setQuery('');
+                  }}
+                  className="text-[11px] text-silver/70 hover:text-gold underline underline-offset-2"
+                >
+                  Change
+                </button>
+              </div>
+            ) : (
+              <div className="relative">
+                <Input
+                  id="assign-name"
+                  value={query}
+                  onChange={(e) => {
+                    setQuery(e.target.value);
+                    setHighlight(0);
+                  }}
+                  onKeyDown={onKeyDown}
+                  placeholder="Type a name…"
+                  autoFocus
+                  autoComplete="off"
+                  required
+                />
+                {matches.length > 0 && (
+                  <ul
+                    role="listbox"
+                    className="mt-1 max-h-56 overflow-y-auto rounded-md border border-navy-secondary bg-navy shadow-xl"
+                  >
+                    {matches.map((a, i) => (
+                      <li
+                        key={a.id}
+                        role="option"
+                        aria-selected={i === highlight}
+                        onMouseEnter={() => setHighlight(i)}
+                        onMouseDown={(e) => {
+                          // mousedown fires before blur so the picker
+                          // stays focused while the selection is set.
+                          e.preventDefault();
+                          setPicked(a);
+                          setQuery('');
+                        }}
+                        className={cn(
+                          'px-3 py-2 text-sm cursor-pointer flex items-center gap-2',
+                          i === highlight
+                            ? 'bg-gold/10 text-white'
+                            : 'text-silver hover:bg-navy-secondary/40',
+                        )}
+                      >
+                        <div className="h-6 w-6 rounded-full bg-gold/10 text-gold text-[9px] font-semibold flex items-center justify-center shrink-0">
+                          {a.firstName[0]}
+                          {a.lastName[0]}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate">
+                            {a.firstName} {a.lastName}
+                          </div>
+                          <div className="text-[10px] text-silver/60 truncate">
+                            {a.email}
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {query.trim() && matches.length === 0 && (
+                  <div className="mt-1 px-3 py-2 text-xs text-silver/60 rounded-md border border-navy-secondary bg-navy">
+                    No associates match “{query}”.
+                  </div>
+                )}
+              </div>
+            )}
             {checking && (
               <div className="text-[11px] text-silver/60 mt-1">Checking conflicts…</div>
             )}
@@ -1470,7 +1958,7 @@ function AssignDialog({
               type="submit"
               variant={hasConflicts || hasTimeOff ? 'destructive' : 'primary'}
               loading={submitting}
-              disabled={!associateId.trim()}
+              disabled={!picked}
             >
               {hasConflicts || hasTimeOff ? 'Assign anyway' : 'Assign'}
             </Button>
@@ -1788,12 +2276,26 @@ function CreateShiftDialog({
 }) {
   const [clientId, setClientId] = useState(clients[0]?.id ?? '');
   const [position, setPosition] = useState('');
+  // When opened from a calendar cell we know the day → switch to time-only
+  // inputs (`HH:MM`) and show the date as a header label. When opened from
+  // the toolbar the day is unknown, so fall back to full datetime-local.
+  const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime] = useState('');
   const [startsAt, setStartsAt] = useState('');
   const [endsAt, setEndsAt] = useState('');
+  // The "anchor day" for time-only mode. null means full datetime mode.
+  const [anchorDay, setAnchorDay] = useState<Date | null>(null);
   const [location, setLocation] = useState('');
   const [hourlyRate, setHourlyRate] = useState('');
+  const [payRate, setPayRate] = useState('');
   const [notes, setNotes] = useState('');
   const [lateNoticeReason, setLateNoticeReason] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  // Default to DRAFT — new shifts are private until the manager publishes
+  // the week. This is the Sling/Deputy convention and surfaces the publish
+  // flow naturally (the publish ribbon shows up the moment a draft exists).
+  // The manager can override per-shift via the "Publish immediately" toggle.
+  const [publishImmediately, setPublishImmediately] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -1803,20 +2305,39 @@ function CreateShiftDialog({
       // When opened from a calendar cell, pre-fill 9am–5pm on that day —
       // the most common shift shape for hourly workforce, easy to edit.
       if (initialDate) {
-        const start = new Date(initialDate);
-        start.setHours(9, 0, 0, 0);
-        const end = new Date(initialDate);
-        end.setHours(17, 0, 0, 0);
-        setStartsAt(toLocalDatetimeInput(start));
-        setEndsAt(toLocalDatetimeInput(end));
+        const day = new Date(initialDate);
+        day.setHours(0, 0, 0, 0);
+        setAnchorDay(day);
+        // initialDate may include a clicked time-of-day (TimeGridWeekView
+        // passes the snapped hour); honor it when set, else default 9–5.
+        const initHasTime =
+          initialDate.getHours() !== 0 || initialDate.getMinutes() !== 0;
+        if (initHasTime) {
+          const start = new Date(initialDate);
+          const end = new Date(initialDate);
+          end.setHours(end.getHours() + 4); // 4h default block off the click
+          setStartTime(toLocalTimeInput(start));
+          setEndTime(toLocalTimeInput(end));
+        } else {
+          setStartTime('09:00');
+          setEndTime('17:00');
+        }
+        setStartsAt('');
+        setEndsAt('');
       } else {
+        setAnchorDay(null);
+        setStartTime('');
+        setEndTime('');
         setStartsAt('');
         setEndsAt('');
       }
       setLocation('');
       setHourlyRate('');
+      setPayRate('');
       setNotes('');
       setLateNoticeReason('');
+      setShowAdvanced(false);
+      setPublishImmediately(false);
       setSubmitting(false);
     }
   }, [open, clients, initialDate]);
@@ -1824,17 +2345,37 @@ function CreateShiftDialog({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
+    // Compose final ISO timestamps from whichever input mode is active.
+    let startISO: string;
+    let endISO: string;
+    if (anchorDay) {
+      const [sh, sm] = startTime.split(':').map(Number);
+      const [eh, em] = endTime.split(':').map(Number);
+      const start = new Date(anchorDay);
+      start.setHours(sh, sm, 0, 0);
+      const end = new Date(anchorDay);
+      end.setHours(eh, em, 0, 0);
+      // Overnight: end <= start rolls end to next day. Matches how
+      // template-apply handles overnight templates server-side.
+      if (end <= start) end.setDate(end.getDate() + 1);
+      startISO = start.toISOString();
+      endISO = end.toISOString();
+    } else {
+      startISO = new Date(startsAt).toISOString();
+      endISO = new Date(endsAt).toISOString();
+    }
     setSubmitting(true);
     try {
       const created = await createShift({
         clientId,
         position,
-        startsAt: new Date(startsAt).toISOString(),
-        endsAt: new Date(endsAt).toISOString(),
+        startsAt: startISO,
+        endsAt: endISO,
         location: location || undefined,
         hourlyRate: hourlyRate ? Number(hourlyRate) : undefined,
+        payRate: payRate ? Number(payRate) : undefined,
         notes: notes || undefined,
-        status: 'OPEN',
+        status: publishImmediately ? 'OPEN' : 'DRAFT',
         lateNoticeReason: lateNoticeReason.trim() || undefined,
       });
       // Phase 53.4 — when the dialog was opened by clicking an associate's
@@ -1910,30 +2451,98 @@ function CreateShiftDialog({
                 placeholder="e.g. Server"
               />
             </div>
-            <div>
-              <Label htmlFor="cs-starts" required>
-                Starts at
-              </Label>
-              <Input
-                id="cs-starts"
-                type="datetime-local"
-                required
-                value={startsAt}
-                onChange={(e) => setStartsAt(e.target.value)}
-              />
-            </div>
-            <div>
-              <Label htmlFor="cs-ends" required>
-                Ends at
-              </Label>
-              <Input
-                id="cs-ends"
-                type="datetime-local"
-                required
-                value={endsAt}
-                onChange={(e) => setEndsAt(e.target.value)}
-              />
-            </div>
+            {anchorDay ? (
+              <>
+                <div className="md:col-span-2 -mb-1">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider text-silver/70">
+                        Day
+                      </div>
+                      <div className="text-sm text-white tabular-nums">
+                        {anchorDay.toLocaleDateString(undefined, {
+                          weekday: 'long',
+                          month: 'short',
+                          day: 'numeric',
+                          year: 'numeric',
+                        })}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        // Drop into full datetime-local mode if the user
+                        // wants to span multiple days or pick a different
+                        // date. Pre-seed from the current time-only values.
+                        const [sh, sm] = startTime.split(':').map(Number);
+                        const [eh, em] = endTime.split(':').map(Number);
+                        const start = new Date(anchorDay);
+                        start.setHours(sh || 9, sm || 0, 0, 0);
+                        const end = new Date(anchorDay);
+                        end.setHours(eh || 17, em || 0, 0, 0);
+                        setStartsAt(toLocalDatetimeInput(start));
+                        setEndsAt(toLocalDatetimeInput(end));
+                        setAnchorDay(null);
+                      }}
+                      className="text-[11px] text-silver/70 hover:text-gold underline underline-offset-2"
+                    >
+                      Different day?
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <Label htmlFor="cs-start-time" required>
+                    Start time
+                  </Label>
+                  <Input
+                    id="cs-start-time"
+                    type="time"
+                    required
+                    value={startTime}
+                    onChange={(e) => setStartTime(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="cs-end-time" required>
+                    End time
+                  </Label>
+                  <Input
+                    id="cs-end-time"
+                    type="time"
+                    required
+                    value={endTime}
+                    onChange={(e) => setEndTime(e.target.value)}
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <Label htmlFor="cs-starts" required>
+                    Starts at
+                  </Label>
+                  <Input
+                    id="cs-starts"
+                    type="datetime-local"
+                    required
+                    value={startsAt}
+                    onChange={(e) => setStartsAt(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="cs-ends" required>
+                    Ends at
+                  </Label>
+                  <Input
+                    id="cs-ends"
+                    type="datetime-local"
+                    required
+                    value={endsAt}
+                    onChange={(e) => setEndsAt(e.target.value)}
+                  />
+                </div>
+              </>
+            )}
             <div>
               <Label htmlFor="cs-location">Location</Label>
               <Input
@@ -1942,17 +2551,64 @@ function CreateShiftDialog({
                 onChange={(e) => setLocation(e.target.value)}
               />
             </div>
-            <div>
-              <Label htmlFor="cs-rate">Hourly rate ($)</Label>
-              <Input
-                id="cs-rate"
-                type="number"
-                min={0}
-                step="0.01"
-                value={hourlyRate}
-                onChange={(e) => setHourlyRate(e.target.value)}
-              />
-            </div>
+          </div>
+
+          {/* Advanced — rates, late-notice. Hidden by default because
+              rates are usually set at the position/client level, not on
+              every individual shift, and most managers never touch them. */}
+          <div className="border-t border-navy-secondary pt-3">
+            <button
+              type="button"
+              onClick={() => setShowAdvanced((v) => !v)}
+              className="text-[11px] uppercase tracking-wider text-silver/70 hover:text-gold inline-flex items-center gap-1"
+            >
+              {showAdvanced ? '▾' : '▸'} Advanced
+              {!showAdvanced && (
+                <span className="normal-case tracking-normal text-silver/50">
+                  · rates, late-notice reason
+                </span>
+              )}
+            </button>
+            {showAdvanced && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+                <div>
+                  <Label htmlFor="cs-pay-rate">Pay rate ($/hr)</Label>
+                  <Input
+                    id="cs-pay-rate"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={payRate}
+                    onChange={(e) => setPayRate(e.target.value)}
+                    placeholder="What the associate is paid"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="cs-rate">Bill rate ($/hr)</Label>
+                  <Input
+                    id="cs-rate"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={hourlyRate}
+                    onChange={(e) => setHourlyRate(e.target.value)}
+                    placeholder="What the client is billed"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <Label htmlFor="cs-late">
+                    Late-notice reason
+                  </Label>
+                  <Textarea
+                    id="cs-late"
+                    rows={2}
+                    value={lateNoticeReason}
+                    onChange={(e) => setLateNoticeReason(e.target.value)}
+                    placeholder="Only required for fair-workweek states inside the 14-day window"
+                  />
+                </div>
+              </div>
+            )}
           </div>
           <div>
             <Label htmlFor="cs-notes">Notes</Label>
@@ -1963,24 +2619,34 @@ function CreateShiftDialog({
               onChange={(e) => setNotes(e.target.value)}
             />
           </div>
-          <div>
-            <Label htmlFor="cs-late">
-              Late-notice reason (only required for fair-workweek states inside the 14-day window)
-            </Label>
-            <Textarea
-              id="cs-late"
-              rows={2}
-              value={lateNoticeReason}
-              onChange={(e) => setLateNoticeReason(e.target.value)}
-              placeholder="e.g. Mutual agreement — associate volunteered to cover a sick call-out"
+          {/* Publish-now toggle. Default off → save as draft, which lets
+              the manager build the whole week privately before broadcasting.
+              Flipping on creates an OPEN shift visible to associates the
+              moment it's saved. */}
+          <label className="flex items-start gap-2.5 px-3 py-2.5 rounded-md border border-navy-secondary bg-navy-secondary/30 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={publishImmediately}
+              onChange={(e) => setPublishImmediately(e.target.checked)}
+              className="mt-0.5 accent-gold"
             />
-          </div>
+            <div className="flex-1">
+              <div className="text-sm text-white font-medium">
+                Publish immediately
+              </div>
+              <div className="text-[11px] text-silver/70">
+                {publishImmediately
+                  ? 'Will be visible to assigned associate the moment you save.'
+                  : 'Saved as draft. Stays private until you click "Publish week".'}
+              </div>
+            </div>
+          </label>
           <DialogFooter>
             <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
             <Button type="submit" loading={submitting}>
-              Create shift
+              {publishImmediately ? 'Create & publish' : 'Save as draft'}
             </Button>
           </DialogFooter>
         </form>
@@ -2437,6 +3103,32 @@ function PublishRibbon({
       <Button onClick={onPublish} loading={loading} variant="primary">
         <Send className="h-3.5 w-3.5" />
         Publish week
+      </Button>
+    </div>
+  );
+}
+
+function AutoScheduleRibbon({
+  count,
+  onAutoSchedule,
+  loading,
+}: {
+  count: number;
+  onAutoSchedule: () => void;
+  loading: boolean;
+}) {
+  return (
+    <div className="mb-3 flex items-center justify-between gap-3 px-3 py-2 rounded-md border border-silver/30 bg-silver/[0.04]">
+      <div className="text-sm text-white">
+        <span className="font-medium tabular-nums">{count}</span>{' '}
+        open shift{count === 1 ? '' : 's'} this week need an associate.
+        <span className="text-silver/70 ml-1">
+          Auto-schedule picks the best fit per shift — you still publish.
+        </span>
+      </div>
+      <Button onClick={onAutoSchedule} loading={loading} variant="secondary">
+        <Wand2 className="h-3.5 w-3.5" />
+        Auto-schedule week
       </Button>
     </div>
   );
