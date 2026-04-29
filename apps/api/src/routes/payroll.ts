@@ -1,30 +1,39 @@
 import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import {
+  PayrollExceptionsInputSchema,
+  PayrollExceptionsResponseSchema,
   PayrollItemListResponseSchema,
   PayrollRunCreateInputSchema,
   PayrollRunDetailSchema,
   PayrollRunListResponseSchema,
+  PayrollRunPreviewResponseSchema,
+  PayrollScheduleAssignInputSchema,
+  PayrollScheduleCreateInputSchema,
+  PayrollScheduleListResponseSchema,
+  PayrollScheduleSchema,
+  PayrollScheduleUpdateInputSchema,
+  PayrollUpcomingSummarySchema,
+  type PayrollException,
+  type PayrollExceptionsResponse,
   type PayrollItem,
   type PayrollItemListResponse,
   type PayrollRunDetail,
   type PayrollRunListResponse,
+  type PayrollRunPreviewResponse,
   type PayrollRunSummary,
+  type PayrollSchedule as PayrollScheduleDto,
+  type PayrollScheduleListResponse,
+  type PayrollUpcomingSummary,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
-import { scopePayrollRuns } from '../lib/scope.js';
-import {
-  pickHourlyRate,
-  round2,
-  sumApprovedHours,
-} from '../lib/payroll.js';
-import {
-  computePaycheckTaxes,
-  zeroTaxBreakdown,
-  type PayFrequency,
-} from '../lib/payrollTax.js';
+import { scopePayrollRuns, scopePayrollSchedules } from '../lib/scope.js';
+import { getCurrentPeriod, getNextPeriod } from '../lib/payrollSchedule.js';
+import { round2 } from '../lib/payroll.js';
+import { aggregatePayrollProjection } from '../lib/payrollAggregator.js';
+import { computePayrollExceptions } from '../lib/payrollExceptions.js';
 import { hashPdf, renderPaystubPdf, type PaystubData } from '../lib/paystub.js';
 import { pickAdapter, type DisbursementInput } from '../lib/disbursement.js';
 import { decryptString } from '../lib/crypto.js';
@@ -45,12 +54,20 @@ const TX_OPTS = { timeout: 60_000, maxWait: 10_000 };
 type RawRun = Prisma.PayrollRunGetPayload<{
   include: {
     client: { select: { name: true } };
-    items: { include: { associate: { select: { firstName: true; lastName: true } } } };
+    items: {
+      include: {
+        associate: { select: { firstName: true; lastName: true } };
+        earnings: true;
+      };
+    };
   };
 }>;
 
 type RawItem = Prisma.PayrollItemGetPayload<{
-  include: { associate: { select: { firstName: true; lastName: true } } };
+  include: {
+    associate: { select: { firstName: true; lastName: true } };
+    earnings: true;
+  };
 }>;
 
 function ymd(d: Date): string {
@@ -78,10 +95,20 @@ function toItem(i: RawItem): PayrollItem {
     employerFuta: Number(i.employerFuta),
     employerSuta: Number(i.employerSuta),
     netPay: Number(i.netPay),
+    postTaxDeductions: Number(i.postTaxDeductions),
     status: i.status,
     disbursementRef: i.disbursementRef,
     disbursedAt: i.disbursedAt ? i.disbursedAt.toISOString() : null,
     failureReason: i.failureReason,
+    earnings: i.earnings.map((e) => ({
+      id: e.id,
+      kind: e.kind,
+      hours: e.hours === null ? null : Number(e.hours),
+      rate: e.rate === null ? null : Number(e.rate),
+      amount: Number(e.amount),
+      isTaxable: e.isTaxable,
+      notes: e.notes,
+    })),
   };
 }
 
@@ -117,7 +144,12 @@ function toDetail(r: RawRun): PayrollRunDetail {
 
 const RUN_INCLUDE = {
   client: { select: { name: true } },
-  items: { include: { associate: { select: { firstName: true, lastName: true } } } },
+  items: {
+    include: {
+      associate: { select: { firstName: true, lastName: true } },
+      earnings: true,
+    },
+  },
 } as const;
 
 /* ===== HR/Finance reads ================================================= */
@@ -283,6 +315,247 @@ payrollRouter.patch(
 /* ===== HR-only writes (process:payroll) ================================= */
 
 /**
+ * Wave 6.2 — Preview a run without creating any rows. Same input shape as
+ * POST /runs; returns the projected per-associate items and run totals so
+ * HR can verify the math (OT split, FIT, SIT, FICA, garnishments, net pay)
+ * before committing.
+ */
+payrollRouter.post('/runs/preview', PROCESS, async (req, res, next) => {
+  try {
+    const parsed = PayrollRunCreateInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const input = parsed.data;
+    const periodStart = new Date(`${input.periodStart}T00:00:00.000Z`);
+    const periodEndExclusive = new Date(`${input.periodEnd}T00:00:00.000Z`);
+    periodEndExclusive.setUTCDate(periodEndExclusive.getUTCDate() + 1);
+    const defaultRate = input.defaultHourlyRate ?? 15;
+
+    // Use the top-level prisma client (no transaction); aggregator does
+    // reads only, so we don't need transactional consistency here.
+    const projection = await aggregatePayrollProjection(prisma, {
+      periodStart,
+      periodEndExclusive,
+      clientId: input.clientId ?? null,
+      defaultRate,
+    });
+
+    const body: PayrollRunPreviewResponse = PayrollRunPreviewResponseSchema.parse({
+      items: projection.items.map((p) => ({
+        associateId: p.associateId,
+        associateName: p.associateName,
+        hoursWorked: p.hoursWorked,
+        hourlyRate: p.hourlyRate,
+        regularHours: p.regularHours,
+        overtimeHours: p.overtimeHours,
+        grossPay: p.grossPay,
+        preTaxDeductions: p.preTaxDeductions,
+        federalIncomeTax: p.federalIncomeTax,
+        fica: p.fica,
+        medicare: p.medicare,
+        stateIncomeTax: p.stateIncomeTax,
+        taxState: p.taxState,
+        payFrequency: p.payFrequency,
+        disposableEarnings: p.disposableEarnings,
+        postTaxDeductions: p.postTaxDeductions,
+        netPay: p.netPay,
+        employerFica: p.employerFica,
+        employerMedicare: p.employerMedicare,
+        employerFuta: p.employerFuta,
+        employerSuta: p.employerSuta,
+        ytdWages: p.ytdWages,
+      })),
+      totals: projection.totals,
+    });
+    res.json(body);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Wave 8 — Pre-flight exceptions for a period. Same input shape as preview
+ * minus defaultHourlyRate (exceptions don't depend on rate). The wizard
+ * fetches this alongside the preview and renders an exception strip; the
+ * landing page uses just the counts to badge the "Run payroll" CTA.
+ */
+payrollRouter.post('/runs/exceptions', PROCESS, async (req, res, next) => {
+  try {
+    const parsed = PayrollExceptionsInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const input = parsed.data;
+    const periodStart = new Date(`${input.periodStart}T00:00:00.000Z`);
+    const periodEndExclusive = new Date(`${input.periodEnd}T00:00:00.000Z`);
+    periodEndExclusive.setUTCDate(periodEndExclusive.getUTCDate() + 1);
+
+    const result = await computePayrollExceptions(prisma, {
+      periodStart,
+      periodEndExclusive,
+      clientId: input.clientId ?? null,
+    });
+
+    const body: PayrollExceptionsResponse = PayrollExceptionsResponseSchema.parse({
+      exceptions: result.exceptions.map((e): PayrollException => ({
+        associateId: e.associateId,
+        associateName: e.associateName,
+        kind: e.kind,
+        severity: e.severity,
+        message: e.message,
+        ...(e.detail ? { detail: e.detail } : {}),
+      })),
+      counts: result.counts,
+    });
+    res.json(body);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Wave 8 — Payroll-home summary card. Returns the soonest schedule's
+ * projected next run (employee count, projected gross/net, exception
+ * counts) plus the most recent run the user can see. Mirrors QuickBooks
+ * Online's "Run payroll" landing card — one fetch, one render.
+ */
+payrollRouter.get('/upcoming', async (req, res, next) => {
+  try {
+    // Pick the schedule with the SOONEST nextPeriodEnd among the ones the
+    // user can see. We compute periods in JS using getCurrentPeriod /
+    // getNextPeriod against the schedule's anchor, since today might fall
+    // mid-period. Fall back to today's biweekly frame if no schedule.
+    const schedules = await prisma.payrollSchedule.findMany({
+      where: {
+        ...scopePayrollSchedules(req.user!),
+        isActive: true,
+      },
+      include: {
+        client: { select: { name: true } },
+        _count: { select: { associates: true } },
+      },
+    });
+
+    const today = new Date();
+
+    let chosenSchedule: typeof schedules[number] | null = null;
+    let chosenWindow: { periodStart: string; periodEnd: string; payDate: string } | null = null;
+
+    for (const s of schedules) {
+      const cur = getCurrentPeriod(
+        {
+          frequency: s.frequency,
+          anchorDate: s.anchorDate,
+          payDateOffsetDays: s.payDateOffsetDays,
+        },
+        today
+      );
+      // If the current period has been run already, skip to next. Cheap
+      // check: any DRAFT-or-later run for this client + period.
+      const periodStartDate = new Date(`${cur.periodStart}T00:00:00.000Z`);
+      const existingRun = await prisma.payrollRun.findFirst({
+        where: {
+          ...(s.clientId ? { clientId: s.clientId } : {}),
+          periodStart: periodStartDate,
+        },
+        select: { id: true },
+      });
+      const w = existingRun
+        ? getNextPeriod(
+            {
+              frequency: s.frequency,
+              anchorDate: s.anchorDate,
+              payDateOffsetDays: s.payDateOffsetDays,
+            },
+            today
+          )
+        : cur;
+
+      if (
+        !chosenSchedule ||
+        !chosenWindow ||
+        w.periodEnd < chosenWindow.periodEnd
+      ) {
+        chosenSchedule = s;
+        chosenWindow = w;
+      }
+    }
+
+    let nextRun: PayrollUpcomingSummary['nextRun'] = null;
+    if (chosenSchedule && chosenWindow) {
+      const periodStart = new Date(`${chosenWindow.periodStart}T00:00:00.000Z`);
+      const periodEndExclusive = new Date(`${chosenWindow.periodEnd}T00:00:00.000Z`);
+      periodEndExclusive.setUTCDate(periodEndExclusive.getUTCDate() + 1);
+
+      const projection = await aggregatePayrollProjection(prisma, {
+        periodStart,
+        periodEndExclusive,
+        clientId: chosenSchedule.clientId,
+        defaultRate: 15,
+      });
+
+      const exceptions = await computePayrollExceptions(prisma, {
+        periodStart,
+        periodEndExclusive,
+        clientId: chosenSchedule.clientId,
+      });
+
+      nextRun = {
+        scheduleId: chosenSchedule.id,
+        scheduleName: chosenSchedule.name,
+        clientId: chosenSchedule.clientId,
+        clientName: chosenSchedule.client?.name ?? null,
+        frequency: chosenSchedule.frequency,
+        periodStart: chosenWindow.periodStart,
+        periodEnd: chosenWindow.periodEnd,
+        payDate: chosenWindow.payDate,
+        employeeCount: projection.totals.itemCount,
+        projectedGross: projection.totals.totalGross,
+        projectedNet: projection.totals.totalNet,
+        projectedEmployerCost: projection.totals.totalEmployerTax,
+        blockingExceptions: exceptions.counts.blocking,
+        totalExceptions:
+          exceptions.counts.blocking +
+          exceptions.counts.warning +
+          exceptions.counts.info,
+      };
+    }
+
+    const lastRunRow = await prisma.payrollRun.findFirst({
+      where: scopePayrollRuns(req.user!),
+      orderBy: { periodEnd: 'desc' },
+      include: { _count: { select: { items: true } } },
+    });
+
+    const lastRun: PayrollUpcomingSummary['lastRun'] = lastRunRow
+      ? {
+          id: lastRunRow.id,
+          periodStart: ymd(lastRunRow.periodStart),
+          periodEnd: ymd(lastRunRow.periodEnd),
+          status: lastRunRow.status,
+          itemCount: lastRunRow._count.items,
+          totalNet: Number(lastRunRow.totalNet),
+          finalizedAt: lastRunRow.finalizedAt
+            ? lastRunRow.finalizedAt.toISOString()
+            : null,
+          disbursedAt: lastRunRow.disbursedAt
+            ? lastRunRow.disbursedAt.toISOString()
+            : null,
+        }
+      : null;
+
+    const body: PayrollUpcomingSummary = PayrollUpcomingSummarySchema.parse({
+      nextRun,
+      lastRun,
+    });
+    res.json(body);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * Create a payroll run for the given period. Aggregates APPROVED time
  * entries for every associate that has any in the period (optionally
  * scoped to a single client). Items are computed and snapshotted.
@@ -302,6 +575,10 @@ payrollRouter.post('/runs', PROCESS, async (req, res, next) => {
 
     const defaultRate = input.defaultHourlyRate ?? 15;
 
+    // Wave 6.1 — Pure-ish aggregation lifted into payrollAggregator.
+    // POST /runs creates the run row, then asks the aggregator for the
+    // projected per-associate items, then persists. POST /runs/preview
+    // calls the same aggregator without creating a run row.
     const result = await prisma.$transaction(async (tx) => {
       const run = await tx.payrollRun.create({
         data: {
@@ -314,183 +591,114 @@ payrollRouter.post('/runs', PROCESS, async (req, res, next) => {
         },
       });
 
-      const entries = await tx.timeEntry.findMany({
-        where: {
-          status: 'APPROVED',
-          clockInAt: { gte: periodStart, lt: periodEndExclusive },
-          ...(input.clientId ? { clientId: input.clientId } : {}),
-        },
-        include: {
-          associate: {
-            select: {
-              id: true,
-              state: true,
-              employmentType: true,
-              w4Submission: {
-                select: {
-                  filingStatus: true,
-                  extraWithholding: true,
-                  deductions: true,
-                  otherIncome: true,
-                  dependentsAmount: true,
-                },
-              },
-            },
-          },
-        },
+      const projection = await aggregatePayrollProjection(tx, {
+        periodStart,
+        periodEndExclusive,
+        clientId: input.clientId ?? null,
+        defaultRate,
       });
 
-      const byAssociate = new Map<string, typeof entries>();
-      for (const e of entries) {
-        const arr = byAssociate.get(e.associateId) ?? [];
-        arr.push(e);
-        byAssociate.set(e.associateId, arr);
-      }
-
-      const payFrequency: PayFrequency = 'BIWEEKLY';
-
-      let totalGross = 0;
-      let totalTax = 0;
-      let totalNet = 0;
-      let totalEmployerTax = 0;
-
-      const yearStart = new Date(Date.UTC(periodStart.getUTCFullYear(), 0, 1));
-
-      for (const [associateId, group] of byAssociate) {
-        const hoursWorked = sumApprovedHours(group);
-        if (hoursWorked === 0) continue;
-
-        const shifts = await tx.shift.findMany({
-          where: {
-            assignedAssociateId: associateId,
-            startsAt: { gte: periodStart, lt: periodEndExclusive },
-          },
-          select: { hourlyRate: true },
-        });
-        const hourlyRate = pickHourlyRate(shifts, defaultRate);
-        const grossPay = round2(hoursWorked * hourlyRate);
-
-        // Pull YTD wages so FICA cap and Medicare surcharge math is right.
-        // We sum prior PayrollItems in this calendar year EXCLUDING items
-        // belonging to this run (so re-aggregating doesn't double-count).
-        const priorYtd = await tx.payrollItem.aggregate({
-          where: {
-            associateId,
-            payrollRun: { periodStart: { gte: yearStart, lt: periodStart } },
-          },
-          _sum: { grossPay: true },
-        });
-        const ytdWages = Number(priorYtd._sum.grossPay ?? 0);
-        const ytdMedicareWages = ytdWages; // no Medicare exclusions in our model
-
-        const w4 = group[0].associate.w4Submission;
-        const associateState = group[0].associate.state ?? null;
-        const employmentType = group[0].associate.employmentType;
-
-        // Phase 42 — sum active pre-tax benefit elections for this period.
-        // Active = effectiveDate <= periodEnd AND (terminationDate is null
-        // OR terminationDate >= periodStart). 1099 contractors don't take
-        // payroll deductions through us — they handle their own benefits.
-        let preTaxDeductions = 0;
-        if (employmentType === 'W2_EMPLOYEE') {
-          const enrollments = await tx.benefitsEnrollment.findMany({
-            where: {
-              associateId,
-              effectiveDate: { lte: periodEndExclusive },
-              OR: [
-                { terminationDate: null },
-                { terminationDate: { gte: periodStart } },
-              ],
-            },
-            select: { electedAmountCentsPerPeriod: true },
-          });
-          const totalCents = enrollments.reduce(
-            (acc, e) => acc + e.electedAmountCentsPerPeriod,
-            0
-          );
-          preTaxDeductions = round2(totalCents / 100);
-        }
-        const taxableGross = round2(Math.max(0, grossPay - preTaxDeductions));
-
-        // Phase 41 — 1099 contractors are paid gross. No federal/state
-        // withholding, no FICA/Medicare, no employer-side payroll tax.
-        // 1099-NEC reporting (Box 1 = grossPay totals) is downstream.
-        const breakdown =
-          employmentType === 'W2_EMPLOYEE'
-            ? computePaycheckTaxes({
-                grossPay: taxableGross,
-                filingStatus: w4?.filingStatus ?? null,
-                payFrequency,
-                state: associateState,
-                ytdWages,
-                ytdMedicareWages,
-                extraWithholding: w4?.extraWithholding ? Number(w4.extraWithholding) : 0,
-                deductions: w4?.deductions ? Number(w4.deductions) : 0,
-                otherIncome: w4?.otherIncome ? Number(w4.otherIncome) : 0,
-                dependentsAmount: w4?.dependentsAmount ? Number(w4.dependentsAmount) : 0,
-              })
-            : zeroTaxBreakdown(grossPay);
-
-        await tx.payrollItem.upsert({
-          where: { payrollRunId_associateId: { payrollRunId: run.id, associateId } },
+      for (const p of projection.items) {
+        const upserted = await tx.payrollItem.upsert({
+          where: { payrollRunId_associateId: { payrollRunId: run.id, associateId: p.associateId } },
           create: {
             payrollRunId: run.id,
-            associateId,
-            hoursWorked,
-            hourlyRate,
-            grossPay,
-            preTaxDeductions,
-            federalWithholding: breakdown.federalIncomeTax,
-            fica: breakdown.socialSecurity,
-            medicare: breakdown.medicare,
-            stateWithholding: breakdown.stateIncomeTax,
-            taxState: associateState,
-            ytdWages,
-            ytdMedicareWages,
-            employerFica: breakdown.employer.fica,
-            employerMedicare: breakdown.employer.medicare,
-            employerFuta: breakdown.employer.futa,
-            employerSuta: breakdown.employer.suta,
-            netPay: breakdown.netPay,
+            associateId: p.associateId,
+            hoursWorked: p.hoursWorked,
+            hourlyRate: p.hourlyRate,
+            grossPay: p.grossPay,
+            preTaxDeductions: p.preTaxDeductions,
+            postTaxDeductions: p.postTaxDeductions,
+            federalWithholding: p.federalIncomeTax,
+            fica: p.fica,
+            medicare: p.medicare,
+            stateWithholding: p.stateIncomeTax,
+            taxState: p.taxState,
+            ytdWages: p.ytdWages,
+            ytdMedicareWages: p.ytdMedicareWages,
+            employerFica: p.employerFica,
+            employerMedicare: p.employerMedicare,
+            employerFuta: p.employerFuta,
+            employerSuta: p.employerSuta,
+            netPay: p.netPay,
             status: 'PENDING',
           },
           update: {
-            hoursWorked,
-            hourlyRate,
-            grossPay,
-            preTaxDeductions,
-            federalWithholding: breakdown.federalIncomeTax,
-            fica: breakdown.socialSecurity,
-            medicare: breakdown.medicare,
-            stateWithholding: breakdown.stateIncomeTax,
-            taxState: associateState,
-            ytdWages,
-            ytdMedicareWages,
-            employerFica: breakdown.employer.fica,
-            employerMedicare: breakdown.employer.medicare,
-            employerFuta: breakdown.employer.futa,
-            employerSuta: breakdown.employer.suta,
-            netPay: breakdown.netPay,
+            hoursWorked: p.hoursWorked,
+            hourlyRate: p.hourlyRate,
+            grossPay: p.grossPay,
+            preTaxDeductions: p.preTaxDeductions,
+            postTaxDeductions: p.postTaxDeductions,
+            federalWithholding: p.federalIncomeTax,
+            fica: p.fica,
+            medicare: p.medicare,
+            stateWithholding: p.stateIncomeTax,
+            taxState: p.taxState,
+            ytdWages: p.ytdWages,
+            ytdMedicareWages: p.ytdMedicareWages,
+            employerFica: p.employerFica,
+            employerMedicare: p.employerMedicare,
+            employerFuta: p.employerFuta,
+            employerSuta: p.employerSuta,
+            netPay: p.netPay,
           },
         });
 
-        totalGross += grossPay;
-        totalTax += breakdown.totalEmployeeTax;
-        totalNet += breakdown.netPay;
-        totalEmployerTax +=
-          breakdown.employer.fica +
-          breakdown.employer.medicare +
-          breakdown.employer.futa +
-          breakdown.employer.suta;
+        // Replace earning lines on every (re-)aggregation.
+        await tx.payrollItemEarning.deleteMany({ where: { payrollItemId: upserted.id } });
+        if (p.earnings.length > 0) {
+          await tx.payrollItemEarning.createMany({
+            data: p.earnings.map((e) => ({
+              payrollItemId: upserted.id,
+              kind: e.kind,
+              hours: new Prisma.Decimal(e.hours),
+              rate: new Prisma.Decimal(e.rate),
+              amount: new Prisma.Decimal(e.amount),
+              isTaxable: e.isTaxable,
+            })),
+          });
+        }
+
+        // Persist garnishment deductions for this run, recompute each
+        // garnishment's running amountWithheld, close any that hit the cap.
+        if (p.garnishments.length > 0) {
+          await tx.garnishmentDeduction.deleteMany({
+            where: {
+              payrollRunId: run.id,
+              garnishmentId: { in: p.garnishments.map((g) => g.garnishmentId) },
+            },
+          });
+          for (const d of p.garnishments) {
+            await tx.garnishmentDeduction.create({
+              data: {
+                garnishmentId: d.garnishmentId,
+                payrollRunId: run.id,
+                amount: new Prisma.Decimal(d.amount),
+              },
+            });
+            const sum = await tx.garnishmentDeduction.aggregate({
+              where: { garnishmentId: d.garnishmentId },
+              _sum: { amount: true },
+            });
+            const newWithheld = Number(sum._sum.amount ?? 0);
+            await tx.garnishment.update({
+              where: { id: d.garnishmentId },
+              data: {
+                amountWithheld: new Prisma.Decimal(newWithheld),
+                ...(d.reachedCap ? { status: 'COMPLETED' as const } : {}),
+              },
+            });
+          }
+        }
       }
 
       await tx.payrollRun.update({
         where: { id: run.id },
         data: {
-          totalGross: round2(totalGross),
-          totalTax: round2(totalTax),
-          totalNet: round2(totalNet),
-          totalEmployerTax: round2(totalEmployerTax),
+          totalGross: projection.totals.totalGross,
+          totalTax: projection.totals.totalEmployeeTax,
+          totalNet: projection.totals.totalNet,
+          totalEmployerTax: projection.totals.totalEmployerTax,
         },
       });
 
@@ -1153,12 +1361,237 @@ payrollRouter.get('/me/items', async (req, res, next) => {
       where: { associateId: user.associateId },
       orderBy: { createdAt: 'desc' },
       take: 50,
-      include: { associate: { select: { firstName: true, lastName: true } } },
+      include: {
+        associate: { select: { firstName: true, lastName: true } },
+        earnings: true,
+      },
     });
     const payload: PayrollItemListResponse = PayrollItemListResponseSchema.parse({
       items: rows.map(toItem),
     });
     res.json(payload);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Wave 1.1 — Pay schedules ======================================== */
+
+type RawSchedule = Prisma.PayrollScheduleGetPayload<{
+  include: {
+    client: { select: { name: true } };
+    _count: { select: { associates: true } };
+  };
+}>;
+
+function toSchedule(s: RawSchedule): PayrollScheduleDto {
+  const cur = getCurrentPeriod({
+    frequency: s.frequency,
+    anchorDate: s.anchorDate,
+    payDateOffsetDays: s.payDateOffsetDays,
+  });
+  const nxt = getNextPeriod({
+    frequency: s.frequency,
+    anchorDate: s.anchorDate,
+    payDateOffsetDays: s.payDateOffsetDays,
+  });
+  // Use the next un-disbursed window as the wizard suggestion. We can't
+  // tell here whether the current period has been run yet (would need a
+  // cross-table check); UI will handle the "is this period already run?"
+  // affordance. For the schedule listing, surfacing "next" is honest.
+  void cur;
+  return {
+    id: s.id,
+    clientId: s.clientId,
+    clientName: s.client?.name ?? null,
+    name: s.name,
+    frequency: s.frequency,
+    anchorDate: ymd(s.anchorDate),
+    payDateOffsetDays: s.payDateOffsetDays,
+    isActive: s.isActive,
+    notes: s.notes,
+    associateCount: s._count.associates,
+    nextPeriodStart: nxt.periodStart,
+    nextPeriodEnd: nxt.periodEnd,
+    nextPayDate: nxt.payDate,
+    createdAt: s.createdAt.toISOString(),
+    updatedAt: s.updatedAt.toISOString(),
+  };
+}
+
+const SCHEDULE_INCLUDE = {
+  client: { select: { name: true } },
+  _count: { select: { associates: true } },
+} as const;
+
+payrollRouter.get('/schedules', PROCESS, async (req, res, next) => {
+  try {
+    const includeInactive = req.query.includeInactive === 'true';
+    const where: Prisma.PayrollScheduleWhereInput = {
+      ...scopePayrollSchedules(req.user!),
+      ...(includeInactive ? {} : { isActive: true }),
+    };
+    const rows = await prisma.payrollSchedule.findMany({
+      where,
+      orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
+      include: SCHEDULE_INCLUDE,
+    });
+    const payload: PayrollScheduleListResponse = PayrollScheduleListResponseSchema.parse({
+      schedules: rows.map(toSchedule),
+    });
+    res.json(payload);
+  } catch (err) {
+    next(err);
+  }
+});
+
+payrollRouter.post('/schedules', PROCESS, async (req, res, next) => {
+  try {
+    const input = PayrollScheduleCreateInputSchema.parse(req.body);
+    if (input.clientId) {
+      const client = await prisma.client.findFirst({
+        where: { id: input.clientId, deletedAt: null },
+      });
+      if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+    }
+    const created = await prisma.payrollSchedule.create({
+      data: {
+        clientId: input.clientId ?? null,
+        name: input.name,
+        frequency: input.frequency,
+        anchorDate: new Date(input.anchorDate),
+        payDateOffsetDays: input.payDateOffsetDays ?? 5,
+        notes: input.notes ?? null,
+      },
+      include: SCHEDULE_INCLUDE,
+    });
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        entityType: 'PayrollSchedule',
+        entityId: created.id,
+        action: 'payroll.schedule.create',
+        metadata: { name: created.name, frequency: created.frequency },
+      },
+      'createPayrollSchedule'
+    );
+    res.status(201).json(PayrollScheduleSchema.parse(toSchedule(created)));
+  } catch (err) {
+    next(err);
+  }
+});
+
+payrollRouter.patch('/schedules/:id', PROCESS, async (req, res, next) => {
+  try {
+    const input = PayrollScheduleUpdateInputSchema.parse(req.body);
+    const existing = await prisma.payrollSchedule.findFirst({
+      where: { id: req.params.id, ...scopePayrollSchedules(req.user!) },
+    });
+    if (!existing) throw new HttpError(404, 'schedule_not_found', 'Pay schedule not found');
+    const data: Prisma.PayrollScheduleUpdateInput = {};
+    if (input.name !== undefined) data.name = input.name;
+    if (input.frequency !== undefined) data.frequency = input.frequency;
+    if (input.anchorDate !== undefined) data.anchorDate = new Date(input.anchorDate);
+    if (input.payDateOffsetDays !== undefined) data.payDateOffsetDays = input.payDateOffsetDays;
+    if (input.isActive !== undefined) data.isActive = input.isActive;
+    if (input.notes !== undefined) data.notes = input.notes;
+    const updated = await prisma.payrollSchedule.update({
+      where: { id: existing.id },
+      data,
+      include: SCHEDULE_INCLUDE,
+    });
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        entityType: 'PayrollSchedule',
+        entityId: updated.id,
+        action: 'payroll.schedule.update',
+        metadata: { changed: Object.keys(data) },
+      },
+      'updatePayrollSchedule'
+    );
+    res.json(PayrollScheduleSchema.parse(toSchedule(updated)));
+  } catch (err) {
+    next(err);
+  }
+});
+
+payrollRouter.delete('/schedules/:id', PROCESS, async (req, res, next) => {
+  try {
+    const existing = await prisma.payrollSchedule.findFirst({
+      where: { id: req.params.id, ...scopePayrollSchedules(req.user!) },
+      include: { _count: { select: { associates: true } } },
+    });
+    if (!existing) throw new HttpError(404, 'schedule_not_found', 'Pay schedule not found');
+    if (existing._count.associates > 0) {
+      throw new HttpError(
+        409,
+        'schedule_in_use',
+        `Cannot delete a schedule with ${existing._count.associates} assigned associate(s). Reassign them first.`
+      );
+    }
+    await prisma.payrollSchedule.update({
+      where: { id: existing.id },
+      data: { deletedAt: new Date(), isActive: false },
+    });
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        entityType: 'PayrollSchedule',
+        entityId: existing.id,
+        action: 'payroll.schedule.delete',
+        metadata: { name: existing.name },
+      },
+      'deletePayrollSchedule'
+    );
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /payroll/schedules/:id/assign
+ * Body: { associateIds: string[] }
+ *
+ * Bulk-assigns associates to this schedule. Idempotent — re-assigning an
+ * associate already on this schedule is a no-op. Associates can only
+ * belong to one schedule, so this overwrites any prior assignment.
+ */
+payrollRouter.post('/schedules/:id/assign', PROCESS, async (req, res, next) => {
+  try {
+    const input = PayrollScheduleAssignInputSchema.parse(req.body);
+    const schedule = await prisma.payrollSchedule.findFirst({
+      where: { id: req.params.id, ...scopePayrollSchedules(req.user!) },
+    });
+    if (!schedule) throw new HttpError(404, 'schedule_not_found', 'Pay schedule not found');
+    // If the schedule is client-scoped, restrict assignments to associates
+    // working at clients with applications under that client. The simplest
+    // correct rule: only pull associates whose latest application's clientId
+    // matches. For Wave 1.1 we don't enforce this — HR can override — but
+    // we do need to make sure the IDs exist.
+    const found = await prisma.associate.findMany({
+      where: { id: { in: input.associateIds }, deletedAt: null },
+      select: { id: true },
+    });
+    if (found.length !== input.associateIds.length) {
+      throw new HttpError(404, 'associate_not_found', 'One or more associates not found');
+    }
+    const result = await prisma.associate.updateMany({
+      where: { id: { in: input.associateIds } },
+      data: { payrollScheduleId: schedule.id },
+    });
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        entityType: 'PayrollSchedule',
+        entityId: schedule.id,
+        action: 'payroll.schedule.assign',
+        metadata: { count: result.count, associateIds: input.associateIds },
+      },
+      'assignPayrollSchedule'
+    );
+    res.json({ assigned: result.count });
   } catch (err) {
     next(err);
   }

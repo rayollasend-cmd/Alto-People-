@@ -1,20 +1,38 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, CreditCard, Download, FileText, Link as LinkIcon, Plus, RotateCw, Send } from 'lucide-react';
+import {
+  AlertTriangle,
+  CalendarDays,
+  CheckCircle2,
+  CreditCard,
+  Download,
+  FileText,
+  Link as LinkIcon,
+  Play,
+  Plus,
+  RotateCw,
+  Send,
+  Users,
+} from 'lucide-react';
 import type {
   PayrollRunDetail,
   PayrollRunStatus,
   PayrollRunSummary,
+  PayrollUpcomingSummary,
 } from '@alto-people/shared';
 import {
-  createPayrollRun,
   disbursePayrollRun,
   finalizePayrollRun,
   getPayrollRun,
+  getPayrollUpcoming,
   listPayrollRuns,
   retryRunFailures,
 } from '@/lib/payrollApi';
 import { syncRun as syncRunToQbo } from '@/lib/quickbooksApi';
 import { BranchEnrollmentDialog } from './BranchEnrollmentDialog';
+import { RunPayrollWizard } from './RunPayrollWizard';
+import { PaySchedulesView } from './PaySchedulesView';
+import { GarnishmentsView } from './GarnishmentsView';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { ApiError } from '@/lib/api';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
@@ -37,8 +55,6 @@ import {
   DrawerTitle,
 } from '@/components/ui/Drawer';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Input, Textarea } from '@/components/ui/Input';
-import { Label } from '@/components/ui/Label';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 import {
@@ -78,6 +94,7 @@ interface AdminPayrollViewProps {
 }
 
 export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
+  const [tab, setTab] = useState<'runs' | 'schedules' | 'garnishments'>('runs');
   const [filter, setFilter] = useState<PayrollRunStatus | 'ALL'>('DRAFT');
   const [runs, setRuns] = useState<PayrollRunSummary[] | null>(null);
   const [selected, setSelected] = useState<PayrollRunDetail | null>(null);
@@ -85,6 +102,9 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
   const [confirmDisburse, setConfirmDisburse] = useState(false);
   const [busy, setBusy] = useState(false);
   const [enrollFor, setEnrollFor] = useState<{ id: string; name: string | null } | null>(null);
+  // Wave 8 — hero summary card. One fetch, hydrates from /payroll/upcoming.
+  const [upcoming, setUpcoming] = useState<PayrollUpcomingSummary | null>(null);
+  const [upcomingLoading, setUpcomingLoading] = useState(true);
 
   const refresh = useCallback(async () => {
     try {
@@ -95,9 +115,28 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
     }
   }, [filter]);
 
+  const refreshUpcoming = useCallback(async () => {
+    setUpcomingLoading(true);
+    try {
+      const res = await getPayrollUpcoming();
+      setUpcoming(res);
+    } catch (err) {
+      // Non-fatal — the hero just won't render. Don't toast on the landing
+      // page; the runs list is still useful even when /upcoming 500s.
+      console.warn('payroll upcoming fetch failed:', err);
+      setUpcoming({ nextRun: null, lastRun: null });
+    } finally {
+      setUpcomingLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    refreshUpcoming();
+  }, [refreshUpcoming]);
 
   const openRun = async (id: string) => {
     try {
@@ -195,17 +234,45 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
       />
 
       {canProcess && (
-        <CreateRunDialog
+        <RunPayrollWizard
           open={showCreate}
           onOpenChange={setShowCreate}
           onCreated={(detail) => {
             setShowCreate(false);
             setSelected(detail);
-            toast.success('Run created and aggregated.');
             refresh();
+            refreshUpcoming();
           }}
         />
       )}
+
+      {/* Wave 8 — QBO-parity hero. Shows next pay date · employee count ·
+          projected gross/net · exception count, with a one-click resume
+          CTA. Hidden when there is neither a schedule nor a prior run. */}
+      <PayrollHero
+        upcoming={upcoming}
+        loading={upcomingLoading}
+        canProcess={canProcess}
+        onStartRun={() => setShowCreate(true)}
+        onOpenLastRun={(id) => {
+          setSelected(null);
+          getPayrollRun(id).then(setSelected).catch(() => {});
+        }}
+      />
+
+      <Tabs value={tab} onValueChange={(v) => setTab(v as 'runs' | 'schedules' | 'garnishments')} className="mb-5">
+        <TabsList>
+          <TabsTrigger value="runs">Runs</TabsTrigger>
+          <TabsTrigger value="schedules">Pay schedules</TabsTrigger>
+          <TabsTrigger value="garnishments">Garnishments</TabsTrigger>
+        </TabsList>
+        <TabsContent value="schedules" className="mt-5">
+          <PaySchedulesView canProcess={canProcess} />
+        </TabsContent>
+        <TabsContent value="garnishments" className="mt-5">
+          <GarnishmentsView canProcess={canProcess} />
+        </TabsContent>
+        <TabsContent value="runs" className="mt-5">
 
       <div className="flex flex-wrap gap-2 mb-5">
         {STATUS_FILTERS.map((f) => (
@@ -279,6 +346,8 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
           )}
         </CardContent>
       </Card>
+        </TabsContent>
+      </Tabs>
 
       <Drawer
         open={selected !== null}
@@ -512,113 +581,179 @@ function Stat({
   );
 }
 
-interface CreateRunDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onCreated: (detail: PayrollRunDetail) => void;
-}
+/* -------------------------------------------------------------------------- *
+ *  Wave 8 — Payroll landing hero.
+ *
+ *  Mirrors QuickBooks Online Payroll's "Run payroll" landing card. Shows
+ *  the next pay date, expected employee count, projected gross/net, and
+ *  any pre-flight exceptions before HR enters the wizard. The CTA is the
+ *  primary entry point for the wizard so users no longer have to hunt for
+ *  the "New run" button in the page header.
+ * -------------------------------------------------------------------------- */
 
-function CreateRunDialog({ open, onOpenChange, onCreated }: CreateRunDialogProps) {
-  const [periodStart, setPeriodStart] = useState('');
-  const [periodEnd, setPeriodEnd] = useState('');
-  const [defaultRate, setDefaultRate] = useState('15');
-  const [notes, setNotes] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    if (open) {
-      setPeriodStart('');
-      setPeriodEnd('');
-      setDefaultRate('15');
-      setNotes('');
-      setSubmitting(false);
-    }
-  }, [open]);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (submitting) return;
-    setSubmitting(true);
-    try {
-      const detail = await createPayrollRun({
-        periodStart,
-        periodEnd,
-        defaultHourlyRate: defaultRate ? Number(defaultRate) : undefined,
-        notes: notes || undefined,
-      });
-      onCreated(detail);
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Create failed.');
-      setSubmitting(false);
-    }
-  };
+function PayrollHero({
+  upcoming,
+  loading,
+  canProcess,
+  onStartRun,
+  onOpenLastRun,
+}: {
+  upcoming: PayrollUpcomingSummary | null;
+  loading: boolean;
+  canProcess: boolean;
+  onStartRun: () => void;
+  onOpenLastRun: (id: string) => void;
+}) {
+  if (loading) {
+    return <Skeleton className="h-40 mb-5" />;
+  }
+  if (!upcoming) return null;
+  const nr = upcoming.nextRun;
+  const lr = upcoming.lastRun;
+  // Hide the hero outright when there is nothing to show — keeps the page
+  // clean for fresh installs that haven't created a schedule yet.
+  if (!nr && !lr) return null;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>New payroll run</DialogTitle>
-          <DialogDescription>
-            Aggregates every APPROVED time entry in the period into paystubs.
-          </DialogDescription>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div>
-              <Label htmlFor="cr-start" required>
-                Period start
-              </Label>
-              <Input
-                id="cr-start"
-                type="date"
-                required
-                value={periodStart}
-                onChange={(e) => setPeriodStart(e.target.value)}
-              />
+    <div className="mb-5 grid grid-cols-1 lg:grid-cols-3 gap-3">
+      {/* Next run — spans two columns to give the projected $ room to breathe. */}
+      <div
+        className={cn(
+          'lg:col-span-2 rounded-lg border p-5',
+          nr ? 'border-gold/30 bg-gradient-to-br from-gold/8 to-transparent' : 'border-silver/15 bg-black/30'
+        )}
+      >
+        {nr ? (
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest text-gold mb-1.5">
+                <CalendarDays className="h-3.5 w-3.5" />
+                Next pay date
+              </div>
+              <div className="text-2xl text-white font-medium tabular-nums">
+                {fmtPayDate(nr.payDate)}
+              </div>
+              <div className="text-xs text-silver/70 mt-1">
+                {nr.scheduleName} · {nr.frequency.toLowerCase()} ·{' '}
+                {nr.periodStart} → {nr.periodEnd}
+                {nr.clientName ? ` · ${nr.clientName}` : ''}
+              </div>
+              <div className="mt-4 grid grid-cols-3 gap-3 text-xs">
+                <HeroStat
+                  icon={<Users className="h-3.5 w-3.5" />}
+                  label="Paystubs"
+                  value={String(nr.employeeCount)}
+                />
+                <HeroStat
+                  label="Projected gross"
+                  value={fmtMoney(nr.projectedGross)}
+                />
+                <HeroStat
+                  label="Projected net"
+                  value={fmtMoney(nr.projectedNet)}
+                  highlight
+                />
+              </div>
+              {nr.totalExceptions > 0 && (
+                <div
+                  className={cn(
+                    'mt-3 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px]',
+                    nr.blockingExceptions > 0
+                      ? 'border-alert/40 bg-alert/5 text-alert'
+                      : 'border-amber-500/30 bg-amber-500/5 text-amber-300'
+                  )}
+                >
+                  <AlertTriangle className="h-3 w-3" />
+                  {nr.blockingExceptions > 0
+                    ? `${nr.blockingExceptions} blocking · ${nr.totalExceptions} total`
+                    : `${nr.totalExceptions} ${nr.totalExceptions === 1 ? 'issue' : 'issues'} to review`}
+                </div>
+              )}
             </div>
-            <div>
-              <Label htmlFor="cr-end" required>
-                Period end
-              </Label>
-              <Input
-                id="cr-end"
-                type="date"
-                required
-                value={periodEnd}
-                onChange={(e) => setPeriodEnd(e.target.value)}
-              />
-            </div>
-            <div>
-              <Label htmlFor="cr-rate">Default rate ($/hr)</Label>
-              <Input
-                id="cr-rate"
-                type="number"
-                min={0}
-                step="0.01"
-                value={defaultRate}
-                onChange={(e) => setDefaultRate(e.target.value)}
-              />
-            </div>
+            {canProcess && (
+              <Button onClick={onStartRun} className="shrink-0">
+                <Play className="h-4 w-4" />
+                Run payroll
+              </Button>
+            )}
           </div>
-          <div>
-            <Label htmlFor="cr-notes">Notes</Label>
-            <Textarea
-              id="cr-notes"
-              rows={2}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-            />
+        ) : (
+          <div className="flex items-center gap-3 text-silver/60 text-sm">
+            <CalendarDays className="h-5 w-5 text-silver/40" />
+            No active pay schedule. Create one in the <strong>Pay schedules</strong> tab to project the next run.
           </div>
-          <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" loading={submitting}>
-              Create + aggregate
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+        )}
+      </div>
+
+      {/* Last run snapshot. */}
+      <div className="rounded-lg border border-silver/15 bg-black/30 p-5">
+        <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest text-silver/60 mb-1.5">
+          <FileText className="h-3.5 w-3.5" />
+          Last run
+        </div>
+        {lr ? (
+          <button
+            type="button"
+            onClick={() => onOpenLastRun(lr.id)}
+            className="block text-left w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
+          >
+            <div className="text-base text-white tabular-nums">
+              {lr.periodStart} → {lr.periodEnd}
+            </div>
+            <div className="mt-1.5 flex items-center gap-2">
+              <Badge variant={RUN_STATUS_VARIANT[lr.status]}>{lr.status}</Badge>
+              <span className="text-xs text-silver/70">
+                {lr.itemCount} paystub{lr.itemCount === 1 ? '' : 's'}
+              </span>
+            </div>
+            <div className="mt-3">
+              <div className="text-[11px] uppercase tracking-widest text-silver/60">Net paid</div>
+              <div className="tabular-nums text-gold mt-0.5">{fmtMoney(lr.totalNet)}</div>
+            </div>
+          </button>
+        ) : (
+          <div className="text-sm text-silver/60">
+            No prior runs. Your first run will appear here once created.
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
+
+function HeroStat({
+  icon,
+  label,
+  value,
+  highlight,
+}: {
+  icon?: React.ReactNode;
+  label: string;
+  value: string;
+  highlight?: boolean;
+}) {
+  return (
+    <div>
+      <div className="flex items-center gap-1 text-[10px] uppercase tracking-widest text-silver/50">
+        {icon}
+        {label}
+      </div>
+      <div className={cn('mt-0.5 tabular-nums', highlight ? 'text-gold' : 'text-white')}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+/** "2026-04-30" → "Thu, Apr 30". UTC parsing avoids tz drift. */
+function fmtPayDate(ymd: string): string {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'UTC',
+  });
+}
+

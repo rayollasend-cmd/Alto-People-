@@ -74,6 +74,17 @@ export function scopePayrollRuns(user: SessionUser): Prisma.PayrollRunWhereInput
   return {};
 }
 
+export function scopePayrollSchedules(user: SessionUser): Prisma.PayrollScheduleWhereInput {
+  // Wave 1.1 — Pay schedules are managed by HR/finance. CLIENT_PORTAL only
+  // ever sees schedules for its own client (plus org-wide nulls); other
+  // privileged roles see everything not soft-deleted.
+  const base: Prisma.PayrollScheduleWhereInput = { deletedAt: null };
+  if (user.role === 'CLIENT_PORTAL' && user.clientId) {
+    return { ...base, OR: [{ clientId: null }, { clientId: user.clientId }] };
+  }
+  return base;
+}
+
 export function scopeShifts(user: SessionUser): Prisma.ShiftWhereInput {
   // ASSOCIATE only ever sees shifts assigned to them.
   if (user.role === 'ASSOCIATE' && user.associateId) {

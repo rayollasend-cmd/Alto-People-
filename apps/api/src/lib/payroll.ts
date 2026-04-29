@@ -79,3 +79,46 @@ export function pickHourlyRate(
   }
   return round2(best);
 }
+
+/**
+ * Wave 1.2 — Federal weekly overtime split (FLSA non-exempt rule).
+ *
+ * Hours over 40 in a single Mon–Sun workweek pay at 1.5x. We compute this
+ * per-week (NOT per-period) because a biweekly period spans two weeks and
+ * each must hit the cap independently. Returns total regular vs overtime
+ * hours summed across all weeks in the input. The caller multiplies these
+ * by the rate (1x and 1.5x) to get amounts.
+ *
+ * State-specific daily OT (e.g., CA >8h/day) is NOT applied here — that's
+ * a Wave 2+ enhancement on top of this baseline.
+ */
+export function splitWeeklyOvertime(
+  entries: Array<{ status: string; clockInAt: Date; clockOutAt: Date | null }>
+): { regularHours: number; overtimeHours: number } {
+  // Bucket APPROVED hours by ISO week (Mon-anchored UTC).
+  const weeks = new Map<string, number>();
+  for (const e of entries) {
+    if (e.status !== 'APPROVED' || !e.clockOutAt) continue;
+    const ms = e.clockOutAt.getTime() - e.clockInAt.getTime();
+    if (ms <= 0) continue;
+    const key = isoWeekKeyUtc(e.clockInAt);
+    weeks.set(key, (weeks.get(key) ?? 0) + ms);
+  }
+  let reg = 0;
+  let ot = 0;
+  for (const ms of weeks.values()) {
+    const h = ms / (1000 * 60 * 60);
+    if (h <= 40) reg += h;
+    else { reg += 40; ot += h - 40; }
+  }
+  return { regularHours: round2(reg), overtimeHours: round2(ot) };
+}
+
+function isoWeekKeyUtc(d: Date): string {
+  // Find the Monday of the UTC week containing d.
+  const utc = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const dow = utc.getUTCDay(); // 0=Sun..6=Sat
+  const offsetToMonday = (dow + 6) % 7; // Mon→0, Tue→1, ..., Sun→6
+  utc.setUTCDate(utc.getUTCDate() - offsetToMonday);
+  return utc.toISOString().slice(0, 10);
+}

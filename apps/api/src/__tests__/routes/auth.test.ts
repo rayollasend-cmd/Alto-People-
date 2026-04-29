@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../app.js';
 import { signSession } from '../../lib/jwt.js';
+import { flushPendingAudits } from '../../lib/audit.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createUser,
@@ -38,6 +39,7 @@ describe('POST /auth/login', () => {
     expect(cookieStr.toLowerCase()).toContain('httponly');
     expect(cookieStr.toLowerCase()).toContain('samesite=lax');
 
+    await flushPendingAudits();
     const log = await prisma.auditLog.findFirst({
       where: { action: 'auth.login', actorUserId: user.id },
     });
@@ -55,6 +57,7 @@ describe('POST /auth/login', () => {
     expect(res.body.error?.code).toBe('invalid_credentials');
     expect(res.headers['set-cookie']).toBeUndefined();
 
+    await flushPendingAudits();
     const log = await prisma.auditLog.findFirst({
       where: { action: 'auth.login_failed', entityId: user.email },
     });
@@ -70,6 +73,7 @@ describe('POST /auth/login', () => {
     expect(res.status).toBe(401);
     expect(res.body.error?.code).toBe('invalid_credentials');
 
+    await flushPendingAudits();
     const log = await prisma.auditLog.findFirst({
       where: { action: 'auth.login_failed', entityId: 'nobody@example.com' },
     });
@@ -85,6 +89,7 @@ describe('POST /auth/login', () => {
       .send({ email: user.email, password: DEFAULT_TEST_PASSWORD });
 
     expect(res.status).toBe(401);
+    await flushPendingAudits();
     const log = await prisma.auditLog.findFirst({
       where: { action: 'auth.login_failed', entityId: user.email },
     });
@@ -99,6 +104,7 @@ describe('POST /auth/login', () => {
       .send({ email: user.email, password: DEFAULT_TEST_PASSWORD });
 
     expect(res.status).toBe(401);
+    await flushPendingAudits();
     const log = await prisma.auditLog.findFirst({
       where: { action: 'auth.login_failed', entityId: user.email },
     });
@@ -142,6 +148,7 @@ describe('POST /auth/logout', () => {
     // Express clearCookie writes an expired cookie
     expect(cookieStr).toMatch(/alto\.session=/);
 
+    await flushPendingAudits();
     const log = await prisma.auditLog.findFirst({
       where: { action: 'auth.logout', actorUserId: user.id },
     });

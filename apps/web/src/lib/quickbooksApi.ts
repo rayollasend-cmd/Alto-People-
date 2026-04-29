@@ -1,10 +1,24 @@
 import type {
   QboAccountConfigInput,
+  QboAccountListResponse,
   QboAuthorizeStartResponse,
   QboStatus,
+  QboSyncAssociatesResponse,
   QboSyncResponse,
 } from '@alto-people/shared';
 import { apiFetch } from './api';
+
+export function listQboAccounts(clientId: string): Promise<QboAccountListResponse> {
+  const sp = new URLSearchParams({ clientId });
+  return apiFetch<QboAccountListResponse>(`/quickbooks/accounts/list?${sp.toString()}`);
+}
+
+export function syncAssociatesToQbo(clientId: string): Promise<QboSyncAssociatesResponse> {
+  return apiFetch<QboSyncAssociatesResponse>('/quickbooks/sync-associates', {
+    method: 'POST',
+    body: { clientId },
+  });
+}
 
 export function getStatus(clientId: string): Promise<QboStatus> {
   const sp = new URLSearchParams({ clientId });
