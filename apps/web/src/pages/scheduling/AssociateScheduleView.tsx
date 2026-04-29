@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
-import type { Shift } from '@alto-people/shared';
-import { listMyShifts } from '@/lib/schedulingApi';
+import type { CalendarFeedUrlResponse, Shift } from '@alto-people/shared';
+import { getMyCalendarUrl, listMyShifts } from '@/lib/schedulingApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { CalendarDays } from 'lucide-react';
+import { Button } from '@/components/ui/Button';
+import { toast } from '@/components/ui/Toaster';
+import { CalendarDays, Check, Copy, ExternalLink } from 'lucide-react';
 import { AvailabilityEditor } from './AvailabilityEditor';
 import { SwapMarketplace } from './SwapMarketplace';
 
@@ -105,8 +107,91 @@ export function AssociateScheduleView() {
       )}
 
       <div className="mt-8">
+        <CalendarSubscribeCard />
         <SwapMarketplace />
         <AvailabilityEditor />
+      </div>
+    </div>
+  );
+}
+
+function CalendarSubscribeCard() {
+  const [feed, setFeed] = useState<CalendarFeedUrlResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await getMyCalendarUrl();
+        if (!cancelled) setFeed(res);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof ApiError ? err.message : 'Could not load calendar URL.');
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (error) return null;
+  if (!feed) {
+    return (
+      <div className="mb-6 p-4 bg-navy border border-navy-secondary rounded-lg animate-pulse h-24" />
+    );
+  }
+
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(feed.url);
+      setCopied(true);
+      toast.success('Calendar URL copied. Paste it into Google or Outlook.');
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      toast.error('Could not copy — long-press the URL to copy manually.');
+    }
+  };
+
+  return (
+    <div className="mb-6 p-4 bg-navy border border-navy-secondary rounded-lg">
+      <div className="flex items-start gap-3">
+        <CalendarDays className="h-5 w-5 text-gold mt-0.5 shrink-0" />
+        <div className="min-w-0 flex-1">
+          <div className="text-white font-medium">Subscribe in your calendar</div>
+          <div className="text-xs text-silver/70 mt-0.5">
+            Add this URL once and your published shifts show up in Google,
+            Apple, or Outlook calendars — refreshed hourly. Don't share it;
+            anyone with the link can see your schedule.
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <code className="flex-1 min-w-0 truncate text-[11px] text-silver bg-navy-secondary/40 border border-navy-secondary rounded px-2 py-1.5 tabular-nums">
+              {feed.url}
+            </code>
+            <Button onClick={onCopy} variant="secondary" className="shrink-0">
+              {copied ? (
+                <>
+                  <Check className="h-3.5 w-3.5" />
+                  Copied
+                </>
+              ) : (
+                <>
+                  <Copy className="h-3.5 w-3.5" />
+                  Copy URL
+                </>
+              )}
+            </Button>
+            <a
+              href={feed.webcalUrl}
+              className="inline-flex items-center gap-1 text-xs text-gold hover:text-gold-bright underline underline-offset-2"
+            >
+              <ExternalLink className="h-3 w-3" />
+              Open in Apple Calendar
+            </a>
+          </div>
+        </div>
       </div>
     </div>
   );
