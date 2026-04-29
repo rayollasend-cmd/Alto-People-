@@ -1549,6 +1549,12 @@ export const PayrollUpcomingSummarySchema = z.object({
       projectedEmployerCost: z.number().nonnegative(),
       blockingExceptions: z.number().int().nonnegative(),
       totalExceptions: z.number().int().nonnegative(),
+      /**
+       * If a DRAFT run already exists for this exact period, its ID. The
+       * landing-page CTA flips from "Run payroll" to "Resume run" and
+       * deep-links to that draft instead of opening the wizard.
+       */
+      draftRunId: UuidSchema.nullable(),
     })
     .nullable(),
   lastRun: z

@@ -26,6 +26,7 @@ import {
   ChevronDown,
   ChevronRight,
   FileText,
+  HelpCircle,
   Info,
   Loader2,
   ShieldAlert,
@@ -47,6 +48,11 @@ import {
 import { ApiError } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/Tooltip';
 import {
   Dialog,
   DialogContent,
@@ -739,6 +745,43 @@ function CardStat({
   );
 }
 
+/**
+ * QBO-style "?" icon next to a label. Hover/focus reveals a one-sentence
+ * explanation of the rate, cap, or source used by the math engine. The
+ * tooltips deliberately cite the 2024 numbers — bumping the year means
+ * editing the constants in payrollTax.ts and these strings together.
+ */
+function InfoTip({ text }: { text: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          className="inline-flex items-center justify-center text-silver/40 hover:text-silver focus:outline-none focus-visible:text-gold align-middle ml-1"
+          aria-label={`What is this?`}
+        >
+          <HelpCircle className="h-3 w-3" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-xs text-[11px] leading-relaxed">
+        {text}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+const TAX_TOOLTIPS = {
+  FIT: 'Federal income tax withholding. Computed via IRS Pub 15-T 2024 percentage method on annualized wages, then divided back by pay frequency. W-4 step 3 (dependents), step 4(a) (other income), step 4(b) (deductions), and step 4(c) (extra) are honored.',
+  FICA: 'Social Security tax. 6.2% of gross wages up to the 2024 wage base of $168,600/year. Stops once YTD wages cross the cap.',
+  MEDICARE: '1.45% of all wages (no cap). An additional 0.9% Medicare surcharge applies on the portion of YTD wages above $200,000.',
+  SIT: 'State income tax. Bracketed tables for CA, NY, NJ, GA, OH, VA, MN. Flat-rate for IL, PA, MI, MA, CO, AZ, KY, IN, NC, UT, ID. Zero for FL/TX/NV/WA/AK/SD/WY/TN/NH. Long-tail states use a conservative 4% fallback.',
+  GARN: 'Court- or agency-issued garnishments, applied in priority order. Federal CCPA caps: 60% disposable for child support, 25% for ordinary creditors, 15% for student loans, up to 100% for tax levies and bankruptcy orders.',
+  EMPLOYER:
+    'Employer-side payroll taxes (FICA match 6.2% + Medicare match 1.45% + FUTA 0.6% on first $7k + per-state SUTA). Not deducted from net pay — the company owes this on top.',
+  GROSS: 'Sum of regular pay (rate × regular hours) + overtime pay (rate × OT hours × 1.5) - any pre-tax deductions.',
+  EMPLOYEE_TAX: 'Sum of FIT + FICA + Medicare + SIT for every paystub in the run.',
+} as const;
+
 function HoursDrillDown({ item }: { item: PayrollRunPreviewItem }) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -774,19 +817,58 @@ function HoursDrillDown({ item }: { item: PayrollRunPreviewItem }) {
 function TaxDrillDown({ item }: { item: PayrollRunPreviewItem }) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      <DrillRow label="Gross pay" amount={fmtMoney(item.grossPay)} />
       <DrillRow
-        label="Federal income tax"
+        label={
+          <>
+            Gross pay
+            <InfoTip text={TAX_TOOLTIPS.GROSS} />
+          </>
+        }
+        amount={fmtMoney(item.grossPay)}
+      />
+      <DrillRow
+        label={
+          <>
+            Federal income tax
+            <InfoTip text={TAX_TOOLTIPS.FIT} />
+          </>
+        }
         amount={`−${fmtMoney(item.federalIncomeTax)}`}
       />
-      <DrillRow label="Social Security (FICA)" amount={`−${fmtMoney(item.fica)}`} />
-      <DrillRow label="Medicare" amount={`−${fmtMoney(item.medicare)}`} />
       <DrillRow
-        label={`State income tax${item.taxState ? ` (${item.taxState})` : ''}`}
+        label={
+          <>
+            Social Security (FICA)
+            <InfoTip text={TAX_TOOLTIPS.FICA} />
+          </>
+        }
+        amount={`−${fmtMoney(item.fica)}`}
+      />
+      <DrillRow
+        label={
+          <>
+            Medicare
+            <InfoTip text={TAX_TOOLTIPS.MEDICARE} />
+          </>
+        }
+        amount={`−${fmtMoney(item.medicare)}`}
+      />
+      <DrillRow
+        label={
+          <>
+            State income tax{item.taxState ? ` (${item.taxState})` : ''}
+            <InfoTip text={TAX_TOOLTIPS.SIT} />
+          </>
+        }
         amount={`−${fmtMoney(item.stateIncomeTax)}`}
       />
       <DrillRow
-        label="Garnishments"
+        label={
+          <>
+            Garnishments
+            <InfoTip text={TAX_TOOLTIPS.GARN} />
+          </>
+        }
         amount={
           item.postTaxDeductions > 0
             ? `−${fmtMoney(item.postTaxDeductions)}`
@@ -796,7 +878,12 @@ function TaxDrillDown({ item }: { item: PayrollRunPreviewItem }) {
       />
       <DrillRow label="Net pay" amount={fmtMoney(item.netPay)} bold accent />
       <DrillRow
-        label="Employer cost (FICA + Med + FUTA + SUTA)"
+        label={
+          <>
+            Employer cost
+            <InfoTip text={TAX_TOOLTIPS.EMPLOYER} />
+          </>
+        }
         amount={fmtMoney(
           item.employerFica + item.employerMedicare + item.employerFuta + item.employerSuta
         )}
@@ -811,14 +898,14 @@ function DrillRow({
   accent,
   bold,
 }: {
-  label: string;
+  label: React.ReactNode;
   amount: string;
   accent?: boolean;
   bold?: boolean;
 }) {
   return (
     <div className="flex justify-between gap-2">
-      <span className="text-silver/60">{label}</span>
+      <span className="text-silver/60 inline-flex items-center">{label}</span>
       <span
         className={cn(
           'tabular-nums',
@@ -913,12 +1000,24 @@ function Step3({
       {preview && preview.items.length > 0 && (
         <>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-            <Stat label="Gross" value={fmtMoney(preview.totals.totalGross)} />
-            <Stat label="Employee tax" value={`−${fmtMoney(preview.totals.totalEmployeeTax)}`} />
+            <Stat
+              label={<>Gross<InfoTip text={TAX_TOOLTIPS.GROSS} /></>}
+              value={fmtMoney(preview.totals.totalGross)}
+            />
+            <Stat
+              label={<>Employee tax<InfoTip text={TAX_TOOLTIPS.EMPLOYEE_TAX} /></>}
+              value={`−${fmtMoney(preview.totals.totalEmployeeTax)}`}
+            />
             {preview.totals.totalGarnishments > 0 ? (
-              <Stat label="Garnishments" value={`−${fmtMoney(preview.totals.totalGarnishments)}`} />
+              <Stat
+                label={<>Garnishments<InfoTip text={TAX_TOOLTIPS.GARN} /></>}
+                value={`−${fmtMoney(preview.totals.totalGarnishments)}`}
+              />
             ) : (
-              <Stat label="Employer cost" value={fmtMoney(preview.totals.totalEmployerTax)} />
+              <Stat
+                label={<>Employer cost<InfoTip text={TAX_TOOLTIPS.EMPLOYER} /></>}
+                value={fmtMoney(preview.totals.totalEmployerTax)}
+              />
             )}
             <Stat label="Net" value={fmtMoney(preview.totals.totalNet)} highlight />
           </div>
@@ -953,10 +1052,10 @@ function Step3({
   );
 }
 
-function Stat({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
+function Stat({ label, value, highlight }: { label: React.ReactNode; value: string; highlight?: boolean }) {
   return (
     <div className={cn('rounded border border-silver/15 bg-black/30 px-3 py-2', highlight && 'border-gold/40 bg-gold/5')}>
-      <div className={cn('text-[10px] uppercase tracking-widest', highlight ? 'text-gold' : 'text-silver/50')}>
+      <div className={cn('text-[10px] uppercase tracking-widest inline-flex items-center', highlight ? 'text-gold' : 'text-silver/50')}>
         {label}
       </div>
       <div className={cn('mt-0.5 tabular-nums', highlight ? 'text-gold' : 'text-white')}>{value}</div>

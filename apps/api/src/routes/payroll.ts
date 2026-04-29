@@ -441,6 +441,7 @@ payrollRouter.get('/upcoming', async (req, res, next) => {
 
     let chosenSchedule: typeof schedules[number] | null = null;
     let chosenWindow: { periodStart: string; periodEnd: string; payDate: string } | null = null;
+    let chosenDraftRunId: string | null = null;
 
     for (const s of schedules) {
       const cur = getCurrentPeriod(
@@ -451,17 +452,23 @@ payrollRouter.get('/upcoming', async (req, res, next) => {
         },
         today
       );
-      // If the current period has been run already, skip to next. Cheap
-      // check: any DRAFT-or-later run for this client + period.
+      // If a finalized/disbursed run exists for this period we've already
+      // run it — skip to the next period. A DRAFT, however, means HR
+      // started the run but didn't approve yet — that's the *resumable*
+      // path the landing CTA points at.
       const periodStartDate = new Date(`${cur.periodStart}T00:00:00.000Z`);
       const existingRun = await prisma.payrollRun.findFirst({
         where: {
           ...(s.clientId ? { clientId: s.clientId } : {}),
           periodStart: periodStartDate,
         },
-        select: { id: true },
+        select: { id: true, status: true },
       });
-      const w = existingRun
+      const isCompleted =
+        existingRun &&
+        (existingRun.status === 'FINALIZED' ||
+          existingRun.status === 'DISBURSED');
+      const w = isCompleted
         ? getNextPeriod(
             {
               frequency: s.frequency,
@@ -471,6 +478,8 @@ payrollRouter.get('/upcoming', async (req, res, next) => {
             today
           )
         : cur;
+      const draftRunId =
+        existingRun && existingRun.status === 'DRAFT' ? existingRun.id : null;
 
       if (
         !chosenSchedule ||
@@ -479,6 +488,7 @@ payrollRouter.get('/upcoming', async (req, res, next) => {
       ) {
         chosenSchedule = s;
         chosenWindow = w;
+        chosenDraftRunId = draftRunId;
       }
     }
 
@@ -519,6 +529,7 @@ payrollRouter.get('/upcoming', async (req, res, next) => {
           exceptions.counts.blocking +
           exceptions.counts.warning +
           exceptions.counts.info,
+        draftRunId: chosenDraftRunId,
       };
     }
 
