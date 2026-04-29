@@ -200,7 +200,89 @@ const NY_BRACKETS_SINGLE_2024: Bracket[] = [
   { over: 25_000_000, flat: 2_509_799, rate: 0.109 },
 ];
 
-/** Flat-rate fallback for states we don't have a real table for yet. */
+// Wave 2.1 — bracketed tables for the next-largest progressive-rate states.
+// All "single filer" since we don't yet split by W-4 state filing status.
+
+const NJ_BRACKETS_SINGLE_2024: Bracket[] = [
+  { over: 0, flat: 0, rate: 0.014 },
+  { over: 20_000, flat: 280, rate: 0.0175 },
+  { over: 35_000, flat: 542.5, rate: 0.035 },
+  { over: 40_000, flat: 717.5, rate: 0.05525 },
+  { over: 75_000, flat: 2_651.25, rate: 0.0637 },
+  { over: 500_000, flat: 29_723.75, rate: 0.0897 },
+  { over: 1_000_000, flat: 74_573.75, rate: 0.1075 },
+];
+
+const GA_BRACKETS_SINGLE_2024: Bracket[] = [
+  // GA flattened to 5.39% effective 2024 (HB 1437 phased reduction);
+  // brackets remain in statute but the top rate applies to nearly all wages.
+  { over: 0, flat: 0, rate: 0.0539 },
+];
+
+const OH_BRACKETS_SINGLE_2024: Bracket[] = [
+  // OH 2024 reduced to 2 brackets above the standard exemption of $26,050.
+  { over: 0, flat: 0, rate: 0 },
+  { over: 26_050, flat: 0, rate: 0.0275 },
+  { over: 100_000, flat: 2_033.6, rate: 0.035 },
+];
+
+const VA_BRACKETS_SINGLE_2024: Bracket[] = [
+  { over: 0, flat: 0, rate: 0.02 },
+  { over: 3_000, flat: 60, rate: 0.03 },
+  { over: 5_000, flat: 120, rate: 0.05 },
+  { over: 17_000, flat: 720, rate: 0.0575 },
+];
+
+const MN_BRACKETS_SINGLE_2024: Bracket[] = [
+  { over: 0, flat: 0, rate: 0.0535 },
+  { over: 31_690, flat: 1_695.42, rate: 0.068 },
+  { over: 104_090, flat: 6_618.62, rate: 0.0785 },
+  { over: 193_240, flat: 13_617.0, rate: 0.0985 },
+];
+
+/**
+ * Wave 2.1 — flat-rate states. Single number applied to grossPay. We keep
+ * these in a map (rather than per-state functions) because they're trivial
+ * and the data is easy to audit at a glance.
+ *
+ * Source: each state's Department of Revenue 2024 withholding tables.
+ * Rates rounded to the percent the agency publishes — no annualization
+ * needed because the rate is constant.
+ */
+const FLAT_STATE_RATES_2024: Record<string, number> = {
+  IL: 0.0495, // Illinois
+  PA: 0.0307, // Pennsylvania
+  MI: 0.0425, // Michigan
+  MA: 0.05,   // Massachusetts (5% on income, +4% surtax over $1M handled at filing)
+  CO: 0.044,  // Colorado (HB 24-1311 retro-active rate cut to 4.4%)
+  AZ: 0.025,  // Arizona (flat-rate effective 2023)
+  KY: 0.04,   // Kentucky (HB 8 phased reduction; 4.0% in 2024)
+  IN: 0.0305, // Indiana (excludes county add-ons)
+  NC: 0.045,  // North Carolina (phased to 4.5% in 2024)
+  UT: 0.0485, // Utah
+  ID: 0.058,  // Idaho (flat-rate effective 2023)
+};
+
+/**
+ * Map of supported bracketed-state tables. Adding a new state = drop a
+ * Bracket[] above and add it here.
+ */
+const BRACKET_STATES_2024: Record<string, Bracket[]> = {
+  CA: CA_BRACKETS_SINGLE_2024,
+  NY: NY_BRACKETS_SINGLE_2024,
+  NJ: NJ_BRACKETS_SINGLE_2024,
+  GA: GA_BRACKETS_SINGLE_2024,
+  OH: OH_BRACKETS_SINGLE_2024,
+  VA: VA_BRACKETS_SINGLE_2024,
+  MN: MN_BRACKETS_SINGLE_2024,
+};
+
+/**
+ * Flat-rate fallback for states we don't have a real table for yet.
+ * Wave 2.1 — most US workers are now covered by an explicit table or
+ * NO_SIT_STATES; this only fires for the long tail (HI, AR, MS, MT, etc.).
+ * Kept intentionally on the high side to avoid under-withholding.
+ */
 const FALLBACK_FLAT_RATE = 0.04;
 
 export interface StateInput {
@@ -214,14 +296,29 @@ export function computeStateIncomeTax(input: StateInput): number {
   const state = input.state?.toUpperCase().trim() ?? null;
   if (state && NO_SIT_STATES.has(state)) return 0;
 
-  const periods = PERIODS_PER_YEAR[input.payFrequency];
-  const annualGross = input.grossPay * periods;
+  if (state) {
+    const flat = FLAT_STATE_RATES_2024[state];
+    if (flat !== undefined) return round2(input.grossPay * flat);
 
-  if (state === 'CA') return annualToCycle(CA_BRACKETS_SINGLE_2024, annualGross, periods);
-  if (state === 'NY') return annualToCycle(NY_BRACKETS_SINGLE_2024, annualGross, periods);
+    const table = BRACKET_STATES_2024[state];
+    if (table) {
+      const periods = PERIODS_PER_YEAR[input.payFrequency];
+      const annualGross = input.grossPay * periods;
+      return annualToCycle(table, annualGross, periods);
+    }
+  }
 
-  // Generic flat fallback. TODO: add real tables for at least IL/PA/MI/AZ/CO/GA/NC/VA/NJ/MA.
+  // Long-tail fallback for states we haven't tabulated. Slightly above
+  // the lowest US bracket so we never under-withhold.
   return round2(input.grossPay * FALLBACK_FLAT_RATE);
+}
+
+/** True if `state` has a real (non-fallback) tax model. Surfaced for the
+ *  payroll wizard's state-coverage badge. */
+export function isStateTaxSupported(state: string | null): boolean {
+  if (!state) return false;
+  const s = state.toUpperCase().trim();
+  return NO_SIT_STATES.has(s) || s in FLAT_STATE_RATES_2024 || s in BRACKET_STATES_2024;
 }
 
 function annualToCycle(table: Bracket[], annualGross: number, periods: number): number {
@@ -236,17 +333,85 @@ function annualToCycle(table: Bracket[], annualGross: number, periods: number): 
 export const FUTA_RATE_NET = 0.006;
 export const FUTA_WAGE_BASE = 7_000;
 
+/**
+ * Wave 2.3 — Per-state SUTA wage bases and new-employer rates for 2024.
+ *
+ * Source: each state UI agency's published rate schedule. New-employer
+ * rates are defaults the state assigns to a brand-new employer's experience
+ * rating — every employer's actual rate diverges over time as their layoff
+ * history accumulates. HR can override per-client in a future Wave when
+ * the real rates land via the state agency notice.
+ *
+ * For states absent from this table, we fall back to the FUTA wage base
+ * ($7000) and a conservative 2.7% rate.
+ */
+const SUTA_2024: Record<string, { wageBase: number; rate: number }> = {
+  AL: { wageBase: 8_000,  rate: 0.027 },
+  AK: { wageBase: 49_700, rate: 0.0227 },
+  AZ: { wageBase: 8_000,  rate: 0.02 },
+  AR: { wageBase: 7_000,  rate: 0.021 },
+  CA: { wageBase: 7_000,  rate: 0.034 },
+  CO: { wageBase: 23_800, rate: 0.0117 },
+  CT: { wageBase: 25_000, rate: 0.027 },
+  DE: { wageBase: 12_500, rate: 0.013 },
+  FL: { wageBase: 7_000,  rate: 0.0270 },
+  GA: { wageBase: 9_500,  rate: 0.0264 },
+  HI: { wageBase: 59_100, rate: 0.04 },
+  ID: { wageBase: 53_500, rate: 0.01 },
+  IL: { wageBase: 13_590, rate: 0.0395 },
+  IN: { wageBase: 9_500,  rate: 0.025 },
+  IA: { wageBase: 38_200, rate: 0.01 },
+  KS: { wageBase: 14_000, rate: 0.0275 },
+  KY: { wageBase: 11_400, rate: 0.027 },
+  LA: { wageBase: 7_700,  rate: 0.011 },
+  ME: { wageBase: 12_000, rate: 0.0225 },
+  MD: { wageBase: 8_500,  rate: 0.026 },
+  MA: { wageBase: 15_000, rate: 0.0224 },
+  MI: { wageBase: 9_500,  rate: 0.027 },
+  MN: { wageBase: 42_000, rate: 0.01 },
+  MS: { wageBase: 14_000, rate: 0.012 },
+  MO: { wageBase: 10_000, rate: 0.0151 },
+  MT: { wageBase: 43_000, rate: 0.01 },
+  NE: { wageBase: 9_000,  rate: 0.0125 },
+  NV: { wageBase: 40_600, rate: 0.0295 },
+  NH: { wageBase: 14_000, rate: 0.027 },
+  NJ: { wageBase: 42_300, rate: 0.028 },
+  NM: { wageBase: 31_700, rate: 0.01 },
+  NY: { wageBase: 12_500, rate: 0.041 },
+  NC: { wageBase: 31_400, rate: 0.01 },
+  ND: { wageBase: 43_800, rate: 0.0102 },
+  OH: { wageBase: 9_000,  rate: 0.027 },
+  OK: { wageBase: 27_000, rate: 0.015 },
+  OR: { wageBase: 52_800, rate: 0.024 },
+  PA: { wageBase: 10_000, rate: 0.03689 },
+  RI: { wageBase: 29_200, rate: 0.0098 },
+  SC: { wageBase: 14_000, rate: 0.0061 },
+  SD: { wageBase: 15_000, rate: 0.012 },
+  TN: { wageBase: 7_000,  rate: 0.027 },
+  TX: { wageBase: 9_000,  rate: 0.027 },
+  UT: { wageBase: 47_000, rate: 0.014 },
+  VT: { wageBase: 14_300, rate: 0.01 },
+  VA: { wageBase: 8_000,  rate: 0.0273 },
+  WA: { wageBase: 68_500, rate: 0.0114 },
+  WV: { wageBase: 9_500,  rate: 0.027 },
+  WI: { wageBase: 14_000, rate: 0.034 },
+  WY: { wageBase: 30_900, rate: 0.0072 },
+  DC: { wageBase: 9_000,  rate: 0.027 },
+};
+
 export interface EmployerInput {
   grossPay: number;
   ytdWages: number;
   ytdMedicareWages: number;
+  /** Wave 2.3 — drives per-state SUTA wage base + rate. */
+  state?: string | null;
 }
 
 export interface EmployerBreakdown {
   fica: number; // 6.2% match, capped at SS wage base
   medicare: number; // 1.45% match, no surcharge match (employer doesn't owe additional)
   futa: number;
-  /** SUTA varies wildly per-state and per-employer. We stub at 2.7% on first $7000 — a defensible national-average new-employer rate. Override per state in a future patch. */
+  /** Per-state SUTA. See SUTA_2024 for wage base + new-employer rate. */
   suta: number;
 }
 
@@ -261,11 +426,22 @@ export function computeEmployerTaxes(input: EmployerInput): EmployerBreakdown {
   const futaTaxable = Math.min(input.grossPay, futaRemaining);
   const futa = round2(futaTaxable * FUTA_RATE_NET);
 
-  const sutaRemaining = Math.max(0, FUTA_WAGE_BASE - input.ytdWages);
-  const sutaTaxable = Math.min(input.grossPay, sutaRemaining);
-  const suta = round2(sutaTaxable * 0.027);
+  const stateKey = input.state?.toUpperCase().trim();
+  const suta = stateKey && SUTA_2024[stateKey]
+    ? sutaFor(SUTA_2024[stateKey], input.grossPay, input.ytdWages)
+    : sutaFor({ wageBase: FUTA_WAGE_BASE, rate: 0.027 }, input.grossPay, input.ytdWages);
 
   return { fica, medicare, futa, suta };
+}
+
+function sutaFor(
+  cfg: { wageBase: number; rate: number },
+  grossPay: number,
+  ytdWages: number
+): number {
+  const remaining = Math.max(0, cfg.wageBase - ytdWages);
+  const taxable = Math.min(grossPay, remaining);
+  return round2(taxable * cfg.rate);
 }
 
 // ---------- Aggregate ------------------------------------------------------
@@ -329,6 +505,7 @@ export function computePaycheckTaxes(input: PaycheckTaxInput): PaycheckTaxBreakd
     grossPay: input.grossPay,
     ytdWages: input.ytdWages,
     ytdMedicareWages: input.ytdMedicareWages,
+    state: input.state,
   });
   return {
     federalIncomeTax: fit,

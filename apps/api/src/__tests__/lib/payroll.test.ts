@@ -5,6 +5,7 @@ import {
   msToHours,
   pickHourlyRate,
   round2,
+  splitWeeklyOvertime,
   sumApprovedHours,
 } from '../../lib/payroll.js';
 
@@ -113,5 +114,103 @@ describe('pickHourlyRate', () => {
   it('returns default when default exceeds all shift rates', () => {
     const shifts = [{ hourlyRate: { toString: () => '10.00' } as never }];
     expect(pickHourlyRate(shifts, 25)).toBe(25);
+  });
+});
+
+describe('splitWeeklyOvertime — FLSA weekly OT (40h/week threshold)', () => {
+  // Helper: build an APPROVED entry of `hours` starting at clockIn.
+  const e = (clockIn: Date, hours: number) => ({
+    status: 'APPROVED',
+    clockInAt: clockIn,
+    clockOutAt: new Date(clockIn.getTime() + hours * 60 * 60 * 1000),
+  });
+
+  // 2026-01-05 is a Monday (UTC).
+  const monday = (offsetDays = 0) =>
+    new Date(Date.UTC(2026, 0, 5 + offsetDays, 9, 0));
+
+  it('returns zeros for empty input', () => {
+    expect(splitWeeklyOvertime([])).toEqual({ regularHours: 0, overtimeHours: 0 });
+  });
+
+  it('skips non-APPROVED and missing-clockOut entries', () => {
+    const entries = [
+      { status: 'ACTIVE', clockInAt: monday(), clockOutAt: null },
+      { status: 'COMPLETED', clockInAt: monday(), clockOutAt: monday(1) },
+      { status: 'REJECTED', clockInAt: monday(), clockOutAt: monday(1) },
+    ];
+    expect(splitWeeklyOvertime(entries)).toEqual({ regularHours: 0, overtimeHours: 0 });
+  });
+
+  it('under 40h in one week → all regular, zero OT', () => {
+    // Mon-Thu, 8h/day = 32h.
+    const entries = [
+      e(monday(0), 8),
+      e(monday(1), 8),
+      e(monday(2), 8),
+      e(monday(3), 8),
+    ];
+    const r = splitWeeklyOvertime(entries);
+    expect(r.regularHours).toBe(32);
+    expect(r.overtimeHours).toBe(0);
+  });
+
+  it('exactly 40h in one week → regular 40, OT 0', () => {
+    const entries = [
+      e(monday(0), 8),
+      e(monday(1), 8),
+      e(monday(2), 8),
+      e(monday(3), 8),
+      e(monday(4), 8),
+    ];
+    const r = splitWeeklyOvertime(entries);
+    expect(r.regularHours).toBe(40);
+    expect(r.overtimeHours).toBe(0);
+  });
+
+  it('45h in one week → 40 regular + 5 OT', () => {
+    const entries = [
+      e(monday(0), 9),
+      e(monday(1), 9),
+      e(monday(2), 9),
+      e(monday(3), 9),
+      e(monday(4), 9),
+    ];
+    const r = splitWeeklyOvertime(entries);
+    expect(r.regularHours).toBe(40);
+    expect(r.overtimeHours).toBe(5);
+  });
+
+  it('biweekly: 50h week 1 + 30h week 2 → 70 regular + 10 OT (per-week, not per-period)', () => {
+    // The FLSA rule is per-workweek: a "slow" second week does NOT offset a
+    // "heavy" first week. 50h week 1 = 40 reg + 10 OT. 30h week 2 = 30 reg.
+    // Total: 70 reg, 10 OT.
+    const entries = [
+      e(monday(0), 10), e(monday(1), 10), e(monday(2), 10),
+      e(monday(3), 10), e(monday(4), 10), // 50h week 1
+      e(monday(7), 10), e(monday(8), 10), e(monday(9), 10), // 30h week 2
+    ];
+    const r = splitWeeklyOvertime(entries);
+    expect(r.regularHours).toBe(70);
+    expect(r.overtimeHours).toBe(10);
+  });
+
+  it('Sunday and Monday belong to different weeks (Mon-anchored UTC)', () => {
+    // 2026-01-04 is a Sunday → belongs to the prior workweek (Dec 29 - Jan 4).
+    // 2026-01-05 is a Monday → starts a new workweek.
+    // 35h on Sun + 35h on Mon = neither week tops 40 → zero OT.
+    const sunday = new Date(Date.UTC(2026, 0, 4, 0, 0));
+    const entries = [e(sunday, 35), e(monday(0), 35)];
+    const r = splitWeeklyOvertime(entries);
+    expect(r.regularHours).toBe(70);
+    expect(r.overtimeHours).toBe(0);
+  });
+
+  it('rounds outputs to 2 decimals', () => {
+    // 40.333h → 40 reg + 0.33 OT (after round2).
+    const entries = [e(monday(0), 40.333)];
+    const r = splitWeeklyOvertime(entries);
+    expect(r.regularHours).toBe(40);
+    expect(r.overtimeHours).toBe(0.33);
   });
 });

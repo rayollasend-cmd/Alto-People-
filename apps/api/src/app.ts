@@ -17,6 +17,7 @@ import { onboardingRouter } from './routes/onboarding.js';
 import { timeRouter } from './routes/time.js';
 import { timeOffRouter } from './routes/timeOff.js';
 import { schedulingRouter } from './routes/scheduling.js';
+import { calendarFeedRouter } from './routes/calendarFeed.js';
 import { payrollRouter } from './routes/payroll.js';
 import { documentsRouter } from './routes/documents.js';
 import { complianceRouter } from './routes/compliance.js';
@@ -132,6 +133,10 @@ export function createApp() {
   // don't get tangled with cookie-flow routes if a caller forgets the
   // bearer header.
   app.use('/integrations/v1', integrationsV1Router);
+  // Public iCal feed — calendar clients poll without credentials, the
+  // HMAC token in the URL is the authorization. Mounted before the
+  // session-cookie chain so it doesn't get wrapped in view:scheduling.
+  app.use('/calendar', calendarFeedRouter);
   app.use('/clients', requireCapability('view:clients'), clientsRouter);
   app.use(
     '/onboarding',

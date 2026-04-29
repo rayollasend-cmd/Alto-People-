@@ -23,13 +23,31 @@ import { prisma } from '../db.js';
 // for a durable queue (Bull, RabbitMQ) without touching call sites.
 // ---------------------------------------------------------------------------
 
+// In-flight audit writes — tests can `await flushPendingAudits()` to wait
+// for fire-and-forget inserts to land before asserting on AuditLog rows.
+// Negligible overhead in production (one push + one splice per audit).
+const inFlight: Set<Promise<unknown>> = new Set();
+
 export function enqueueAudit(
   data: Prisma.AuditLogUncheckedCreateInput,
   where: string
 ): void {
-  prisma.auditLog.create({ data }).catch((err) => {
-    console.error(`[audit] ${where} failed:`, err);
-  });
+  const p = prisma.auditLog
+    .create({ data })
+    .catch((err) => {
+      console.error(`[audit] ${where} failed:`, err);
+    })
+    .finally(() => {
+      inFlight.delete(p);
+    });
+  inFlight.add(p);
+}
+
+/** Test-only: resolves once every queued audit insert has settled. */
+export async function flushPendingAudits(): Promise<void> {
+  while (inFlight.size > 0) {
+    await Promise.allSettled(Array.from(inFlight));
+  }
 }
 
 interface LoginContext {
