@@ -547,19 +547,71 @@ Alto HR reserves the right to skip any step of the progressive discipline proces
 10.4  Return Worker Program
 Associates who complete a full season in good standing — meeting the performance standards above with no disciplinary incidents — are eligible for Alto HR's Return Worker Program. Return workers receive priority scheduling consideration, may qualify for a performance bonus, and are the first to receive notification of the following season's positions.`,
   },
+  {
+    title: 'Policy 11 — Code of Conduct',
+    version: '2026.1',
+    industry: null,
+    body: `Applicable to every Alto HR associate, on every shift, at every client location.
+
+11.1  Purpose
+Alto HR is a licensed temporary staffing agency that places associates at client worksites across retail, hospitality, food and beverage, golf and recreation, and warehouse and distribution. Each placement makes the Associate the face of Alto HR at that client. This Code of Conduct sets the minimum behavioral standards every associate is expected to meet, regardless of role, client, or shift length. It supplements — and does not replace — the policy-specific obligations in Policy 1 through Policy 10 and the Associate Employment Agreement.
+
+11.2  Honesty and Integrity
+Associates must be truthful in all dealings with Alto HR and with client management. This includes accurate timekeeping (clocking in only when physically present at the assigned client site, never on behalf of another associate); truthful information on the employment application and onboarding paperwork; accurate reporting of hours worked, breaks taken, and incidents observed; and honest representation of qualifications, certifications, and prior employment. Falsification of any record — timesheet, application, expense report, certification, or incident report — is grounds for immediate termination and may be reported to law enforcement when applicable.
+
+11.3  Compliance with Law and Client Policy
+Associates must comply with all federal, state, and local laws while on duty, and with the operational and security policies of the client to which they are assigned. The Associate is responsible for reviewing and following client-specific procedures communicated at orientation, including access control, dress code, food handling, cash handling, customer interaction standards, and emergency procedures. A violation of client policy on the client's premises is a violation of this Code of Conduct.
+
+11.4  Respect for Persons
+Every associate is expected to treat coworkers, client employees, vendors, guests, and the public with dignity and respect. Harassment, discrimination, retaliation, intimidation, bullying, threatening behavior, profanity directed at any person, and physical altercations are strictly prohibited. Specific rules on harassment and equal employment opportunity are set forth in Policy 8 — Equal Employment Opportunity and Anti-Harassment Policy and are incorporated here by reference.
+
+11.5  Conflicts of Interest
+Associates owe Alto HR a duty of loyalty during their assignment. The following constitute conflicts of interest and are prohibited unless disclosed to and approved in writing by the HR Administrator:
+- Soliciting or accepting direct employment from a client during, or within ninety (90) days after, an active Alto HR placement, except through the formal temp-to-permanent conversion process administered by Alto HR.
+- Performing the same or similar work for the assigned client outside the Alto HR scheduling and payroll systems.
+- Holding a financial interest in a competing staffing agency or in any business that contracts with the assigned client.
+- Using Alto HR's name, logo, or client relationships for personal benefit, side businesses, or third-party endorsements.
+
+11.6  Gifts, Gratuities, and Tips
+Associates may not solicit gifts, tips, gratuities, or favors from client employees, customers, or vendors. Customary tips received in hospitality and food-service settings, where permitted by the client and applicable law, are the property of the Associate or the tip pool — never to be retained in violation of Alto HR's tip-pool rules or applicable wage law. Cash, cards, valuables, or merchandise found on a client's premises must be turned over to client management or Alto HR; they are never to be kept by the Associate.
+
+11.7  Use of Company and Client Property
+Alto HR property and client property — including mobile devices, badges, keys, uniforms, vehicles, registers, computer terminals, and inventory — are to be used only for authorized employment purposes. Personal use of client systems is prohibited. Removal of any client property from a client's premises without written authorization is theft and is grounds for immediate termination and law-enforcement referral.
+
+11.8  Confidentiality
+Associates may encounter confidential information about the client's business, customers, employees, products, prices, security procedures, and operations. All such information is the confidential property of the client and must not be disclosed to any unauthorized person, photographed, copied, or shared on social media. Confidentiality obligations survive the end of the Associate's assignment and continue indefinitely. Specific rules on social media and confidentiality are set forth in Policy 6 — Social Media and Confidentiality Policy.
+
+11.9  Substance-Free Workplace
+Reporting to a client site under the influence of alcohol, illegal drugs, or unauthorized controlled substances, or possessing or using any of the foregoing on the client's premises, is prohibited and is grounds for immediate termination. Full rules are set forth in Policy 7 — Drug and Alcohol Free Workplace Policy.
+
+11.10  Workplace Violence and Weapons
+Threats of violence, physical altercations, intimidation, and the unauthorized possession of any firearm, knife, or other weapon on a client's premises are prohibited and are grounds for immediate termination and law-enforcement referral.
+
+11.11  Outside Activities
+Associates may hold concurrent employment outside their Alto HR assignment provided that (a) the outside employment does not interfere with scheduled shifts or attendance standards, (b) the outside employment is not for a competing staffing agency or for the assigned client without written approval, and (c) the outside employment does not require the use of confidential information acquired through the Alto HR placement.
+
+11.12  Reporting Violations and Non-Retaliation
+Associates who become aware of, suspect, or are subject to a violation of this Code of Conduct are required to report the matter promptly to the HR Administrator at hr@altohr.com or by phone at 850-749-3420. Reports may be made anonymously through the Alto People application. Alto HR strictly prohibits retaliation against any associate who, in good faith, reports a suspected violation, raises a compliance concern, or cooperates in an investigation. Retaliation is itself a violation of this Code and is grounds for discipline up to and including termination.
+
+11.13  Consequences of Violation
+Violations of this Code of Conduct are addressed under the progressive discipline framework set forth in Policy 10 — Performance Standards and Disciplinary Policy. Alto HR reserves the right to skip any step of progressive discipline and proceed directly to termination for serious violations including but not limited to: theft, falsification of records, physical altercation, harassment, breach of confidentiality, unauthorized access to client systems, possession of controlled substances on client premises, and any conduct that exposes Alto HR or the client to legal, financial, or reputational harm.
+
+11.14  Acknowledgment
+By acknowledging this policy, the Associate confirms they have read this Code of Conduct in its entirety, understand the standards expected of them on every Alto HR assignment, and agree that compliance with this Code is a condition of continued employment with Alto Etho LLC, DBA Alto HR.`,
+  },
 ];
 
 export const HANDBOOK_POLICY: PolicySpec = {
   title: 'Associate Policy Manual — Acknowledgment of Receipt',
   version: '2026.1',
   industry: null,
-  body: `By acknowledging this policy, you confirm that you have received a copy of the Alto HR Associate Policy Manual, that you have read and understood all 10 policies contained in this manual (Policy 1 through Policy 10), and that you agree to comply with all policies as a condition of your employment with Alto Etho LLC, DBA Alto HR.
+  body: `By acknowledging this policy, you confirm that you have received a copy of the Alto HR Associate Policy Manual, that you have read and understood all 11 policies contained in this manual (Policy 1 through Policy 11, including the Code of Conduct), and that you agree to comply with all policies as a condition of your employment with Alto Etho LLC, DBA Alto HR.
 
 You acknowledge that violations of these policies may result in disciplinary action up to and including immediate termination.
 
 By clicking Acknowledge, you confirm:
 - You have received the Alto HR Associate Policy Manual.
-- You have read all 10 policies and the cross-reference to the Associate Employment Agreement.
+- You have read all 11 policies and the cross-reference to the Associate Employment Agreement.
 - You agree to comply with all policies as a condition of employment.
 - You understand violations may result in disciplinary action up to and including immediate termination.
 - You understand this acknowledgment is part of your permanent employment record.`,
