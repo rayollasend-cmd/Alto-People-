@@ -449,18 +449,24 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
       req,
     });
 
-    await notifyShift(prisma, {
-      associateId: associate.id,
-      subject: 'New shift assigned',
-      body: `You've been assigned: ${formatShiftLine({
-        position: updated.position,
-        clientName: updated.client?.name ?? null,
-        startsAt: updated.startsAt,
-        endsAt: updated.endsAt,
-      })}`,
-      category: 'shift_assigned',
-      senderUserId: req.user!.id,
-    });
+    // Only notify if the shift is already published — otherwise the
+    // manager is pre-assigning a draft that the associate isn't supposed
+    // to see yet. The publish PATCH route will fire its own notification
+    // when the schedule actually goes out.
+    if (updated.publishedAt) {
+      await notifyShift(prisma, {
+        associateId: associate.id,
+        subject: 'New shift assigned',
+        body: `You've been assigned: ${formatShiftLine({
+          position: updated.position,
+          clientName: updated.client?.name ?? null,
+          startsAt: updated.startsAt,
+          endsAt: updated.endsAt,
+        })}`,
+        category: 'shift_assigned',
+        senderUserId: req.user!.id,
+      });
+    }
 
     res.json(toShift(updated));
   } catch (err) {
@@ -498,18 +504,23 @@ schedulingRouter.post('/shifts/:id/unassign', MANAGE, async (req, res, next) => 
       req,
     });
 
-    await notifyShift(prisma, {
-      associateId: previousAssociateId,
-      subject: 'Shift removed from your schedule',
-      body: `Removed: ${formatShiftLine({
-        position: updated.position,
-        clientName: updated.client?.name ?? null,
-        startsAt: updated.startsAt,
-        endsAt: updated.endsAt,
-      })}`,
-      category: 'shift_unassigned',
-      senderUserId: req.user!.id,
-    });
+    // Only notify if the shift was visible to the associate. Removing
+    // someone from a draft shift is invisible — they never knew they were
+    // on it.
+    if (shift.publishedAt) {
+      await notifyShift(prisma, {
+        associateId: previousAssociateId,
+        subject: 'Shift removed from your schedule',
+        body: `Removed: ${formatShiftLine({
+          position: updated.position,
+          clientName: updated.client?.name ?? null,
+          startsAt: updated.startsAt,
+          endsAt: updated.endsAt,
+        })}`,
+        category: 'shift_unassigned',
+        senderUserId: req.user!.id,
+      });
+    }
 
     res.json(toShift(updated));
   } catch (err) {
@@ -550,7 +561,9 @@ schedulingRouter.post('/shifts/:id/cancel', MANAGE, async (req, res, next) => {
       req,
     });
 
-    if (shift.assignedAssociateId) {
+    // Same draft rule as unassign — cancelling a never-published shift
+    // is invisible to the associate, so no notification.
+    if (shift.assignedAssociateId && shift.publishedAt) {
       await notifyShift(prisma, {
         associateId: shift.assignedAssociateId,
         subject: 'Shift cancelled',
@@ -584,6 +597,12 @@ schedulingRouter.get('/me/shifts', async (req, res, next) => {
     const rows = await prisma.shift.findMany({
       where: {
         assignedAssociateId: user.associateId,
+        // Associates only see published shifts. `publishedAt` is stamped
+        // the first time a shift transitions out of DRAFT, so a non-null
+        // value is the canonical "the manager has shown this to people"
+        // signal — matches Sling/Deputy/7shifts conventions and keeps the
+        // schedule editable in draft form without leaking to associates.
+        publishedAt: { not: null },
         status: { notIn: ['CANCELLED'] },
       },
       orderBy: { startsAt: 'asc' },

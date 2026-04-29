@@ -75,9 +75,18 @@ export function scopePayrollRuns(user: SessionUser): Prisma.PayrollRunWhereInput
 }
 
 export function scopeShifts(user: SessionUser): Prisma.ShiftWhereInput {
-  // ASSOCIATE only ever sees shifts assigned to them.
+  // ASSOCIATE only ever sees shifts assigned to them — and only after
+  // they're published. DRAFT shifts are the manager's in-progress
+  // schedule; surfacing them to associates would leak edits-in-progress
+  // and break the Sling/Deputy convention every workforce-management
+  // product ships. `publishedAt` is stamped the first time a shift
+  // transitions out of DRAFT, so non-null = "the manager has shown this
+  // to people."
   if (user.role === 'ASSOCIATE' && user.associateId) {
-    return { assignedAssociateId: user.associateId };
+    return {
+      assignedAssociateId: user.associateId,
+      publishedAt: { not: null },
+    };
   }
   // CLIENT_PORTAL is restricted to its own client's shifts.
   if (user.role === 'CLIENT_PORTAL' && user.clientId) {
