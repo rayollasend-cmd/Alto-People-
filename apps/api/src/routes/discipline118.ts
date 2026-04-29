@@ -14,7 +14,11 @@ import { requireAuth, requireCapability } from '../middleware/auth.js';
 
 export const discipline118Router = Router();
 
-const VIEW = requireCapability('view:performance');
+// Reads are org-wide HR data — gate on view:hr-admin so a regular
+// associate can't enumerate every warning/suspension/termination.
+// Subjects still acknowledge their own actions via the requireAuth
+// /:id/acknowledge endpoint below.
+const VIEW = requireCapability('view:hr-admin');
 const MANAGE = requireCapability('manage:performance');
 
 const KIND = z.enum([

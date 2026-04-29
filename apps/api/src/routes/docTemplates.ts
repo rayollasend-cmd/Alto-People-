@@ -18,7 +18,10 @@ import { requireCapability } from '../middleware/auth.js';
 
 export const docTemplatesRouter = Router();
 
-const VIEW = requireCapability('view:documents');
+// Templates are an HR-admin authoring tool. Gate reads on view:hr-admin
+// so associates with view:documents (their own personal docs page)
+// can't enumerate offer-letter / termination-letter templates.
+const VIEW = requireCapability('view:hr-admin');
 const MANAGE = requireCapability('manage:documents');
 
 // Token regex: {{ x }} or {{x}}. Whitespace OK; no nested braces.

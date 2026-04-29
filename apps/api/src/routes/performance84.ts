@@ -15,7 +15,10 @@ import { requireCapability } from '../middleware/auth.js';
 
 export const performance84Router = Router();
 
-const VIEW = requireCapability('view:performance');
+// Org-wide goals/PIPs/360s reads are gated on view:hr-admin so associates
+// with view:performance can't enumerate every goal across the company.
+// (Self-service "my goals" should hit /me/* routes, not these.)
+const VIEW = requireCapability('view:hr-admin');
 const MANAGE = requireCapability('manage:performance');
 
 // ----- Goals --------------------------------------------------------------

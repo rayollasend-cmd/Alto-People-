@@ -271,7 +271,7 @@ export const MODULES: ModuleNav[] = [
     label: 'Succession',
     description:
       'Designate successors for each position with a readiness band — ready now, 1–2 years, 3+ years, or emergency cover.',
-    requires: 'view:performance',
+    requires: 'view:hr-admin',
     icon: SuccessionIcon,
     group: 'workforce',
   },
@@ -281,7 +281,7 @@ export const MODULES: ModuleNav[] = [
     label: 'Probation',
     description:
       'New-hire probation periods. See who is active, ending soon, or overdue. Pass, extend, or fail before the end date.',
-    requires: 'view:onboarding',
+    requires: 'view:hr-admin',
     icon: ProbationIcon,
     group: 'workforce',
   },
@@ -301,7 +301,7 @@ export const MODULES: ModuleNav[] = [
     label: 'Discipline',
     description:
       'Formal warning ladder — verbal, written, final, suspension, termination. Associates can acknowledge; HR can rescind.',
-    requires: 'view:performance',
+    requires: 'view:hr-admin',
     icon: DisciplineIcon,
     group: 'workforce',
   },
@@ -311,7 +311,7 @@ export const MODULES: ModuleNav[] = [
     label: 'Separations',
     description:
       'Plan, process, and complete associate departures. Capture exit-interview feedback — rating, what worked, what to change.',
-    requires: 'view:onboarding',
+    requires: 'view:hr-admin',
     icon: SeparationIcon,
     group: 'workforce',
   },
@@ -341,7 +341,7 @@ export const MODULES: ModuleNav[] = [
     label: 'Agreements',
     description:
       'NDAs, non-competes, IP assignments, equity grants — per-associate one-off legal agreements with electronic signature.',
-    requires: 'view:dashboard',
+    requires: 'view:hr-admin',
     icon: AgreementsIcon,
     group: 'compliance',
   },
@@ -371,7 +371,7 @@ export const MODULES: ModuleNav[] = [
     label: 'Ramp plans',
     description:
       'New-hire 30/60/90 day milestones. Manager updates status as they progress; achieve / miss is captured for the timeline.',
-    requires: 'view:onboarding',
+    requires: 'view:hr-admin',
     icon: RampIcon,
     group: 'workforce',
   },
