@@ -112,3 +112,30 @@ export const careersApplyEmailLimiter = rateLimit({
     },
   },
 });
+
+// Public integration API (e.g. AltoHR / ASN bridge). Keyed by the
+// authenticated ApiKey.id so noisy neighbours don't starve other tenants.
+// 60/min/key is generous for a polling integration that refreshes once
+// every few seconds; tests bypass.
+const INTEGRATIONS_LIMIT = process.env.NODE_ENV === 'test' ? 100_000 : 60;
+
+/** 60 requests / minute / API key for /integrations/v1/*. */
+export const integrationsApiKeyLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: INTEGRATIONS_LIMIT,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => {
+    // requireApiKey runs before this limiter so req.apiKey is set.
+    // Falling back to IP for safety if the limiter is somehow mounted
+    // before the auth middleware (misconfiguration).
+    const id = req.apiKey?.id;
+    return id ? `apiKey:${id}` : `ip:${req.ip ?? 'unknown'}`;
+  },
+  message: {
+    error: {
+      code: 'rate_limited',
+      message: 'Too many requests for this API key. Try again in a minute.',
+    },
+  },
+});

@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Copy, Key, Plus, Webhook } from 'lucide-react';
+import type { ClientSummary } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import {
   createApiKey,
@@ -14,6 +15,7 @@ import {
   type ApiKeyRecord,
   type WebhookRecord,
 } from '@/lib/apiKeysWebhooks93Api';
+import { listClients } from '@/lib/clientsApi';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
@@ -206,6 +208,65 @@ function KeysTab({ canManage }: { canManage: boolean }) {
   );
 }
 
+/**
+ * Preset definitions for the AltoHR / ShiftReport Nexus integration. Each
+ * preset bundles the right capability set for an ASN role; store-scoped
+ * presets also force a clientId selection. Issuing a key via a preset
+ * keeps the key surface tight — admins don't free-type capability strings
+ * (and can't accidentally over-grant).
+ */
+const ASN_CAPABILITIES = [
+  'asn:read:schedule',
+  'asn:read:roster',
+  'asn:read:clocked-in',
+  'asn:read:kpis',
+] as const;
+
+interface AsnPreset {
+  id: 'asn-supervisor' | 'asn-lead' | 'asn-command-desk' | 'asn-ops-mgr';
+  label: string;
+  description: string;
+  /** True when the preset must be bound to a specific store. */
+  storeScoped: boolean;
+  capabilities: readonly string[];
+}
+
+const ASN_PRESETS: readonly AsnPreset[] = [
+  {
+    id: 'asn-supervisor',
+    label: 'ASN Supervisor',
+    description:
+      'One store. Read schedule, roster, clocked-in roster, and weekly KPIs.',
+    storeScoped: true,
+    capabilities: ASN_CAPABILITIES,
+  },
+  {
+    id: 'asn-lead',
+    label: 'ASN Lead Supervisor',
+    description:
+      'One store. Same surface as Supervisor — kept distinct for audit-trail clarity.',
+    storeScoped: true,
+    capabilities: ASN_CAPABILITIES,
+  },
+  {
+    id: 'asn-command-desk',
+    label: 'ASN Command Desk',
+    description: 'Every store. Live monitoring across all locations.',
+    storeScoped: false,
+    capabilities: ASN_CAPABILITIES,
+  },
+  {
+    id: 'asn-ops-mgr',
+    label: 'ASN Operations Manager',
+    description:
+      'Every store. Same read surface as Command Desk — kept distinct for audit-trail clarity.',
+    storeScoped: false,
+    capabilities: ASN_CAPABILITIES,
+  },
+];
+
+type DrawerMode = 'preset' | 'custom';
+
 function NewKeyDrawer({
   onClose,
   onSaved,
@@ -213,26 +274,92 @@ function NewKeyDrawer({
   onClose: () => void;
   onSaved: (s: { plaintext: string; last4: string }) => void;
 }) {
+  const [mode, setMode] = useState<DrawerMode>('preset');
+  const [presetId, setPresetId] = useState<AsnPreset['id']>('asn-supervisor');
+  const [storeId, setStoreId] = useState<string>('');
   const [name, setName] = useState('');
   const [capabilities, setCapabilities] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
   const [saving, setSaving] = useState(false);
+  const [stores, setStores] = useState<ClientSummary[] | null>(null);
+
+  // Load active stores once when the drawer opens — used by every
+  // store-scoped preset to populate the picker. Cheap and cached for
+  // the drawer's lifetime.
+  useEffect(() => {
+    listClients({ status: 'ACTIVE' })
+      .then((r) => setStores(r.clients))
+      .catch(() => setStores([]));
+  }, []);
+
+  const preset = useMemo(
+    () => ASN_PRESETS.find((p) => p.id === presetId) ?? ASN_PRESETS[0],
+    [presetId],
+  );
+  const selectedStore = useMemo(
+    () => stores?.find((s) => s.id === storeId) ?? null,
+    [stores, storeId],
+  );
+
+  // Auto-suggest the key name from the preset + (if scoped) the store.
+  // The admin can still edit it — we only seed the field, we don't
+  // overwrite typing in progress.
+  useEffect(() => {
+    if (mode !== 'preset') return;
+    const base = preset.label;
+    const tail = preset.storeScoped && selectedStore ? ` — ${selectedStore.name}` : '';
+    const suggested = `${base}${tail}`;
+    setName((current) => {
+      // Only auto-update if the field still matches a previous suggestion
+      // (or is empty). Don't clobber the admin's edit.
+      if (
+        current === '' ||
+        ASN_PRESETS.some(
+          (p) =>
+            current === p.label ||
+            current.startsWith(`${p.label} — `),
+        )
+      ) {
+        return suggested;
+      }
+      return current;
+    });
+  }, [mode, preset, selectedStore]);
+
+  const canSubmit = (() => {
+    if (!name.trim()) return false;
+    if (mode === 'preset' && preset.storeScoped && !storeId) return false;
+    return true;
+  })();
 
   const onSubmit = async () => {
-    if (!name.trim()) {
-      toast.error('Name required.');
+    if (!canSubmit) {
+      toast.error(
+        mode === 'preset' && preset.storeScoped && !storeId
+          ? 'Pick a store for this preset.'
+          : 'Name required.',
+      );
       return;
     }
     setSaving(true);
     try {
-      const r = await createApiKey({
-        name: name.trim(),
-        capabilities: capabilities
-          .split(',')
-          .map((c) => c.trim())
-          .filter(Boolean),
-        expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
-      });
+      const payload =
+        mode === 'preset'
+          ? {
+              name: name.trim(),
+              clientId: preset.storeScoped ? storeId : null,
+              capabilities: [...preset.capabilities],
+              expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
+            }
+          : {
+              name: name.trim(),
+              capabilities: capabilities
+                .split(',')
+                .map((c) => c.trim())
+                .filter(Boolean),
+              expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
+            };
+      const r = await createApiKey(payload);
       onSaved({ plaintext: r.plaintext, last4: r.last4 });
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -240,33 +367,124 @@ function NewKeyDrawer({
       setSaving(false);
     }
   };
+
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
         <DrawerTitle>New API key</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
+        {/* Mode toggle — preset (curated) vs custom (raw capability strings) */}
+        <div className="inline-flex rounded-md border border-navy-secondary p-0.5">
+          <button
+            type="button"
+            onClick={() => setMode('preset')}
+            className={`px-3 py-1 text-xs rounded ${
+              mode === 'preset'
+                ? 'bg-gold/20 text-gold'
+                : 'text-silver hover:text-white'
+            }`}
+          >
+            ASN preset
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('custom')}
+            className={`px-3 py-1 text-xs rounded ${
+              mode === 'custom'
+                ? 'bg-gold/20 text-gold'
+                : 'text-silver hover:text-white'
+            }`}
+          >
+            Custom
+          </button>
+        </div>
+
+        {mode === 'preset' && (
+          <>
+            <div>
+              <Label>Role</Label>
+              <select
+                className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 py-2 text-sm text-white"
+                value={presetId}
+                onChange={(e) =>
+                  setPresetId(e.target.value as AsnPreset['id'])
+                }
+              >
+                {ASN_PRESETS.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+              <div className="text-xs text-silver mt-1">{preset.description}</div>
+            </div>
+
+            {preset.storeScoped && (
+              <div>
+                <Label required>Store</Label>
+                <select
+                  className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 py-2 text-sm text-white"
+                  value={storeId}
+                  onChange={(e) => setStoreId(e.target.value)}
+                  disabled={stores === null}
+                >
+                  <option value="">
+                    {stores === null ? 'Loading…' : 'Select a store'}
+                  </option>
+                  {stores?.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                      {s.state ? ` (${s.state})` : ''}
+                    </option>
+                  ))}
+                </select>
+                <div className="text-xs text-silver mt-1">
+                  This key will only see data for the selected store.
+                </div>
+              </div>
+            )}
+
+            <div className="rounded-md border border-navy-secondary bg-navy-secondary/20 p-3 text-xs text-silver space-y-1">
+              <div className="text-white font-medium">Granted capabilities</div>
+              <ul className="font-mono">
+                {preset.capabilities.map((c) => (
+                  <li key={c}>{c}</li>
+                ))}
+              </ul>
+            </div>
+          </>
+        )}
+
         <div>
           <Label>Name</Label>
           <Input
             className="mt-1"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="ATS sync — production"
+            placeholder={
+              mode === 'preset'
+                ? 'Auto-filled from preset — edit to taste'
+                : 'ATS sync — production'
+            }
           />
         </div>
-        <div>
-          <Label>Capabilities (comma separated)</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={capabilities}
-            onChange={(e) => setCapabilities(e.target.value)}
-            placeholder="view:clients, view:onboarding"
-          />
-          <div className="text-xs text-silver mt-1">
-            Leave empty to inherit your own capabilities.
+
+        {mode === 'custom' && (
+          <div>
+            <Label>Capabilities (comma separated)</Label>
+            <Input
+              className="mt-1 font-mono text-xs"
+              value={capabilities}
+              onChange={(e) => setCapabilities(e.target.value)}
+              placeholder="view:clients, view:onboarding"
+            />
+            <div className="text-xs text-silver mt-1">
+              Leave empty to inherit your own capabilities.
+            </div>
           </div>
-        </div>
+        )}
+
         <div>
           <Label>Expires at (optional)</Label>
           <Input
@@ -281,7 +499,7 @@ function NewKeyDrawer({
         <Button variant="ghost" onClick={onClose}>
           Cancel
         </Button>
-        <Button onClick={onSubmit} disabled={saving}>
+        <Button onClick={onSubmit} disabled={saving || !canSubmit}>
           {saving ? 'Generating…' : 'Generate'}
         </Button>
       </DrawerFooter>

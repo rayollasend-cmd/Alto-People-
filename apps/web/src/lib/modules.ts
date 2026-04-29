@@ -68,7 +68,8 @@ export type ModuleKey =
   | 'compensation'
   | 'marketplace'
   | 'payrules'
-  | 'dircomms';
+  | 'dircomms'
+  | 'integrations';
 
 /**
  * Phase 67 — sidebar groupings, F500-style. Modules with the same `group`
@@ -121,7 +122,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon, LogOut as SeparationIcon, Briefcase as InternalJobsIcon, Syringe as VaccinationsIcon, FileSignature as AgreementsIcon, MessageCircle as HrCasesIcon, BookOpen as KbIcon, Target as RampIcon, TrendingUp as CareerIcon, GraduationCap as TuitionIcon, Siren as HotlineIcon, Coins as EquityIcon, Heart as VolunteerIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon, LogOut as SeparationIcon, Briefcase as InternalJobsIcon, Syringe as VaccinationsIcon, FileSignature as AgreementsIcon, MessageCircle as HrCasesIcon, BookOpen as KbIcon, Target as RampIcon, TrendingUp as CareerIcon, GraduationCap as TuitionIcon, Siren as HotlineIcon, Coins as EquityIcon, Heart as VolunteerIcon, Plug as IntegrationsIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -612,6 +613,16 @@ export const MODULES: ModuleNav[] = [
       'Executive dashboard, custom reports, and predictive analytics.',
     requires: 'view:analytics',
     icon: LineChart,
+    group: 'insights',
+  },
+  {
+    key: 'integrations',
+    path: '/integrations',
+    label: 'Integrations',
+    description:
+      'Public API keys + outbound webhooks. Mint ASN bridge keys for AltoHR / ShiftReport Nexus and any other programmatic consumer.',
+    requires: 'view:integrations',
+    icon: IntegrationsIcon,
     group: 'insights',
   },
 ];
