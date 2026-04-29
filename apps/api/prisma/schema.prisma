@@ -150,76 +150,106 @@ enum I9CitizenshipStatus {
 }
 
 enum TimeEntryStatus {
-  ACTIVE      // clocked in, not yet out
-  COMPLETED   // clocked out, awaiting review
-  APPROVED    // HR/Ops approved for payroll
-  REJECTED    // HR/Ops rejected (associate must edit + resubmit)
+  ACTIVE // clocked in, not yet out
+  COMPLETED // clocked out, awaiting review
+  APPROVED // HR/Ops approved for payroll
+  REJECTED // HR/Ops rejected (associate must edit + resubmit)
 }
 
 enum ShiftStatus {
-  DRAFT       // HR scratch pad, not yet open for assignment
-  OPEN        // published, no one assigned
-  ASSIGNED    // associate accepted (or HR assigned)
-  COMPLETED   // worked
-  CANCELLED   // pulled
+  DRAFT // HR scratch pad, not yet open for assignment
+  OPEN // published, no one assigned
+  ASSIGNED // associate accepted (or HR assigned)
+  COMPLETED // worked
+  CANCELLED // pulled
 }
 
 enum PayrollRunStatus {
-  DRAFT       // newly created, items aggregated, can be edited
-  FINALIZED   // locked for review, ready to disburse
-  DISBURSED   // funds sent (real or stubbed)
+  DRAFT // newly created, items aggregated, can be edited
+  FINALIZED // locked for review, ready to disburse
+  DISBURSED // funds sent (real or stubbed)
   CANCELLED
 }
 
 enum PayrollItemStatus {
-  PENDING     // computed, not yet sent
-  DISBURSED   // sent (with disbursementRef)
-  FAILED      // disbursement attempt failed
-  HELD        // HR put a hold on this single item
+  PENDING // computed, not yet sent
+  DISBURSED // sent (with disbursementRef)
+  FAILED // disbursement attempt failed
+  HELD // HR put a hold on this single item
+}
+
+// Wave 1.1 — Pay schedule cadence. Mirrors QuickBooks Online Payroll's four
+// frequencies. Drives the run wizard's "next period" computation, the federal
+// weekly OT split (>40h = 1.5x is week-bounded), and tax annualization
+// multipliers (52 / 26 / 24 / 12) used by IRS Pub 15-T.
+enum PayrollFrequency {
+  WEEKLY
+  BIWEEKLY
+  SEMIMONTHLY
+  MONTHLY
+}
+
+// Wave 1.2 — Earning line types on a paystub. Mirrors QuickBooks Online
+// Payroll's "earnings" picker: each PayrollItem may have multiple earning
+// lines that sum to grossPay. REGULAR + OVERTIME are auto-split from
+// approved time entries (federal weekly rule: hours over 40 in a Mon–Sun
+// week pay at 1.5x). The remaining kinds are manual entries the run-wizard
+// surfaces as add-on lines.
+enum PayrollEarningKind {
+  REGULAR
+  OVERTIME
+  DOUBLE_TIME
+  HOLIDAY
+  SICK
+  VACATION
+  BONUS
+  COMMISSION
+  TIPS
+  REIMBURSEMENT
 }
 
 enum NotificationChannel {
-  SMS         // Twilio (Phase 12 stubbed)
-  PUSH        // FCM (Phase 12 stubbed)
-  EMAIL       // SES / Resend (Phase 12 stubbed)
-  IN_APP      // delivered via the web inbox; no external service
+  SMS // Twilio (Phase 12 stubbed)
+  PUSH // FCM (Phase 12 stubbed)
+  EMAIL // SES / Resend (Phase 12 stubbed)
+  IN_APP // delivered via the web inbox; no external service
 }
 
 enum NotificationStatus {
-  QUEUED      // accepted, not yet sent
-  SENT        // delivered to provider (or in-app written)
-  FAILED      // provider returned an error
-  READ        // IN_APP only — recipient opened it
+  QUEUED // accepted, not yet sent
+  SENT // delivered to provider (or in-app written)
+  FAILED // provider returned an error
+  READ // IN_APP only — recipient opened it
 }
 
 enum PerformanceReviewStatus {
-  DRAFT          // HR is still composing — not visible to associate
-  SUBMITTED      // visible to associate, awaiting acknowledgement
-  ACKNOWLEDGED   // associate has read + signed off
+  DRAFT // HR is still composing — not visible to associate
+  SUBMITTED // visible to associate, awaiting acknowledgement
+  ACKNOWLEDGED // associate has read + signed off
 }
 
 enum CandidateStage {
-  APPLIED        // record exists, hasn't been screened yet
-  SCREENING      // recruiter is reviewing
-  INTERVIEW      // interview scheduled / in progress
-  OFFER          // offer extended, awaiting response
-  HIRED          // accepted; converted to Associate
-  WITHDRAWN      // candidate pulled out
-  REJECTED       // we passed
+  APPLIED // record exists, hasn't been screened yet
+  SCREENING // recruiter is reviewing
+  INTERVIEW // interview scheduled / in progress
+  OFFER // offer extended, awaiting response
+  HIRED // accepted; converted to Associate
+  WITHDRAWN // candidate pulled out
+  REJECTED // we passed
 }
 
 enum BreakType {
-  MEAL           // 30+ min unpaid (state-dependent)
-  REST           // 10-15 min paid
+  MEAL // 30+ min unpaid (state-dependent)
+  REST // 10-15 min paid
 }
 
 enum ShiftSwapStatus {
-  PENDING_PEER       // sent to counterparty associate
-  PEER_ACCEPTED      // counterparty agreed; awaiting manager approval
-  PEER_DECLINED      // counterparty refused
-  MANAGER_APPROVED   // executed — shift assignment swapped
-  MANAGER_REJECTED   // manager refused after peer accepted
-  CANCELLED          // requester pulled it
+  PENDING_PEER // sent to counterparty associate
+  PEER_ACCEPTED // counterparty agreed; awaiting manager approval
+  PEER_DECLINED // counterparty refused
+  MANAGER_APPROVED // executed — shift assignment swapped
+  MANAGER_REJECTED // manager refused after peer accepted
+  CANCELLED // requester pulled it
 }
 
 // Phase 78 — Position is a seat-in-the-org concept distinct from a
@@ -238,122 +268,122 @@ enum PositionStatus {
 // =============================================================================
 
 model User {
-  id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  email         String     @unique
-  passwordHash  String?    @db.VarChar(255)
-  role          Role
-  status        UserStatus @default(INVITED)
-  tokenVersion  Int        @default(0)
-  associateId   String?    @unique @db.Uuid
-  clientId      String?    @db.Uuid
-  associate     Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)
-  client        Client?    @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  createdAt     DateTime   @default(now()) @db.Timestamptz(6)
-  updatedAt     DateTime   @updatedAt @db.Timestamptz(6)
-  deletedAt     DateTime?  @db.Timestamptz(6)
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email        String     @unique
+  passwordHash String?    @db.VarChar(255)
+  role         Role
+  status       UserStatus @default(INVITED)
+  tokenVersion Int        @default(0)
+  associateId  String?    @unique @db.Uuid
+  clientId     String?    @db.Uuid
+  associate    Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)
+  client       Client?    @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  createdAt    DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime   @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime?  @db.Timestamptz(6)
 
-  signaturesGiven       Signature[]            @relation("UserSignatures")
-  i9VerificationsAsRep  I9Verification[]       @relation("I9Verifier")
-  auditLogActions       AuditLog[]             @relation("AuditActor")
-  timeApprovals         TimeEntry[]            @relation("TimeApprover")
-  createdShifts         Shift[]                @relation("ShiftCreator")
-  createdPayrollRuns    PayrollRun[]           @relation("PayrollRunCreator")
-  verifiedDocuments     DocumentRecord[]       @relation("DocumentVerifier")
-  sentNotifications     Notification[]         @relation("NotificationSender")
-  receivedNotifications Notification[]         @relation("NotificationRecipient")
-  authoredReviews       PerformanceReview[]    @relation("PerformanceReviewer")
-  inviteTokens          InviteToken[]
-  createdEsignAgreements EsignAgreement[]      @relation("EsignAgreementCreator")
-  payrollDisbursementAttempts PayrollDisbursementAttempt[] @relation("PayrollDisbursementAttemptActor")
-  timeOffLedgerEntriesAuthored TimeOffLedgerEntry[]
-  timeOffReviews               TimeOffRequest[]               @relation("TimeOffReviewer")
-  associateHistoryEntries      AssociateHistory[]             @relation("AssociateHistoryActor")
-  workflowDefinitions          WorkflowDefinition[]           @relation("WorkflowDefinitionCreator")
-  reviewedLifeEvents           LifeEvent[]                    @relation("LifeEventReviewer")
+  signaturesGiven                   Signature[]                  @relation("UserSignatures")
+  i9VerificationsAsRep              I9Verification[]             @relation("I9Verifier")
+  auditLogActions                   AuditLog[]                   @relation("AuditActor")
+  timeApprovals                     TimeEntry[]                  @relation("TimeApprover")
+  createdShifts                     Shift[]                      @relation("ShiftCreator")
+  createdPayrollRuns                PayrollRun[]                 @relation("PayrollRunCreator")
+  verifiedDocuments                 DocumentRecord[]             @relation("DocumentVerifier")
+  sentNotifications                 Notification[]               @relation("NotificationSender")
+  receivedNotifications             Notification[]               @relation("NotificationRecipient")
+  authoredReviews                   PerformanceReview[]          @relation("PerformanceReviewer")
+  inviteTokens                      InviteToken[]
+  createdEsignAgreements            EsignAgreement[]             @relation("EsignAgreementCreator")
+  payrollDisbursementAttempts       PayrollDisbursementAttempt[] @relation("PayrollDisbursementAttemptActor")
+  timeOffLedgerEntriesAuthored      TimeOffLedgerEntry[]
+  timeOffReviews                    TimeOffRequest[]             @relation("TimeOffReviewer")
+  associateHistoryEntries           AssociateHistory[]           @relation("AssociateHistoryActor")
+  workflowDefinitions               WorkflowDefinition[]         @relation("WorkflowDefinitionCreator")
+  reviewedLifeEvents                LifeEvent[]                  @relation("LifeEventReviewer")
   // Phase 83 — compensation back-relations.
-  compRecordsActed             CompensationRecord[]           @relation("CompRecordActor")
-  meritProposalsProposed       MeritProposal[]                @relation("MeritProposalProposer")
-  meritProposalsDecided        MeritProposal[]                @relation("MeritProposalDecider")
+  compRecordsActed                  CompensationRecord[]         @relation("CompRecordActor")
+  meritProposalsProposed            MeritProposal[]              @relation("MeritProposalProposer")
+  meritProposalsDecided             MeritProposal[]              @relation("MeritProposalDecider")
   // Phase 84 — performance back-relations.
-  goalsCreated                 Goal[]                         @relation("GoalCreator")
-  oneOnOnesAsManager           OneOnOne[]                     @relation("OneOnOneManager")
-  kudosSent                    Kudo[]                         @relation("KudoSender")
-  pipsAsManager                Pip[]                          @relation("PipManager")
-  reviews360Requested          Review360[]                    @relation("Review360Requester")
-  reviews360FeedbackGiven      Review360Feedback[]            @relation("Review360FeedbackFrom")
+  goalsCreated                      Goal[]                       @relation("GoalCreator")
+  oneOnOnesAsManager                OneOnOne[]                   @relation("OneOnOneManager")
+  kudosSent                         Kudo[]                       @relation("KudoSender")
+  pipsAsManager                     Pip[]                        @relation("PipManager")
+  reviews360Requested               Review360[]                  @relation("Review360Requester")
+  reviews360FeedbackGiven           Review360Feedback[]          @relation("Review360FeedbackFrom")
   // Phase 85 — claim decisions.
-  shiftClaimsDecided           OpenShiftClaim[]               @relation("OpenShiftClaimDecider")
+  shiftClaimsDecided                OpenShiftClaim[]             @relation("OpenShiftClaimDecider")
   // Phase 86 — tip pool authorship.
-  tipPoolsCreated              TipPool[]                      @relation("TipPoolCreator")
+  tipPoolsCreated                   TipPool[]                    @relation("TipPoolCreator")
   // Phase 87 — broadcast / survey authorship + receipts + responses.
-  broadcastsCreated            Broadcast[]                    @relation("BroadcastCreator")
-  broadcastReceipts            BroadcastReceipt[]             @relation("BroadcastReceiptUser")
-  surveysCreated               Survey[]                       @relation("SurveyCreator")
-  surveyResponses              SurveyResponse[]               @relation("SurveyRespondent")
+  broadcastsCreated                 Broadcast[]                  @relation("BroadcastCreator")
+  broadcastReceipts                 BroadcastReceipt[]           @relation("BroadcastReceiptUser")
+  surveysCreated                    Survey[]                     @relation("SurveyCreator")
+  surveyResponses                   SurveyResponse[]             @relation("SurveyRespondent")
   // Phase 88 — OSHA incident reporters.
-  oshaIncidentsReported        OshaIncident[]                 @relation("OshaIncidentReporter")
+  oshaIncidentsReported             OshaIncident[]               @relation("OshaIncidentReporter")
   // Phase 89 — document template authorship + renders.
-  documentTemplatesCreated     DocumentTemplate[]             @relation("DocTemplateCreator")
-  documentTemplateVersionsPublished DocumentTemplateVersion[] @relation("DocTemplateVersionPublisher")
-  documentsRendered            DocumentRender[]               @relation("DocRenderer")
+  documentTemplatesCreated          DocumentTemplate[]           @relation("DocTemplateCreator")
+  documentTemplateVersionsPublished DocumentTemplateVersion[]    @relation("DocTemplateVersionPublisher")
+  documentsRendered                 DocumentRender[]             @relation("DocRenderer")
   // Phase 90 — recruiting authorship.
-  interviewKitsCreated         InterviewKit[]                 @relation("InterviewKitCreator")
-  interviewsAsInterviewer      Interview[]                    @relation("Interviewer")
-  offersCreated                Offer[]                        @relation("OfferCreator")
-  referralsMade                Referral[]                     @relation("Referrer")
-  jobPostingsCreated           JobPosting[]                   @relation("JobPostingCreator")
+  interviewKitsCreated              InterviewKit[]               @relation("InterviewKitCreator")
+  interviewsAsInterviewer           Interview[]                  @relation("Interviewer")
+  offersCreated                     Offer[]                      @relation("OfferCreator")
+  referralsMade                     Referral[]                   @relation("Referrer")
+  jobPostingsCreated                JobPosting[]                 @relation("JobPostingCreator")
   // Phase 91 — garnishments + tax forms authorship.
-  garnishmentsCreated          Garnishment[]                  @relation("GarnishmentCreator")
-  taxFormsFiled                TaxForm[]                      @relation("TaxFormFiler")
+  garnishmentsCreated               Garnishment[]                @relation("GarnishmentCreator")
+  taxFormsFiled                     TaxForm[]                    @relation("TaxFormFiler")
   // Phase 92 — open enrollment + QLE authorship.
-  openEnrollmentsCreated       OpenEnrollmentWindow[]         @relation("OpenEnrollmentCreator")
-  qleDecisions                 QualifyingLifeEvent[]          @relation("QleDecider")
+  openEnrollmentsCreated            OpenEnrollmentWindow[]       @relation("OpenEnrollmentCreator")
+  qleDecisions                      QualifyingLifeEvent[]        @relation("QleDecider")
   // Phase 93 — API keys + webhooks authorship.
-  apiKeysCreated               ApiKey[]                       @relation("ApiKeyCreator")
-  webhooksCreated              Webhook[]                      @relation("WebhookCreator")
+  apiKeysCreated                    ApiKey[]                     @relation("ApiKeyCreator")
+  webhooksCreated                   Webhook[]                    @relation("WebhookCreator")
   // Phase 94 — LMS course authorship + enrollment assignment.
-  coursesCreated               Course[]                       @relation("CourseCreator")
-  enrollmentsAssigned          CourseEnrollment[]             @relation("EnrollmentAssigner")
+  coursesCreated                    Course[]                     @relation("CourseCreator")
+  enrollmentsAssigned               CourseEnrollment[]           @relation("EnrollmentAssigner")
   // Phase 95 — worktag assignments authored.
-  worktagAssignmentsAuthored   WorktagAssignment[]            @relation("WorktagAssigner")
+  worktagAssignmentsAuthored        WorktagAssignment[]          @relation("WorktagAssigner")
   // Phase 96 — saved reports authored.
-  reportsCreated               Report[]                       @relation("ReportCreator")
+  reportsCreated                    Report[]                     @relation("ReportCreator")
   // Phase 97 — reimbursement decisions.
-  reimbursementsDecided        Reimbursement[]                @relation("ReimbursementDecider")
+  reimbursementsDecided             Reimbursement[]              @relation("ReimbursementDecider")
   // Phase 99 — kiosk authorship (devices registered, PINs assigned).
-  kioskDevicesCreated          KioskDevice[]                  @relation("KioskDeviceCreator")
-  kioskPinsCreated             KioskPin[]                     @relation("KioskPinCreator")
-  kioskPunchesReviewed         KioskPunch[]                   @relation("KioskPunchReviewer")
-  assetAssignmentsAssigned     AssetAssignment[]              @relation("AssetAssigner")
-  assetAssignmentsReturned     AssetAssignment[]              @relation("AssetReturner")
-  pulseSurveysCreated          PulseSurvey[]                  @relation("PulseSurveyCreator")
-  associateSkillsVerified      AssociateSkill[]               @relation("AssociateSkillVerifier")
-  mentorshipsProposed          Mentorship[]                   @relation("MentorshipProposer")
-  learningPathsCreated         LearningPath[]                 @relation("LearningPathCreator")
-  successionCandidatesCreated  SuccessionCandidate[]
-  probationsCreated            ProbationPeriod[]              @relation("ProbationCreator")
-  probationsDecided            ProbationPeriod[]              @relation("ProbationDecider")
-  holidaysCreated              Holiday[]
-  disciplinaryActionsIssued    DisciplinaryAction[]           @relation("DisciplineIssuer")
-  disciplinaryActionsRescinded DisciplinaryAction[]           @relation("DisciplineRescinder")
-  separationsInitiated         Separation[]                   @relation("SeparationInitiator")
-  separationsCompleted         Separation[]                   @relation("SeparationCompleter")
-  exitInterviewsConducted      Separation[]                   @relation("SeparationExitInterviewer")
-  internalApplicationsReviewed InternalJobApplication[]       @relation("InternalApplicationReviewer")
-  vaccinationRecordsCreated    VaccinationRecord[]
-  agreementsIssued             Agreement[]
-  hrCasesAssigned              HrCase[]
-  hrCaseCommentsAuthored       HrCaseComment[]                @relation("HrCaseCommentUserAuthor")
-  kbArticlesAuthored           KbArticle[]
-  rampPlansCreated             RampPlan[]                     @relation("RampPlanCreator")
-  rampPlansManaged             RampPlan[]                     @relation("RampPlanManager")
-  careerLaddersCreated         CareerLadder[]
-  tuitionRequestsReviewed      TuitionRequest[]               @relation("TuitionReviewer")
-  tuitionRequestsPaid          TuitionRequest[]               @relation("TuitionPayer")
-  anonymousReportsAssigned     AnonymousReport[]              @relation("AnonReportAssignee")
-  anonymousReportUpdates       AnonymousReportUpdate[]        @relation("AnonReportAuthor")
-  equityGrantsIssued           EquityGrant[]                  @relation("EquityGrantedBy")
-  volunteerEntriesReviewed     VolunteerEntry[]               @relation("VolunteerReviewer")
+  kioskDevicesCreated               KioskDevice[]                @relation("KioskDeviceCreator")
+  kioskPinsCreated                  KioskPin[]                   @relation("KioskPinCreator")
+  kioskPunchesReviewed              KioskPunch[]                 @relation("KioskPunchReviewer")
+  assetAssignmentsAssigned          AssetAssignment[]            @relation("AssetAssigner")
+  assetAssignmentsReturned          AssetAssignment[]            @relation("AssetReturner")
+  pulseSurveysCreated               PulseSurvey[]                @relation("PulseSurveyCreator")
+  associateSkillsVerified           AssociateSkill[]             @relation("AssociateSkillVerifier")
+  mentorshipsProposed               Mentorship[]                 @relation("MentorshipProposer")
+  learningPathsCreated              LearningPath[]               @relation("LearningPathCreator")
+  successionCandidatesCreated       SuccessionCandidate[]
+  probationsCreated                 ProbationPeriod[]            @relation("ProbationCreator")
+  probationsDecided                 ProbationPeriod[]            @relation("ProbationDecider")
+  holidaysCreated                   Holiday[]
+  disciplinaryActionsIssued         DisciplinaryAction[]         @relation("DisciplineIssuer")
+  disciplinaryActionsRescinded      DisciplinaryAction[]         @relation("DisciplineRescinder")
+  separationsInitiated              Separation[]                 @relation("SeparationInitiator")
+  separationsCompleted              Separation[]                 @relation("SeparationCompleter")
+  exitInterviewsConducted           Separation[]                 @relation("SeparationExitInterviewer")
+  internalApplicationsReviewed      InternalJobApplication[]     @relation("InternalApplicationReviewer")
+  vaccinationRecordsCreated         VaccinationRecord[]
+  agreementsIssued                  Agreement[]
+  hrCasesAssigned                   HrCase[]
+  hrCaseCommentsAuthored            HrCaseComment[]              @relation("HrCaseCommentUserAuthor")
+  kbArticlesAuthored                KbArticle[]
+  rampPlansCreated                  RampPlan[]                   @relation("RampPlanCreator")
+  rampPlansManaged                  RampPlan[]                   @relation("RampPlanManager")
+  careerLaddersCreated              CareerLadder[]
+  tuitionRequestsReviewed           TuitionRequest[]             @relation("TuitionReviewer")
+  tuitionRequestsPaid               TuitionRequest[]             @relation("TuitionPayer")
+  anonymousReportsAssigned          AnonymousReport[]            @relation("AnonReportAssignee")
+  anonymousReportUpdates            AnonymousReportUpdate[]      @relation("AnonReportAuthor")
+  equityGrantsIssued                EquityGrant[]                @relation("EquityGrantedBy")
+  volunteerEntriesReviewed          VolunteerEntry[]             @relation("VolunteerReviewer")
 
   @@index([role])
   @@index([clientId])
@@ -381,24 +411,26 @@ model Client {
   updatedAt            DateTime     @updatedAt @db.Timestamptz(6)
   deletedAt            DateTime?    @db.Timestamptz(6)
 
-  applications Application[]
-  users        User[]
-  policies     Policy[]
-  templates    OnboardingTemplate[]
-  shifts       Shift[]
-  payrollRuns  PayrollRun[]
-  jobs         Job[]
-  benefitsPlans BenefitsPlan[]
-  quickbooksConnection QuickbooksConnection?
-  shiftTemplates ShiftTemplate[]
+  applications           Application[]
+  users                  User[]
+  policies               Policy[]
+  templates              OnboardingTemplate[]
+  shifts                 Shift[]
+  payrollRuns            PayrollRun[]
+  // Wave 1.1 — Pay schedules scoped to this client.
+  payrollSchedules       PayrollSchedule[]
+  jobs                   Job[]
+  benefitsPlans          BenefitsPlan[]
+  quickbooksConnection   QuickbooksConnection?
+  shiftTemplates         ShiftTemplate[]
   // Phase 76 — org hierarchy entities are per-client.
-  departments  Department[]
-  costCenters  CostCenter[]
-  jobProfiles  JobProfile[]
+  departments            Department[]
+  costCenters            CostCenter[]
+  jobProfiles            JobProfile[]
   // Phase 78 — positions / seats.
-  positions    Position[]
+  positions              Position[]
   // Phase 80 — workflow definitions can be client-scoped.
-  workflows    WorkflowDefinition[]
+  workflows              WorkflowDefinition[]
   // Phase 81 — custom field definitions can be client-scoped.
   customFieldDefinitions CustomFieldDefinition[]
   // Phase 83 — compensation bands + merit cycles.
@@ -449,149 +481,162 @@ model Client {
 }
 
 model Associate {
-  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  firstName    String
-  lastName     String
-  dob          DateTime? @db.Date
-  email        String    @unique
-  phone        String?
-  ssnLast4     String?   @db.VarChar(4)
-  addressLine1 String?
-  addressLine2 String?
-  city         String?
-  state        String?   @db.VarChar(2)
-  zip          String?   @db.VarChar(10)
-  j1Status     Boolean   @default(false)
+  id                String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  firstName         String
+  lastName          String
+  dob               DateTime?      @db.Date
+  email             String         @unique
+  phone             String?
+  ssnLast4          String?        @db.VarChar(4)
+  addressLine1      String?
+  addressLine2      String?
+  city              String?
+  state             String?        @db.VarChar(2)
+  zip               String?        @db.VarChar(10)
+  j1Status          Boolean        @default(false)
   // Phase 41 — W-2 vs 1099. Default W2 keeps every existing record's
   // payroll math identical; 1099 records skip W-4 / FICA / Medicare.
-  employmentType EmploymentType @default(W2_EMPLOYEE)
+  employmentType    EmploymentType @default(W2_EMPLOYEE)
   // Phase 76 — org hierarchy. All four are nullable: existing rows
   // continue to work with NULLs and HR fills them in over time. The
   // managerId self-reference enables direct-reports queries.
-  managerId      String?  @db.Uuid
-  departmentId   String?  @db.Uuid
-  costCenterId   String?  @db.Uuid
-  jobProfileId   String?  @db.Uuid
+  managerId         String?        @db.Uuid
+  departmentId      String?        @db.Uuid
+  costCenterId      String?        @db.Uuid
+  jobProfileId      String?        @db.Uuid
+  // Wave 1.1 — pay schedule assignment. Drives the payroll run wizard's
+  // "next period to run" calculation and determines pay frequency for
+  // tax annualization. NULL = legacy associates that haven't been
+  // assigned to a schedule yet (treated as biweekly default until set).
+  payrollScheduleId String?        @db.Uuid
+  // Wave 3.2 — QBO Employee.Id (W2) or Vendor.Id (1099) cache. Set the
+  // first time we sync this associate to QuickBooks. Used as the dedup
+  // key so we never create duplicate QBO records, and (future) as the
+  // EmployeeRef on per-associate journal entries.
+  qboEmployeeId     String?
+  qboVendorId       String?
+  qboSyncedAt       DateTime?      @db.Timestamptz(6)
   // Profile photo. photoS3Key is the storage path under uploads/profile-photos/;
   // photoUpdatedAt is the cache-buster the API stamps onto the photo URL so
   // the browser refetches after an upload. Null when no photo on file —
   // Avatar then falls back to initials.
-  photoS3Key     String?
-  photoUpdatedAt DateTime? @db.Timestamptz(6)
-  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
-  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
-  deletedAt    DateTime? @db.Timestamptz(6)
+  photoS3Key        String?
+  photoUpdatedAt    DateTime?      @db.Timestamptz(6)
+  createdAt         DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime       @updatedAt @db.Timestamptz(6)
+  deletedAt         DateTime?      @db.Timestamptz(6)
 
-  user             User?
-  j1Profile        J1Profile?
-  applications     Application[]
-  documents        DocumentRecord[]
-  signatures       Signature[]            @relation("AssociateSignatures")
-  backgroundChecks BackgroundCheck[]
-  policyAcks       PolicyAcknowledgment[]
-  i9Verification   I9Verification?
-  w4Submission     W4Submission?
-  payoutMethods    PayoutMethod[]
-  timeEntries      TimeEntry[]
-  assignedShifts   Shift[]
-  payrollItems     PayrollItem[]
-  performanceReviews PerformanceReview[]
-  availability       AssociateAvailability[]
-  swapsRequested     ShiftSwapRequest[] @relation("SwapRequester")
-  swapsReceived      ShiftSwapRequest[] @relation("SwapCounterparty")
-  timeOffBalances    TimeOffBalance[]
-  timeOffLedger      TimeOffLedgerEntry[]
-  timeOffRequests    TimeOffRequest[]
-  benefitsEnrollments BenefitsEnrollment[]
-  timeOffEntitlements TimeOffEntitlement[]
+  user                    User?
+  j1Profile               J1Profile?
+  applications            Application[]
+  documents               DocumentRecord[]
+  signatures              Signature[]              @relation("AssociateSignatures")
+  backgroundChecks        BackgroundCheck[]
+  policyAcks              PolicyAcknowledgment[]
+  i9Verification          I9Verification?
+  w4Submission            W4Submission?
+  payoutMethods           PayoutMethod[]
+  timeEntries             TimeEntry[]
+  assignedShifts          Shift[]
+  payrollItems            PayrollItem[]
+  performanceReviews      PerformanceReview[]
+  availability            AssociateAvailability[]
+  swapsRequested          ShiftSwapRequest[]       @relation("SwapRequester")
+  swapsReceived           ShiftSwapRequest[]       @relation("SwapCounterparty")
+  timeOffBalances         TimeOffBalance[]
+  timeOffLedger           TimeOffLedgerEntry[]
+  timeOffRequests         TimeOffRequest[]
+  benefitsEnrollments     BenefitsEnrollment[]
+  timeOffEntitlements     TimeOffEntitlement[]
   // Phase 76 — manager chain.
-  manager        Associate?  @relation("AssociateManager", fields: [managerId], references: [id], onDelete: SetNull)
-  directReports  Associate[] @relation("AssociateManager")
-  department     Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
-  costCenter     CostCenter? @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
-  jobProfile     JobProfile? @relation(fields: [jobProfileId], references: [id], onDelete: SetNull)
+  manager                 Associate?               @relation("AssociateManager", fields: [managerId], references: [id], onDelete: SetNull)
+  directReports           Associate[]              @relation("AssociateManager")
+  department              Department?              @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  costCenter              CostCenter?              @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
+  jobProfile              JobProfile?              @relation(fields: [jobProfileId], references: [id], onDelete: SetNull)
+  payrollSchedule         PayrollSchedule?         @relation(fields: [payrollScheduleId], references: [id], onDelete: SetNull)
   // Phase 77 — effective-dated history of tracked fields.
-  history        AssociateHistory[]
+  history                 AssociateHistory[]
   // Phase 78 — positions filled and managed.
-  filledPositions  Position[] @relation("PositionFilledBy")
-  managedPositions Position[] @relation("PositionManager")
+  filledPositions         Position[]               @relation("PositionFilledBy")
+  managedPositions        Position[]               @relation("PositionManager")
   // Phase 82 — self-service personal data.
-  emergencyContacts EmergencyContact[]
-  dependents        Dependent[]
-  beneficiaries     Beneficiary[]
-  lifeEvents        LifeEvent[]
-  taxDocuments      TaxDocument[]
+  emergencyContacts       EmergencyContact[]
+  dependents              Dependent[]
+  beneficiaries           Beneficiary[]
+  lifeEvents              LifeEvent[]
+  taxDocuments            TaxDocument[]
   // Phase 83 — compensation history + merit-cycle proposals.
-  compRecords       CompensationRecord[]
-  meritProposals    MeritProposal[]
+  compRecords             CompensationRecord[]
+  meritProposals          MeritProposal[]
   // Phase 84 — performance: goals, 1:1s, kudos received, PIPs, 360s.
-  goals             Goal[]
-  oneOnOnes         OneOnOne[]
-  kudosReceived     Kudo[]            @relation("KudoRecipient")
-  pips              Pip[]
-  reviews360Subject Review360[]       @relation("Review360Subject")
+  goals                   Goal[]
+  oneOnOnes               OneOnOne[]
+  kudosReceived           Kudo[]                   @relation("KudoRecipient")
+  pips                    Pip[]
+  reviews360Subject       Review360[]              @relation("Review360Subject")
   // Phase 85 — qualifications + claimed open shifts.
-  qualifications    AssociateQualification[]
-  shiftClaims       OpenShiftClaim[]
+  qualifications          AssociateQualification[]
+  shiftClaims             OpenShiftClaim[]
   // Phase 86 — tip pool allocations.
-  tipPoolAllocations TipPoolAllocation[]
+  tipPoolAllocations      TipPoolAllocation[]
   // Phase 88 — OSHA incidents (subject) + EEO record (1:1).
-  oshaIncidents      OshaIncident[]
-  eeo                AssociateEeo?
+  oshaIncidents           OshaIncident[]
+  eeo                     AssociateEeo?
   // Phase 89 — document renders targeting this associate.
-  documentRenders    DocumentRender[]
+  documentRenders         DocumentRender[]
   // Phase 91 — garnishments + tax forms (W-2, 1099-NEC).
-  garnishments       Garnishment[]
-  taxForms           TaxForm[]
+  garnishments            Garnishment[]
+  taxForms                TaxForm[]
   // Phase 92 — qualifying life events, COBRA offers, ACA monthly snapshots.
-  qles               QualifyingLifeEvent[]
-  cobraOffers        CobraOffer[]
-  acaMonths          AcaMonth[]
+  qles                    QualifyingLifeEvent[]
+  cobraOffers             CobraOffer[]
+  acaMonths               AcaMonth[]
   // Phase 94 — LMS course enrollments.
-  courseEnrollments  CourseEnrollment[]
+  courseEnrollments       CourseEnrollment[]
   // Phase 97 — reimbursement requests.
-  reimbursements     Reimbursement[]
+  reimbursements          Reimbursement[]
   // Phase 99 — kiosk PINs (one per client) + punch history.
-  kioskPins          KioskPin[]
-  kioskPunches       KioskPunch[]
+  kioskPins               KioskPin[]
+  kioskPunches            KioskPunch[]
   // Phase 101 — face descriptor for kiosk match-on-punch.
-  kioskFaceReference KioskFaceReference?
+  kioskFaceReference      KioskFaceReference?
   // Phase 108 — physical asset assignments (laptops, badges, keys…).
-  assetAssignments   AssetAssignment[]
+  assetAssignments        AssetAssignment[]
   // Phase 111 — skills + competencies.
-  skills             AssociateSkill[]
+  skills                  AssociateSkill[]
   // Phase 112 — mentorship pairings.
-  mentorshipsAsMentor Mentorship[]      @relation("MentorshipMentor")
-  mentorshipsAsMentee Mentorship[]      @relation("MentorshipMentee")
+  mentorshipsAsMentor     Mentorship[]             @relation("MentorshipMentor")
+  mentorshipsAsMentee     Mentorship[]             @relation("MentorshipMentee")
   // Phase 114 — learning path enrollments.
   learningPathEnrollments LearningPathEnrollment[]
   // Phase 115 — positions for which this associate is on the bench.
-  successionCandidacies SuccessionCandidate[]
+  successionCandidacies   SuccessionCandidate[]
   // Phase 116 — probation history (one ACTIVE at a time).
-  probationPeriods      ProbationPeriod[]
+  probationPeriods        ProbationPeriod[]
   // Phase 118 — formal disciplinary actions.
-  disciplinaryActions   DisciplinaryAction[]
+  disciplinaryActions     DisciplinaryAction[]
   // Phase 119 — separations + exit interviews.
-  separations           Separation[]
+  separations             Separation[]
   // Phase 120 — internal mobility applications.
-  internalApplications  InternalJobApplication[]
+  internalApplications    InternalJobApplication[]
   // Phase 121 — vaccination + medical records.
-  vaccinationRecords    VaccinationRecord[]
+  vaccinationRecords      VaccinationRecord[]
   // Phase 122 — per-associate legal agreements (NDA, non-compete, etc.).
-  agreements            Agreement[]
+  agreements              Agreement[]
   // Phase 123 — HR cases filed by this associate + comments authored.
-  hrCasesFiled          HrCase[]
-  hrCaseCommentsAuthored HrCaseComment[] @relation("HrCaseCommentAssociateAuthor")
+  hrCasesFiled            HrCase[]
+  hrCaseCommentsAuthored  HrCaseComment[]          @relation("HrCaseCommentAssociateAuthor")
   // Phase 124 — KB feedback votes.
-  kbFeedback            KbFeedback[]
+  kbFeedback              KbFeedback[]
   // Phase 125 — new-hire ramp plans.
-  rampPlans             RampPlan[]
+  rampPlans               RampPlan[]
   // Phase 127 — tuition reimbursement requests.
-  tuitionRequests       TuitionRequest[]
+  tuitionRequests         TuitionRequest[]
   // Phase 129 — equity grants (RSU/NSO/ISO/etc.).
-  equityGrants          EquityGrant[]
+  equityGrants            EquityGrant[]
   // Phase 130 — volunteer time off entries.
-  volunteerEntries      VolunteerEntry[]
+  volunteerEntries        VolunteerEntry[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -601,37 +646,37 @@ model Associate {
 }
 
 model J1Profile {
-  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId       String    @unique @db.Uuid
-  programStartDate  DateTime  @db.Date
-  programEndDate    DateTime  @db.Date
-  ds2019Number      String
-  sponsorAgency     String
-  visaNumber        String?
-  sevisId           String?
-  country           String
-  associate         Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
-  createdAt         DateTime  @default(now()) @db.Timestamptz(6)
-  updatedAt         DateTime  @updatedAt @db.Timestamptz(6)
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId      String    @unique @db.Uuid
+  programStartDate DateTime  @db.Date
+  programEndDate   DateTime  @db.Date
+  ds2019Number     String
+  sponsorAgency    String
+  visaNumber       String?
+  sevisId          String?
+  country          String
+  associate        Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(6)
 }
 
 model Application {
-  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId     String              @db.Uuid
-  clientId        String              @db.Uuid
+  id              String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId     String               @db.Uuid
+  clientId        String               @db.Uuid
   onboardingTrack OnboardingTrack
-  status          ApplicationStatus   @default(DRAFT)
+  status          ApplicationStatus    @default(DRAFT)
   position        String?
-  startDate       DateTime?           @db.Date
-  invitedAt       DateTime            @default(now()) @db.Timestamptz(6)
-  submittedAt     DateTime?           @db.Timestamptz(6)
-  associate       Associate           @relation(fields: [associateId], references: [id], onDelete: Restrict)
-  client          Client              @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  startDate       DateTime?            @db.Date
+  invitedAt       DateTime             @default(now()) @db.Timestamptz(6)
+  submittedAt     DateTime?            @db.Timestamptz(6)
+  associate       Associate            @relation(fields: [associateId], references: [id], onDelete: Restrict)
+  client          Client               @relation(fields: [clientId], references: [id], onDelete: Restrict)
   checklist       OnboardingChecklist?
   esignAgreements EsignAgreement[]
-  createdAt       DateTime            @default(now()) @db.Timestamptz(6)
-  updatedAt       DateTime            @updatedAt @db.Timestamptz(6)
-  deletedAt       DateTime?           @db.Timestamptz(6)
+  createdAt       DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime             @updatedAt @db.Timestamptz(6)
+  deletedAt       DateTime?            @db.Timestamptz(6)
 
   @@index([associateId])
   @@index([clientId, status])
@@ -650,20 +695,20 @@ model OnboardingChecklist {
 }
 
 model OnboardingTask {
-  id          String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  checklistId String              @db.Uuid
-  kind        TaskKind
-  status      TaskStatus          @default(PENDING)
-  title       String
-  description String?
-  order       Int
-  documentId  String?             @db.Uuid
-  completedAt DateTime?           @db.Timestamptz(6)
-  checklist   OnboardingChecklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
-  document    DocumentRecord?     @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  checklistId     String              @db.Uuid
+  kind            TaskKind
+  status          TaskStatus          @default(PENDING)
+  title           String
+  description     String?
+  order           Int
+  documentId      String?             @db.Uuid
+  completedAt     DateTime?           @db.Timestamptz(6)
+  checklist       OnboardingChecklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
+  document        DocumentRecord?     @relation(fields: [documentId], references: [id], onDelete: SetNull)
   esignAgreements EsignAgreement[]
-  createdAt   DateTime            @default(now()) @db.Timestamptz(6)
-  updatedAt   DateTime            @updatedAt @db.Timestamptz(6)
+  createdAt       DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime            @updatedAt @db.Timestamptz(6)
 
   @@index([checklistId])
   @@index([status])
@@ -738,26 +783,26 @@ model PolicyAcknowledgment {
 }
 
 model DocumentRecord {
-  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId      String            @db.Uuid
-  clientId         String?           @db.Uuid
-  kind             DocumentKind
-  s3Key            String?
-  filename         String
-  mimeType         String
-  size             Int
-  status           DocumentStatus    @default(UPLOADED)
-  expiresAt        DateTime?         @db.Timestamptz(6)
-  rejectionReason  String?
-  verifiedById     String?           @db.Uuid
-  verifiedAt       DateTime?         @db.Timestamptz(6)
-  associate        Associate         @relation(fields: [associateId], references: [id], onDelete: Restrict)
-  verifiedBy       User?             @relation("DocumentVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
-  signatures       Signature[]
-  tasks            OnboardingTask[]
-  createdAt        DateTime          @default(now()) @db.Timestamptz(6)
-  updatedAt        DateTime          @updatedAt @db.Timestamptz(6)
-  deletedAt        DateTime?         @db.Timestamptz(6)
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId     String           @db.Uuid
+  clientId        String?          @db.Uuid
+  kind            DocumentKind
+  s3Key           String?
+  filename        String
+  mimeType        String
+  size            Int
+  status          DocumentStatus   @default(UPLOADED)
+  expiresAt       DateTime?        @db.Timestamptz(6)
+  rejectionReason String?
+  verifiedById    String?          @db.Uuid
+  verifiedAt      DateTime?        @db.Timestamptz(6)
+  associate       Associate        @relation(fields: [associateId], references: [id], onDelete: Restrict)
+  verifiedBy      User?            @relation("DocumentVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
+  signatures      Signature[]
+  tasks           OnboardingTask[]
+  createdAt       DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime         @updatedAt @db.Timestamptz(6)
+  deletedAt       DateTime?        @db.Timestamptz(6)
 
   @@index([associateId, kind])
   @@index([status])
@@ -767,27 +812,27 @@ model DocumentRecord {
 }
 
 model Signature {
-  id              String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  documentId      String                 @db.Uuid
-  signerUserId    String?                @db.Uuid
-  associateId     String?                @db.Uuid
-  signedAt        DateTime               @default(now()) @db.Timestamptz(6)
-  ipAddress       String?
-  userAgent       String?
-  signatureS3Key  String
+  id             String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  documentId     String                 @db.Uuid
+  signerUserId   String?                @db.Uuid
+  associateId    String?                @db.Uuid
+  signedAt       DateTime               @default(now()) @db.Timestamptz(6)
+  ipAddress      String?
+  userAgent      String?
+  signatureS3Key String
   // Phase 19 — when this Signature row was produced by the typed-name
   // e-sign flow (rather than uploaded out-of-band), agreementId points at
   // the EsignAgreement that was signed. typedName is exactly what the
   // signer typed (immutable proof). pdfHash is sha256 of the rendered
   // signed PDF — a future re-render must hash to the same value.
-  agreementId     String?                @db.Uuid
-  typedName       String?
-  pdfHash         String?
-  agreement       EsignAgreement?        @relation(fields: [agreementId], references: [id], onDelete: SetNull)
-  document        DocumentRecord         @relation(fields: [documentId], references: [id], onDelete: Restrict)
-  signerUser      User?                  @relation("UserSignatures", fields: [signerUserId], references: [id], onDelete: SetNull)
-  associate       Associate?             @relation("AssociateSignatures", fields: [associateId], references: [id], onDelete: SetNull)
-  policyAcks      PolicyAcknowledgment[]
+  agreementId    String?                @db.Uuid
+  typedName      String?
+  pdfHash        String?
+  agreement      EsignAgreement?        @relation(fields: [agreementId], references: [id], onDelete: SetNull)
+  document       DocumentRecord         @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  signerUser     User?                  @relation("UserSignatures", fields: [signerUserId], references: [id], onDelete: SetNull)
+  associate      Associate?             @relation("AssociateSignatures", fields: [associateId], references: [id], onDelete: SetNull)
+  policyAcks     PolicyAcknowledgment[]
 
   @@index([documentId])
   @@index([signerUserId])
@@ -805,24 +850,24 @@ model Signature {
 // exactly one Signature row; duplicate sign attempts return 409. The
 // agreement itself is immutable once signed.
 model EsignAgreement {
-  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  applicationId String       @db.Uuid
+  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  applicationId String          @db.Uuid
   // Optional link to the onboarding checklist task — when set, signing
   // this agreement marks that task DONE.
-  taskId        String?      @db.Uuid
+  taskId        String?         @db.Uuid
   title         String
   // Plain-text agreement body (markdown-light: \n linebreaks). Renderer
   // wraps it into the PDF as paragraphs; no HTML/script execution.
   body          String
-  createdById   String       @db.Uuid
-  createdAt     DateTime     @default(now()) @db.Timestamptz(6)
+  createdById   String          @db.Uuid
+  createdAt     DateTime        @default(now()) @db.Timestamptz(6)
   // Once signed, signedAt mirrors the Signature row for fast dashboard
   // queries. Null = unsigned.
-  signedAt      DateTime?    @db.Timestamptz(6)
-  signatureId   String?      @db.Uuid
-  application   Application  @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  signedAt      DateTime?       @db.Timestamptz(6)
+  signatureId   String?         @db.Uuid
+  application   Application     @relation(fields: [applicationId], references: [id], onDelete: Cascade)
   task          OnboardingTask? @relation(fields: [taskId], references: [id], onDelete: SetNull)
-  createdBy     User         @relation("EsignAgreementCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdBy     User            @relation("EsignAgreementCreator", fields: [createdById], references: [id], onDelete: Restrict)
   signatures    Signature[]
 
   @@index([applicationId])
@@ -847,46 +892,46 @@ model BackgroundCheck {
 }
 
 model I9Verification {
-  id                       String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId              String              @unique @db.Uuid
-  section1CompletedAt      DateTime?           @db.Timestamptz(6)
+  id                         String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId                String               @unique @db.Uuid
+  section1CompletedAt        DateTime?            @db.Timestamptz(6)
   // Phase 20 — Section 1 employee self-attestation fields. citizenshipStatus
   // is the exclusive choice the employee picks. alienRegistrationNumberEnc
   // is encrypted at rest (same key as W-4 SSN); workAuthExpiresAt applies
   // only to ALIEN_AUTHORIZED_TO_WORK (or LAWFUL_PERMANENT_RESIDENT with an
   // expiring USCIS number). section1TypedName + IP + userAgent capture the
   // typed-name e-signature exactly per Phase 19's pattern.
-  citizenshipStatus        I9CitizenshipStatus?
+  citizenshipStatus          I9CitizenshipStatus?
   alienRegistrationNumberEnc Bytes?
-  workAuthExpiresAt        DateTime?           @db.Date
-  section1TypedName        String?
-  section1Ip               String?
-  section1UserAgent        String?
-  section2VerifierUserId   String?             @db.Uuid
-  section2CompletedAt      DateTime?           @db.Timestamptz(6)
-  documentList             I9DocumentList?
-  supportingDocIds         Json?
-  associate                Associate           @relation(fields: [associateId], references: [id], onDelete: Cascade)
-  section2Verifier         User?               @relation("I9Verifier", fields: [section2VerifierUserId], references: [id], onDelete: SetNull)
-  createdAt                DateTime            @default(now()) @db.Timestamptz(6)
-  updatedAt                DateTime            @updatedAt @db.Timestamptz(6)
+  workAuthExpiresAt          DateTime?            @db.Date
+  section1TypedName          String?
+  section1Ip                 String?
+  section1UserAgent          String?
+  section2VerifierUserId     String?              @db.Uuid
+  section2CompletedAt        DateTime?            @db.Timestamptz(6)
+  documentList               I9DocumentList?
+  supportingDocIds           Json?
+  associate                  Associate            @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  section2Verifier           User?                @relation("I9Verifier", fields: [section2VerifierUserId], references: [id], onDelete: SetNull)
+  createdAt                  DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt                  DateTime             @updatedAt @db.Timestamptz(6)
 }
 
 model W4Submission {
-  id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId       String          @unique @db.Uuid
-  filingStatus      W4FilingStatus
-  multipleJobs      Boolean         @default(false)
-  dependentsAmount  Decimal         @default(0) @db.Decimal(12, 2)
-  otherIncome       Decimal         @default(0) @db.Decimal(12, 2)
-  deductions        Decimal         @default(0) @db.Decimal(12, 2)
-  extraWithholding  Decimal         @default(0) @db.Decimal(12, 2)
-  ssnEncrypted      Bytes?
-  signedDocumentId  String?         @db.Uuid
-  signedAt          DateTime?       @db.Timestamptz(6)
-  associate         Associate       @relation(fields: [associateId], references: [id], onDelete: Cascade)
-  createdAt         DateTime        @default(now()) @db.Timestamptz(6)
-  updatedAt         DateTime        @updatedAt @db.Timestamptz(6)
+  id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId      String         @unique @db.Uuid
+  filingStatus     W4FilingStatus
+  multipleJobs     Boolean        @default(false)
+  dependentsAmount Decimal        @default(0) @db.Decimal(12, 2)
+  otherIncome      Decimal        @default(0) @db.Decimal(12, 2)
+  deductions       Decimal        @default(0) @db.Decimal(12, 2)
+  extraWithholding Decimal        @default(0) @db.Decimal(12, 2)
+  ssnEncrypted     Bytes?
+  signedDocumentId String?        @db.Uuid
+  signedAt         DateTime?      @db.Timestamptz(6)
+  associate        Associate      @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  createdAt        DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime       @updatedAt @db.Timestamptz(6)
 }
 
 model PayoutMethod {
@@ -907,46 +952,46 @@ model PayoutMethod {
 }
 
 model TimeEntry {
-  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId   String          @db.Uuid
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId     String          @db.Uuid
   // Denormalized clientId so HR can scope/filter by client without joining.
   // Captured from the Associate's currently-assigned client at clock-in.
-  clientId      String?         @db.Uuid
+  clientId        String?         @db.Uuid
   // Optional Job for cost-coding. Null means generic / undifferentiated time.
-  jobId         String?         @db.Uuid
-  clockInAt     DateTime        @db.Timestamptz(6)
-  clockOutAt    DateTime?       @db.Timestamptz(6)
+  jobId           String?         @db.Uuid
+  clockInAt       DateTime        @db.Timestamptz(6)
+  clockOutAt      DateTime?       @db.Timestamptz(6)
   // GPS coords captured from the associate's device at each transition.
   // Used for geofence audit; nullable so the partial-unique still works
   // and so older entries (pre-geofence) aren't broken.
-  clockInLat    Decimal?        @db.Decimal(10, 7)
-  clockInLng    Decimal?        @db.Decimal(10, 7)
-  clockOutLat   Decimal?        @db.Decimal(10, 7)
-  clockOutLng   Decimal?        @db.Decimal(10, 7)
+  clockInLat      Decimal?        @db.Decimal(10, 7)
+  clockInLng      Decimal?        @db.Decimal(10, 7)
+  clockOutLat     Decimal?        @db.Decimal(10, 7)
+  clockOutLng     Decimal?        @db.Decimal(10, 7)
   // Snapshotted pay rate at clock-in time for payroll repeatability.
-  payRate       Decimal?        @db.Decimal(8, 2)
-  status        TimeEntryStatus @default(ACTIVE)
-  notes         String?
+  payRate         Decimal?        @db.Decimal(8, 2)
+  status          TimeEntryStatus @default(ACTIVE)
+  notes           String?
   // Tags surfaced in the HR queue: NO_BREAK, OVERTIME_UNAPPROVED,
   // GEOFENCE_VIOLATION, FORGOT_CLOCKOUT, MEAL_BREAK_TOO_SHORT, etc.
   // Computed at clock-out and re-computed on edit.
-  anomalies     Json?
+  anomalies       Json?
   rejectionReason String?
-  approvedById  String?         @db.Uuid
-  approvedAt    DateTime?       @db.Timestamptz(6)
+  approvedById    String?         @db.Uuid
+  approvedAt      DateTime?       @db.Timestamptz(6)
   // Phase 86 — optional project tag for cost coding.
-  projectId     String?         @db.Uuid
+  projectId       String?         @db.Uuid
 
-  associate     Associate       @relation(fields: [associateId], references: [id], onDelete: Cascade)
-  approvedBy    User?           @relation("TimeApprover", fields: [approvedById], references: [id], onDelete: SetNull)
-  job           Job?            @relation(fields: [jobId], references: [id], onDelete: SetNull)
-  project       Project?        @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  breaks        BreakEntry[]
+  associate            Associate            @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  approvedBy           User?                @relation("TimeApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  job                  Job?                 @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  project              Project?             @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  breaks               BreakEntry[]
   timeOffLedgerEntries TimeOffLedgerEntry[]
   // Phase 99 — kiosk punches that opened/closed this entry.
-  kioskPunches  KioskPunch[]
-  createdAt     DateTime        @default(now()) @db.Timestamptz(6)
-  updatedAt     DateTime        @updatedAt @db.Timestamptz(6)
+  kioskPunches         KioskPunch[]
+  createdAt            DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime             @updatedAt @db.Timestamptz(6)
 
   // At most one ACTIVE row per associate at any time. Postgres treats this
   // as a partial unique via the where clause below.
@@ -958,40 +1003,40 @@ model TimeEntry {
 }
 
 model Shift {
-  id                   String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId             String      @db.Uuid
-  position             String
-  startsAt             DateTime    @db.Timestamptz(6)
-  endsAt               DateTime    @db.Timestamptz(6)
-  location             String?
+  id                  String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId            String                          @db.Uuid
+  position            String
+  startsAt            DateTime                        @db.Timestamptz(6)
+  endsAt              DateTime                        @db.Timestamptz(6)
+  location            String?
   // What the client is billed (revenue side).
-  hourlyRate           Decimal?    @db.Decimal(8, 2)
+  hourlyRate          Decimal?                        @db.Decimal(8, 2)
   // What the associate is paid (cost side). null = use Job.payRate or default.
-  payRate              Decimal?    @db.Decimal(8, 2)
-  status               ShiftStatus @default(DRAFT)
-  notes                String?
-  assignedAssociateId  String?     @db.Uuid
-  assignedAt           DateTime?   @db.Timestamptz(6)
-  createdById          String?     @db.Uuid
-  cancelledAt          DateTime?   @db.Timestamptz(6)
-  cancellationReason   String?
+  payRate             Decimal?                        @db.Decimal(8, 2)
+  status              ShiftStatus                     @default(DRAFT)
+  notes               String?
+  assignedAssociateId String?                         @db.Uuid
+  assignedAt          DateTime?                       @db.Timestamptz(6)
+  createdById         String?                         @db.Uuid
+  cancelledAt         DateTime?                       @db.Timestamptz(6)
+  cancellationReason  String?
   // Phase 25 — stamped the first time the shift transitions out of DRAFT
   // (= "schedule was published"). Combined with startsAt, this is the
   // notice window every fair-workweek law audits against.
-  publishedAt          DateTime?   @db.Timestamptz(6)
+  publishedAt         DateTime?                       @db.Timestamptz(6)
   // Documented justification when a shift in a fair-workweek state was
   // published inside the 14-day notice window (mutual agreement,
   // emergency call-out cover, etc.). Required by the API for those cases.
-  lateNoticeReason     String?
-  client               Client      @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  assignedAssociate    Associate?  @relation(fields: [assignedAssociateId], references: [id], onDelete: SetNull)
-  createdBy            User?       @relation("ShiftCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  swapRequests         ShiftSwapRequest[]
+  lateNoticeReason    String?
+  client              Client                          @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  assignedAssociate   Associate?                      @relation(fields: [assignedAssociateId], references: [id], onDelete: SetNull)
+  createdBy           User?                           @relation("ShiftCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  swapRequests        ShiftSwapRequest[]
   // Phase 85 — qualification gates + open-shift claims.
-  qualReqs             ShiftQualificationRequirement[]
-  claims               OpenShiftClaim[]
-  createdAt            DateTime    @default(now()) @db.Timestamptz(6)
-  updatedAt            DateTime    @updatedAt @db.Timestamptz(6)
+  qualReqs            ShiftQualificationRequirement[]
+  claims              OpenShiftClaim[]
+  createdAt           DateTime                        @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime                        @updatedAt @db.Timestamptz(6)
 
   @@index([clientId, startsAt])
   @@index([assignedAssociateId, startsAt])
@@ -1009,9 +1054,9 @@ model ShiftTemplate {
   clientId    String?   @db.Uuid
   name        String
   position    String
-  dayOfWeek   Int       // 0 = Sunday … 6 = Saturday (matches JS Date.getDay).
-  startMinute Int       // minutes from local midnight, 0..1439.
-  endMinute   Int       // minutes from local midnight, 0..1439. May be < startMinute for overnight.
+  dayOfWeek   Int // 0 = Sunday … 6 = Saturday (matches JS Date.getDay).
+  startMinute Int // minutes from local midnight, 0..1439.
+  endMinute   Int // minutes from local midnight, 0..1439. May be < startMinute for overnight.
   location    String?
   hourlyRate  Decimal?  @db.Decimal(8, 2)
   payRate     Decimal?  @db.Decimal(8, 2)
@@ -1026,30 +1071,30 @@ model ShiftTemplate {
 }
 
 model Job {
-  id           String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId     String      @db.Uuid
-  name         String
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId    String      @db.Uuid
+  name        String
   // Default rates if a Shift doesn't override. Bill = revenue, pay = cost.
-  billRate     Decimal?    @db.Decimal(8, 2)
-  payRate      Decimal?    @db.Decimal(8, 2)
-  isActive     Boolean     @default(true)
-  client       Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  timeEntries  TimeEntry[]
-  createdAt    DateTime    @default(now()) @db.Timestamptz(6)
-  updatedAt    DateTime    @updatedAt @db.Timestamptz(6)
-  deletedAt    DateTime?   @db.Timestamptz(6)
+  billRate    Decimal?    @db.Decimal(8, 2)
+  payRate     Decimal?    @db.Decimal(8, 2)
+  isActive    Boolean     @default(true)
+  client      Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  timeEntries TimeEntry[]
+  createdAt   DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime    @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime?   @db.Timestamptz(6)
 
   @@unique([clientId, name])
   @@index([clientId, isActive])
 }
 
 model BreakEntry {
-  id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  timeEntryId   String     @db.Uuid
-  type          BreakType
-  startedAt     DateTime   @db.Timestamptz(6)
-  endedAt       DateTime?  @db.Timestamptz(6)
-  timeEntry     TimeEntry  @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  timeEntryId String    @db.Uuid
+  type        BreakType
+  startedAt   DateTime  @db.Timestamptz(6)
+  endedAt     DateTime? @db.Timestamptz(6)
+  timeEntry   TimeEntry @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
 
   @@index([timeEntryId])
 }
@@ -1092,18 +1137,18 @@ enum TimeOffLedgerReason {
 // in the same window is a no-op. `policyAnchorDate` lets HR pick the
 // reset month (e.g. Jan 1 vs hire-anniversary).
 model TimeOffEntitlement {
-  id                   String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId          String           @db.Uuid
-  category             TimeOffCategory
-  annualMinutes        Int
-  carryoverMaxMinutes  Int              @default(0)
+  id                  String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId         String          @db.Uuid
+  category            TimeOffCategory
+  annualMinutes       Int
+  carryoverMaxMinutes Int             @default(0)
   // Anchor for the annual reset. Resets happen on the same MM-DD each
   // year. Default = Jan 1.
-  policyAnchorDate     DateTime         @default(dbgenerated("DATE '2000-01-01'")) @db.Date
-  lastGrantedAt        DateTime?        @db.Date
-  createdAt            DateTime         @default(now()) @db.Timestamptz(6)
-  updatedAt            DateTime         @updatedAt @db.Timestamptz(6)
-  associate            Associate        @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  policyAnchorDate    DateTime        @default(dbgenerated("DATE '2000-01-01'")) @db.Date
+  lastGrantedAt       DateTime?       @db.Date
+  createdAt           DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime        @updatedAt @db.Timestamptz(6)
+  associate           Associate       @relation(fields: [associateId], references: [id], onDelete: Cascade)
 
   @@unique([associateId, category])
   @@index([associateId])
@@ -1125,24 +1170,24 @@ model TimeOffBalance {
 }
 
 model TimeOffLedgerEntry {
-  id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId        String              @db.Uuid
-  category           TimeOffCategory
-  reason             TimeOffLedgerReason
+  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId       String              @db.Uuid
+  category          TimeOffCategory
+  reason            TimeOffLedgerReason
   // Signed: +N for accrual/credit, -N for use/payout.
-  deltaMinutes       Int
+  deltaMinutes      Int
   // Optional foreign keys so we can audit-trail back to the source.
   // sourceTimeEntryId is the worked entry that drove an ACCRUAL row.
-  sourceTimeEntryId  String?             @db.Uuid
+  sourceTimeEntryId String?             @db.Uuid
   // Phase 30 — the request that drove a USE row. One USE entry per request.
-  sourceRequestId    String?             @unique @db.Uuid
-  sourceUserId       String?             @db.Uuid
-  notes              String?
-  createdAt          DateTime            @default(now()) @db.Timestamptz(6)
-  associate          Associate           @relation(fields: [associateId], references: [id], onDelete: Cascade)
-  sourceTimeEntry    TimeEntry?          @relation(fields: [sourceTimeEntryId], references: [id], onDelete: SetNull)
-  sourceRequest      TimeOffRequest?     @relation(fields: [sourceRequestId], references: [id], onDelete: SetNull)
-  sourceUser         User?               @relation(fields: [sourceUserId], references: [id], onDelete: SetNull)
+  sourceRequestId   String?             @unique @db.Uuid
+  sourceUserId      String?             @db.Uuid
+  notes             String?
+  createdAt         DateTime            @default(now()) @db.Timestamptz(6)
+  associate         Associate           @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  sourceTimeEntry   TimeEntry?          @relation(fields: [sourceTimeEntryId], references: [id], onDelete: SetNull)
+  sourceRequest     TimeOffRequest?     @relation(fields: [sourceRequestId], references: [id], onDelete: SetNull)
+  sourceUser        User?               @relation(fields: [sourceUserId], references: [id], onDelete: SetNull)
 
   // Idempotency guard for the accrual hook: one accrual row per (entry,
   // category). If the approve handler runs twice we no-op.
@@ -1163,65 +1208,65 @@ enum TimeOffRequestStatus {
 }
 
 model TimeOffRequest {
-  id              String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId     String               @db.Uuid
-  category        TimeOffCategory
+  id               String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId      String               @db.Uuid
+  category         TimeOffCategory
   // Inclusive day range. We store dates (not timestamps) because requests
   // are scheduled at day granularity; the UI picks days, not minutes.
-  startDate       DateTime             @db.Date
-  endDate         DateTime             @db.Date
+  startDate        DateTime             @db.Date
+  endDate          DateTime             @db.Date
   // Hours requested in MINUTES so the unit matches the ledger and balance.
   // We store minutes (not days) because part-days are valid (a half-day off
   // = 240 min for an 8h schedule) and we'd lose precision converting twice.
   requestedMinutes Int
-  reason          String?
-  status          TimeOffRequestStatus  @default(PENDING)
-  reviewerUserId  String?              @db.Uuid
-  reviewerNote    String?
-  decidedAt       DateTime?            @db.Timestamptz(6)
-  cancelledAt     DateTime?            @db.Timestamptz(6)
-  createdAt       DateTime             @default(now()) @db.Timestamptz(6)
-  updatedAt       DateTime             @updatedAt @db.Timestamptz(6)
+  reason           String?
+  status           TimeOffRequestStatus @default(PENDING)
+  reviewerUserId   String?              @db.Uuid
+  reviewerNote     String?
+  decidedAt        DateTime?            @db.Timestamptz(6)
+  cancelledAt      DateTime?            @db.Timestamptz(6)
+  createdAt        DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime             @updatedAt @db.Timestamptz(6)
 
-  associate       Associate            @relation(fields: [associateId], references: [id], onDelete: Cascade)
-  reviewer        User?                @relation("TimeOffReviewer", fields: [reviewerUserId], references: [id], onDelete: SetNull)
-  ledgerEntry     TimeOffLedgerEntry?
+  associate   Associate           @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  reviewer    User?               @relation("TimeOffReviewer", fields: [reviewerUserId], references: [id], onDelete: SetNull)
+  ledgerEntry TimeOffLedgerEntry?
 
   @@index([associateId, status])
   @@index([status, createdAt])
 }
 
 model AssociateAvailability {
-  id                   String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId          String     @db.Uuid
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId String    @db.Uuid
   // 0 = Sunday … 6 = Saturday
-  dayOfWeek            Int
+  dayOfWeek   Int
   // Minutes since midnight: 480 = 08:00, 1080 = 18:00.
-  startMinute          Int
-  endMinute            Int
-  associate            Associate  @relation(fields: [associateId], references: [id], onDelete: Cascade)
-  createdAt            DateTime   @default(now()) @db.Timestamptz(6)
-  updatedAt            DateTime   @updatedAt @db.Timestamptz(6)
+  startMinute Int
+  endMinute   Int
+  associate   Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
 
   @@index([associateId, dayOfWeek])
 }
 
 model ShiftSwapRequest {
-  id                  String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  shiftId             String          @db.Uuid
-  requesterAssociateId String         @db.Uuid
+  id                      String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  shiftId                 String          @db.Uuid
+  requesterAssociateId    String          @db.Uuid
   // Counterparty associate the requester proposes the swap to. They must
   // accept before HR/Ops sees it for final approval.
-  counterpartyAssociateId String      @db.Uuid
-  status              ShiftSwapStatus @default(PENDING_PEER)
-  note                String?
-  decidedById         String?         @db.Uuid
-  decidedAt           DateTime?       @db.Timestamptz(6)
-  shift               Shift           @relation(fields: [shiftId], references: [id], onDelete: Cascade)
-  requester           Associate       @relation("SwapRequester", fields: [requesterAssociateId], references: [id], onDelete: Cascade)
-  counterparty        Associate       @relation("SwapCounterparty", fields: [counterpartyAssociateId], references: [id], onDelete: Cascade)
-  createdAt           DateTime        @default(now()) @db.Timestamptz(6)
-  updatedAt           DateTime        @updatedAt @db.Timestamptz(6)
+  counterpartyAssociateId String          @db.Uuid
+  status                  ShiftSwapStatus @default(PENDING_PEER)
+  note                    String?
+  decidedById             String?         @db.Uuid
+  decidedAt               DateTime?       @db.Timestamptz(6)
+  shift                   Shift           @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  requester               Associate       @relation("SwapRequester", fields: [requesterAssociateId], references: [id], onDelete: Cascade)
+  counterparty            Associate       @relation("SwapCounterparty", fields: [counterpartyAssociateId], references: [id], onDelete: Cascade)
+  createdAt               DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt               DateTime        @updatedAt @db.Timestamptz(6)
 
   @@index([shiftId])
   @@index([counterpartyAssociateId, status])
@@ -1229,38 +1274,38 @@ model ShiftSwapRequest {
 }
 
 model PayrollRun {
-  id            String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id                    String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   // clientId is nullable so a run can span all clients (Alto-internal payroll).
-  clientId      String?          @db.Uuid
-  periodStart   DateTime         @db.Date
-  periodEnd     DateTime         @db.Date
-  status        PayrollRunStatus @default(DRAFT)
-  totalGross    Decimal          @default(0) @db.Decimal(12, 2)
-  totalTax      Decimal          @default(0) @db.Decimal(12, 2)
-  totalNet      Decimal          @default(0) @db.Decimal(12, 2)
+  clientId              String?                @db.Uuid
+  periodStart           DateTime               @db.Date
+  periodEnd             DateTime               @db.Date
+  status                PayrollRunStatus       @default(DRAFT)
+  totalGross            Decimal                @default(0) @db.Decimal(12, 2)
+  totalTax              Decimal                @default(0) @db.Decimal(12, 2)
+  totalNet              Decimal                @default(0) @db.Decimal(12, 2)
   // Phase 18 — employer-side total (FICA match + Medicare match + FUTA + SUTA)
   // is the company's true cost on top of totalGross. Used in finance reports.
-  totalEmployerTax Decimal       @default(0) @db.Decimal(12, 2)
-  notes         String?
-  createdById   String?          @db.Uuid
-  finalizedAt   DateTime?        @db.Timestamptz(6)
-  disbursedAt   DateTime?        @db.Timestamptz(6)
-  cancelledAt   DateTime?        @db.Timestamptz(6)
+  totalEmployerTax      Decimal                @default(0) @db.Decimal(12, 2)
+  notes                 String?
+  createdById           String?                @db.Uuid
+  finalizedAt           DateTime?              @db.Timestamptz(6)
+  disbursedAt           DateTime?              @db.Timestamptz(6)
+  cancelledAt           DateTime?              @db.Timestamptz(6)
   // Phase 44 — QuickBooks Online journal-entry sync. Set to the QBO
   // JournalEntry.Id on first successful sync; qboSyncError carries the
   // last failure reason so HR can retry from the UI.
-  qboJournalEntryId String?      @db.VarChar(64)
-  qboSyncedAt   DateTime?        @db.Timestamptz(6)
-  qboSyncError  String?
-  client        Client?          @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  createdBy     User?            @relation("PayrollRunCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  items         PayrollItem[]
+  qboJournalEntryId     String?                @db.VarChar(64)
+  qboSyncedAt           DateTime?              @db.Timestamptz(6)
+  qboSyncError          String?
+  client                Client?                @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  createdBy             User?                  @relation("PayrollRunCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  items                 PayrollItem[]
   // Phase 91 — garnishment deductions sourced from this run.
   garnishmentDeductions GarnishmentDeduction[]
   // Phase 97 — reimbursements paid in this run.
   reimbursementsPaid    Reimbursement[]
-  createdAt     DateTime         @default(now()) @db.Timestamptz(6)
-  updatedAt     DateTime         @updatedAt @db.Timestamptz(6)
+  createdAt             DateTime               @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime               @updatedAt @db.Timestamptz(6)
 
   @@index([clientId, periodStart])
   @@index([status])
@@ -1298,6 +1343,11 @@ model PayrollItem {
   // subtracted again from net to land on take-home. Stored as a sum
   // here; per-plan breakdown lives in BenefitsEnrollment + the period.
   preTaxDeductions   Decimal           @default(0) @db.Decimal(12, 2)
+  // Wave 4.2 — post-tax deductions taken this period (garnishments,
+  // Roth 401k, etc.). Subtracted AFTER taxes to land on take-home; does
+  // NOT affect FIT/FICA/Medicare/SIT bases. Per-deduction breakdown for
+  // garnishments lives in GarnishmentDeduction rows tied to the run.
+  postTaxDeductions  Decimal           @default(0) @db.Decimal(12, 2)
   netPay             Decimal           @db.Decimal(12, 2)
   // The state used for SIT lookup (snapshot of associate.state at compute
   // time). Lets the paystub label the SIT line and the auditor see why a
@@ -1321,6 +1371,12 @@ model PayrollItem {
   // SUCCESS ref; this table preserves the full attempt history for audit.
   disbursementAttempts PayrollDisbursementAttempt[]
 
+  // Wave 1.2 — per-kind earning breakdown that sums to grossPay. The legacy
+  // hoursWorked / hourlyRate / grossPay columns are kept for back-compat
+  // with paystub PDFs and aggregate reports — earnings is the canonical
+  // breakdown going forward.
+  earnings PayrollItemEarning[]
+
   // One paystub per (run, associate) — re-aggregating updates in place
   // rather than duplicating.
   @@unique([payrollRunId, associateId])
@@ -1328,50 +1384,112 @@ model PayrollItem {
   @@index([status])
 }
 
+// Wave 1.2 — One row per earning line on a paystub. The sum of all
+// `amount` rows for a PayrollItem equals its grossPay (re-aggregation
+// invariant). Hours/rate are nullable because non-hourly earnings (BONUS,
+// REIMBURSEMENT, TIPS) are flat amounts. REIMBURSEMENT is non-taxable —
+// we still surface it on the stub but it doesn't roll into taxable wages
+// (the run-creation code excludes it from the FIT/FICA/Medicare base).
+model PayrollItemEarning {
+  id            String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  payrollItemId String             @db.Uuid
+  kind          PayrollEarningKind
+  hours         Decimal?           @db.Decimal(8, 2)
+  rate          Decimal?           @db.Decimal(8, 2)
+  amount        Decimal            @db.Decimal(12, 2)
+  // True for REIMBURSEMENT and any future fringe benefits we surface as
+  // non-taxable. The run aggregator excludes these from taxable wages.
+  isTaxable     Boolean            @default(true)
+  notes         String?
+  payrollItem   PayrollItem        @relation(fields: [payrollItemId], references: [id], onDelete: Cascade)
+  createdAt     DateTime           @default(now()) @db.Timestamptz(6)
+
+  @@index([payrollItemId])
+}
+
 // Phase 22 — disbursement attempt log. One row per provider call, regardless
 // of outcome. Lets finance reconstruct "who got paid when, by which provider,
 // for which run" without trusting that PayrollItem.disbursementRef is
 // authoritative (it isn't — retries overwrite it).
 model PayrollDisbursementAttempt {
-  id              String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  payrollItemId   String       @db.Uuid
-  provider        String
-  status          String       // SUCCESS | PENDING | FAILED (mirrors DisbursementResult.status)
-  externalRef     String?
-  failureReason   String?
-  attemptedAt     DateTime     @default(now()) @db.Timestamptz(6)
-  attemptedById   String?      @db.Uuid
-  payrollItem     PayrollItem  @relation(fields: [payrollItemId], references: [id], onDelete: Cascade)
-  attemptedBy     User?        @relation("PayrollDisbursementAttemptActor", fields: [attemptedById], references: [id], onDelete: SetNull)
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  payrollItemId String      @db.Uuid
+  provider      String
+  status        String // SUCCESS | PENDING | FAILED (mirrors DisbursementResult.status)
+  externalRef   String?
+  failureReason String?
+  attemptedAt   DateTime    @default(now()) @db.Timestamptz(6)
+  attemptedById String?     @db.Uuid
+  payrollItem   PayrollItem @relation(fields: [payrollItemId], references: [id], onDelete: Cascade)
+  attemptedBy   User?       @relation("PayrollDisbursementAttemptActor", fields: [attemptedById], references: [id], onDelete: SetNull)
 
   @@index([payrollItemId, attemptedAt])
   @@index([status])
 }
 
+// Wave 1.1 — Pay schedules. A named cadence + anchor date that drives the
+// payroll run wizard's "next period to run" computation. Mirrors QuickBooks
+// Online Payroll's "Pay schedules" concept: clients have one or more (e.g.
+// "Hourly biweekly" + "Salaried monthly") and each Associate is assigned to
+// exactly one. clientId is nullable so Alto can define org-wide defaults.
+//
+// anchorDate is the reference point for cadence math:
+//   WEEKLY      → period = Mon..Sun of the week containing anchorDate
+//                 (subsequent periods = +7d each)
+//   BIWEEKLY    → period = anchorDate..anchorDate+13d (subsequent = +14d)
+//   SEMIMONTHLY → periods = 1st..15th and 16th..end-of-month every month
+//                 (anchorDate's month determines first period)
+//   MONTHLY     → period = 1st..last-day of anchorDate's month, then +1mo
+//
+// payDateOffsetDays = days after periodEnd that funds disburse (default 5
+// = "pay on Friday for a Mon..Sun period"). Used by the wizard to display
+// "next pay date" and to schedule QBO journal-entry post date.
+model PayrollSchedule {
+  id                String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId          String?          @db.Uuid
+  name              String
+  frequency         PayrollFrequency
+  anchorDate        DateTime         @db.Date
+  // Days from periodEnd to actual pay date. Most US employers use 3–7 days
+  // (Friday-after-Sun cutoff = 5). Allow 0 if a client cuts cheques same-day.
+  payDateOffsetDays Int              @default(5)
+  isActive          Boolean          @default(true)
+  notes             String?
+  createdAt         DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime         @updatedAt @db.Timestamptz(6)
+  deletedAt         DateTime?        @db.Timestamptz(6)
+
+  client     Client?     @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  associates Associate[]
+
+  @@index([clientId, isActive])
+  @@index([deletedAt])
+}
+
 model Candidate {
-  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  firstName      String
-  lastName       String
-  email          String         @unique
-  phone          String?
-  position       String?
-  source         String?        // referral, indeed, careers-page, etc.
-  stage          CandidateStage @default(APPLIED)
-  notes          String?
+  id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  firstName        String
+  lastName         String
+  email            String         @unique
+  phone            String?
+  position         String?
+  source           String? // referral, indeed, careers-page, etc.
+  stage            CandidateStage @default(APPLIED)
+  notes            String?
   // External-careers applicants paste links rather than uploading files
   // (Railway filesystem is ephemeral; direct upload waits for the S3/Volume
   // migration). Both fields are optional and free-form.
-  resumeUrl      String?
-  linkedinUrl    String?
+  resumeUrl        String?
+  linkedinUrl      String?
   // When HIRED, populated with the new Associate's id (and clientId).
-  hiredAssociateId String?      @unique @db.Uuid
-  hiredClientId    String?      @db.Uuid
-  hiredAt          DateTime?    @db.Timestamptz(6)
+  hiredAssociateId String?        @unique @db.Uuid
+  hiredClientId    String?        @db.Uuid
+  hiredAt          DateTime?      @db.Timestamptz(6)
   rejectedReason   String?
   withdrawnReason  String?
-  createdAt        DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt        DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt        DateTime?    @db.Timestamptz(6)
+  createdAt        DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime       @updatedAt @db.Timestamptz(6)
+  deletedAt        DateTime?      @db.Timestamptz(6)
 
   // Phase 90 — recruiting back-relations.
   interviews Interview[]
@@ -1383,21 +1501,21 @@ model Candidate {
 }
 
 model InviteToken {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   // sha256(rawToken) — never store the raw token. The user-facing magic link
   // contains the raw token; the server hashes the lookup key before query.
-  tokenHash   String    @unique
-  userId      String    @db.Uuid
-  expiresAt   DateTime  @db.Timestamptz(6)
+  tokenHash      String    @unique
+  userId         String    @db.Uuid
+  expiresAt      DateTime  @db.Timestamptz(6)
   // Single-use: set on accept-invite. Lookups exclude consumedAt != NULL.
-  consumedAt  DateTime? @db.Timestamptz(6)
+  consumedAt     DateTime? @db.Timestamptz(6)
   // Set the first time a reminder email goes out for this token. The 48h
   // sweep skips rows where this is non-null so users get reminded at most
   // once per token. HR-triggered resend always rotates the token (creates
   // a new row), so this never blocks a manual resend.
   reminderSentAt DateTime? @db.Timestamptz(6)
-  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, consumedAt])
   @@index([expiresAt])
@@ -1430,28 +1548,28 @@ model PerformanceReview {
 }
 
 model Notification {
-  id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  channel        NotificationChannel
-  status         NotificationStatus  @default(QUEUED)
+  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  channel         NotificationChannel
+  status          NotificationStatus  @default(QUEUED)
   // Recipient: a user (in-app), or by phone/email for SMS/EMAIL when the
   // recipient may not be a User yet.
-  recipientUserId String?            @db.Uuid
+  recipientUserId String?             @db.Uuid
   recipientPhone  String?
   recipientEmail  String?
-  subject        String?
-  body           String
+  subject         String?
+  body            String
   // Optional template/category so HR can filter ("shift_reminder", etc.).
-  category       String?
+  category        String?
   // Provider's id for the sent message (Twilio SID, FCM message id).
-  externalRef    String?
-  failureReason  String?
-  sentAt         DateTime?           @db.Timestamptz(6)
-  readAt         DateTime?           @db.Timestamptz(6)
+  externalRef     String?
+  failureReason   String?
+  sentAt          DateTime?           @db.Timestamptz(6)
+  readAt          DateTime?           @db.Timestamptz(6)
   // Sender: HR user, or null for system-triggered notifications.
-  senderUserId   String?             @db.Uuid
-  recipientUser  User?               @relation("NotificationRecipient", fields: [recipientUserId], references: [id], onDelete: SetNull)
-  senderUser     User?               @relation("NotificationSender", fields: [senderUserId], references: [id], onDelete: SetNull)
-  createdAt      DateTime            @default(now()) @db.Timestamptz(6)
+  senderUserId    String?             @db.Uuid
+  recipientUser   User?               @relation("NotificationRecipient", fields: [recipientUserId], references: [id], onDelete: SetNull)
+  senderUser      User?               @relation("NotificationSender", fields: [senderUserId], references: [id], onDelete: SetNull)
+  createdAt       DateTime            @default(now()) @db.Timestamptz(6)
 
   // Sort: Desc — invite-delivery + recent-notification queries always
   // ORDER BY createdAt DESC. Matching index order lets the planner do an
@@ -1462,15 +1580,15 @@ model Notification {
 }
 
 model AuditLog {
-  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  actorUserId  String?   @db.Uuid
-  clientId     String?   @db.Uuid
-  action       String
-  entityType   String
-  entityId     String
-  metadata     Json?
-  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
-  actorUser    User?     @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorUserId String?  @db.Uuid
+  clientId    String?  @db.Uuid
+  action      String
+  entityType  String
+  entityId    String
+  metadata    Json?
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  actorUser   User?    @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
 
   // Composite covers (entityType, entityId) prefix queries AND the timeline
   // pattern WHERE entityType=X AND entityId=Y ORDER BY createdAt DESC.
@@ -1507,22 +1625,22 @@ enum BenefitsPlanKind {
 // HR records here for reporting (not currently posted to payroll — only the
 // associate election affects taxable income / net pay).
 model BenefitsPlan {
-  id                              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId                        String           @db.Uuid
-  kind                            BenefitsPlanKind
-  name                            String
-  description                     String?
+  id                                        String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId                                  String           @db.Uuid
+  kind                                      BenefitsPlanKind
+  name                                      String
+  description                               String?
   // Per-pay-period amount the employer contributes. Reporting only for v1.
-  employerContributionCentsPerPeriod Int           @default(0)
+  employerContributionCentsPerPeriod        Int              @default(0)
   // Default amount shown to the associate when they enroll. They can
   // override; the actual deduction comes from BenefitsEnrollment.
-  employeeContributionDefaultCentsPerPeriod Int    @default(0)
-  isActive                        Boolean          @default(true)
-  createdAt                       DateTime         @default(now()) @db.Timestamptz(6)
-  updatedAt                       DateTime         @updatedAt @db.Timestamptz(6)
+  employeeContributionDefaultCentsPerPeriod Int              @default(0)
+  isActive                                  Boolean          @default(true)
+  createdAt                                 DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt                                 DateTime         @updatedAt @db.Timestamptz(6)
 
-  client                          Client           @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  enrollments                     BenefitsEnrollment[]
+  client      Client               @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  enrollments BenefitsEnrollment[]
 
   @@index([clientId, isActive])
   @@index([clientId, kind])
@@ -1532,17 +1650,17 @@ model BenefitsPlan {
 // the deduction posts in a given payroll period; null terminationDate means
 // "currently enrolled."
 model BenefitsEnrollment {
-  id                        String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId               String       @db.Uuid
-  planId                    String       @db.Uuid
+  id                          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId                 String    @db.Uuid
+  planId                      String    @db.Uuid
   electedAmountCentsPerPeriod Int
-  effectiveDate             DateTime     @db.Date
-  terminationDate           DateTime?    @db.Date
-  createdAt                 DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt                 DateTime     @updatedAt @db.Timestamptz(6)
+  effectiveDate               DateTime  @db.Date
+  terminationDate             DateTime? @db.Date
+  createdAt                   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt                   DateTime  @updatedAt @db.Timestamptz(6)
 
-  associate                 Associate    @relation(fields: [associateId], references: [id], onDelete: Cascade)
-  plan                      BenefitsPlan @relation(fields: [planId], references: [id], onDelete: Restrict)
+  associate Associate    @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  plan      BenefitsPlan @relation(fields: [planId], references: [id], onDelete: Restrict)
 
   // One active election per (associate, plan) at a time. Re-enrolling after
   // a termination produces a new row (so the history is preserved).
@@ -1559,30 +1677,42 @@ model BenefitsEnrollment {
 // On payroll finalize/disburse, lib/quickbooks.ts builds a JournalEntry
 // payload and (when env-configured) posts it via the v3 API; the resulting
 // JE id is stamped on PayrollRun.qboJournalEntryId.
+// Wave 5.2 — JE granularity. AGGREGATE posts one journal entry per run
+// (sum of all paystubs); PER_EMPLOYEE iterates items and posts one JE per
+// associate with EmployeeRef set, mirroring how QBO Payroll itself records
+// payroll. PER_EMPLOYEE requires that every associate in the run has been
+// synced via Wave 3.2 first (qboEmployeeId / qboVendorId set).
+enum QboJeMode {
+  AGGREGATE
+  PER_EMPLOYEE
+}
+
 model QuickbooksConnection {
-  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId        String   @unique @db.Uuid
-  realmId         String   // Intuit company / realm identifier
-  accessTokenEnc  Bytes
-  refreshTokenEnc Bytes
-  expiresAt       DateTime @db.Timestamptz(6)
+  id                       String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId                 String    @unique @db.Uuid
+  realmId                  String // Intuit company / realm identifier
+  accessTokenEnc           Bytes
+  refreshTokenEnc          Bytes
+  expiresAt                DateTime  @db.Timestamptz(6)
   // Intuit may rotate refresh tokens; track the last refresh timestamp
   // so we can warn if it's been > 100 days (their TTL).
-  lastRefreshedAt DateTime @default(now()) @db.Timestamptz(6)
+  lastRefreshedAt          DateTime  @default(now()) @db.Timestamptz(6)
   // Account ref IDs in QBO that the journal-entry posting needs. HR
   // configures these once per company. NULL = use defaults derived from
   // QBO chart-of-accounts lookup (best-effort, may fail).
-  accountSalariesExpense    String?
-  accountFederalTaxPayable  String?
-  accountStateTaxPayable    String?
-  accountFicaPayable        String?
-  accountMedicarePayable    String?
-  accountBenefitsPayable    String?
-  accountNetPayPayable      String?
-  createdAt       DateTime @default(now()) @db.Timestamptz(6)
-  updatedAt       DateTime @updatedAt @db.Timestamptz(6)
+  accountSalariesExpense   String?
+  accountFederalTaxPayable String?
+  accountStateTaxPayable   String?
+  accountFicaPayable       String?
+  accountMedicarePayable   String?
+  accountBenefitsPayable   String?
+  accountNetPayPayable     String?
+  // Wave 5.2 — per-run vs per-employee JE granularity.
+  jeMode                   QboJeMode @default(AGGREGATE)
+  createdAt                DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt                DateTime  @updatedAt @db.Timestamptz(6)
 
-  client          Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 }
 
 // ===== Phase 76 — Org hierarchy ===========================================
@@ -1593,23 +1723,23 @@ model QuickbooksConnection {
 // to all three plus a self-FK manager relationship.
 
 model Department {
-  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId    String       @db.Uuid
-  parentId    String?      @db.Uuid
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId    String    @db.Uuid
+  parentId    String?   @db.Uuid
   name        String
   code        String?
   description String?
-  createdAt   DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt   DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt   DateTime?    @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
 
-  client      Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  parent      Department?  @relation("DepartmentParent", fields: [parentId], references: [id], onDelete: SetNull)
-  children    Department[] @relation("DepartmentParent")
-  associates  Associate[]
-  positions   Position[]
+  client       Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  parent       Department?   @relation("DepartmentParent", fields: [parentId], references: [id], onDelete: SetNull)
+  children     Department[]  @relation("DepartmentParent")
+  associates   Associate[]
+  positions    Position[]
   // Phase 87 — broadcast targeting.
-  broadcasts  Broadcast[]
+  broadcasts   Broadcast[]
   // Phase 109 — pulse surveys scoped to this department.
   pulseSurveys PulseSurvey[]
 
@@ -1618,45 +1748,45 @@ model Department {
 }
 
 model CostCenter {
-  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId    String      @db.Uuid
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId    String    @db.Uuid
   code        String
   name        String
   description String?
-  createdAt   DateTime    @default(now()) @db.Timestamptz(6)
-  updatedAt   DateTime    @updatedAt @db.Timestamptz(6)
-  deletedAt   DateTime?   @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
 
-  client      Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  associates  Associate[]
-  positions   Position[]
+  client     Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  associates Associate[]
+  positions  Position[]
   // Phase 87 — broadcast targeting.
-  broadcasts  Broadcast[]
+  broadcasts Broadcast[]
 
   @@index([clientId, deletedAt])
 }
 
 model JobProfile {
-  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId    String      @db.Uuid
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId    String    @db.Uuid
   code        String
   title       String
   family      String?
   level       String?
   // FLSA exemption flag — exempt salaried employees aren't entitled to
   // overtime under federal rules; surfaced in payroll OT calc later.
-  isExempt    Boolean     @default(false)
+  isExempt    Boolean   @default(false)
   description String?
   // Phase 88 — Workers' Comp NCCI / state-specific class code lookup.
-  wcClassCode String?     @db.VarChar(10)
-  createdAt   DateTime    @default(now()) @db.Timestamptz(6)
-  updatedAt   DateTime    @updatedAt @db.Timestamptz(6)
-  deletedAt   DateTime?   @db.Timestamptz(6)
+  wcClassCode String?   @db.VarChar(10)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
 
-  client      Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  associates  Associate[]
-  positions   Position[]
-  compBands   CompBand[]
+  client       Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  associates   Associate[]
+  positions    Position[]
+  compBands    CompBand[]
   // Phase 126 — career-ladder rungs that point at this profile.
   careerLevels CareerLevel[]
 
@@ -1670,32 +1800,32 @@ model JobProfile {
 // requisition-driven hiring, and attrition reporting all operate on
 // Position, not Associate.
 model Position {
-  id                   String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId             String         @db.Uuid
-  code                 String
-  title                String
-  jobProfileId         String?        @db.Uuid
-  departmentId         String?        @db.Uuid
-  costCenterId         String?        @db.Uuid
-  managerAssociateId   String?        @db.Uuid
-  fteAuthorized        Decimal        @default(1.00) @db.Decimal(4, 2)
-  status               PositionStatus @default(PLANNED)
-  filledByAssociateId  String?        @db.Uuid
-  filledAt             DateTime?      @db.Timestamptz(6)
-  targetStartDate      DateTime?      @db.Date
-  minHourlyRate        Decimal?       @db.Decimal(8, 2)
-  maxHourlyRate        Decimal?       @db.Decimal(8, 2)
-  notes                String?
-  createdAt            DateTime       @default(now()) @db.Timestamptz(6)
-  updatedAt            DateTime       @updatedAt @db.Timestamptz(6)
-  deletedAt            DateTime?      @db.Timestamptz(6)
+  id                  String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId            String         @db.Uuid
+  code                String
+  title               String
+  jobProfileId        String?        @db.Uuid
+  departmentId        String?        @db.Uuid
+  costCenterId        String?        @db.Uuid
+  managerAssociateId  String?        @db.Uuid
+  fteAuthorized       Decimal        @default(1.00) @db.Decimal(4, 2)
+  status              PositionStatus @default(PLANNED)
+  filledByAssociateId String?        @db.Uuid
+  filledAt            DateTime?      @db.Timestamptz(6)
+  targetStartDate     DateTime?      @db.Date
+  minHourlyRate       Decimal?       @db.Decimal(8, 2)
+  maxHourlyRate       Decimal?       @db.Decimal(8, 2)
+  notes               String?
+  createdAt           DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime       @updatedAt @db.Timestamptz(6)
+  deletedAt           DateTime?      @db.Timestamptz(6)
 
-  client       Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  jobProfile   JobProfile? @relation(fields: [jobProfileId], references: [id], onDelete: SetNull)
-  department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
-  costCenter   CostCenter? @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
-  manager      Associate?  @relation("PositionManager", fields: [managerAssociateId], references: [id], onDelete: SetNull)
-  filledBy     Associate?  @relation("PositionFilledBy", fields: [filledByAssociateId], references: [id], onDelete: SetNull)
+  client         Client                @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  jobProfile     JobProfile?           @relation(fields: [jobProfileId], references: [id], onDelete: SetNull)
+  department     Department?           @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  costCenter     CostCenter?           @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
+  manager        Associate?            @relation("PositionManager", fields: [managerAssociateId], references: [id], onDelete: SetNull)
+  filledBy       Associate?            @relation("PositionFilledBy", fields: [filledByAssociateId], references: [id], onDelete: SetNull)
   // Phase 115 — designated successors.
   successionPlan SuccessionCandidate[]
 
@@ -1857,22 +1987,22 @@ enum CustomFieldEntity {
 }
 
 model CustomFieldDefinition {
-  id           String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId     String?             @db.Uuid
+  id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId     String?           @db.Uuid
   entityType   CustomFieldEntity
   key          String
   label        String
   type         CustomFieldType
-  isRequired   Boolean             @default(false)
-  isSensitive  Boolean             @default(false)
+  isRequired   Boolean           @default(false)
+  isSensitive  Boolean           @default(false)
   helpText     String?
   options      Json?
-  displayOrder Int                 @default(0)
-  createdAt    DateTime            @default(now()) @db.Timestamptz(6)
-  updatedAt    DateTime            @updatedAt @db.Timestamptz(6)
-  deletedAt    DateTime?           @db.Timestamptz(6)
+  displayOrder Int               @default(0)
+  createdAt    DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime          @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime?         @db.Timestamptz(6)
 
-  client Client?              @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client Client?            @relation(fields: [clientId], references: [id], onDelete: Cascade)
   values CustomFieldValue[]
 
   @@index([entityType])
@@ -1937,8 +2067,8 @@ enum LifeEventStatus {
 enum TaxDocumentKind {
   W2
   W3
-  N_1099_NEC  @map("1099_NEC")
-  N_1095_C    @map("1095_C")
+  N_1099_NEC @map("1099_NEC")
+  N_1095_C   @map("1095_C")
 }
 
 model EmergencyContact {
@@ -1978,16 +2108,16 @@ model Dependent {
 }
 
 model Beneficiary {
-  id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId  String            @db.Uuid
-  dependentId  String?           @db.Uuid
-  name         String
-  relation     DependentRelation
-  kind         BeneficiaryKind   @default(PRIMARY)
-  percentage   Int               @default(100)
-  createdAt    DateTime          @default(now()) @db.Timestamptz(6)
-  updatedAt    DateTime          @updatedAt @db.Timestamptz(6)
-  deletedAt    DateTime?         @db.Timestamptz(6)
+  id          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId String            @db.Uuid
+  dependentId String?           @db.Uuid
+  name        String
+  relation    DependentRelation
+  kind        BeneficiaryKind   @default(PRIMARY)
+  percentage  Int               @default(100)
+  createdAt   DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime          @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime?         @db.Timestamptz(6)
 
   associate Associate  @relation(fields: [associateId], references: [id], onDelete: Cascade)
   dependent Dependent? @relation(fields: [dependentId], references: [id], onDelete: SetNull)
@@ -2016,15 +2146,15 @@ model LifeEvent {
 }
 
 model TaxDocument {
-  id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId  String          @db.Uuid
-  kind         TaxDocumentKind
-  taxYear      Int
-  storageKey   String
-  fileHash     String?         @db.VarChar(64)
-  fileSize     Int?
-  issuedAt     DateTime        @default(now()) @db.Timestamptz(6)
-  createdAt    DateTime        @default(now()) @db.Timestamptz(6)
+  id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId String          @db.Uuid
+  kind        TaxDocumentKind
+  taxYear     Int
+  storageKey  String
+  fileHash    String?         @db.VarChar(64)
+  fileSize    Int?
+  issuedAt    DateTime        @default(now()) @db.Timestamptz(6)
+  createdAt   DateTime        @default(now()) @db.Timestamptz(6)
 
   associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
 
@@ -2128,20 +2258,20 @@ model MeritCycle {
 }
 
 model MeritProposal {
-  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  cycleId         String              @db.Uuid
-  associateId     String              @db.Uuid
-  currentAmount   Decimal             @db.Decimal(12, 2)
-  currentPayType  PayType
-  proposedAmount  Decimal             @db.Decimal(12, 2)
-  proposedNotes   String?
-  status          MeritProposalStatus @default(DRAFT)
-  proposedById    String?             @db.Uuid
-  decidedById     String?             @db.Uuid
-  decidedAt       DateTime?           @db.Timestamptz(6)
-  decisionNote    String?
-  createdAt       DateTime            @default(now()) @db.Timestamptz(6)
-  updatedAt       DateTime            @updatedAt @db.Timestamptz(6)
+  id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cycleId        String              @db.Uuid
+  associateId    String              @db.Uuid
+  currentAmount  Decimal             @db.Decimal(12, 2)
+  currentPayType PayType
+  proposedAmount Decimal             @db.Decimal(12, 2)
+  proposedNotes  String?
+  status         MeritProposalStatus @default(DRAFT)
+  proposedById   String?             @db.Uuid
+  decidedById    String?             @db.Uuid
+  decidedAt      DateTime?           @db.Timestamptz(6)
+  decisionNote   String?
+  createdAt      DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime            @updatedAt @db.Timestamptz(6)
 
   cycle      MeritCycle           @relation(fields: [cycleId], references: [id], onDelete: Cascade)
   associate  Associate            @relation(fields: [associateId], references: [id], onDelete: Cascade)
@@ -2305,14 +2435,14 @@ model Review360 {
 }
 
 model Review360Feedback {
-  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  reviewId     String    @db.Uuid
-  fromUserId   String?   @db.Uuid
-  isAnonymous  Boolean   @default(false)
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reviewId     String   @db.Uuid
+  fromUserId   String?  @db.Uuid
+  isAnonymous  Boolean  @default(false)
   strengths    String?
   improvements String?
   rating       Int?
-  submittedAt  DateTime  @default(now()) @db.Timestamptz(6)
+  submittedAt  DateTime @default(now()) @db.Timestamptz(6)
 
   review   Review360 @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   fromUser User?     @relation("Review360FeedbackFrom", fields: [fromUserId], references: [id], onDelete: SetNull)
@@ -2341,9 +2471,9 @@ model Qualification {
   updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
   deletedAt   DateTime? @db.Timestamptz(6)
 
-  client                   Client?                         @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  associateQualifications  AssociateQualification[]
-  shiftRequirements        ShiftQualificationRequirement[]
+  client                  Client?                         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  associateQualifications AssociateQualification[]
+  shiftRequirements       ShiftQualificationRequirement[]
 
   @@index([clientId])
 }
@@ -2675,24 +2805,24 @@ enum EeoGender {
 }
 
 model OshaIncident {
-  id              String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId        String               @db.Uuid
-  associateId     String?              @db.Uuid
-  occurredAt      DateTime             @db.Timestamptz(6)
-  reportedAt      DateTime             @default(now()) @db.Timestamptz(6)
-  reportedById    String?              @db.Uuid
-  location        String?
-  description     String
-  bodyPart        String?
-  severity        OshaIncidentSeverity
-  daysAway        Int                  @default(0)
-  daysRestricted  Int                  @default(0)
-  isRecordable    Boolean              @default(true)
-  status          OshaIncidentStatus   @default(REPORTED)
-  resolutionNote  String?
-  resolvedAt      DateTime?            @db.Timestamptz(6)
-  createdAt       DateTime             @default(now()) @db.Timestamptz(6)
-  updatedAt       DateTime             @updatedAt @db.Timestamptz(6)
+  id             String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId       String               @db.Uuid
+  associateId    String?              @db.Uuid
+  occurredAt     DateTime             @db.Timestamptz(6)
+  reportedAt     DateTime             @default(now()) @db.Timestamptz(6)
+  reportedById   String?              @db.Uuid
+  location       String?
+  description    String
+  bodyPart       String?
+  severity       OshaIncidentSeverity
+  daysAway       Int                  @default(0)
+  daysRestricted Int                  @default(0)
+  isRecordable   Boolean              @default(true)
+  status         OshaIncidentStatus   @default(REPORTED)
+  resolutionNote String?
+  resolvedAt     DateTime?            @db.Timestamptz(6)
+  createdAt      DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime             @updatedAt @db.Timestamptz(6)
 
   client     Client     @relation(fields: [clientId], references: [id], onDelete: Cascade)
   associate  Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)
@@ -2744,15 +2874,15 @@ enum DocumentTemplateKind {
 }
 
 model DocumentTemplate {
-  id               String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId         String?                    @db.Uuid
+  id               String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId         String?              @db.Uuid
   name             String
-  kind             DocumentTemplateKind       @default(GENERIC)
-  currentVersionId String?                    @db.Uuid
-  createdById      String?                    @db.Uuid
-  createdAt        DateTime                   @default(now()) @db.Timestamptz(6)
-  updatedAt        DateTime                   @updatedAt @db.Timestamptz(6)
-  deletedAt        DateTime?                  @db.Timestamptz(6)
+  kind             DocumentTemplateKind @default(GENERIC)
+  currentVersionId String?              @db.Uuid
+  createdById      String?              @db.Uuid
+  createdAt        DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime             @updatedAt @db.Timestamptz(6)
+  deletedAt        DateTime?            @db.Timestamptz(6)
 
   client         Client?                   @relation(fields: [clientId], references: [id], onDelete: Cascade)
   createdBy      User?                     @relation("DocTemplateCreator", fields: [createdById], references: [id], onDelete: SetNull)
@@ -2775,25 +2905,25 @@ model DocumentTemplateVersion {
   publishedById String?   @db.Uuid
   createdAt     DateTime  @default(now()) @db.Timestamptz(6)
 
-  template       DocumentTemplate   @relation("TemplateVersions", fields: [templateId], references: [id], onDelete: Cascade)
+  template            DocumentTemplate   @relation("TemplateVersions", fields: [templateId], references: [id], onDelete: Cascade)
   currentForTemplates DocumentTemplate[] @relation("CurrentVersion")
-  publishedBy    User?              @relation("DocTemplateVersionPublisher", fields: [publishedById], references: [id], onDelete: SetNull)
-  renders        DocumentRender[]
+  publishedBy         User?              @relation("DocTemplateVersionPublisher", fields: [publishedById], references: [id], onDelete: SetNull)
+  renders             DocumentRender[]
 
   @@unique([templateId, version])
   @@index([templateId, version(sort: Desc)])
 }
 
 model DocumentRender {
-  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  templateId       String   @db.Uuid
-  versionId        String   @db.Uuid
-  associateId      String?  @db.Uuid
-  renderedSubject  String?
-  renderedBody     String
-  data             Json
-  renderedById     String?  @db.Uuid
-  createdAt        DateTime @default(now()) @db.Timestamptz(6)
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  templateId      String   @db.Uuid
+  versionId       String   @db.Uuid
+  associateId     String?  @db.Uuid
+  renderedSubject String?
+  renderedBody    String
+  data            Json
+  renderedById    String?  @db.Uuid
+  createdAt       DateTime @default(now()) @db.Timestamptz(6)
 
   template   DocumentTemplate        @relation(fields: [templateId], references: [id], onDelete: Cascade)
   version    DocumentTemplateVersion @relation(fields: [versionId], references: [id], onDelete: Restrict)
@@ -2868,23 +2998,23 @@ model Interview {
 }
 
 model Offer {
-  id              String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  candidateId     String       @db.Uuid
-  clientId        String       @db.Uuid
-  jobTitle        String
-  startDate       DateTime     @db.Date
-  salary          Decimal?     @db.Decimal(12, 2)
-  hourlyRate      Decimal?     @db.Decimal(8, 2)
-  currency        String       @default("USD") @db.VarChar(3)
-  letterBody      String?
+  id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  candidateId      String      @db.Uuid
+  clientId         String      @db.Uuid
+  jobTitle         String
+  startDate        DateTime    @db.Date
+  salary           Decimal?    @db.Decimal(12, 2)
+  hourlyRate       Decimal?    @db.Decimal(8, 2)
+  currency         String      @default("USD") @db.VarChar(3)
+  letterBody       String?
   templateRenderId String?     @db.Uuid
-  status          OfferStatus  @default(DRAFT)
-  sentAt          DateTime?    @db.Timestamptz(6)
-  decidedAt       DateTime?    @db.Timestamptz(6)
-  expiresAt       DateTime?    @db.Timestamptz(6)
-  createdById     String?      @db.Uuid
-  createdAt       DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt       DateTime     @updatedAt @db.Timestamptz(6)
+  status           OfferStatus @default(DRAFT)
+  sentAt           DateTime?   @db.Timestamptz(6)
+  decidedAt        DateTime?   @db.Timestamptz(6)
+  expiresAt        DateTime?   @db.Timestamptz(6)
+  createdById      String?     @db.Uuid
+  createdAt        DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime    @updatedAt @db.Timestamptz(6)
 
   candidate      Candidate       @relation(fields: [candidateId], references: [id], onDelete: Cascade)
   client         Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
@@ -2896,20 +3026,20 @@ model Offer {
 }
 
 model Referral {
-  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  referrerUserId  String         @db.Uuid
-  candidateId     String?        @db.Uuid
-  candidateName   String
-  candidateEmail  String
-  candidatePhone  String?
-  position        String?
-  notes           String?
-  status          ReferralStatus @default(OPEN)
-  bonusAmount     Decimal?       @db.Decimal(10, 2)
-  bonusCurrency   String         @default("USD") @db.VarChar(3)
-  bonusPaidAt     DateTime?      @db.Timestamptz(6)
-  createdAt       DateTime       @default(now()) @db.Timestamptz(6)
-  updatedAt       DateTime       @updatedAt @db.Timestamptz(6)
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  referrerUserId String         @db.Uuid
+  candidateId    String?        @db.Uuid
+  candidateName  String
+  candidateEmail String
+  candidatePhone String?
+  position       String?
+  notes          String?
+  status         ReferralStatus @default(OPEN)
+  bonusAmount    Decimal?       @db.Decimal(10, 2)
+  bonusCurrency  String         @default("USD") @db.VarChar(3)
+  bonusPaidAt    DateTime?      @db.Timestamptz(6)
+  createdAt      DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime       @updatedAt @db.Timestamptz(6)
 
   referrer  User       @relation("Referrer", fields: [referrerUserId], references: [id], onDelete: Cascade)
   candidate Candidate? @relation(fields: [candidateId], references: [id], onDelete: SetNull)
@@ -2935,8 +3065,8 @@ model JobPosting {
   createdAt   DateTime         @default(now()) @db.Timestamptz(6)
   updatedAt   DateTime         @updatedAt @db.Timestamptz(6)
 
-  client    Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  createdBy User?   @relation("JobPostingCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  client               Client?                  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy            User?                    @relation("JobPostingCreator", fields: [createdById], references: [id], onDelete: SetNull)
   // Phase 120 — internal applicants on this posting.
   internalApplications InternalJobApplication[]
 
@@ -2977,42 +3107,42 @@ enum TaxFormStatus {
 }
 
 model Garnishment {
-  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId     String            @db.Uuid
-  kind            GarnishmentKind
-  caseNumber      String?
-  agencyName      String?
-  amountPerRun    Decimal?          @db.Decimal(10, 2)
-  percentOfDisp   Decimal?          @db.Decimal(5, 4)
-  totalCap        Decimal?          @db.Decimal(12, 2)
-  amountWithheld  Decimal           @default(0) @db.Decimal(12, 2)
-  remitTo         String?
-  remitAddress    String?
-  startDate       DateTime          @db.Date
-  endDate         DateTime?         @db.Date
-  status          GarnishmentStatus @default(ACTIVE)
-  priority        Int               @default(100)
-  notes           String?
-  createdById     String?           @db.Uuid
-  createdAt       DateTime          @default(now()) @db.Timestamptz(6)
-  updatedAt       DateTime          @updatedAt @db.Timestamptz(6)
-  deletedAt       DateTime?         @db.Timestamptz(6)
+  id             String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId    String            @db.Uuid
+  kind           GarnishmentKind
+  caseNumber     String?
+  agencyName     String?
+  amountPerRun   Decimal?          @db.Decimal(10, 2)
+  percentOfDisp  Decimal?          @db.Decimal(5, 4)
+  totalCap       Decimal?          @db.Decimal(12, 2)
+  amountWithheld Decimal           @default(0) @db.Decimal(12, 2)
+  remitTo        String?
+  remitAddress   String?
+  startDate      DateTime          @db.Date
+  endDate        DateTime?         @db.Date
+  status         GarnishmentStatus @default(ACTIVE)
+  priority       Int               @default(100)
+  notes          String?
+  createdById    String?           @db.Uuid
+  createdAt      DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime          @updatedAt @db.Timestamptz(6)
+  deletedAt      DateTime?         @db.Timestamptz(6)
 
-  associate   Associate              @relation(fields: [associateId], references: [id], onDelete: Cascade)
-  createdBy   User?                  @relation("GarnishmentCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  deductions  GarnishmentDeduction[]
+  associate  Associate              @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  createdBy  User?                  @relation("GarnishmentCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  deductions GarnishmentDeduction[]
 
   @@index([associateId])
   @@index([status])
 }
 
 model GarnishmentDeduction {
-  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  garnishmentId String    @db.Uuid
-  payrollRunId  String?   @db.Uuid
-  amount        Decimal   @db.Decimal(10, 2)
-  deductedOn    DateTime  @default(now()) @db.Timestamptz(6)
-  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  garnishmentId String   @db.Uuid
+  payrollRunId  String?  @db.Uuid
+  amount        Decimal  @db.Decimal(10, 2)
+  deductedOn    DateTime @default(now()) @db.Timestamptz(6)
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
 
   garnishment Garnishment @relation(fields: [garnishmentId], references: [id], onDelete: Cascade)
   payrollRun  PayrollRun? @relation(fields: [payrollRunId], references: [id], onDelete: SetNull)
@@ -3194,16 +3324,16 @@ model ApiKey {
 }
 
 model Webhook {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId    String?  @db.Uuid
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId    String?   @db.Uuid
   name        String
   url         String
   secret      String
-  eventTypes  String[] @default([])
-  isActive    Boolean  @default(true)
-  createdById String?  @db.Uuid
-  createdAt   DateTime @default(now()) @db.Timestamptz(6)
-  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
+  eventTypes  String[]  @default([])
+  isActive    Boolean   @default(true)
+  createdById String?   @db.Uuid
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
   deletedAt   DateTime? @db.Timestamptz(6)
 
   client     Client?           @relation(fields: [clientId], references: [id], onDelete: Cascade)
@@ -3214,17 +3344,17 @@ model Webhook {
 }
 
 model WebhookDelivery {
-  id              String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  webhookId       String                @db.Uuid
-  eventType       String
-  payload         Json
-  status          WebhookDeliveryStatus @default(PENDING)
-  attemptCount    Int                   @default(0)
-  lastAttemptAt   DateTime?             @db.Timestamptz(6)
-  responseStatus  Int?
-  responseBody    String?
-  deliveredAt     DateTime?             @db.Timestamptz(6)
-  createdAt       DateTime              @default(now()) @db.Timestamptz(6)
+  id             String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  webhookId      String                @db.Uuid
+  eventType      String
+  payload        Json
+  status         WebhookDeliveryStatus @default(PENDING)
+  attemptCount   Int                   @default(0)
+  lastAttemptAt  DateTime?             @db.Timestamptz(6)
+  responseStatus Int?
+  responseBody   String?
+  deliveredAt    DateTime?             @db.Timestamptz(6)
+  createdAt      DateTime              @default(now()) @db.Timestamptz(6)
 
   webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
 
@@ -3347,7 +3477,7 @@ model Worktag {
   createdAt  DateTime @default(now()) @db.Timestamptz(6)
   updatedAt  DateTime @updatedAt @db.Timestamptz(6)
 
-  category    WorktagCategory      @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  category    WorktagCategory     @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   assignments WorktagAssignment[]
 
   @@unique([categoryId, value])
@@ -3399,7 +3529,7 @@ model Report {
   updatedAt   DateTime     @updatedAt @db.Timestamptz(6)
   deletedAt   DateTime?    @db.Timestamptz(6)
 
-  createdBy User?           @relation("ReportCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdBy User?            @relation("ReportCreator", fields: [createdById], references: [id], onDelete: SetNull)
   schedules ReportSchedule[]
 
   @@index([entity])
@@ -3439,26 +3569,26 @@ enum ExpenseLineKind {
 }
 
 model Reimbursement {
-  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId       String              @db.Uuid
-  title             String
-  description       String?
-  totalAmount       Decimal             @default(0) @db.Decimal(12, 2)
-  currency          String              @default("USD") @db.VarChar(3)
-  status            ReimbursementStatus @default(DRAFT)
-  submittedAt       DateTime?           @db.Timestamptz(6)
-  decidedAt         DateTime?           @db.Timestamptz(6)
-  decidedById       String?             @db.Uuid
-  rejectionReason   String?
-  paidPayrollRunId  String?             @db.Uuid
-  paidAt            DateTime?           @db.Timestamptz(6)
-  createdAt         DateTime            @default(now()) @db.Timestamptz(6)
-  updatedAt         DateTime            @updatedAt @db.Timestamptz(6)
+  id               String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId      String              @db.Uuid
+  title            String
+  description      String?
+  totalAmount      Decimal             @default(0) @db.Decimal(12, 2)
+  currency         String              @default("USD") @db.VarChar(3)
+  status           ReimbursementStatus @default(DRAFT)
+  submittedAt      DateTime?           @db.Timestamptz(6)
+  decidedAt        DateTime?           @db.Timestamptz(6)
+  decidedById      String?             @db.Uuid
+  rejectionReason  String?
+  paidPayrollRunId String?             @db.Uuid
+  paidAt           DateTime?           @db.Timestamptz(6)
+  createdAt        DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime            @updatedAt @db.Timestamptz(6)
 
-  associate     Associate     @relation(fields: [associateId], references: [id], onDelete: Cascade)
-  decidedBy     User?         @relation("ReimbursementDecider", fields: [decidedById], references: [id], onDelete: SetNull)
-  paidPayrollRun PayrollRun?  @relation(fields: [paidPayrollRunId], references: [id], onDelete: SetNull)
-  lines         ExpenseLine[]
+  associate      Associate     @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  decidedBy      User?         @relation("ReimbursementDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  paidPayrollRun PayrollRun?   @relation(fields: [paidPayrollRunId], references: [id], onDelete: SetNull)
+  lines          ExpenseLine[]
 
   @@index([associateId, status])
   @@index([status])
@@ -3508,41 +3638,41 @@ enum KioskAnomalyKind {
 }
 
 model KioskDevice {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId    String    @db.Uuid
-  name        String
-  tokenHash   String
-  lastSeenAt  DateTime? @db.Timestamptz(6)
-  isActive    Boolean   @default(true)
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId     String    @db.Uuid
+  name         String
+  tokenHash    String
+  lastSeenAt   DateTime? @db.Timestamptz(6)
+  isActive     Boolean   @default(true)
   // Phase 100 — optional geofence. All three set together or all NULL
   // (CHECK constraint). When set, punches must report coords within
   // radiusMeters or get rejected.
-  latitude     Decimal? @db.Decimal(10, 7)
-  longitude    Decimal? @db.Decimal(10, 7)
+  latitude     Decimal?  @db.Decimal(10, 7)
+  longitude    Decimal?  @db.Decimal(10, 7)
   radiusMeters Int?
-  createdById String?   @db.Uuid
-  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
-  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  createdById  String?   @db.Uuid
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
 
-  client    Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  createdBy User?         @relation("KioskDeviceCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  client    Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy User?        @relation("KioskDeviceCreator", fields: [createdById], references: [id], onDelete: SetNull)
   punches   KioskPunch[]
 
   @@index([clientId, isActive])
 }
 
 model KioskPin {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId String   @db.Uuid
-  clientId    String   @db.Uuid
-  pinHmac     Bytes
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId  String   @db.Uuid
+  clientId     String   @db.Uuid
+  pinHmac      Bytes
   // Encrypted plaintext so the associate can see their own employee
   // number on /me/profile and HR can show it again in the directory.
   // Encryption uses the same AES-256-GCM helper as W4/payout secrets.
   pinEncrypted Bytes?
-  createdById String?  @db.Uuid
-  createdAt   DateTime @default(now()) @db.Timestamptz(6)
-  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
+  createdById  String?  @db.Uuid
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(6)
 
   associate Associate    @relation(fields: [associateId], references: [id], onDelete: Cascade)
   client    Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
@@ -3557,50 +3687,50 @@ model KioskPin {
 }
 
 model KioskPunch {
-  id            String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  kioskDeviceId String           @db.Uuid
-  kioskPinId    String?          @db.Uuid
-  associateId   String?          @db.Uuid
-  timeEntryId   String?          @db.Uuid
-  action        KioskPunchAction
-  selfie        Bytes?
-  rejectReason  String?
+  id              String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kioskDeviceId   String                  @db.Uuid
+  kioskPinId      String?                 @db.Uuid
+  associateId     String?                 @db.Uuid
+  timeEntryId     String?                 @db.Uuid
+  action          KioskPunchAction
+  selfie          Bytes?
+  rejectReason    String?
   // Phase 100 — coords reported by the kiosk + computed distance from
   // the device's geofence center. NULL when device has no geofence.
-  punchLat       Decimal? @db.Decimal(10, 7)
-  punchLng       Decimal? @db.Decimal(10, 7)
-  distanceMeters Int?
+  punchLat        Decimal?                @db.Decimal(10, 7)
+  punchLng        Decimal?                @db.Decimal(10, 7)
+  distanceMeters  Int?
   // Phase 101 — face match telemetry. NULL when no descriptor was sent
   // (camera denied / models still loading). faceMismatch=true means the
   // distance exceeded the threshold; HR reviews — we don't auto-reject.
-  faceDistance   Float?
-  faceMismatch   Boolean?
+  faceDistance    Float?
+  faceMismatch    Boolean?
   // Phase 102 — offline queue support. idempotencyKey dedupes retries
   // (unique partial index — NULL allowed for direct online punches that
   // skipped the queue). clientPunchedAt is the wall-clock time the user
   // pressed the button; used as TimeEntry.clockInAt/clockOutAt when
   // provided, so a punch queued at 8am and synced at 11am still logs 8am.
-  idempotencyKey  String?  @unique
-  clientPunchedAt DateTime? @db.Timestamptz(6)
+  idempotencyKey  String?                 @unique
+  clientPunchedAt DateTime?               @db.Timestamptz(6)
   // Phase 103 — anomaly review queue. NULL = no review needed; PENDING
   // when a flag (face mismatch, impossible travel, etc.) was raised.
   // Approve leaves the TimeEntry intact; reject voids it.
   reviewStatus    KioskPunchReviewStatus?
-  reviewedById    String?  @db.Uuid
-  reviewedAt      DateTime? @db.Timestamptz(6)
+  reviewedById    String?                 @db.Uuid
+  reviewedAt      DateTime?               @db.Timestamptz(6)
   reviewNotes     String?
   // Phase 104 — discrete anomaly classification + free-form detail.
   // Captured at punch-write time so the review UI knows what raised the
   // flag (face mismatch, impossible travel, etc.) and can show context.
   anomalyKind     KioskAnomalyKind?
   anomalyDetail   String?
-  createdAt     DateTime         @default(now()) @db.Timestamptz(6)
+  createdAt       DateTime                @default(now()) @db.Timestamptz(6)
 
-  device    KioskDevice @relation(fields: [kioskDeviceId], references: [id], onDelete: Cascade)
-  pin       KioskPin?   @relation(fields: [kioskPinId], references: [id], onDelete: SetNull)
-  associate Associate?  @relation(fields: [associateId], references: [id], onDelete: SetNull)
-  timeEntry TimeEntry?  @relation(fields: [timeEntryId], references: [id], onDelete: SetNull)
-  reviewedBy User?       @relation("KioskPunchReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  device           KioskDevice          @relation(fields: [kioskDeviceId], references: [id], onDelete: Cascade)
+  pin              KioskPin?            @relation(fields: [kioskPinId], references: [id], onDelete: SetNull)
+  associate        Associate?           @relation(fields: [associateId], references: [id], onDelete: SetNull)
+  timeEntry        TimeEntry?           @relation(fields: [timeEntryId], references: [id], onDelete: SetNull)
+  reviewedBy       User?                @relation("KioskPunchReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
   enrolledFaceRefs KioskFaceReference[] @relation("KioskFaceEnrolledByPunch")
 
   @@index([kioskDeviceId])
@@ -3611,15 +3741,15 @@ model KioskPunch {
 // Phase 101 — One face descriptor per associate, captured on first
 // successful kiosk punch (or HR-reset). 128-dim Float32 → 512 bytes.
 model KioskFaceReference {
-  id                String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId       String      @unique @db.Uuid
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId       String   @unique @db.Uuid
   descriptor        Bytes
-  enrolledByPunchId String?     @db.Uuid
-  enrolledAt        DateTime    @default(now()) @db.Timestamptz(6)
-  updatedAt         DateTime    @updatedAt @db.Timestamptz(6)
+  enrolledByPunchId String?  @db.Uuid
+  enrolledAt        DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime @updatedAt @db.Timestamptz(6)
 
-  associate         Associate   @relation(fields: [associateId], references: [id], onDelete: Cascade)
-  enrolledByPunch   KioskPunch? @relation("KioskFaceEnrolledByPunch", fields: [enrolledByPunchId], references: [id], onDelete: SetNull)
+  associate       Associate   @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  enrolledByPunch KioskPunch? @relation("KioskFaceEnrolledByPunch", fields: [enrolledByPunchId], references: [id], onDelete: SetNull)
 }
 
 // Phase 108 — Employee asset tracking. Lifecycle: AVAILABLE -> ASSIGNED
@@ -3659,28 +3789,28 @@ model Asset {
   createdAt     DateTime    @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime    @updatedAt @db.Timestamptz(6)
 
-  assignments   AssetAssignment[]
+  assignments AssetAssignment[]
 
   @@index([status])
   @@index([kind])
 }
 
 model AssetAssignment {
-  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  assetId       String    @db.Uuid
-  associateId   String    @db.Uuid
-  assignedAt    DateTime  @default(now()) @db.Timestamptz(6)
-  assignedById  String?   @db.Uuid
-  returnedAt    DateTime? @db.Timestamptz(6)
-  returnedById  String?   @db.Uuid
-  returnNotes   String?
-  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
-  updatedAt     DateTime  @updatedAt @db.Timestamptz(6)
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  assetId      String    @db.Uuid
+  associateId  String    @db.Uuid
+  assignedAt   DateTime  @default(now()) @db.Timestamptz(6)
+  assignedById String?   @db.Uuid
+  returnedAt   DateTime? @db.Timestamptz(6)
+  returnedById String?   @db.Uuid
+  returnNotes  String?
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
 
-  asset         Asset     @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  associate     Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
-  assignedBy    User?     @relation("AssetAssigner", fields: [assignedById], references: [id], onDelete: SetNull)
-  returnedBy    User?     @relation("AssetReturner", fields: [returnedById], references: [id], onDelete: SetNull)
+  asset      Asset     @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  associate  Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  assignedBy User?     @relation("AssetAssigner", fields: [assignedById], references: [id], onDelete: SetNull)
+  returnedBy User?     @relation("AssetReturner", fields: [returnedById], references: [id], onDelete: SetNull)
 
   @@index([associateId])
 }
@@ -3702,40 +3832,39 @@ enum PulseAudience {
 }
 
 model PulseSurvey {
-  id                    String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  question              String
-  scale                 PulseScale
-  audience              PulseAudience   @default(ALL)
-  audienceDepartmentId  String?         @db.Uuid
-  audienceClientId      String?         @db.Uuid
-  openFrom              DateTime        @default(now()) @db.Timestamptz(6)
-  openUntil             DateTime        @db.Timestamptz(6)
-  createdById           String?         @db.Uuid
-  createdAt             DateTime        @default(now()) @db.Timestamptz(6)
-  updatedAt             DateTime        @updatedAt @db.Timestamptz(6)
+  id                   String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  question             String
+  scale                PulseScale
+  audience             PulseAudience @default(ALL)
+  audienceDepartmentId String?       @db.Uuid
+  audienceClientId     String?       @db.Uuid
+  openFrom             DateTime      @default(now()) @db.Timestamptz(6)
+  openUntil            DateTime      @db.Timestamptz(6)
+  createdById          String?       @db.Uuid
+  createdAt            DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime      @updatedAt @db.Timestamptz(6)
 
-  audienceDepartment    Department?     @relation(fields: [audienceDepartmentId], references: [id], onDelete: SetNull)
-  audienceClient        Client?         @relation(fields: [audienceClientId], references: [id], onDelete: SetNull)
-  createdBy             User?           @relation("PulseSurveyCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  responses             PulseResponse[]
+  audienceDepartment Department?     @relation(fields: [audienceDepartmentId], references: [id], onDelete: SetNull)
+  audienceClient     Client?         @relation(fields: [audienceClientId], references: [id], onDelete: SetNull)
+  createdBy          User?           @relation("PulseSurveyCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  responses          PulseResponse[]
 
   @@index([openFrom, openUntil])
 }
 
 model PulseResponse {
-  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  surveyId      String      @db.Uuid
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  surveyId      String   @db.Uuid
   responderHash Bytes
-  scoreValue    Int         @db.SmallInt
+  scoreValue    Int      @db.SmallInt
   comment       String?
-  submittedAt   DateTime    @default(now()) @db.Timestamptz(6)
+  submittedAt   DateTime @default(now()) @db.Timestamptz(6)
 
-  survey        PulseSurvey @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  survey PulseSurvey @relation(fields: [surveyId], references: [id], onDelete: Cascade)
 
   @@unique([surveyId, responderHash])
   @@index([surveyId])
 }
-
 
 // Phase 111 — Skills & competencies. Skill is the catalog (Python,
 // Forklift, Spanish, etc). AssociateSkill is the join with level +
@@ -3755,9 +3884,9 @@ model Skill {
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
 
-  associateSkills AssociateSkill[]
+  associateSkills         AssociateSkill[]
   // Phase 112 — mentorships focused on this skill.
-  mentorships     Mentorship[]
+  mentorships             Mentorship[]
   // Phase 126 — career-level skill requirements.
   careerLevelRequirements CareerLevelSkill[]
 
@@ -3798,23 +3927,23 @@ enum MentorshipStatus {
 }
 
 model Mentorship {
-  id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  mentorAssociateId  String           @db.Uuid
-  menteeAssociateId  String           @db.Uuid
-  focusSkillId       String?          @db.Uuid
-  goals              String?
-  status             MentorshipStatus @default(PROPOSED)
-  startedAt          DateTime?        @db.Timestamptz(6)
-  endedAt            DateTime?        @db.Timestamptz(6)
-  endedReason        String?
-  proposedById       String?          @db.Uuid
-  createdAt          DateTime         @default(now()) @db.Timestamptz(6)
-  updatedAt          DateTime         @updatedAt @db.Timestamptz(6)
+  id                String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  mentorAssociateId String           @db.Uuid
+  menteeAssociateId String           @db.Uuid
+  focusSkillId      String?          @db.Uuid
+  goals             String?
+  status            MentorshipStatus @default(PROPOSED)
+  startedAt         DateTime?        @db.Timestamptz(6)
+  endedAt           DateTime?        @db.Timestamptz(6)
+  endedReason       String?
+  proposedById      String?          @db.Uuid
+  createdAt         DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime         @updatedAt @db.Timestamptz(6)
 
-  mentor    Associate @relation("MentorshipMentor", fields: [mentorAssociateId], references: [id], onDelete: Cascade)
-  mentee    Associate @relation("MentorshipMentee", fields: [menteeAssociateId], references: [id], onDelete: Cascade)
-  focusSkill Skill?   @relation(fields: [focusSkillId], references: [id], onDelete: SetNull)
-  proposedBy User?    @relation("MentorshipProposer", fields: [proposedById], references: [id], onDelete: SetNull)
+  mentor     Associate @relation("MentorshipMentor", fields: [mentorAssociateId], references: [id], onDelete: Cascade)
+  mentee     Associate @relation("MentorshipMentee", fields: [menteeAssociateId], references: [id], onDelete: Cascade)
+  focusSkill Skill?    @relation(fields: [focusSkillId], references: [id], onDelete: SetNull)
+  proposedBy User?     @relation("MentorshipProposer", fields: [proposedById], references: [id], onDelete: SetNull)
 
   @@index([mentorAssociateId])
   @@index([menteeAssociateId])
@@ -3850,8 +3979,8 @@ model LearningPath {
   updatedAt   DateTime           @updatedAt @db.Timestamptz(6)
   deletedAt   DateTime?          @db.Timestamptz(6)
 
-  client      Client?                 @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  createdBy   User?                   @relation("LearningPathCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  client      Client?                  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy   User?                    @relation("LearningPathCreator", fields: [createdById], references: [id], onDelete: SetNull)
   steps       LearningPathStep[]
   enrollments LearningPathEnrollment[]
 
@@ -3904,14 +4033,14 @@ enum SuccessionReadiness {
 }
 
 model SuccessionCandidate {
-  id           String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  positionId   String              @db.Uuid
-  associateId  String              @db.Uuid
-  readiness    SuccessionReadiness
-  notes        String?
-  createdById  String?             @db.Uuid
-  createdAt    DateTime            @default(now()) @db.Timestamptz(6)
-  updatedAt    DateTime            @updatedAt @db.Timestamptz(6)
+  id          String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  positionId  String              @db.Uuid
+  associateId String              @db.Uuid
+  readiness   SuccessionReadiness
+  notes       String?
+  createdById String?             @db.Uuid
+  createdAt   DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime            @updatedAt @db.Timestamptz(6)
 
   position  Position  @relation(fields: [positionId], references: [id], onDelete: Cascade)
   associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
@@ -3938,17 +4067,17 @@ enum ProbationStatus {
 }
 
 model ProbationPeriod {
-  id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId  String          @db.Uuid
-  startDate    DateTime        @db.Date
-  endDate      DateTime        @db.Date
-  status       ProbationStatus @default(ACTIVE)
-  decision     String?
-  decidedById  String?         @db.Uuid
-  decidedAt    DateTime?       @db.Timestamptz(6)
-  createdById  String?         @db.Uuid
-  createdAt    DateTime        @default(now()) @db.Timestamptz(6)
-  updatedAt    DateTime        @updatedAt @db.Timestamptz(6)
+  id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId String          @db.Uuid
+  startDate   DateTime        @db.Date
+  endDate     DateTime        @db.Date
+  status      ProbationStatus @default(ACTIVE)
+  decision    String?
+  decidedById String?         @db.Uuid
+  decidedAt   DateTime?       @db.Timestamptz(6)
+  createdById String?         @db.Uuid
+  createdAt   DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime        @updatedAt @db.Timestamptz(6)
 
   associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
   decidedBy User?     @relation("ProbationDecider", fields: [decidedById], references: [id], onDelete: SetNull)
@@ -4013,23 +4142,23 @@ enum DisciplineStatus {
 }
 
 model DisciplinaryAction {
-  id                String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId       String           @db.Uuid
-  kind              DisciplineKind
-  status            DisciplineStatus @default(ACTIVE)
-  incidentDate      DateTime         @db.Date
-  effectiveDate     DateTime         @db.Date
-  suspensionDays    Int?
-  description       String
-  expectedAction    String?
-  issuedById        String?          @db.Uuid
-  acknowledgedAt    DateTime?        @db.Timestamptz(6)
-  acknowledgedSig   String?
-  rescindedAt       DateTime?        @db.Timestamptz(6)
-  rescindedReason   String?
-  rescindedById     String?          @db.Uuid
-  createdAt         DateTime         @default(now()) @db.Timestamptz(6)
-  updatedAt         DateTime         @updatedAt @db.Timestamptz(6)
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId     String           @db.Uuid
+  kind            DisciplineKind
+  status          DisciplineStatus @default(ACTIVE)
+  incidentDate    DateTime         @db.Date
+  effectiveDate   DateTime         @db.Date
+  suspensionDays  Int?
+  description     String
+  expectedAction  String?
+  issuedById      String?          @db.Uuid
+  acknowledgedAt  DateTime?        @db.Timestamptz(6)
+  acknowledgedSig String?
+  rescindedAt     DateTime?        @db.Timestamptz(6)
+  rescindedReason String?
+  rescindedById   String?          @db.Uuid
+  createdAt       DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime         @updatedAt @db.Timestamptz(6)
 
   associate   Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
   issuedBy    User?     @relation("DisciplineIssuer", fields: [issuedById], references: [id], onDelete: SetNull)
@@ -4088,10 +4217,10 @@ model Separation {
   createdAt                DateTime         @default(now()) @db.Timestamptz(6)
   updatedAt                DateTime         @updatedAt @db.Timestamptz(6)
 
-  associate           Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
-  initiatedBy         User?     @relation("SeparationInitiator", fields: [initiatedById], references: [id], onDelete: SetNull)
-  completedBy         User?     @relation("SeparationCompleter", fields: [completedById], references: [id], onDelete: SetNull)
-  exitInterviewBy     User?     @relation("SeparationExitInterviewer", fields: [exitInterviewByUserId], references: [id], onDelete: SetNull)
+  associate       Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  initiatedBy     User?     @relation("SeparationInitiator", fields: [initiatedById], references: [id], onDelete: SetNull)
+  completedBy     User?     @relation("SeparationCompleter", fields: [completedById], references: [id], onDelete: SetNull)
+  exitInterviewBy User?     @relation("SeparationExitInterviewer", fields: [exitInterviewByUserId], references: [id], onDelete: SetNull)
 
   @@index([associateId])
   @@index([status])
@@ -4219,10 +4348,10 @@ model Agreement {
   createdAt     DateTime        @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime        @updatedAt @db.Timestamptz(6)
 
-  associate    Associate    @relation(fields: [associateId], references: [id], onDelete: Cascade)
-  supersedes   Agreement?   @relation("AgreementSupersedes", fields: [supersedesId], references: [id], onDelete: SetNull)
-  supersededBy Agreement[]  @relation("AgreementSupersedes")
-  issuedBy     User?        @relation(fields: [issuedById], references: [id], onDelete: SetNull)
+  associate    Associate   @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  supersedes   Agreement?  @relation("AgreementSupersedes", fields: [supersedesId], references: [id], onDelete: SetNull)
+  supersededBy Agreement[] @relation("AgreementSupersedes")
+  issuedBy     User?       @relation(fields: [issuedById], references: [id], onDelete: SetNull)
 
   @@index([associateId])
   @@index([status])
@@ -4370,15 +4499,15 @@ enum RampMilestoneStatus {
 }
 
 model RampPlan {
-  id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId String          @db.Uuid
-  startDate   DateTime        @db.Date
-  managerId   String?         @db.Uuid
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId String    @db.Uuid
+  startDate   DateTime  @db.Date
+  managerId   String?   @db.Uuid
   notes       String?
-  archivedAt  DateTime?       @db.Timestamptz(6)
-  createdById String?         @db.Uuid
-  createdAt   DateTime        @default(now()) @db.Timestamptz(6)
-  updatedAt   DateTime        @updatedAt @db.Timestamptz(6)
+  archivedAt  DateTime? @db.Timestamptz(6)
+  createdById String?   @db.Uuid
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
 
   associate  Associate       @relation(fields: [associateId], references: [id], onDelete: Cascade)
   manager    User?           @relation("RampPlanManager", fields: [managerId], references: [id], onDelete: SetNull)
@@ -4412,15 +4541,15 @@ model RampMilestone {
 // ladder (unique). Each rung optionally links a JobProfile and lists required
 // skills with a minimum SkillLevel from Phase 111.
 model CareerLadder {
-  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId    String?       @db.Uuid
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId    String?   @db.Uuid
   name        String
   family      String?
   description String?
-  archivedAt  DateTime?     @db.Timestamptz(6)
-  createdById String?       @db.Uuid
-  createdAt   DateTime      @default(now()) @db.Timestamptz(6)
-  updatedAt   DateTime      @updatedAt @db.Timestamptz(6)
+  archivedAt  DateTime? @db.Timestamptz(6)
+  createdById String?   @db.Uuid
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
 
   client    Client?       @relation(fields: [clientId], references: [id], onDelete: Cascade)
   createdBy User?         @relation(fields: [createdById], references: [id], onDelete: SetNull)
@@ -4430,18 +4559,18 @@ model CareerLadder {
 }
 
 model CareerLevel {
-  id           String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  ladderId     String              @db.Uuid
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ladderId     String   @db.Uuid
   rank         Int
   title        String
   description  String?
-  jobProfileId String?             @db.Uuid
-  createdAt    DateTime            @default(now()) @db.Timestamptz(6)
-  updatedAt    DateTime            @updatedAt @db.Timestamptz(6)
+  jobProfileId String?  @db.Uuid
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(6)
 
-  ladder       CareerLadder       @relation(fields: [ladderId], references: [id], onDelete: Cascade)
-  jobProfile   JobProfile?        @relation(fields: [jobProfileId], references: [id], onDelete: SetNull)
-  skills       CareerLevelSkill[]
+  ladder     CareerLadder       @relation(fields: [ladderId], references: [id], onDelete: Cascade)
+  jobProfile JobProfile?        @relation(fields: [jobProfileId], references: [id], onDelete: SetNull)
+  skills     CareerLevelSkill[]
 
   @@unique([ladderId, rank])
   @@index([jobProfileId])
@@ -4622,23 +4751,23 @@ enum VtoStatus {
 }
 
 model VolunteerEntry {
-  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId     String    @db.Uuid
-  activityDate    DateTime  @db.Date
-  hours           Decimal   @db.Decimal(5, 2)
-  organization    String
-  cause           String?
-  description     String
-  evidenceUrl     String?
-  matchRequested  Boolean   @default(false)
-  matchAmount     Decimal?  @db.Decimal(10, 2)
-  matchCurrency   String    @default("USD") @db.VarChar(3)
-  status          VtoStatus @default(PENDING)
-  reviewedById    String?   @db.Uuid
-  reviewedAt      DateTime? @db.Timestamptz(6)
-  reviewerNotes   String?
-  createdAt       DateTime  @default(now()) @db.Timestamptz(6)
-  updatedAt       DateTime  @updatedAt @db.Timestamptz(6)
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId    String    @db.Uuid
+  activityDate   DateTime  @db.Date
+  hours          Decimal   @db.Decimal(5, 2)
+  organization   String
+  cause          String?
+  description    String
+  evidenceUrl    String?
+  matchRequested Boolean   @default(false)
+  matchAmount    Decimal?  @db.Decimal(10, 2)
+  matchCurrency  String    @default("USD") @db.VarChar(3)
+  status         VtoStatus @default(PENDING)
+  reviewedById   String?   @db.Uuid
+  reviewedAt     DateTime? @db.Timestamptz(6)
+  reviewerNotes  String?
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
 
   associate  Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
   reviewedBy User?     @relation("VolunteerReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)

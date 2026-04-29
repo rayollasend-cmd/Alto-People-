@@ -3,8 +3,11 @@ import { Prisma } from '@prisma/client';
 import {
   AssociateListResponseSchema,
   AutoFillResponseSchema,
+  AutoScheduleWeekInputSchema,
+  AutoScheduleWeekResponseSchema,
   AvailabilityListResponseSchema,
   AvailabilityReplaceInputSchema,
+  CalendarFeedUrlResponseSchema,
   CopyWeekInputSchema,
   PublishWeekInputSchema,
   PublishWeekResponseSchema,
@@ -22,6 +25,8 @@ import {
   SwapCreateInputSchema,
   SwapDecideInputSchema,
   type AutoFillCandidate,
+  type AutoScheduleSkip,
+  type AutoScheduleWeekResponse,
   type AvailabilityWindow,
   type CopyWeekResponse,
   type PublishWeekResponse,
@@ -44,6 +49,8 @@ import {
   isPublishingTransition,
 } from '../lib/predictiveScheduling.js';
 import { renderSchedulePdf } from '../lib/scheduleReport.js';
+import { mintCalendarToken } from '../lib/calendarFeed.js';
+import { env } from '../config/env.js';
 
 export const schedulingRouter = Router();
 
@@ -70,6 +77,7 @@ function toShift(row: RawShift): Shift {
     endsAt: row.endsAt.toISOString(),
     location: row.location,
     hourlyRate: row.hourlyRate ? Number(row.hourlyRate) : null,
+    payRate: row.payRate ? Number(row.payRate) : null,
     status: row.status,
     notes: row.notes,
     assignedAssociateId: row.assignedAssociateId,
@@ -166,15 +174,30 @@ schedulingRouter.get('/kpis', MANAGE, async (req, res, next) => {
       _count: { _all: true },
     });
 
-    // For total scheduled minutes we need the rows (no SQL helper for
-    // computed durations in Prisma). Pull just the two columns and sum.
+    // For total scheduled minutes + projected labor cost we need the rows
+    // (no SQL helper for computed durations in Prisma). Pull duration + the
+    // two rate columns and roll up.
     const rows = await prisma.shift.findMany({
       where,
-      select: { startsAt: true, endsAt: true },
+      select: { startsAt: true, endsAt: true, payRate: true },
     });
-    const totalScheduledMinutes = rows.reduce((acc, r) => {
-      return acc + Math.max(0, Math.round((r.endsAt.getTime() - r.startsAt.getTime()) / 60_000));
-    }, 0);
+    let totalScheduledMinutes = 0;
+    let projectedLaborCost = 0;
+    let shiftsWithoutRate = 0;
+    for (const r of rows) {
+      const minutes = Math.max(
+        0,
+        Math.round((r.endsAt.getTime() - r.startsAt.getTime()) / 60_000),
+      );
+      totalScheduledMinutes += minutes;
+      if (r.payRate === null) {
+        shiftsWithoutRate += 1;
+      } else {
+        projectedLaborCost += (Number(r.payRate) * minutes) / 60;
+      }
+    }
+    // Round to cents — JSON floats survive 2dp safely; the UI formats as $.
+    projectedLaborCost = Math.round(projectedLaborCost * 100) / 100;
 
     let openShifts = 0;
     let assignedShifts = 0;
@@ -200,6 +223,8 @@ schedulingRouter.get('/kpis', MANAGE, async (req, res, next) => {
       totalShifts: openShifts + assignedShifts + draftShifts + completedShifts,
       fillRatePercent,
       totalScheduledMinutes,
+      projectedLaborCost,
+      shiftsWithoutRate,
     });
   } catch (err) {
     next(err);
@@ -289,6 +314,7 @@ schedulingRouter.post('/shifts', MANAGE, async (req, res, next) => {
         endsAt: new Date(input.endsAt),
         location: input.location ?? null,
         hourlyRate: input.hourlyRate ?? null,
+        payRate: input.payRate ?? null,
         notes: input.notes ?? null,
         status,
         createdById: req.user!.id,
@@ -337,6 +363,7 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
     if (i.endsAt !== undefined) data.endsAt = new Date(i.endsAt);
     if (i.location !== undefined) data.location = i.location;
     if (i.hourlyRate !== undefined) data.hourlyRate = i.hourlyRate;
+    if (i.payRate !== undefined) data.payRate = i.payRate;
     if (i.notes !== undefined) data.notes = i.notes;
     if (i.status !== undefined) data.status = i.status;
 
@@ -449,18 +476,24 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
       req,
     });
 
-    await notifyShift(prisma, {
-      associateId: associate.id,
-      subject: 'New shift assigned',
-      body: `You've been assigned: ${formatShiftLine({
-        position: updated.position,
-        clientName: updated.client?.name ?? null,
-        startsAt: updated.startsAt,
-        endsAt: updated.endsAt,
-      })}`,
-      category: 'shift_assigned',
-      senderUserId: req.user!.id,
-    });
+    // Only notify if the shift is already published — otherwise the
+    // manager is pre-assigning a draft that the associate isn't supposed
+    // to see yet. The publish PATCH route will fire its own notification
+    // when the schedule actually goes out.
+    if (updated.publishedAt) {
+      await notifyShift(prisma, {
+        associateId: associate.id,
+        subject: 'New shift assigned',
+        body: `You've been assigned: ${formatShiftLine({
+          position: updated.position,
+          clientName: updated.client?.name ?? null,
+          startsAt: updated.startsAt,
+          endsAt: updated.endsAt,
+        })}`,
+        category: 'shift_assigned',
+        senderUserId: req.user!.id,
+      });
+    }
 
     res.json(toShift(updated));
   } catch (err) {
@@ -498,18 +531,23 @@ schedulingRouter.post('/shifts/:id/unassign', MANAGE, async (req, res, next) => 
       req,
     });
 
-    await notifyShift(prisma, {
-      associateId: previousAssociateId,
-      subject: 'Shift removed from your schedule',
-      body: `Removed: ${formatShiftLine({
-        position: updated.position,
-        clientName: updated.client?.name ?? null,
-        startsAt: updated.startsAt,
-        endsAt: updated.endsAt,
-      })}`,
-      category: 'shift_unassigned',
-      senderUserId: req.user!.id,
-    });
+    // Only notify if the shift was visible to the associate. Removing
+    // someone from a draft shift is invisible — they never knew they were
+    // on it.
+    if (shift.publishedAt) {
+      await notifyShift(prisma, {
+        associateId: previousAssociateId,
+        subject: 'Shift removed from your schedule',
+        body: `Removed: ${formatShiftLine({
+          position: updated.position,
+          clientName: updated.client?.name ?? null,
+          startsAt: updated.startsAt,
+          endsAt: updated.endsAt,
+        })}`,
+        category: 'shift_unassigned',
+        senderUserId: req.user!.id,
+      });
+    }
 
     res.json(toShift(updated));
   } catch (err) {
@@ -550,7 +588,9 @@ schedulingRouter.post('/shifts/:id/cancel', MANAGE, async (req, res, next) => {
       req,
     });
 
-    if (shift.assignedAssociateId) {
+    // Same draft rule as unassign — cancelling a never-published shift
+    // is invisible to the associate, so no notification.
+    if (shift.assignedAssociateId && shift.publishedAt) {
       await notifyShift(prisma, {
         associateId: shift.assignedAssociateId,
         subject: 'Shift cancelled',
@@ -584,6 +624,12 @@ schedulingRouter.get('/me/shifts', async (req, res, next) => {
     const rows = await prisma.shift.findMany({
       where: {
         assignedAssociateId: user.associateId,
+        // Associates only see published shifts. `publishedAt` is stamped
+        // the first time a shift transitions out of DRAFT, so a non-null
+        // value is the canonical "the manager has shown this to people"
+        // signal — matches Sling/Deputy/7shifts conventions and keeps the
+        // schedule editable in draft form without leaking to associates.
+        publishedAt: { not: null },
         status: { notIn: ['CANCELLED'] },
       },
       orderBy: { startsAt: 'asc' },
@@ -591,6 +637,41 @@ schedulingRouter.get('/me/shifts', async (req, res, next) => {
       include: SHIFT_INCLUDE,
     });
     res.json({ shifts: rows.map(toShift) } satisfies ShiftListResponse);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /scheduling/me/calendar-url
+ *
+ * Returns the personal iCal subscription URL for the signed-in associate.
+ * Token is HMAC-derived (deterministic per CALENDAR_FEED_SECRET +
+ * associateId), so successive calls return the same URL — calendar
+ * clients can subscribe once and keep getting updates.
+ *
+ * The webcal:// variant triggers Apple Calendar's subscribe handler on
+ * macOS/iOS without an extra step; the https:// URL works for Google
+ * Calendar's "Add by URL" flow and Outlook.
+ */
+schedulingRouter.get('/me/calendar-url', async (req, res, next) => {
+  try {
+    const user = req.user!;
+    if (!user.associateId) {
+      throw new HttpError(404, 'no_associate', 'No associate profile linked');
+    }
+    const token = mintCalendarToken(user.associateId);
+    // APP_BASE_URL is the web app origin in dev; in prod the API and SPA
+    // share an origin (Railway single-service setup), so this works for
+    // both. The `/api/calendar/v1/...` prefix matches the prod proxy path
+    // — in dev the SPA proxies `/api/*` to the API.
+    const base = env.APP_BASE_URL.replace(/\/$/, '');
+    const path = `/api/calendar/v1/${user.associateId}/${token}.ics`;
+    const url = `${base}${path}`;
+    const webcalUrl = url.replace(/^https?:\/\//, 'webcal://');
+    res.json(
+      CalendarFeedUrlResponseSchema.parse({ url, webcalUrl }),
+    );
   } catch (err) {
     next(err);
   }
@@ -1545,6 +1626,11 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
       publishable.push(s);
     }
 
+    // Bucket publishable shifts by assignee so we can send ONE digest
+    // notification per associate at the end. Without this, a person with
+    // five shifts in the published week would get five push pings — fine
+    // for a single change, spammy on a batch publish.
+    const perAssociate = new Map<string, typeof publishable>();
     let publishedCount = 0;
     for (const s of publishable) {
       const nextStatus = s.assignedAssociateId ? 'ASSIGNED' : 'OPEN';
@@ -1561,24 +1647,312 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
         req,
       });
       if (s.assignedAssociateId) {
-        await notifyShift(prisma, {
-          associateId: s.assignedAssociateId,
-          subject: 'Shift published',
-          body: `Now on your schedule: ${formatShiftLine({
-            position: s.position,
-            clientName: s.client?.name ?? null,
-            startsAt: s.startsAt,
-            endsAt: s.endsAt,
-          })}`,
-          category: 'shift_published',
-          senderUserId: req.user!.id,
-        });
+        const bucket = perAssociate.get(s.assignedAssociateId) ?? [];
+        bucket.push(s);
+        perAssociate.set(s.assignedAssociateId, bucket);
       }
       publishedCount += 1;
     }
 
+    // One digest per associate, ordered chronologically. Subject scales
+    // with the count so a single-shift batch reads naturally.
+    for (const [associateId, shifts] of perAssociate) {
+      shifts.sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
+      const lines = shifts.map((s) =>
+        formatShiftLine({
+          position: s.position,
+          clientName: s.client?.name ?? null,
+          startsAt: s.startsAt,
+          endsAt: s.endsAt,
+        }),
+      );
+      const subject =
+        shifts.length === 1
+          ? 'Shift published'
+          : `${shifts.length} shifts published`;
+      const body =
+        shifts.length === 1
+          ? `Now on your schedule: ${lines[0]}`
+          : `Now on your schedule:\n${lines.map((l) => `• ${l}`).join('\n')}`;
+      await notifyShift(prisma, {
+        associateId,
+        subject,
+        body,
+        category: 'shift_published',
+        senderUserId: req.user!.id,
+      });
+    }
+
     const body: PublishWeekResponse = { published: publishedCount, skipped };
     res.json(PublishWeekResponseSchema.parse(body));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /scheduling/auto-schedule-week
+ * Body: { weekStart, clientId? }
+ *
+ * One-click "fill the week" — for every OPEN shift in the snapped Mon–Sun
+ * window, picks the best-scoring associate using the same heuristic as
+ * /shifts/:id/auto-fill (availability match, no conflict, room before 40h
+ * OT, PTO is a hard veto), and assigns them. Earlier shifts get first
+ * claim on candidates so a popular associate isn't sniped from a Monday
+ * morning by a Friday evening that scored them slightly higher.
+ *
+ * Stays in DRAFT-or-current status — does NOT touch publishedAt. Manager
+ * still has to hit "Publish week" before associates see anything, which
+ * means no notifications fire here either (the publish-week digest is
+ * the single broadcast moment).
+ *
+ * Skipped shifts come back in the response with a reason so the manager
+ * can see exactly which slots still need a human decision.
+ */
+schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = AutoScheduleWeekInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    // Snap to local Monday 00:00 — matches the week the UI is showing.
+    const start = new Date(parsed.data.weekStart);
+    start.setHours(0, 0, 0, 0);
+    const dow = (start.getDay() + 6) % 7; // Mon=0..Sun=6
+    start.setDate(start.getDate() - dow);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 7);
+
+    const where: Prisma.ShiftWhereInput = {
+      ...scopeShifts(req.user!),
+      status: 'OPEN',
+      assignedAssociateId: null,
+      startsAt: { gte: start, lt: end },
+      ...(parsed.data.clientId ? { clientId: parsed.data.clientId } : {}),
+    };
+
+    // Earlier shifts go first so they get first pick of candidates.
+    const openShifts = await prisma.shift.findMany({
+      where,
+      orderBy: { startsAt: 'asc' },
+      take: 2000,
+    });
+
+    if (openShifts.length === 0) {
+      const empty: AutoScheduleWeekResponse = {
+        assigned: 0,
+        skipped: [],
+        byAssociate: [],
+      };
+      res.json(AutoScheduleWeekResponseSchema.parse(empty));
+      return;
+    }
+
+    // Pull the candidate pool ONCE for the whole week. We mutate the
+    // in-memory state below as we assign so that consecutive iterations
+    // don't double-book the same associate or push them over 40h.
+    const weekStartUTC = startOfWeekUTC(openShifts[0].startsAt);
+    const weekEndUTC = endOfWeekUTC(openShifts[0].startsAt);
+
+    const [associates, ptoRows] = await Promise.all([
+      prisma.associate.findMany({
+        where: { deletedAt: null },
+        include: {
+          assignedShifts: {
+            where: {
+              status: { notIn: ['CANCELLED', 'COMPLETED'] },
+              startsAt: { gte: weekStartUTC, lt: weekEndUTC },
+            },
+            select: { startsAt: true, endsAt: true },
+          },
+          timeEntries: {
+            where: { clockInAt: { gte: weekStartUTC, lt: weekEndUTC } },
+            include: { breaks: true },
+          },
+          availability: true,
+        },
+        take: 1000,
+      }),
+      prisma.timeOffRequest.findMany({
+        where: {
+          status: 'APPROVED',
+          startDate: { lte: end },
+          endDate: { gte: start },
+        },
+        select: { associateId: true, startDate: true, endDate: true },
+      }),
+    ]);
+
+    type AssocState = {
+      id: string;
+      name: string;
+      availability: { dayOfWeek: number; startMinute: number; endMinute: number }[];
+      // mutable: shifts already-assigned for THIS week (pre-existing + auto-added)
+      busy: { startsAt: Date; endsAt: Date }[];
+      // mutable: minutes already worked (actual + scheduled this week)
+      weeklyMinutes: number;
+      // PTO ranges that block specific shift days
+      pto: { start: Date; end: Date }[];
+    };
+
+    const ptoByAssociate = new Map<string, { start: Date; end: Date }[]>();
+    for (const r of ptoRows) {
+      const list = ptoByAssociate.get(r.associateId) ?? [];
+      list.push({ start: r.startDate, end: r.endDate });
+      ptoByAssociate.set(r.associateId, list);
+    }
+
+    const states: AssocState[] = associates.map((a) => {
+      const scheduledMins = a.assignedShifts.reduce(
+        (sum, s) => sum + Math.floor((s.endsAt.getTime() - s.startsAt.getTime()) / 60_000),
+        0,
+      );
+      const actualMins = a.timeEntries.reduce(
+        (sum, e) => sum + netWorkedMinutes(e, e.breaks),
+        0,
+      );
+      return {
+        id: a.id,
+        name: `${a.firstName} ${a.lastName}`,
+        availability: a.availability.map((w) => ({
+          dayOfWeek: w.dayOfWeek,
+          startMinute: w.startMinute,
+          endMinute: w.endMinute,
+        })),
+        busy: a.assignedShifts.map((s) => ({ startsAt: s.startsAt, endsAt: s.endsAt })),
+        // Use the larger of scheduled-or-actual as the "minutes consumed"
+        // baseline — same idea as the per-shift /auto-fill route, which
+        // checks against actuals to avoid pushing someone past 40h OT.
+        weeklyMinutes: Math.max(scheduledMins, actualMins),
+        pto: ptoByAssociate.get(a.id) ?? [],
+      };
+    });
+
+    const skipped: AutoScheduleSkip[] = [];
+    const assignedCounts = new Map<string, { name: string; count: number }>();
+    let assignedTotal = 0;
+
+    for (const shift of openShifts) {
+      const dow = shift.startsAt.getUTCDay();
+      const startMin = shift.startsAt.getUTCHours() * 60 + shift.startsAt.getUTCMinutes();
+      const endMin = shift.endsAt.getUTCHours() * 60 + shift.endsAt.getUTCMinutes();
+      const shiftMinutes = Math.floor(
+        (shift.endsAt.getTime() - shift.startsAt.getTime()) / 60_000,
+      );
+
+      const shiftDayStart = new Date(shift.startsAt);
+      shiftDayStart.setUTCHours(0, 0, 0, 0);
+      const shiftDayEnd = new Date(shift.endsAt);
+      shiftDayEnd.setUTCHours(0, 0, 0, 0);
+
+      type Scored = { state: AssocState; score: number };
+      const scored: Scored[] = [];
+      let everyoneOverOT = true;
+      let anyEligible = false;
+
+      for (const s of states) {
+        // PTO is a hard veto — don't even consider this candidate.
+        const onPto = s.pto.some(
+          (p) => p.start <= shiftDayEnd && p.end >= shiftDayStart,
+        );
+        if (onPto) continue;
+
+        // Conflict against any prior or just-added shift this week.
+        const hasConflict = s.busy.some(
+          (b) => b.startsAt < shift.endsAt && b.endsAt > shift.startsAt,
+        );
+        if (hasConflict) continue;
+
+        anyEligible = true;
+        const wouldExceed40 = s.weeklyMinutes + shiftMinutes > 40 * 60;
+        if (wouldExceed40) continue;
+        everyoneOverOT = false;
+
+        const matchesAvailability = s.availability.some(
+          (w) =>
+            w.dayOfWeek === dow &&
+            w.startMinute <= startMin &&
+            w.endMinute >= endMin,
+        );
+
+        // Mirror the per-shift scorer, then break ties with whoever has
+        // FEWER weekly minutes — keeps load balanced across the team.
+        let score = 0;
+        if (matchesAvailability) score += 0.5;
+        score += 0.3; // no conflict (already filtered)
+        score += 0.2; // not over 40h (already filtered)
+        // Tiebreak: prefer the lighter-loaded associate. Multiply by a
+        // small factor so it never beats a real signal but always beats
+        // alphabetical / insertion order.
+        score += (1 - s.weeklyMinutes / (40 * 60)) * 0.05;
+
+        scored.push({ state: s, score });
+      }
+
+      if (scored.length === 0) {
+        if (anyEligible && everyoneOverOT) {
+          skipped.push({
+            shiftId: shift.id,
+            reason: 'all_candidates_overtime',
+            detail: 'Every available associate would cross 40h this week.',
+          });
+        } else {
+          skipped.push({
+            shiftId: shift.id,
+            reason: 'no_eligible_candidate',
+            detail: 'No associate is available without a conflict or approved time off.',
+          });
+        }
+        continue;
+      }
+
+      scored.sort((a, b) => b.score - a.score);
+      const winner = scored[0].state;
+
+      await prisma.shift.update({
+        where: { id: shift.id },
+        data: {
+          status: 'ASSIGNED',
+          assignedAssociateId: winner.id,
+          assignedAt: new Date(),
+        },
+      });
+      await recordShiftEvent({
+        actorUserId: req.user!.id,
+        action: 'shift.updated',
+        shiftId: shift.id,
+        clientId: shift.clientId,
+        metadata: {
+          fields: ['status', 'assignedAssociateId'],
+          autoFill: 'week',
+          associateId: winner.id,
+        },
+        req,
+      });
+
+      // Mutate in-memory state so the next iteration sees this assignment.
+      winner.busy.push({ startsAt: shift.startsAt, endsAt: shift.endsAt });
+      winner.weeklyMinutes += shiftMinutes;
+      assignedTotal += 1;
+      const prev = assignedCounts.get(winner.id);
+      if (prev) prev.count += 1;
+      else assignedCounts.set(winner.id, { name: winner.name, count: 1 });
+    }
+
+    const byAssociate = Array.from(assignedCounts.entries())
+      .map(([associateId, { name, count }]) => ({
+        associateId,
+        associateName: name,
+        shiftsAssigned: count,
+      }))
+      .sort((a, b) => b.shiftsAssigned - a.shiftsAssigned);
+
+    const body: AutoScheduleWeekResponse = {
+      assigned: assignedTotal,
+      skipped,
+      byAssociate,
+    };
+    res.json(AutoScheduleWeekResponseSchema.parse(body));
   } catch (err) {
     next(err);
   }

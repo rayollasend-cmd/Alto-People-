@@ -96,7 +96,9 @@ describe('POST /payroll/runs aggregation with new tax engine', () => {
     const { item } = await seedRunWithItem({ associateState: 'CA' });
     expect(item.hoursWorked).toBe(80);
     expect(item.hourlyRate).toBe(25);
-    expect(item.grossPay).toBe(2000);
+    // Wave 1.2 — 80h logged Wed→Sat falls in a single workweek under FLSA,
+    // so 40h regular @ $25 + 40h OT @ $37.50 = $2500 gross.
+    expect(item.grossPay).toBe(2500);
     expect(item.federalWithholding).toBeGreaterThan(0);
     expect(item.fica).toBeGreaterThan(0);
     expect(item.medicare).toBeGreaterThan(0);

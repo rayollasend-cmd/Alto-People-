@@ -84,6 +84,11 @@ const EnvSchema = z.object({
   // Phase 109 — pulse survey responder hash secret. Defaults to
   // PAYOUT_ENCRYPTION_KEY if unset.
   PULSE_HASH_SECRET: z.string().min(32).optional(),
+  // HMAC secret used to mint per-associate iCal feed URLs. The token
+  // embedded in /scheduling/calendar/:token.ics is HMAC(secret, associateId);
+  // rotating this secret revokes every outstanding subscription. Defaults
+  // to JWT_SECRET so dev environments don't need a second key.
+  CALENDAR_FEED_SECRET: z.string().min(32).optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

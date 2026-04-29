@@ -3,6 +3,7 @@ import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
 import { decryptString } from '../../lib/crypto.js';
+import { flushPendingAudits } from '../../lib/audit.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createApplicationWithChecklist,
@@ -84,6 +85,7 @@ describe('POST /onboarding/applications (HR creates)', () => {
     expect(created).not.toBeNull();
     expect(created!.checklist?.tasks.length).toBe(template.tasks.length);
 
+    await flushPendingAudits();
     const audit = await prisma.auditLog.findFirst({
       where: { action: 'onboarding.application_created', entityId: created!.id },
     });
@@ -336,6 +338,7 @@ describe('Task skip (HR-only)', () => {
     const refreshed = await prisma.onboardingTask.findUniqueOrThrow({ where: { id: docTask.id } });
     expect(refreshed.status).toBe('SKIPPED');
 
+    await flushPendingAudits();
     const audit = await prisma.auditLog.findFirst({
       where: { action: 'onboarding.task_skipped', entityId: w.application.id },
     });

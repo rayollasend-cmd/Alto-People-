@@ -259,7 +259,9 @@ describe('Finalize → disburse lifecycle', () => {
 });
 
 describe('GET /payroll/runs', () => {
-  it('FINANCE_ACCOUNTANT can view runs but not create', async () => {
+  it('FINANCE_ACCOUNTANT can view AND create runs (commit 42aefd1)', async () => {
+    // FINANCE_ACCOUNTANT was elevated to process:payroll so finance teams
+    // can run payroll without HR sign-off. ASSOCIATE remains denied below.
     await seedApprovedPeriod();
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const hrAgent = await loginAs(hr.email);
@@ -276,6 +278,22 @@ describe('GET /payroll/runs', () => {
     expect(list.body.runs).toHaveLength(1);
 
     const create = await finAgent.post('/payroll/runs').send({
+      periodStart: '2026-04-20',
+      periodEnd: '2026-04-26',
+    });
+    expect(create.status).toBe(201);
+  });
+
+  it('ASSOCIATE cannot create runs (process:payroll required)', async () => {
+    await seedApprovedPeriod();
+    const associate = await createAssociate({ firstName: 'Pat', lastName: 'X' });
+    const { user: assocUser } = await createUser({
+      role: 'ASSOCIATE',
+      email: associate.email,
+      associateId: associate.id,
+    });
+    const a = await loginAs(assocUser.email);
+    const create = await a.post('/payroll/runs').send({
       periodStart: '2026-04-13',
       periodEnd: '2026-04-19',
     });

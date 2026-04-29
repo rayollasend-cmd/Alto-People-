@@ -1,9 +1,17 @@
 import type {
+  PayrollExceptionsInput,
+  PayrollExceptionsResponse,
   PayrollItemListResponse,
   PayrollRunCreateInput,
   PayrollRunDetail,
   PayrollRunListResponse,
+  PayrollRunPreviewResponse,
   PayrollRunStatus,
+  PayrollSchedule,
+  PayrollScheduleCreateInput,
+  PayrollScheduleListResponse,
+  PayrollScheduleUpdateInput,
+  PayrollUpcomingSummary,
 } from '@alto-people/shared';
 import { apiFetch } from './api';
 
@@ -20,6 +28,25 @@ export function getPayrollRun(id: string): Promise<PayrollRunDetail> {
 
 export function createPayrollRun(body: PayrollRunCreateInput): Promise<PayrollRunDetail> {
   return apiFetch<PayrollRunDetail>('/payroll/runs', { method: 'POST', body });
+}
+
+export function previewPayrollRun(body: PayrollRunCreateInput): Promise<PayrollRunPreviewResponse> {
+  return apiFetch<PayrollRunPreviewResponse>('/payroll/runs/preview', { method: 'POST', body });
+}
+
+/* ===== Wave 8 — exception triage + landing summary ===================== */
+
+export function listPayrollExceptions(
+  body: PayrollExceptionsInput
+): Promise<PayrollExceptionsResponse> {
+  return apiFetch<PayrollExceptionsResponse>('/payroll/runs/exceptions', {
+    method: 'POST',
+    body,
+  });
+}
+
+export function getPayrollUpcoming(): Promise<PayrollUpcomingSummary> {
+  return apiFetch<PayrollUpcomingSummary>('/payroll/upcoming');
 }
 
 export function finalizePayrollRun(id: string): Promise<PayrollRunDetail> {
@@ -67,4 +94,38 @@ export function setBranchEnrollment(
 
 export function listMyPayrollItems(): Promise<PayrollItemListResponse> {
   return apiFetch<PayrollItemListResponse>('/payroll/me/items');
+}
+
+/* ===== Wave 1.1 — Pay schedules ======================================== */
+
+export function listPayrollSchedules(
+  opts: { includeInactive?: boolean } = {}
+): Promise<PayrollScheduleListResponse> {
+  const qs = opts.includeInactive ? '?includeInactive=true' : '';
+  return apiFetch<PayrollScheduleListResponse>(`/payroll/schedules${qs}`);
+}
+
+export function createPayrollSchedule(body: PayrollScheduleCreateInput): Promise<PayrollSchedule> {
+  return apiFetch<PayrollSchedule>('/payroll/schedules', { method: 'POST', body });
+}
+
+export function updatePayrollSchedule(
+  id: string,
+  body: PayrollScheduleUpdateInput
+): Promise<PayrollSchedule> {
+  return apiFetch<PayrollSchedule>(`/payroll/schedules/${id}`, { method: 'PATCH', body });
+}
+
+export function deletePayrollSchedule(id: string): Promise<void> {
+  return apiFetch<void>(`/payroll/schedules/${id}`, { method: 'DELETE' });
+}
+
+export function assignPayrollSchedule(
+  id: string,
+  associateIds: string[]
+): Promise<{ assigned: number }> {
+  return apiFetch<{ assigned: number }>(
+    `/payroll/schedules/${id}/assign`,
+    { method: 'POST', body: { associateIds } }
+  );
 }

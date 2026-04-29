@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   DndContext,
   PointerSensor,
@@ -7,11 +7,31 @@ import {
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragStartEvent,
 } from '@dnd-kit/core';
 import { Plus, GripVertical } from 'lucide-react';
 import type { AssociateLite, Shift, ShiftStatus } from '@alto-people/shared';
 import { Badge } from '@/components/ui/Badge';
 import { cn } from '@/lib/cn';
+import { colorForPosition } from '@/lib/positionColor';
+import {
+  ShiftHoverCard,
+  useShiftHoverCard,
+  type QuickActions,
+} from './ShiftHoverCard';
+import {
+  ShiftContextMenu,
+  useShiftContextMenu,
+} from './ShiftContextMenu';
+import { TEMPLATE_MIME } from './TemplatesRail';
+
+// Week-view chips have no time axis to drag against, so resize maps
+// pointer-x-pixels to minutes at a comfortable 1.5px per minute (so a
+// 45px drag = 30 min). Snapped to 15-minute increments to match payroll
+// rounding everywhere else.
+const RESIZE_PX_PER_MIN = 1.5;
+const RESIZE_SNAP_MIN = 15;
+const RESIZE_MIN_DURATION_MIN = 15;
 
 const STATUS_VARIANT: Record<
   ShiftStatus,
@@ -52,6 +72,12 @@ function sameDay(a: Date, b: Date): boolean {
   );
 }
 
+function formatCost(n: number): string {
+  if (n >= 10_000) return `$${Math.round(n / 1000)}k`;
+  if (n >= 1_000) return `$${(n / 1000).toFixed(1)}k`;
+  return `$${Math.round(n)}`;
+}
+
 function shiftMinutes(s: Shift): number {
   return Math.max(
     0,
@@ -66,8 +92,11 @@ interface Props {
   associates: AssociateLite[];
   weekStart: Date; // Monday at 00:00 local
   canManage: boolean;
-  /** Open edit/assign sheet for a shift. */
-  onShiftClick: (s: Shift) => void;
+  /** Click on a chip. Parent inspects modifier keys to decide between
+   *  selection-toggle and open-edit-dialog. */
+  onShiftClick: (s: Shift, e: React.MouseEvent) => void;
+  /** Set of currently-selected shift ids (for bulk actions). */
+  selectedIds: Set<string>;
   /** Click "+" in a cell. associateId is null for the Unassigned row. */
   onCellCreate: (dayStart: Date, associateId: string | null) => void;
   /**
@@ -80,6 +109,12 @@ interface Props {
     s: Shift,
     target: { associateId: string | null; dayStart: Date }
   ) => Promise<void>;
+  /** Drag the right edge of a chip to change duration (snapped 15 min). */
+  onShiftResize: (s: Shift, newEndsAt: Date) => Promise<void>;
+  /** Hover-card quick actions (assign / unassign / cancel / duplicate / edit). */
+  quickActions: QuickActions;
+  /** Apply a dragged-from-rail template to a specific cell. */
+  onTemplateDrop: (templateId: string, dayStart: Date, associateId: string | null) => void;
   /** When true, render every associate as a row (Sling default); otherwise only those with shifts. */
   showAllAssociates: boolean;
 }
@@ -108,8 +143,14 @@ export function WeekCalendarView({
   onShiftClick,
   onCellCreate,
   onShiftMove,
+  onShiftResize,
+  quickActions,
+  selectedIds,
+  onTemplateDrop,
   showAllAssociates,
 }: Props) {
+  const hover = useShiftHoverCard();
+  const ctxMenu = useShiftContextMenu();
   const days = useMemo(
     () => Array.from({ length: 7 }).map((_, i) => addDays(weekStart, i)),
     [weekStart]
@@ -133,6 +174,36 @@ export function WeekCalendarView({
     }
     return map;
   }, [shifts]);
+
+  // Per-day totals: shift count + scheduled minutes + projected cost.
+  // Powers the footer row under each day column.
+  const dayTotals = useMemo(() => {
+    const out = new Map<number, { count: number; minutes: number; cost: number }>();
+    for (const d of [] as Date[]) void d; // (eslint scope)
+    const dayKeys = Array.from({ length: 7 }).map((_, i) =>
+      addDays(weekStart, i).getTime(),
+    );
+    for (const k of dayKeys) {
+      out.set(k, { count: 0, minutes: 0, cost: 0 });
+    }
+    const weekStartMs = weekStart.getTime();
+    const weekEndMs = addDays(weekStart, 7).getTime();
+    for (const s of shifts) {
+      if (s.status === 'CANCELLED') continue;
+      const t = new Date(s.startsAt).getTime();
+      if (t < weekStartMs || t >= weekEndMs) continue;
+      const day = startOfDay(new Date(s.startsAt)).getTime();
+      const entry = out.get(day);
+      if (!entry) continue;
+      const mins = shiftMinutes(s);
+      entry.count += 1;
+      entry.minutes += mins;
+      if (s.payRate != null) {
+        entry.cost += (s.payRate * mins) / 60;
+      }
+    }
+    return out;
+  }, [shifts, weekStart]);
 
   // Per-associate weekly minutes (only counting shifts in the visible week).
   const weeklyMinutes = useMemo(() => {
@@ -171,8 +242,19 @@ export function WeekCalendarView({
   );
 
   const [movingShiftId, setMovingShiftId] = useState<string | null>(null);
+  // Tracks which chip is currently being dragged so cells can render a
+  // live conflict overlay (red tint) where dropping would create an
+  // overlap with that associate's existing shifts on that day.
+  const [activeDragShift, setActiveDragShift] = useState<Shift | null>(null);
+
+  const handleDragStart = (e: DragStartEvent) => {
+    const shiftId = String(e.active.id);
+    const s = shifts.find((x) => x.id === shiftId) ?? null;
+    setActiveDragShift(s);
+  };
 
   const handleDragEnd = async (e: DragEndEvent) => {
+    setActiveDragShift(null);
     const shiftId = String(e.active.id);
     const overId = e.over ? String(e.over.id) : null;
     if (!overId || !overId.startsWith('cell:')) return;
@@ -206,8 +288,47 @@ export function WeekCalendarView({
     gridTemplateColumns: `200px repeat(7, minmax(150px, 1fr))`,
   };
 
+  // Compute the set of (associateId|unassigned)_dayMs cells that would be
+  // conflicts for the currently-dragged shift. Using a Set keeps per-cell
+  // lookup O(1) during the drag.
+  const conflictCellKeys = useMemo(() => {
+    if (!activeDragShift) return new Set<string>();
+    const out = new Set<string>();
+    const dragStart = new Date(activeDragShift.startsAt);
+    const dragEnd = new Date(activeDragShift.endsAt);
+    const dayMinutes = dragStart.getHours() * 60 + dragStart.getMinutes();
+    const durationMs = dragEnd.getTime() - dragStart.getTime();
+
+    // For each visible associate × day, simulate the drop and check for
+    // overlap with that associate's other shifts on that same day. The
+    // dragged shift itself is excluded so dropping it back onto its own
+    // cell never lights up red.
+    for (const a of visibleAssociates) {
+      for (const d of days) {
+        const target = new Date(d);
+        target.setHours(0, 0, 0, 0);
+        target.setMinutes(target.getMinutes() + dayMinutes);
+        const targetEnd = new Date(target.getTime() + durationMs);
+        const cellShifts = byCell.get(`${a.id}_${d.getTime()}`) ?? [];
+        const conflict = cellShifts.some((s) => {
+          if (s.id === activeDragShift.id) return false;
+          const sStart = new Date(s.startsAt);
+          const sEnd = new Date(s.endsAt);
+          return sStart < targetEnd && sEnd > target;
+        });
+        if (conflict) out.add(`${a.id}_${d.getTime()}`);
+      }
+    }
+    return out;
+  }, [activeDragShift, visibleAssociates, days, byCell]);
+
   return (
-    <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+    <DndContext
+      sensors={sensors}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      onDragCancel={() => setActiveDragShift(null)}
+    >
       <div className="rounded-md border border-navy-secondary bg-navy/40 overflow-x-auto">
         <div className="grid min-w-[1200px]" style={gridStyle}>
           {/* ===== Header row ===== */}
@@ -260,8 +381,14 @@ export function WeekCalendarView({
               canManage={canManage}
               onShiftClick={onShiftClick}
               onCreate={() => onCellCreate(d, null)}
+              onShiftResize={onShiftResize}
+              hoverBind={hover.bind}
+              onContextMenu={ctxMenu.openFor}
               movingShiftId={movingShiftId}
+              selectedIds={selectedIds}
+              isConflictTarget={false}
               variant="unassigned"
+              onTemplateDrop={(tplId) => onTemplateDrop(tplId, d, null)}
             />
           ))}
 
@@ -286,15 +413,98 @@ export function WeekCalendarView({
                     canManage={canManage}
                     onShiftClick={onShiftClick}
                     onCreate={() => onCellCreate(d, a.id)}
+                    onShiftResize={onShiftResize}
+                    hoverBind={hover.bind}
+                    onContextMenu={ctxMenu.openFor}
                     movingShiftId={movingShiftId}
+                    selectedIds={selectedIds}
+                    isConflictTarget={conflictCellKeys.has(`${a.id}_${d.getTime()}`)}
                     variant="default"
+                    onTemplateDrop={(tplId) => onTemplateDrop(tplId, d, a.id)}
                   />
                 ))}
               </Row>
             );
           })}
+
+          {/* ===== Day totals footer ===== */}
+          <div className="sticky left-0 z-10 bg-navy/95 backdrop-blur border-t border-r border-navy-secondary px-3 py-2 text-[10px] uppercase tracking-wider text-silver/70">
+            Daily total
+          </div>
+          {days.map((d) => {
+            const t = dayTotals.get(d.getTime());
+            const count = t?.count ?? 0;
+            const hrs = (t?.minutes ?? 0) / 60;
+            const cost = t?.cost ?? 0;
+            const isToday = sameDay(d, today);
+            return (
+              <div
+                key={`total_${d.getTime()}`}
+                className={cn(
+                  'border-t border-r border-navy-secondary px-2 py-2',
+                  isToday && 'bg-gold/[0.03]',
+                )}
+              >
+                {count === 0 ? (
+                  <div className="text-[11px] text-silver/40">—</div>
+                ) : (
+                  <div className="flex items-baseline gap-2 text-[11px] tabular-nums">
+                    <span className="text-white font-medium">{count}</span>
+                    <span className="text-silver/60">·</span>
+                    <span className="text-silver">{hrs.toFixed(1)}h</span>
+                    {cost > 0 && (
+                      <>
+                        <span className="text-silver/60">·</span>
+                        <span className="text-silver">{formatCost(cost)}</span>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
+      {hover.active && (
+        <ShiftHoverCard
+          shift={hover.active.shift}
+          anchorRect={hover.active.rect}
+          onClose={hover.close}
+          onPointerEnterCard={hover.onCardEnter}
+          onPointerLeaveCard={hover.onCardLeave}
+          canManage={canManage}
+          actions={{
+            onEdit: (s) => {
+              hover.close();
+              quickActions.onEdit(s);
+            },
+            onAssign: (s) => {
+              hover.close();
+              quickActions.onAssign(s);
+            },
+            onUnassign: async (s) => {
+              await quickActions.onUnassign(s);
+              hover.close();
+            },
+            onCancel: async (s) => {
+              await quickActions.onCancel(s);
+              hover.close();
+            },
+            onDuplicate: async (s) => {
+              await quickActions.onDuplicate(s);
+              hover.close();
+            },
+          }}
+        />
+      )}
+      {ctxMenu.active && (
+        <ShiftContextMenu
+          active={ctxMenu.active}
+          onClose={ctxMenu.close}
+          canManage={canManage}
+          actions={quickActions}
+        />
+      )}
     </DndContext>
   );
 }
@@ -376,31 +586,72 @@ function Cell({
   isToday,
   canManage,
   onShiftClick,
+  onContextMenu,
   onCreate,
+  onShiftResize,
+  hoverBind,
   movingShiftId,
+  selectedIds,
+  isConflictTarget,
   variant,
+  onTemplateDrop,
 }: {
   cellId: string;
   shifts: Shift[];
   dayStart: Date;
   isToday: boolean;
   canManage: boolean;
-  onShiftClick: (s: Shift) => void;
+  onShiftClick: (s: Shift, e: React.MouseEvent) => void;
+  onContextMenu: (s: Shift, e: React.MouseEvent) => void;
   onCreate: () => void;
+  onShiftResize: (s: Shift, newEndsAt: Date) => Promise<void>;
+  hoverBind: (s: Shift) => {
+    onPointerEnter: (e: React.PointerEvent<HTMLElement>) => void;
+    onPointerLeave: () => void;
+  };
   movingShiftId: string | null;
+  selectedIds: Set<string>;
+  isConflictTarget: boolean;
   variant: 'default' | 'unassigned';
+  onTemplateDrop: (templateId: string) => void;
 }) {
   const { isOver, setNodeRef } = useDroppable({ id: cellId });
+  // Native HTML5 drag from the templates rail. Independent of dnd-kit's
+  // shift-move drag because the events use different APIs.
+  const [tplOver, setTplOver] = useState(false);
+  const onNativeDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!canManage) return;
+    if (!e.dataTransfer.types.includes(TEMPLATE_MIME)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    if (!tplOver) setTplOver(true);
+  };
+  const onNativeDragLeave = () => setTplOver(false);
+  const onNativeDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    setTplOver(false);
+    const tplId = e.dataTransfer.getData(TEMPLATE_MIME);
+    if (!tplId) return;
+    e.preventDefault();
+    onTemplateDrop(tplId);
+  };
 
   return (
     <div
       ref={setNodeRef}
+      onDragOver={onNativeDragOver}
+      onDragLeave={onNativeDragLeave}
+      onDrop={onNativeDrop}
       className={cn(
         'group relative border-b border-r border-navy-secondary p-1.5 min-h-[88px]',
         'flex flex-col gap-1.5',
         isToday && 'bg-gold/[0.03]',
-        isOver && 'bg-gold/15 outline outline-1 outline-gold/40 -outline-offset-1',
-        variant === 'unassigned' && !isOver && 'bg-warning/[0.04]'
+        // Conflict tint shows under the hover/drop highlight so the manager
+        // can still see the gold "you're hovering here" outline on top.
+        isConflictTarget && !isOver && 'bg-alert/15',
+        isConflictTarget && isOver && 'bg-alert/30 outline outline-1 outline-alert/60 -outline-offset-1',
+        !isConflictTarget && isOver && 'bg-gold/15 outline outline-1 outline-gold/40 -outline-offset-1',
+        tplOver && 'bg-gold/20 outline-2 outline outline-gold/70 -outline-offset-1',
+        variant === 'unassigned' && !isOver && !isConflictTarget && !tplOver && 'bg-warning/[0.04]'
       )}
     >
       {shifts.length === 0 ? (
@@ -420,8 +671,13 @@ function Cell({
             <ShiftChip
               key={s.id}
               shift={s}
-              onClick={() => onShiftClick(s)}
+              onClick={(e) => onShiftClick(s, e)}
+              onContextMenu={(e) => onContextMenu(s, e)}
+              onResize={onShiftResize}
+              canManage={canManage}
               isMoving={movingShiftId === s.id}
+              isSelected={selectedIds.has(s.id)}
+              hoverHandlers={hoverBind(s)}
             />
           ))}
           {canManage && (
@@ -444,37 +700,135 @@ function Cell({
 function ShiftChip({
   shift,
   onClick,
+  onContextMenu,
+  onResize,
+  canManage,
   isMoving,
+  isSelected,
+  hoverHandlers,
 }: {
   shift: Shift;
-  onClick: () => void;
+  onClick: (e: React.MouseEvent) => void;
+  onContextMenu: (e: React.MouseEvent) => void;
+  onResize: (s: Shift, newEndsAt: Date) => Promise<void>;
+  canManage: boolean;
   isMoving: boolean;
+  isSelected: boolean;
+  hoverHandlers: {
+    onPointerEnter: (e: React.PointerEvent<HTMLElement>) => void;
+    onPointerLeave: () => void;
+  };
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: shift.id,
   });
+
+  // Resize state. resizeDeltaPx===null = idle; otherwise we're tracking
+  // the live drag and the chip shows a previewed end time.
+  const [resizeDeltaPx, setResizeDeltaPx] = useState<number | null>(null);
+  const startXRef = useRef<number | null>(null);
+
+  const startsAt = new Date(shift.startsAt);
+  const endsAt = new Date(shift.endsAt);
+  const baseDurationMin = Math.max(
+    0,
+    Math.round((endsAt.getTime() - startsAt.getTime()) / 60_000),
+  );
+
+  const previewEndsAt = useMemo(() => {
+    if (resizeDeltaPx === null) return endsAt;
+    const newDurationMin = Math.max(
+      RESIZE_MIN_DURATION_MIN,
+      Math.round(
+        (baseDurationMin + resizeDeltaPx / RESIZE_PX_PER_MIN) /
+          RESIZE_SNAP_MIN,
+      ) * RESIZE_SNAP_MIN,
+    );
+    return new Date(startsAt.getTime() + newDurationMin * 60_000);
+    // startsAt/endsAt are derived from shift fields; safe to depend on the raw inputs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resizeDeltaPx, baseDurationMin, shift.startsAt]);
+
+  // Window-level move/up so the user can drag past the chip's right edge
+  // without losing the gesture.
+  useEffect(() => {
+    if (resizeDeltaPx === null) return;
+
+    const onMove = (ev: MouseEvent) => {
+      if (startXRef.current === null) return;
+      setResizeDeltaPx(ev.clientX - startXRef.current);
+    };
+    const onUp = () => {
+      const finalEnds = previewEndsAt;
+      if (finalEnds.getTime() !== endsAt.getTime()) {
+        void onResize(shift, finalEnds);
+      }
+      setResizeDeltaPx(null);
+      startXRef.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [resizeDeltaPx, previewEndsAt, endsAt, onResize, shift]);
+
+  const onResizeMouseDown = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    startXRef.current = e.clientX;
+    setResizeDeltaPx(0);
+  };
+
   const style: React.CSSProperties = transform
     ? {
         transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
         zIndex: 50,
       }
     : {};
+  const isResizing = resizeDeltaPx !== null;
+  const color = colorForPosition(shift.position);
   return (
     <div
       ref={setNodeRef}
-      style={style}
+      style={{
+        ...style,
+        backgroundColor: color.bg,
+        borderColor: color.border,
+      }}
       className={cn(
-        'relative rounded border bg-navy/70 hover:bg-navy-secondary/40 transition-colors',
-        'border-navy-secondary hover:border-silver/40',
+        'relative rounded border transition-colors hover:brightness-125',
         isDragging && 'shadow-2xl ring-2 ring-gold/60 opacity-90',
+        isResizing && 'ring-2 ring-gold/70',
+        isSelected && 'ring-2 ring-gold ring-offset-1 ring-offset-navy',
         isMoving && 'opacity-50'
       )}
+      onPointerEnter={hoverHandlers.onPointerEnter}
+      onPointerLeave={hoverHandlers.onPointerLeave}
+      onContextMenu={onContextMenu}
     >
+      {isSelected && (
+        <div
+          aria-hidden
+          className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-gold text-navy flex items-center justify-center text-[10px] font-bold"
+        >
+          ✓
+        </div>
+      )}
+      {/* Position color accent bar — left edge, full height */}
+      <div
+        aria-hidden
+        className="absolute left-0 top-0 bottom-0 w-1 rounded-l"
+        style={{ backgroundColor: color.accent }}
+      />
       {/* Drag grip — visually subtle, mouse-down here starts the drag */}
       <div
         {...listeners}
         {...attributes}
-        className="absolute left-0.5 top-1.5 text-silver/30 hover:text-gold cursor-grab active:cursor-grabbing no-print"
+        className="absolute left-1.5 top-1.5 text-silver/40 hover:text-gold cursor-grab active:cursor-grabbing no-print"
         aria-label={`Move ${shift.position}`}
       >
         <GripVertical className="h-3 w-3" />
@@ -482,11 +836,11 @@ function ShiftChip({
       <button
         type="button"
         onClick={onClick}
-        className="w-full text-left p-1.5 pl-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
+        className="w-full text-left p-1.5 pl-5 pr-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
       >
         <div className="flex items-center justify-between gap-1">
           <div className="text-[11px] text-silver tabular-nums">
-            {fmtTime(shift.startsAt)}–{fmtTime(shift.endsAt)}
+            {fmtTime(shift.startsAt)}–{fmtTime(previewEndsAt.toISOString())}
           </div>
           <Badge
             variant={STATUS_VARIANT[shift.status] ?? 'default'}
@@ -509,6 +863,17 @@ function ShiftChip({
           </div>
         )}
       </button>
+      {canManage && (
+        <div
+          onMouseDown={onResizeMouseDown}
+          className="absolute right-0 top-0 bottom-0 w-1.5 cursor-ew-resize hover:bg-gold/40 group no-print"
+          aria-label="Drag to resize duration"
+          role="slider"
+          tabIndex={-1}
+        >
+          <div className="my-auto w-0.5 h-8 ml-0.5 mt-2 rounded-full bg-silver/30 group-hover:bg-gold" />
+        </div>
+      )}
     </div>
   );
 }

@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Link as LinkIcon, Save, Unlink } from 'lucide-react';
+import { Link as LinkIcon, Save, Unlink, Users } from 'lucide-react';
 import { toast } from 'sonner';
-import type { QboAccountConfigInput, QboStatus } from '@alto-people/shared';
+import type { QboAccount, QboAccountConfigInput, QboStatus } from '@alto-people/shared';
 import {
   disconnect,
   getStatus,
+  listQboAccounts,
   startConnect,
+  syncAssociatesToQbo,
   updateAccounts,
 } from '@/lib/quickbooksApi';
 import { ApiError } from '@/lib/api';
@@ -20,7 +22,6 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/Card';
-import { Input } from '@/components/ui/Input';
 import { Label, FormHint } from '@/components/ui/Label';
 import { Skeleton } from '@/components/ui/Skeleton';
 
@@ -32,14 +33,16 @@ const ACCOUNT_FIELDS: ReadonlyArray<{
   key: keyof QboAccountConfigInput;
   label: string;
   hint: string;
+  /** QBO classification used to filter the dropdown picker. */
+  classification: 'Expense' | 'Liability' | null;
 }> = [
-  { key: 'accountSalariesExpense',   label: 'Salaries Expense',     hint: 'Debit. Total gross + employer-side payroll tax.' },
-  { key: 'accountFederalTaxPayable', label: 'Federal Tax Payable',  hint: 'Credit. FIT withheld this period.' },
-  { key: 'accountStateTaxPayable',   label: 'State Tax Payable',    hint: 'Credit. SIT withheld this period.' },
-  { key: 'accountFicaPayable',       label: 'FICA Payable',         hint: 'Credit. Employee + employer Social Security.' },
-  { key: 'accountMedicarePayable',   label: 'Medicare Payable',     hint: 'Credit. Employee + employer Medicare.' },
-  { key: 'accountBenefitsPayable',   label: 'Benefits Payable',     hint: 'Credit. Pre-tax deductions (Section 125).' },
-  { key: 'accountNetPayPayable',     label: 'Net Pay Payable',      hint: 'Credit. Take-home owed to associates.' },
+  { key: 'accountSalariesExpense',   label: 'Salaries Expense',     hint: 'Debit. Total gross + employer-side payroll tax.', classification: 'Expense' },
+  { key: 'accountFederalTaxPayable', label: 'Federal Tax Payable',  hint: 'Credit. FIT withheld this period.',                classification: 'Liability' },
+  { key: 'accountStateTaxPayable',   label: 'State Tax Payable',    hint: 'Credit. SIT withheld this period.',                classification: 'Liability' },
+  { key: 'accountFicaPayable',       label: 'FICA Payable',         hint: 'Credit. Employee + employer Social Security.',      classification: 'Liability' },
+  { key: 'accountMedicarePayable',   label: 'Medicare Payable',     hint: 'Credit. Employee + employer Medicare.',             classification: 'Liability' },
+  { key: 'accountBenefitsPayable',   label: 'Benefits Payable',     hint: 'Credit. Pre-tax deductions (Section 125).',         classification: 'Liability' },
+  { key: 'accountNetPayPayable',     label: 'Net Pay Payable',      hint: 'Credit. Take-home owed to associates.',             classification: 'Liability' },
 ];
 
 /**
@@ -189,15 +192,176 @@ export function QuickbooksSection({ clientId }: Props) {
         )}
 
         {status.connected && (
-          <AccountMappingForm
-            clientId={clientId}
-            status={status}
-            canManage={canManage}
-            onSaved={refresh}
-          />
+          <>
+            <AccountMappingForm
+              clientId={clientId}
+              status={status}
+              canManage={canManage}
+              onSaved={refresh}
+            />
+            <JeModeToggle
+              clientId={clientId}
+              status={status}
+              canManage={canManage}
+              onSaved={refresh}
+            />
+            {canManage && <AssociateSyncSection clientId={clientId} />}
+          </>
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function JeModeToggle({
+  clientId,
+  status,
+  canManage,
+  onSaved,
+}: {
+  clientId: string;
+  status: QboStatus;
+  canManage: boolean;
+  onSaved: () => Promise<void>;
+}) {
+  const [saving, setSaving] = useState(false);
+
+  const setMode = async (mode: 'AGGREGATE' | 'PER_EMPLOYEE') => {
+    if (mode === status.jeMode || saving) return;
+    setSaving(true);
+    try {
+      await updateAccounts(clientId, { jeMode: mode });
+      toast.success(
+        mode === 'PER_EMPLOYEE'
+          ? 'Switched to per-employee JE posting'
+          : 'Switched to aggregate JE posting'
+      );
+      await onSaved();
+    } catch (err) {
+      toast.error('Could not change JE mode', {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3 pt-3 border-t border-navy-secondary">
+      <div>
+        <h3 className="text-sm font-medium text-white">Journal entry granularity</h3>
+        <FormHint>
+          AGGREGATE posts one balanced JE per run (sum of every paystub).
+          PER_EMPLOYEE posts one JE per associate with EmployeeRef set —
+          mirrors how QBO Payroll itself records payroll, but requires
+          every associate has been synced to QuickBooks first.
+        </FormHint>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <ModeButton
+          label="Aggregate (one JE per run)"
+          active={status.jeMode === 'AGGREGATE'}
+          disabled={!canManage || saving}
+          onClick={() => setMode('AGGREGATE')}
+        />
+        <ModeButton
+          label="Per employee (one JE per paystub)"
+          active={status.jeMode === 'PER_EMPLOYEE'}
+          disabled={!canManage || saving}
+          onClick={() => setMode('PER_EMPLOYEE')}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ModeButton({
+  label,
+  active,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={
+        'px-3 py-1.5 text-xs rounded border transition-colors disabled:opacity-50 ' +
+        (active
+          ? 'border-gold text-gold bg-gold/10'
+          : 'border-silver/30 text-silver/70 hover:border-silver/60 hover:text-silver')
+      }
+    >
+      {label}
+    </button>
+  );
+}
+
+function AssociateSyncSection({ clientId }: { clientId: string }) {
+  const [busy, setBusy] = useState(false);
+  const [lastResult, setLastResult] = useState<{
+    scanned: number;
+    synced: number;
+    failed: number;
+    errors: Array<{ associateId: string; name: string; reason: string }>;
+  } | null>(null);
+
+  const onSync = async () => {
+    setBusy(true);
+    try {
+      const res = await syncAssociatesToQbo(clientId);
+      setLastResult(res);
+      if (res.failed === 0) {
+        toast.success(`${res.synced} associate(s) synced to QuickBooks`);
+      } else {
+        toast.warning(`${res.synced} synced, ${res.failed} failed`);
+      }
+    } catch (err) {
+      toast.error('Sync failed', {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3 pt-3 border-t border-navy-secondary">
+      <div>
+        <h3 className="text-sm font-medium text-white">Associate sync</h3>
+        <FormHint>
+          Pushes every active associate at this client to QuickBooks as an
+          Employee (W2) or Vendor (1099). Idempotent — already-synced
+          records are updated in place using their cached QBO id.
+        </FormHint>
+      </div>
+      <Button onClick={onSync} loading={busy}>
+        <Users className="h-4 w-4" />
+        Sync associates to QuickBooks
+      </Button>
+      {lastResult && (
+        <div className="text-xs text-silver/70 space-y-1">
+          <div>
+            Last run: scanned {lastResult.scanned}, synced {lastResult.synced},
+            failed {lastResult.failed}.
+          </div>
+          {lastResult.errors.slice(0, 5).map((e) => (
+            <div key={e.associateId} className="text-alert">
+              · {e.name}: {e.reason}
+            </div>
+          ))}
+          {lastResult.errors.length > 5 && (
+            <div className="text-alert">… and {lastResult.errors.length - 5} more</div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -241,6 +405,11 @@ function AccountMappingForm({
     )
   );
   const [saving, setSaving] = useState(false);
+  // Wave 3.1 — pull the QBO chart-of-accounts so HR picks accounts from a
+  // dropdown instead of typing raw IDs. We start with `null` (loading), then
+  // either `[]` (failed/empty — fall back to text input) or the loaded list.
+  const [accounts, setAccounts] = useState<QboAccount[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     setValues(
@@ -249,6 +418,23 @@ function AccountMappingForm({
       )
     );
   }, [status]);
+
+  useEffect(() => {
+    let alive = true;
+    listQboAccounts(clientId)
+      .then((res) => {
+        if (alive) setAccounts(res.accounts);
+      })
+      .catch((err) => {
+        if (alive) {
+          setLoadError(err instanceof ApiError ? err.message : 'Failed to load chart of accounts.');
+          setAccounts([]);
+        }
+      });
+    return () => {
+      alive = false;
+    };
+  }, [clientId]);
 
   const submit = async () => {
     setSaving(true);
@@ -273,26 +459,29 @@ function AccountMappingForm({
       <div>
         <h3 className="text-sm font-medium text-white">Account mapping</h3>
         <FormHint>
-          Pull these IDs from QuickBooks → Accounting → Chart of Accounts.
-          Empty fields fall back to placeholder names; QBO will reject the
-          post unless every account exists in the company file.
+          Map each payroll JE line to a GL account in your QuickBooks chart
+          of accounts. The list below loads live from QBO; empty fields fall
+          back to placeholder names and QBO will reject the post.
         </FormHint>
+        {loadError && (
+          <p className="text-xs text-alert mt-1">{loadError}</p>
+        )}
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {ACCOUNT_FIELDS.map((f) => (
-          <div key={f.key}>
-            <Label htmlFor={`qbo-${f.key}`}>{f.label}</Label>
-            <Input
-              id={`qbo-${f.key}`}
-              value={values[f.key] ?? ''}
-              onChange={(e) =>
-                setValues((prev) => ({ ...prev, [f.key]: e.target.value }))
-              }
-              placeholder="e.g. 73"
-              disabled={!canManage}
-            />
-            <FormHint>{f.hint}</FormHint>
-          </div>
+          <AccountPicker
+            key={f.key}
+            id={`qbo-${f.key}`}
+            label={f.label}
+            hint={f.hint}
+            value={values[f.key] ?? ''}
+            onChange={(v) =>
+              setValues((prev) => ({ ...prev, [f.key]: v }))
+            }
+            accounts={accounts}
+            classification={f.classification}
+            disabled={!canManage}
+          />
         ))}
       </div>
       {canManage && (
@@ -301,6 +490,62 @@ function AccountMappingForm({
           Save mapping
         </Button>
       )}
+    </div>
+  );
+}
+
+function AccountPicker({
+  id,
+  label,
+  hint,
+  value,
+  onChange,
+  accounts,
+  classification,
+  disabled,
+}: {
+  id: string;
+  label: string;
+  hint: string;
+  value: string;
+  onChange: (v: string) => void;
+  accounts: QboAccount[] | null;
+  classification: 'Expense' | 'Liability' | null;
+  disabled?: boolean;
+}) {
+  // Filter to the relevant classification (Expense vs Liability) to keep
+  // the picker focused. If no classification on the field, show all.
+  const filtered = accounts && classification
+    ? accounts.filter((a) => a.classification === classification)
+    : accounts ?? [];
+  const valueExists = !value || filtered.some((a) => a.id === value);
+
+  return (
+    <div>
+      <Label htmlFor={id}>{label}</Label>
+      {accounts === null ? (
+        <Skeleton className="h-9 mt-1" />
+      ) : (
+        <select
+          id={id}
+          className="mt-1 w-full rounded border border-silver/20 bg-black/40 px-2 py-1.5 text-sm text-silver"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          disabled={disabled}
+        >
+          <option value="">— Not mapped —</option>
+          {filtered.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.isSubAccount ? '— ' : ''}
+              {a.name} ({a.accountType})
+            </option>
+          ))}
+          {!valueExists && value && (
+            <option value={value}>(unknown id: {value})</option>
+          )}
+        </select>
+      )}
+      <FormHint>{hint}</FormHint>
     </div>
   );
 }

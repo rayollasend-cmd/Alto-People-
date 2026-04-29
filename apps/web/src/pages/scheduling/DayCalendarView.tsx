@@ -12,6 +12,16 @@ import { GripVertical, Plus } from 'lucide-react';
 import type { AssociateLite, Shift, ShiftStatus } from '@alto-people/shared';
 import { Badge } from '@/components/ui/Badge';
 import { cn } from '@/lib/cn';
+import { colorForPosition } from '@/lib/positionColor';
+import {
+  ShiftHoverCard,
+  useShiftHoverCard,
+  type QuickActions,
+} from './ShiftHoverCard';
+import {
+  ShiftContextMenu,
+  useShiftContextMenu,
+} from './ShiftContextMenu';
 
 const STATUS_VARIANT: Record<
   ShiftStatus,
@@ -74,6 +84,7 @@ interface Props {
     target: { associateId: string | null; dayStart: Date }
   ) => Promise<void>;
   onShiftResize: (s: Shift, newEndsAt: Date) => Promise<void>;
+  quickActions: QuickActions;
 }
 
 /**
@@ -96,7 +107,10 @@ export function DayCalendarView({
   onCellCreate,
   onShiftMove,
   onShiftResize,
+  quickActions,
 }: Props) {
+  const hover = useShiftHoverCard();
+  const ctxMenu = useShiftContextMenu();
   // Filter to shifts that actually fall on `dayAnchor`. The parent already
   // requested ≤24h of data, but cross-day overlap can leak in.
   const todayShifts = useMemo(() => {
@@ -193,6 +207,8 @@ export function DayCalendarView({
               onCellCreate(d, null);
             }}
             onShiftResize={onShiftResize}
+            hoverBind={hover.bind}
+            onContextMenu={ctxMenu.openFor}
             tone="warning"
           />
 
@@ -227,11 +243,53 @@ export function DayCalendarView({
                   onCellCreate(d, a.id);
                 }}
                 onShiftResize={onShiftResize}
+                hoverBind={hover.bind}
+                onContextMenu={ctxMenu.openFor}
               />
             ))
           )}
         </div>
       </div>
+      {hover.active && (
+        <ShiftHoverCard
+          shift={hover.active.shift}
+          anchorRect={hover.active.rect}
+          onClose={hover.close}
+          onPointerEnterCard={hover.onCardEnter}
+          onPointerLeaveCard={hover.onCardLeave}
+          canManage={canManage}
+          actions={{
+            onEdit: (s) => {
+              hover.close();
+              quickActions.onEdit(s);
+            },
+            onAssign: (s) => {
+              hover.close();
+              quickActions.onAssign(s);
+            },
+            onUnassign: async (s) => {
+              await quickActions.onUnassign(s);
+              hover.close();
+            },
+            onCancel: async (s) => {
+              await quickActions.onCancel(s);
+              hover.close();
+            },
+            onDuplicate: async (s) => {
+              await quickActions.onDuplicate(s);
+              hover.close();
+            },
+          }}
+        />
+      )}
+      {ctxMenu.active && (
+        <ShiftContextMenu
+          active={ctxMenu.active}
+          onClose={ctxMenu.close}
+          canManage={canManage}
+          actions={quickActions}
+        />
+      )}
     </DndContext>
   );
 }
@@ -245,6 +303,8 @@ function DayColumn({
   onShiftClick,
   onCreate,
   onShiftResize,
+  hoverBind,
+  onContextMenu,
   tone,
 }: {
   colId: string;
@@ -255,6 +315,11 @@ function DayColumn({
   onShiftClick: (s: Shift) => void;
   onCreate: (gridMinutes: number) => void;
   onShiftResize: (s: Shift, newEndsAt: Date) => Promise<void>;
+  hoverBind: (s: Shift) => {
+    onPointerEnter: (e: React.PointerEvent<HTMLElement>) => void;
+    onPointerLeave: () => void;
+  };
+  onContextMenu: (s: Shift, e: React.MouseEvent) => void;
   tone?: 'warning';
 }) {
   const { isOver, setNodeRef } = useDroppable({ id: colId });
@@ -294,8 +359,10 @@ function DayColumn({
             shift={s}
             dayAnchor={dayAnchor}
             onClick={() => onShiftClick(s)}
+            onContextMenu={(e) => onContextMenu(s, e)}
             onResize={onShiftResize}
             canManage={canManage}
+            hoverHandlers={hoverBind(s)}
           />
         ))}
         {shifts.length === 0 && canManage && (
@@ -312,14 +379,21 @@ function DayShiftChip({
   shift,
   dayAnchor,
   onClick,
+  onContextMenu,
   onResize,
   canManage,
+  hoverHandlers,
 }: {
   shift: Shift;
   dayAnchor: Date;
   onClick: () => void;
+  onContextMenu: (e: React.MouseEvent) => void;
   onResize: (s: Shift, newEndsAt: Date) => Promise<void>;
   canManage: boolean;
+  hoverHandlers: {
+    onPointerEnter: (e: React.PointerEvent<HTMLElement>) => void;
+    onPointerLeave: () => void;
+  };
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: shift.id,
@@ -393,6 +467,7 @@ function DayShiftChip({
       )
     : endsAt;
 
+  const color = colorForPosition(shift.position);
   return (
     <div
       ref={setNodeRef}
@@ -402,19 +477,28 @@ function DayShiftChip({
         left: 4,
         right: 4,
         height,
+        backgroundColor: color.bg,
+        borderColor: color.border,
         ...dragStyle,
       }}
       className={cn(
-        'rounded border bg-navy/80 hover:bg-navy-secondary/60 transition-colors',
-        'border-navy-secondary hover:border-silver/40',
+        'rounded border transition-colors hover:brightness-125',
         isDragging && 'shadow-2xl ring-2 ring-gold/60 opacity-90',
         resizeDeltaPx !== null && 'ring-2 ring-gold/70'
       )}
+      onPointerEnter={hoverHandlers.onPointerEnter}
+      onPointerLeave={hoverHandlers.onPointerLeave}
+      onContextMenu={onContextMenu}
     >
+      <div
+        aria-hidden
+        className="absolute left-0 top-0 bottom-0 w-1 rounded-l"
+        style={{ backgroundColor: color.accent }}
+      />
       <div
         {...listeners}
         {...attributes}
-        className="absolute left-0.5 top-1 text-silver/30 hover:text-gold cursor-grab active:cursor-grabbing no-print"
+        className="absolute left-1.5 top-1 text-silver/40 hover:text-gold cursor-grab active:cursor-grabbing no-print"
         aria-label={`Move ${shift.position}`}
       >
         <GripVertical className="h-3 w-3" />
@@ -422,7 +506,7 @@ function DayShiftChip({
       <button
         type="button"
         onClick={onClick}
-        className="w-full h-full text-left px-1.5 pl-4 pt-1 pb-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
+        className="w-full h-full text-left px-1.5 pl-5 pt-1 pb-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
       >
         <div className="flex items-center justify-between gap-1">
           <div className="text-[10px] text-silver tabular-nums truncate">

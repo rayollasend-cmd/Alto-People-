@@ -1,8 +1,12 @@
 import { Router } from 'express';
 import {
   QboAccountConfigInputSchema,
+  QboAccountListResponseSchema,
+  QboSyncAssociatesResponseSchema,
+  type QboAccountListResponse,
   type QboAuthorizeStartResponse,
   type QboStatus,
+  type QboSyncAssociatesResponse,
   type QboSyncResponse,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
@@ -13,8 +17,10 @@ import {
   buildAuthorizeUrl,
   exchangeCode,
   isStubMode,
+  listQboAccounts,
   postPayrollJournalEntry,
   saveConnection,
+  syncAssociateToQbo,
   verifyState,
 } from '../lib/quickbooks.js';
 import { recordPayrollEvent } from '../lib/audit.js';
@@ -54,6 +60,7 @@ quickbooksRouter.get('/status', VIEW, async (req, res, next) => {
       accountMedicarePayable: conn?.accountMedicarePayable ?? null,
       accountBenefitsPayable: conn?.accountBenefitsPayable ?? null,
       accountNetPayPayable: conn?.accountNetPayPayable ?? null,
+      jeMode: conn?.jeMode ?? 'AGGREGATE',
     };
     res.json(body);
   } catch (err) {
@@ -142,6 +149,27 @@ quickbooksRouter.post('/disconnect', MANAGE, async (req, res, next) => {
 });
 
 /**
+ * GET /quickbooks/accounts/list?clientId=X
+ * Wave 3.1 — fetches the QBO chart-of-accounts so the mapping UI can offer
+ * a real dropdown of GL accounts. Stub mode returns 9 sample accounts.
+ */
+quickbooksRouter.get('/accounts/list', MANAGE, async (req, res, next) => {
+  try {
+    const clientId = req.query.clientId;
+    if (typeof clientId !== 'string' || clientId.length === 0) {
+      throw new HttpError(400, 'invalid_query', 'clientId is required');
+    }
+    const conn = await prisma.quickbooksConnection.findUnique({ where: { clientId } });
+    if (!conn) throw new HttpError(404, 'not_connected', 'QuickBooks not connected for this client');
+    const accounts = await listQboAccounts(prisma, clientId);
+    const body: QboAccountListResponse = QboAccountListResponseSchema.parse({ accounts });
+    res.json(body);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * PATCH /quickbooks/accounts { clientId, ...accountRefs }
  * Configures the QBO account refs used by JournalEntry lines. HR pulls
  * these from their QBO chart-of-accounts (Account.Id values).
@@ -206,35 +234,102 @@ quickbooksRouter.post('/sync-run/:runId', MANAGE, async (req, res, next) => {
       );
     }
 
-    const totals = aggregateRunForJournalEntry(run.items);
     const txnDate = run.disbursedAt ?? run.finalizedAt ?? new Date();
+    const periodLabel = `${run.periodStart.toISOString().slice(0, 10)} – ${run.periodEnd
+      .toISOString()
+      .slice(0, 10)}`;
+
     try {
-      const result = await postPayrollJournalEntry(prisma, run.clientId, {
-        txnDate,
-        memo: `Payroll ${run.periodStart.toISOString().slice(0, 10)} – ${run.periodEnd
-          .toISOString()
-          .slice(0, 10)}`,
-        ...totals,
-      });
-      const updated = await prisma.payrollRun.update({
-        where: { id: run.id },
-        data: {
-          qboJournalEntryId: result.journalEntryId,
-          qboSyncedAt: new Date(),
-          qboSyncError: null,
-        },
-      });
+      let primaryJournalId: string;
+
+      if (conn.jeMode === 'PER_EMPLOYEE') {
+        // Wave 5.2 — one JE per item, EmployeeRef on every line. Requires
+        // every associate has been synced to QBO first; we fail-fast if
+        // any aren't, rather than skipping silently and producing an
+        // unbalanced ledger.
+        const items = await prisma.payrollItem.findMany({
+          where: { payrollRunId: run.id },
+          include: {
+            associate: {
+              select: {
+                firstName: true,
+                lastName: true,
+                employmentType: true,
+                qboEmployeeId: true,
+                qboVendorId: true,
+              },
+            },
+          },
+        });
+        const missing = items.filter((i) => {
+          const isW2 = i.associate.employmentType === 'W2_EMPLOYEE';
+          return isW2 ? !i.associate.qboEmployeeId : !i.associate.qboVendorId;
+        });
+        if (missing.length > 0) {
+          throw new HttpError(
+            409,
+            'qbo_associates_not_synced',
+            `${missing.length} associate(s) need to be synced to QuickBooks before per-employee JE posting. Run "Sync associates to QuickBooks" first.`
+          );
+        }
+
+        const ids: string[] = [];
+        for (const i of items) {
+          const totals = aggregateRunForJournalEntry([i]);
+          const isW2 = i.associate.employmentType === 'W2_EMPLOYEE';
+          const refValue = isW2 ? i.associate.qboEmployeeId! : i.associate.qboVendorId!;
+          const result = await postPayrollJournalEntry(prisma, run.clientId, {
+            txnDate,
+            memo: `Payroll ${periodLabel} — ${i.associate.firstName} ${i.associate.lastName}`,
+            ...totals,
+            entityRef: { type: isW2 ? 'Employee' : 'Vendor', value: refValue },
+          });
+          ids.push(result.journalEntryId);
+        }
+        primaryJournalId = ids[0] ?? '';
+        // Persist all ids in a comma-joined string on the legacy field so
+        // existing UI keeps working; the count is recoverable from split.
+        await prisma.payrollRun.update({
+          where: { id: run.id },
+          data: {
+            qboJournalEntryId: ids.join(','),
+            qboSyncedAt: new Date(),
+            qboSyncError: null,
+          },
+        });
+      } else {
+        const totals = aggregateRunForJournalEntry(run.items);
+        const result = await postPayrollJournalEntry(prisma, run.clientId, {
+          txnDate,
+          memo: `Payroll ${periodLabel}`,
+          ...totals,
+        });
+        primaryJournalId = result.journalEntryId;
+        await prisma.payrollRun.update({
+          where: { id: run.id },
+          data: {
+            qboJournalEntryId: result.journalEntryId,
+            qboSyncedAt: new Date(),
+            qboSyncError: null,
+          },
+        });
+      }
+
       await recordPayrollEvent({
         actorUserId: req.user!.id,
         action: 'payroll.qbo_synced',
         payrollRunId: run.id,
         clientId: run.clientId,
-        metadata: { journalEntryId: result.journalEntryId, stubMode: isStubMode() },
+        metadata: {
+          journalEntryId: primaryJournalId,
+          jeMode: conn.jeMode,
+          stubMode: isStubMode(),
+        },
         req,
       });
       const body: QboSyncResponse = {
-        journalEntryId: result.journalEntryId,
-        syncedAt: updated.qboSyncedAt!.toISOString(),
+        journalEntryId: primaryJournalId,
+        syncedAt: new Date().toISOString(),
       };
       res.json(body);
     } catch (err) {
@@ -243,8 +338,83 @@ quickbooksRouter.post('/sync-run/:runId', MANAGE, async (req, res, next) => {
         where: { id: run.id },
         data: { qboSyncError: msg.slice(0, 500) },
       });
+      if (err instanceof HttpError) throw err;
       throw new HttpError(502, 'qbo_post_failed', `QuickBooks rejected the post: ${msg}`);
     }
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /quickbooks/sync-associates { clientId }
+ * Wave 3.2 — pushes every active associate at the client to QBO as either
+ * an Employee (W2) or Vendor (1099). Skips already-synced records that
+ * haven't changed; per-record failures don't abort the batch.
+ */
+quickbooksRouter.post('/sync-associates', MANAGE, async (req, res, next) => {
+  try {
+    const clientId =
+      typeof req.body?.clientId === 'string' ? req.body.clientId : null;
+    if (!clientId) {
+      throw new HttpError(400, 'invalid_body', 'clientId is required');
+    }
+    const conn = await prisma.quickbooksConnection.findUnique({ where: { clientId } });
+    if (!conn) {
+      throw new HttpError(409, 'qbo_not_connected', 'QuickBooks not connected for this client');
+    }
+
+    // Pull all active associates currently working at this client. Two
+    // scopes possible: by application.clientId (HR's view) or by recent
+    // shifts. We use applications because that's the canonical "who works
+    // here" relationship; LIVE_ASN-style operational mappings are a
+    // separate phase.
+    const associates = await prisma.associate.findMany({
+      where: {
+        deletedAt: null,
+        applications: { some: { clientId, deletedAt: null } },
+      },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        phone: true,
+        addressLine1: true,
+        addressLine2: true,
+        city: true,
+        state: true,
+        zip: true,
+        employmentType: true,
+        qboEmployeeId: true,
+        qboVendorId: true,
+      },
+    });
+
+    let synced = 0;
+    let failed = 0;
+    const errors: Array<{ associateId: string; name: string; reason: string }> = [];
+    for (const a of associates) {
+      try {
+        const result = await syncAssociateToQbo(prisma, clientId, a);
+        if (result.changed) synced += 1;
+      } catch (err) {
+        failed += 1;
+        errors.push({
+          associateId: a.id,
+          name: `${a.firstName} ${a.lastName}`,
+          reason: err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200),
+        });
+      }
+    }
+
+    const body: QboSyncAssociatesResponse = QboSyncAssociatesResponseSchema.parse({
+      scanned: associates.length,
+      synced,
+      failed,
+      errors,
+    });
+    res.json(body);
   } catch (err) {
     next(err);
   }

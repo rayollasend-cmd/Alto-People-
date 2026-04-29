@@ -629,6 +629,9 @@ export type AuditLogListResponse = z.infer<typeof AuditLogListResponseSchema>;
  *  Phase 44 — QuickBooks Online integration (per-client OAuth + JE sync)
  * -------------------------------------------------------------------------- */
 
+export const QboJeModeSchema = z.enum(['AGGREGATE', 'PER_EMPLOYEE']);
+export type QboJeMode = z.infer<typeof QboJeModeSchema>;
+
 export const QboStatusSchema = z.object({
   connected: z.boolean(),
   realmId: z.string().nullable(),
@@ -646,6 +649,9 @@ export const QboStatusSchema = z.object({
   accountMedicarePayable: z.string().nullable(),
   accountBenefitsPayable: z.string().nullable(),
   accountNetPayPayable: z.string().nullable(),
+  // Wave 5.2 — JE granularity. AGGREGATE = one JE per run (default);
+  // PER_EMPLOYEE = one JE per associate, with EmployeeRef.
+  jeMode: QboJeModeSchema,
 });
 export type QboStatus = z.infer<typeof QboStatusSchema>;
 
@@ -663,6 +669,8 @@ export const QboAccountConfigInputSchema = z.object({
   accountMedicarePayable: z.string().trim().min(1).max(64).nullable().optional(),
   accountBenefitsPayable: z.string().trim().min(1).max(64).nullable().optional(),
   accountNetPayPayable: z.string().trim().min(1).max(64).nullable().optional(),
+  // Wave 5.2 — when omitted, jeMode is left unchanged.
+  jeMode: QboJeModeSchema.optional(),
 });
 export type QboAccountConfigInput = z.infer<typeof QboAccountConfigInputSchema>;
 
@@ -671,6 +679,36 @@ export const QboSyncResponseSchema = z.object({
   syncedAt: z.string().datetime(),
 });
 export type QboSyncResponse = z.infer<typeof QboSyncResponseSchema>;
+
+// Wave 3.1 — Chart-of-accounts discovery
+export const QboAccountSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  classification: z.string(),
+  accountType: z.string(),
+  isSubAccount: z.boolean(),
+});
+export type QboAccount = z.infer<typeof QboAccountSchema>;
+
+export const QboAccountListResponseSchema = z.object({
+  accounts: z.array(QboAccountSchema),
+});
+export type QboAccountListResponse = z.infer<typeof QboAccountListResponseSchema>;
+
+// Wave 3.2 — Batch associate sync
+export const QboSyncAssociatesResponseSchema = z.object({
+  scanned: z.number().int().nonnegative(),
+  synced: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  errors: z.array(
+    z.object({
+      associateId: UuidSchema,
+      name: z.string(),
+      reason: z.string(),
+    })
+  ),
+});
+export type QboSyncAssociatesResponse = z.infer<typeof QboSyncAssociatesResponseSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Phase 43 — Time-off entitlements (annual lump-sum + carryover cap)
@@ -945,6 +983,8 @@ export const ShiftSchema = z.object({
   endsAt: z.string().datetime(),
   location: z.string().nullable(),
   hourlyRate: z.number().nullable(),
+  /** Cost-side rate (associate is paid this) — drives projected labor cost. */
+  payRate: z.number().nullable(),
   status: ShiftStatusSchema,
   notes: z.string().nullable(),
   assignedAssociateId: UuidSchema.nullable(),
@@ -975,6 +1015,8 @@ export const ShiftCreateInputSchema = z
     endsAt: z.string().datetime(),
     location: z.string().max(200).optional(),
     hourlyRate: z.number().nonnegative().optional(),
+    /** Cost-side rate (associate pay). Drives projected labor cost. */
+    payRate: z.number().nonnegative().optional(),
     notes: z.string().max(1000).optional(),
     status: ShiftStatusSchema.optional(),
     // Phase 25 — required by the server when publishing a shift inside
@@ -994,6 +1036,7 @@ export const ShiftUpdateInputSchema = z
     endsAt: z.string().datetime().optional(),
     location: z.string().max(200).nullable().optional(),
     hourlyRate: z.number().nonnegative().nullable().optional(),
+    payRate: z.number().nonnegative().nullable().optional(),
     notes: z.string().max(1000).nullable().optional(),
     status: ShiftStatusSchema.optional(),
     lateNoticeReason: z.string().min(1).max(500).optional(),
@@ -1125,6 +1168,57 @@ export const PublishWeekResponseSchema = z.object({
 });
 export type PublishWeekResponse = z.infer<typeof PublishWeekResponseSchema>;
 
+/* Auto-schedule the week ================================================== */
+
+export const AutoScheduleWeekInputSchema = z.object({
+  /** ISO; server snaps to local Monday 00:00 of that week. */
+  weekStart: z.string().datetime(),
+  /** When set, only fills OPEN shifts for this client. */
+  clientId: UuidSchema.optional(),
+});
+export type AutoScheduleWeekInput = z.infer<typeof AutoScheduleWeekInputSchema>;
+
+export const AutoScheduleSkipReasonSchema = z.enum([
+  /** Every associate either had a hard conflict, was on PTO, or was unscored. */
+  'no_eligible_candidate',
+  /** Top candidate would already exceed 40h with no slack — manager review needed. */
+  'all_candidates_overtime',
+]);
+export type AutoScheduleSkipReason = z.infer<typeof AutoScheduleSkipReasonSchema>;
+
+export const AutoScheduleSkipSchema = z.object({
+  shiftId: UuidSchema,
+  reason: AutoScheduleSkipReasonSchema,
+  detail: z.string().nullable(),
+});
+export type AutoScheduleSkip = z.infer<typeof AutoScheduleSkipSchema>;
+
+export const AutoScheduleWeekResponseSchema = z.object({
+  /** Number of OPEN shifts that were auto-assigned. */
+  assigned: z.number().int().nonnegative(),
+  /** Shifts that couldn't be auto-filled, with the reason. */
+  skipped: z.array(AutoScheduleSkipSchema),
+  /** Per-associate roll-up so the UI can render "Jane got 3 shifts, Bob got 2". */
+  byAssociate: z.array(
+    z.object({
+      associateId: UuidSchema,
+      associateName: z.string(),
+      shiftsAssigned: z.number().int().positive(),
+    }),
+  ),
+});
+export type AutoScheduleWeekResponse = z.infer<typeof AutoScheduleWeekResponseSchema>;
+
+/* iCal feed URL for the signed-in associate */
+
+export const CalendarFeedUrlResponseSchema = z.object({
+  /** Absolute URL the user can paste into Google/Apple/Outlook to subscribe. */
+  url: z.string().url(),
+  /** webcal:// variant — Apple Calendar handles this directly via system handler. */
+  webcalUrl: z.string(),
+});
+export type CalendarFeedUrlResponse = z.infer<typeof CalendarFeedUrlResponseSchema>;
+
 /* Phase 54.4 — schedule PDF export ======================================== */
 
 export const ScheduleExportInputSchema = z.object({
@@ -1156,6 +1250,32 @@ export const PayrollItemStatusSchema = z.enum([
 ]);
 export type PayrollItemStatus = z.infer<typeof PayrollItemStatusSchema>;
 
+// Wave 1.2 — earning kinds. Mirrors PayrollEarningKind in schema.prisma.
+export const PayrollEarningKindSchema = z.enum([
+  'REGULAR',
+  'OVERTIME',
+  'DOUBLE_TIME',
+  'HOLIDAY',
+  'SICK',
+  'VACATION',
+  'BONUS',
+  'COMMISSION',
+  'TIPS',
+  'REIMBURSEMENT',
+]);
+export type PayrollEarningKind = z.infer<typeof PayrollEarningKindSchema>;
+
+export const PayrollItemEarningSchema = z.object({
+  id: UuidSchema,
+  kind: PayrollEarningKindSchema,
+  hours: z.number().nullable(),
+  rate: z.number().nullable(),
+  amount: z.number(),
+  isTaxable: z.boolean(),
+  notes: z.string().nullable(),
+});
+export type PayrollItemEarning = z.infer<typeof PayrollItemEarningSchema>;
+
 export const PayrollItemSchema = z.object({
   id: UuidSchema,
   payrollRunId: UuidSchema,
@@ -1178,10 +1298,15 @@ export const PayrollItemSchema = z.object({
   employerFuta: z.number().nonnegative(),
   employerSuta: z.number().nonnegative(),
   netPay: z.number(),
+  // Wave 4.2 — post-tax deductions (garnishments etc.) taken this period.
+  // Subtracted from net AFTER taxes; does not affect taxable wages.
+  postTaxDeductions: z.number().nonnegative(),
   status: PayrollItemStatusSchema,
   disbursementRef: z.string().nullable(),
   disbursedAt: z.string().datetime().nullable(),
   failureReason: z.string().nullable(),
+  // Wave 1.2 — per-kind breakdown that sums to grossPay.
+  earnings: z.array(PayrollItemEarningSchema),
 });
 export type PayrollItem = z.infer<typeof PayrollItemSchema>;
 
@@ -1236,10 +1361,216 @@ export const PayrollRunCreateInputSchema = z
   });
 export type PayrollRunCreateInput = z.infer<typeof PayrollRunCreateInputSchema>;
 
+// Wave 6.2 — Run preview. Same input shape as create (notes is irrelevant
+// but accepted so the wizard can pass the same payload). Output is a
+// projected per-associate breakdown with no DB rows touched.
+export const PayrollRunPreviewItemSchema = z.object({
+  associateId: UuidSchema,
+  associateName: z.string(),
+  hoursWorked: z.number().nonnegative(),
+  hourlyRate: z.number().nonnegative(),
+  regularHours: z.number().nonnegative(),
+  overtimeHours: z.number().nonnegative(),
+  grossPay: z.number().nonnegative(),
+  preTaxDeductions: z.number().nonnegative(),
+  federalIncomeTax: z.number().nonnegative(),
+  fica: z.number().nonnegative(),
+  medicare: z.number().nonnegative(),
+  stateIncomeTax: z.number().nonnegative(),
+  taxState: z.string().nullable(),
+  payFrequency: z.enum(['WEEKLY', 'BIWEEKLY', 'SEMIMONTHLY', 'MONTHLY']),
+  disposableEarnings: z.number().nonnegative(),
+  postTaxDeductions: z.number().nonnegative(),
+  netPay: z.number(),
+  employerFica: z.number().nonnegative(),
+  employerMedicare: z.number().nonnegative(),
+  employerFuta: z.number().nonnegative(),
+  employerSuta: z.number().nonnegative(),
+  ytdWages: z.number().nonnegative(),
+});
+export type PayrollRunPreviewItem = z.infer<typeof PayrollRunPreviewItemSchema>;
+
+export const PayrollRunPreviewResponseSchema = z.object({
+  items: z.array(PayrollRunPreviewItemSchema),
+  totals: z.object({
+    totalGross: z.number().nonnegative(),
+    totalEmployeeTax: z.number().nonnegative(),
+    totalNet: z.number(),
+    totalEmployerTax: z.number().nonnegative(),
+    totalGarnishments: z.number().nonnegative(),
+    itemCount: z.number().int().nonnegative(),
+  }),
+});
+export type PayrollRunPreviewResponse = z.infer<typeof PayrollRunPreviewResponseSchema>;
+
 export const PayrollItemListResponseSchema = z.object({
   items: z.array(PayrollItemSchema),
 });
 export type PayrollItemListResponse = z.infer<typeof PayrollItemListResponseSchema>;
+
+/* -------------------------------------------------------------------------- *
+ *  Wave 1.1 — Pay schedules (QuickBooks Online Payroll parity)
+ * -------------------------------------------------------------------------- */
+
+export const PayrollFrequencySchema = z.enum([
+  'WEEKLY',
+  'BIWEEKLY',
+  'SEMIMONTHLY',
+  'MONTHLY',
+]);
+export type PayrollFrequency = z.infer<typeof PayrollFrequencySchema>;
+
+export const PayrollScheduleSchema = z.object({
+  id: UuidSchema,
+  clientId: UuidSchema.nullable(),
+  clientName: z.string().nullable(),
+  name: z.string().min(1).max(120),
+  frequency: PayrollFrequencySchema,
+  /** YYYY-MM-DD reference point used to anchor the cadence math. */
+  anchorDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  payDateOffsetDays: z.number().int().min(0).max(31),
+  isActive: z.boolean(),
+  notes: z.string().nullable(),
+  associateCount: z.number().int().nonnegative(),
+  /** Computed window the wizard treats as the next period to run. */
+  nextPeriodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  nextPeriodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  nextPayDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type PayrollSchedule = z.infer<typeof PayrollScheduleSchema>;
+
+export const PayrollScheduleListResponseSchema = z.object({
+  schedules: z.array(PayrollScheduleSchema),
+});
+export type PayrollScheduleListResponse = z.infer<typeof PayrollScheduleListResponseSchema>;
+
+export const PayrollScheduleCreateInputSchema = z.object({
+  clientId: UuidSchema.nullable().optional(),
+  name: z.string().min(1).max(120),
+  frequency: PayrollFrequencySchema,
+  anchorDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  payDateOffsetDays: z.number().int().min(0).max(31).optional(),
+  notes: z.string().max(1000).optional(),
+});
+export type PayrollScheduleCreateInput = z.infer<typeof PayrollScheduleCreateInputSchema>;
+
+export const PayrollScheduleUpdateInputSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  frequency: PayrollFrequencySchema.optional(),
+  anchorDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  payDateOffsetDays: z.number().int().min(0).max(31).optional(),
+  isActive: z.boolean().optional(),
+  notes: z.string().max(1000).nullable().optional(),
+});
+export type PayrollScheduleUpdateInput = z.infer<typeof PayrollScheduleUpdateInputSchema>;
+
+export const PayrollScheduleAssignInputSchema = z.object({
+  associateIds: z.array(UuidSchema).min(1).max(500),
+});
+export type PayrollScheduleAssignInput = z.infer<typeof PayrollScheduleAssignInputSchema>;
+
+/* -------------------------------------------------------------------------- *
+ *  Wave 8 — QBO-parity UX
+ *
+ *  Pre-flight exception triage and a Payroll-home summary card so HR can
+ *  open the page and see "next pay date · X paystubs · projected $Y · N
+ *  issues" at a glance before opening the wizard.
+ * -------------------------------------------------------------------------- */
+
+/**
+ * Pre-flight exception kinds. `BLOCKING` items must be resolved (or the
+ * associate excluded) before a run can be created. `WARNING` is something
+ * a payroll admin should look at but doesn't break the run. `INFO` is
+ * heads-up signal (OT spike, unsupported state).
+ */
+export const PayrollExceptionKindSchema = z.enum([
+  'MISSING_W4',          // BLOCKING — W2 employee with no W-4 submission
+  'MISSING_BANK_ACCOUNT',// WARNING  — no primary payout method on file
+  'TERMINATED_IN_RUN',   // WARNING  — terminated <= periodEnd but has hours
+  'OT_SPIKE',            // INFO     — > 20 OT hours in this period
+  'UNSUPPORTED_STATE',   // INFO     — state has no real SIT table; using fallback
+]);
+export type PayrollExceptionKind = z.infer<typeof PayrollExceptionKindSchema>;
+
+export const PayrollExceptionSeveritySchema = z.enum(['BLOCKING', 'WARNING', 'INFO']);
+export type PayrollExceptionSeverity = z.infer<typeof PayrollExceptionSeveritySchema>;
+
+export const PayrollExceptionSchema = z.object({
+  associateId: UuidSchema,
+  associateName: z.string(),
+  kind: PayrollExceptionKindSchema,
+  severity: PayrollExceptionSeveritySchema,
+  /** Short human-readable summary for the UI. */
+  message: z.string(),
+  /** Optional structured detail (e.g. terminationDate, otHours). */
+  detail: z.record(z.unknown()).optional(),
+});
+export type PayrollException = z.infer<typeof PayrollExceptionSchema>;
+
+export const PayrollExceptionsResponseSchema = z.object({
+  exceptions: z.array(PayrollExceptionSchema),
+  /** Counts per severity — handy for the landing page chip. */
+  counts: z.object({
+    blocking: z.number().int().nonnegative(),
+    warning: z.number().int().nonnegative(),
+    info: z.number().int().nonnegative(),
+  }),
+});
+export type PayrollExceptionsResponse = z.infer<typeof PayrollExceptionsResponseSchema>;
+
+export const PayrollExceptionsInputSchema = z.object({
+  clientId: UuidSchema.nullable().optional(),
+  periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+export type PayrollExceptionsInput = z.infer<typeof PayrollExceptionsInputSchema>;
+
+/**
+ * Payroll-home summary. The hero card on AdminPayrollView shows the
+ * soonest schedule's projected run plus a snapshot of the most recent run
+ * the user can see. `nextRun` is null when no schedule is configured.
+ */
+export const PayrollUpcomingSummarySchema = z.object({
+  nextRun: z
+    .object({
+      scheduleId: UuidSchema,
+      scheduleName: z.string(),
+      clientId: UuidSchema.nullable(),
+      clientName: z.string().nullable(),
+      frequency: PayrollFrequencySchema,
+      periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      payDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      employeeCount: z.number().int().nonnegative(),
+      projectedGross: z.number().nonnegative(),
+      projectedNet: z.number(),
+      projectedEmployerCost: z.number().nonnegative(),
+      blockingExceptions: z.number().int().nonnegative(),
+      totalExceptions: z.number().int().nonnegative(),
+      /**
+       * If a DRAFT run already exists for this exact period, its ID. The
+       * landing-page CTA flips from "Run payroll" to "Resume run" and
+       * deep-links to that draft instead of opening the wizard.
+       */
+      draftRunId: UuidSchema.nullable(),
+    })
+    .nullable(),
+  lastRun: z
+    .object({
+      id: UuidSchema,
+      periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      status: z.enum(['DRAFT', 'FINALIZED', 'DISBURSED', 'CANCELLED']),
+      itemCount: z.number().int().nonnegative(),
+      totalNet: z.number(),
+      finalizedAt: z.string().datetime().nullable(),
+      disbursedAt: z.string().datetime().nullable(),
+    })
+    .nullable(),
+});
+export type PayrollUpcomingSummary = z.infer<typeof PayrollUpcomingSummarySchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Documents — Phase 9 (local-fs storage; S3 swap is future work)

@@ -1,8 +1,11 @@
 import type {
   AssociateListResponse,
   AutoFillResponse,
+  AutoScheduleWeekInput,
+  AutoScheduleWeekResponse,
   AvailabilityListResponse,
   AvailabilityReplaceInput,
+  CalendarFeedUrlResponse,
   CopyWeekInput,
   CopyWeekResponse,
   PublishWeekInput,
@@ -58,6 +61,8 @@ export interface SchedulingKpis {
   totalShifts: number;
   fillRatePercent: number;
   totalScheduledMinutes: number;
+  projectedLaborCost: number;
+  shiftsWithoutRate: number;
 }
 
 export function getSchedulingKpis(
@@ -73,6 +78,10 @@ export function getSchedulingKpis(
 
 export function listMyShifts(): Promise<ShiftListResponse> {
   return apiFetch<ShiftListResponse>('/scheduling/me/shifts');
+}
+
+export function getMyCalendarUrl(): Promise<CalendarFeedUrlResponse> {
+  return apiFetch<CalendarFeedUrlResponse>('/scheduling/me/calendar-url');
 }
 
 export function createShift(body: ShiftCreateInput): Promise<Shift> {
@@ -219,6 +228,15 @@ export function listSchedulingAssociates(): Promise<AssociateListResponse> {
 
 export function publishWeek(body: PublishWeekInput): Promise<PublishWeekResponse> {
   return apiFetch<PublishWeekResponse>('/scheduling/publish-week', {
+    method: 'POST',
+    body,
+  });
+}
+
+export function autoScheduleWeek(
+  body: AutoScheduleWeekInput,
+): Promise<AutoScheduleWeekResponse> {
+  return apiFetch<AutoScheduleWeekResponse>('/scheduling/auto-schedule-week', {
     method: 'POST',
     body,
   });

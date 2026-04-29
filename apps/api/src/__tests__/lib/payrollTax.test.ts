@@ -14,6 +14,8 @@ import {
   computePaycheckTaxes,
   computeSocialSecurity,
   computeStateIncomeTax,
+  isStateTaxSupported,
+  zeroTaxBreakdown,
 } from '../../lib/payrollTax.js';
 
 const close = (a: number, b: number, eps = 0.02) => Math.abs(a - b) < eps;
@@ -165,7 +167,8 @@ describe('computeStateIncomeTax', () => {
   });
 
   it('falls back to flat 4% for unknown states', () => {
-    const t = computeStateIncomeTax({ grossPay: 1000, state: 'IL', payFrequency: 'BIWEEKLY' });
+    // AR has no real table yet (not in NO_SIT, not flat-rate, not bracketed) → fallback fires.
+    const t = computeStateIncomeTax({ grossPay: 1000, state: 'AR', payFrequency: 'BIWEEKLY' });
     expect(close(t, 40)).toBe(true);
   });
 
@@ -230,5 +233,168 @@ describe('computePaycheckTaxes (aggregate)', () => {
       ytdMedicareWages: 0,
     });
     expect(out.stateIncomeTax).toBe(0);
+  });
+});
+
+describe('Wave 2 — additional bracket states (NJ/GA/OH/VA/MN)', () => {
+  it('NJ uses progressive brackets — $2000 biweekly ≈ annualized $52k', () => {
+    const t = computeStateIncomeTax({ grossPay: 2000, state: 'NJ', payFrequency: 'BIWEEKLY' });
+    // Annual $52000 → bracket "over 40000 flat 717.5 + 5.525%".
+    // Excess: 52000 - 40000 = 12000; *.05525 = 663; +717.5 = 1380.5 annual.
+    // Per cycle: 1380.5/26 ≈ 53.10.
+    expect(close(t, 53.10, 0.5)).toBe(true);
+  });
+
+  it('GA applies a flat top rate of 5.39% (HB 1437 phased reduction)', () => {
+    const t = computeStateIncomeTax({ grossPay: 2000, state: 'GA', payFrequency: 'BIWEEKLY' });
+    // Annual $52000 × 5.39% = 2802.80; per cycle 2802.80/26 ≈ 107.80.
+    expect(close(t, 107.80, 0.5)).toBe(true);
+  });
+
+  it('OH zero-tax bracket below $26,050 annualized', () => {
+    const t = computeStateIncomeTax({ grossPay: 800, state: 'OH', payFrequency: 'BIWEEKLY' });
+    // Annual $20800 < 26050 standard exemption → 0 tax.
+    expect(t).toBe(0);
+  });
+
+  it('VA progressive brackets — $1500 biweekly ≈ annualized $39k', () => {
+    const t = computeStateIncomeTax({ grossPay: 1500, state: 'VA', payFrequency: 'BIWEEKLY' });
+    // Annual $39000 → bracket "over 17000 flat 720 + 5.75%".
+    // Excess: 39000 - 17000 = 22000; *.0575 = 1265; +720 = 1985 annual.
+    // Per cycle: 1985/26 ≈ 76.35.
+    expect(close(t, 76.35, 0.5)).toBe(true);
+  });
+
+  it('MN progressive brackets — $2500 biweekly ≈ annualized $65k', () => {
+    const t = computeStateIncomeTax({ grossPay: 2500, state: 'MN', payFrequency: 'BIWEEKLY' });
+    // Annual $65000 → bracket "over 31690 flat 1695.42 + 6.8%".
+    // Excess: 65000 - 31690 = 33310; *.068 = 2265.08; +1695.42 = 3960.50 annual.
+    // Per cycle: 3960.50/26 ≈ 152.33.
+    expect(close(t, 152.33, 0.5)).toBe(true);
+  });
+});
+
+describe('Wave 2 — flat-rate states', () => {
+  it('IL applies 4.95%', () => {
+    const t = computeStateIncomeTax({ grossPay: 1000, state: 'IL', payFrequency: 'BIWEEKLY' });
+    expect(close(t, 49.50)).toBe(true);
+  });
+
+  it('PA applies 3.07%', () => {
+    const t = computeStateIncomeTax({ grossPay: 1000, state: 'PA', payFrequency: 'BIWEEKLY' });
+    expect(close(t, 30.70)).toBe(true);
+  });
+
+  it('AZ applies 2.5% (post-2023 flat rate)', () => {
+    const t = computeStateIncomeTax({ grossPay: 1000, state: 'AZ', payFrequency: 'BIWEEKLY' });
+    expect(close(t, 25.00)).toBe(true);
+  });
+
+  it('flat-rate states ignore payFrequency (no annualization needed)', () => {
+    const biweekly = computeStateIncomeTax({ grossPay: 1000, state: 'CO', payFrequency: 'BIWEEKLY' });
+    const monthly = computeStateIncomeTax({ grossPay: 1000, state: 'CO', payFrequency: 'MONTHLY' });
+    expect(biweekly).toBe(monthly);
+  });
+});
+
+describe('isStateTaxSupported', () => {
+  it('returns true for NO_SIT states (TX, FL, etc.)', () => {
+    expect(isStateTaxSupported('TX')).toBe(true);
+    expect(isStateTaxSupported('FL')).toBe(true);
+    expect(isStateTaxSupported('NV')).toBe(true);
+  });
+
+  it('returns true for bracketed states (CA, NY, NJ, GA, OH, VA, MN)', () => {
+    expect(isStateTaxSupported('CA')).toBe(true);
+    expect(isStateTaxSupported('NY')).toBe(true);
+    expect(isStateTaxSupported('NJ')).toBe(true);
+    expect(isStateTaxSupported('GA')).toBe(true);
+    expect(isStateTaxSupported('OH')).toBe(true);
+    expect(isStateTaxSupported('VA')).toBe(true);
+    expect(isStateTaxSupported('MN')).toBe(true);
+  });
+
+  it('returns true for flat-rate states (IL, PA, MI, etc.)', () => {
+    expect(isStateTaxSupported('IL')).toBe(true);
+    expect(isStateTaxSupported('PA')).toBe(true);
+    expect(isStateTaxSupported('MI')).toBe(true);
+    expect(isStateTaxSupported('NC')).toBe(true);
+  });
+
+  it('returns false for the long tail (AR, HI, MS, MT, etc.)', () => {
+    expect(isStateTaxSupported('AR')).toBe(false);
+    expect(isStateTaxSupported('HI')).toBe(false);
+    expect(isStateTaxSupported('MS')).toBe(false);
+    expect(isStateTaxSupported('MT')).toBe(false);
+  });
+
+  it('returns false for null and empty string', () => {
+    expect(isStateTaxSupported(null)).toBe(false);
+    expect(isStateTaxSupported('')).toBe(false);
+  });
+
+  it('handles lowercase input', () => {
+    expect(isStateTaxSupported('ca')).toBe(true);
+    expect(isStateTaxSupported('tx')).toBe(true);
+  });
+});
+
+describe('Wave 2.3 — per-state SUTA wage base + rate', () => {
+  it('CA SUTA: 3.4% on first $7000 of YTD wages', () => {
+    // First paycheck of the year, $5000 — entirely under the $7k base.
+    const emp = computeEmployerTaxes({ grossPay: 5000, ytdWages: 0, ytdMedicareWages: 0, state: 'CA' });
+    expect(close(emp.suta, 5000 * 0.034)).toBe(true);
+  });
+
+  it('CA SUTA caps at $7000 wage base (next paycheck owes 0)', () => {
+    const emp = computeEmployerTaxes({ grossPay: 5000, ytdWages: 7000, ytdMedicareWages: 7000, state: 'CA' });
+    expect(emp.suta).toBe(0);
+  });
+
+  it('WA SUTA uses a much higher wage base ($68,500) and 1.14% rate', () => {
+    const emp = computeEmployerTaxes({ grossPay: 5000, ytdWages: 30_000, ytdMedicareWages: 30_000, state: 'WA' });
+    expect(close(emp.suta, 5000 * 0.0114)).toBe(true);
+  });
+
+  it('NY SUTA: 4.1% on first $12,500', () => {
+    const emp = computeEmployerTaxes({ grossPay: 4000, ytdWages: 0, ytdMedicareWages: 0, state: 'NY' });
+    expect(close(emp.suta, 4000 * 0.041)).toBe(true);
+  });
+
+  it('partial cap when this paycheck crosses the SUTA wage base', () => {
+    // CA wage base $7000. YTD $5000 → $2000 headroom remaining for a $5000 check.
+    const emp = computeEmployerTaxes({ grossPay: 5000, ytdWages: 5000, ytdMedicareWages: 5000, state: 'CA' });
+    expect(close(emp.suta, 2000 * 0.034)).toBe(true);
+  });
+
+  it('unknown / missing state falls back to FUTA wage base + 2.7% rate', () => {
+    const emp = computeEmployerTaxes({ grossPay: 3000, ytdWages: 0, ytdMedicareWages: 0, state: null });
+    expect(close(emp.suta, 3000 * 0.027)).toBe(true);
+  });
+
+  it('uppercases state code before lookup', () => {
+    const upper = computeEmployerTaxes({ grossPay: 4000, ytdWages: 0, ytdMedicareWages: 0, state: 'CA' });
+    const lower = computeEmployerTaxes({ grossPay: 4000, ytdWages: 0, ytdMedicareWages: 0, state: 'ca' });
+    expect(lower.suta).toBe(upper.suta);
+  });
+});
+
+describe('zeroTaxBreakdown — 1099 contractors', () => {
+  it('returns all zeros except netPay = grossPay', () => {
+    const z = zeroTaxBreakdown(2500);
+    expect(z.federalIncomeTax).toBe(0);
+    expect(z.socialSecurity).toBe(0);
+    expect(z.medicare).toBe(0);
+    expect(z.stateIncomeTax).toBe(0);
+    expect(z.totalEmployeeTax).toBe(0);
+    expect(z.netPay).toBe(2500);
+  });
+
+  it('zeros out employer-side taxes too (no FICA/FUTA/SUTA owed on 1099)', () => {
+    const z = zeroTaxBreakdown(2500);
+    expect(z.employer.fica).toBe(0);
+    expect(z.employer.medicare).toBe(0);
+    expect(z.employer.futa).toBe(0);
+    expect(z.employer.suta).toBe(0);
   });
 });
