@@ -531,7 +531,7 @@ export const MODULES: ModuleNav[] = [
     label: 'Pay rules',
     description:
       'Project codes, premium-pay differentials (overtime, night, holiday), and tip pools.',
-    requires: 'view:payroll',
+    requires: 'manage:scheduling',
     icon: PayRulesIcon,
     group: 'time-and-pay',
   },
