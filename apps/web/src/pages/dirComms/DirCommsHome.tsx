@@ -61,12 +61,16 @@ export function DirCommsHome() {
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="directory">Directory</TabsTrigger>
-          <TabsTrigger value="broadcasts">Broadcasts</TabsTrigger>
-          <TabsTrigger value="surveys">Surveys</TabsTrigger>
+          {canManage && <TabsTrigger value="broadcasts">Broadcasts</TabsTrigger>}
+          {canManage && <TabsTrigger value="surveys">Surveys</TabsTrigger>}
         </TabsList>
         <TabsContent value="directory"><DirectoryTab /></TabsContent>
-        <TabsContent value="broadcasts"><BroadcastsTab canManage={canManage} /></TabsContent>
-        <TabsContent value="surveys"><SurveysTab canManage={canManage} /></TabsContent>
+        {canManage && (
+          <TabsContent value="broadcasts"><BroadcastsTab canManage={canManage} /></TabsContent>
+        )}
+        {canManage && (
+          <TabsContent value="surveys"><SurveysTab canManage={canManage} /></TabsContent>
+        )}
       </Tabs>
     </div>
   );
