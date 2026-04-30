@@ -907,6 +907,12 @@ model I9Verification {
   section1TypedName          String?
   section1Ip                 String?
   section1UserAgent          String?
+  // Set when the associate clicks "Submit for HR review" after signing
+  // Section 1 and uploading documents. Distinct from section1CompletedAt:
+  // a signed Section 1 with no documents is not yet ready for HR. Drives
+  // the I9_VERIFICATION task transition PENDING → IN_PROGRESS so the
+  // associate gets visible confirmation that the ball is in HR's court.
+  documentsSubmittedAt       DateTime?            @db.Timestamptz(6)
   section2VerifierUserId     String?              @db.Uuid
   section2CompletedAt        DateTime?            @db.Timestamptz(6)
   documentList               I9DocumentList?

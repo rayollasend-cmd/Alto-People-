@@ -1886,6 +1886,9 @@ onboardingRouter.get('/applications/:id/i9', async (req, res, next) => {
             typedName: row.section1TypedName,
           }
         : null,
+      documentsSubmittedAt: row?.documentsSubmittedAt
+        ? row.documentsSubmittedAt.toISOString()
+        : null,
       section2: row && row.section2CompletedAt
         ? {
             completedAt: row.section2CompletedAt.toISOString(),
@@ -1896,6 +1899,76 @@ onboardingRouter.get('/applications/:id/i9', async (req, res, next) => {
               : [],
           }
         : null,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Associate marks "I'm done — please review." Requires Section 1 signed
+// and at least one I-9 document on file. Sets documentsSubmittedAt and
+// transitions the I9_VERIFICATION task to IN_PROGRESS so the checklist
+// shows visible progress while HR works on Section 2.
+onboardingRouter.post('/applications/:id/i9/submit', async (req, res, next) => {
+  try {
+    const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+
+    const verification = await prisma.i9Verification.findUnique({
+      where: { associateId: app.associateId },
+    });
+    if (!verification || !verification.section1CompletedAt) {
+      throw new HttpError(
+        400,
+        'section1_not_signed',
+        'Sign Section 1 before submitting documents for HR review.'
+      );
+    }
+
+    const docCount = await prisma.documentRecord.count({
+      where: {
+        associateId: app.associateId,
+        deletedAt: null,
+        kind: { in: ['I9_SUPPORTING', 'ID', 'SSN_CARD', 'J1_VISA', 'J1_DS2019'] },
+      },
+    });
+    if (docCount === 0) {
+      throw new HttpError(
+        400,
+        'no_documents',
+        'Upload at least one identification document before submitting.'
+      );
+    }
+
+    const now = new Date();
+    const updated = await prisma.$transaction(async (tx) => {
+      const upd = await tx.i9Verification.update({
+        where: { associateId: app.associateId },
+        data: { documentsSubmittedAt: verification.documentsSubmittedAt ?? now },
+      });
+      // Idempotent: only flip PENDING → IN_PROGRESS. Don't clobber a
+      // task that HR has already moved to DONE via Section 2.
+      await tx.onboardingTask.updateMany({
+        where: {
+          checklist: { applicationId: app.id },
+          kind: 'I9_VERIFICATION',
+          status: 'PENDING',
+        },
+        data: { status: 'IN_PROGRESS' },
+      });
+      return upd;
+    }, TX_OPTS);
+
+    await recordOnboardingEvent({
+      actorUserId: req.user!.id,
+      action: 'onboarding.i9_documents_submitted',
+      applicationId: app.id,
+      clientId: app.clientId,
+      metadata: { documentCount: docCount },
+      req,
+    });
+
+    res.status(200).json({
+      documentsSubmittedAt: updated.documentsSubmittedAt?.toISOString() ?? null,
     });
   } catch (err) {
     next(err);

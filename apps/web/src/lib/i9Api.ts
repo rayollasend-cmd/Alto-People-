@@ -15,6 +15,7 @@ export interface I9Status {
     hasAlienNumber: boolean;
     typedName: string | null;
   } | null;
+  documentsSubmittedAt: string | null;
   section2: {
     completedAt: string;
     verifierEmail: string | null;
@@ -91,6 +92,16 @@ export async function uploadI9Document(
   return jsonFetch(`/api/onboarding/applications/${applicationId}/i9/documents`, {
     method: 'POST',
     body: fd,
+  });
+}
+
+export function submitI9ForReview(
+  applicationId: string
+): Promise<{ documentsSubmittedAt: string }> {
+  return jsonFetch(`/api/onboarding/applications/${applicationId}/i9/submit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
   });
 }
 

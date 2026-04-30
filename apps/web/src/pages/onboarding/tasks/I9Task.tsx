@@ -5,6 +5,7 @@ import { ApiError } from '@/lib/api';
 import {
   getI9Status,
   listI9Documents,
+  submitI9ForReview,
   submitI9Section1,
   uploadI9Document,
   type CitizenshipStatus,
@@ -296,11 +297,16 @@ function DocumentsCard({
 }) {
   const [docs, setDocs] = useState<I9DocumentListItem[] | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [docKind, setDocKind] = useState<I9DocumentKind>('ID');
   const [docSide, setDocSide] = useState<I9DocumentSide | ''>('');
   const section2Done = status.section2 !== null;
+  const section1Done = status.section1 !== null;
+  const submitted = status.documentsSubmittedAt !== null;
+  const docCount = docs?.length ?? 0;
+  const canSubmit = section1Done && docCount > 0 && !submitted && !section2Done;
 
   // Hydrate from the server so the list survives a page reload — fixes the
   // "where did my upload go?" gap from the prior version that only kept
@@ -340,12 +346,39 @@ function DocumentsCard({
     }
   };
 
+  const handleSubmit = async () => {
+    if (!canSubmit || submitting) return;
+    setError(null);
+    setSubmitting(true);
+    try {
+      await submitI9ForReview(applicationId);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Submit failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <section className="bg-navy border border-navy-secondary rounded-lg p-5 mb-5">
       <header className="flex items-center justify-between mb-3">
         <h2 className="text-lg font-medium text-white">Identification documents</h2>
-        <span className="text-xs text-silver/60">
-          {section2Done ? 'Verified by HR' : 'Optional until HR reviews'}
+        <span
+          className={cn(
+            'text-xs uppercase tracking-widest',
+            section2Done
+              ? 'text-gold'
+              : submitted
+                ? 'text-success'
+                : 'text-silver/60'
+          )}
+        >
+          {section2Done
+            ? 'Verified by HR'
+            : submitted
+              ? 'Submitted — awaiting HR'
+              : 'Required'}
         </span>
       </header>
       <p className="text-sm text-silver mb-4">
@@ -356,7 +389,7 @@ function DocumentsCard({
         to 10 MB.
       </p>
 
-      {!section2Done && (
+      {!section2Done && !submitted && (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
             <Field label="Document type">
@@ -406,6 +439,16 @@ function DocumentsCard({
         </>
       )}
 
+      {submitted && !section2Done && (
+        <div className="mb-4 px-3 py-2.5 rounded border border-success/40 bg-success/[0.06] text-sm text-silver">
+          Submitted on{' '}
+          <span className="text-white">
+            {new Date(status.documentsSubmittedAt!).toLocaleString()}
+          </span>
+          . HR will verify your documents and complete Section 2. You can close this page — you'll be notified when verification is complete.
+        </div>
+      )}
+
       {docs === null ? (
         <SkeletonRows count={2} rowHeight="h-10" />
       ) : docs.length > 0 ? (
@@ -447,6 +490,28 @@ function DocumentsCard({
         <p className="text-xs text-silver/60">
           No documents uploaded yet.
         </p>
+      )}
+
+      {!section2Done && !submitted && (
+        <div className="mt-5 pt-4 border-t border-navy-secondary flex items-center gap-3">
+          <Button
+            type="button"
+            onClick={handleSubmit}
+            loading={submitting}
+            disabled={!canSubmit || submitting}
+          >
+            {submitting ? 'Submitting…' : 'Submit for HR review'}
+          </Button>
+          {!canSubmit && (
+            <span className="text-xs text-silver/70">
+              {!section1Done
+                ? 'Sign Section 1 first.'
+                : docCount === 0
+                  ? 'Upload at least one document first.'
+                  : ''}
+            </span>
+          )}
+        </div>
       )}
     </section>
   );
