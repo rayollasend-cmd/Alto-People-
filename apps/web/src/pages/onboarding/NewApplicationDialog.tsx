@@ -227,7 +227,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
           <InviteLinkPanel inviteLink={inviteLink} onCopy={copyLink} />
         ) : (
           <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <Label htmlFor="na-first" required>
                   First name
@@ -360,7 +360,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
               </FormHint>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <Label htmlFor="na-position">Position</Label>
                 <Input
