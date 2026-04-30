@@ -18,6 +18,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip';
 import { Avatar } from '@/components/ui/Avatar';
 import { NotificationsBell } from './NotificationsBell';
+import { InstallAppButton } from './InstallAppButton';
 import { Logo } from '@/components/Logo';
 
 interface TopbarProps {
@@ -146,6 +147,7 @@ export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
 
       {user && (
         <>
+          <InstallAppButton />
           <NotificationsBell />
 
           {/* Mobile-only avatar fallback. The full account menu lives in the
