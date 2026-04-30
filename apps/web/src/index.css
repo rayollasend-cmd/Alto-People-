@@ -122,6 +122,49 @@
 }
 
 /* ---------------------------------------------------------------------------
+ * Theme-aware modal/drawer backdrop.
+ *
+ * The previous `bg-midnight/80` worked in dark mode (midnight = #080F20)
+ * but became a near-invisible 80% slate-50 over light content in light
+ * mode. Backdrops should *always* darken regardless of theme — they exist
+ * to dim the page behind a modal — so we use a stable dark slate at a
+ * theme-tuned opacity. Use `.bg-backdrop` (60% in dark, 50% in light) on
+ * dialog overlays, drawer scrims, and the mobile nav scrim.
+ * ------------------------------------------------------------------------- */
+.bg-backdrop {
+  background-color: rgba(8, 15, 32, 0.6); /* navy at 60% — works on dark + light */
+}
+:root[data-theme='light'] .bg-backdrop {
+  background-color: rgba(15, 23, 42, 0.5); /* slate-900 at 50% — softer for light UI */
+}
+
+/* ---------------------------------------------------------------------------
+ * Login aurora background.
+ *
+ * The marketing-y gradient on the auth screen reads great in dark mode but
+ * collapses to white-on-white in light mode (every stop in the original
+ * gradient maps to a near-white token under light theme). This rule keeps
+ * the dark gradient unchanged and substitutes a soft gold-tinted aurora
+ * for light mode so the auth card still has a sense of place.
+ * ------------------------------------------------------------------------- */
+.bg-login-aurora {
+  background-image: linear-gradient(
+    135deg,
+    rgb(var(--color-midnight)) 0%,
+    rgb(var(--color-navy)) 55%,
+    rgb(var(--color-navy-secondary)) 100%
+  );
+}
+:root[data-theme='light'] .bg-login-aurora {
+  background-image: linear-gradient(
+    135deg,
+    #F8F4E8 0%,    /* warm cream */
+    #FFFFFF 50%,
+    #F2EBD6 100%   /* faded gold tint */
+  );
+}
+
+/* ---------------------------------------------------------------------------
  * Native <select> polish — matches Input's hover + focus treatment.
  *
  * The app uses raw <select class="… border-navy-secondary bg-navy-secondary/40 …">
