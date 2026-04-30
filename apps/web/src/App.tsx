@@ -49,6 +49,7 @@ const I9Task = lazyNamed(() => import('@/pages/onboarding/tasks/I9Task'), 'I9Tas
 const DocumentUploadTask = lazyNamed(() => import('@/pages/onboarding/tasks/DocumentUploadTask'), 'DocumentUploadTask');
 const BackgroundCheckTask = lazyNamed(() => import('@/pages/onboarding/tasks/BackgroundCheckTask'), 'BackgroundCheckTask');
 const J1DocsTask = lazyNamed(() => import('@/pages/onboarding/tasks/J1DocsTask'), 'J1DocsTask');
+const EsignTask = lazyNamed(() => import('@/pages/onboarding/tasks/EsignTask'), 'EsignTask');
 const StubTask = lazyNamed(() => import('@/pages/onboarding/tasks/StubTask'), 'StubTask');
 
 // Time / scheduling / payroll
@@ -189,8 +190,11 @@ const ONBOARDING_ROUTES = [
     path: 'onboarding/me/:applicationId/tasks/j1_docs',
     element: <J1DocsTask />,
   },
-  // Catch-all for any kind we still haven't wired (E_SIGN routes through
-  // the application detail's e-sign panel, not a /me/ form).
+  {
+    path: 'onboarding/me/:applicationId/tasks/e_sign',
+    element: <EsignTask />,
+  },
+  // Catch-all for any kind we still haven't wired.
   {
     path: 'onboarding/me/:applicationId/tasks/:taskKind',
     element: <StubTask />,
