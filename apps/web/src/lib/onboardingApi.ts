@@ -86,6 +86,28 @@ export function resendInvite(applicationId: string): Promise<{
   );
 }
 
+/* ----------------- HR review outcome (approve / reject) --------------- */
+
+export function approveApplication(
+  applicationId: string,
+  body: { hireDate: string }
+): Promise<void> {
+  return apiFetch<void>(
+    `/onboarding/applications/${applicationId}/approve`,
+    { method: 'POST', body }
+  );
+}
+
+export function rejectApplication(
+  applicationId: string,
+  body: { reason: string }
+): Promise<void> {
+  return apiFetch<void>(
+    `/onboarding/applications/${applicationId}/reject`,
+    { method: 'POST', body }
+  );
+}
+
 /* ---------------------- Phase 58 — bulk + nudge ----------------------- */
 
 export function bulkInvite(body: BulkInviteInput): Promise<BulkInviteResponse> {

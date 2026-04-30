@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   CheckCircle2,
@@ -10,6 +10,8 @@ import {
   MailWarning,
   MinusCircle,
   Send,
+  ThumbsDown,
+  ThumbsUp,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
@@ -19,9 +21,11 @@ import type {
   InviteDeliveryInfo,
 } from '@alto-people/shared';
 import {
+  approveApplication,
   compliancePacketUrl,
   getApplication,
   getApplicationAudit,
+  rejectApplication,
   resendInvite,
   skipTask,
 } from '@/lib/onboardingApi';
@@ -37,6 +41,17 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/Card';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/Dialog';
+import { Input } from '@/components/ui/Input';
+import { Label } from '@/components/ui/Label';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { EsignSection } from './EsignSection';
 import { cn } from '@/lib/cn';
@@ -104,6 +119,8 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
   const [detail, setDetail] = useState<ApplicationDetailType | null>(null);
   const [audit, setAudit] = useState<AuditLogEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [approveOpen, setApproveOpen] = useState(false);
+  const [rejectOpen, setRejectOpen] = useState(false);
 
   const canManage =
     user?.role === 'HR_ADMINISTRATOR' || user?.role === 'OPERATIONS_MANAGER';
@@ -190,6 +207,37 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
     }
   };
 
+  const handleApprove = async (hireDate: string) => {
+    try {
+      await approveApplication(detail.id, { hireDate });
+      toast.success('Application approved', {
+        description: `Hire date set to ${hireDate}. Account activated.`,
+        icon: <ThumbsUp className="h-4 w-4" />,
+      });
+      setApproveOpen(false);
+      await refresh();
+    } catch (err) {
+      const msg =
+        err instanceof ApiError ? err.message : 'Could not approve.';
+      toast.error('Approval failed', { description: msg });
+    }
+  };
+
+  const handleReject = async (reason: string | undefined) => {
+    if (!reason) return;
+    try {
+      await rejectApplication(detail.id, { reason });
+      toast.success('Application rejected', {
+        icon: <ThumbsDown className="h-4 w-4" />,
+      });
+      setRejectOpen(false);
+      await refresh();
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : 'Could not reject.';
+      toast.error('Rejection failed', { description: msg });
+    }
+  };
+
   const counts = detail.tasks.reduce<Record<string, number>>((acc, t) => {
     acc[t.status] = (acc[t.status] ?? 0) + 1;
     return acc;
@@ -210,7 +258,12 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
               <DetailMeta detail={detail} />
             </div>
             {canManage && (
-              <DetailActions detail={detail} onResend={handleResend} />
+              <DetailActions
+                detail={detail}
+                onResend={handleResend}
+                onApprove={() => setApproveOpen(true)}
+                onReject={() => setRejectOpen(true)}
+              />
             )}
           </div>
         )}
@@ -218,7 +271,13 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
           <div className="flex items-start justify-between gap-3 flex-wrap">
             <DetailMeta detail={detail} />
             {canManage && (
-              <DetailActions detail={detail} onResend={handleResend} compact />
+              <DetailActions
+                detail={detail}
+                onResend={handleResend}
+                onApprove={() => setApproveOpen(true)}
+                onReject={() => setRejectOpen(true)}
+                compact
+              />
             )}
           </div>
         )}
@@ -330,6 +389,25 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
           </Link>
         </div>
       )}
+
+      <ApproveDialog
+        open={approveOpen}
+        onOpenChange={setApproveOpen}
+        defaultDate={detail.startDate ? detail.startDate.slice(0, 10) : null}
+        onConfirm={handleApprove}
+      />
+      <ConfirmDialog
+        open={rejectOpen}
+        onOpenChange={setRejectOpen}
+        title="Reject application"
+        description={`Reject ${detail.associateName}'s onboarding? They can be re-considered later via a new application.`}
+        confirmLabel="Reject"
+        destructive
+        requireReason
+        reasonLabel="Reason (saved to audit log)"
+        reasonPlaceholder="e.g. Failed background check, withdrew, role no longer available"
+        onConfirm={handleReject}
+      />
     </>
   );
 }
@@ -359,14 +437,25 @@ function DetailMeta({ detail }: { detail: ApplicationDetailType }) {
 function DetailActions({
   detail,
   onResend,
+  onApprove,
+  onReject,
   compact,
 }: {
   detail: ApplicationDetailType;
   onResend: () => void;
+  onApprove: () => void;
+  onReject: () => void;
   compact?: boolean;
 }) {
+  // Approve / Reject only shown while the application is still under review.
+  // After APPROVED or REJECTED the buttons disappear — the API also rejects
+  // re-decisions with 409, but hiding them avoids a confusing dead button.
+  // Approve also requires the checklist at 100%.
+  const decided = detail.status === 'APPROVED' || detail.status === 'REJECTED';
+  const checklistComplete = detail.percentComplete === 100;
+
   return (
-    <div className="flex gap-2 shrink-0">
+    <div className="flex flex-wrap gap-2 shrink-0">
       <a
         href={compliancePacketUrl(detail.id)}
         download={`compliance-packet-${detail.associateName.replace(/\s+/g, '-').toLowerCase()}.pdf`}
@@ -379,11 +468,113 @@ function DetailActions({
         <FileDown className="h-4 w-4" />
         {compact ? 'Packet' : 'Compliance packet'}
       </a>
-      <Button variant="outline" size="sm" onClick={onResend}>
-        <Send className="h-4 w-4" />
-        Resend invite
-      </Button>
+      {!decided && (
+        <Button variant="outline" size="sm" onClick={onResend}>
+          <Send className="h-4 w-4" />
+          Resend invite
+        </Button>
+      )}
+      {!decided && (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onReject}
+          className="text-alert hover:text-alert"
+        >
+          <ThumbsDown className="h-4 w-4" />
+          Reject
+        </Button>
+      )}
+      {!decided && (
+        <Button
+          size="sm"
+          onClick={onApprove}
+          disabled={!checklistComplete}
+          title={
+            checklistComplete
+              ? undefined
+              : 'Checklist must be 100% before approving'
+          }
+        >
+          <ThumbsUp className="h-4 w-4" />
+          Approve
+        </Button>
+      )}
     </div>
+  );
+}
+
+function ApproveDialog({
+  open,
+  onOpenChange,
+  defaultDate,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  defaultDate: string | null;
+  onConfirm: (hireDate: string) => Promise<void>;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [hireDate, setHireDate] = useState(defaultDate ?? today);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Re-seed when the dialog re-opens for a different application or after
+  // the parent's defaultDate changes (e.g. picked a new application).
+  useEffect(() => {
+    if (open) setHireDate(defaultDate ?? today);
+  }, [open, defaultDate, today]);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (submitting || !hireDate) return;
+    setSubmitting(true);
+    try {
+      await onConfirm(hireDate);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Approve onboarding</DialogTitle>
+          <DialogDescription>
+            This activates the associate's account and stamps their hire date.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-4">
+          <div>
+            <Label htmlFor="approve-hire-date" required>
+              Hire date
+            </Label>
+            <Input
+              id="approve-hire-date"
+              type="date"
+              required
+              value={hireDate}
+              onChange={(e) => setHireDate(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => onOpenChange(false)}
+              disabled={submitting}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" loading={submitting} disabled={!hireDate}>
+              <ThumbsUp className="h-4 w-4" />
+              Approve
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

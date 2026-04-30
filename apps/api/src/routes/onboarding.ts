@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Prisma } from '@prisma/client';
 import {
   ApplicationCreateInputSchema,
+  ApproveApplicationInputSchema,
   BackgroundCheckAuthorizeInputSchema,
   BulkInviteInputSchema,
   BulkResendInputSchema,
@@ -10,6 +11,7 @@ import {
   NudgeInputSchema,
   PolicyAckInputSchema,
   ProfileSubmissionSchema,
+  RejectApplicationInputSchema,
   TemplateUpsertInputSchema,
   W4SubmissionInputSchema,
   type ApplicationDetail,
@@ -566,7 +568,12 @@ onboardingRouter.get('/applications/:id', async (req, res, next) => {
       where: { ...scopeApplications(req.user!), id: req.params.id },
       include: {
         associate: {
-          select: { firstName: true, lastName: true, employmentType: true },
+          select: {
+            firstName: true,
+            lastName: true,
+            employmentType: true,
+            hireDate: true,
+          },
         },
         client: { select: { name: true } },
         checklist: { include: { tasks: { orderBy: { order: 'asc' } } } },
@@ -607,12 +614,174 @@ onboardingRouter.get('/applications/:id', async (req, res, next) => {
       tasks,
       employmentType: row.associate.employmentType,
       lastInviteDelivery: deliveryByAssociate.get(row.associateId) ?? null,
+      approvedAt: row.approvedAt ? row.approvedAt.toISOString() : null,
+      rejectedAt: row.rejectedAt ? row.rejectedAt.toISOString() : null,
+      rejectionReason: row.rejectionReason,
+      hireDate: row.associate.hireDate
+        ? row.associate.hireDate.toISOString().slice(0, 10)
+        : null,
     };
     res.json(detail);
   } catch (err) {
     next(err);
   }
 });
+
+/* ===== HR review outcome — approve / reject ============================== */
+//
+// Both routes are MANAGE-gated (manage:onboarding) and idempotency-rejecting:
+// once an application has settled into APPROVED or REJECTED, neither action
+// can re-fire — HR re-runs the onboarding by creating a new application.
+//
+// Approve side-effects in one transaction:
+//   1) Application.status -> APPROVED, approvedAt -> now
+//   2) Associate.hireDate -> body.hireDate
+//   3) User (if any) for this associate -> status ACTIVE so they can log in
+//      (their tokenVersion is bumped so any pre-hire invite session is
+//      invalidated and they're forced to sign in via the activated account)
+// Reject side-effects:
+//   1) Application.status -> REJECTED, rejectedAt -> now, rejectionReason
+// Per product call: rejected User accounts stay intact so the same person
+// can be re-considered later via a brand-new Application — no soft-delete.
+
+onboardingRouter.post(
+  '/applications/:id/approve',
+  MANAGE,
+  async (req, res, next) => {
+    try {
+      const parsed = ApproveApplicationInputSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(
+          400,
+          'invalid_body',
+          'Invalid request body',
+          parsed.error.flatten()
+        );
+      }
+      const { hireDate } = parsed.data;
+      const app = await prisma.application.findFirst({
+        where: { ...scopeApplications(req.user!), id: req.params.id },
+        include: { checklist: { include: { tasks: true } } },
+      });
+      if (!app) {
+        throw new HttpError(
+          404,
+          'application_not_found',
+          'Application not found'
+        );
+      }
+      if (app.status === 'APPROVED' || app.status === 'REJECTED') {
+        throw new HttpError(
+          409,
+          'application_already_decided',
+          `Application is already ${app.status}.`
+        );
+      }
+      const percent = computePercent(app.checklist?.tasks ?? []);
+      if (percent < 100) {
+        throw new HttpError(
+          409,
+          'checklist_incomplete',
+          `Checklist is ${percent}% complete — finish all tasks before approving.`
+        );
+      }
+
+      // Date-only — strip the time so a midday approval doesn't accidentally
+      // backdate the hireDate to the previous day in some timezones.
+      const hireDateValue = new Date(`${hireDate}T00:00:00.000Z`);
+      const now = new Date();
+
+      await prisma.$transaction(async (tx) => {
+        await tx.application.update({
+          where: { id: app.id },
+          data: { status: 'APPROVED', approvedAt: now },
+        });
+        await tx.associate.update({
+          where: { id: app.associateId },
+          data: { hireDate: hireDateValue },
+        });
+        // Activate the associate's User (if one exists). tokenVersion bump
+        // invalidates any pre-hire invite session so they must sign in via
+        // the now-activated account.
+        await tx.user.updateMany({
+          where: { associateId: app.associateId },
+          data: { status: 'ACTIVE', tokenVersion: { increment: 1 } },
+        });
+      }, TX_OPTS);
+
+      await recordOnboardingEvent({
+        actorUserId: req.user!.id,
+        action: 'application.approved',
+        applicationId: app.id,
+        clientId: app.clientId,
+        metadata: { hireDate, percentComplete: percent },
+        req,
+      });
+
+      res.status(204).end();
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+onboardingRouter.post(
+  '/applications/:id/reject',
+  MANAGE,
+  async (req, res, next) => {
+    try {
+      const parsed = RejectApplicationInputSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(
+          400,
+          'invalid_body',
+          'Invalid request body',
+          parsed.error.flatten()
+        );
+      }
+      const { reason } = parsed.data;
+      const app = await prisma.application.findFirst({
+        where: { ...scopeApplications(req.user!), id: req.params.id },
+      });
+      if (!app) {
+        throw new HttpError(
+          404,
+          'application_not_found',
+          'Application not found'
+        );
+      }
+      if (app.status === 'APPROVED' || app.status === 'REJECTED') {
+        throw new HttpError(
+          409,
+          'application_already_decided',
+          `Application is already ${app.status}.`
+        );
+      }
+
+      await prisma.application.update({
+        where: { id: app.id },
+        data: {
+          status: 'REJECTED',
+          rejectedAt: new Date(),
+          rejectionReason: reason,
+        },
+      });
+
+      await recordOnboardingEvent({
+        actorUserId: req.user!.id,
+        action: 'application.rejected',
+        applicationId: app.id,
+        clientId: app.clientId,
+        metadata: { reason },
+        req,
+      });
+
+      res.status(204).end();
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 onboardingRouter.get('/templates', async (req, res, next) => {
   try {

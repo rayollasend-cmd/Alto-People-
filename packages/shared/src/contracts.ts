@@ -201,8 +201,33 @@ export const ApplicationDetailSchema = ApplicationSummarySchema.extend({
   // Phase 41 — surfaced on the detail header so HR can see at a glance
   // whether this is a W-2 or 1099 onboarding flow (no W-4 task on 1099s).
   employmentType: EmploymentTypeSchema,
+  // HR review outcome. approvedAt is set when HR clicks Approve and
+  // assigns a hire date; rejectedAt + rejectionReason are set on Reject.
+  // hireDate mirrors the Associate.hireDate set at approval time so the
+  // detail page can render it without a second join.
+  approvedAt: z.string().datetime().nullable(),
+  rejectedAt: z.string().datetime().nullable(),
+  rejectionReason: z.string().nullable(),
+  hireDate: z.string().date().nullable(),
 });
 export type ApplicationDetail = z.infer<typeof ApplicationDetailSchema>;
+
+// HR review actions — used by /onboarding/applications/:id/approve and
+// /reject. hireDate is a YYYY-MM-DD date string the HR user picks in the
+// approve dialog.
+export const ApproveApplicationInputSchema = z.object({
+  hireDate: z.string().date(),
+});
+export type ApproveApplicationInput = z.infer<
+  typeof ApproveApplicationInputSchema
+>;
+
+export const RejectApplicationInputSchema = z.object({
+  reason: z.string().trim().min(1).max(500),
+});
+export type RejectApplicationInput = z.infer<
+  typeof RejectApplicationInputSchema
+>;
 
 export const ApplicationListResponseSchema = z.object({
   applications: z.array(ApplicationSummarySchema),
