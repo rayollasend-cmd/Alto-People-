@@ -138,6 +138,10 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'view:payroll',
     'view:documents',
     'view:performance',
+    // Required so associates can read their own IN_APP notifications via
+    // /communications/me/inbox. Send/broadcast paths still gated on
+    // manage:communications.
+    'view:communications',
   ]),
   CLIENT_PORTAL: new Set<Capability>([
     'view:dashboard',

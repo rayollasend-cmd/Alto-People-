@@ -12,6 +12,7 @@ import {
   truncateAll,
 } from '../../../test/db.js';
 import { resolveStoragePath } from '../../lib/storage.js';
+import { flushPendingAudits } from '../../lib/audit.js';
 
 const app = () => createApp();
 
@@ -205,6 +206,8 @@ describe('HR verify / reject', () => {
     expect(verify.body.verifiedById).toBe(hr.id);
     expect(verify.body.verifierEmail).toBe(hr.email);
 
+    // Audit writes are fire-and-forget — wait for them before asserting.
+    await flushPendingAudits();
     const audit = await prisma.auditLog.findFirst({
       where: { action: 'document.verified', entityId: upload.body.id },
     });

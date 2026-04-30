@@ -1,5 +1,6 @@
 import { PrismaClient, type Role } from '@prisma/client';
 import { hashPassword } from '../src/lib/passwords.js';
+import { flushPendingAudits } from '../src/lib/audit.js';
 
 export const prisma = new PrismaClient();
 
@@ -46,6 +47,11 @@ const TABLES = [
 ] as const;
 
 export async function truncateAll(): Promise<void> {
+  // Wait for any in-flight fire-and-forget audit writes from the previous
+  // test to land BEFORE we truncate. Otherwise their late `INSERT INTO
+  // AuditLog` lands on a wiped table and trips an FK violation against the
+  // already-deleted user, polluting the next test's logs.
+  await flushPendingAudits();
   // Quote each identifier so PascalCase table names are preserved. CASCADE
   // handles the FK graph; RESTART IDENTITY isn't required (UUIDs everywhere).
   const quoted = TABLES.map((t) => `"alto_test"."${t}"`).join(', ');

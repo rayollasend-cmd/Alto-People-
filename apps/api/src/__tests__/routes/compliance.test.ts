@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
+import { flushPendingAudits } from '../../lib/audit.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createAssociate,
@@ -60,6 +61,7 @@ describe('I-9 endpoints', () => {
     expect(res.body.section2VerifierUserId).toBe(hr.id);
     expect(res.body.section2VerifierEmail).toBe(hr.email);
 
+    await flushPendingAudits();
     const audit = await prisma.auditLog.findFirst({
       where: { action: 'compliance.i9_updated', entityId: res.body.id },
     });

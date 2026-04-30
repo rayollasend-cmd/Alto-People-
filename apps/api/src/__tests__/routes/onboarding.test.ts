@@ -198,7 +198,9 @@ describe('DIRECT_DEPOSIT encrypts the account number', () => {
       .post(`/onboarding/applications/${w.application.id}/direct-deposit`)
       .send({
         type: 'BANK_ACCOUNT',
-        routingNumber: '123456789',
+        // Real ABA-valid routing number (Wells Fargo CA) — the API now runs
+        // the ANSI X9.5 checksum so the placeholder 123456789 is rejected.
+        routingNumber: '121000248',
         accountNumber: '987654321',
         accountType: 'CHECKING',
       });
@@ -213,7 +215,7 @@ describe('DIRECT_DEPOSIT encrypts the account number', () => {
     expect(acct[0]).toBe(1);
     expect(decryptString(acct)).toBe('987654321');
     // Routing number stored plain (it's printed on every check)
-    expect((payout.routingNumberEnc as Buffer).toString('utf8')).toBe('123456789');
+    expect((payout.routingNumberEnc as Buffer).toString('utf8')).toBe('121000248');
   });
 
   it('BRANCH_CARD: stores branchCardId, no encrypted blobs', async () => {
@@ -356,8 +358,12 @@ describe('Audit timeline', () => {
       .send({ firstName: 'A', lastName: 'B' });
     await associateAgent
       .post(`/onboarding/applications/${w.application.id}/w4`)
-      .send({ filingStatus: 'SINGLE' });
+      // SSN is required on first submission (no row on file yet).
+      .send({ filingStatus: 'SINGLE', ssn: '123-45-6789' });
 
+    // Audit writes are fire-and-forget — wait for them to commit before
+    // querying the timeline.
+    await flushPendingAudits();
     const hrAgent = await loginAs(w.hrUser.email);
     const res = await hrAgent.get(`/onboarding/applications/${w.application.id}/audit`);
     expect(res.status).toBe(200);
@@ -436,7 +442,8 @@ describe('Happy-path checklist progression', () => {
       firstName: 'Maria', lastName: 'Lopez',
     });
     await a.post(`/onboarding/applications/${application.id}/w4`).send({
-      filingStatus: 'SINGLE',
+      // SSN is now mandatory on first W-4 submit (no encrypted row on file).
+      filingStatus: 'SINGLE', ssn: '123-45-6789',
     });
     await a.post(`/onboarding/applications/${application.id}/direct-deposit`).send({
       type: 'BRANCH_CARD',
