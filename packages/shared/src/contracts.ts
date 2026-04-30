@@ -410,6 +410,23 @@ export type MeResponse = z.infer<typeof MeResponseSchema>;
  *  Onboarding — Phase 4 inputs and read-extras
  * -------------------------------------------------------------------------- */
 
+// Roles HR can hire someone into via the onboarding flow. ASSOCIATE is the
+// default. Management roles let HR onboard a new Operations / Workforce /
+// Marketing manager etc. through the same magic-link + checklist pipeline.
+// LIVE_ASN is excluded (system integration only) and CLIENT_PORTAL is
+// excluded (provisioned through the client-admin path, not onboarding).
+export const HIREABLE_ROLES = [
+  'ASSOCIATE',
+  'OPERATIONS_MANAGER',
+  'MANAGER',
+  'INTERNAL_RECRUITER',
+  'WORKFORCE_MANAGER',
+  'MARKETING_MANAGER',
+  'FINANCE_ACCOUNTANT',
+] as const;
+export const HireableRoleSchema = z.enum(HIREABLE_ROLES);
+export type HireableRole = z.infer<typeof HireableRoleSchema>;
+
 export const ApplicationCreateInputSchema = z.object({
   associateEmail: z.string().email(),
   associateFirstName: z.string().min(1).max(80),
@@ -419,6 +436,11 @@ export const ApplicationCreateInputSchema = z.object({
   position: z.string().min(1).max(120).optional(),
   startDate: z.string().datetime().optional(),
   employmentType: EmploymentTypeSchema.optional(),
+  // Defaults to ASSOCIATE on the server when omitted. Set to a management
+  // role to onboard a new manager / recruiter / accountant via the same
+  // invite + checklist pipeline. Their User row is created with this role
+  // so on first login they land in the correct sidebar / capability set.
+  hireRole: HireableRoleSchema.optional(),
 });
 export type ApplicationCreateInput = z.infer<typeof ApplicationCreateInputSchema>;
 

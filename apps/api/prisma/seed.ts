@@ -85,6 +85,25 @@ async function main() {
       },
     }));
 
+  // Synthetic "client" tenant for Alto HR's own internal hires (managers,
+  // recruiters, accountants). HR picks this in the new-applicant dialog
+  // and sets `Hire as` to the management role they're inviting; the
+  // resulting User row is minted with that role so on first login they
+  // land in the correct sidebar / capability set.
+  const existingInternalClient = await prisma.client.findFirst({
+    where: { name: 'Alto HR — Internal Hires' },
+  });
+  if (!existingInternalClient) {
+    await prisma.client.create({
+      data: {
+        name: 'Alto HR — Internal Hires',
+        industry: 'staffing',
+        status: 'ACTIVE',
+        contactEmail: 'people@altohr.com',
+      },
+    });
+  }
+
   // ---- Standard onboarding template (global, clientId=null) --------------
   // NOTE: Postgres treats NULL != NULL in unique constraints, so we can't use
   // upsert against the (clientId, track) compound unique. Use find-or-create.
