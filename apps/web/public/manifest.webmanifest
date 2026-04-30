@@ -36,21 +36,45 @@
     }
   ],
   "categories": ["business", "productivity"],
+  "screenshots": [
+    {
+      "src": "/screenshot-wide.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Alto People — desktop"
+    },
+    {
+      "src": "/screenshot-narrow.png",
+      "sizes": "720x1280",
+      "type": "image/png",
+      "label": "Alto People — mobile"
+    }
+  ],
   "shortcuts": [
     {
       "name": "Time clock",
       "url": "/time-attendance",
-      "description": "Clock in / out"
+      "description": "Clock in / out",
+      "icons": [
+        { "src": "/icon-96.png", "sizes": "96x96", "type": "image/png" }
+      ]
     },
     {
       "name": "My profile",
       "url": "/me",
-      "description": "Self-service profile"
+      "description": "Self-service profile",
+      "icons": [
+        { "src": "/icon-96.png", "sizes": "96x96", "type": "image/png" }
+      ]
     },
     {
       "name": "Reimbursements",
       "url": "/reimbursements",
-      "description": "Submit an expense report"
+      "description": "Submit an expense report",
+      "icons": [
+        { "src": "/icon-96.png", "sizes": "96x96", "type": "image/png" }
+      ]
     }
   ]
 }
