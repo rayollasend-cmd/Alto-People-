@@ -151,11 +151,38 @@ export async function attachUser(
   }
 }
 
+/**
+ * Browser refreshes on SPA routes (/clients, /payroll, etc.) hit the API
+ * routers mounted at those same unprefixed paths *before* the SPA fallback
+ * gets a chance — so an expired session would surface as raw JSON in the
+ * address bar. When the request is an HTML navigation (GET + Accept
+ * includes text/html), redirect to /login with the original path encoded
+ * as ?next=… so Login.tsx can return there after sign-in. XHR/fetch
+ * callers (Accept: application/json) keep getting the 401 JSON they expect.
+ *
+ * `next` is intentionally a path-only string (leading slash, no host) — the
+ * Login route validates it before navigating to prevent open-redirect.
+ */
+function replyUnauthenticated(req: Request, res: Response): void {
+  const accept = req.get('accept') ?? '';
+  const wantsHtml = req.method === 'GET' && accept.includes('text/html');
+  if (wantsHtml) {
+    // req.originalUrl preserves the pre-stripApiPrefix path so the user
+    // returns to where they were trying to go.
+    const next = req.originalUrl && req.originalUrl !== '/login'
+      ? `?next=${encodeURIComponent(req.originalUrl)}`
+      : '';
+    res.redirect(302, `/login${next}`);
+    return;
+  }
+  res.status(401).json({
+    error: { code: 'unauthenticated', message: 'Authentication required' },
+  });
+}
+
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!req.user) {
-    res.status(401).json({
-      error: { code: 'unauthenticated', message: 'Authentication required' },
-    });
+    replyUnauthenticated(req, res);
     return;
   }
   next();
@@ -164,9 +191,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
 export function requireCapability(...caps: Capability[]) {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!req.user) {
-      res.status(401).json({
-        error: { code: 'unauthenticated', message: 'Authentication required' },
-      });
+      replyUnauthenticated(req, res);
       return;
     }
     const missing = caps.find((c) => !hasCapability(req.user!.role, c));
