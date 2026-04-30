@@ -3,7 +3,6 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Lock, Mail, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { ApiError, NetworkError } from '@/lib/api';
-import { Logo } from '@/components/Logo';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Label, FormHint } from '@/components/ui/Label';
@@ -52,7 +51,6 @@ export function Login() {
     <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-login-aurora">
       <div className="w-full max-w-md">
         <div className="text-center mb-8 animate-fade-in">
-          <Logo size="xl" className="mx-auto mb-4 rounded-xl" alt="Alto People" />
           <h1 className="font-display text-5xl md:text-6xl text-gold mb-2 leading-none">
             Alto People
           </h1>

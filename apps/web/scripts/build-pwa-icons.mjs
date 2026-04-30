@@ -21,6 +21,10 @@ import { readFile, writeFile } from 'node:fs/promises';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.resolve(__dirname, '..', 'public');
 const LOGO = path.join(PUBLIC, 'logo-source.jpg');
+// Simplified mark for sub-96px sizes — the full logo's inner ticks /
+// baseline detail muddy at favicon scale. See favicon.svg for the
+// design rationale.
+const FAVICON_SVG = path.join(PUBLIC, 'favicon.svg');
 
 async function rasterizeLogo(outPngName, size) {
   const png = await sharp(LOGO)
@@ -31,7 +35,18 @@ async function rasterizeLogo(outPngName, size) {
   console.log(`[pwa-icons] wrote ${outPngName} (${size}x${size}, ${png.length} bytes)`);
 }
 
-// Standard PWA manifest sizes.
+async function rasterizeFavicon(outPngName, size) {
+  const src = await readFile(FAVICON_SVG);
+  // density:300 keeps the rasterized strokes crisp at the requested size.
+  const png = await sharp(src, { density: 300 })
+    .resize(size, size)
+    .png({ compressionLevel: 9 })
+    .toBuffer();
+  await writeFile(path.join(PUBLIC, outPngName), png);
+  console.log(`[pwa-icons] wrote ${outPngName} (${size}x${size}, ${png.length} bytes, simplified mark)`);
+}
+
+// Standard PWA manifest sizes — full logo, has the detail to fill 96px+.
 await rasterizeLogo('icon-192.png', 192);
 await rasterizeLogo('icon-512.png', 512);
 // Apple touch icon — 180x180 is the iOS sweet spot.
@@ -39,9 +54,11 @@ await rasterizeLogo('apple-touch-icon.png', 180);
 // 96x96 used by manifest "shortcuts" entries — Chrome wants exactly this
 // size and warns if it's missing.
 await rasterizeLogo('icon-96.png', 96);
-// Favicon — Vite serves /favicon.ico but a 32px PNG is also useful for
-// modern browsers via the link rel="icon" we add to index.html.
-await rasterizeLogo('favicon-32.png', 32);
+// Favicon — sub-96px renders from the simplified SVG mark so the rim
+// + peak silhouette stays readable at 16/32px. Modern browsers will
+// prefer favicon.svg directly (see index.html); this PNG is the
+// legacy-browser fallback.
+await rasterizeFavicon('favicon-32.png', 32);
 
 // ---- Screenshots for the richer PWA install dialog -----------------------
 // Chrome's "richer install UI" needs at least one screenshot per form factor.
