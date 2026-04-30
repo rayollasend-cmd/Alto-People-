@@ -144,10 +144,10 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>When</TableHead>
-                  <TableHead>Channel</TableHead>
+                  <TableHead className="hidden md:table-cell">When</TableHead>
+                  <TableHead className="hidden sm:table-cell">Channel</TableHead>
                   <TableHead>Recipient</TableHead>
-                  <TableHead>Subject / preview</TableHead>
+                  <TableHead className="hidden lg:table-cell">Subject / preview</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
@@ -163,10 +163,10 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
                       setDrawerTarget(n);
                     }}
                   >
-                    <TableCell className="text-silver tabular-nums whitespace-nowrap">
+                    <TableCell className="hidden md:table-cell text-silver tabular-nums whitespace-nowrap">
                       {new Date(n.createdAt).toLocaleString()}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="hidden sm:table-cell">
                       <Badge variant="outline">{n.channel}</Badge>
                     </TableCell>
                     <TableCell className="text-silver">
@@ -185,8 +185,16 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
                           {n.recipientEmail ?? n.recipientPhone ?? n.recipientUserId ?? '—'}
                         </span>
                       </div>
+                      {/* On phones we tuck the subject + when under the
+                          recipient since the dedicated columns are hidden. */}
+                      <div className="lg:hidden mt-1 text-xs text-silver truncate max-w-[60vw]">
+                        {n.subject ?? '(no subject)'}
+                      </div>
+                      <div className="md:hidden text-[10px] text-silver/60 tabular-nums">
+                        {new Date(n.createdAt).toLocaleString()}
+                      </div>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="hidden lg:table-cell">
                       <div className="text-white truncate max-w-md font-medium">
                         {n.subject ?? '(no subject)'}
                       </div>

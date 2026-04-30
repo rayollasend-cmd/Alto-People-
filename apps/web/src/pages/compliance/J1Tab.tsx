@@ -132,10 +132,10 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
           <TableHeader>
             <TableRow>
               <TableHead>Associate</TableHead>
-              <TableHead>Country</TableHead>
-              <TableHead>DS-2019</TableHead>
-              <TableHead>Sponsor</TableHead>
-              <TableHead>Program</TableHead>
+              <TableHead className="hidden sm:table-cell">Country</TableHead>
+              <TableHead className="hidden lg:table-cell">DS-2019</TableHead>
+              <TableHead className="hidden lg:table-cell">Sponsor</TableHead>
+              <TableHead className="hidden md:table-cell">Program</TableHead>
               <TableHead>Days left</TableHead>
             </TableRow>
           </TableHeader>
@@ -154,13 +154,23 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
                 <TableCell className="font-medium">
                   <div className="flex items-center gap-2.5">
                     <Avatar name={p.associateName} email={p.associateEmail} size="sm" />
-                    <span>{p.associateName}</span>
+                    <div className="min-w-0">
+                      <div className="truncate">{p.associateName}</div>
+                      {/* Phone-only secondary line so the country / program
+                          dates aren't lost when their columns are hidden. */}
+                      <div className="sm:hidden text-[11px] text-silver/70 truncate">
+                        {p.country}
+                      </div>
+                      <div className="md:hidden text-[10px] text-silver/60 tabular-nums">
+                        {p.programStartDate} → {p.programEndDate}
+                      </div>
+                    </div>
                   </div>
                 </TableCell>
-                <TableCell className="text-silver">{p.country}</TableCell>
-                <TableCell className="text-silver">{p.ds2019Number}</TableCell>
-                <TableCell className="text-silver">{p.sponsorAgency}</TableCell>
-                <TableCell className="text-silver tabular-nums">
+                <TableCell className="hidden sm:table-cell text-silver">{p.country}</TableCell>
+                <TableCell className="hidden lg:table-cell text-silver">{p.ds2019Number}</TableCell>
+                <TableCell className="hidden lg:table-cell text-silver">{p.sponsorAgency}</TableCell>
+                <TableCell className="hidden md:table-cell text-silver tabular-nums">
                   {p.programStartDate} → {p.programEndDate}
                 </TableCell>
                 <TableCell>

@@ -135,7 +135,7 @@ function OshaTab({ clientId }: { clientId: string }) {
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div>
               <div className="text-xs uppercase tracking-wider text-silver">Form 300A summary</div>
-              <div className="mt-2 grid grid-cols-3 md:grid-cols-7 gap-3 text-sm">
+              <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-7 gap-3 text-sm">
                 <Stat label="Total cases" value={summary?.totalCases ?? '—'} />
                 <Stat label="Fatalities" value={summary?.fatalities ?? '—'} />
                 <Stat label="Days-away cases" value={summary?.daysAwayCases ?? '—'} />

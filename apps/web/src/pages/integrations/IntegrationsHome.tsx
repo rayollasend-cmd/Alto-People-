@@ -627,7 +627,7 @@ function WebhooksTab({ canManage }: { canManage: boolean }) {
                 {rows.map((w) => (
                   <TableRow key={w.id} className="group">
                     <TableCell className="font-medium text-white">{w.name}</TableCell>
-                    <TableCell className="font-mono text-xs truncate max-w-[280px]">
+                    <TableCell className="font-mono text-xs truncate max-w-[140px] sm:max-w-[200px] md:max-w-[280px]">
                       {w.url}
                     </TableCell>
                     <TableCell className="text-xs text-silver">

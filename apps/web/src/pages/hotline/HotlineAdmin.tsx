@@ -87,7 +87,7 @@ export function HotlineAdmin() {
       />
 
       {summary && (
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <SummaryCard label="New" value={summary.newCount} tone="destructive" />
           <SummaryCard
             label="Triaging"
