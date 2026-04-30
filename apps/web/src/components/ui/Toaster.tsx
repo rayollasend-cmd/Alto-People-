@@ -17,6 +17,17 @@ export function Toaster() {
       // Tighter visible stack — older toasts can be expanded on hover.
       visibleToasts={4}
       gap={10}
+      // Stay clear of the iOS status bar / Dynamic Island. Without this,
+      // top-right toasts land directly under the time/battery icons on
+      // iPhone PWA installs and are hard to read or dismiss.
+      offset={{
+        top: 'max(1rem, env(safe-area-inset-top))',
+        right: 'max(1rem, env(safe-area-inset-right))',
+      }}
+      mobileOffset={{
+        top: 'max(0.5rem, env(safe-area-inset-top))',
+        right: 'max(0.5rem, env(safe-area-inset-right))',
+      }}
       toastOptions={{
         classNames: {
           toast:

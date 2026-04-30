@@ -49,7 +49,7 @@ export function Drawer({ open, onOpenChange, width = 'max-w-md', children }: Dra
           )}
         >
           <DialogPrimitive.Close
-            className="absolute right-3 top-3 grid place-items-center h-8 w-8 rounded-md text-silver hover:text-white hover:bg-navy-secondary/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+            className="absolute grid place-items-center h-8 w-8 rounded-md text-silver hover:text-white hover:bg-navy-secondary/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright top-[max(0.75rem,env(safe-area-inset-top))] right-[max(0.75rem,env(safe-area-inset-right))]"
             aria-label="Close"
           >
             <X className="h-4 w-4" />
@@ -66,6 +66,9 @@ export function DrawerHeader({ className, ...props }: React.HTMLAttributes<HTMLD
     <div
       className={cn(
         'p-6 pr-12 border-b border-navy-secondary flex flex-col gap-1',
+        // Push the title clear of the notch on iOS — the close button uses the
+        // same max() pattern so the two stay vertically aligned.
+        'pt-[max(1.5rem,calc(env(safe-area-inset-top)+0.75rem))] pr-[max(3rem,calc(env(safe-area-inset-right)+2.25rem))]',
         className,
       )}
       {...props}
@@ -111,6 +114,9 @@ export function DrawerFooter({ className, ...props }: React.HTMLAttributes<HTMLD
     <div
       className={cn(
         'p-6 border-t border-navy-secondary flex justify-end gap-2',
+        // Keep buttons clear of the iOS home indicator on phones with no
+        // hardware home button.
+        'pb-[max(1.5rem,calc(env(safe-area-inset-bottom)+0.75rem))]',
         className,
       )}
       {...props}

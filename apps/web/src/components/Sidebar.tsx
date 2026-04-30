@@ -144,6 +144,10 @@ export function Sidebar() {
     <aside
       className={cn(
         'hidden md:flex shrink-0 flex-col bg-navy border-r border-navy-secondary transition-[width] duration-200 ease-out',
+        // pt-safe so the brand row aligns with the Topbar (which carries the
+        // same env(safe-area-inset-top) padding) on iPad portrait under a notch.
+        // pl-safe handles landscape with the notch on the left.
+        'pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]',
         railCollapsed ? 'w-14' : 'w-64',
       )}
     >
