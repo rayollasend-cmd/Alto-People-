@@ -187,6 +187,7 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
         jobProfileId: a.jobProfileId,
         jobProfileTitle: a.jobProfile?.title ?? null,
         onboardingPercent,
+        applicationId: workplaceApp?.id ?? null,
         createdAt: a.createdAt.toISOString(),
         photoUrl: profilePhotoUrlFor({
           id: a.id,
