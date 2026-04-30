@@ -524,6 +524,12 @@ model Associate {
   qboEmployeeId     String?
   qboVendorId       String?
   qboSyncedAt       DateTime?      @db.Timestamptz(6)
+  // Stamped when HR approves the associate's onboarding application
+  // (POST /onboarding/applications/:id/approve). The date HR enters in
+  // the approve dialog — distinct from Application.startDate (the
+  // *planned* start at invitation time, which can differ if HR changes
+  // their mind during review).
+  hireDate          DateTime?      @db.Date
   // Profile photo. photoS3Key is the storage path under uploads/profile-photos/;
   // photoUpdatedAt is the cache-buster the API stamps onto the photo URL so
   // the browser refetches after an upload. Null when no photo on file —
@@ -678,6 +684,14 @@ model Application {
   startDate       DateTime?            @db.Date
   invitedAt       DateTime             @default(now()) @db.Timestamptz(6)
   submittedAt     DateTime?            @db.Timestamptz(6)
+  // HR review outcome — exactly one of approvedAt / rejectedAt is set
+  // once status leaves IN_REVIEW. rejectionReason is required on REJECTED
+  // so the audit trail captures the why; approve has no equivalent free-
+  // text field by design (the hireDate stamped on Associate IS the
+  // outcome record).
+  approvedAt      DateTime?            @db.Timestamptz(6)
+  rejectedAt      DateTime?            @db.Timestamptz(6)
+  rejectionReason String?
   associate       Associate            @relation(fields: [associateId], references: [id], onDelete: Restrict)
   client          Client               @relation(fields: [clientId], references: [id], onDelete: Restrict)
   checklist       OnboardingChecklist?
