@@ -22,7 +22,20 @@ export function Login() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const from = (location.state as LocationState | null)?.from ?? '/';
+  // Two sources for the post-login destination:
+  //   - location.state.from — set by the SPA's protected-route guard when it
+  //     intercepts an unauthenticated client-side navigation
+  //   - ?next=…             — set by the API's replyUnauthenticated helper
+  //     when a browser refresh on a protected SPA path hit the API first
+  // safeNext requires same-origin (leading "/" but not "//", which would be
+  // a protocol-relative URL) to prevent open-redirect.
+  const queryNext = new URLSearchParams(location.search).get('next');
+  const safeNext =
+    queryNext && queryNext.startsWith('/') && !queryNext.startsWith('//')
+      ? queryNext
+      : null;
+  const from =
+    (location.state as LocationState | null)?.from ?? safeNext ?? '/';
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
