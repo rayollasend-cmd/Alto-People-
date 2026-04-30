@@ -10,9 +10,11 @@ vi.mock('@/lib/i9Api', () => ({
   submitI9Section1: vi.fn(),
   uploadI9Document: vi.fn(),
   submitI9Section2: vi.fn(),
+  listI9Documents: vi.fn(async () => ({ documents: [] })),
+  submitI9ForReview: vi.fn(async () => ({ documentsSubmittedAt: new Date().toISOString() })),
 }));
 
-import { getI9Status, submitI9Section1, uploadI9Document } from '@/lib/i9Api';
+import { getI9Status, submitI9Section1, uploadI9Document, listI9Documents } from '@/lib/i9Api';
 import { I9Task } from '@/pages/onboarding/tasks/I9Task';
 
 const APP_ID = '00000000-0000-4000-8000-00000000bbbb';
@@ -54,6 +56,10 @@ beforeEach(() => {
   vi.mocked(getI9Status).mockReset();
   vi.mocked(submitI9Section1).mockReset();
   vi.mocked(uploadI9Document).mockReset();
+  // Reset to default empty-list response; tests that need upload-then-list
+  // override per-call via mockResolvedValueOnce.
+  vi.mocked(listI9Documents).mockReset();
+  vi.mocked(listI9Documents).mockResolvedValue({ documents: [] });
 });
 
 describe('<I9Task> Section 1', () => {
@@ -61,6 +67,7 @@ describe('<I9Task> Section 1', () => {
     vi.mocked(getI9Status).mockResolvedValue({
       associateId: 'a',
       section1: null,
+      documentsSubmittedAt: null,
       section2: null,
     });
     vi.mocked(submitI9Section1).mockResolvedValue({
@@ -104,6 +111,7 @@ describe('<I9Task> Section 1', () => {
     vi.mocked(getI9Status).mockResolvedValue({
       associateId: 'a',
       section1: null,
+      documentsSubmittedAt: null,
       section2: null,
     });
     const user = userEvent.setup();
@@ -130,6 +138,7 @@ describe('<I9Task> Section 1', () => {
         hasAlienNumber: false,
         typedName: 'Maria Lopez',
       },
+      documentsSubmittedAt: null,
       section2: null,
     });
     renderTask();
@@ -150,16 +159,34 @@ describe('<I9Task> document upload', () => {
         hasAlienNumber: false,
         typedName: 'Maria Lopez',
       },
+      documentsSubmittedAt: null,
       section2: null,
     });
     vi.mocked(uploadI9Document).mockResolvedValue({
       documentId: 'doc-1',
-      kind: 'I9_SUPPORTING',
+      kind: 'ID',
       side: null,
       size: 1234,
       mimeType: 'image/png',
       sha256: 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789',
     });
+    // First call (mount) → empty; second call (after upload) → doc shows up.
+    vi.mocked(listI9Documents)
+      .mockResolvedValueOnce({ documents: [] })
+      .mockResolvedValueOnce({
+        documents: [
+          {
+            id: 'doc-1',
+            kind: 'ID',
+            filename: 'license.png',
+            mimeType: 'image/png',
+            size: 1234,
+            status: 'UPLOADED',
+            side: null,
+            createdAt: '2026-04-26T18:30:00.000Z',
+          },
+        ],
+      });
 
     const user = userEvent.setup();
     const { container } = renderTask();
@@ -175,7 +202,9 @@ describe('<I9Task> document upload', () => {
     await user.upload(input, fakeFile);
 
     await waitFor(() => expect(uploadI9Document).toHaveBeenCalledTimes(1));
-    expect(uploadI9Document).toHaveBeenCalledWith(APP_ID, fakeFile, 'I9_SUPPORTING');
+    // The component's default docKind is 'ID' (driver's license / passport);
+    // 4th arg is docSide (undefined when "Not applicable" is selected).
+    expect(uploadI9Document).toHaveBeenCalledWith(APP_ID, fakeFile, 'ID', undefined);
     expect(await screen.findByText('license.png')).toBeInTheDocument();
   });
 
@@ -189,6 +218,7 @@ describe('<I9Task> document upload', () => {
         hasAlienNumber: false,
         typedName: 'Maria Lopez',
       },
+      documentsSubmittedAt: '2026-04-26T18:30:00.000Z',
       section2: {
         completedAt: '2026-04-26T19:00:00.000Z',
         verifierEmail: 'admin@altohr.com',

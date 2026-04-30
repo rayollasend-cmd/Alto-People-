@@ -78,10 +78,10 @@ describe('hasCapability', () => {
     // discipline, succession, ramp, probation, agreements, document
     // templates, goals/PIPs/360s).
     expect(hasCapability('ASSOCIATE', 'view:hr-admin')).toBe(false);
-    // view:communications was a dead capability for ASSOCIATE — no
-    // route consumed it and it leaked nothing useful. Removed in the
-    // RBAC tightening pass.
-    expect(hasCapability('ASSOCIATE', 'view:communications')).toBe(false);
+    // view:communications is required for ASSOCIATE — they need to read
+    // their own IN_APP inbox via /communications/me/inbox. Send/broadcast
+    // paths are still locked behind manage:communications.
+    expect(hasCapability('ASSOCIATE', 'view:communications')).toBe(true);
     for (const m of ALL_MANAGE) expect(hasCapability('ASSOCIATE', m)).toBe(false);
   });
 

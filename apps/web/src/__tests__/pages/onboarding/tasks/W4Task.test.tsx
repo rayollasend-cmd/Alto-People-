@@ -7,9 +7,27 @@ import { AuthContext } from '@/lib/auth';
 
 vi.mock('@/lib/onboardingApi', () => ({
   submitW4: vi.fn(async () => {}),
+  // W4Task mounts and immediately calls getW4 to hydrate prior submissions.
+  // hasSsnOnFile:true means the form treats the SSN as already on record
+  // (showing "•••-••-1234" rather than asking the associate to retype it),
+  // so the default-submit happy-path test can submit without typing an SSN.
+  // Tests that exercise the SSN-input path call mockResolvedValueOnce with
+  // hasSsnOnFile:false to override.
+  getW4: vi.fn(async () => ({
+    hasSubmission: true,
+    filingStatus: null,
+    multipleJobs: false,
+    dependentsAmount: null,
+    otherIncome: null,
+    deductions: null,
+    extraWithholding: null,
+    hasSsnOnFile: true,
+    ssnLast4: '6789',
+    submittedAt: null,
+  })),
 }));
 
-import { submitW4 } from '@/lib/onboardingApi';
+import { submitW4, getW4 } from '@/lib/onboardingApi';
 import { W4Task } from '@/pages/onboarding/tasks/W4Task';
 
 const APP_ID = '00000000-0000-4000-8000-00000000bbbb';
@@ -71,9 +89,15 @@ describe('<W4Task>', () => {
   });
 
   it('passes the SSN through verbatim when typed (server strips dashes + encrypts)', async () => {
+    // SSN input is only rendered when no SSN is on file yet.
+    vi.mocked(getW4).mockResolvedValueOnce({
+      hasSubmission: false, filingStatus: null, multipleJobs: false,
+      dependentsAmount: null, otherIncome: null, deductions: null,
+      extraWithholding: null, hasSsnOnFile: false, ssnLast4: null, submittedAt: null,
+    });
     const user = userEvent.setup();
     renderTask();
-    const ssnField = screen.getByLabelText(/social security/i);
+    const ssnField = await screen.findByLabelText(/social security/i);
     await user.type(ssnField, '123-45-6789');
 
     await user.click(screen.getByRole('button', { name: /submit w-4/i }));
@@ -82,11 +106,16 @@ describe('<W4Task>', () => {
   });
 
   it('does not log SSN to the console (regression guard for an obvious leak)', async () => {
+    vi.mocked(getW4).mockResolvedValueOnce({
+      hasSubmission: false, filingStatus: null, multipleJobs: false,
+      dependentsAmount: null, otherIncome: null, deductions: null,
+      extraWithholding: null, hasSsnOnFile: false, ssnLast4: null, submittedAt: null,
+    });
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const user = userEvent.setup();
     renderTask();
-    await user.type(screen.getByLabelText(/social security/i), '123456789');
+    await user.type(await screen.findByLabelText(/social security/i), '123456789');
     await user.click(screen.getByRole('button', { name: /submit w-4/i }));
     await waitFor(() => expect(submitW4).toHaveBeenCalled());
 

@@ -185,7 +185,11 @@ describe('POST /payroll/runs', () => {
     expect(res.status).toBe(400);
   });
 
-  it('OPERATIONS_MANAGER cannot create a run (intentionally lacks process:payroll)', async () => {
+  it('OPERATIONS_MANAGER can create a run (full-admin role since the management-roles update)', async () => {
+    // Originally OPS lacked process:payroll. The product decision was to
+    // give every operational manager (OPS / MANAGER / RECRUITER /
+    // WORKFORCE / MARKETING) full admin caps so they don't have to escalate
+    // for routine actions. ASSOCIATE / CLIENT_PORTAL still can't reach this.
     await seedApprovedPeriod();
     const { user: ops } = await createUser({ role: 'OPERATIONS_MANAGER' });
     const a = await loginAs(ops.email);
@@ -193,7 +197,7 @@ describe('POST /payroll/runs', () => {
       periodStart: '2026-04-13',
       periodEnd: '2026-04-19',
     });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(201);
   });
 
   it('returns an empty run when no APPROVED entries exist in the period', async () => {

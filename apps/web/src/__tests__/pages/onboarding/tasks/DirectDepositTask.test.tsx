@@ -7,6 +7,18 @@ import { AuthContext } from '@/lib/auth';
 
 vi.mock('@/lib/onboardingApi', () => ({
   submitDirectDeposit: vi.fn(async () => {}),
+  // DirectDepositTask mounts and calls getDirectDeposit to hydrate any prior
+  // submission. Return the "no payout method yet" shape so the form is blank.
+  getDirectDeposit: vi.fn(async () => ({
+    hasPayoutMethod: false,
+    type: null,
+    accountType: null,
+    routingMasked: null,
+    accountLast4: null,
+    branchCardId: null,
+    verifiedAt: null,
+    updatedAt: null,
+  })),
 }));
 
 import { submitDirectDeposit } from '@/lib/onboardingApi';
@@ -70,7 +82,11 @@ describe('<DirectDepositTask>', () => {
     const user = userEvent.setup();
     renderTask();
 
-    await user.type(screen.getByLabelText(/routing number/i), '123456789');
+    // Real valid ABA routing # (Wells Fargo CA) — DirectDepositTask now
+    // runs the routing # through an ABA-checksum validator before allowing
+    // submit, so a synthetic 123456789 placeholder is rejected client-side.
+    const ROUTING = '121000248';
+    await user.type(screen.getByLabelText(/routing number/i), ROUTING);
     await user.type(screen.getByLabelText(/^account number$/i), '987654321');
     await user.selectOptions(screen.getByLabelText(/account type/i), 'SAVINGS');
 
@@ -79,7 +95,7 @@ describe('<DirectDepositTask>', () => {
     await waitFor(() => expect(submitDirectDeposit).toHaveBeenCalledTimes(1));
     expect(submitDirectDeposit).toHaveBeenCalledWith(APP_ID, {
       type: 'BANK_ACCOUNT',
-      routingNumber: '123456789',
+      routingNumber: ROUTING,
       accountNumber: '987654321',
       accountType: 'SAVINGS',
     });
