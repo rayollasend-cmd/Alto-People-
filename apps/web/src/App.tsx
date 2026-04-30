@@ -2,6 +2,7 @@ import { lazy, Suspense, type ComponentType } from 'react';
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { Login } from '@/pages/Login';
+import { Install } from '@/pages/Install';
 import { AcceptInvite } from '@/pages/AcceptInvite';
 import { Dashboard } from '@/pages/Dashboard';
 import { ModulePlaceholder } from '@/pages/ModulePlaceholder';
@@ -256,6 +257,9 @@ const PLACEHOLDER_MODULES = MODULES.filter(
 
 export const router = createBrowserRouter([
   { path: '/login', element: <Login />, errorElement: <RouterErrorPage /> },
+  // Public landing for "add this app to your home screen" — no auth, so we
+  // can drop the link in invite emails before the associate has a password.
+  { path: '/install', element: <Install />, errorElement: <RouterErrorPage /> },
   {
     path: '/accept-invite/:token',
     element: <AcceptInvite />,
