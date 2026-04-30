@@ -3,22 +3,48 @@ import { Link } from 'react-router-dom';
 import {
   Briefcase,
   Building2,
+  Download,
+  FileText,
   Mail,
   Phone,
+  Plus,
   Search,
   Users,
   X,
 } from 'lucide-react';
-import type { DirectoryEntry, DirectoryStatus } from '@alto-people/shared';
+import { toast } from 'sonner';
+import type {
+  DirectoryEntry,
+  DirectoryStatus,
+  DocumentRecord,
+} from '@alto-people/shared';
 import { listDirectory, type DirectoryFilters } from '@/lib/directoryApi';
 import { listClients } from '@/lib/clientsApi';
 import type { ClientListItem } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import {
+  type CompChangeReason,
+  type CompRecord,
+  type PayType,
+  createRecord,
+  listRecords,
+} from '@/lib/compApi';
+import {
+  downloadDocumentUrl,
+  listAdminDocuments,
+} from '@/lib/documentsApi';
+import {
   Avatar,
   Badge,
+  Button,
   Card,
   CardContent,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
   Drawer,
   DrawerBody,
   DrawerDescription,
@@ -27,6 +53,7 @@ import {
   DrawerTitle,
   EmptyState,
   Input,
+  Label,
   PageHeader,
   SkeletonRows,
   Table,
@@ -35,7 +62,10 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-  Button,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
 } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
@@ -431,7 +461,7 @@ export function PeopleDirectory() {
       <Drawer
         open={target !== null}
         onOpenChange={(o) => !o && setTarget(null)}
-        width="max-w-lg"
+        width="max-w-2xl"
       >
         {target && (
           <DirectoryDrawer associate={target} onClose={() => setTarget(null)} />
@@ -496,6 +526,9 @@ function DirectoryDrawer({
   associate: DirectoryEntry;
   onClose: () => void;
 }) {
+  const [tab, setTab] = useState<'profile' | 'compensation' | 'documents'>(
+    'profile',
+  );
   return (
     <>
       <DrawerHeader>
@@ -516,99 +549,23 @@ function DirectoryDrawer({
         </div>
       </DrawerHeader>
       <DrawerBody>
-        <div className="space-y-4">
-          {/* Contact */}
-          <Section title="Contact">
-            <Field
-              icon={<Mail className="h-3.5 w-3.5" />}
-              label="Email"
-              value={
-                <a
-                  href={`mailto:${a.email}`}
-                  className="text-gold hover:text-gold-bright"
-                >
-                  {a.email}
-                </a>
-              }
-            />
-            <Field
-              icon={<Phone className="h-3.5 w-3.5" />}
-              label="Phone"
-              value={
-                a.phone ? (
-                  <a href={`tel:${a.phone}`} className="hover:text-white">
-                    {a.phone}
-                  </a>
-                ) : (
-                  '—'
-                )
-              }
-            />
-          </Section>
+        <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
+          <TabsList>
+            <TabsTrigger value="profile">Profile</TabsTrigger>
+            <TabsTrigger value="compensation">Compensation</TabsTrigger>
+            <TabsTrigger value="documents">Documents</TabsTrigger>
+          </TabsList>
 
-          <Section title="Workplace">
-            <Field
-              icon={<Building2 className="h-3.5 w-3.5" />}
-              label="Client"
-              value={
-                a.workplaceClientId && a.workplaceClientName ? (
-                  <Link
-                    to={`/clients/${a.workplaceClientId}`}
-                    className="text-gold hover:text-gold-bright"
-                  >
-                    {a.workplaceClientName}
-                  </Link>
-                ) : (
-                  '—'
-                )
-              }
-            />
-            <Field
-              icon={<Briefcase className="h-3.5 w-3.5" />}
-              label="Position"
-              value={a.position ?? '—'}
-            />
-            <Field label="Start date" value={a.startDate ?? '—'} />
-            {a.status === 'PENDING' && a.onboardingPercent !== null && (
-              <Field
-                label="Onboarding"
-                value={
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 h-2 rounded bg-navy-secondary/60 overflow-hidden max-w-[160px]">
-                      <div
-                        className="h-full bg-warning"
-                        style={{ width: `${a.onboardingPercent}%` }}
-                      />
-                    </div>
-                    <span className="text-xs tabular-nums text-silver">
-                      {a.onboardingPercent}%
-                    </span>
-                  </div>
-                }
-              />
-            )}
-          </Section>
-
-          <Section title="Compensation">
-            <Field
-              label="Pay rate"
-              value={fmtPay(a.payAmount, a.payType, a.payCurrency)}
-            />
-          </Section>
-
-          <Section title="Org assignment">
-            <Field label="Manager" value={a.managerName ?? '—'} />
-            <Field label="Department" value={a.departmentName ?? '—'} />
-            <Field label="Job profile" value={a.jobProfileTitle ?? '—'} />
-          </Section>
-
-          <Section title="On record">
-            <Field
-              label="In Alto HR since"
-              value={new Date(a.createdAt).toLocaleDateString()}
-            />
-          </Section>
-        </div>
+          <TabsContent value="profile">
+            <ProfileTab associate={a} />
+          </TabsContent>
+          <TabsContent value="compensation">
+            <CompensationTab associate={a} />
+          </TabsContent>
+          <TabsContent value="documents">
+            <DocumentsTab associateId={a.id} />
+          </TabsContent>
+        </Tabs>
       </DrawerBody>
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>
@@ -622,6 +579,538 @@ function DirectoryDrawer({
         </Link>
       </DrawerFooter>
     </>
+  );
+}
+
+function ProfileTab({ associate: a }: { associate: DirectoryEntry }) {
+  return (
+    <div className="space-y-4">
+      <Section title="Contact">
+        <Field
+          icon={<Mail className="h-3.5 w-3.5" />}
+          label="Email"
+          value={
+            <a
+              href={`mailto:${a.email}`}
+              className="text-gold hover:text-gold-bright"
+            >
+              {a.email}
+            </a>
+          }
+        />
+        <Field
+          icon={<Phone className="h-3.5 w-3.5" />}
+          label="Phone"
+          value={
+            a.phone ? (
+              <a href={`tel:${a.phone}`} className="hover:text-white">
+                {a.phone}
+              </a>
+            ) : (
+              '—'
+            )
+          }
+        />
+      </Section>
+
+      <Section title="Workplace">
+        <Field
+          icon={<Building2 className="h-3.5 w-3.5" />}
+          label="Client"
+          value={
+            a.workplaceClientId && a.workplaceClientName ? (
+              <Link
+                to={`/clients/${a.workplaceClientId}`}
+                className="text-gold hover:text-gold-bright"
+              >
+                {a.workplaceClientName}
+              </Link>
+            ) : (
+              '—'
+            )
+          }
+        />
+        <Field
+          icon={<Briefcase className="h-3.5 w-3.5" />}
+          label="Position"
+          value={a.position ?? '—'}
+        />
+        <Field label="Start date" value={a.startDate ?? '—'} />
+        {a.status === 'PENDING' && a.onboardingPercent !== null && (
+          <Field
+            label="Onboarding"
+            value={
+              <div className="flex items-center gap-2">
+                <div className="flex-1 h-2 rounded bg-navy-secondary/60 overflow-hidden max-w-[160px]">
+                  <div
+                    className="h-full bg-warning"
+                    style={{ width: `${a.onboardingPercent}%` }}
+                  />
+                </div>
+                <span className="text-xs tabular-nums text-silver">
+                  {a.onboardingPercent}%
+                </span>
+              </div>
+            }
+          />
+        )}
+      </Section>
+
+      <Section title="Org assignment">
+        <Field label="Manager" value={a.managerName ?? '—'} />
+        <Field label="Department" value={a.departmentName ?? '—'} />
+        <Field label="Job profile" value={a.jobProfileTitle ?? '—'} />
+      </Section>
+
+      <Section title="On record">
+        <Field
+          label="In Alto HR since"
+          value={new Date(a.createdAt).toLocaleDateString()}
+        />
+      </Section>
+    </div>
+  );
+}
+
+const REASON_LABEL: Record<CompChangeReason, string> = {
+  HIRE: 'Hire',
+  MERIT: 'Merit',
+  PROMOTION: 'Promotion',
+  MARKET_ADJUSTMENT: 'Market adjustment',
+  CORRECTION: 'Correction',
+  OTHER: 'Other',
+};
+
+function CompensationTab({ associate: a }: { associate: DirectoryEntry }) {
+  const [records, setRecords] = useState<CompRecord[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [reloadTick, setReloadTick] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setRecords(null);
+    setError(null);
+    listRecords(a.id)
+      .then((r) => {
+        if (cancelled) return;
+        // Newest first — server sorts ASC by effectiveFrom; we flip for display.
+        setRecords([...r.records].reverse());
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof ApiError ? err.message : 'Failed to load.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [a.id, reloadTick]);
+
+  const current = records?.find((r) => r.effectiveTo === null) ?? null;
+
+  return (
+    <div className="space-y-5">
+      <Card>
+        <CardContent className="py-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-silver">
+                Current rate
+              </div>
+              <div className="text-3xl font-semibold tabular-nums text-white mt-1">
+                {current
+                  ? fmtPay(current.amount, current.payType, current.currency)
+                  : fmtPay(a.payAmount, a.payType, a.payCurrency)}
+              </div>
+              {current && (
+                <div className="text-[11px] text-silver mt-1">
+                  {REASON_LABEL[current.reason]} · effective{' '}
+                  {new Date(current.effectiveFrom).toLocaleDateString()}
+                </div>
+              )}
+            </div>
+            <Button onClick={() => setEditOpen(true)}>
+              <Plus className="h-4 w-4 mr-1" />
+              Set new rate
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div>
+        <div className="text-[10px] uppercase tracking-widest text-silver/80 mb-2 border-b border-navy-secondary pb-1">
+          History
+        </div>
+        {error && (
+          <div className="text-sm text-alert" role="alert">
+            {error}
+          </div>
+        )}
+        {!records && !error && <SkeletonRows count={3} rowHeight="h-9" />}
+        {records && records.length === 0 && !error && (
+          <div className="text-sm text-silver py-4">
+            No compensation records yet.
+          </div>
+        )}
+        {records && records.length > 0 && (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Effective</TableHead>
+                <TableHead>Rate</TableHead>
+                <TableHead>Reason</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {records.map((r) => (
+                <TableRow key={r.id}>
+                  <TableCell className="text-silver text-xs tabular-nums whitespace-nowrap">
+                    {new Date(r.effectiveFrom).toLocaleDateString()}
+                    {r.effectiveTo && (
+                      <>
+                        {' – '}
+                        {new Date(r.effectiveTo).toLocaleDateString()}
+                      </>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-white tabular-nums">
+                    {fmtPay(r.amount, r.payType, r.currency)}
+                  </TableCell>
+                  <TableCell className="text-silver text-xs">
+                    {REASON_LABEL[r.reason]}
+                    {r.notes && (
+                      <span className="block text-[10px] text-silver/60 truncate max-w-[180px]">
+                        {r.notes}
+                      </span>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </div>
+
+      <NewRateDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        associate={a}
+        currentRecord={current}
+        onSaved={() => {
+          setEditOpen(false);
+          setReloadTick((n) => n + 1);
+        }}
+      />
+    </div>
+  );
+}
+
+function NewRateDialog({
+  open,
+  onOpenChange,
+  associate: a,
+  currentRecord,
+  onSaved,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  associate: DirectoryEntry;
+  currentRecord: CompRecord | null;
+  onSaved: () => void;
+}) {
+  const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const initialPayType: PayType =
+    (currentRecord?.payType as PayType | undefined) ??
+    (a.payType === 'SALARY' ? 'SALARY' : 'HOURLY');
+
+  const [payType, setPayType] = useState<PayType>(initialPayType);
+  const [amount, setAmount] = useState<string>(
+    currentRecord?.amount ?? a.payAmount ?? '',
+  );
+  const [effectiveFrom, setEffectiveFrom] = useState(today);
+  const [reason, setReason] = useState<CompChangeReason>('MERIT');
+  const [notes, setNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  // Reset whenever dialog opens for a different associate or current rate
+  // changes — prevents stale form values bleeding across rows.
+  useEffect(() => {
+    if (!open) return;
+    setPayType(initialPayType);
+    setAmount(currentRecord?.amount ?? a.payAmount ?? '');
+    setEffectiveFrom(today);
+    setReason('MERIT');
+    setNotes('');
+    setSubmitting(false);
+  }, [open, a.id, currentRecord?.id, initialPayType, today, currentRecord, a.payAmount]);
+
+  const amountNum = Number(amount);
+  const valid =
+    Number.isFinite(amountNum) && amountNum > 0 && effectiveFrom.length === 10;
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!valid || submitting) return;
+    setSubmitting(true);
+    try {
+      await createRecord(a.id, {
+        payType,
+        amount: amountNum,
+        reason,
+        notes: notes.trim() || undefined,
+        effectiveFrom,
+      });
+      toast.success('Rate updated');
+      onSaved();
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : 'Could not save.';
+      toast.error(msg);
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Set new rate</DialogTitle>
+          <DialogDescription>
+            {a.firstName} {a.lastName}
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="grid gap-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Pay type</Label>
+              <div className="mt-1 flex gap-2">
+                <PayTypeOption
+                  active={payType === 'HOURLY'}
+                  onClick={() => setPayType('HOURLY')}
+                  label="Hourly"
+                />
+                <PayTypeOption
+                  active={payType === 'SALARY'}
+                  onClick={() => setPayType('SALARY')}
+                  label="Salary"
+                />
+              </div>
+            </div>
+            <div>
+              <Label htmlFor="rate-amount">
+                Amount{payType === 'HOURLY' ? ' / hour' : ' / year'}
+              </Label>
+              <Input
+                id="rate-amount"
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                min="0"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder={payType === 'HOURLY' ? '24.50' : '65000'}
+                required
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="rate-effective">Effective from</Label>
+              <Input
+                id="rate-effective"
+                type="date"
+                value={effectiveFrom}
+                onChange={(e) => setEffectiveFrom(e.target.value)}
+                required
+              />
+            </div>
+            <div>
+              <Label htmlFor="rate-reason">Reason</Label>
+              <select
+                id="rate-reason"
+                value={reason}
+                onChange={(e) =>
+                  setReason(e.target.value as CompChangeReason)
+                }
+                className="mt-1 w-full h-10 px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
+              >
+                <option value="HIRE">Hire</option>
+                <option value="MERIT">Merit</option>
+                <option value="PROMOTION">Promotion</option>
+                <option value="MARKET_ADJUSTMENT">Market adjustment</option>
+                <option value="CORRECTION">Correction</option>
+                <option value="OTHER">Other</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <Label htmlFor="rate-notes">Notes (optional)</Label>
+            <textarea
+              id="rate-notes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+              maxLength={500}
+              className="mt-1 w-full px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
+              placeholder="Context for the change (visible in history)"
+            />
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => onOpenChange(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!valid || submitting}>
+              {submitting ? 'Saving…' : 'Save'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function PayTypeOption({
+  active,
+  onClick,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'flex-1 h-10 rounded-md border text-sm transition-colors',
+        active
+          ? 'border-gold bg-gold/10 text-white'
+          : 'border-navy-secondary bg-navy-secondary/40 text-silver hover:text-white',
+      )}
+      aria-pressed={active}
+    >
+      {label}
+    </button>
+  );
+}
+
+const DOCUMENT_KIND_LABEL: Record<string, string> = {
+  ID: 'ID',
+  SSN_CARD: 'SSN card',
+  I9_SUPPORTING: 'I-9 supporting',
+  W4_PDF: 'W-4',
+  OFFER_LETTER: 'Offer letter',
+  POLICY: 'Policy',
+  HOUSING_AGREEMENT: 'Housing agreement',
+  TRANSPORT_AGREEMENT: 'Transport agreement',
+  J1_DS2019: 'DS-2019',
+  J1_VISA: 'J-1 visa',
+  SIGNED_AGREEMENT: 'Signed agreement',
+  OTHER: 'Other',
+};
+
+const DOC_STATUS_VARIANT: Record<
+  DocumentRecord['status'],
+  'success' | 'pending' | 'default'
+> = {
+  VERIFIED: 'success',
+  UPLOADED: 'pending',
+  REJECTED: 'default',
+  EXPIRED: 'default',
+};
+
+function DocumentsTab({ associateId }: { associateId: string }) {
+  const [docs, setDocs] = useState<DocumentRecord[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDocs(null);
+    setError(null);
+    listAdminDocuments({ associateId })
+      .then((r) => {
+        if (cancelled) return;
+        setDocs(r.documents);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof ApiError ? err.message : 'Failed to load.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [associateId]);
+
+  if (error) {
+    return (
+      <div className="text-sm text-alert" role="alert">
+        {error}
+      </div>
+    );
+  }
+  if (!docs) {
+    return <SkeletonRows count={3} rowHeight="h-9" />;
+  }
+  if (docs.length === 0) {
+    return (
+      <EmptyState
+        icon={FileText}
+        title="No documents on file"
+        description="Documents the associate uploads or HR verifies will appear here."
+      />
+    );
+  }
+
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow className="hover:bg-transparent">
+          <TableHead>Document</TableHead>
+          <TableHead className="w-28">Status</TableHead>
+          <TableHead className="hidden sm:table-cell">Uploaded</TableHead>
+          <TableHead className="w-12" />
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {docs.map((d) => (
+          <TableRow key={d.id}>
+            <TableCell>
+              <div className="font-medium text-white text-sm">
+                {DOCUMENT_KIND_LABEL[d.kind] ?? d.kind}
+              </div>
+              <div className="text-[10px] text-silver truncate max-w-[220px]">
+                {d.filename}
+              </div>
+            </TableCell>
+            <TableCell>
+              <Badge variant={DOC_STATUS_VARIANT[d.status]}>
+                {d.status.charAt(0) + d.status.slice(1).toLowerCase()}
+              </Badge>
+            </TableCell>
+            <TableCell className="hidden sm:table-cell text-xs text-silver tabular-nums">
+              {new Date(d.createdAt).toLocaleDateString()}
+            </TableCell>
+            <TableCell>
+              <a
+                href={downloadDocumentUrl(d.id)}
+                download
+                className="inline-grid place-items-center h-8 w-8 rounded text-silver hover:text-white hover:bg-navy-secondary/60"
+                aria-label={`Download ${d.filename}`}
+              >
+                <Download className="h-4 w-4" />
+              </a>
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
   );
 }
 
