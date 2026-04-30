@@ -442,55 +442,105 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
             )}
             {active && active.length > 0 && filteredActive && (
               <>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Associate</TableHead>
-                      <TableHead>Client</TableHead>
-                      <TableHead>Job</TableHead>
-                      <TableHead>Since</TableHead>
-                      <TableHead>Elapsed</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Geofence</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredActive.map((e) => (
-                      <TableRow key={e.id} className="group">
-                        <TableCell className="font-medium">
-                          <div className="flex items-center gap-2.5">
-                            <Avatar name={e.associateName} size="sm" />
-                            <span>{e.associateName}</span>
+                {/* md+ : full columnar table. */}
+                <div className="hidden md:block">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Associate</TableHead>
+                        <TableHead>Client</TableHead>
+                        <TableHead>Job</TableHead>
+                        <TableHead>Since</TableHead>
+                        <TableHead>Elapsed</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Geofence</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredActive.map((e) => (
+                        <TableRow key={e.id} className="group">
+                          <TableCell className="font-medium">
+                            <div className="flex items-center gap-2.5">
+                              <Avatar name={e.associateName} size="sm" />
+                              <span>{e.associateName}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-silver">{e.clientName ?? '—'}</TableCell>
+                          <TableCell className="text-silver">{e.jobName ?? '—'}</TableCell>
+                          <TableCell className="tabular-nums text-silver">
+                            {new Date(e.clockInAt).toLocaleTimeString()}
+                          </TableCell>
+                          <TableCell className="tabular-nums">
+                            {formatHM(e.minutesElapsed)}
+                          </TableCell>
+                          <TableCell>
+                            {e.onBreak ? (
+                              <Badge variant="pending">On break</Badge>
+                            ) : (
+                              <Badge variant="success">Working</Badge>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {e.geofenceOk === null && (
+                              <span className="text-xs text-silver/60">N/A</span>
+                            )}
+                            {e.geofenceOk === true && <Badge variant="success">OK</Badge>}
+                            {e.geofenceOk === false && (
+                              <Badge variant="destructive">Off-site</Badge>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                {/* Phone: card stack. Manager scans for "who's on shift" /
+                    "is anyone off-site"; the elapsed counter and break
+                    state are the load-bearing bits. */}
+                <ul className="md:hidden space-y-2">
+                  {filteredActive.map((e) => (
+                    <li
+                      key={e.id}
+                      className="rounded-md border border-navy-secondary bg-navy/40 p-3"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          <Avatar name={e.associateName} size="sm" />
+                          <div className="min-w-0">
+                            <div className="font-medium text-white truncate">
+                              {e.associateName}
+                            </div>
+                            <div className="text-[11px] text-silver/70 truncate">
+                              {e.clientName ?? '—'}
+                              {e.jobName ? ` · ${e.jobName}` : ''}
+                            </div>
                           </div>
-                        </TableCell>
-                        <TableCell className="text-silver">{e.clientName ?? '—'}</TableCell>
-                        <TableCell className="text-silver">{e.jobName ?? '—'}</TableCell>
-                        <TableCell className="tabular-nums text-silver">
-                          {new Date(e.clockInAt).toLocaleTimeString()}
-                        </TableCell>
-                        <TableCell className="tabular-nums">
-                          {formatHM(e.minutesElapsed)}
-                        </TableCell>
-                        <TableCell>
+                        </div>
+                        <div className="flex flex-col items-end gap-1 shrink-0">
                           {e.onBreak ? (
                             <Badge variant="pending">On break</Badge>
                           ) : (
                             <Badge variant="success">Working</Badge>
                           )}
-                        </TableCell>
-                        <TableCell>
-                          {e.geofenceOk === null && (
-                            <span className="text-xs text-silver/60">N/A</span>
-                          )}
-                          {e.geofenceOk === true && <Badge variant="success">OK</Badge>}
                           {e.geofenceOk === false && (
-                            <Badge variant="destructive">Off-site</Badge>
+                            <Badge variant="destructive" className="text-[10px]">
+                              Off-site
+                            </Badge>
                           )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                        </div>
+                      </div>
+                      <div className="mt-2 flex items-end justify-between gap-3 text-[11px] text-silver">
+                        <span className="tabular-nums">
+                          Since {new Date(e.clockInAt).toLocaleTimeString()}
+                        </span>
+                        <span className="tabular-nums text-white">
+                          {formatHM(e.minutesElapsed)}
+                        </span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
                 {filteredActive.length === 0 && (
                   <p className="text-sm text-silver mt-3">
                     No matches for &ldquo;{liveSearch}&rdquo;.
@@ -602,12 +652,12 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
 
           {/* Bulk-action toolbar — only shown when rows are selectable & any selected. */}
           {canManage && filter === 'COMPLETED' && selected.size > 0 && (
-            <div className="mx-5 mb-3 flex items-center justify-between gap-3 px-3 py-2 rounded-md border border-gold/40 bg-gold/10">
+            <div className="mx-5 mb-3 flex flex-wrap items-center justify-between gap-3 px-3 py-2 rounded-md border border-gold/40 bg-gold/10">
               <div className="text-sm text-gold">
                 <span className="font-medium tabular-nums">{selected.size}</span>{' '}
                 selected
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Button
                   size="sm"
                   variant="primary"
@@ -647,119 +697,237 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
               />
             )}
             {entries && entries.length > 0 && (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    {canManage && filter === 'COMPLETED' && (
-                      <TableHead className="w-8">
-                        <input
-                          type="checkbox"
-                          aria-label="Select all"
-                          checked={allSelected}
-                          ref={(el) => {
-                            if (el) el.indeterminate = someSelected;
-                          }}
-                          onChange={toggleAll}
-                          className="h-4 w-4 rounded border-navy-secondary bg-navy-secondary/40 text-gold focus:ring-gold"
-                        />
-                      </TableHead>
-                    )}
-                    <TableHead>Associate</TableHead>
-                    <TableHead>Client</TableHead>
-                    <TableHead>In</TableHead>
-                    <TableHead>Out</TableHead>
-                    <TableHead>Duration</TableHead>
-                    <TableHead>Status</TableHead>
-                    {canManage && <TableHead className="text-right">Actions</TableHead>}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
+              <>
+                {/* md+ : full sortable table. */}
+                <div className="hidden md:block">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        {canManage && filter === 'COMPLETED' && (
+                          <TableHead className="w-8">
+                            <input
+                              type="checkbox"
+                              aria-label="Select all"
+                              checked={allSelected}
+                              ref={(el) => {
+                                if (el) el.indeterminate = someSelected;
+                              }}
+                              onChange={toggleAll}
+                              className="h-4 w-4 rounded border-navy-secondary bg-navy-secondary/40 text-gold focus:ring-gold"
+                            />
+                          </TableHead>
+                        )}
+                        <TableHead>Associate</TableHead>
+                        <TableHead>Client</TableHead>
+                        <TableHead>In</TableHead>
+                        <TableHead>Out</TableHead>
+                        <TableHead>Duration</TableHead>
+                        <TableHead>Status</TableHead>
+                        {canManage && <TableHead className="text-right">Actions</TableHead>}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {entries.map((e) => {
+                        const isSelectable = canManage && filter === 'COMPLETED' && e.status === 'COMPLETED';
+                        return (
+                          <TableRow
+                            key={e.id}
+                            className="group cursor-pointer"
+                            data-state={selected.has(e.id) ? 'selected' : undefined}
+                            onClick={(ev) => {
+                              const target = ev.target as HTMLElement;
+                              if (target.closest('button, a, input, [data-no-row-click]')) return;
+                              if (window.getSelection()?.toString()) return;
+                              setDrawerTarget(e);
+                            }}
+                          >
+                            {canManage && filter === 'COMPLETED' && (
+                              <TableCell className="w-8">
+                                {isSelectable && (
+                                  <input
+                                    type="checkbox"
+                                    aria-label={`Select entry for ${e.associateName ?? 'associate'}`}
+                                    checked={selected.has(e.id)}
+                                    onChange={() => toggleOne(e.id)}
+                                    className="h-4 w-4 rounded border-navy-secondary bg-navy-secondary/40 text-gold focus:ring-gold"
+                                  />
+                                )}
+                              </TableCell>
+                            )}
+                            <TableCell className="font-medium">
+                              <div className="flex items-center gap-2.5">
+                                <Avatar name={e.associateName ?? '—'} size="sm" />
+                                <span>{e.associateName ?? '—'}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-silver">{e.clientName ?? '—'}</TableCell>
+                            <TableCell className="tabular-nums">
+                              {new Date(e.clockInAt).toLocaleString()}
+                            </TableCell>
+                            <TableCell className="tabular-nums">
+                              {e.clockOutAt
+                                ? new Date(e.clockOutAt).toLocaleTimeString()
+                                : '—'}
+                            </TableCell>
+                            <TableCell className="tabular-nums">
+                              {formatHM(e.minutesElapsed)}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant={statusVariant(e.status)}>{e.status}</Badge>
+                              {e.rejectionReason && (
+                                <div className="text-alert text-[10px] mt-1">
+                                  {e.rejectionReason}
+                                </div>
+                              )}
+                            </TableCell>
+                            {canManage && (
+                              <TableCell className="text-right whitespace-nowrap">
+                                <div className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity inline-flex items-center gap-1">
+                                  {(e.status === 'COMPLETED' || e.status === 'REJECTED') && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => onApprove(e.id)}
+                                      loading={pendingId === e.id}
+                                      disabled={pendingId === e.id || bulkBusy}
+                                    >
+                                      Approve
+                                    </Button>
+                                  )}
+                                  {(e.status === 'COMPLETED' || e.status === 'APPROVED') && (
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="text-alert hover:text-alert hover:bg-alert/10"
+                                      onClick={() => setRejectOpen({ mode: 'one', id: e.id })}
+                                      disabled={pendingId === e.id || bulkBusy}
+                                    >
+                                      Reject
+                                    </Button>
+                                  )}
+                                </div>
+                              </TableCell>
+                            )}
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                {/* Phone: card stack. Approve/Reject are inline on each
+                    card instead of hover-revealed; the row is also tap-to-
+                    open the detail drawer (managers reach the audit trail
+                    + edits there). Selection checkbox top-left when
+                    bulk-eligible. */}
+                <ul className="md:hidden space-y-2">
                   {entries.map((e) => {
                     const isSelectable = canManage && filter === 'COMPLETED' && e.status === 'COMPLETED';
+                    const showCheckbox = canManage && filter === 'COMPLETED';
                     return (
-                      <TableRow
-                        key={e.id}
-                        className="group cursor-pointer"
-                        data-state={selected.has(e.id) ? 'selected' : undefined}
-                        onClick={(ev) => {
-                          const target = ev.target as HTMLElement;
-                          if (target.closest('button, a, input, [data-no-row-click]')) return;
-                          if (window.getSelection()?.toString()) return;
-                          setDrawerTarget(e);
-                        }}
-                      >
-                        {canManage && filter === 'COMPLETED' && (
-                          <TableCell className="w-8">
-                            {isSelectable && (
-                              <input
-                                type="checkbox"
-                                aria-label={`Select entry for ${e.associateName ?? 'associate'}`}
-                                checked={selected.has(e.id)}
-                                onChange={() => toggleOne(e.id)}
-                                className="h-4 w-4 rounded border-navy-secondary bg-navy-secondary/40 text-gold focus:ring-gold"
-                              />
-                            )}
-                          </TableCell>
-                        )}
-                        <TableCell className="font-medium">
-                          <div className="flex items-center gap-2.5">
-                            <Avatar name={e.associateName ?? '—'} size="sm" />
-                            <span>{e.associateName ?? '—'}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-silver">{e.clientName ?? '—'}</TableCell>
-                        <TableCell className="tabular-nums">
-                          {new Date(e.clockInAt).toLocaleString()}
-                        </TableCell>
-                        <TableCell className="tabular-nums">
-                          {e.clockOutAt
-                            ? new Date(e.clockOutAt).toLocaleTimeString()
-                            : '—'}
-                        </TableCell>
-                        <TableCell className="tabular-nums">
-                          {formatHM(e.minutesElapsed)}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={statusVariant(e.status)}>{e.status}</Badge>
-                          {e.rejectionReason && (
-                            <div className="text-alert text-[10px] mt-1">
-                              {e.rejectionReason}
-                            </div>
+                      <li key={e.id}>
+                        <div
+                          className={cn(
+                            'rounded-md border bg-navy/40 transition-colors',
+                            selected.has(e.id)
+                              ? 'border-gold/40 bg-gold/5'
+                              : 'border-navy-secondary'
                           )}
-                        </TableCell>
-                        {canManage && (
-                          <TableCell className="text-right whitespace-nowrap">
-                            <div className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity inline-flex items-center gap-1">
-                              {(e.status === 'COMPLETED' || e.status === 'REJECTED') && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => onApprove(e.id)}
-                                  loading={pendingId === e.id}
-                                  disabled={pendingId === e.id || bulkBusy}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => setDrawerTarget(e)}
+                            className="w-full text-left p-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded-md"
+                          >
+                            <div className="flex items-start gap-2.5">
+                              {showCheckbox && (
+                                <span
+                                  className="pt-0.5 shrink-0"
+                                  data-no-row-click
+                                  onClick={(ev) => ev.stopPropagation()}
                                 >
-                                  Approve
-                                </Button>
+                                  {isSelectable && (
+                                    <input
+                                      type="checkbox"
+                                      aria-label={`Select entry for ${e.associateName ?? 'associate'}`}
+                                      checked={selected.has(e.id)}
+                                      onChange={() => toggleOne(e.id)}
+                                      className="h-4 w-4 rounded border-navy-secondary bg-navy-secondary/40 text-gold focus:ring-gold"
+                                    />
+                                  )}
+                                </span>
                               )}
-                              {(e.status === 'COMPLETED' || e.status === 'APPROVED') && (
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  className="text-alert hover:text-alert hover:bg-alert/10"
-                                  onClick={() => setRejectOpen({ mode: 'one', id: e.id })}
-                                  disabled={pendingId === e.id || bulkBusy}
-                                >
-                                  Reject
-                                </Button>
-                              )}
+                              <Avatar name={e.associateName ?? '—'} size="sm" />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="font-medium text-white truncate">
+                                    {e.associateName ?? '—'}
+                                  </div>
+                                  <Badge variant={statusVariant(e.status)} className="shrink-0">
+                                    {e.status}
+                                  </Badge>
+                                </div>
+                                <div className="text-[11px] text-silver/70 truncate">
+                                  {e.clientName ?? '—'}
+                                </div>
+                                <div className="mt-1.5 flex items-end justify-between gap-3 text-[11px] text-silver">
+                                  <span className="tabular-nums">
+                                    {new Date(e.clockInAt).toLocaleString()}
+                                    {e.clockOutAt
+                                      ? ` → ${new Date(e.clockOutAt).toLocaleTimeString()}`
+                                      : ' → —'}
+                                  </span>
+                                  <span className="tabular-nums text-white">
+                                    {formatHM(e.minutesElapsed)}
+                                  </span>
+                                </div>
+                                {e.rejectionReason && (
+                                  <div className="text-alert text-[10px] mt-1">
+                                    {e.rejectionReason}
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                          </TableCell>
-                        )}
-                      </TableRow>
+                          </button>
+                          {canManage &&
+                            (e.status === 'COMPLETED' ||
+                              e.status === 'APPROVED' ||
+                              e.status === 'REJECTED') && (
+                              <div
+                                className="flex gap-2 px-3 pb-3 pt-0"
+                                data-no-row-click
+                                onClick={(ev) => ev.stopPropagation()}
+                              >
+                                {(e.status === 'COMPLETED' || e.status === 'REJECTED') && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => onApprove(e.id)}
+                                    loading={pendingId === e.id}
+                                    disabled={pendingId === e.id || bulkBusy}
+                                  >
+                                    Approve
+                                  </Button>
+                                )}
+                                {(e.status === 'COMPLETED' || e.status === 'APPROVED') && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="text-alert hover:text-alert hover:bg-alert/10"
+                                    onClick={() => setRejectOpen({ mode: 'one', id: e.id })}
+                                    disabled={pendingId === e.id || bulkBusy}
+                                  >
+                                    Reject
+                                  </Button>
+                                )}
+                              </div>
+                            )}
+                        </div>
+                      </li>
                     );
                   })}
-                </TableBody>
-              </Table>
+                </ul>
+              </>
             )}
           </CardContent>
         </Card>
