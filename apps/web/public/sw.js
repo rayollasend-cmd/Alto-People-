@@ -9,8 +9,18 @@
 //     never cache business data, since it'd diverge from the source of
 //     truth and potentially leak across user sessions.
 
-const CACHE_NAME = 'alto-shell-v2';
-const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/logo.png', '/icon-512.svg'];
+// Bumped when the SHELL list changes so the activate handler evicts the
+// previous shell cache instead of leaving stale entries (the now-broken
+// 125x91 logo.png) lying around indefinitely.
+const CACHE_NAME = 'alto-shell-v3';
+const SHELL = [
+  '/',
+  '/index.html',
+  '/manifest.webmanifest',
+  '/icon-192.png',
+  '/icon-512.png',
+  '/apple-touch-icon.png',
+];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
