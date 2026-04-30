@@ -50,15 +50,6 @@ export function Login() {
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-login-aurora">
       <div className="w-full max-w-md">
-        <div className="text-center mb-8 animate-fade-in">
-          <h1 className="font-display text-5xl md:text-6xl text-gold mb-2 leading-none">
-            Alto People
-          </h1>
-          <p className="text-silver text-xs md:text-sm tracking-[0.3em] uppercase">
-            Workforce Management Platform
-          </p>
-        </div>
-
         <form
           onSubmit={handleSubmit}
           className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 shadow-2xl animate-zoom-in"
