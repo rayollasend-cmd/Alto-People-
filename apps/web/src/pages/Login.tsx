@@ -48,7 +48,7 @@ export function Login() {
   const canSubmit = !!email && password.length >= 12 && !submitting;
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-gradient-to-br from-midnight via-navy to-navy-secondary">
+    <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-login-aurora">
       <div className="w-full max-w-md">
         <div className="text-center mb-8 animate-fade-in">
           <h1 className="font-display text-5xl md:text-6xl text-gold mb-2 leading-none">

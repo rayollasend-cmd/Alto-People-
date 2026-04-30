@@ -34,7 +34,7 @@ export function Drawer({ open, onOpenChange, width = 'max-w-md', children }: Dra
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
           className={cn(
-            'fixed inset-0 z-50 bg-midnight/80 backdrop-blur-sm',
+            'fixed inset-0 z-50 bg-backdrop backdrop-blur-sm',
             'data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out',
           )}
         />

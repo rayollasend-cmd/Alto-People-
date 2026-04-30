@@ -51,7 +51,7 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
       aria-label="Main navigation"
     >
       <div
-        className="absolute inset-0 bg-midnight/80 backdrop-blur-sm"
+        className="absolute inset-0 bg-backdrop backdrop-blur-sm"
         onClick={onClose}
         aria-hidden="true"
       />
