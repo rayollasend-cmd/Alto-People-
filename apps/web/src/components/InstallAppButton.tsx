@@ -1,56 +1,46 @@
 import { useEffect, useState } from 'react';
 import { Download } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import {
+  isStandaloneDisplay,
+  subscribeInstallPrompt,
+  triggerInstall,
+} from '@/lib/installPrompt';
 
-// Captures Chrome's deferred install prompt and surfaces it as a button in
-// the topbar. iOS Safari does not fire `beforeinstallprompt`; users install
-// there via the share sheet → "Add to Home Screen". The apple-mobile-web-app
-// meta tags in index.html make that path work.
+// Surfaces Chrome's deferred install prompt as a button in the topbar.
 //
-// Once the user installs (`appinstalled` fires) or dismisses for the
-// session, we hide the button until the next session.
-
-interface BeforeInstallPromptEvent extends Event {
-  readonly platforms: ReadonlyArray<string>;
-  readonly userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
-  prompt(): Promise<void>;
-}
+// We DON'T add the listener here — that's done at module import time in
+// `lib/installPrompt.ts` so the event isn't lost if it fires before this
+// component mounts (e.g. while the user is on /login). We just subscribe.
+//
+// iOS Safari and Firefox Desktop don't fire beforeinstallprompt at all.
+// Users on those browsers install via Share → Add to Home Screen / the
+// browser's install menu. The button stays hidden in that case rather
+// than promising something we can't deliver.
 
 const DISMISS_KEY = 'alto.install.dismissed';
 
 export function InstallAppButton() {
-  const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
+  const [available, setAvailable] = useState(false);
+  const [dismissed, setDismissed] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return sessionStorage.getItem(DISMISS_KEY) === '1';
+  });
 
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (sessionStorage.getItem(DISMISS_KEY) === '1') return;
+  useEffect(() => subscribeInstallPrompt(setAvailable), []);
 
-    const onBeforeInstall = (e: Event) => {
-      e.preventDefault();
-      setDeferred(e as BeforeInstallPromptEvent);
-    };
-    const onInstalled = () => setDeferred(null);
-
-    window.addEventListener('beforeinstallprompt', onBeforeInstall);
-    window.addEventListener('appinstalled', onInstalled);
-    return () => {
-      window.removeEventListener('beforeinstallprompt', onBeforeInstall);
-      window.removeEventListener('appinstalled', onInstalled);
-    };
-  }, []);
-
-  if (!deferred) return null;
+  // Already running in standalone window — nothing to install.
+  if (isStandaloneDisplay()) return null;
+  if (!available || dismissed) return null;
 
   const handleInstall = async () => {
-    try {
-      await deferred.prompt();
-      const choice = await deferred.userChoice;
-      if (choice.outcome === 'dismissed') {
-        sessionStorage.setItem(DISMISS_KEY, '1');
-      }
-    } finally {
-      setDeferred(null);
+    const outcome = await triggerInstall();
+    if (outcome === 'dismissed') {
+      sessionStorage.setItem(DISMISS_KEY, '1');
+      setDismissed(true);
     }
+    // 'accepted' → appinstalled fires → store flips available=false
+    // 'unavailable' → state already false; nothing to do
   };
 
   return (
@@ -58,11 +48,10 @@ export function InstallAppButton() {
       variant="ghost"
       size="sm"
       onClick={handleInstall}
-      className="hidden sm:inline-flex"
       aria-label="Install Alto People as an app"
     >
       <Download className="h-3.5 w-3.5" aria-hidden="true" />
-      <span>Install app</span>
+      <span className="hidden sm:inline">Install app</span>
     </Button>
   );
 }

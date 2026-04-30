@@ -18,6 +18,11 @@ import '@fontsource-variable/cormorant-garamond';
 
 import './index.css';
 
+// Side-effect import: attaches the `beforeinstallprompt` listener at module
+// load time so the event isn't lost if it fires before the InstallAppButton
+// component mounts (e.g. while the user is still on /login).
+import '@/lib/installPrompt';
+
 const rootEl = document.getElementById('root');
 if (!rootEl) throw new Error('Root element #root not found');
 
