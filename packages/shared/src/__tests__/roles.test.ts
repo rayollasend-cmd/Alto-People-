@@ -48,12 +48,19 @@ describe('hasCapability', () => {
     for (const c of ALL_CAPS) expect(hasCapability('HR_ADMINISTRATOR', c)).toBe(true);
   });
 
-  it('OPERATIONS_MANAGER has every view but cannot process payroll', () => {
-    for (const v of ALL_VIEWS) expect(hasCapability('OPERATIONS_MANAGER', v)).toBe(true);
-    expect(hasCapability('OPERATIONS_MANAGER', 'process:payroll')).toBe(false);
-    // But other manage caps yes
-    expect(hasCapability('OPERATIONS_MANAGER', 'manage:onboarding')).toBe(true);
-    expect(hasCapability('OPERATIONS_MANAGER', 'manage:scheduling')).toBe(true);
+  // Per product policy, OPERATIONS_MANAGER, MANAGER, INTERNAL_RECRUITER,
+  // and WORKFORCE_MANAGER all share the HR_ADMINISTRATOR capability surface.
+  // The role label still differs so audit logs reflect functional capacity.
+  it.each([
+    'OPERATIONS_MANAGER',
+    'MANAGER',
+    'INTERNAL_RECRUITER',
+    'WORKFORCE_MANAGER',
+    'MARKETING_MANAGER',
+  ] as const)('%s mirrors HR_ADMINISTRATOR capability set', (role) => {
+    for (const c of ALL_CAPS) expect(hasCapability(role, c)).toBe(true);
+    expect(hasCapability(role, 'view:hr-admin')).toBe(true);
+    expect(hasCapability(role, 'view:audit')).toBe(true);
   });
 
   it('LIVE_ASN has zero capabilities', () => {
@@ -87,19 +94,25 @@ describe('hasCapability', () => {
     for (const m of ALL_MANAGE) expect(hasCapability('CLIENT_PORTAL', m)).toBe(false);
   });
 
-  it('FINANCE_ACCOUNTANT views payroll + analytics only', () => {
+  it('FINANCE_ACCOUNTANT is scoped to time + pay only', () => {
+    // In-scope: time, scheduling, payroll, comp, analytics, dashboard.
+    expect(hasCapability('FINANCE_ACCOUNTANT', 'view:dashboard')).toBe(true);
+    expect(hasCapability('FINANCE_ACCOUNTANT', 'view:time')).toBe(true);
+    expect(hasCapability('FINANCE_ACCOUNTANT', 'view:scheduling')).toBe(true);
     expect(hasCapability('FINANCE_ACCOUNTANT', 'view:payroll')).toBe(true);
+    expect(hasCapability('FINANCE_ACCOUNTANT', 'process:payroll')).toBe(true);
+    expect(hasCapability('FINANCE_ACCOUNTANT', 'view:comp')).toBe(true);
     expect(hasCapability('FINANCE_ACCOUNTANT', 'view:analytics')).toBe(true);
+    // Out-of-scope: HR / onboarding / recruiting / comms / clients.
     expect(hasCapability('FINANCE_ACCOUNTANT', 'view:onboarding')).toBe(false);
-    expect(hasCapability('FINANCE_ACCOUNTANT', 'process:payroll')).toBe(false);
-  });
-
-  it('INTERNAL_RECRUITER manages onboarding and recruiting, no payroll/scheduling', () => {
-    expect(hasCapability('INTERNAL_RECRUITER', 'view:recruiting')).toBe(true);
-    expect(hasCapability('INTERNAL_RECRUITER', 'manage:recruiting')).toBe(true);
-    expect(hasCapability('INTERNAL_RECRUITER', 'manage:onboarding')).toBe(true);
-    expect(hasCapability('INTERNAL_RECRUITER', 'view:payroll')).toBe(false);
-    expect(hasCapability('INTERNAL_RECRUITER', 'manage:scheduling')).toBe(false);
+    expect(hasCapability('FINANCE_ACCOUNTANT', 'view:recruiting')).toBe(false);
+    expect(hasCapability('FINANCE_ACCOUNTANT', 'view:hr-admin')).toBe(false);
+    expect(hasCapability('FINANCE_ACCOUNTANT', 'view:communications')).toBe(false);
+    expect(hasCapability('FINANCE_ACCOUNTANT', 'view:clients')).toBe(false);
+    // No write caps on HR-side data either.
+    expect(hasCapability('FINANCE_ACCOUNTANT', 'manage:onboarding')).toBe(false);
+    expect(hasCapability('FINANCE_ACCOUNTANT', 'manage:scheduling')).toBe(false);
+    expect(hasCapability('FINANCE_ACCOUNTANT', 'manage:comp')).toBe(false);
   });
 });
 

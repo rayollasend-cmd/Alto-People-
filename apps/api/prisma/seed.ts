@@ -1,4 +1,4 @@
-import { PrismaClient, type Prisma } from '@prisma/client';
+import { PrismaClient, type Prisma, type Role } from '@prisma/client';
 import { hashPassword } from '../src/lib/passwords.js';
 import { ALTO_POLICIES, HANDBOOK_POLICY } from '../src/lib/altoHrContent.js';
 
@@ -7,6 +7,25 @@ const prisma = new PrismaClient();
 const ADMIN_DEV_PASSWORD = 'alto-admin-dev';
 const ASSOCIATE_DEV_PASSWORD = 'maria-dev-2026!';
 const PORTAL_DEV_PASSWORD = 'portal-dev-2026!';
+
+// Management users: one per role so QA can sign in as each functional
+// persona. OPS / MANAGER / RECRUITER / WORKFORCE all share HR_ADMIN-level
+// capabilities (granted in roles.ts); only the role label differs so audit
+// logs show who acted in which capacity. FINANCE is intentionally limited
+// to the time + pay surface.
+const MANAGEMENT_USERS: ReadonlyArray<{
+  email: string;
+  password: string;
+  role: Role;
+  label: string;
+}> = [
+  { email: 'ops@altohr.com', password: 'ops-dev-2026!', role: 'OPERATIONS_MANAGER', label: 'Operations Manager' },
+  { email: 'manager@altohr.com', password: 'manager-dev-2026!', role: 'MANAGER', label: 'Manager' },
+  { email: 'recruiter@altohr.com', password: 'recruiter-dev-2026!', role: 'INTERNAL_RECRUITER', label: 'Internal Recruiter' },
+  { email: 'workforce@altohr.com', password: 'workforce-dev-2026!', role: 'WORKFORCE_MANAGER', label: 'Workforce Manager' },
+  { email: 'marketing@altohr.com', password: 'marketing-dev-2026!', role: 'MARKETING_MANAGER', label: 'Marketing Manager' },
+  { email: 'finance@altohr.com', password: 'finance-dev-2026!', role: 'FINANCE_ACCOUNTANT', label: 'Finance / Accountant' },
+];
 
 /**
  * Phase 2 seed.
@@ -277,6 +296,30 @@ async function main() {
     portalUser = existingPortalUser;
   }
 
+  // ---- Management users (one per non-HR role for QA / persona testing) ---
+  for (const m of MANAGEMENT_USERS) {
+    const existing = await prisma.user.findUnique({ where: { email: m.email } });
+    if (!existing) {
+      await prisma.user.create({
+        data: {
+          email: m.email,
+          passwordHash: await hashPassword(m.password),
+          role: m.role,
+          status: 'ACTIVE',
+        },
+      });
+    } else if (!existing.passwordHash || existing.role !== m.role) {
+      await prisma.user.update({
+        where: { id: existing.id },
+        data: {
+          passwordHash: await hashPassword(m.password),
+          role: m.role,
+          status: 'ACTIVE',
+        },
+      });
+    }
+  }
+
   // ---- Application + Checklist (instantiated from template) --------------
   const existingApp = await prisma.application.findFirst({
     where: { associateId: associate.id, clientId: client.id },
@@ -316,6 +359,9 @@ async function main() {
   console.log(`[seed]   admin user: ${adminUser.email} / ${ADMIN_DEV_PASSWORD}`);
   console.log(`[seed]   associate user: ${associateUser.email} / ${ASSOCIATE_DEV_PASSWORD}`);
   console.log(`[seed]   portal user: ${portalUser.email} / ${PORTAL_DEV_PASSWORD}`);
+  for (const m of MANAGEMENT_USERS) {
+    console.log(`[seed]   ${m.label}: ${m.email} / ${m.password}`);
+  }
   console.log(`[seed]   client (primary): ${client.name} (${client.id})`);
   console.log(`[seed]   client (portal):  ${portalClient.name} (${portalClient.id})`);
   console.log(`[seed]   associate: ${associate.firstName} ${associate.lastName} (${associate.id})`);
