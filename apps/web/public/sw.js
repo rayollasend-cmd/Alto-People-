@@ -12,7 +12,7 @@
 // Bumped when the SHELL list changes so the activate handler evicts the
 // previous shell cache instead of leaving stale entries (the now-broken
 // 125x91 logo.png) lying around indefinitely.
-const CACHE_NAME = 'alto-shell-v4';
+const CACHE_NAME = 'alto-shell-v5';
 const SHELL = [
   '/',
   '/index.html',
