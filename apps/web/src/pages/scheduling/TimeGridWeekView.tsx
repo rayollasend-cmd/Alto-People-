@@ -247,7 +247,7 @@ export function TimeGridWeekView({
       onDragEnd={onDragEnd}
       onDragCancel={() => setActiveDrag(null)}
     >
-      <div className="rounded-md border border-navy-secondary bg-navy/40 overflow-x-auto">
+      <div className="rounded-md border border-navy-secondary bg-navy/40 overflow-x-auto overscroll-x-contain">
         <div className="grid min-w-[1200px]" style={gridStyle}>
           {/* Header */}
           <div className="sticky left-0 z-20 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-3 py-2 text-[10px] uppercase tracking-wider text-silver">

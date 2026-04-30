@@ -456,7 +456,7 @@ function KpiSection({ kpis }: { kpis: DashboardKPIs | null }) {
   return (
     <section aria-label="Workforce metrics" className="space-y-3">
       <SectionTitle icon={Activity}>Workforce snapshot</SectionTitle>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {kpis ? (
           buildKpis(kpis).map((kpi) => <KpiTile key={kpi.label} kpi={kpi} />)
         ) : (
