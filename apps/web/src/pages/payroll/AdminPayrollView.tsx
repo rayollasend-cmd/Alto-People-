@@ -380,93 +380,151 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
             />
           )}
           {sortedRuns && sortedRuns.length > 0 && (
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <SortableTh
-                    label="Period"
-                    sortKey="periodEnd"
-                    activeKey={sortKey}
-                    activeDir={sortDir}
-                    onClick={toggleSort}
-                  />
-                  <SortableTh
-                    label="Status"
-                    sortKey="status"
-                    activeKey={sortKey}
-                    activeDir={sortDir}
-                    onClick={toggleSort}
-                  />
-                  <SortableTh
-                    label="Paystubs"
-                    sortKey="itemCount"
-                    activeKey={sortKey}
-                    activeDir={sortDir}
-                    onClick={toggleSort}
-                    align="right"
-                  />
-                  <SortableTh
-                    label="Gross"
-                    sortKey="totalGross"
-                    activeKey={sortKey}
-                    activeDir={sortDir}
-                    onClick={toggleSort}
-                    align="right"
-                  />
-                  <SortableTh
-                    label="Net"
-                    sortKey="totalNet"
-                    activeKey={sortKey}
-                    activeDir={sortDir}
-                    onClick={toggleSort}
-                    align="right"
-                  />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+            <>
+              {/* md+ : columnar table with sortable headers. */}
+              <div className="hidden md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <SortableTh
+                        label="Period"
+                        sortKey="periodEnd"
+                        activeKey={sortKey}
+                        activeDir={sortDir}
+                        onClick={toggleSort}
+                      />
+                      <SortableTh
+                        label="Status"
+                        sortKey="status"
+                        activeKey={sortKey}
+                        activeDir={sortDir}
+                        onClick={toggleSort}
+                      />
+                      <SortableTh
+                        label="Paystubs"
+                        sortKey="itemCount"
+                        activeKey={sortKey}
+                        activeDir={sortDir}
+                        onClick={toggleSort}
+                        align="right"
+                      />
+                      <SortableTh
+                        label="Gross"
+                        sortKey="totalGross"
+                        activeKey={sortKey}
+                        activeDir={sortDir}
+                        onClick={toggleSort}
+                        align="right"
+                      />
+                      <SortableTh
+                        label="Net"
+                        sortKey="totalNet"
+                        activeKey={sortKey}
+                        activeDir={sortDir}
+                        onClick={toggleSort}
+                        align="right"
+                      />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {sortedRuns.map((r) => (
+                      <TableRow
+                        key={r.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => openRun(r.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            openRun(r.id);
+                          }
+                        }}
+                        className={cn(
+                          'cursor-pointer focus:outline-none focus-visible:bg-navy-secondary/50',
+                          selected?.id === r.id && 'bg-gold/5'
+                        )}
+                      >
+                        <TableCell>
+                          <div className="text-white tabular-nums">
+                            {r.periodStart} → {r.periodEnd}
+                          </div>
+                          {r.clientName && (
+                            <div className="text-[11px] text-silver/60 mt-0.5">
+                              {r.clientName}
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={RUN_STATUS_VARIANT[r.status]}>{r.status}</Badge>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-silver">
+                          {r.itemCount}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-silver">
+                          {fmtMoney(r.totalGross)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-gold">
+                          {fmtMoney(r.totalNet)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Phone: card stack. Same default sort (periodEnd desc); the
+                  sortable headers are desktop-only — on mobile we rely on
+                  the status filter buttons above for the common "show me
+                  drafts" / "show me disbursed" cuts. */}
+              <ul className="md:hidden space-y-2">
                 {sortedRuns.map((r) => (
-                  <TableRow
-                    key={r.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => openRun(r.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        openRun(r.id);
-                      }
-                    }}
-                    className={cn(
-                      'cursor-pointer focus:outline-none focus-visible:bg-navy-secondary/50',
-                      selected?.id === r.id && 'bg-gold/5'
-                    )}
-                  >
-                    <TableCell>
-                      <div className="text-white tabular-nums">
-                        {r.periodStart} → {r.periodEnd}
-                      </div>
-                      {r.clientName && (
-                        <div className="text-[11px] text-silver/60 mt-0.5">
-                          {r.clientName}
-                        </div>
+                  <li key={r.id}>
+                    <button
+                      type="button"
+                      onClick={() => openRun(r.id)}
+                      className={cn(
+                        'w-full text-left rounded-md border bg-navy/40 p-3 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                        selected?.id === r.id
+                          ? 'border-gold/40 bg-gold/5'
+                          : 'border-navy-secondary hover:border-silver/40'
                       )}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={RUN_STATUS_VARIANT[r.status]}>{r.status}</Badge>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-silver">
-                      {r.itemCount}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-silver">
-                      {fmtMoney(r.totalGross)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-gold">
-                      {fmtMoney(r.totalNet)}
-                    </TableCell>
-                  </TableRow>
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm text-white tabular-nums">
+                            {r.periodStart} → {r.periodEnd}
+                          </div>
+                          {r.clientName && (
+                            <div className="text-[11px] text-silver/60 mt-0.5 truncate">
+                              {r.clientName}
+                            </div>
+                          )}
+                        </div>
+                        <Badge variant={RUN_STATUS_VARIANT[r.status]} className="shrink-0">
+                          {r.status}
+                        </Badge>
+                      </div>
+                      <div className="mt-2 flex items-end justify-between gap-3">
+                        <div className="text-[11px] text-silver/70">
+                          {r.itemCount} paystub{r.itemCount === 1 ? '' : 's'} · gross{' '}
+                          <span className="tabular-nums text-silver">
+                            {fmtMoney(r.totalGross)}
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-[10px] uppercase tracking-widest text-silver/50">
+                            Net
+                          </div>
+                          <div className="tabular-nums text-gold text-base">
+                            {fmtMoney(r.totalNet)}
+                          </div>
+                        </div>
+                      </div>
+                    </button>
+                  </li>
                 ))}
-              </TableBody>
-            </Table>
+              </ul>
+            </>
           )}
         </CardContent>
       </Card>
@@ -726,7 +784,7 @@ function PayrollHero({
                 {nr.periodStart} → {nr.periodEnd}
                 {nr.clientName ? ` · ${nr.clientName}` : ''}
               </div>
-              <div className="mt-4 grid grid-cols-3 gap-3 text-xs">
+              <div className="mt-4 grid grid-cols-3 gap-2 sm:gap-3 text-xs">
                 <HeroStat
                   icon={<Users className="h-3.5 w-3.5" />}
                   label="Paystubs"
