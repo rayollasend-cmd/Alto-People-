@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Simplified Alto People mark for favicon / sub-96px sizes.
+
+  The full brand logo (logo-source.jpg) has compass-rim ticks, sky shading
+  inside the ring, and a baseline detail under the peak — all of which
+  muddy at 16px and 32px. This stripped-down mark keeps just the two
+  load-bearing shapes (gold compass ring with N/S/E/W star points + the
+  central A-peak in solid gold) so it stays crisp in browser tabs and on
+  the manifest "shortcut" icons.
+
+  Pair this with logo-source.jpg in build-pwa-icons.mjs:
+    - 32px favicon → render this SVG
+    - 96px+ tiles  → resize the JPG (it has the inner detail to fill)
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Alto People">
+  <!-- Solid navy backdrop matches the rest of the brand surfaces (Login,
+       Install, PWA splash). -->
+  <rect width="64" height="64" rx="10" fill="#0B1832"/>
+
+  <!-- Compass star points poking outward from the ring at N/S/E/W.
+       Drawn before the ring so the ring's stroke clips them cleanly. -->
+  <g fill="#D4AF37">
+    <path d="M32 4 L29.5 14 L32 12 L34.5 14 Z"/>
+    <path d="M32 60 L29.5 50 L32 52 L34.5 50 Z"/>
+    <path d="M4 32 L14 29.5 L12 32 L14 34.5 Z"/>
+    <path d="M60 32 L50 29.5 L52 32 L50 34.5 Z"/>
+  </g>
+
+  <!-- Compass ring. Stroke-width tuned so the rim still reads at 16px. -->
+  <circle cx="32" cy="32" r="20" fill="none" stroke="#D4AF37" stroke-width="3"/>
+
+  <!-- The "A" / peak. Solid gold so it pops at small sizes; at 16px the
+       triangular silhouette is what survives downsampling. -->
+  <path d="M32 17 L45 41 L19 41 Z" fill="#D4AF37"/>
+
+  <!-- Inner cut-out giving the peak its A-bar negative space. The cut-out
+       fill matches the navy backdrop so it reads as a hollow A at large
+       sizes and as a filled triangle at small sizes (the cut-out becomes
+       too small to distinguish). -->
+  <path d="M32 26 L40 39.5 L24 39.5 Z" fill="#0B1832"/>
+
+  <!-- A-bar — short horizontal stroke across the peak, only visible
+       above ~32px. -->
+  <rect x="27" y="35" width="10" height="2" fill="#D4AF37"/>
+</svg>
