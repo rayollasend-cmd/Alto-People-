@@ -2,6 +2,8 @@ import { lazy, Suspense, type ComponentType } from 'react';
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { Login } from '@/pages/Login';
+import { ForgotPassword } from '@/pages/ForgotPassword';
+import { ResetPassword } from '@/pages/ResetPassword';
 import { Install } from '@/pages/Install';
 import { AcceptInvite } from '@/pages/AcceptInvite';
 import { Dashboard } from '@/pages/Dashboard';
@@ -257,6 +259,11 @@ const PLACEHOLDER_MODULES = MODULES.filter(
 
 export const router = createBrowserRouter([
   { path: '/login', element: <Login />, errorElement: <RouterErrorPage /> },
+  // Self-serve password reset — public, two-step flow. /forgot-password
+  // takes an email and emails a magic link; /reset-password/:token
+  // accepts the new password.
+  { path: '/forgot-password', element: <ForgotPassword />, errorElement: <RouterErrorPage /> },
+  { path: '/reset-password/:token', element: <ResetPassword />, errorElement: <RouterErrorPage /> },
   // Public landing for "add this app to your home screen" — no auth, so we
   // can drop the link in invite emails before the associate has a password.
   { path: '/install', element: <Install />, errorElement: <RouterErrorPage /> },
