@@ -44,12 +44,13 @@ await rasterize('icon-192.svg', 'icon-96.png', 96);
 // Replace these with real app screenshots when you have them.
 
 async function renderSplash(width, height, outName) {
+  const monoSize = Math.round(Math.min(width, height) * 0.28);
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}">
       <rect width="${width}" height="${height}" fill="#0B1832"/>
-      <text x="50%" y="${Math.round(height * 0.5)}" text-anchor="middle"
-            font-family="Cormorant Garamond, serif" font-size="${Math.round(Math.min(width, height) * 0.35)}"
-            font-weight="700" fill="#D4AF37">A</text>
+      <text x="50%" y="${Math.round(height * 0.5)}" text-anchor="middle" dominant-baseline="central"
+            font-family="Cormorant Garamond, Garamond, serif" font-size="${monoSize}"
+            font-weight="700" fill="#D4AF37" letter-spacing="${-Math.round(monoSize * 0.025)}">AP</text>
       <text x="50%" y="${Math.round(height * 0.72)}" text-anchor="middle"
             font-family="Geist, sans-serif" font-size="${Math.round(Math.min(width, height) * 0.05)}"
             font-weight="400" fill="#FFFFFF" letter-spacing="4">ALTO PEOPLE</text>
