@@ -158,12 +158,33 @@ timeRouter.get('/me/entries', async (req, res, next) => {
   }
 });
 
+// Hourly associates clock in via the kiosk (PIN + selfie) at the worksite —
+// not from their personal phones. The web/app /me/clock-in path is for
+// managers and other salaried roles whose time we still track.
+type SelfClockUser = NonNullable<Express.Request['user']>;
+function assertCanSelfClock(
+  user: SelfClockUser,
+): asserts user is SelfClockUser & { associateId: string } {
+  if (user.role === 'ASSOCIATE') {
+    throw new HttpError(
+      403,
+      'use_kiosk',
+      'Hourly associates clock in at the worksite kiosk with their 4-digit PIN. The clock-in/out buttons in the web app are reserved for managers.',
+    );
+  }
+  if (!user.associateId) {
+    throw new HttpError(
+      403,
+      'no_associate_record',
+      'Your user account is not linked to an associate record yet — ask HR to provision one before you can clock in.',
+    );
+  }
+}
+
 timeRouter.post('/me/clock-in', async (req, res, next) => {
   try {
     const user = req.user!;
-    if (!user.associateId) {
-      throw new HttpError(403, 'not_an_associate', 'Only associates can clock in');
-    }
+    assertCanSelfClock(user);
     const parsed = ClockInInputV2Schema.safeParse(req.body ?? {});
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
@@ -243,9 +264,7 @@ timeRouter.post('/me/clock-in', async (req, res, next) => {
 timeRouter.post('/me/clock-out', async (req, res, next) => {
   try {
     const user = req.user!;
-    if (!user.associateId) {
-      throw new HttpError(403, 'not_an_associate', 'Only associates can clock out');
-    }
+    assertCanSelfClock(user);
     const parsed = ClockOutInputV2Schema.safeParse(req.body ?? {});
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
@@ -378,9 +397,7 @@ timeRouter.post('/me/clock-out', async (req, res, next) => {
 timeRouter.post('/me/break/start', async (req, res, next) => {
   try {
     const user = req.user!;
-    if (!user.associateId) {
-      throw new HttpError(403, 'not_an_associate', 'Only associates can start a break');
-    }
+    assertCanSelfClock(user);
     const parsed = StartBreakInputSchema.safeParse(req.body);
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
@@ -427,9 +444,7 @@ timeRouter.post('/me/break/start', async (req, res, next) => {
 timeRouter.post('/me/break/end', async (req, res, next) => {
   try {
     const user = req.user!;
-    if (!user.associateId) {
-      throw new HttpError(403, 'not_an_associate', 'Only associates can end a break');
-    }
+    assertCanSelfClock(user);
     const active = await prisma.timeEntry.findFirst({
       where: { associateId: user.associateId, status: 'ACTIVE' },
       include: { breaks: { where: { endedAt: null } } },
