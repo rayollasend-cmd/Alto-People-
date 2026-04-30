@@ -8,6 +8,8 @@ export const ROLES = {
   FINANCE_ACCOUNTANT: 'FINANCE_ACCOUNTANT',
   INTERNAL_RECRUITER: 'INTERNAL_RECRUITER',
   MANAGER: 'MANAGER',
+  WORKFORCE_MANAGER: 'WORKFORCE_MANAGER',
+  MARKETING_MANAGER: 'MARKETING_MANAGER',
 } as const;
 
 export type Role = keyof typeof ROLES;
@@ -22,19 +24,22 @@ export const ROLE_LABELS: Record<Role, string> = {
   FINANCE_ACCOUNTANT: 'Finance / Accountant',
   INTERNAL_RECRUITER: 'Internal Recruiter',
   MANAGER: 'Manager',
+  WORKFORCE_MANAGER: 'Workforce Manager',
+  MARKETING_MANAGER: 'Marketing Manager',
 };
 
 export const ROLE_DESCRIPTIONS: Record<Role, string> = {
   EXECUTIVE_CHAIRMAN: 'Read-only access across all modules and clients',
   HR_ADMINISTRATOR: 'Full access to every module and client',
-  OPERATIONS_MANAGER: 'Full operational access; cannot process payroll',
+  OPERATIONS_MANAGER: 'Full org-wide access (mirrors HR Administrator)',
   LIVE_ASN: 'System integration portal — not for human login',
   ASSOCIATE: 'Personal access to own profile, schedule, and pay',
   CLIENT_PORTAL: 'Read-only access scoped to one client account',
-  FINANCE_ACCOUNTANT: 'Runs payroll and reads financial modules; cannot change HR/comp data',
-  INTERNAL_RECRUITER: 'Full access to recruiting pipeline',
-  MANAGER:
-    'Approves time, time-off, and schedule changes for direct reports; sees a "my team" view',
+  FINANCE_ACCOUNTANT: 'Time, scheduling, and payroll only — runs pay cycles, no HR data',
+  INTERNAL_RECRUITER: 'Full org-wide access (mirrors HR Administrator)',
+  MANAGER: 'Full org-wide access (mirrors HR Administrator)',
+  WORKFORCE_MANAGER: 'Full org-wide access (mirrors HR Administrator)',
+  MARKETING_MANAGER: 'Full org-wide access (mirrors HR Administrator)',
 };
 
 export type Capability =
@@ -114,25 +119,16 @@ const ALL_MANAGE: Capability[] = [
   'manage:integrations',
 ];
 
+// Org-wide admin: identical capability surface to HR_ADMINISTRATOR. Granted
+// to OPERATIONS_MANAGER, MANAGER, INTERNAL_RECRUITER, WORKFORCE_MANAGER per
+// product policy — the role label still differs so audit logs show who
+// acted in which functional capacity.
+const FULL_ADMIN: Capability[] = [...ALL_VIEWS, ...ALL_MANAGE, 'view:audit'];
+
 export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
   EXECUTIVE_CHAIRMAN: new Set<Capability>([...ALL_VIEWS, 'view:audit']),
-  HR_ADMINISTRATOR: new Set<Capability>([...ALL_VIEWS, ...ALL_MANAGE, 'view:audit']),
-  OPERATIONS_MANAGER: new Set<Capability>([
-    ...ALL_VIEWS,
-    'manage:onboarding',
-    'manage:time',
-    'manage:team-time',
-    'manage:team-time-off',
-    'manage:scheduling',
-    'manage:documents',
-    'manage:communications',
-    'manage:clients',
-    'manage:compliance',
-    'manage:performance',
-    'manage:recruiting',
-    'manage:org',
-    'manage:comp',
-  ]),
+  HR_ADMINISTRATOR: new Set<Capability>(FULL_ADMIN),
+  OPERATIONS_MANAGER: new Set<Capability>(FULL_ADMIN),
   LIVE_ASN: new Set<Capability>(),
   ASSOCIATE: new Set<Capability>([
     'view:dashboard',
@@ -149,38 +145,22 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'view:analytics',
     'view:performance',
   ]),
+  // Time + pay only. Runs payroll cycles, sees scheduling/time as inputs
+  // and analytics for financial reports. Deliberately *not* granted any
+  // HR/onboarding/recruiting/comms surface area.
   FINANCE_ACCOUNTANT: new Set<Capability>([
     'view:dashboard',
+    'view:time',
+    'view:scheduling',
     'view:payroll',
     'process:payroll',
+    'view:comp',
     'view:analytics',
   ]),
-  INTERNAL_RECRUITER: new Set<Capability>([
-    'view:dashboard',
-    'view:onboarding',
-    'manage:onboarding',
-    'view:recruiting',
-    'manage:recruiting',
-    'view:communications',
-    'manage:communications',
-    'view:hr-admin',
-  ]),
-  // Phase 76 — line manager: a small subset of HR power, scoped at
-  // the call site to the manager's direct reports.
-  MANAGER: new Set<Capability>([
-    'view:dashboard',
-    'view:my-team',
-    'view:time',
-    'manage:team-time',
-    'view:scheduling',
-    'view:performance',
-    'manage:team-time-off',
-    'view:onboarding',
-    'view:communications',
-    'view:org',
-    'view:comp',
-    'view:hr-admin',
-  ]),
+  INTERNAL_RECRUITER: new Set<Capability>(FULL_ADMIN),
+  MANAGER: new Set<Capability>(FULL_ADMIN),
+  WORKFORCE_MANAGER: new Set<Capability>(FULL_ADMIN),
+  MARKETING_MANAGER: new Set<Capability>(FULL_ADMIN),
 };
 
 export function hasCapability(role: Role, capability: Capability): boolean {

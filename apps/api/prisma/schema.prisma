@@ -35,6 +35,13 @@ enum Role {
   // schedule changes, view their team's performance reviews. Not a
   // replacement for OPERATIONS_MANAGER (which is org-wide ops admin).
   MANAGER
+  // Workforce Manager — org-wide workforce planning + admin. Same
+  // capability surface as HR_ADMINISTRATOR; distinct role label so audit
+  // logs show who acted in which functional capacity.
+  WORKFORCE_MANAGER
+  // Marketing Manager — same admin surface as HR_ADMINISTRATOR; distinct
+  // role label keeps audit attribution for marketing-driven actions.
+  MARKETING_MANAGER
 }
 
 enum UserStatus {
