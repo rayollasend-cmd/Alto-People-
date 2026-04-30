@@ -378,7 +378,7 @@ function TeamSnapshot({
   return (
     <section aria-label="Team snapshot" className="space-y-3">
       <SectionTitle icon={Activity}>Team snapshot</SectionTitle>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {summary ? (
           <>
             <KpiTile

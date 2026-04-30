@@ -317,7 +317,11 @@ function PaystubTable({
   footer?: string[];
 }) {
   return (
-    <table className="w-full text-xs">
+    // Wrapped in overflow-x-auto so the earnings/deductions/taxes
+    // breakdown can scroll horizontally on narrow phones instead of
+    // squishing the tabular-num columns into illegible 2-3 char cells.
+    <div className="-mx-2 overflow-x-auto sm:mx-0">
+      <table className="w-full min-w-[20rem] text-xs">
       <thead>
         <tr className="text-silver/50">
           {headers.map((h, i) => (
@@ -361,7 +365,8 @@ function PaystubTable({
           </tr>
         </tfoot>
       )}
-    </table>
+      </table>
+    </div>
   );
 }
 

@@ -167,7 +167,7 @@ export function DayCalendarView({
 
   return (
     <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-      <div className="rounded-md border border-navy-secondary bg-navy/40 overflow-x-auto">
+      <div className="rounded-md border border-navy-secondary bg-navy/40 overflow-x-auto overscroll-x-contain">
         <div className="flex min-w-[700px]">
           {/* Hour gutter */}
           <div className="sticky left-0 z-20 bg-navy/95 backdrop-blur w-16 border-r border-navy-secondary">
