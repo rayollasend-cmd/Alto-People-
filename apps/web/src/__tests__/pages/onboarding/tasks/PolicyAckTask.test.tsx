@@ -21,6 +21,7 @@ const policy = (id: string, title: string, acknowledged = false): PolicyForAppli
   version: 'v1.0',
   industry: null,
   bodyUrl: null,
+  body: 'Short policy body for tests.',
   acknowledged,
   acknowledgedAt: acknowledged ? new Date().toISOString() : null,
 });
@@ -66,9 +67,9 @@ describe('<PolicyAckTask>', () => {
     });
     renderTask();
 
-    expect(await screen.findByText('Code of Conduct')).toBeInTheDocument();
-    expect(screen.getByText('Food Safety')).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: /acknowledge/i })).toHaveLength(2);
+    // Each policy renders as an expandable row (the title is inside a button).
+    expect(await screen.findByRole('button', { name: /code of conduct/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /food safety/i })).toBeInTheDocument();
   });
 
   it('clicks Acknowledge → calls API → re-fetches the list', async () => {
@@ -79,7 +80,12 @@ describe('<PolicyAckTask>', () => {
 
     const user = userEvent.setup();
     renderTask();
-    const ackButton = await screen.findByRole('button', { name: /acknowledge/i });
+    // Expand the policy row first (Acknowledge only renders inside an expanded row).
+    const expandToggle = await screen.findByRole('button', { name: /code of conduct/i });
+    await user.click(expandToggle);
+    // In jsdom, scrollHeight/clientHeight default to 0, so the "scrolled to end"
+    // useEffect fires immediately and the Acknowledge button is enabled.
+    const ackButton = await screen.findByRole('button', { name: /^acknowledge$/i });
     await user.click(ackButton);
 
     await waitFor(() => expect(acknowledgePolicy).toHaveBeenCalledWith(APP_ID, { policyId: 'p1' }));
@@ -89,18 +95,19 @@ describe('<PolicyAckTask>', () => {
     expect(screen.queryByRole('button', { name: /^acknowledge$/i })).not.toBeInTheDocument();
   });
 
-  it('shows a loading state until the first fetch resolves', async () => {
+  it('shows a skeleton loading state until the first fetch resolves', async () => {
     let resolveFn!: (v: { policies: PolicyForApplication[] }) => void;
     vi.mocked(getApplicationPolicies).mockReturnValueOnce(
       new Promise((res) => {
         resolveFn = res;
       })
     );
-    renderTask();
-    expect(screen.getByText(/loading/i)).toBeInTheDocument();
+    const { container } = renderTask();
+    // SkeletonRows renders elements with aria-busy="true" while loading.
+    expect(container.querySelectorAll('[aria-busy="true"]').length).toBeGreaterThan(0);
     resolveFn({ policies: [] });
     await waitFor(() =>
-      expect(screen.queryByText(/loading/i)).not.toBeInTheDocument()
+      expect(container.querySelectorAll('[aria-busy="true"]').length).toBe(0)
     );
   });
 });

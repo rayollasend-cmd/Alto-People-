@@ -45,6 +45,13 @@ beforeEach(() => {
   vi.mocked(submitI9Section2).mockReset();
 });
 
+// In the new UI, an I-9 row is a clickable Card (no explicit "Verify Section 2"
+// button). Clicking the row opens a drawer; the verifier card lives inside.
+async function openRowDrawer(user: ReturnType<typeof userEvent.setup>) {
+  const nameEl = await screen.findByText('Maria Lopez');
+  await user.click(nameEl);
+}
+
 describe('<I9Tab> Section 2 verifier card', () => {
   it('happy path: HR picks LIST_A + one doc, calls submitI9Section2 with that applicationId', async () => {
     vi.mocked(listI9s).mockResolvedValue({ i9s: [pendingRow()] });
@@ -81,11 +88,10 @@ describe('<I9Tab> Section 2 verifier card', () => {
     const user = userEvent.setup();
     render(<I9Tab canManage={true} />);
 
-    const verifyBtn = await screen.findByRole('button', { name: /verify section 2/i });
-    await user.click(verifyBtn);
+    await openRowDrawer(user);
 
     await waitFor(() => expect(listI9Documents).toHaveBeenCalledWith(APP_ID));
-    // Default doc-list is LIST_A (1 doc minimum); pick the first.
+    // Default doc-list is LIST_A (1 doc minimum); pick the front of the ID.
     const front = await screen.findByLabelText(/id front/i);
     await user.click(front);
 
@@ -119,7 +125,7 @@ describe('<I9Tab> Section 2 verifier card', () => {
     const user = userEvent.setup();
     render(<I9Tab canManage={true} />);
 
-    await user.click(await screen.findByRole('button', { name: /verify section 2/i }));
+    await openRowDrawer(user);
     await screen.findByLabelText(/id front/i);
 
     const submit = screen.getByRole('button', { name: /verify section 2 \(0 docs\)/i });
@@ -156,7 +162,7 @@ describe('<I9Tab> Section 2 verifier card', () => {
     const user = userEvent.setup();
     render(<I9Tab canManage={true} />);
 
-    await user.click(await screen.findByRole('button', { name: /verify section 2/i }));
+    await openRowDrawer(user);
     await screen.findByLabelText(/id front/i);
     await user.click(screen.getByRole('radio', { name: /lists b \+ c/i }));
     await user.click(screen.getByLabelText(/id front/i));
@@ -182,9 +188,9 @@ describe('<I9Tab> Section 2 verifier card', () => {
     const user = userEvent.setup();
     render(<I9Tab canManage={true} />);
 
-    await user.click(await screen.findByRole('button', { name: /^edit$/i }));
+    await openRowDrawer(user);
     // Legacy form contains "Section 1 complete" + "Section 2 complete" checkboxes.
-    expect(screen.getByLabelText(/section 1 complete/i)).toBeInTheDocument();
+    expect(await screen.findByLabelText(/section 1 complete/i)).toBeInTheDocument();
     expect(listI9Documents).not.toHaveBeenCalled();
   });
 });
