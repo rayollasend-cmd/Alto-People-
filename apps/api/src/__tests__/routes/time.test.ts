@@ -30,17 +30,23 @@ async function loginAs(email: string): Promise<TestAgent<Test>> {
   return a;
 }
 
-async function seedAssociate() {
+// Seeds a user who CAN self-clock — i.e. a manager with an Associate
+// record, since hourly ASSOCIATEs are now blocked from /me/clock-* and
+// must use the kiosk PIN flow.
+async function seedSelfClocker() {
   const client = await createClient();
   const associate = await createAssociate();
   const { user } = await createUser({
-    role: 'ASSOCIATE',
+    role: 'MANAGER',
     email: associate.email,
     associateId: associate.id,
     clientId: client.id,
   });
   return { client, associate, user };
 }
+
+// Back-compat alias — many tests below still call this. Same shape.
+const seedAssociate = seedSelfClocker;
 
 describe('GET /time/me/active', () => {
   it('returns null when associate has no active entry', async () => {
@@ -100,7 +106,20 @@ describe('POST /time/me/clock-in', () => {
     const a = await loginAs(user.email);
     const res = await a.post('/time/me/clock-in').send({});
     expect(res.status).toBe(403);
-    expect(res.body.error?.code).toBe('not_an_associate');
+    expect(res.body.error?.code).toBe('no_associate_record');
+  });
+
+  it('rejects ASSOCIATE role (must use the kiosk PIN flow)', async () => {
+    const associate = await createAssociate();
+    const { user } = await createUser({
+      role: 'ASSOCIATE',
+      email: associate.email,
+      associateId: associate.id,
+    });
+    const a = await loginAs(user.email);
+    const res = await a.post('/time/me/clock-in').send({});
+    expect(res.status).toBe(403);
+    expect(res.body.error?.code).toBe('use_kiosk');
   });
 
   it('returns 401 unauthenticated', async () => {
@@ -237,12 +256,25 @@ describe('POST /time/admin/entries/:id/approve', () => {
   });
 
   it('returns 403 to ASSOCIATE', async () => {
-    const { user: assocUser } = await seedAssociate();
+    // ASSOCIATEs can't reach /me/clock-in anymore (use_kiosk), so we
+    // create the time entry directly. The point of this test is the
+    // admin-approve gate, not the clock-in flow.
+    const associate = await createAssociate();
+    const { user: assocUser } = await createUser({
+      role: 'ASSOCIATE',
+      email: associate.email,
+      associateId: associate.id,
+    });
+    const entry = await prisma.timeEntry.create({
+      data: {
+        associateId: associate.id,
+        clockInAt: new Date(Date.now() - 3_600_000),
+        clockOutAt: new Date(),
+        status: 'COMPLETED',
+      },
+    });
     const associateAgent = await loginAs(assocUser.email);
-    const inRes = await associateAgent.post('/time/me/clock-in').send({});
-    await associateAgent.post('/time/me/clock-out').send({});
-
-    const res = await associateAgent.post(`/time/admin/entries/${inRes.body.id}/approve`).send({});
+    const res = await associateAgent.post(`/time/admin/entries/${entry.id}/approve`).send({});
     expect(res.status).toBe(403);
   });
 });
