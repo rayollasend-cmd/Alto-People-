@@ -84,7 +84,11 @@ export const TabsList = React.forwardRef<HTMLDivElement, TabsListProps>(
         role="tablist"
         onKeyDown={onKeyDown}
         className={cn(
-          'flex flex-wrap gap-1 border-b border-navy-secondary',
+          // Single-row scrollable strip — keeps the bottom-border underline
+          // pattern intact when there are too many tabs to fit on a phone.
+          // `scrollbar-none` hides the scrollbar (we still get touch
+          // / trackpad scrolling); the flex-nowrap forces the row layout.
+          'flex flex-nowrap gap-1 border-b border-navy-secondary overflow-x-auto scrollbar-none',
           className,
         )}
         {...props}
@@ -116,7 +120,7 @@ export const TabsTrigger = React.forwardRef<HTMLButtonElement, TabsTriggerProps>
         disabled={disabled}
         onClick={() => onValueChange(value)}
         className={cn(
-          'relative px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors',
+          'relative shrink-0 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright focus-visible:ring-offset-2 focus-visible:ring-offset-midnight',
           'disabled:opacity-50 disabled:pointer-events-none',
           selected

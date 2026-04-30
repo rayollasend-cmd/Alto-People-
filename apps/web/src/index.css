@@ -301,3 +301,14 @@ input[type='radio'] {
 /* On-screen, .print-only is hidden. */
 .print-only { display: none; }
 
+/* Hide scrollbars on horizontally-scrolling tab strips and similar
+   thin-strip widgets. Touch scrolling and trackpad swipe still work; we
+   just don't want a chunky native scrollbar appearing under the tabs. */
+.scrollbar-none {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE 10+ / old Edge */
+}
+.scrollbar-none::-webkit-scrollbar { /* Chrome / Safari / new Edge */
+  display: none;
+}
+
