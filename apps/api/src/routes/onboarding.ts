@@ -161,6 +161,17 @@ interface InviteApplicantInput {
   employmentType?: 'W2_EMPLOYEE' | 'CONTRACTOR_1099_INDIVIDUAL' | 'CONTRACTOR_1099_BUSINESS';
   position?: string;
   startDate?: string; // ISO
+  // Role to mint the INVITED User with. Defaults to ASSOCIATE. Management
+  // roles let HR onboard a new manager via this same pipeline so they
+  // land in the correct sidebar on first login.
+  hireRole?:
+    | 'ASSOCIATE'
+    | 'OPERATIONS_MANAGER'
+    | 'MANAGER'
+    | 'INTERNAL_RECRUITER'
+    | 'WORKFORCE_MANAGER'
+    | 'MARKETING_MANAGER'
+    | 'FINANCE_ACCOUNTANT';
 }
 
 interface InviteApplicantResult {
@@ -214,6 +225,7 @@ async function inviteOneApplicant(
     if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
     if (!template) throw new HttpError(404, 'template_not_found', 'Template not found');
 
+    const hireRole = input.hireRole ?? 'ASSOCIATE';
     let user = await tx.user.findUnique({ where: { email } });
     if (user) {
       if (user.status === 'ACTIVE' && user.passwordHash) {
@@ -223,17 +235,24 @@ async function inviteOneApplicant(
           'A user with this email is already active. Cannot re-invite.'
         );
       }
+      // Promote a previously-invited user to the new role if HR re-invites
+      // with a different hireRole (e.g. they invited as ASSOCIATE first,
+      // then realised they meant MANAGER).
+      const updates: Prisma.UserUpdateInput = {};
       if (user.associateId !== associate.id) {
-        user = await tx.user.update({
-          where: { id: user.id },
-          data: { associateId: associate.id },
-        });
+        updates.associate = { connect: { id: associate.id } };
+      }
+      if (user.role !== hireRole) {
+        updates.role = hireRole;
+      }
+      if (Object.keys(updates).length > 0) {
+        user = await tx.user.update({ where: { id: user.id }, data: updates });
       }
     } else {
       user = await tx.user.create({
         data: {
           email,
-          role: 'ASSOCIATE',
+          role: hireRole,
           status: 'INVITED',
           associateId: associate.id,
         },

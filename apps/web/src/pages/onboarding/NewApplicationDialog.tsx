@@ -4,8 +4,10 @@ import { toast } from 'sonner';
 import type {
   ClientSummary,
   EmploymentType,
+  HireableRole,
   OnboardingTemplate,
 } from '@alto-people/shared';
+import { HIREABLE_ROLES } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import {
   createApplication,
@@ -28,6 +30,31 @@ const TRACK_LABEL: Record<string, string> = {
   STANDARD: 'Standard',
   J1: 'J-1',
   CLIENT_SPECIFIC: 'Client-specific',
+};
+
+// Labels for the "Hire as" picker. Order matches HIREABLE_ROLES so the
+// first option (ASSOCIATE) is the default and the management roles follow.
+const HIRE_ROLE_LABEL: Record<HireableRole, string> = {
+  ASSOCIATE: 'Associate (default)',
+  OPERATIONS_MANAGER: 'Operations Manager',
+  MANAGER: 'Manager',
+  INTERNAL_RECRUITER: 'Internal Recruiter',
+  WORKFORCE_MANAGER: 'Workforce Manager',
+  MARKETING_MANAGER: 'Marketing Manager',
+  FINANCE_ACCOUNTANT: 'Finance / Accountant',
+};
+
+// Pre-fill the Position field when HR picks a management role so the
+// applicant's position matches the role they'll log in as. HR can still
+// override if they want a more specific job title.
+const HIRE_ROLE_POSITION: Record<HireableRole, string | null> = {
+  ASSOCIATE: null,
+  OPERATIONS_MANAGER: 'Operations Manager',
+  MANAGER: 'Manager',
+  INTERNAL_RECRUITER: 'Internal Recruiter',
+  WORKFORCE_MANAGER: 'Workforce Manager',
+  MARKETING_MANAGER: 'Marketing Manager',
+  FINANCE_ACCOUNTANT: 'Finance / Accountant',
 };
 
 /** Shared <select> className — matches Input height/border/focus so the
@@ -65,6 +92,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
   const [clientId, setClientId] = useState('');
   const [templateId, setTemplateId] = useState('');
   const [employmentType, setEmploymentType] = useState<EmploymentType>('W2_EMPLOYEE');
+  const [hireRole, setHireRole] = useState<HireableRole>('ASSOCIATE');
 
   const [submitting, setSubmitting] = useState(false);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
@@ -78,6 +106,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
     setClientId('');
     setTemplateId('');
     setEmploymentType('W2_EMPLOYEE');
+    setHireRole('ASSOCIATE');
     setInviteLink(null);
   };
 
@@ -139,6 +168,10 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
         employmentType,
         position: position.trim() || undefined,
         startDate: startDate ? new Date(`${startDate}T00:00:00.000Z`).toISOString() : undefined,
+        // Only send hireRole when it differs from the default ASSOCIATE
+        // so older bulk-invite test fixtures and the bulk endpoint stay
+        // backwards compatible.
+        ...(hireRole !== 'ASSOCIATE' ? { hireRole } : {}),
       });
       onCreated();
       if (res.inviteUrl) {
@@ -233,6 +266,37 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
             </div>
 
             <div>
+              <Label htmlFor="na-hire-role" required>
+                Hire as
+              </Label>
+              <select
+                id="na-hire-role"
+                value={hireRole}
+                onChange={(e) => {
+                  const next = e.target.value as HireableRole;
+                  setHireRole(next);
+                  // Pre-fill position with the role label when HR picks a
+                  // management role and they haven't typed anything yet.
+                  // Don't clobber a value HR already entered.
+                  const prefill = HIRE_ROLE_POSITION[next];
+                  if (prefill && !position.trim()) setPosition(prefill);
+                }}
+                className={SELECT_CX}
+              >
+                {HIREABLE_ROLES.map((r) => (
+                  <option key={r} value={r}>
+                    {HIRE_ROLE_LABEL[r]}
+                  </option>
+                ))}
+              </select>
+              <FormHint>
+                Associate is the default. Pick a management role to onboard
+                a new manager via the same invite + checklist flow — they'll
+                land in the correct sidebar on first login.
+              </FormHint>
+            </div>
+
+            <div>
               <Label htmlFor="na-client" required>
                 Client
               </Label>
@@ -253,6 +317,15 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
                   </option>
                 ))}
               </select>
+              {hireRole !== 'ASSOCIATE' && (
+                <FormHint>
+                  For management hires, pick the
+                  {' '}
+                  <span className="text-white">Alto HR — Internal Hires</span>
+                  {' '}
+                  client (or a specific client they'll oversee).
+                </FormHint>
+              )}
             </div>
 
             <div>
