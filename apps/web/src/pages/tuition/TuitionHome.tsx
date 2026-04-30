@@ -143,7 +143,7 @@ export function TuitionHome() {
       </div>
 
       {tab === 'queue' && summary && (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <Card>
             <CardContent className="p-3">
               <div className="text-xs uppercase tracking-wider text-silver">

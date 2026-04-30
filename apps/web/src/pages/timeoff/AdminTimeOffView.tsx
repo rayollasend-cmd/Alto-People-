@@ -159,10 +159,10 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Associate</TableHead>
-                  <TableHead>Category</TableHead>
+                  <TableHead className="hidden md:table-cell">Category</TableHead>
                   <TableHead>Dates</TableHead>
-                  <TableHead className="text-right">Hours</TableHead>
-                  <TableHead>Reason</TableHead>
+                  <TableHead className="text-right hidden sm:table-cell">Hours</TableHead>
+                  <TableHead className="hidden lg:table-cell">Reason</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -173,18 +173,29 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
                     <TableCell className="text-white">
                       <div className="flex items-center gap-2.5">
                         <Avatar name={r.associateName ?? '—'} size="sm" />
-                        <span>{r.associateName ?? '—'}</span>
+                        <div className="min-w-0">
+                          <div className="truncate">{r.associateName ?? '—'}</div>
+                          {/* Phone-only inline category + hours since their
+                              dedicated columns are hidden. */}
+                          <div className="md:hidden text-[11px] text-silver/70 truncate">
+                            {r.category}
+                            <span className="sm:hidden tabular-nums">
+                              {' · '}
+                              {fmtHours(r.requestedMinutes)}
+                            </span>
+                          </div>
+                        </div>
                       </div>
                     </TableCell>
-                    <TableCell>{r.category}</TableCell>
+                    <TableCell className="hidden md:table-cell">{r.category}</TableCell>
                     <TableCell className="tabular-nums">
                       {fmtDate(r.startDate)}
                       {r.startDate !== r.endDate && ` – ${fmtDate(r.endDate)}`}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">
+                    <TableCell className="text-right tabular-nums hidden sm:table-cell">
                       {fmtHours(r.requestedMinutes)}
                     </TableCell>
-                    <TableCell className="text-xs text-silver max-w-[18ch] truncate">
+                    <TableCell className="hidden lg:table-cell text-xs text-silver max-w-[18ch] truncate">
                       {r.reason || '—'}
                     </TableCell>
                     <TableCell>

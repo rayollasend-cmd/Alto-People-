@@ -504,11 +504,11 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
               <TableRow className="hover:bg-transparent">
                 <TableHead>File</TableHead>
                 <TableHead className="hidden md:table-cell">Kind</TableHead>
-                <TableHead>Associate</TableHead>
+                <TableHead className="hidden sm:table-cell">Associate</TableHead>
                 <TableHead className="hidden md:table-cell w-20">Size</TableHead>
                 <TableHead className="hidden lg:table-cell w-24">Uploaded</TableHead>
                 <TableHead className="w-32">Status</TableHead>
-                {canManage && <TableHead className="w-44 text-right" aria-label="Actions" />}
+                {canManage && <TableHead className="hidden md:table-cell w-44 text-right" aria-label="Actions" />}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -524,11 +524,17 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                       <FileText className="h-3.5 w-3.5 shrink-0" />
                       <span className="truncate">{d.filename}</span>
                     </button>
+                    {/* Phone-only secondary line — associate name takes the
+                        place of its hidden column. Tap-target area still
+                        opens the preview via the file button above. */}
+                    <div className="sm:hidden text-[11px] text-silver/70 truncate mt-0.5">
+                      {d.associateName ?? '—'}
+                    </div>
                   </TableCell>
                   <TableCell className="hidden md:table-cell text-xs text-silver uppercase tracking-wider">
                     {d.kind.replace(/_/g, ' ')}
                   </TableCell>
-                  <TableCell className="text-silver">
+                  <TableCell className="hidden sm:table-cell text-silver">
                     <button
                       type="button"
                       onClick={() => {
@@ -561,7 +567,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                     )}
                   </TableCell>
                   {canManage && (
-                    <TableCell className="text-right whitespace-nowrap">
+                    <TableCell className="hidden md:table-cell text-right whitespace-nowrap">
                       <div className="flex items-center justify-end gap-1 opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                         {(d.status === 'UPLOADED' || d.status === 'REJECTED') && (
                           <Button

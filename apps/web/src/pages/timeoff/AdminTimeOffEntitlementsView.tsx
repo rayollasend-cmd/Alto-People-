@@ -125,9 +125,9 @@ export function AdminTimeOffEntitlementsView({ canManage }: Props) {
                 <TableHead>Associate</TableHead>
                 <TableHead>Category</TableHead>
                 <TableHead className="text-right">Annual</TableHead>
-                <TableHead className="text-right">Carryover cap</TableHead>
-                <TableHead>Anchor</TableHead>
-                <TableHead>Last grant</TableHead>
+                <TableHead className="text-right hidden md:table-cell">Carryover cap</TableHead>
+                <TableHead className="hidden lg:table-cell">Anchor</TableHead>
+                <TableHead className="hidden lg:table-cell">Last grant</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -143,14 +143,14 @@ export function AdminTimeOffEntitlementsView({ canManage }: Props) {
                   <TableCell className="text-right text-silver tabular-nums">
                     {fmtHours(e.annualMinutes)}
                   </TableCell>
-                  <TableCell className="text-right text-silver tabular-nums">
+                  <TableCell className="text-right hidden md:table-cell text-silver tabular-nums">
                     {fmtHours(e.carryoverMaxMinutes)}
                   </TableCell>
-                  <TableCell className="text-silver text-xs">
+                  <TableCell className="hidden lg:table-cell text-silver text-xs">
                     {String(e.policyAnchorMonth).padStart(2, '0')}-
                     {String(e.policyAnchorDay).padStart(2, '0')}
                   </TableCell>
-                  <TableCell className="text-silver text-xs">
+                  <TableCell className="hidden lg:table-cell text-silver text-xs">
                     {e.lastGrantedAt
                       ? new Date(e.lastGrantedAt).toLocaleDateString()
                       : '—'}

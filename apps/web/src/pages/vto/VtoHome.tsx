@@ -171,7 +171,7 @@ export function VtoHome() {
       )}
 
       {tab === 'queue' && summary && (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <SummaryCard label="Pending review" value={summary.pendingCount} />
           <SummaryCard label="Hours YTD" value={summary.hoursYtd} />
           <SummaryCard

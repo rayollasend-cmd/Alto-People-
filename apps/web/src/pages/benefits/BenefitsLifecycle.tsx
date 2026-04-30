@@ -133,9 +133,9 @@ function OeTab({ canManage }: { canManage: boolean }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Window</TableHead>
-                  <TableHead>Client</TableHead>
-                  <TableHead>Period</TableHead>
-                  <TableHead>Effective</TableHead>
+                  <TableHead className="hidden md:table-cell">Client</TableHead>
+                  <TableHead className="hidden sm:table-cell">Period</TableHead>
+                  <TableHead className="hidden lg:table-cell">Effective</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -143,12 +143,21 @@ function OeTab({ canManage }: { canManage: boolean }) {
               <TableBody>
                 {rows.map((w) => (
                   <TableRow key={w.id}>
-                    <TableCell className="font-medium text-white">{w.name}</TableCell>
-                    <TableCell>{w.clientName}</TableCell>
-                    <TableCell>
+                    <TableCell className="font-medium text-white">
+                      <div className="truncate">{w.name}</div>
+                      {/* Phone-only secondary line replacing the hidden cells. */}
+                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        {w.clientName}
+                      </div>
+                      <div className="sm:hidden text-[10px] text-silver/60 tabular-nums">
+                        {w.startsOn} → {w.endsOn}
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">{w.clientName}</TableCell>
+                    <TableCell className="hidden sm:table-cell tabular-nums">
                       {w.startsOn} → {w.endsOn}
                     </TableCell>
-                    <TableCell>{w.effectiveOn}</TableCell>
+                    <TableCell className="hidden lg:table-cell tabular-nums">{w.effectiveOn}</TableCell>
                     <TableCell>
                       <Badge variant={OE_BADGE[w.status]}>{w.status}</Badge>
                     </TableCell>

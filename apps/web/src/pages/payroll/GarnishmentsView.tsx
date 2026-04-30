@@ -551,7 +551,7 @@ function CreateGarnishmentDialog({
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <Label htmlFor="g-cap">Total cap</Label>
               <Input
@@ -585,7 +585,7 @@ function CreateGarnishmentDialog({
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <Label htmlFor="g-priority">Priority</Label>
               <Input

@@ -142,10 +142,10 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
           <TableHeader>
             <TableRow>
               <TableHead>Associate</TableHead>
-              <TableHead>Provider</TableHead>
+              <TableHead className="hidden sm:table-cell">Provider</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead>Initiated</TableHead>
-              <TableHead>Completed</TableHead>
+              <TableHead className="hidden md:table-cell">Initiated</TableHead>
+              <TableHead className="hidden lg:table-cell">Completed</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -163,17 +163,23 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
                 <TableCell className="font-medium">
                   <div className="flex items-center gap-2.5">
                     <Avatar name={c.associateName} size="sm" />
-                    <span>{c.associateName}</span>
+                    <div className="min-w-0">
+                      <div className="truncate">{c.associateName}</div>
+                      {/* Phone-only secondary line replacing the hidden cells. */}
+                      <div className="sm:hidden text-[11px] text-silver/70 truncate">
+                        {c.provider} · initiated {new Date(c.initiatedAt).toLocaleDateString()}
+                      </div>
+                    </div>
                   </div>
                 </TableCell>
-                <TableCell className="text-silver">{c.provider}</TableCell>
+                <TableCell className="hidden sm:table-cell text-silver">{c.provider}</TableCell>
                 <TableCell>
                   <Badge variant={statusVariant(c.status)}>{c.status}</Badge>
                 </TableCell>
-                <TableCell className="text-silver tabular-nums">
+                <TableCell className="hidden md:table-cell text-silver tabular-nums">
                   {new Date(c.initiatedAt).toLocaleDateString()}
                 </TableCell>
-                <TableCell className="text-silver tabular-nums">
+                <TableCell className="hidden lg:table-cell text-silver tabular-nums">
                   {c.completedAt ? new Date(c.completedAt).toLocaleDateString() : '—'}
                 </TableCell>
               </TableRow>
