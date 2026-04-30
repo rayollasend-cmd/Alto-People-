@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Lock, Mail, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { ApiError, NetworkError } from '@/lib/api';
@@ -93,9 +93,17 @@ export function Login() {
             </div>
 
             <div>
-              <Label htmlFor="login-password" required>
-                Password
-              </Label>
+              <div className="flex items-baseline justify-between gap-2">
+                <Label htmlFor="login-password" required>
+                  Password
+                </Label>
+                <Link
+                  to="/forgot-password"
+                  className="text-xs text-silver hover:text-gold-bright transition-colors"
+                >
+                  Forgot password?
+                </Link>
+              </div>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/60 pointer-events-none" />
                 <Input

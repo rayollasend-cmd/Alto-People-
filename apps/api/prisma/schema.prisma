@@ -300,6 +300,7 @@ model User {
   receivedNotifications             Notification[]               @relation("NotificationRecipient")
   authoredReviews                   PerformanceReview[]          @relation("PerformanceReviewer")
   inviteTokens                      InviteToken[]
+  passwordResetTokens               PasswordResetToken[]
   createdEsignAgreements            EsignAgreement[]             @relation("EsignAgreementCreator")
   payrollDisbursementAttempts       PayrollDisbursementAttempt[] @relation("PayrollDisbursementAttemptActor")
   timeOffLedgerEntriesAuthored      TimeOffLedgerEntry[]
@@ -1535,6 +1536,28 @@ model InviteToken {
   // Sweep query filters by (consumedAt IS NULL, reminderSentAt IS NULL,
   // expiresAt > now, createdAt < threshold). Composite index covers it.
   @@index([consumedAt, reminderSentAt, createdAt])
+}
+
+// Mirror of InviteToken for self-serve password reset. Reset links carry a
+// random ~256-bit token; only its sha256 lives in the DB. Tokens are
+// single-use (consumedAt) and short-lived (1 hour) to limit the blast
+// radius of a leaked email forward. Consuming a token bumps the user's
+// tokenVersion, killing every active session — defending against the
+// "attacker stole an old reset link before the user reset" case.
+model PasswordResetToken {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tokenHash   String    @unique
+  userId      String    @db.Uuid
+  expiresAt   DateTime  @db.Timestamptz(6)
+  consumedAt  DateTime? @db.Timestamptz(6)
+  // IP that requested the reset — useful for forensics if a user reports
+  // a reset they didn't initiate.
+  requestedIp String?   @db.VarChar(64)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, consumedAt])
+  @@index([expiresAt])
 }
 
 model PerformanceReview {
