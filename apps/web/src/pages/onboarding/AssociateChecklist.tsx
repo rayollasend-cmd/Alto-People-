@@ -37,8 +37,7 @@ const TASK_LABEL: Record<string, string> = {
 };
 
 // Tasks that route to a real associate-facing form. Anything not in
-// this set falls through to the StubTask "coming soon" placeholder
-// (currently just E_SIGN, which is launched from the HR-side detail).
+// this set falls through to the StubTask "coming soon" placeholder.
 const REAL_KINDS = new Set([
   'PROFILE_INFO',
   'W4',
@@ -49,6 +48,8 @@ const REAL_KINDS = new Set([
   'DOCUMENT_UPLOAD',
   'BACKGROUND_CHECK',
   'J1_DOCS',
+  // E-sign (Alto HR Employment Agreement + any HR-drafted addenda).
+  'E_SIGN',
 ]);
 
 export function AssociateChecklist() {

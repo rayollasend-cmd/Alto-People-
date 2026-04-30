@@ -159,6 +159,17 @@ export function createEsignAgreement(
   );
 }
 
+export function signEsignAgreement(
+  applicationId: string,
+  agreementId: string,
+  body: { typedName: string }
+): Promise<{ signedAt: string; signatureId: string }> {
+  return apiFetch(
+    `/onboarding/applications/${applicationId}/esign/agreements/${agreementId}/sign`,
+    { method: 'POST', body }
+  );
+}
+
 export function getApplication(id: string): Promise<ApplicationDetail> {
   return apiFetch<ApplicationDetail>(`/onboarding/applications/${id}`);
 }
