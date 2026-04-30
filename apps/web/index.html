@@ -15,8 +15,9 @@
     <title>Alto People</title>
     <!-- Fonts are self-hosted via @fontsource-variable/* and bundled by Vite —
          see apps/web/src/main.tsx. No Google Fonts CDN hop. -->
-    <!-- Start the API socket negotiation in parallel with the JS bundle. -->
-    <link rel="preconnect" href="http://localhost:3001" />
+    <!-- API requests go through Vite's /api proxy in dev and are same-origin
+         in prod (Express serves the SPA + API from one host), so no
+         preconnect is needed in either case. -->
   </head>
   <body>
     <div id="root"></div>
