@@ -64,7 +64,7 @@ export function InstallPrompt() {
   };
 
   return (
-    <div className="fixed bottom-4 right-4 z-50 max-w-sm bg-navy-secondary border border-cyan-500/40 rounded-lg shadow-xl p-4 flex items-start gap-3">
+    <div className="fixed z-50 max-w-sm bg-navy-secondary border border-cyan-500/40 rounded-lg shadow-xl p-4 flex items-start gap-3 bottom-[max(1rem,env(safe-area-inset-bottom))] right-[max(1rem,env(safe-area-inset-right))]">
       <Download className="h-5 w-5 text-cyan-400 mt-0.5 flex-shrink-0" />
       <div className="flex-1">
         <div className="text-sm font-medium text-white">

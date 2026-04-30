@@ -72,6 +72,49 @@ export const changePasswordLimiter = rateLimit({
   },
 });
 
+// Forgot-password endpoint is unauthenticated and could be abused both
+// to enumerate accounts (despite the always-200 response, response time
+// can leak) and to spam users with reset emails. Two limiters layered:
+// per-IP catches mass scans, per-email caps how many reset emails any
+// one account can receive in a window. Tests bypass both.
+const FORGOT_PASSWORD_IP_LIMIT =
+  process.env.NODE_ENV === 'test' ? 100_000 : 10;
+const FORGOT_PASSWORD_EMAIL_LIMIT =
+  process.env.NODE_ENV === 'test' ? 100_000 : 3;
+
+/** 10 requests / hour / IP for /auth/forgot-password. */
+export const forgotPasswordIpLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: FORGOT_PASSWORD_IP_LIMIT,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: {
+    error: {
+      code: 'rate_limited',
+      message: 'Too many reset requests from this address. Try again later.',
+    },
+  },
+});
+
+/** 3 requests / hour / email for /auth/forgot-password. */
+export const forgotPasswordEmailLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: FORGOT_PASSWORD_EMAIL_LIMIT,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => {
+    const email = (req.body?.email ?? '').toString().trim().toLowerCase();
+    if (email) return `email:${email}`;
+    return `ip:${req.ip ?? 'unknown'}`;
+  },
+  message: {
+    error: {
+      code: 'rate_limited',
+      message: 'Too many reset requests for this account. Try again later.',
+    },
+  },
+});
+
 // Public careers apply endpoint is unauthenticated and therefore the most
 // abusable surface in the API. Two limiters layered: per-IP catches a
 // botnet hammering one origin; per-email catches a single account being

@@ -38,11 +38,11 @@ export const DialogContent = React.forwardRef<
         // dialog never touches the screen edges; cap at max-w-lg on
         // larger screens.
         'w-[calc(100vw-2rem)] max-w-lg',
-        // Height: cap at viewport-minus-gutter so tall dialogs (long
-        // forms, listings) stay reachable. Internal scroll handles
-        // overflow — without this, the submit button drops below the
-        // fold on phones and is unreachable.
-        'max-h-[calc(100dvh-2rem)] overflow-y-auto',
+        // Height: cap at viewport-minus-gutter-minus-safe-area so tall
+        // dialogs (long forms, listings) stay clear of the iOS notch and
+        // home indicator. Internal scroll handles overflow — without
+        // this, the submit button drops below the fold on phones.
+        'max-h-[calc(100dvh-2rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] overflow-y-auto',
         'bg-navy border border-navy-secondary rounded-lg shadow-2xl',
         'p-6 grid gap-4',
         'data-[state=open]:animate-zoom-in data-[state=closed]:animate-zoom-out',

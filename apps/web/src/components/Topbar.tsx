@@ -45,7 +45,9 @@ export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
   };
 
   return (
-    <header className="bg-navy border-b border-navy-secondary px-4 md:px-6 h-14 flex items-center gap-3">
+    <header
+      className="bg-navy border-b border-navy-secondary flex items-center gap-3 min-h-14 pt-[env(safe-area-inset-top)] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] md:pl-[max(1.5rem,env(safe-area-inset-left))] md:pr-[max(1.5rem,env(safe-area-inset-right))]"
+    >
       <Button
         variant="ghost"
         size="icon-sm"

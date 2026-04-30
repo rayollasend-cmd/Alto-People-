@@ -52,7 +52,7 @@ export function Layout() {
           <main
             id="main-content"
             tabIndex={-1}
-            className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 focus:outline-none"
+            className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 focus:outline-none pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] md:pl-[max(1.5rem,env(safe-area-inset-left))] md:pr-[max(1.5rem,env(safe-area-inset-right))] lg:pl-[max(2rem,env(safe-area-inset-left))] lg:pr-[max(2rem,env(safe-area-inset-right))]"
           >
             <AnimatePresence mode="wait" initial={false}>
               <motion.div

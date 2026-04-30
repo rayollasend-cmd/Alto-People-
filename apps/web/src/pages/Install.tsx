@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Apple, Smartphone, Share, MoreVertical, Plus, Download, ChevronRight, ShieldCheck } from 'lucide-react';
+import { Logo } from '@/components/Logo';
 
 type Platform = 'ios' | 'android' | 'desktop';
 
@@ -55,9 +56,7 @@ export function Install() {
   return (
     <Page>
       <header className="text-center mb-8">
-        <div className="inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-navy border border-gold/40 mb-4">
-          <span className="font-serif text-3xl text-gold tracking-tight">AP</span>
-        </div>
+        <Logo size="xl" className="mx-auto mb-4 rounded-2xl" alt="Alto People" />
         <h1 className="text-2xl sm:text-3xl font-medium text-white mb-2">
           Install Alto People
         </h1>

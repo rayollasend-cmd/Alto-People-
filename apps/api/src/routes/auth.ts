@@ -32,8 +32,16 @@ import {
   loginIpLimiter,
   loginEmailLimiter,
   changePasswordLimiter,
+  forgotPasswordIpLimiter,
+  forgotPasswordEmailLimiter,
 } from '../middleware/rateLimit.js';
 import { hashToken } from '../lib/inviteToken.js';
+import {
+  generatePasswordResetToken,
+  hashResetToken,
+  PASSWORD_RESET_TTL_SECONDS,
+} from '../lib/passwordResetToken.js';
+import { send } from '../lib/notifications.js';
 import { HttpError } from '../middleware/error.js';
 
 export const authRouter = Router();
@@ -420,6 +428,268 @@ authRouter.post('/change-password', requireAuth, changePasswordLimiter, async (r
         },
       },
       'auth.password_changed'
+    );
+
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Self-serve password reset ======================================= */
+
+const ForgotPasswordSchema = z.object({
+  email: z.string().email().max(254),
+});
+
+const ResetPasswordSchema = z.object({
+  // ~43-char base64url; cap higher to allow for future formats but reject
+  // obviously bogus inputs early.
+  token: z.string().min(20).max(200),
+  newPassword: z.string().min(12).max(256),
+});
+
+/**
+ * POST /auth/forgot-password { email }
+ *
+ * Public. ALWAYS returns 200 regardless of whether the email exists or
+ * the user is eligible to reset — leaking that distinction would let an
+ * attacker enumerate accounts. The audit log records the actual outcome
+ * for forensics.
+ *
+ * Eligibility: user must exist, not be soft-deleted, have a password
+ * already (so newly-invited accounts can't bypass the invite flow), and
+ * be in a human role. Anything else falls through to "no email sent" but
+ * the response is identical.
+ *
+ * Token lives 1 hour. Earlier outstanding tokens for the same user are
+ * invalidated when a new one is issued — the latest reset request wins.
+ */
+authRouter.post(
+  '/forgot-password',
+  forgotPasswordIpLimiter,
+  forgotPasswordEmailLimiter,
+  async (req, res, next) => {
+    try {
+      const parsed = ForgotPasswordSchema.safeParse(req.body);
+      if (!parsed.success) {
+        // Even bad input gets a 200 — same reason as the success path.
+        // Don't audit; the rate limiter handles abuse.
+        res.json({ ok: true });
+        return;
+      }
+      const email = parsed.data.email.trim().toLowerCase();
+
+      const user = await prisma.user.findFirst({
+        where: { email, deletedAt: null },
+        select: {
+          id: true,
+          email: true,
+          status: true,
+          role: true,
+          clientId: true,
+          passwordHash: true,
+        },
+      });
+
+      const eligible =
+        !!user &&
+        user.status === 'ACTIVE' &&
+        !!user.passwordHash &&
+        HUMAN_ROLES.includes(user.role);
+
+      if (eligible && user) {
+        const { raw, hash } = generatePasswordResetToken();
+        const expiresAt = new Date(Date.now() + PASSWORD_RESET_TTL_SECONDS * 1000);
+
+        await prisma.$transaction(async (tx) => {
+          // Invalidate any outstanding tokens — newest-issued wins so a
+          // user who clicks "send me another" doesn't leave the older
+          // link live alongside it.
+          await tx.passwordResetToken.updateMany({
+            where: { userId: user.id, consumedAt: null },
+            data: { consumedAt: new Date() },
+          });
+          await tx.passwordResetToken.create({
+            data: {
+              tokenHash: hash,
+              userId: user.id,
+              expiresAt,
+              requestedIp: req.ip ?? null,
+            },
+          });
+        });
+
+        const resetUrl = `${env.APP_BASE_URL}/reset-password/${raw}`;
+        const subject = 'Reset your Alto People password';
+        const body = [
+          `Hi,`,
+          ``,
+          `Someone (hopefully you) asked to reset the password on your Alto People account (${user.email}).`,
+          ``,
+          `Open this link to set a new password — it works once and expires in 1 hour:`,
+          ``,
+          resetUrl,
+          ``,
+          `If you didn't request this, you can ignore this email — your password stays the same.`,
+          ``,
+          `— Alto People`,
+        ].join('\n');
+
+        try {
+          await send({
+            channel: 'EMAIL',
+            recipient: { userId: user.id, phone: null, email: user.email },
+            subject,
+            body,
+          });
+        } catch (sendErr) {
+          // Don't surface to the client (see enumeration note above) but
+          // do record so HR can investigate undelivered resets.
+          console.error('[auth.forgot-password] email send failed:', sendErr);
+        }
+
+        enqueueAudit(
+          {
+            actorUserId: user.id,
+            clientId: user.clientId ?? null,
+            action: 'auth.password_reset_requested',
+            entityType: 'User',
+            entityId: user.id,
+            metadata: {
+              ip: req.ip ?? null,
+              userAgent: req.headers['user-agent'] ?? null,
+              email,
+            },
+          },
+          'auth.password_reset_requested'
+        );
+      } else {
+        // No-op path. Still record so a flood of resets against a single
+        // unknown email leaves a paper trail.
+        enqueueAudit(
+          {
+            actorUserId: null,
+            clientId: null,
+            action: 'auth.password_reset_skipped',
+            entityType: 'User',
+            entityId: email,
+            metadata: {
+              ip: req.ip ?? null,
+              userAgent: req.headers['user-agent'] ?? null,
+              email,
+              reason: !user
+                ? 'unknown_email'
+                : user.status !== 'ACTIVE'
+                  ? 'not_active'
+                  : !user.passwordHash
+                    ? 'no_password'
+                    : 'non_human_role',
+            },
+          },
+          'auth.password_reset_skipped'
+        );
+      }
+
+      res.json({ ok: true });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * POST /auth/reset-password { token, newPassword }
+ *
+ * Public. Looks up by sha256(token); returns 400 with a generic message
+ * for any failure (unknown / expired / consumed / wrong user state) so
+ * we don't leak which case applied.
+ *
+ * On success: stores the new hash, marks the token consumed, and bumps
+ * tokenVersion so every previously-issued session cookie for this user
+ * goes stale immediately. Does NOT auto-sign-in — the user must log in
+ * with the new password from a clean state. This is the safer pattern
+ * (it confirms the password actually works before they leave the page).
+ */
+authRouter.post('/reset-password', async (req, res, next) => {
+  try {
+    const parsed = ResetPasswordSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_token', 'Reset link is invalid or expired');
+    }
+    const { token, newPassword } = parsed.data;
+    const tokenHash = hashResetToken(token);
+
+    const reset = await prisma.passwordResetToken.findUnique({
+      where: { tokenHash },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            role: true,
+            status: true,
+            clientId: true,
+            deletedAt: true,
+          },
+        },
+      },
+    });
+    if (
+      !reset ||
+      reset.consumedAt ||
+      reset.expiresAt <= new Date() ||
+      !reset.user ||
+      reset.user.deletedAt ||
+      reset.user.status !== 'ACTIVE' ||
+      !HUMAN_ROLES.includes(reset.user.role)
+    ) {
+      throw new HttpError(400, 'invalid_token', 'Reset link is invalid or expired');
+    }
+
+    const newHash = await hashPassword(newPassword);
+    const now = new Date();
+
+    await prisma.$transaction(async (tx) => {
+      await tx.passwordResetToken.update({
+        where: { id: reset.id },
+        data: { consumedAt: now },
+      });
+      // Kill any siblings — once one was used, the others are dead.
+      await tx.passwordResetToken.updateMany({
+        where: {
+          userId: reset.userId,
+          consumedAt: null,
+          id: { not: reset.id },
+        },
+        data: { consumedAt: now },
+      });
+      await tx.user.update({
+        where: { id: reset.userId },
+        data: {
+          passwordHash: newHash,
+          // Nuke every existing session so a stolen cookie can't outlive
+          // the password it was paired with.
+          tokenVersion: { increment: 1 },
+        },
+      });
+    });
+
+    invalidateUserCache(reset.userId);
+
+    enqueueAudit(
+      {
+        actorUserId: reset.userId,
+        clientId: reset.user.clientId ?? null,
+        action: 'auth.password_reset_completed',
+        entityType: 'User',
+        entityId: reset.userId,
+        metadata: {
+          ip: req.ip ?? null,
+          userAgent: req.headers['user-agent'] ?? null,
+        },
+      },
+      'auth.password_reset_completed'
     );
 
     res.status(204).end();

@@ -12,12 +12,15 @@
 // Bumped when the SHELL list or any cached page chrome changes so the
 // activate handler evicts the previous shell cache instead of leaving
 // stale entries (e.g. the old Login page with the picture logo above
-// "Alto People") lying around indefinitely.
+// "Alto People", or the now-broken 125x91 logo.png) lying around
+// indefinitely.
 const CACHE_NAME = 'alto-shell-v7';
 const SHELL = [
   '/',
   '/index.html',
   '/manifest.webmanifest',
+  '/favicon.svg',
+  '/favicon-32.png',
   '/icon-192.png',
   '/icon-512.png',
   '/apple-touch-icon.png',
