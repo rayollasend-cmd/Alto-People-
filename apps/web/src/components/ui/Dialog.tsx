@@ -33,7 +33,16 @@ export const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        'fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2',
+        'fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2',
+        // Width: leave a 1rem gutter on each side at phone widths so the
+        // dialog never touches the screen edges; cap at max-w-lg on
+        // larger screens.
+        'w-[calc(100vw-2rem)] max-w-lg',
+        // Height: cap at viewport-minus-gutter so tall dialogs (long
+        // forms, listings) stay reachable. Internal scroll handles
+        // overflow — without this, the submit button drops below the
+        // fold on phones and is unreachable.
+        'max-h-[calc(100dvh-2rem)] overflow-y-auto',
         'bg-navy border border-navy-secondary rounded-lg shadow-2xl',
         'p-6 grid gap-4',
         'data-[state=open]:animate-zoom-in data-[state=closed]:animate-zoom-out',
