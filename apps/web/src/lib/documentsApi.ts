@@ -44,6 +44,30 @@ export async function uploadMyDocument(
   return res.json();
 }
 
+// HR-side upload for result PDFs (background-check, drug-test, E-Verify).
+// The created DocumentRecord lands as VERIFIED on the target associate's
+// profile so it shows up immediately in their Documents tab.
+export async function uploadAdminDocument(
+  file: File,
+  kind: DocumentKind,
+  associateId: string
+): Promise<DocumentRecord> {
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('kind', kind);
+  fd.append('associateId', associateId);
+  const res = await fetch('/api/documents/admin/upload', {
+    method: 'POST',
+    credentials: 'include',
+    body: fd,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error?.message ?? `Upload failed (${res.status})`);
+  }
+  return res.json();
+}
+
 export function downloadDocumentUrl(id: string): string {
   return `/api/documents/${id}/download`;
 }

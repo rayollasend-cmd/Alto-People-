@@ -1635,6 +1635,12 @@ export const DocumentKindSchema = z.enum([
   'J1_DS2019',
   'J1_VISA',
   'SIGNED_AGREEMENT',
+  // HR-uploaded result PDFs from external providers (Checkr, drug-test
+  // lab, E-Verify). HR runs the check externally and uploads the result
+  // PDF into the associate's profile via /documents/admin/upload.
+  'BACKGROUND_CHECK_RESULT',
+  'DRUG_TEST_RESULT',
+  'I9_VERIFICATION_RESULT',
   'OTHER',
 ]);
 export type DocumentKind = z.infer<typeof DocumentKindSchema>;

@@ -147,6 +147,90 @@ documentsRouter.post('/me/upload', upload.single('file'), async (req, res, next)
   }
 });
 
+/* ===== HR-side upload =================================================== */
+
+// HR uploads result PDFs (background-check, drug-test, E-Verify) into the
+// associate's profile. Different from /me/upload in that:
+//   1. The actor isn't the associate — `associateId` comes from a form field.
+//   2. Status is auto-VERIFIED with `verifiedById = HR user`. These are
+//      HR-curated source-of-truth artifacts, not associate submissions
+//      that need a review pass.
+documentsRouter.post(
+  '/admin/upload',
+  MANAGE,
+  upload.single('file'),
+  async (req, res, next) => {
+    try {
+      const user = req.user!;
+      if (!req.file) {
+        throw new HttpError(400, 'no_file', 'A "file" multipart field is required');
+      }
+      const associateId =
+        typeof req.body.associateId === 'string' ? req.body.associateId : null;
+      if (!associateId) {
+        throw new HttpError(400, 'invalid_body', '"associateId" form field is required');
+      }
+      const kindParse = DocumentKindSchema.safeParse(req.body.kind);
+      if (!kindParse.success) {
+        throw new HttpError(400, 'invalid_kind', 'Invalid or missing "kind" field');
+      }
+      const associate = await prisma.associate.findFirst({
+        where: { id: associateId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!associate) {
+        throw new HttpError(404, 'associate_not_found', 'Associate not found');
+      }
+      // Denormalized clientId on DocumentRecord powers tenant scoping for
+      // CLIENT_PORTAL viewers. Associate <-> Client lives on Application,
+      // so pull the most recent application's clientId; falls back to null
+      // for associates without one (still HR-visible via scopeDocuments).
+      const recentApp = await prisma.application.findFirst({
+        where: { associateId: associate.id, deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+        select: { clientId: true },
+      });
+
+      const sha = createHash('sha256').update(req.file.buffer).digest('hex').slice(0, 16);
+      const id = randomUUID();
+      const ext = extname(req.file.originalname || '').toLowerCase();
+      const relativeKey = `${id}-${sha}${ext}`;
+      await writeFile(resolveStoragePath(relativeKey), req.file.buffer);
+
+      const created = await prisma.documentRecord.create({
+        data: {
+          id,
+          associateId: associate.id,
+          clientId: recentApp?.clientId ?? null,
+          kind: kindParse.data,
+          s3Key: relativeKey,
+          filename: req.file.originalname || 'upload',
+          mimeType: req.file.mimetype,
+          size: req.file.size,
+          status: 'VERIFIED',
+          verifiedById: user.id,
+          verifiedAt: new Date(),
+        },
+        include: DOC_INCLUDE,
+      });
+
+      await recordDocumentEvent({
+        actorUserId: user.id,
+        action: 'document.hr_uploaded',
+        documentId: created.id,
+        associateId: created.associateId,
+        clientId: created.clientId,
+        metadata: { kind: created.kind, size: created.size, mime: created.mimeType },
+        req,
+      });
+
+      res.status(201).json(toRecord(created));
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 /* ===== Download (associate of own + HR/Ops of any) ====================== */
 
 // Pass `?inline=1` to render the document in-browser (PDFs / images) for the
