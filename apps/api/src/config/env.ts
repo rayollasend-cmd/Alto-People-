@@ -89,6 +89,14 @@ const EnvSchema = z.object({
   // rotating this secret revokes every outstanding subscription. Defaults
   // to JWT_SECRET so dev environments don't need a second key.
   CALENDAR_FEED_SECRET: z.string().min(32).optional(),
+  // ASN Nexus — Walmart-shift compliance metrics source. ASN Nexus is a
+  // separate service (built on Replit) that owns the source-of-truth
+  // shift data. The compliance scorecard's Tile 3 (shift compliance)
+  // pulls live metrics from there. When either var is unset, Tile 3
+  // falls back to its built-in fill-rate query against our local Shift
+  // table and shows "Coming soon" for everything else.
+  ASN_NEXUS_BASE_URL: z.string().url().optional(),
+  ASN_NEXUS_API_KEY: z.string().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
