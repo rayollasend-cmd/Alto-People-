@@ -135,6 +135,7 @@ async function buildOnboardingTile(): Promise<ScorecardOnboardingResponse> {
   if (total === 0) {
     return ScorecardOnboardingResponseSchema.parse({
       activeAssociateCount: 0,
+      fullyCompliantCount: 0,
       signals: [],
       severity: 'ok',
       generatedAt: new Date().toISOString(),
@@ -260,8 +261,18 @@ async function buildOnboardingTile(): Promise<ScorecardOnboardingResponse> {
     return Math.max(worstPct, pct);
   }, 0);
 
+  // Fully compliant = passes every signal. Computed from the uncapped sets
+  // because the per-signal `missing[]` payload is sliced for response size.
+  const allSignalSets: Array<Set<string>> = [
+    ageOkSet, drugSet, bgSet, i9Set, eVerifyClearedSet, w4Set, offerSet, policySet,
+  ];
+  const fullyCompliantCount = ids.filter((id) =>
+    allSignalSets.every((s) => s.has(id)),
+  ).length;
+
   return ScorecardOnboardingResponseSchema.parse({
     activeAssociateCount: total,
+    fullyCompliantCount,
     signals,
     severity: severityFromPercent(worst),
     generatedAt: new Date().toISOString(),

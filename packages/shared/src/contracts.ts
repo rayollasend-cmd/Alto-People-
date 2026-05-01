@@ -2792,6 +2792,10 @@ export type ScorecardOnboardingSignal = z.infer<typeof ScorecardOnboardingSignal
 
 export const ScorecardOnboardingResponseSchema = z.object({
   activeAssociateCount: z.number().int().nonnegative(),
+  // Number of active associates passing every signal (no gaps). Computed
+  // server-side because the per-signal `missing[]` lists are capped for
+  // payload size, so the client can't reliably take their union.
+  fullyCompliantCount: z.number().int().nonnegative(),
   signals: z.array(ScorecardOnboardingSignalSchema),
   severity: ScorecardSeveritySchema,
   generatedAt: z.string().datetime(),
