@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -13,7 +14,9 @@ import {
   ShieldCheck,
   Sparkles,
   TrendingUp,
+  WifiOff,
 } from 'lucide-react';
+import { DonutChart } from '@/components/ui/DonutChart';
 import {
   Badge,
   Button,
@@ -31,14 +34,8 @@ import {
   TooltipTrigger,
 } from '@/components/ui';
 import type {
-  ScorecardActionsResponse,
-  ScorecardBillingResponse,
-  ScorecardExpirationsResponse,
-  ScorecardOnboardingResponse,
   ScorecardOnboardingSignal,
   ScorecardSeverity,
-  ScorecardShiftsResponse,
-  ScorecardTrainingResponse,
   ScorecardTrainingSignal,
 } from '@alto-people/shared';
 import {
@@ -53,6 +50,46 @@ import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 
 const REFRESH_INTERVAL_MS = 15 * 60 * 1000;
+
+// Shared fetch hook for tiles. Two behaviors that matter:
+//   1. First load shows a skeleton; subsequent refreshes keep the previous
+//      data on screen so the page doesn't flash empty when nothing changed.
+//   2. If a refresh fails *after* a successful first load, we surface a
+//      "stale" badge instead of throwing the user back to an error state.
+//      They keep the last-good numbers and can retry from the header.
+function useTileData<T>(
+  fetcher: () => Promise<T>,
+  refreshEpoch: number,
+): { data: T | null; error: string | null; stale: boolean } {
+  const [data, setData] = useState<T | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
+
+  useEffect(() => {
+    const isFirst = data === null;
+    if (isFirst) setError(null);
+    let cancelled = false;
+    fetcher()
+      .then((d) => {
+        if (cancelled) return;
+        setData(d);
+        setError(null);
+        setStale(false);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        if (isFirst) {
+          setError(e instanceof ApiError ? e.message : 'Failed to load.');
+        } else {
+          setStale(true);
+        }
+      });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshEpoch]);
+
+  return { data, error, stale };
+}
 
 const SEVERITY_BADGE: Record<ScorecardSeverity, { variant: 'success' | 'pending' | 'destructive'; label: string }> = {
   ok: { variant: 'success', label: 'OK' },
@@ -71,6 +108,7 @@ export function ComplianceScorecard() {
   // every tile re-fetches off it. Beats wiring 6 separate timers.
   const [refreshEpoch, setRefreshEpoch] = useState(0);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date>(new Date());
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -81,42 +119,40 @@ export function ComplianceScorecard() {
   }, []);
 
   const refresh = useCallback(() => {
+    setRefreshing(true);
     setRefreshEpoch((n) => n + 1);
     setLastRefreshedAt(new Date());
+    // Spinner is purely visual; the tiles each manage their own loading.
+    // 600ms is enough to register the click without leaving the icon
+    // spinning if a tile finishes faster than the eye can catch.
+    setTimeout(() => setRefreshing(false), 600);
   }, []);
 
   return (
     <TooltipProvider delayDuration={150}>
-      <div className="space-y-5">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="font-display text-2xl text-white flex items-center gap-2">
-              <ShieldCheck className="h-5 w-5 text-gold" />
-              Walmart Contract Compliance Scorecard
-            </h1>
-            <p className="text-sm text-silver mt-1">
-              Live state of our compliance against Walmart MSA / SOW / MTSA. Refreshes every 15 minutes.
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="text-[11px] text-silver tabular-nums">
-              Last refreshed {fmtTimeAgo(lastRefreshedAt)}
-            </span>
-            <Button size="sm" variant="outline" onClick={refresh}>
-              <RefreshCw className="h-3.5 w-3.5" />
-              Refresh
-            </Button>
-          </div>
+      <div className="space-y-4">
+        <HeroStrip
+          refreshEpoch={refreshEpoch}
+          lastRefreshedAt={lastRefreshedAt}
+          refreshing={refreshing}
+          onRefresh={refresh}
+        />
+
+        {/* Tile 1 — promoted to full-width hero. Most important tile per spec. */}
+        <OnboardingTile refreshEpoch={refreshEpoch} />
+
+        {/* Expirations + Training: time-bound items. */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <ExpirationsTile refreshEpoch={refreshEpoch} />
+          <TrainingTile refreshEpoch={refreshEpoch} />
         </div>
 
-        <CriticalBanner refreshEpoch={refreshEpoch} />
-
+        {/* Operational + financial. Both have heavy "coming soon" content
+            until the schema catches up — pairing them keeps the visual
+            weight balanced. */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <OnboardingTile refreshEpoch={refreshEpoch} />
-          <ExpirationsTile refreshEpoch={refreshEpoch} />
           <ShiftsTile refreshEpoch={refreshEpoch} />
           <BillingTile refreshEpoch={refreshEpoch} />
-          <TrainingTile refreshEpoch={refreshEpoch} />
         </div>
 
         <ActionsTile refreshEpoch={refreshEpoch} />
@@ -125,27 +161,95 @@ export function ComplianceScorecard() {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* Critical banner — surfaces /actions counts at the top of the page. */
-/* ------------------------------------------------------------------ */
+/* ----------------------------------------------------------------- */
+/* Hero strip — page header + at-a-glance KPIs + refresh control.    */
+/* Combines what used to be separate header + critical banner. The   */
+/* critical count is the first thing the user sees, in red, so the   */
+/* "is anything on fire?" question is answered without scrolling.    */
+/* ----------------------------------------------------------------- */
 
-function CriticalBanner({ refreshEpoch }: { refreshEpoch: number }) {
-  const [data, setData] = useState<ScorecardActionsResponse | null>(null);
-  useEffect(() => {
-    getScorecardActions().then(setData).catch(() => setData(null));
-  }, [refreshEpoch]);
-  if (!data || data.criticalCount === 0) return null;
+function HeroStrip({
+  refreshEpoch,
+  lastRefreshedAt,
+  refreshing,
+  onRefresh,
+}: {
+  refreshEpoch: number;
+  lastRefreshedAt: Date;
+  refreshing: boolean;
+  onRefresh: () => void;
+}) {
+  const { data } = useTileData(getScorecardActions, refreshEpoch);
+  const critical = data?.criticalCount ?? 0;
+  const warn = data?.warnCount ?? 0;
+  const totalActions = critical + warn;
+
   return (
-    <div className="rounded-lg border border-alert/60 bg-alert/10 p-4 flex items-start gap-3">
-      <AlertTriangle className="h-5 w-5 text-alert flex-shrink-0 mt-0.5" />
-      <div className="flex-1">
-        <div className="font-semibold text-alert text-sm">
-          {data.criticalCount} critical {data.criticalCount === 1 ? 'item' : 'items'} need attention
+    <Card className={cn('border', critical > 0 ? 'border-alert/60' : 'border-navy-secondary')}>
+      <CardContent className="py-4">
+        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+          <div className="flex-1 min-w-[260px]">
+            <h1 className="font-display text-xl text-white flex items-center gap-2">
+              <ShieldCheck className="h-5 w-5 text-gold" />
+              Walmart Contract Compliance Scorecard
+            </h1>
+            <p className="text-xs text-silver mt-0.5">
+              Live state against Walmart MSA / SOW / MTSA. Auto-refreshes every 15 minutes.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-5">
+            <KpiNumber
+              label="Critical"
+              value={critical}
+              tone={critical > 0 ? 'text-alert' : 'text-silver'}
+              icon={critical > 0 ? <AlertTriangle className="h-3.5 w-3.5" /> : null}
+            />
+            <KpiNumber
+              label="Warn"
+              value={warn}
+              tone={warn > 0 ? 'text-warning' : 'text-silver'}
+            />
+            <KpiNumber
+              label="Open actions"
+              value={totalActions}
+              tone="text-white"
+            />
+          </div>
+
+          <div className="flex items-center gap-3 ml-auto">
+            <span className="text-[11px] text-silver tabular-nums">
+              Updated {fmtTimeAgo(lastRefreshedAt)}
+            </span>
+            <Button size="sm" variant="outline" onClick={onRefresh} disabled={refreshing}>
+              <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+              {refreshing ? 'Refreshing…' : 'Refresh'}
+            </Button>
+          </div>
         </div>
-        <p className="text-xs text-silver mt-0.5">
-          Scroll to the Open Actions tile for the full list.
-        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function KpiNumber({
+  label,
+  value,
+  tone,
+  icon,
+}: {
+  label: string;
+  value: number;
+  tone: string;
+  icon?: React.ReactNode;
+}) {
+  return (
+    <div className="text-center">
+      <div className={cn('text-2xl font-bold tabular-nums flex items-center justify-center gap-1.5', tone)}>
+        {icon}
+        {value}
       </div>
+      <div className="text-[10px] uppercase tracking-widest text-silver/80 mt-0.5">{label}</div>
     </div>
   );
 }
@@ -153,16 +257,27 @@ function CriticalBanner({ refreshEpoch }: { refreshEpoch: number }) {
 /* ----------------------------- TILE 1 ----------------------------- */
 
 function OnboardingTile({ refreshEpoch }: { refreshEpoch: number }) {
-  const [data, setData] = useState<ScorecardOnboardingResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { data, error, stale } = useTileData(getScorecardOnboarding, refreshEpoch);
   const [drawerSignal, setDrawerSignal] = useState<ScorecardOnboardingSignal | null>(null);
 
-  useEffect(() => {
-    setData(null); setError(null);
-    getScorecardOnboarding()
-      .then(setData)
-      .catch((e) => setError(e instanceof ApiError ? e.message : 'Failed to load.'));
-  }, [refreshEpoch]);
+  // Empty population — there's nothing to score yet.
+  if (data && data.activeAssociateCount === 0) {
+    return (
+      <TileShell
+        icon={<ClipboardList className="h-4 w-4" />}
+        title="Onboarding completeness"
+        severity="ok"
+        loading={false}
+        error={null}
+        stale={stale}
+      >
+        <div className="text-sm text-silver flex items-center gap-2 py-4">
+          <Info className="h-4 w-4" />
+          No active associates yet — once HR approves an application this tile lights up.
+        </div>
+      </TileShell>
+    );
+  }
 
   return (
     <TileShell
@@ -171,36 +286,51 @@ function OnboardingTile({ refreshEpoch }: { refreshEpoch: number }) {
       severity={data?.severity ?? 'ok'}
       loading={!data && !error}
       error={error}
+      stale={stale}
     >
       {data && (
         <>
-          <p className="text-[11px] text-silver mb-2">
-            {data.activeAssociateCount} active {data.activeAssociateCount === 1 ? 'associate' : 'associates'}
-          </p>
-          <div className="space-y-1.5">
-            {data.signals.map((s) => {
-              const total = data.activeAssociateCount;
-              const pct = total === 0 ? 100 : Math.round((s.completedCount / total) * 100);
-              return (
-                <button
-                  key={s.key}
-                  type="button"
-                  onClick={() => setDrawerSignal(s)}
-                  className="group w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded hover:bg-navy-secondary/40 text-left"
-                >
-                  <ClauseTooltip clause={s.contractClause}>
-                    <span className="text-xs text-white">{s.label}</span>
-                  </ClauseTooltip>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11px] text-silver tabular-nums">
-                      {s.completedCount}/{total} ({pct}%)
-                    </span>
-                    <PctBar pct={pct} severity={pctSeverity(pct)} />
-                    <ChevronRight className="h-3.5 w-3.5 text-silver/60 group-hover:text-silver" />
-                  </div>
-                </button>
-              );
-            })}
+          <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-6 items-start">
+            {/* Hero metric — fully compliant donut. */}
+            <ComplianceDonut
+              fully={data.fullyCompliantCount}
+              total={data.activeAssociateCount}
+            />
+
+            {/* Per-signal grid — wider on the right so labels breathe. */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] uppercase tracking-widest text-silver/80">
+                  Per signal
+                </span>
+                <span className="text-[10px] text-silver/80 tabular-nums">
+                  {data.activeAssociateCount} active
+                </span>
+              </div>
+              {data.signals.map((s) => {
+                const total = data.activeAssociateCount;
+                const pct = total === 0 ? 100 : Math.round((s.completedCount / total) * 100);
+                return (
+                  <button
+                    key={s.key}
+                    type="button"
+                    onClick={() => setDrawerSignal(s)}
+                    className="group w-full flex items-center justify-between gap-3 px-2 py-1.5 rounded hover:bg-navy-secondary/40 text-left"
+                  >
+                    <ClauseTooltip clause={s.contractClause}>
+                      <span className="text-xs text-white">{s.label}</span>
+                    </ClauseTooltip>
+                    <div className="flex items-center gap-3">
+                      <span className="text-[11px] text-silver tabular-nums">
+                        {s.completedCount}/{total} ({pct}%)
+                      </span>
+                      <PctBar pct={pct} severity={pctSeverity(pct)} className="w-24" />
+                      <ChevronRight className="h-3.5 w-3.5 text-silver/60 group-hover:text-silver" />
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           <Drawer open={drawerSignal !== null} onOpenChange={(o) => !o && setDrawerSignal(null)}>
@@ -228,12 +358,12 @@ function OnboardingTile({ refreshEpoch }: { refreshEpoch: number }) {
                         <div className="text-[10px] text-silver">{m.clientName ?? '—'}</div>
                       </div>
                       {m.associateId && (
-                        <a
-                          href={`/people?associate=${m.associateId}`}
+                        <Link
+                          to={`/people?associate=${m.associateId}`}
                           className="text-xs text-gold hover:underline flex items-center gap-1"
                         >
                           Open <ExternalLink className="h-3 w-3" />
-                        </a>
+                        </Link>
                       )}
                     </li>
                   ))}
@@ -252,17 +382,38 @@ function OnboardingTile({ refreshEpoch }: { refreshEpoch: number }) {
   );
 }
 
+function ComplianceDonut({ fully, total }: { fully: number; total: number }) {
+  const pct = total === 0 ? 100 : Math.round((fully / total) * 100);
+  const gaps = total - fully;
+  const tone = pct === 100 ? 'text-success' : pct >= 80 ? 'text-warning' : 'text-alert';
+  return (
+    <div className="flex flex-col items-center justify-center text-center">
+      <DonutChart
+        size={170}
+        gap={3}
+        data={[
+          { name: 'Fully compliant', value: fully, color: '#34A874' },
+          { name: 'Has gaps', value: Math.max(0, gaps), color: '#E96255' },
+        ]}
+        centerLabel={`${pct}%`}
+        centerSublabel="compliant"
+      />
+      <div className={cn('text-xs mt-2', tone)}>
+        {fully} of {total} fully compliant
+      </div>
+      {gaps > 0 && (
+        <div className="text-[10px] text-silver mt-0.5">
+          {gaps} {gaps === 1 ? 'associate has' : 'associates have'} at least one gap
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ----------------------------- TILE 2 ----------------------------- */
 
 function ExpirationsTile({ refreshEpoch }: { refreshEpoch: number }) {
-  const [data, setData] = useState<ScorecardExpirationsResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    setData(null); setError(null);
-    getScorecardExpirations()
-      .then(setData)
-      .catch((e) => setError(e instanceof ApiError ? e.message : 'Failed to load.'));
-  }, [refreshEpoch]);
+  const { data, error, stale } = useTileData(getScorecardExpirations, refreshEpoch);
 
   return (
     <TileShell
@@ -271,6 +422,7 @@ function ExpirationsTile({ refreshEpoch }: { refreshEpoch: number }) {
       severity={data?.severity ?? 'ok'}
       loading={!data && !error}
       error={error}
+      stale={stale}
     >
       {data && (
         <>
@@ -322,14 +474,7 @@ function ExpirationsTile({ refreshEpoch }: { refreshEpoch: number }) {
 /* ----------------------------- TILE 3 ----------------------------- */
 
 function ShiftsTile({ refreshEpoch }: { refreshEpoch: number }) {
-  const [data, setData] = useState<ScorecardShiftsResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    setData(null); setError(null);
-    getScorecardShifts()
-      .then(setData)
-      .catch((e) => setError(e instanceof ApiError ? e.message : 'Failed to load.'));
-  }, [refreshEpoch]);
+  const { data, error, stale } = useTileData(getScorecardShifts, refreshEpoch);
 
   return (
     <TileShell
@@ -338,6 +483,7 @@ function ShiftsTile({ refreshEpoch }: { refreshEpoch: number }) {
       severity={data?.severity ?? 'ok'}
       loading={!data && !error}
       error={error}
+      stale={stale}
     >
       {data && (
         <div className="space-y-2">
@@ -376,14 +522,7 @@ function ShiftsTile({ refreshEpoch }: { refreshEpoch: number }) {
 /* ----------------------------- TILE 4 ----------------------------- */
 
 function BillingTile({ refreshEpoch }: { refreshEpoch: number }) {
-  const [data, setData] = useState<ScorecardBillingResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    setData(null); setError(null);
-    getScorecardBilling()
-      .then(setData)
-      .catch((e) => setError(e instanceof ApiError ? e.message : 'Failed to load.'));
-  }, [refreshEpoch]);
+  const { data, error, stale } = useTileData(getScorecardBilling, refreshEpoch);
 
   const mismatches = useMemo(
     () => data?.rateChecks.filter((r) => r.expectedRate !== null && !r.match) ?? [],
@@ -397,6 +536,7 @@ function BillingTile({ refreshEpoch }: { refreshEpoch: number }) {
       severity={data?.severity ?? 'ok'}
       loading={!data && !error}
       error={error}
+      stale={stale}
     >
       {data && (
         <>
@@ -444,16 +584,8 @@ function BillingTile({ refreshEpoch }: { refreshEpoch: number }) {
 /* ----------------------------- TILE 5 ----------------------------- */
 
 function TrainingTile({ refreshEpoch }: { refreshEpoch: number }) {
-  const [data, setData] = useState<ScorecardTrainingResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { data, error, stale } = useTileData(getScorecardTraining, refreshEpoch);
   const [drawerSignal, setDrawerSignal] = useState<ScorecardTrainingSignal | null>(null);
-
-  useEffect(() => {
-    setData(null); setError(null);
-    getScorecardTraining()
-      .then(setData)
-      .catch((e) => setError(e instanceof ApiError ? e.message : 'Failed to load.'));
-  }, [refreshEpoch]);
 
   return (
     <TileShell
@@ -462,6 +594,7 @@ function TrainingTile({ refreshEpoch }: { refreshEpoch: number }) {
       severity={data?.severity ?? 'ok'}
       loading={!data && !error}
       error={error}
+      stale={stale}
     >
       {data && (
         <>
@@ -526,12 +659,12 @@ function TrainingTile({ refreshEpoch }: { refreshEpoch: number }) {
                         <div className="text-[10px] text-silver">{m.clientName ?? '—'}</div>
                       </div>
                       {m.associateId && (
-                        <a
-                          href={`/people?associate=${m.associateId}`}
+                        <Link
+                          to={`/people?associate=${m.associateId}`}
                           className="text-xs text-gold hover:underline flex items-center gap-1"
                         >
                           Open <ExternalLink className="h-3 w-3" />
-                        </a>
+                        </Link>
                       )}
                     </li>
                   ))}
@@ -547,42 +680,83 @@ function TrainingTile({ refreshEpoch }: { refreshEpoch: number }) {
 
 /* ----------------------------- TILE 6 ----------------------------- */
 
+type ActionFilter = 'all' | 'critical' | 'warn';
+
 function ActionsTile({ refreshEpoch }: { refreshEpoch: number }) {
-  const [data, setData] = useState<ScorecardActionsResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    setData(null); setError(null);
-    getScorecardActions()
-      .then(setData)
-      .catch((e) => setError(e instanceof ApiError ? e.message : 'Failed to load.'));
-  }, [refreshEpoch]);
+  const { data, error, stale } = useTileData(getScorecardActions, refreshEpoch);
+  const [filter, setFilter] = useState<ActionFilter>('all');
+
+  const filtered = useMemo(() => {
+    if (!data) return [];
+    if (filter === 'all') return data.actions;
+    return data.actions.filter((a) => a.severity === filter);
+  }, [data, filter]);
 
   return (
     <Card>
       <CardContent className="space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-sm font-semibold text-white">
             <Sparkles className="h-4 w-4 text-gold" />
             Open actions
+            {stale && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex items-center gap-1 text-[10px] text-warning ml-1">
+                    <WifiOff className="h-3 w-3" />
+                    Stale
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  Last refresh failed.
+                </TooltipContent>
+              </Tooltip>
+            )}
           </div>
-          {data && (
-            <div className="flex items-center gap-2 text-[11px]">
-              <span className="text-alert tabular-nums">{data.criticalCount} critical</span>
-              <span className="text-warning tabular-nums">{data.warnCount} warn</span>
+          {data && data.actions.length > 0 && (
+            <div className="flex items-center gap-1">
+              <FilterChip
+                active={filter === 'all'}
+                onClick={() => setFilter('all')}
+                label="All"
+                count={data.actions.length}
+              />
+              <FilterChip
+                active={filter === 'critical'}
+                onClick={() => setFilter('critical')}
+                label="Critical"
+                count={data.criticalCount}
+                tone="alert"
+              />
+              <FilterChip
+                active={filter === 'warn'}
+                onClick={() => setFilter('warn')}
+                label="Warn"
+                count={data.warnCount}
+                tone="warning"
+              />
             </div>
           )}
         </div>
         {error && <div className="text-sm text-alert">{error}</div>}
         {!data && !error && <Skeleton className="h-32" />}
         {data && data.actions.length === 0 && (
-          <div className="text-xs text-success flex items-center gap-2">
-            <CheckCircle2 className="h-3.5 w-3.5" />
-            No open compliance actions. Nice work.
+          <div className="rounded-md border border-success/40 bg-success/10 px-4 py-6 flex flex-col items-center text-center">
+            <CheckCircle2 className="h-6 w-6 text-success mb-2" />
+            <div className="text-sm text-success font-medium">No open compliance actions</div>
+            <div className="text-[11px] text-silver mt-0.5">
+              Every signal across all five tiles is clear.
+            </div>
           </div>
         )}
-        {data && data.actions.length > 0 && (
+        {data && data.actions.length > 0 && filtered.length === 0 && (
+          <div className="text-xs text-silver py-3 text-center">
+            No actions match this filter.
+          </div>
+        )}
+        {data && filtered.length > 0 && (
           <ul className="divide-y divide-navy-secondary border border-navy-secondary rounded">
-            {data.actions.map((a) => (
+            {filtered.map((a) => (
               <li key={a.id} className="px-3 py-2 flex items-center justify-between gap-2">
                 <div className="flex items-start gap-2 min-w-0">
                   <SeverityDot severity={a.severity} />
@@ -592,12 +766,12 @@ function ActionsTile({ refreshEpoch }: { refreshEpoch: number }) {
                   </div>
                 </div>
                 {a.link && (
-                  <a
-                    href={a.link}
+                  <Link
+                    to={a.link}
                     className="text-[11px] text-gold hover:underline flex items-center gap-1 shrink-0"
                   >
                     Fix <ExternalLink className="h-3 w-3" />
-                  </a>
+                  </Link>
                 )}
               </li>
             ))}
@@ -605,6 +779,42 @@ function ActionsTile({ refreshEpoch }: { refreshEpoch: number }) {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function FilterChip({
+  active,
+  onClick,
+  label,
+  count,
+  tone,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  count: number;
+  tone?: 'alert' | 'warning';
+}) {
+  const accentTone =
+    tone === 'alert' ? 'text-alert' :
+    tone === 'warning' ? 'text-warning' :
+    'text-white';
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'h-7 px-2.5 rounded-md border text-[11px] flex items-center gap-1.5 transition-colors',
+        active
+          ? 'border-gold bg-gold/10 text-white'
+          : 'border-navy-secondary text-silver hover:text-white hover:bg-navy-secondary/40',
+      )}
+    >
+      <span>{label}</span>
+      <span className={cn('tabular-nums font-semibold', active ? 'text-white' : accentTone)}>
+        {count}
+      </span>
+    </button>
   );
 }
 
@@ -616,6 +826,7 @@ function TileShell({
   severity,
   loading,
   error,
+  stale,
   children,
 }: {
   icon: React.ReactNode;
@@ -623,19 +834,35 @@ function TileShell({
   severity: ScorecardSeverity;
   loading: boolean;
   error: string | null;
+  stale?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <Card className={cn('border', SEVERITY_RING[severity])}>
       <CardContent className="space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-sm font-semibold text-white">
             <span className="text-gold">{icon}</span>
             {title}
           </div>
-          <Badge variant={SEVERITY_BADGE[severity].variant}>
-            {SEVERITY_BADGE[severity].label}
-          </Badge>
+          <div className="flex items-center gap-2">
+            {stale && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex items-center gap-1 text-[10px] text-warning">
+                    <WifiOff className="h-3 w-3" />
+                    Stale
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="left" className="max-w-xs">
+                  Last refresh failed. Numbers may be out of date — click Refresh to retry.
+                </TooltipContent>
+              </Tooltip>
+            )}
+            <Badge variant={SEVERITY_BADGE[severity].variant}>
+              {SEVERITY_BADGE[severity].label}
+            </Badge>
+          </div>
         </div>
         {error && <div className="text-sm text-alert">{error}</div>}
         {loading && <Skeleton className="h-32" />}
@@ -645,10 +872,18 @@ function TileShell({
   );
 }
 
-function PctBar({ pct, severity }: { pct: number; severity: ScorecardSeverity }) {
+function PctBar({
+  pct,
+  severity,
+  className,
+}: {
+  pct: number;
+  severity: ScorecardSeverity;
+  className?: string;
+}) {
   const fill = severity === 'critical' ? 'bg-alert' : severity === 'warn' ? 'bg-warning' : 'bg-success';
   return (
-    <div className="w-16 h-1.5 rounded-full bg-navy-secondary overflow-hidden">
+    <div className={cn('h-2 rounded-full bg-navy-secondary overflow-hidden', className ?? 'w-16')}>
       <div className={cn('h-full transition-all', fill)} style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
     </div>
   );
