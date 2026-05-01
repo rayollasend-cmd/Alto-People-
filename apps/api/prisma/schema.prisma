@@ -102,6 +102,13 @@ enum DocumentKind {
   J1_VISA
   // Phase 19 — server-rendered signed agreement PDF (typed-name e-sign).
   SIGNED_AGREEMENT
+  // HR-uploaded result PDFs from external providers (Checkr, drug-test
+  // lab, E-Verify). Mirrored from the feat/hr-result-uploads branch so
+  // the compliance scorecard can ship even if these branches land in
+  // either order — the migration uses ADD VALUE IF NOT EXISTS.
+  BACKGROUND_CHECK_RESULT
+  DRUG_TEST_RESULT
+  I9_VERIFICATION_RESULT
   OTHER
 }
 
@@ -118,6 +125,29 @@ enum BgCheckStatus {
   PASSED
   FAILED
   NEEDS_REVIEW
+}
+
+// Phase add-on — Walmart Contract Compliance Scorecard. Tags Course rows
+// so the scorecard's training-completeness tile can count completions per
+// regulatory category (EEO/harassment, OSHA safety, Walmart CADE, food
+// handler) without scanning free-text titles.
+enum ComplianceTag {
+  EEO_HARASSMENT
+  OSHA_SAFETY
+  WALMART_CADE
+  FOOD_HANDLER
+}
+
+// Phase add-on — E-Verify case state from the federal portal. HR records
+// the case number + outcome after submitting Section 2 docs through the
+// E-Verify website. PENDING covers cases that haven't returned a final
+// status yet (TNC review window).
+enum EVerifyStatus {
+  PENDING
+  EMPLOYMENT_AUTHORIZED
+  TENTATIVE_NONCONFIRMATION
+  FINAL_NONCONFIRMATION
+  CLOSE_CASE_AND_RESUBMIT
 }
 
 enum PayoutType {
@@ -939,6 +969,14 @@ model I9Verification {
   section2CompletedAt        DateTime?            @db.Timestamptz(6)
   documentList               I9DocumentList?
   supportingDocIds           Json?
+  // Phase add-on — E-Verify (the federal portal HR runs separately after
+  // Section 2). The case number is opaque (assigned by USCIS); status is
+  // the rolled-up outcome. eVerifyClosedAt stamps when the case left
+  // PENDING. Compliance scorecard's onboarding tile counts an associate
+  // as fully E-Verified only when status = EMPLOYMENT_AUTHORIZED.
+  eVerifyCaseNumber          String?
+  eVerifyStatus              EVerifyStatus?
+  eVerifyClosedAt            DateTime?            @db.Timestamptz(6)
   associate                  Associate            @relation(fields: [associateId], references: [id], onDelete: Cascade)
   section2Verifier           User?                @relation("I9Verifier", fields: [section2VerifierUserId], references: [id], onDelete: SetNull)
   createdAt                  DateTime             @default(now()) @db.Timestamptz(6)
@@ -3444,6 +3482,11 @@ model Course {
   isRequired   Boolean      @default(false)
   validityDays Int?
   status       CourseStatus @default(DRAFT)
+  // Phase add-on — categorizes the course for the compliance scorecard's
+  // training-completeness tile. Nullable so existing free-text courses
+  // stay untagged; HR sets this on courses that satisfy a specific
+  // regulatory requirement (Walmart MTSA Section 5a, etc.).
+  complianceTag ComplianceTag?
   createdById  String?      @db.Uuid
   createdAt    DateTime     @default(now()) @db.Timestamptz(6)
   updatedAt    DateTime     @updatedAt @db.Timestamptz(6)
