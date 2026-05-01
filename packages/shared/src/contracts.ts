@@ -2556,6 +2556,16 @@ export const AssociateOrgAssignmentInputSchema = z.object({
 });
 export type AssociateOrgAssignmentInput = z.infer<typeof AssociateOrgAssignmentInputSchema>;
 
+// HR-side patch of plain associate fields (phone, etc.). Mirrors the
+// fields self-service exposes on /me/profile but gated to manage:org so
+// HR can correct contact info without asking the associate to re-submit
+// onboarding. Address fields stay read-only here on purpose — those go
+// through onboarding's PROFILE_INFO task which is the source of truth.
+export const AssociateProfilePatchInputSchema = z.object({
+  phone: z.string().trim().min(7).max(40).nullable().optional(),
+});
+export type AssociateProfilePatchInput = z.infer<typeof AssociateProfilePatchInputSchema>;
+
 export const AssociateOrgSummarySchema = z.object({
   id: UuidSchema,
   firstName: z.string(),
@@ -2622,6 +2632,10 @@ export const DirectoryEntrySchema = z.object({
   jobProfileTitle: z.string().nullable(),
   // For pending entries — the % complete on their onboarding checklist.
   onboardingPercent: z.number().int().min(0).max(100).nullable(),
+  // The id of the workplace application — present whenever a workplace
+  // could be derived. Used by the drawer to deep-link into the onboarding
+  // detail and to drive the nudge action for PENDING associates.
+  applicationId: UuidSchema.nullable(),
   // First time this associate's record was created — useful as a proxy
   // for tenure when no formal hire date is on file.
   createdAt: z.string().datetime(),

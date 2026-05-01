@@ -1,6 +1,7 @@
 import type {
   AssociateOrgAssignmentInput,
   AssociateOrgListResponse,
+  AssociateProfilePatchInput,
   CostCenter,
   CostCenterInput,
   CostCenterListResponse,
@@ -12,6 +13,16 @@ import type {
   JobProfileListResponse,
 } from '@alto-people/shared';
 import { apiFetch } from './api';
+
+export function patchAssociateProfile(
+  associateId: string,
+  input: AssociateProfilePatchInput,
+): Promise<{ id: string; phone: string | null }> {
+  return apiFetch(`/org/associates/${associateId}`, {
+    method: 'PATCH',
+    body: input,
+  });
+}
 
 export function listDepartments(clientId?: string): Promise<DepartmentListResponse> {
   const q = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';

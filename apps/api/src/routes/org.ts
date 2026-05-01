@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import {
   AssociateOrgAssignmentInputSchema,
+  AssociateProfilePatchInputSchema,
   CostCenterInputSchema,
   CostCenterListResponseSchema,
   DepartmentInputSchema,
@@ -620,5 +621,35 @@ orgRouter.get(
         hourlyRate: snapshot.hourlyRate?.toString() ?? null,
       },
     });
+  },
+);
+
+// ----- HR-side profile patch ---------------------------------------------
+// Lets HR fix plain associate fields (today: phone) directly from the
+// People directory drawer without bouncing the associate back through
+// onboarding's PROFILE_INFO task. Address fields stay out of scope —
+// those need to come from the associate themselves so the I-9 / W-4
+// chain stays clean.
+orgRouter.patch(
+  '/associates/:id',
+  MANAGE,
+  async (req: Request, res: Response) => {
+    const id = req.params.id;
+    const input = AssociateProfilePatchInputSchema.parse(req.body);
+    const existing = await prisma.associate.findUnique({ where: { id } });
+    if (!existing || existing.deletedAt) {
+      throw new HttpError(404, 'not_found', 'Associate not found.');
+    }
+    const updated = await prisma.associate.update({
+      where: { id },
+      data: {
+        phone: input.phone === undefined ? undefined : input.phone,
+      },
+      select: { id: true, phone: true },
+    });
+    audit(req, 'associate.profile_patch', 'Associate', id, {
+      phoneChanged: input.phone !== undefined,
+    });
+    res.json(updated);
   },
 );

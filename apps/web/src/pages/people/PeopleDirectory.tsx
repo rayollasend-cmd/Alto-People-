@@ -3,12 +3,16 @@ import { Link } from 'react-router-dom';
 import {
   Briefcase,
   Building2,
+  Check,
   Download,
+  ExternalLink,
   FileText,
   Mail,
+  Pencil,
   Phone,
   Plus,
   Search,
+  Send,
   Users,
   X,
 } from 'lucide-react';
@@ -32,13 +36,18 @@ import {
 import {
   downloadDocumentUrl,
   listAdminDocuments,
+  rejectDocument,
+  verifyDocument,
 } from '@/lib/documentsApi';
+import { nudgeApplicant } from '@/lib/onboardingApi';
+import { patchAssociateProfile } from '@/lib/orgApi';
 import {
   Avatar,
   Badge,
   Button,
   Card,
   CardContent,
+  ConfirmDialog,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -464,7 +473,17 @@ export function PeopleDirectory() {
         width="max-w-2xl"
       >
         {target && (
-          <DirectoryDrawer associate={target} onClose={() => setTarget(null)} />
+          <DirectoryDrawer
+            associate={target}
+            onClose={() => setTarget(null)}
+            onAssociateChange={(patch) => {
+              const updated = { ...target, ...patch };
+              setTarget(updated);
+              setRows((prev) =>
+                prev ? prev.map((r) => (r.id === updated.id ? updated : r)) : prev,
+              );
+            }}
+          />
         )}
       </Drawer>
     </div>
@@ -522,9 +541,11 @@ function FilterPicker({
 function DirectoryDrawer({
   associate: a,
   onClose,
+  onAssociateChange,
 }: {
   associate: DirectoryEntry;
   onClose: () => void;
+  onAssociateChange: (patch: Partial<DirectoryEntry>) => void;
 }) {
   const [tab, setTab] = useState<'profile' | 'compensation' | 'documents'>(
     'profile',
@@ -557,7 +578,7 @@ function DirectoryDrawer({
           </TabsList>
 
           <TabsContent value="profile">
-            <ProfileTab associate={a} />
+            <ProfileTab associate={a} onAssociateChange={onAssociateChange} />
           </TabsContent>
           <TabsContent value="compensation">
             <CompensationTab associate={a} />
@@ -582,7 +603,13 @@ function DirectoryDrawer({
   );
 }
 
-function ProfileTab({ associate: a }: { associate: DirectoryEntry }) {
+function ProfileTab({
+  associate: a,
+  onAssociateChange,
+}: {
+  associate: DirectoryEntry;
+  onAssociateChange: (patch: Partial<DirectoryEntry>) => void;
+}) {
   return (
     <div className="space-y-4">
       <Section title="Contact">
@@ -598,18 +625,9 @@ function ProfileTab({ associate: a }: { associate: DirectoryEntry }) {
             </a>
           }
         />
-        <Field
-          icon={<Phone className="h-3.5 w-3.5" />}
-          label="Phone"
-          value={
-            a.phone ? (
-              <a href={`tel:${a.phone}`} className="hover:text-white">
-                {a.phone}
-              </a>
-            ) : (
-              '—'
-            )
-          }
+        <PhoneField
+          associate={a}
+          onSaved={(phone) => onAssociateChange({ phone })}
         />
       </Section>
 
@@ -656,6 +674,13 @@ function ProfileTab({ associate: a }: { associate: DirectoryEntry }) {
         )}
       </Section>
 
+      {a.status === 'PENDING' && a.applicationId && (
+        <PendingActions
+          applicationId={a.applicationId}
+          associateName={`${a.firstName} ${a.lastName}`}
+        />
+      )}
+
       <Section title="Org assignment">
         <Field label="Manager" value={a.managerName ?? '—'} />
         <Field label="Department" value={a.departmentName ?? '—'} />
@@ -669,6 +694,195 @@ function ProfileTab({ associate: a }: { associate: DirectoryEntry }) {
         />
       </Section>
     </div>
+  );
+}
+
+function PhoneField({
+  associate: a,
+  onSaved,
+}: {
+  associate: DirectoryEntry;
+  onSaved: (phone: string | null) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(a.phone ?? '');
+  const [saving, setSaving] = useState(false);
+
+  // Reset the draft whenever the canonical phone changes (e.g. another
+  // tab on this row saved it). Avoids stale text staying in the input.
+  useEffect(() => {
+    if (!editing) setDraft(a.phone ?? '');
+  }, [a.phone, editing]);
+
+  async function save() {
+    if (saving) return;
+    const trimmed = draft.trim();
+    const next = trimmed.length === 0 ? null : trimmed;
+    if (next === a.phone) {
+      setEditing(false);
+      return;
+    }
+    if (next !== null && next.length < 7) {
+      toast.error('Phone must be at least 7 characters');
+      return;
+    }
+    setSaving(true);
+    try {
+      const r = await patchAssociateProfile(a.id, { phone: next });
+      onSaved(r.phone);
+      toast.success('Phone updated');
+      setEditing(false);
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : 'Could not save.';
+      toast.error(msg);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <div className="flex items-start gap-3 text-sm">
+        <div className="w-32 text-silver text-xs flex items-center gap-1.5 pt-2">
+          <Phone className="h-3.5 w-3.5" />
+          <span>Phone</span>
+        </div>
+        <div className="flex-1 min-w-0 flex items-center gap-1">
+          <Input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="555 555 0123"
+            className="h-8 text-sm"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void save();
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                setDraft(a.phone ?? '');
+                setEditing(false);
+              }
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => void save()}
+            disabled={saving}
+            aria-label="Save phone"
+            className="grid place-items-center h-8 w-8 rounded text-silver hover:text-white hover:bg-navy-secondary/60 disabled:opacity-40"
+          >
+            <Check className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setDraft(a.phone ?? '');
+              setEditing(false);
+            }}
+            disabled={saving}
+            aria-label="Cancel"
+            className="grid place-items-center h-8 w-8 rounded text-silver hover:text-white hover:bg-navy-secondary/60 disabled:opacity-40"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <Field
+      icon={<Phone className="h-3.5 w-3.5" />}
+      label="Phone"
+      value={
+        <div className="flex items-center gap-2 group">
+          <span className="flex-1 min-w-0">
+            {a.phone ? (
+              <a href={`tel:${a.phone}`} className="hover:text-white">
+                {a.phone}
+              </a>
+            ) : (
+              '—'
+            )}
+          </span>
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            aria-label="Edit phone"
+            className="opacity-0 group-hover:opacity-100 focus:opacity-100 grid place-items-center h-7 w-7 rounded text-silver hover:text-white hover:bg-navy-secondary/60 transition-opacity"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      }
+    />
+  );
+}
+
+function PendingActions({
+  applicationId,
+  associateName,
+}: {
+  applicationId: string;
+  associateName: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  async function sendNudge() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await nudgeApplicant(applicationId, {
+        subject: 'Reminder: finish your onboarding',
+        body:
+          `Hi ${associateName.split(' ')[0]},\n\n` +
+          'This is a friendly reminder to finish the remaining onboarding ' +
+          "steps so we can get you set up. Sign back into your Alto account to pick up where you left off — it should only take a few minutes.\n\n" +
+          'Thanks,\nAlto HR',
+      });
+      setOpen(false);
+      toast.success(
+        r.emailSent ? `Nudge sent to ${r.recipientEmail}` : 'Nudge logged',
+      );
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : 'Could not send.';
+      toast.error(msg);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Section title="Onboarding">
+      <div className="flex flex-wrap gap-2">
+        <Link
+          to={`/onboarding/applications/${applicationId}`}
+          className="inline-flex items-center gap-1.5 text-xs px-3 py-2 rounded bg-navy-secondary/60 text-silver hover:text-white border border-navy-secondary"
+        >
+          <ExternalLink className="h-3.5 w-3.5" />
+          Open application
+        </Link>
+        <Button
+          variant="ghost"
+          onClick={() => setOpen(true)}
+          className="text-xs"
+        >
+          <Send className="h-3.5 w-3.5 mr-1" />
+          Send nudge
+        </Button>
+      </div>
+      <ConfirmDialog
+        open={open}
+        onOpenChange={setOpen}
+        title="Send onboarding nudge?"
+        description={`Emails ${associateName} a reminder to finish their open onboarding tasks.`}
+        confirmLabel={busy ? 'Sending…' : 'Send nudge'}
+        busy={busy}
+        onConfirm={sendNudge}
+      />
+    </Section>
   );
 }
 
@@ -1029,6 +1243,8 @@ const DOC_STATUS_VARIANT: Record<
 function DocumentsTab({ associateId }: { associateId: string }) {
   const [docs, setDocs] = useState<DocumentRecord[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [actingId, setActingId] = useState<string | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<DocumentRecord | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -1047,6 +1263,42 @@ function DocumentsTab({ associateId }: { associateId: string }) {
       cancelled = true;
     };
   }, [associateId]);
+
+  function replaceDoc(updated: DocumentRecord) {
+    setDocs((prev) =>
+      prev ? prev.map((d) => (d.id === updated.id ? updated : d)) : prev,
+    );
+  }
+
+  async function handleVerify(d: DocumentRecord) {
+    if (actingId) return;
+    setActingId(d.id);
+    try {
+      const updated = await verifyDocument(d.id);
+      replaceDoc(updated);
+      toast.success('Document verified');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not verify.');
+    } finally {
+      setActingId(null);
+    }
+  }
+
+  async function handleReject(reason: string) {
+    if (!rejectTarget || actingId) return;
+    const id = rejectTarget.id;
+    setActingId(id);
+    try {
+      const updated = await rejectDocument(id, { reason });
+      replaceDoc(updated);
+      toast.success('Document rejected');
+      setRejectTarget(null);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not reject.');
+    } finally {
+      setActingId(null);
+    }
+  }
 
   if (error) {
     return (
@@ -1069,48 +1321,100 @@ function DocumentsTab({ associateId }: { associateId: string }) {
   }
 
   return (
-    <Table>
-      <TableHeader>
-        <TableRow className="hover:bg-transparent">
-          <TableHead>Document</TableHead>
-          <TableHead className="w-28">Status</TableHead>
-          <TableHead className="hidden sm:table-cell">Uploaded</TableHead>
-          <TableHead className="w-12" />
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {docs.map((d) => (
-          <TableRow key={d.id}>
-            <TableCell>
-              <div className="font-medium text-white text-sm">
-                {DOCUMENT_KIND_LABEL[d.kind] ?? d.kind}
-              </div>
-              <div className="text-[10px] text-silver truncate max-w-[220px]">
-                {d.filename}
-              </div>
-            </TableCell>
-            <TableCell>
-              <Badge variant={DOC_STATUS_VARIANT[d.status]}>
-                {d.status.charAt(0) + d.status.slice(1).toLowerCase()}
-              </Badge>
-            </TableCell>
-            <TableCell className="hidden sm:table-cell text-xs text-silver tabular-nums">
-              {new Date(d.createdAt).toLocaleDateString()}
-            </TableCell>
-            <TableCell>
-              <a
-                href={downloadDocumentUrl(d.id)}
-                download
-                className="inline-grid place-items-center h-8 w-8 rounded text-silver hover:text-white hover:bg-navy-secondary/60"
-                aria-label={`Download ${d.filename}`}
-              >
-                <Download className="h-4 w-4" />
-              </a>
-            </TableCell>
+    <>
+      <Table>
+        <TableHeader>
+          <TableRow className="hover:bg-transparent">
+            <TableHead>Document</TableHead>
+            <TableHead className="w-28">Status</TableHead>
+            <TableHead className="hidden sm:table-cell">Uploaded</TableHead>
+            <TableHead className="text-right">Actions</TableHead>
           </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+        </TableHeader>
+        <TableBody>
+          {docs.map((d) => (
+            <TableRow key={d.id}>
+              <TableCell>
+                <div className="font-medium text-white text-sm">
+                  {DOCUMENT_KIND_LABEL[d.kind] ?? d.kind}
+                </div>
+                <div className="text-[10px] text-silver truncate max-w-[220px]">
+                  {d.filename}
+                </div>
+                {d.status === 'REJECTED' && d.rejectionReason && (
+                  <div className="text-[10px] text-alert mt-0.5 truncate max-w-[220px]">
+                    {d.rejectionReason}
+                  </div>
+                )}
+              </TableCell>
+              <TableCell>
+                <Badge variant={DOC_STATUS_VARIANT[d.status]}>
+                  {d.status.charAt(0) + d.status.slice(1).toLowerCase()}
+                </Badge>
+              </TableCell>
+              <TableCell className="hidden sm:table-cell text-xs text-silver tabular-nums">
+                {new Date(d.createdAt).toLocaleDateString()}
+              </TableCell>
+              <TableCell>
+                <div className="flex justify-end items-center gap-1">
+                  {d.status === 'UPLOADED' && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => void handleVerify(d)}
+                        disabled={actingId === d.id}
+                        aria-label={`Verify ${d.filename}`}
+                        title="Verify"
+                        className="grid place-items-center h-8 w-8 rounded text-success hover:bg-navy-secondary/60 disabled:opacity-40"
+                      >
+                        <Check className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRejectTarget(d)}
+                        disabled={actingId === d.id}
+                        aria-label={`Reject ${d.filename}`}
+                        title="Reject"
+                        className="grid place-items-center h-8 w-8 rounded text-alert hover:bg-navy-secondary/60 disabled:opacity-40"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </>
+                  )}
+                  <a
+                    href={downloadDocumentUrl(d.id)}
+                    download
+                    className="grid place-items-center h-8 w-8 rounded text-silver hover:text-white hover:bg-navy-secondary/60"
+                    aria-label={`Download ${d.filename}`}
+                    title="Download"
+                  >
+                    <Download className="h-4 w-4" />
+                  </a>
+                </div>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+
+      <ConfirmDialog
+        open={rejectTarget !== null}
+        onOpenChange={(o) => !o && setRejectTarget(null)}
+        title="Reject document"
+        description={
+          rejectTarget
+            ? `${DOCUMENT_KIND_LABEL[rejectTarget.kind] ?? rejectTarget.kind} — ${rejectTarget.filename}`
+            : ''
+        }
+        requireReason
+        reasonLabel="Reason for rejection"
+        reasonPlaceholder="What's missing or wrong with this document?"
+        confirmLabel={actingId === rejectTarget?.id ? 'Rejecting…' : 'Reject'}
+        destructive
+        busy={actingId === rejectTarget?.id}
+        onConfirm={handleReject}
+      />
+    </>
   );
 }
 
