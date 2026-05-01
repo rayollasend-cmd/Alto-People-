@@ -1636,9 +1636,8 @@ export const DocumentKindSchema = z.enum([
   'J1_VISA',
   'SIGNED_AGREEMENT',
   // HR-uploaded result PDFs from external providers (Checkr, drug-test
-  // lab, E-Verify). Mirrored from feat/hr-result-uploads so the
-  // compliance scorecard's drug-test/background-check signals can land
-  // independently.
+  // lab, E-Verify). HR runs the check externally and uploads the result
+  // PDF into the associate's profile via /documents/admin/upload.
   'BACKGROUND_CHECK_RESULT',
   'DRUG_TEST_RESULT',
   'I9_VERIFICATION_RESULT',

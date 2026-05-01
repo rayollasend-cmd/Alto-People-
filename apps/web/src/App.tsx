@@ -1,7 +1,8 @@
 import { lazy, Suspense, type ComponentType } from 'react';
-import { createBrowserRouter, Navigate } from 'react-router-dom';
+import { createBrowserRouter } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { Login } from '@/pages/Login';
+import { NotFound } from '@/pages/NotFound';
 import { ForgotPassword } from '@/pages/ForgotPassword';
 import { ResetPassword } from '@/pages/ResetPassword';
 import { Install } from '@/pages/Install';
@@ -376,7 +377,23 @@ export const router = createBrowserRouter([
           />
         ),
       })),
+      // Catch-all for unmatched authenticated routes — render a styled
+      // 404 inside the Layout so the user keeps sidebar/topbar context
+      // and can navigate away. Previously this silently bounced to "/",
+      // leaving users wondering if their click did anything.
+      { path: '*', element: <NotFound /> },
     ],
   },
-  { path: '*', element: <Navigate to="/" replace /> },
+  // Catch-all outside the Layout — RequireAuth will bounce unauthenticated
+  // users to /login. Authenticated users hit the in-Layout 404 above.
+  {
+    path: '*',
+    element: (
+      <RequireAuth>
+        <Layout />
+      </RequireAuth>
+    ),
+    errorElement: <RouterErrorPage />,
+    children: [{ index: true, element: <NotFound /> }],
+  },
 ]);

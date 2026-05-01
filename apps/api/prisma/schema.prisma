@@ -103,9 +103,9 @@ enum DocumentKind {
   // Phase 19 — server-rendered signed agreement PDF (typed-name e-sign).
   SIGNED_AGREEMENT
   // HR-uploaded result PDFs from external providers (Checkr, drug-test
-  // lab, E-Verify). Mirrored from the feat/hr-result-uploads branch so
-  // the compliance scorecard can ship even if these branches land in
-  // either order — the migration uses ADD VALUE IF NOT EXISTS.
+  // lab, E-Verify). The associate-facing tasks collect the info; HR runs
+  // the check externally and uploads the result here so everything lives
+  // under one auditable Documents tab on the profile.
   BACKGROUND_CHECK_RESULT
   DRUG_TEST_RESULT
   I9_VERIFICATION_RESULT
