@@ -88,16 +88,36 @@ import { errorHandler, notFoundHandler } from './middleware/error.js';
 // so we strip the prefix here once at the top of the chain. Tests and the
 // dev workflow (Vite proxy already strips `/api/`) hit the routes directly
 // — this middleware is a no-op when there's no prefix.
+//
+// If a user types an `/api/*` URL into the address bar (or clicks a stale
+// link), we'd otherwise dump raw JSON onto the page. In production, redirect
+// browser navigations to the de-prefixed SPA path so they see the rendered
+// page (or the login screen, if unauthenticated). `Sec-Fetch-Mode=navigate`
+// + `Sec-Fetch-Dest=document` matches address-bar / link clicks specifically:
+// fetch() calls, image requests, iCal pollers, and integration API clients
+// don't set those, so they keep getting JSON.
 function stripApiPrefix(
   req: Request & { isApiCall?: boolean },
-  _: express.Response,
+  res: express.Response,
   next: express.NextFunction
 ) {
   if (req.url.startsWith('/api/') || req.url === '/api') {
+    if (env.NODE_ENV === 'production' && isBrowserNavigation(req)) {
+      const target = req.url.slice(4) || '/';
+      return res.redirect(302, target);
+    }
     req.isApiCall = true;
     req.url = req.url.slice(4) || '/';
   }
   next();
+}
+
+function isBrowserNavigation(req: Request): boolean {
+  return (
+    req.method === 'GET' &&
+    req.headers['sec-fetch-mode'] === 'navigate' &&
+    req.headers['sec-fetch-dest'] === 'document'
+  );
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

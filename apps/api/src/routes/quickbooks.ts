@@ -101,26 +101,29 @@ quickbooksRouter.post('/connect/start', MANAGE, async (req, res, next) => {
  * connection (encrypting both tokens), then redirects the browser back to
  * the client detail page.
  */
-quickbooksRouter.get('/connect/callback', async (req, res, next) => {
+quickbooksRouter.get('/connect/callback', async (req, res) => {
+  // Intuit lands the user's browser on this URL — any error here surfaces
+  // directly on screen, so we never call next(err) (the JSON errorHandler
+  // would dump a `{"error":...}` envelope onto the page). Redirect to the
+  // SPA with an error code instead so the UI can toast it.
+  const code = typeof req.query.code === 'string' ? req.query.code : null;
+  const state = typeof req.query.state === 'string' ? req.query.state : null;
+  const realmId =
+    typeof req.query.realmId === 'string' ? req.query.realmId : null;
+  if (!code || !state || !realmId) {
+    return res.redirect(`${env.APP_BASE_URL}/clients?qbo_error=invalid_callback`);
+  }
+  const clientId = verifyState(state);
+  if (!clientId) {
+    return res.redirect(`${env.APP_BASE_URL}/clients?qbo_error=invalid_state`);
+  }
   try {
-    const code = typeof req.query.code === 'string' ? req.query.code : null;
-    const state = typeof req.query.state === 'string' ? req.query.state : null;
-    const realmId =
-      typeof req.query.realmId === 'string' ? req.query.realmId : null;
-    if (!code || !state || !realmId) {
-      throw new HttpError(400, 'invalid_callback', 'Missing code, state, or realmId');
-    }
-    const clientId = verifyState(state);
-    if (!clientId) {
-      throw new HttpError(400, 'invalid_state', 'State signature mismatch');
-    }
     const tokens = await exchangeCode(code);
     await saveConnection(prisma, clientId, realmId, tokens);
-    // Redirect the browser back to the client detail page so the UI can
-    // re-fetch /status and show "connected".
     res.redirect(`${env.APP_BASE_URL}/clients/${clientId}?qbo=connected`);
   } catch (err) {
-    next(err);
+    console.error('[alto-people/api] qbo callback error:', err);
+    res.redirect(`${env.APP_BASE_URL}/clients/${clientId}?qbo_error=connect_failed`);
   }
 });
 
