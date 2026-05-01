@@ -47,7 +47,11 @@ async function seedAssociateAtTally(opts: { withGeofence?: boolean } = {}) {
   }
   const associate = await createAssociate();
   const { user } = await createUser({
-    role: 'ASSOCIATE',
+    // MANAGER, not ASSOCIATE: the /time/me/clock-in route deliberately
+    // 403s for ASSOCIATE because hourly associates clock in via the
+    // worksite kiosk with a 4-digit PIN, not from a logged-in web
+    // session. The path under test here is the salaried/manager flow.
+    role: 'MANAGER',
     email: associate.email,
     associateId: associate.id,
     clientId: client.id,
@@ -95,7 +99,10 @@ describe('Job-tagged clock-in', () => {
     const client = await createClient();
     const associate = await createAssociate();
     const { user } = await createUser({
-      role: 'ASSOCIATE',
+      // MANAGER, not ASSOCIATE: /time/me/clock-in 403s ASSOCIATE on
+      // purpose (kiosk PIN flow handles them). Use the same role the
+      // shared seed helper uses for the rest of the suite.
+      role: 'MANAGER',
       email: associate.email,
       associateId: associate.id,
       clientId: client.id,
@@ -208,7 +215,17 @@ describe('Real-time active dashboard', () => {
   });
 
   it('ASSOCIATE cannot access /admin/active', async () => {
-    const { user } = await seedAssociateAtTally();
+    // Inline ASSOCIATE: the shared seed helper now creates MANAGER (which
+    // has FULL_ADMIN and would mask the 403 we're asserting). Hit the
+    // route with a real associate to exercise the RBAC gate.
+    const client = await createClient();
+    const associate = await createAssociate();
+    const { user } = await createUser({
+      role: 'ASSOCIATE',
+      email: associate.email,
+      associateId: associate.id,
+      clientId: client.id,
+    });
     const a = await loginAs(user.email);
     const res = await a.get('/time/admin/active');
     expect(res.status).toBe(403);

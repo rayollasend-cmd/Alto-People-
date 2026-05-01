@@ -193,7 +193,17 @@ describe('GET /time/me/entries', () => {
 
 describe('GET /time/admin/entries', () => {
   it('returns 403 to ASSOCIATE (lacks manage:time)', async () => {
-    const { user } = await seedAssociate();
+    // Use a true ASSOCIATE here, not the MANAGER that `seedAssociate`
+    // happens to create — MANAGER has FULL_ADMIN, which would mask the
+    // 403 we're trying to assert.
+    const client = await createClient();
+    const associate = await createAssociate();
+    const { user } = await createUser({
+      role: 'ASSOCIATE',
+      email: associate.email,
+      associateId: associate.id,
+      clientId: client.id,
+    });
     const a = await loginAs(user.email);
     const res = await a.get('/time/admin/entries');
     expect(res.status).toBe(403);

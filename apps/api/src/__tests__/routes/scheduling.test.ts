@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
+import { flushPendingAudits } from '../../lib/audit.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createAssociate,
@@ -52,6 +53,9 @@ describe('POST /scheduling/shifts', () => {
     expect(res.body.status).toBe('OPEN');
     expect(res.body.scheduledMinutes).toBeGreaterThan(0);
 
+    // Audit writes are fire-and-forget — wait for them to land before
+    // querying or this race goes flaky.
+    await flushPendingAudits();
     const audit = await prisma.auditLog.findFirst({
       where: { action: 'shift.created', entityId: res.body.id },
     });
@@ -125,6 +129,7 @@ describe('Assignment', () => {
     expect(assign.body.assignedAssociateId).toBe(associate.id);
     expect(assign.body.assignedAssociateName).toBe('Maria Lopez');
 
+    await flushPendingAudits();
     const audit = await prisma.auditLog.findFirst({
       where: { action: 'shift.assigned', entityId: create.body.id },
     });
