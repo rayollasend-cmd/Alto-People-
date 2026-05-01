@@ -16,7 +16,7 @@ import {
   TrendingUp,
   WifiOff,
 } from 'lucide-react';
-import { DonutChart } from '@/components/ui/DonutChart';
+import { Cell, Pie, PieChart, ResponsiveContainer } from 'recharts';
 import {
   Badge,
   Button,
@@ -315,16 +315,19 @@ function OnboardingTile({ refreshEpoch }: { refreshEpoch: number }) {
                     key={s.key}
                     type="button"
                     onClick={() => setDrawerSignal(s)}
-                    className="group w-full flex items-center justify-between gap-3 px-2 py-1.5 rounded hover:bg-navy-secondary/40 text-left"
+                    className="group w-full flex items-center justify-between gap-3 px-2 py-1.5 rounded hover:bg-navy-secondary/40 text-left min-w-0"
                   >
                     <ClauseTooltip clause={s.contractClause}>
-                      <span className="text-xs text-white">{s.label}</span>
+                      <span className="text-xs text-white truncate">{s.label}</span>
                     </ClauseTooltip>
-                    <div className="flex items-center gap-3">
-                      <span className="text-[11px] text-silver tabular-nums">
+                    <div className="flex items-center gap-3 shrink-0">
+                      <span className="text-[11px] text-silver tabular-nums hidden sm:inline">
                         {s.completedCount}/{total} ({pct}%)
                       </span>
-                      <PctBar pct={pct} severity={pctSeverity(pct)} className="w-24" />
+                      <span className="text-[11px] text-silver tabular-nums sm:hidden">
+                        {pct}%
+                      </span>
+                      <PctBar pct={pct} severity={pctSeverity(pct)} className="w-16 sm:w-24" />
                       <ChevronRight className="h-3.5 w-3.5 text-silver/60 group-hover:text-silver" />
                     </div>
                   </button>
@@ -382,23 +385,54 @@ function OnboardingTile({ refreshEpoch }: { refreshEpoch: number }) {
   );
 }
 
+// Chart-only donut (no legend) sized for the Tile 1 hero column. The shared
+// <DonutChart> component bundles its own legend in a flex-row, which doesn't
+// fit a 220px column — so we drop down to recharts here directly. The center
+// label sits in the donut hole via absolute positioning over a sized parent;
+// this only works because the parent has explicit width/height in px.
 function ComplianceDonut({ fully, total }: { fully: number; total: number }) {
   const pct = total === 0 ? 100 : Math.round((fully / total) * 100);
-  const gaps = total - fully;
+  const gaps = Math.max(0, total - fully);
   const tone = pct === 100 ? 'text-success' : pct >= 80 ? 'text-warning' : 'text-alert';
+  const SIZE = 170;
+
   return (
-    <div className="flex flex-col items-center justify-center text-center">
-      <DonutChart
-        size={170}
-        gap={3}
-        data={[
-          { name: 'Fully compliant', value: fully, color: '#34A874' },
-          { name: 'Has gaps', value: Math.max(0, gaps), color: '#E96255' },
-        ]}
-        centerLabel={`${pct}%`}
-        centerSublabel="compliant"
-      />
-      <div className={cn('text-xs mt-2', tone)}>
+    <div className="flex flex-col items-center text-center">
+      <div className="relative shrink-0" style={{ width: SIZE, height: SIZE }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={[
+                { name: 'Fully compliant', value: fully },
+                { name: 'Has gaps', value: gaps },
+              ]}
+              dataKey="value"
+              cx="50%"
+              cy="50%"
+              innerRadius={Math.round(SIZE * 0.34)}
+              outerRadius={Math.round(SIZE * 0.48)}
+              paddingAngle={gaps > 0 && fully > 0 ? 3 : 0}
+              startAngle={90}
+              endAngle={-270}
+              stroke="none"
+              isAnimationActive
+              animationDuration={500}
+            >
+              <Cell fill="#34A874" />
+              <Cell fill="#E96255" />
+            </Pie>
+          </PieChart>
+        </ResponsiveContainer>
+        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+          <div className="font-display text-3xl tabular-nums text-white leading-none">
+            {pct}%
+          </div>
+          <div className="text-[10px] uppercase tracking-widest text-silver/70 mt-1">
+            compliant
+          </div>
+        </div>
+      </div>
+      <div className={cn('text-xs mt-3', tone)}>
         {fully} of {total} fully compliant
       </div>
       {gaps > 0 && (
@@ -492,24 +526,24 @@ function ShiftsTile({ refreshEpoch }: { refreshEpoch: number }) {
             <div
               key={s.key}
               className={cn(
-                'px-2 py-1.5 rounded flex items-center justify-between',
+                'px-2 py-1.5 rounded flex items-center justify-between gap-2 min-w-0',
                 s.status === 'live' ? 'bg-navy-secondary/30' : 'bg-navy-secondary/10',
               )}
             >
               <ClauseTooltip clause={s.contractClause}>
-                <span className="text-xs text-white">{s.label}</span>
+                <span className="text-xs text-white truncate">{s.label}</span>
               </ClauseTooltip>
               {s.status === 'live' && s.value !== null ? (
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 shrink-0">
                   <span className="text-xs text-silver tabular-nums">
-                    {s.value}% / target {s.target}%
+                    {s.value}% / {s.target}%
                   </span>
                   <PctBar pct={s.value} severity={liveSeverity(s.value, s.target ?? 0)} />
                 </div>
               ) : s.status === 'live' && s.value === null ? (
-                <span className="text-[11px] text-silver/80">No data in window</span>
+                <span className="text-[11px] text-silver/80 shrink-0">No data in window</span>
               ) : (
-                <Badge variant="outline">Coming soon</Badge>
+                <Badge variant="outline" className="shrink-0">Coming soon</Badge>
               )}
             </div>
           ))}
@@ -608,17 +642,20 @@ function TrainingTile({ refreshEpoch }: { refreshEpoch: number }) {
                   disabled={s.status !== 'live'}
                   onClick={() => s.status === 'live' && setDrawerSignal(s)}
                   className={cn(
-                    'group w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded text-left',
+                    'group w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded text-left min-w-0',
                     s.status === 'live' ? 'hover:bg-navy-secondary/40' : 'opacity-70',
                   )}
                 >
                   <ClauseTooltip clause={s.contractClause}>
-                    <span className="text-xs text-white">{s.label}</span>
+                    <span className="text-xs text-white truncate">{s.label}</span>
                   </ClauseTooltip>
                   {s.status === 'live' ? (
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] text-silver tabular-nums">
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-[11px] text-silver tabular-nums hidden sm:inline">
                         {s.completedCount}/{s.totalAssociates} ({pct}%)
+                      </span>
+                      <span className="text-[11px] text-silver tabular-nums sm:hidden">
+                        {pct}%
                       </span>
                       <PctBar pct={pct} severity={pctSeverity(pct)} />
                       <ChevronRight className="h-3.5 w-3.5 text-silver/60 group-hover:text-silver" />
@@ -695,7 +732,7 @@ function ActionsTile({ refreshEpoch }: { refreshEpoch: number }) {
   return (
     <Card>
       <CardContent className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
           <div className="flex items-center gap-2 text-sm font-semibold text-white">
             <Sparkles className="h-4 w-4 text-gold" />
             Open actions
