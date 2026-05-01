@@ -2732,3 +2732,199 @@ export const PositionHeadcountSchema = z.object({
   fteFilled: z.string(),
 });
 export type PositionHeadcount = z.infer<typeof PositionHeadcountSchema>;
+
+/* -------------------------------------------------------------------------- *
+ *  Compliance Scorecard — Walmart Contract Compliance dashboard
+ *
+ *  Each tile has its own GET endpoint so the page can refresh them
+ *  independently. Tiles 3 (shifts) and 4 (billing) include "unsupported"
+ *  signals — schema for shift-lead presence, MOD sign-off, temp logs,
+ *  Fieldglass timesheets, invoice tracking, and monthly reports doesn't
+ *  exist yet. The UI shows them as "Coming soon" rather than fake numbers.
+ * -------------------------------------------------------------------------- */
+
+export const ComplianceTagSchema = z.enum([
+  'EEO_HARASSMENT',
+  'OSHA_SAFETY',
+  'WALMART_CADE',
+  'FOOD_HANDLER',
+]);
+export type ComplianceTag = z.infer<typeof ComplianceTagSchema>;
+
+export const EVerifyStatusSchema = z.enum([
+  'PENDING',
+  'EMPLOYMENT_AUTHORIZED',
+  'TENTATIVE_NONCONFIRMATION',
+  'FINAL_NONCONFIRMATION',
+  'CLOSE_CASE_AND_RESUBMIT',
+]);
+export type EVerifyStatus = z.infer<typeof EVerifyStatusSchema>;
+
+export const ScorecardSeveritySchema = z.enum(['ok', 'warn', 'critical']);
+export type ScorecardSeverity = z.infer<typeof ScorecardSeveritySchema>;
+
+const ScorecardSubjectSchema = z.object({
+  associateId: UuidSchema.nullable(),
+  associateName: z.string().nullable(),
+  clientId: UuidSchema.nullable(),
+  clientName: z.string().nullable(),
+});
+
+// Tile 1 — onboarding completeness
+export const ScorecardOnboardingSignalSchema = z.object({
+  key: z.enum([
+    'AGE_18_PLUS',
+    'DRUG_TEST_60D',
+    'BACKGROUND_CHECK',
+    'I9_BOTH_SECTIONS',
+    'E_VERIFY',
+    'W4_ON_FILE',
+    'OFFER_LETTER_SIGNED',
+    'POLICY_ACK_SIGNED',
+  ]),
+  label: z.string(),
+  contractClause: z.string(),
+  completedCount: z.number().int().nonnegative(),
+  missingCount: z.number().int().nonnegative(),
+  missing: z.array(ScorecardSubjectSchema),
+});
+export type ScorecardOnboardingSignal = z.infer<typeof ScorecardOnboardingSignalSchema>;
+
+export const ScorecardOnboardingResponseSchema = z.object({
+  activeAssociateCount: z.number().int().nonnegative(),
+  signals: z.array(ScorecardOnboardingSignalSchema),
+  severity: ScorecardSeveritySchema,
+  generatedAt: z.string().datetime(),
+});
+export type ScorecardOnboardingResponse = z.infer<typeof ScorecardOnboardingResponseSchema>;
+
+// Tile 2 — expiring documents (30/60/90)
+export const ScorecardExpirationKindSchema = z.enum([
+  'WORKERS_COMP',
+  'GENERAL_LIABILITY',
+  'DRUG_TEST',
+  'I9_WORK_AUTH',
+  'J1_DS2019',
+  'TRAINING_CERT',
+]);
+export type ScorecardExpirationKind = z.infer<typeof ScorecardExpirationKindSchema>;
+
+export const ScorecardExpiringItemSchema = z.object({
+  kind: ScorecardExpirationKindSchema,
+  label: z.string(),
+  expiresAt: z.string(),
+  daysUntil: z.number().int(),
+  subject: ScorecardSubjectSchema,
+});
+export type ScorecardExpiringItem = z.infer<typeof ScorecardExpiringItemSchema>;
+
+export const ScorecardExpirationsResponseSchema = z.object({
+  buckets: z.object({
+    red: z.array(ScorecardExpiringItemSchema),    // 0–30 days
+    amber: z.array(ScorecardExpiringItemSchema),  // 31–60 days
+    green: z.array(ScorecardExpiringItemSchema),  // 61–90 days
+  }),
+  unsupported: z.array(z.object({
+    kind: ScorecardExpirationKindSchema,
+    label: z.string(),
+    reason: z.string(),
+  })),
+  severity: ScorecardSeveritySchema,
+  generatedAt: z.string().datetime(),
+});
+export type ScorecardExpirationsResponse = z.infer<typeof ScorecardExpirationsResponseSchema>;
+
+// Tile 3 — shift compliance
+export const ScorecardShiftSignalSchema = z.object({
+  key: z.enum([
+    'FILL_RATE',
+    'NO_SHOW_RATE',
+    'SHIFT_LEAD_PRESENT',
+    'TEMPERATURE_LOGS',
+    'MOD_SIGNOFF',
+    'FIELDGLASS_TIMESHEETS',
+  ]),
+  label: z.string(),
+  contractClause: z.string(),
+  status: z.enum(['live', 'unsupported']),
+  // Live signals carry a percent + target. Unsupported signals carry only
+  // the label + a reason the UI can show as "Coming soon".
+  value: z.number().nullable(),
+  target: z.number().nullable(),
+  reason: z.string().nullable(),
+});
+export type ScorecardShiftSignal = z.infer<typeof ScorecardShiftSignalSchema>;
+
+export const ScorecardShiftsResponseSchema = z.object({
+  windowDays: z.number().int().positive(),
+  signals: z.array(ScorecardShiftSignalSchema),
+  severity: ScorecardSeveritySchema,
+  generatedAt: z.string().datetime(),
+});
+export type ScorecardShiftsResponse = z.infer<typeof ScorecardShiftsResponseSchema>;
+
+// Tile 4 — billing & invoicing
+export const ScorecardBillingRateRowSchema = z.object({
+  clientId: UuidSchema,
+  clientName: z.string(),
+  jobId: UuidSchema,
+  jobName: z.string(),
+  billRate: z.number(),
+  expectedRate: z.number().nullable(),
+  match: z.boolean(),
+});
+export type ScorecardBillingRateRow = z.infer<typeof ScorecardBillingRateRowSchema>;
+
+export const ScorecardBillingResponseSchema = z.object({
+  rateChecks: z.array(ScorecardBillingRateRowSchema),
+  unsupported: z.array(z.object({
+    key: z.enum(['INVOICE_FORFEITURE', 'MONTHLY_REPORT', 'FIELDGLASS_LAST_SUBMIT']),
+    label: z.string(),
+    reason: z.string(),
+  })),
+  severity: ScorecardSeveritySchema,
+  generatedAt: z.string().datetime(),
+});
+export type ScorecardBillingResponse = z.infer<typeof ScorecardBillingResponseSchema>;
+
+// Tile 5 — training completeness
+export const ScorecardTrainingSignalSchema = z.object({
+  tag: ComplianceTagSchema,
+  label: z.string(),
+  contractClause: z.string(),
+  // No Course tagged with this complianceTag → status = 'no_course'.
+  // Course exists but no enrollments → status = 'no_enrollments'.
+  // Otherwise live counts.
+  status: z.enum(['live', 'no_course', 'no_enrollments']),
+  completedCount: z.number().int().nonnegative(),
+  totalAssociates: z.number().int().nonnegative(),
+  missing: z.array(ScorecardSubjectSchema),
+});
+export type ScorecardTrainingSignal = z.infer<typeof ScorecardTrainingSignalSchema>;
+
+export const ScorecardTrainingResponseSchema = z.object({
+  signals: z.array(ScorecardTrainingSignalSchema),
+  severity: ScorecardSeveritySchema,
+  generatedAt: z.string().datetime(),
+});
+export type ScorecardTrainingResponse = z.infer<typeof ScorecardTrainingResponseSchema>;
+
+// Tile 6 — open actions (rolled up from the other tiles server-side)
+export const ScorecardActionSchema = z.object({
+  id: z.string(),
+  severity: ScorecardSeveritySchema,
+  title: z.string(),
+  contractClause: z.string(),
+  subject: ScorecardSubjectSchema,
+  link: z.string().nullable(),  // SPA path, e.g. "/people?associate=..."
+});
+export type ScorecardAction = z.infer<typeof ScorecardActionSchema>;
+
+export const ScorecardActionsResponseSchema = z.object({
+  actions: z.array(ScorecardActionSchema),
+  criticalCount: z.number().int().nonnegative(),
+  warnCount: z.number().int().nonnegative(),
+  generatedAt: z.string().datetime(),
+});
+export type ScorecardActionsResponse = z.infer<typeof ScorecardActionsResponseSchema>;
+

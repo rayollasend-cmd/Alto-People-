@@ -21,6 +21,7 @@ import { calendarFeedRouter } from './routes/calendarFeed.js';
 import { payrollRouter } from './routes/payroll.js';
 import { documentsRouter } from './routes/documents.js';
 import { complianceRouter } from './routes/compliance.js';
+import { complianceScorecardRouter } from './routes/complianceScorecard.js';
 import { analyticsRouter } from './routes/analytics.js';
 import { communicationsRouter } from './routes/communications.js';
 import { performanceRouter } from './routes/performance.js';
@@ -180,6 +181,13 @@ export function createApp() {
     '/compliance',
     requireCapability('view:compliance'),
     complianceRouter
+  );
+  // Walmart Contract Compliance Scorecard — preventative dashboard
+  // (separate from /audit which is the forensic event log).
+  app.use(
+    '/compliance-scorecard',
+    requireCapability('view:compliance'),
+    complianceScorecardRouter
   );
   app.use(
     '/analytics',
