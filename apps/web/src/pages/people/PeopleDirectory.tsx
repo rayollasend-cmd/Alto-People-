@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Briefcase,
@@ -13,6 +13,7 @@ import {
   Plus,
   Search,
   Send,
+  Upload,
   Users,
   X,
 } from 'lucide-react';
@@ -20,6 +21,7 @@ import { toast } from 'sonner';
 import type {
   DirectoryEntry,
   DirectoryStatus,
+  DocumentKind,
   DocumentRecord,
 } from '@alto-people/shared';
 import { listDirectory, type DirectoryFilters } from '@/lib/directoryApi';
@@ -37,6 +39,7 @@ import {
   downloadDocumentUrl,
   listAdminDocuments,
   rejectDocument,
+  uploadAdminDocument,
   verifyDocument,
 } from '@/lib/documentsApi';
 import { nudgeApplicant } from '@/lib/onboardingApi';
@@ -1227,8 +1230,23 @@ const DOCUMENT_KIND_LABEL: Record<string, string> = {
   J1_DS2019: 'DS-2019',
   J1_VISA: 'J-1 visa',
   SIGNED_AGREEMENT: 'Signed agreement',
+  BACKGROUND_CHECK_RESULT: 'Background check result',
+  DRUG_TEST_RESULT: 'Drug test result',
+  I9_VERIFICATION_RESULT: 'I-9 verification result',
   OTHER: 'Other',
 };
+
+// HR-curated result kinds available in the upload dialog. Associate-uploaded
+// kinds (ID, SSN_CARD, etc.) are intentionally excluded — those come from
+// the onboarding flow, not from HR.
+const HR_UPLOAD_KINDS: ReadonlyArray<DocumentKind> = [
+  'BACKGROUND_CHECK_RESULT',
+  'DRUG_TEST_RESULT',
+  'I9_VERIFICATION_RESULT',
+  'OFFER_LETTER',
+  'POLICY',
+  'OTHER',
+];
 
 const DOC_STATUS_VARIANT: Record<
   DocumentRecord['status'],
@@ -1245,6 +1263,7 @@ function DocumentsTab({ associateId }: { associateId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [actingId, setActingId] = useState<string | null>(null);
   const [rejectTarget, setRejectTarget] = useState<DocumentRecord | null>(null);
+  const [showUpload, setShowUpload] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -1268,6 +1287,10 @@ function DocumentsTab({ associateId }: { associateId: string }) {
     setDocs((prev) =>
       prev ? prev.map((d) => (d.id === updated.id ? updated : d)) : prev,
     );
+  }
+
+  function prependDoc(created: DocumentRecord) {
+    setDocs((prev) => (prev ? [created, ...prev] : [created]));
   }
 
   async function handleVerify(d: DocumentRecord) {
@@ -1310,18 +1333,41 @@ function DocumentsTab({ associateId }: { associateId: string }) {
   if (!docs) {
     return <SkeletonRows count={3} rowHeight="h-9" />;
   }
+
+  const uploadButton = (
+    <Button size="sm" variant="outline" onClick={() => setShowUpload(true)}>
+      <Upload className="h-3.5 w-3.5" />
+      Upload result
+    </Button>
+  );
+
   if (docs.length === 0) {
     return (
-      <EmptyState
-        icon={FileText}
-        title="No documents on file"
-        description="Documents the associate uploads or HR verifies will appear here."
-      />
+      <>
+        <div className="flex items-center justify-end mb-3">{uploadButton}</div>
+        <EmptyState
+          icon={FileText}
+          title="No documents on file"
+          description="Upload background-check, drug-test, or E-Verify result PDFs here. Associate-submitted documents will also appear in this list."
+        />
+        <UploadResultDialog
+          open={showUpload}
+          onOpenChange={setShowUpload}
+          associateId={associateId}
+          onUploaded={prependDoc}
+        />
+      </>
     );
   }
 
   return (
     <>
+      <div className="flex items-center justify-between mb-3">
+        <div className="text-[10px] uppercase tracking-widest text-silver/80">
+          {docs.length} document{docs.length === 1 ? '' : 's'}
+        </div>
+        {uploadButton}
+      </div>
       <Table>
         <TableHeader>
           <TableRow className="hover:bg-transparent">
@@ -1414,7 +1460,110 @@ function DocumentsTab({ associateId }: { associateId: string }) {
         busy={actingId === rejectTarget?.id}
         onConfirm={handleReject}
       />
+
+      <UploadResultDialog
+        open={showUpload}
+        onOpenChange={setShowUpload}
+        associateId={associateId}
+        onUploaded={prependDoc}
+      />
     </>
+  );
+}
+
+function UploadResultDialog({
+  open,
+  onOpenChange,
+  associateId,
+  onUploaded,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  associateId: string;
+  onUploaded: (doc: DocumentRecord) => void;
+}) {
+  const [kind, setKind] = useState<DocumentKind>('BACKGROUND_CHECK_RESULT');
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Reset when the dialog reopens so a previous selection doesn't linger.
+  useEffect(() => {
+    if (open) {
+      setKind('BACKGROUND_CHECK_RESULT');
+      setFile(null);
+      setBusy(false);
+    }
+  }, [open]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!file || busy) return;
+    setBusy(true);
+    try {
+      const created = await uploadAdminDocument(file, kind, associateId);
+      onUploaded(created);
+      toast.success('Result uploaded');
+      onOpenChange(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Upload failed');
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Upload result document</DialogTitle>
+          <DialogDescription>
+            Attach a PDF or image (background-check report, drug-test result,
+            E-Verify confirmation, etc.) to this associate&apos;s profile.
+            The document is marked verified on upload.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <Label htmlFor="upload-kind">Document type</Label>
+            <select
+              id="upload-kind"
+              value={kind}
+              onChange={(e) => setKind(e.target.value as DocumentKind)}
+              className="w-full h-10 rounded-md border border-navy-secondary bg-navy-secondary/30 px-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-gold-bright"
+            >
+              {HR_UPLOAD_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {DOCUMENT_KIND_LABEL[k]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <Label htmlFor="upload-file">File</Label>
+            <input
+              ref={fileInputRef}
+              id="upload-file"
+              type="file"
+              accept="application/pdf,image/png,image/jpeg,image/webp"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              className="block w-full text-xs text-silver file:mr-3 file:rounded-md file:border-0 file:bg-navy-secondary file:px-3 file:py-2 file:text-xs file:font-medium file:text-white hover:file:bg-navy-secondary/80"
+            />
+            <p className="mt-1 text-[10px] text-silver/80">
+              PDF, PNG, JPEG, or WebP. Max 10 MB.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" loading={busy} disabled={!file}>
+              <Upload className="h-4 w-4" />
+              Upload
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
