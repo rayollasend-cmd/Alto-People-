@@ -60,7 +60,7 @@ export const listAssets = (params?: {
   return apiFetch<{ assets: Asset[] }>(`/assets${suffix}`);
 };
 
-export const createAsset = (input: {
+export interface AssetInput {
   kind: AssetKind;
   label: string;
   serial?: string | null;
@@ -68,8 +68,13 @@ export const createAsset = (input: {
   purchasedAt?: string | null;
   purchasePrice?: number | null;
   notes?: string | null;
-}) =>
+}
+
+export const createAsset = (input: AssetInput) =>
   apiFetch<{ id: string }>('/assets', { method: 'POST', body: input });
+
+export const updateAsset = (id: string, input: Partial<AssetInput>) =>
+  apiFetch<{ ok: true }>(`/assets/${id}`, { method: 'PUT', body: input });
 
 export const deleteAsset = (id: string) =>
   apiFetch<void>(`/assets/${id}`, { method: 'DELETE' });

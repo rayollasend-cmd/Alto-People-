@@ -29,6 +29,15 @@ export const createInterviewKit = (input: {
   questions?: InterviewQuestion[];
 }) => apiFetch<{ id: string }>('/interview-kits', { method: 'POST', body: input });
 
+export const updateInterviewKit = (
+  id: string,
+  input: {
+    name?: string;
+    description?: string | null;
+    questions?: InterviewQuestion[];
+  },
+) => apiFetch<{ ok: true }>(`/interview-kits/${id}`, { method: 'PUT', body: input });
+
 export const deleteInterviewKit = (id: string) =>
   apiFetch<void>(`/interview-kits/${id}`, { method: 'DELETE' });
 
@@ -64,6 +73,9 @@ export const scoreInterview = (
   id: string,
   input: { scorecard?: unknown; rating?: number | null },
 ) => apiFetch<{ ok: true }>(`/interviews/${id}/score`, { method: 'POST', body: input });
+
+export const deleteInterview = (id: string) =>
+  apiFetch<void>(`/interviews/${id}`, { method: 'DELETE' });
 
 // ----- Offers ------------------------------------------------------------
 

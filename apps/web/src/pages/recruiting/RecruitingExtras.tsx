@@ -18,7 +18,9 @@ import {
   openJobPosting,
   sendOffer,
   setReferralStatus,
+  updateInterviewKit,
   type InterviewKit,
+  type InterviewQuestion,
   type JobPostingRecord,
   type OfferRecord,
   type ReferralRecord,
@@ -100,6 +102,7 @@ function KitsTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
   const [kits, setKits] = useState<InterviewKit[] | null>(null);
   const [showNew, setShowNew] = useState(false);
+  const [editTarget, setEditTarget] = useState<InterviewKit | null>(null);
 
   const refresh = () => {
     setKits(null);
@@ -156,7 +159,15 @@ function KitsTab({ canManage }: { canManage: boolean }) {
                     <TableCell className="font-medium text-white">{k.name}</TableCell>
                     <TableCell>{k.questions.length}</TableCell>
                     <TableCell>{new Date(k.updatedAt).toLocaleDateString()}</TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className="text-right space-x-3">
+                      {canManage && (
+                        <button
+                          onClick={() => setEditTarget(k)}
+                          className="opacity-60 group-hover:opacity-100 text-silver hover:text-white transition text-xs"
+                        >
+                          Edit
+                        </button>
+                      )}
                       {canManage && (
                         <button
                           onClick={() => onDelete(k.id)}
@@ -182,7 +193,104 @@ function KitsTab({ canManage }: { canManage: boolean }) {
           }}
         />
       )}
+      {editTarget && (
+        <EditKitDrawer
+          kit={editTarget}
+          onClose={() => setEditTarget(null)}
+          onSaved={() => {
+            setEditTarget(null);
+            refresh();
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function EditKitDrawer({
+  kit,
+  onClose,
+  onSaved,
+}: {
+  kit: InterviewKit;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(kit.name);
+  const [description, setDescription] = useState(kit.description ?? '');
+  const [questionsText, setQuestionsText] = useState(
+    kit.questions.map((q) => q.prompt).join('\n'),
+  );
+  const [saving, setSaving] = useState(false);
+
+  const onSubmit = async () => {
+    if (!name.trim()) {
+      toast.error('Name required.');
+      return;
+    }
+    // Preserve `kind` and `hint` for prompts that already exist; default to
+    // GENERAL for newly typed lines so we never blank out structure HR set
+    // up via a future advanced editor.
+    const existingByPrompt = new Map<string, InterviewQuestion>();
+    for (const q of kit.questions) existingByPrompt.set(q.prompt.trim(), q);
+    const questions: InterviewQuestion[] = questionsText
+      .split('\n')
+      .map((q) => q.trim())
+      .filter(Boolean)
+      .map((prompt) => existingByPrompt.get(prompt) ?? { prompt, kind: 'GENERAL' });
+    setSaving(true);
+    try {
+      await updateInterviewKit(kit.id, {
+        name: name.trim(),
+        description: description.trim() || null,
+        questions,
+      });
+      toast.success('Kit updated.');
+      onSaved();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+      <DrawerHeader>
+        <DrawerTitle>Edit kit</DrawerTitle>
+      </DrawerHeader>
+      <DrawerBody className="space-y-4">
+        <div>
+          <Label>Name</Label>
+          <Input className="mt-1" value={name} onChange={(e) => setName(e.target.value)} />
+        </div>
+        <div>
+          <Label>Description (optional)</Label>
+          <Textarea
+            className="mt-1"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+          />
+        </div>
+        <div>
+          <Label>Questions (one per line)</Label>
+          <Textarea
+            className="mt-1 min-h-32 font-mono text-xs"
+            value={questionsText}
+            onChange={(e) => setQuestionsText(e.target.value)}
+            placeholder="Tell me about a time you led under pressure..."
+          />
+        </div>
+      </DrawerBody>
+      <DrawerFooter>
+        <Button variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button onClick={onSubmit} disabled={saving}>
+          {saving ? 'Saving…' : 'Save'}
+        </Button>
+      </DrawerFooter>
+    </Drawer>
   );
 }
 
