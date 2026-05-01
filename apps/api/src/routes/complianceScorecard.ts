@@ -21,6 +21,7 @@ import {
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { requireCapability } from '../middleware/auth.js';
+import { getShiftMetrics, isConfigured as asnNexusConfigured, type AsnNexusMetric } from '../lib/asnNexus.js';
 
 export const complianceScorecardRouter = Router();
 
@@ -461,11 +462,48 @@ complianceScorecardRouter.get('/shifts', VIEW, async (_req, res) => {
 
 async function buildShiftsTile(): Promise<ScorecardShiftsResponse> {
   const windowDays = 30;
-  const since = new Date(Date.now() - windowDays * 24 * 3600 * 1000);
 
+  // ASN Nexus is the source of truth for shift events. If the integration
+  // is configured (env vars set + endpoint reachable), every signal comes
+  // from there. If a metric is null in the response, ASN hasn't built it
+  // yet — surface as "Coming soon".
+  //
+  // If the integration isn't configured OR the call fails, fall back to
+  // our built-in fill-rate query against the local Shift table — keeps
+  // dev environments and emergency outages working with a degraded view.
+  let asn: Awaited<ReturnType<typeof getShiftMetrics>> = null;
+  if (asnNexusConfigured()) {
+    try {
+      asn = await getShiftMetrics({ windowDays });
+    } catch (err) {
+      console.warn('[compliance-scorecard] ASN Nexus fetch failed; falling back:', err);
+      asn = null;
+    }
+  }
+
+  if (asn) {
+    const signals: ScorecardShiftsResponse['signals'] = [
+      asnSignal('FILL_RATE', 'Shift fill rate', CLAUSE.FILL_RATE, asn.metrics.fillRate),
+      asnSignal('NO_SHOW_RATE', 'No-show rate', CLAUSE.NO_SHOW, asn.metrics.noShowRate),
+      asnSignal('SHIFT_LEAD_PRESENT', 'Shift Lead present', CLAUSE.SHIFT_LEAD, asn.metrics.shiftLeadPresent),
+      asnSignal('TEMPERATURE_LOGS', 'Temperature logs with photos', CLAUSE.TEMP_LOG, asn.metrics.temperatureLogs),
+      asnSignal('MOD_SIGNOFF', 'MOD sign-off captured', CLAUSE.MOD_SIGNOFF, asn.metrics.modSignoff),
+      asnSignal('FIELDGLASS_TIMESHEETS', 'Fieldglass timesheet by Mon 2pm PST', CLAUSE.FIELDGLASS, asn.metrics.fieldglassTimesheetsOnTime),
+    ];
+
+    return ScorecardShiftsResponseSchema.parse({
+      windowDays: asn.windowDays,
+      signals,
+      severity: shiftsSeverity(signals),
+      generatedAt: asn.generatedAt,
+    });
+  }
+
+  // -------- Fallback: local fill-rate query --------------------------------
   // Fill rate = ASSIGNED + COMPLETED / (everything except DRAFT and CANCELLED).
   // DRAFT is unpublished scratch; CANCELLED was pulled (doesn't count against
   // fill rate). OPEN is published-but-unfilled — that's the gap.
+  const since = new Date(Date.now() - windowDays * 24 * 3600 * 1000);
   const counts = await prisma.shift.groupBy({
     by: ['status'],
     _count: { _all: true },
@@ -483,72 +521,78 @@ async function buildShiftsTile(): Promise<ScorecardShiftsResponse> {
   const fillSeverity: ScorecardSeverity =
     fillRate === null ? 'ok' : fillRate >= 97 ? 'ok' : fillRate >= 90 ? 'warn' : 'critical';
 
-  const liveSignals: ScorecardShiftsResponse['signals'] = [
+  const placeholderReason = 'Connect ASN Nexus (set ASN_NEXUS_BASE_URL + ASN_NEXUS_API_KEY) to enable.';
+
+  const signals: ScorecardShiftsResponse['signals'] = [
     {
       key: 'FILL_RATE',
-      label: 'Shift fill rate (last 30 days)',
+      label: 'Shift fill rate (local — last 30 days)',
       contractClause: CLAUSE.FILL_RATE,
       status: 'live',
       value: fillRate,
       target: 97,
       reason: null,
     },
-  ];
-
-  const unsupported: ScorecardShiftsResponse['signals'] = [
-    {
-      key: 'NO_SHOW_RATE',
-      label: 'No-show rate',
-      contractClause: CLAUSE.NO_SHOW,
-      status: 'unsupported',
-      value: null,
-      target: 2,
-      reason: 'No NO_SHOW anomaly flag in TimeEntry yet.',
-    },
-    {
-      key: 'SHIFT_LEAD_PRESENT',
-      label: 'Shift Lead present',
-      contractClause: CLAUSE.SHIFT_LEAD,
-      status: 'unsupported',
-      value: null,
-      target: 100,
-      reason: 'No Shift.shiftLeadId or requiresShiftLead field in schema.',
-    },
-    {
-      key: 'TEMPERATURE_LOGS',
-      label: 'Temperature logs with photos',
-      contractClause: CLAUSE.TEMP_LOG,
-      status: 'unsupported',
-      value: null,
-      target: 100,
-      reason: 'No temperature-log model in schema.',
-    },
-    {
-      key: 'MOD_SIGNOFF',
-      label: 'MOD sign-off captured',
-      contractClause: CLAUSE.MOD_SIGNOFF,
-      status: 'unsupported',
-      value: null,
-      target: 100,
-      reason: 'No MOD signature kind in schema.',
-    },
-    {
-      key: 'FIELDGLASS_TIMESHEETS',
-      label: 'Fieldglass timesheet by Mon 2pm PST',
-      contractClause: CLAUSE.FIELDGLASS,
-      status: 'unsupported',
-      value: null,
-      target: 100,
-      reason: 'No Fieldglass integration in schema yet.',
-    },
+    { key: 'NO_SHOW_RATE',         label: 'No-show rate',                          contractClause: CLAUSE.NO_SHOW,      status: 'unsupported', value: null, target: 2,   reason: placeholderReason },
+    { key: 'SHIFT_LEAD_PRESENT',   label: 'Shift Lead present',                    contractClause: CLAUSE.SHIFT_LEAD,   status: 'unsupported', value: null, target: 100, reason: placeholderReason },
+    { key: 'TEMPERATURE_LOGS',     label: 'Temperature logs with photos',          contractClause: CLAUSE.TEMP_LOG,     status: 'unsupported', value: null, target: 100, reason: placeholderReason },
+    { key: 'MOD_SIGNOFF',          label: 'MOD sign-off captured',                 contractClause: CLAUSE.MOD_SIGNOFF,  status: 'unsupported', value: null, target: 100, reason: placeholderReason },
+    { key: 'FIELDGLASS_TIMESHEETS',label: 'Fieldglass timesheet by Mon 2pm PST',   contractClause: CLAUSE.FIELDGLASS,   status: 'unsupported', value: null, target: 100, reason: placeholderReason },
   ];
 
   return ScorecardShiftsResponseSchema.parse({
     windowDays,
-    signals: [...liveSignals, ...unsupported],
+    signals,
     severity: fillSeverity,
     generatedAt: new Date().toISOString(),
   });
+}
+
+// Maps an ASN Nexus metric onto a scorecard signal. value=null means ASN
+// hasn't implemented the signal yet — render as unsupported with a note.
+function asnSignal(
+  key: ScorecardShiftsResponse['signals'][number]['key'],
+  label: string,
+  contractClause: string,
+  metric: AsnNexusMetric,
+): ScorecardShiftsResponse['signals'][number] {
+  if (metric.value === null) {
+    return {
+      key,
+      label,
+      contractClause,
+      status: 'unsupported',
+      value: null,
+      target: metric.target,
+      reason: metric.note ?? 'ASN Nexus has not implemented this signal yet.',
+    };
+  }
+  return {
+    key,
+    label,
+    contractClause,
+    status: 'live',
+    value: metric.value,
+    target: metric.target,
+    reason: metric.note ?? null,
+  };
+}
+
+// Tile severity from the ASN-driven signal mix. NO_SHOW_RATE is the only
+// signal where lower is better — invert it before scoring.
+function shiftsSeverity(signals: ScorecardShiftsResponse['signals']): ScorecardSeverity {
+  let worst: ScorecardSeverity = 'ok';
+  for (const s of signals) {
+    if (s.status !== 'live' || s.value === null || s.target === null) continue;
+    const isNoShow = s.key === 'NO_SHOW_RATE';
+    const passes = isNoShow ? s.value <= s.target : s.value >= s.target;
+    if (passes) continue;
+    const ratio = isNoShow ? s.target / Math.max(s.value, 0.01) : s.value / s.target;
+    const severity: ScorecardSeverity = ratio >= 0.93 ? 'warn' : 'critical';
+    if (severity === 'critical') return 'critical';
+    if (severity === 'warn') worst = 'warn';
+  }
+  return worst;
 }
 
 /* ============================================================ TILE 4 ===== *
