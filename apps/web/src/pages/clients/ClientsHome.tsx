@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
+import { toast } from 'sonner';
 import {
   Building2,
   ClipboardList,
@@ -103,6 +104,24 @@ export function ClientsHome() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Surface "?qbo_error=..." set by the QuickBooks OAuth callback when state
+  // validation failed before we knew which client to bounce to. Clear the
+  // param so a refresh doesn't re-fire the toast.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const code = searchParams.get('qbo_error');
+    if (!code) return;
+    toast.error('QuickBooks connection failed', {
+      description:
+        code === 'invalid_state'
+          ? 'Connection request expired or was tampered with. Try connecting again from the client page.'
+          : 'Try connecting again from the client page.',
+    });
+    const next = new URLSearchParams(searchParams);
+    next.delete('qbo_error');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   return (
     <div className="max-w-6xl mx-auto">

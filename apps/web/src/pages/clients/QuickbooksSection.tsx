@@ -73,14 +73,22 @@ export function QuickbooksSection({ clientId }: Props) {
     refresh();
   }, [refresh]);
 
-  // Surface the post-OAuth "?qbo=connected" toast and clear the param so
-  // a refresh doesn't re-fire the toast.
+  // Surface the post-OAuth "?qbo=connected" toast (or "?qbo_error=...")
+  // and clear the param so a refresh doesn't re-fire it.
   useEffect(() => {
     const flag = searchParams.get('qbo');
+    const errorCode = searchParams.get('qbo_error');
     if (flag === 'connected') {
       toast.success('QuickBooks connected');
+    } else if (errorCode) {
+      toast.error('QuickBooks connection failed', {
+        description: describeQboError(errorCode),
+      });
+    }
+    if (flag || errorCode) {
       const next = new URLSearchParams(searchParams);
       next.delete('qbo');
+      next.delete('qbo_error');
       setSearchParams(next, { replace: true });
     }
   }, [searchParams, setSearchParams]);
@@ -548,4 +556,17 @@ function AccountPicker({
       <FormHint>{hint}</FormHint>
     </div>
   );
+}
+
+function describeQboError(code: string): string {
+  switch (code) {
+    case 'invalid_callback':
+      return 'Intuit returned to Alto without the expected parameters. Try connecting again.';
+    case 'invalid_state':
+      return 'Connection request expired or was tampered with. Try connecting again.';
+    case 'connect_failed':
+      return 'Could not exchange the authorization code for a token. Try connecting again.';
+    default:
+      return 'Try connecting again. If the problem persists, contact support.';
+  }
 }

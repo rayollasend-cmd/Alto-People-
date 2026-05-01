@@ -76,10 +76,14 @@ function describeError(error: unknown): { headline: string; detail: string } {
     };
   }
   if (error instanceof Error) {
-    return {
-      headline: 'Something went wrong',
-      detail: `${error.name}: ${error.message}\n\n${error.stack ?? ''}`.trim(),
-    };
+    // Strip the stack in production builds — frustrated users clicking
+    // "Show technical details" don't benefit from a JS stack, and it
+    // leaks build paths / minified component names. Dev keeps the full
+    // trace for debugging.
+    const detail = import.meta.env.DEV
+      ? `${error.name}: ${error.message}\n\n${error.stack ?? ''}`.trim()
+      : `${error.name}: ${error.message}`;
+    return { headline: 'Something went wrong', detail };
   }
   return {
     headline: 'Something went wrong',
