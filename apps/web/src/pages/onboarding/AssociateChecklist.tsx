@@ -140,13 +140,10 @@ export function AssociateChecklist() {
           ) : nextTask ? (
             <Link
               to={`/onboarding/me/${detail.id}/tasks/${nextTask.kind.toLowerCase()}`}
-              className="mt-3 inline-flex items-center gap-1.5 text-gold hover:text-gold-bright text-sm group"
+              className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-md bg-gold text-navy text-sm font-semibold hover:bg-gold-bright transition-colors group focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
             >
-              Continue with{' '}
-              <span className="font-medium">
-                {TASK_LABEL[nextTask.kind] ?? nextTask.title}
-              </span>
-              <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+              Continue with {TASK_LABEL[nextTask.kind] ?? nextTask.title}
+              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
             </Link>
           ) : null}
         </CardContent>
@@ -154,7 +151,12 @@ export function AssociateChecklist() {
 
       <section className="space-y-2.5">
         {detail.tasks.map((t) => (
-          <AssociateTaskRow key={t.id} task={t} applicationId={detail.id} />
+          <AssociateTaskRow
+            key={t.id}
+            task={t}
+            applicationId={detail.id}
+            isNext={nextTask?.id === t.id}
+          />
         ))}
       </section>
     </div>
@@ -217,9 +219,10 @@ const STATUS_TONE: Record<
 interface AssociateTaskRowProps {
   task: ChecklistTask;
   applicationId: string;
+  isNext: boolean;
 }
 
-function AssociateTaskRow({ task, applicationId }: AssociateTaskRowProps) {
+function AssociateTaskRow({ task, applicationId, isNext }: AssociateTaskRowProps) {
   const isComplete = task.status === 'DONE' || task.status === 'SKIPPED';
   const isReal = REAL_KINDS.has(task.kind);
   const linkable = isReal && !isComplete;
@@ -229,14 +232,16 @@ function AssociateTaskRow({ task, applicationId }: AssociateTaskRowProps) {
   const Icon = tone.icon;
 
   const inner = (
-    <div className="flex items-start gap-3">
-      <Icon className={cn('h-5 w-5 mt-0.5 shrink-0', tone.iconCx)} aria-hidden />
+    <div className="flex items-center gap-3">
+      <Icon className={cn('h-5 w-5 shrink-0', tone.iconCx)} aria-hidden />
       <div className="flex-1 min-w-0">
         <div className="font-medium text-white">
           {TASK_LABEL[task.kind] ?? task.title}
         </div>
         {task.description && (
-          <div className="text-xs text-silver mt-1">{task.description}</div>
+          <div className="text-xs text-silver mt-1 line-clamp-2">
+            {task.description}
+          </div>
         )}
       </div>
       <div className="shrink-0">
@@ -252,8 +257,15 @@ function AssociateTaskRow({ task, applicationId }: AssociateTaskRowProps) {
             {tone.label}
           </span>
         ) : linkable ? (
-          <span className="inline-flex items-center gap-1 text-gold text-sm">
-            Start
+          <span
+            className={cn(
+              'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-semibold transition-colors whitespace-nowrap',
+              isNext
+                ? 'bg-gold text-navy group-hover:bg-gold-bright'
+                : 'border border-gold/60 text-gold group-hover:bg-gold/10'
+            )}
+          >
+            {isNext ? 'Start now' : 'Start'}
             <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
           </span>
         ) : (
@@ -266,10 +278,11 @@ function AssociateTaskRow({ task, applicationId }: AssociateTaskRowProps) {
   );
 
   const baseCx = cn(
-    'group block rounded-lg border p-4 transition-colors',
-    tone.bg,
-    tone.border,
-    linkable && 'hover:border-gold/60 cursor-pointer',
+    'group block rounded-lg border p-4 transition-all',
+    isNext && linkable
+      ? 'bg-gold/[0.05] border-gold/50 ring-1 ring-gold/20 hover:border-gold/80 hover:ring-gold/40'
+      : cn(tone.bg, tone.border, linkable && 'hover:border-gold/60'),
+    linkable && 'cursor-pointer',
     !linkable && !isComplete && 'opacity-80'
   );
 
