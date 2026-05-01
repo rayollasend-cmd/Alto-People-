@@ -460,6 +460,66 @@ complianceScorecardRouter.get('/shifts', VIEW, async (_req, res) => {
   res.json(body);
 });
 
+// Tile 3 silently falls back when ASN Nexus is unreachable / misconfigured —
+// every fallback path looks identical to the user. This endpoint surfaces the
+// actual reason so ops can tell unconfigured from broken without grepping
+// Railway logs. Returns hostname only (never the full URL or the API key).
+complianceScorecardRouter.get('/asn-nexus/diagnostic', VIEW, async (_req, res) => {
+  const baseUrl = process.env.ASN_NEXUS_BASE_URL ?? null;
+  const keySet = !!process.env.ASN_NEXUS_API_KEY;
+  let hostname: string | null = null;
+  if (baseUrl) {
+    try {
+      hostname = new URL(baseUrl).host;
+    } catch {
+      hostname = '<invalid URL>';
+    }
+  }
+
+  const out: {
+    configured: boolean;
+    baseUrlHost: string | null;
+    apiKeySet: boolean;
+    probe: {
+      attempted: boolean;
+      ok: boolean;
+      durationMs: number | null;
+      errorClass: string | null;
+      errorMessage: string | null;
+      sampleFillRate: number | null;
+    };
+  } = {
+    configured: asnNexusConfigured(),
+    baseUrlHost: hostname,
+    apiKeySet: keySet,
+    probe: {
+      attempted: false,
+      ok: false,
+      durationMs: null,
+      errorClass: null,
+      errorMessage: null,
+      sampleFillRate: null,
+    },
+  };
+
+  if (asnNexusConfigured()) {
+    out.probe.attempted = true;
+    const start = Date.now();
+    try {
+      const result = await getShiftMetrics({ windowDays: 30, timeoutMs: 4000 });
+      out.probe.durationMs = Date.now() - start;
+      out.probe.ok = true;
+      out.probe.sampleFillRate = result?.metrics.fillRate.value ?? null;
+    } catch (err) {
+      out.probe.durationMs = Date.now() - start;
+      out.probe.errorClass = err instanceof Error ? err.constructor.name : typeof err;
+      out.probe.errorMessage = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  res.json(out);
+});
+
 async function buildShiftsTile(): Promise<ScorecardShiftsResponse> {
   const windowDays = 30;
 
