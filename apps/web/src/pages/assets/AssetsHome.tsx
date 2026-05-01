@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Laptop, Plus, Smartphone, Key, IdCard, Car, Shirt, Box } from 'lucide-react';
+import { Laptop, Pencil, Plus, Smartphone, Key, IdCard, Car, Shirt, Box } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {
@@ -8,6 +8,7 @@ import {
   deleteAsset,
   listAssets,
   returnAsset,
+  updateAsset,
   type Asset,
   type AssetKind,
 } from '@/lib/assets108Api';
@@ -66,6 +67,7 @@ export function AssetsHome() {
   const canManage = user ? hasCapability(user.role, 'manage:org') : false;
   const [rows, setRows] = useState<Asset[] | null>(null);
   const [showNew, setShowNew] = useState(false);
+  const [editTarget, setEditTarget] = useState<Asset | null>(null);
   const [assignTarget, setAssignTarget] = useState<Asset | null>(null);
   const [returnTarget, setReturnTarget] = useState<Asset | null>(null);
   const [returning, setReturning] = useState(false);
@@ -168,6 +170,16 @@ export function AssetsHome() {
                         )}
                         {canManage && (
                           <button
+                            onClick={() => setEditTarget(a)}
+                            aria-label={`Edit ${a.label}`}
+                            className="opacity-60 group-hover:opacity-100 text-silver hover:text-white transition inline-flex items-center gap-1 text-xs"
+                          >
+                            <Pencil className="h-3 w-3" />
+                            Edit
+                          </button>
+                        )}
+                        {canManage && (
+                          <button
                             onClick={async () => {
                               if (!(await confirm({ title: 'Delete this asset? Assignment history will be removed.', destructive: true })))
                                 return;
@@ -197,6 +209,16 @@ export function AssetsHome() {
           onClose={() => setShowNew(false)}
           onSaved={() => {
             setShowNew(false);
+            refresh();
+          }}
+        />
+      )}
+      {editTarget && (
+        <EditAssetDrawer
+          asset={editTarget}
+          onClose={() => setEditTarget(null)}
+          onSaved={() => {
+            setEditTarget(null);
             refresh();
           }}
         />
@@ -328,6 +350,112 @@ function NewAssetDrawer({
             className="mt-1"
             value={model}
             onChange={(e) => setModel(e.target.value)}
+          />
+        </div>
+      </DrawerBody>
+      <DrawerFooter>
+        <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button onClick={submit} disabled={saving}>
+          {saving ? 'Saving…' : 'Save'}
+        </Button>
+      </DrawerFooter>
+    </Drawer>
+  );
+}
+
+function EditAssetDrawer({
+  asset,
+  onClose,
+  onSaved,
+}: {
+  asset: Asset;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [kind, setKind] = useState<AssetKind>(asset.kind);
+  const [label, setLabel] = useState(asset.label);
+  const [serial, setSerial] = useState(asset.serial ?? '');
+  const [model, setModel] = useState(asset.model ?? '');
+  const [notes, setNotes] = useState(asset.notes ?? '');
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    if (!label.trim()) {
+      toast.error('Label is required.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateAsset(asset.id, {
+        kind,
+        label: label.trim(),
+        serial: serial.trim() || null,
+        model: model.trim() || null,
+        notes: notes.trim() || null,
+      });
+      toast.success('Asset updated.');
+      onSaved();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+      <DrawerHeader>
+        <DrawerTitle>Edit asset</DrawerTitle>
+      </DrawerHeader>
+      <DrawerBody className="space-y-4">
+        <div>
+          <Label>Kind</Label>
+          <select
+            className="mt-1 w-full bg-midnight border border-navy-secondary rounded-md p-2 text-white"
+            value={kind}
+            onChange={(e) => setKind(e.target.value as AssetKind)}
+          >
+            {KIND_OPTIONS.map((k) => (
+              <option key={k} value={k}>
+                {k}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <Label>Label</Label>
+          <Input
+            className="mt-1"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="MacBook Pro 14, Front desk badge…"
+          />
+        </div>
+        <div>
+          <Label>Serial</Label>
+          <Input
+            className="mt-1 font-mono text-xs"
+            value={serial}
+            onChange={(e) => setSerial(e.target.value)}
+          />
+        </div>
+        <div>
+          <Label>Model</Label>
+          <Input
+            className="mt-1"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+          />
+        </div>
+        <div>
+          <Label>Notes</Label>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={3}
+            maxLength={2000}
+            className="mt-1 w-full px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
+            placeholder="Condition, accessories, anything HR/IT should know"
           />
         </div>
       </DrawerBody>
