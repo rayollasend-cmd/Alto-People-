@@ -56,6 +56,17 @@ export const schedulingRouter = Router();
 
 const MANAGE = requireCapability('manage:scheduling');
 
+// Reported 2026-05-02: scheduling pickers were listing every Associate
+// regardless of role or status, including managers (who use a separate
+// system) and terminated/uninvited people. Schedulable pool = associates
+// whose linked User row is ACTIVE and has the ASSOCIATE role specifically
+// — excludes MANAGER, OPERATIONS_MANAGER, HR_*, CLIENT_PORTAL, etc., and
+// also excludes anyone INVITED-but-not-yet-accepted or DISABLED.
+const ACTIVE_ASSOCIATE_FILTER: Prisma.AssociateWhereInput = {
+  deletedAt: null,
+  user: { is: { status: 'ACTIVE', role: 'ASSOCIATE' } },
+};
+
 type RawShift = Prisma.ShiftGetPayload<{
   include: {
     client: { select: { name: true } };
@@ -236,31 +247,12 @@ schedulingRouter.get('/kpis', MANAGE, async (req, res, next) => {
  *
  * Phase 53 — slim list of associates the caller is allowed to schedule
  * for. Drives the row axis of the pivot week view (rows=people × cols=days).
- *
- * Scope:
- *   - HR/Ops: every non-deleted associate
- *   - CLIENT_PORTAL: associates who have at least one shift at the user's
- *     client (Associate has no clientId column today, so we lean on
- *     Shift.clientId)
- *   - ASSOCIATE: themselves only (defense-in-depth; the picker is HR-only
- *     in the UI but the route shouldn't leak)
+ * Gated to manage:scheduling, so only HR/Ops reach this endpoint.
  */
-schedulingRouter.get('/associates', MANAGE, async (req, res, next) => {
+schedulingRouter.get('/associates', MANAGE, async (_req, res, next) => {
   try {
-    const user = req.user!;
-    let where: Prisma.AssociateWhereInput = { deletedAt: null };
-
-    if (user.role === 'CLIENT_PORTAL' && user.clientId) {
-      where = {
-        deletedAt: null,
-        assignedShifts: { some: { clientId: user.clientId } },
-      };
-    } else if (user.role === 'ASSOCIATE' && user.associateId) {
-      where = { deletedAt: null, id: user.associateId };
-    }
-
     const rows = await prisma.associate.findMany({
-      where,
+      where: ACTIVE_ASSOCIATE_FILTER,
       orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
       select: { id: true, firstName: true, lastName: true, email: true },
       take: 500,
@@ -770,7 +762,7 @@ schedulingRouter.get('/shifts/:id/auto-fill', MANAGE, async (req, res, next) => 
 
     const [associates, ptoRows] = await Promise.all([
       prisma.associate.findMany({
-        where: { deletedAt: null },
+        where: ACTIVE_ASSOCIATE_FILTER,
         include: {
           assignedShifts: {
             where: {
@@ -1756,7 +1748,7 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
 
     const [associates, ptoRows] = await Promise.all([
       prisma.associate.findMany({
-        where: { deletedAt: null },
+        where: ACTIVE_ASSOCIATE_FILTER,
         include: {
           assignedShifts: {
             where: {
