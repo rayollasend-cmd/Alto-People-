@@ -57,6 +57,7 @@ import {
 import multer from 'multer';
 import { decryptString, encryptString } from '../lib/crypto.js';
 import { recordOnboardingEvent } from '../lib/audit.js';
+import { notifyAllHR, notifyAssociate, notifyHrOnApplicationComplete } from '../lib/notify.js';
 import {
   renderCompliancePacket,
   type PacketData,
@@ -718,6 +719,12 @@ onboardingRouter.post(
         req,
       });
 
+      void notifyAssociate(app.associateId, {
+        subject: 'You\'re officially hired 🎉',
+        body: `Welcome aboard! Your onboarding has been approved${hireDate ? `; your hire date is ${hireDate}` : ''}. Sign in to access your associate dashboard.`,
+        category: 'onboarding',
+      });
+
       res.status(204).end();
     } catch (err) {
       next(err);
@@ -774,6 +781,12 @@ onboardingRouter.post(
         clientId: app.clientId,
         metadata: { reason },
         req,
+      });
+
+      void notifyAssociate(app.associateId, {
+        subject: 'Application update',
+        body: `Your application has been declined. Reason: ${reason}. Please contact HR if you have questions.`,
+        category: 'onboarding',
       });
 
       res.status(204).end();
@@ -1354,6 +1367,7 @@ onboardingRouter.post('/applications/:id/profile', async (req, res, next) => {
       req,
     });
 
+    void notifyHrOnApplicationComplete(app.id);
     res.status(204).end();
   } catch (err) {
     next(err);
@@ -1470,6 +1484,7 @@ onboardingRouter.post('/applications/:id/w4', async (req, res, next) => {
       req,
     });
 
+    void notifyHrOnApplicationComplete(app.id);
     res.status(204).end();
   } catch (err) {
     next(err);
@@ -1617,6 +1632,7 @@ onboardingRouter.post(
         req,
       });
 
+      void notifyHrOnApplicationComplete(app.id);
       res.status(204).end();
     } catch (err) {
       next(err);
@@ -1705,6 +1721,7 @@ onboardingRouter.post('/applications/:id/policy-ack', async (req, res, next) => 
       req,
     });
 
+    void notifyHrOnApplicationComplete(app.id);
     res.status(204).end();
   } catch (err) {
     next(err);
@@ -1757,6 +1774,7 @@ onboardingRouter.post(
         req,
       });
 
+      void notifyHrOnApplicationComplete(app.id);
       res.json({ ok: true, documentCount });
     } catch (err) {
       next(err);
@@ -1844,6 +1862,7 @@ onboardingRouter.post(
         req,
       });
 
+      void notifyHrOnApplicationComplete(app.id);
       res.json({
         id: bg.id,
         associateId: bg.associateId,
@@ -1992,6 +2011,7 @@ onboardingRouter.post(
         req,
       });
 
+      void notifyHrOnApplicationComplete(app.id);
       res.json({ ok: true, hasProfile: true, documentCount });
     } catch (err) {
       next(err);
@@ -2273,6 +2293,16 @@ onboardingRouter.post('/applications/:id/i9/section1', async (req, res, next) =>
       req,
     });
 
+    const assoc = await prisma.associate.findUnique({
+      where: { id: app.associateId },
+      select: { firstName: true, lastName: true },
+    });
+    void notifyAllHR({
+      subject: 'I-9 Section 1 complete — Section 2 needed',
+      body: `${assoc?.firstName ?? 'An associate'} ${assoc?.lastName ?? ''} signed I-9 Section 1. You need to inspect their documents in person and complete Section 2 within 3 business days of their start date.`,
+      category: 'onboarding',
+    });
+
     res.status(200).json({
       section1CompletedAt: updated.section1CompletedAt?.toISOString() ?? null,
       citizenshipStatus: updated.citizenshipStatus,
@@ -2485,6 +2515,7 @@ onboardingRouter.post(
         req,
       });
 
+      void notifyHrOnApplicationComplete(app.id);
       res.json({
         section2CompletedAt: updated.section2CompletedAt?.toISOString() ?? null,
         documentList: updated.documentList,
@@ -2719,6 +2750,8 @@ onboardingRouter.post(
         },
         req,
       });
+
+      void notifyHrOnApplicationComplete(app.id);
 
       // Email a copy of the signed PDF to the associate. Non-fatal — the
       // signature itself is already persisted, and the document lives in
@@ -3154,6 +3187,7 @@ onboardingRouter.post(
         req,
       });
 
+      void notifyHrOnApplicationComplete(app.id);
       res.status(204).end();
     } catch (err) {
       next(err);

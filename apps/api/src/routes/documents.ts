@@ -16,6 +16,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopeDocuments } from '../lib/scope.js';
 import { recordDocumentEvent } from '../lib/audit.js';
+import { notifyAllHR, notifyAssociate } from '../lib/notify.js';
 import { resolveStoragePath, UPLOAD_ROOT } from '../lib/storage.js';
 
 export const documentsRouter = Router();
@@ -139,6 +140,16 @@ documentsRouter.post('/me/upload', upload.single('file'), async (req, res, next)
       clientId: created.clientId,
       metadata: { kind: created.kind, size: created.size, mime: created.mimeType },
       req,
+    });
+
+    const assoc = await prisma.associate.findUnique({
+      where: { id: created.associateId },
+      select: { firstName: true, lastName: true },
+    });
+    void notifyAllHR({
+      subject: 'Document uploaded — review needed',
+      body: `${assoc?.firstName ?? 'An associate'} ${assoc?.lastName ?? ''} uploaded a ${created.kind.replace(/_/g, ' ').toLowerCase()} (${created.filename}). Verify or reject in the associate's Documents tab.`,
+      category: 'documents',
     });
 
     res.status(201).json(toRecord(created));
@@ -372,6 +383,13 @@ documentsRouter.post('/admin/:id/reject', MANAGE, async (req, res, next) => {
       metadata: { reason: parsed.data.reason },
       req,
     });
+
+    void notifyAssociate(updated.associateId, {
+      subject: 'A document was rejected — please re-upload',
+      body: `Your "${updated.filename}" (${updated.kind.replace(/_/g, ' ').toLowerCase()}) was rejected. Reason: ${parsed.data.reason}. Open Identity documents and upload a replacement.`,
+      category: 'documents',
+    });
+
     res.json(toRecord(updated));
   } catch (err) {
     next(err);
