@@ -18,6 +18,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { notifyAllAdmins, notifyManager } from '../lib/notify.js';
 import {
   approveRequest,
   formatDateUTC,
@@ -62,7 +63,7 @@ function toRequestDTO(row: RawRequest): TimeOffRequestDTO {
 }
 
 const REQUEST_INCLUDE = {
-  associate: { select: { firstName: true, lastName: true } },
+  associate: { select: { firstName: true, lastName: true, managerId: true } },
   reviewer: { select: { email: true } },
 } as const;
 
@@ -158,6 +159,25 @@ timeOffRouter.post('/me/requests', async (req, res, next) => {
       },
       include: REQUEST_INCLUDE,
     });
+
+    // Manager-first routing: time-off is the manager's call. If the associate
+    // has a direct manager assigned, only the manager is notified — admins
+    // already have the request visible in the HR queue and don't need a ping
+    // for every request. If there's no manager, fall through to all admins
+    // so the request doesn't sit unowned. (Avoids the manager getting
+    // duplicate notifications when their role also matches admin fan-out.)
+    const who = `${created.associate.firstName} ${created.associate.lastName}`;
+    const range =
+      formatDateUTC(startDate) === formatDateUTC(endDate)
+        ? formatDateUTC(startDate)
+        : `${formatDateUTC(startDate)} → ${formatDateUTC(endDate)}`;
+    const subject = 'Time-off request needs review';
+    const body = `${who} requested ${input.hours}h ${input.category.toLowerCase()} for ${range}.${input.reason ? ` Reason: ${input.reason}.` : ''}`;
+    if (created.associate.managerId) {
+      void notifyManager(user.associateId, { subject, body, category: 'time-off' });
+    } else {
+      void notifyAllAdmins({ subject, body, category: 'time-off', excludeUserId: user.id });
+    }
 
     res.status(201).json(
       TimeOffRequestResponseSchema.parse({ request: toRequestDTO(created) })

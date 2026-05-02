@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { notifyAssociate, notifyManager } from '../lib/notify.js';
 
 /**
  * Phase 116 — Probation period tracking.
@@ -56,6 +57,16 @@ probation116Router.post('/probations', MANAGE, async (req, res) => {
         endDate: new Date(input.endDate),
         createdById: req.user!.id,
       },
+    });
+    void notifyAssociate(input.associateId, {
+      subject: 'You\'ve been placed on probation',
+      body: `A probation period was opened ${input.startDate} → ${input.endDate}. Talk to your manager about expectations.`,
+      category: 'probation',
+    });
+    void notifyManager(input.associateId, {
+      subject: 'Direct report placed on probation',
+      body: `One of your direct reports was placed on probation ${input.startDate} → ${input.endDate}.`,
+      category: 'probation',
     });
     res.status(201).json({ id: created.id });
   } catch (err: unknown) {

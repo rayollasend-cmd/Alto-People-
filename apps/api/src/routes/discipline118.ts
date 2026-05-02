@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
+import { notifyAssociate, notifyManager } from '../lib/notify.js';
 
 /**
  * Phase 118 — Disciplinary action log.
@@ -142,6 +143,17 @@ discipline118Router.post(
         expectedAction: input.expectedAction ?? null,
         issuedById: req.user!.id,
       },
+    });
+    const kindLabel = input.kind.replace(/_/g, ' ').toLowerCase();
+    void notifyAssociate(input.associateId, {
+      subject: `Disciplinary action issued — ${kindLabel}`,
+      body: `A ${kindLabel} was filed effective ${input.effectiveDate}. Open My Profile → Discipline to acknowledge.`,
+      category: 'discipline',
+    });
+    void notifyManager(input.associateId, {
+      subject: `Disciplinary action filed on direct report`,
+      body: `A ${kindLabel} was filed for one of your direct reports effective ${input.effectiveDate}.`,
+      category: 'discipline',
     });
     res.status(201).json({ id: created.id });
   },

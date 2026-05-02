@@ -57,7 +57,12 @@ import {
 import multer from 'multer';
 import { decryptString, encryptString } from '../lib/crypto.js';
 import { recordOnboardingEvent } from '../lib/audit.js';
-import { notifyAllHR, notifyAssociate, notifyHrOnApplicationComplete } from '../lib/notify.js';
+import {
+  notifyAllAdmins,
+  notifyAssociate,
+  notifyHrOnApplicationComplete,
+  notifyManager,
+} from '../lib/notify.js';
 import {
   renderCompliancePacket,
   type PacketData,
@@ -724,6 +729,13 @@ onboardingRouter.post(
         body: `Welcome aboard! Your onboarding has been approved${hireDate ? `; your hire date is ${hireDate}` : ''}. Sign in to access your associate dashboard.`,
         category: 'onboarding',
       });
+      // Manager copy so the new hire's direct manager knows they're cleared
+      // to start — no-op if no manager assigned.
+      void notifyManager(app.associateId, {
+        subject: 'New hire approved on your team',
+        body: `One of your direct reports was just approved${hireDate ? ` with a hire date of ${hireDate}` : ''}. Reach out to set up day-1 expectations.`,
+        category: 'onboarding',
+      });
 
       res.status(204).end();
     } catch (err) {
@@ -786,6 +798,12 @@ onboardingRouter.post(
       void notifyAssociate(app.associateId, {
         subject: 'Application update',
         body: `Your application has been declined. Reason: ${reason}. Please contact HR if you have questions.`,
+        category: 'onboarding',
+      });
+      // Manager copy so the team owner knows the candidate isn't joining.
+      void notifyManager(app.associateId, {
+        subject: 'Application declined on your team',
+        body: `An application for one of your direct reports was declined. Reason: ${reason}.`,
         category: 'onboarding',
       });
 
@@ -2297,7 +2315,7 @@ onboardingRouter.post('/applications/:id/i9/section1', async (req, res, next) =>
       where: { id: app.associateId },
       select: { firstName: true, lastName: true },
     });
-    void notifyAllHR({
+    void notifyAllAdmins({
       subject: 'I-9 Section 1 complete — Section 2 needed',
       body: `${assoc?.firstName ?? 'An associate'} ${assoc?.lastName ?? ''} signed I-9 Section 1. You need to inspect their documents in person and complete Section 2 within 3 business days of their start date.`,
       category: 'onboarding',
