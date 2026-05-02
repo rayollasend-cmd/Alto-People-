@@ -1,10 +1,16 @@
 /**
- * Thin helpers for creating IN_APP Notification rows the topbar bell renders.
+ * Thin helpers for system-triggered notifications.
+ *
+ * Every helper writes an IN_APP Notification (the topbar bell row) AND
+ * fires a parallel EMAIL via Resend so the recipient gets the same news
+ * even if they're not currently logged in. Both writes are tracked as
+ * separate Notification rows (channel='IN_APP' and channel='EMAIL') so
+ * the bell view and the email-deliverability audit stay independent.
  *
  * Why a small helper rather than reusing the broadcast/send endpoints:
  * those are user-triggered (HR composing a message). System-triggered
  * notifications (event hooks) skip the auth + delivery-channel layers and
- * just write a row — the inbox endpoint surfaces it on the next poll.
+ * just write a row + fire an email.
  *
  * Every helper here is fire-and-forget from the caller's perspective:
  * notification failures must NEVER fail the underlying request that
@@ -17,6 +23,7 @@
  */
 import type { PrismaClient } from '@prisma/client';
 import { prisma } from '../db.js';
+import { send } from './notifications.js';
 
 const inFlight: Set<Promise<unknown>> = new Set();
 
@@ -43,10 +50,57 @@ export interface NotifyOpts {
 }
 
 /**
- * Create one IN_APP notification for a single user. Returns silently on
- * any failure (the bell will pick it up next poll if it lands; if the
- * write itself failed, the underlying event still happened — we don't
- * want to mask that with a "couldn't notify" error).
+ * Send a transactional email to one user and record the result as an
+ * EMAIL Notification row (status SENT or FAILED). Tracked so tests can
+ * await it via flushPendingNotifications.
+ */
+function sendEmailNotification(
+  userId: string,
+  email: string,
+  opts: NotifyOpts,
+): Promise<void> {
+  return track(
+    (async () => {
+      let externalRef: string | null = null;
+      let failureReason: string | null = null;
+      try {
+        const r = await send({
+          channel: 'EMAIL',
+          recipient: { userId, phone: null, email },
+          subject: opts.subject,
+          body: opts.body,
+        });
+        externalRef = r.externalRef;
+      } catch (err) {
+        failureReason = err instanceof Error ? err.message : String(err);
+      }
+      await prisma.notification.create({
+        data: {
+          channel: 'EMAIL',
+          status: failureReason ? 'FAILED' : 'SENT',
+          recipientUserId: userId,
+          recipientEmail: email,
+          subject: opts.subject,
+          body: opts.body,
+          category: opts.category ?? null,
+          externalRef,
+          failureReason,
+          sentAt: failureReason ? null : new Date(),
+        },
+      });
+    })().catch((err: unknown) => {
+      console.warn(
+        '[notify] sendEmailNotification failed:',
+        err instanceof Error ? err.message : err,
+      );
+    }),
+  );
+}
+
+/**
+ * Create one IN_APP notification for a single user AND email them. Returns
+ * silently on any failure — the bell will pick it up next poll if it lands;
+ * if writes fail, the underlying event still happened, we don't mask that.
  */
 export function notifyUser(
   userId: string,
@@ -54,8 +108,8 @@ export function notifyUser(
   client: Pick<PrismaClient, 'notification'> = prisma,
 ): Promise<void> {
   return track(
-    client.notification
-      .create({
+    (async () => {
+      await client.notification.create({
         data: {
           channel: 'IN_APP',
           status: 'SENT',
@@ -65,20 +119,26 @@ export function notifyUser(
           category: opts.category ?? null,
           sentAt: new Date(),
         },
-      })
-      .then(() => undefined)
-      .catch((err: unknown) => {
-        console.warn('[notify] notifyUser failed:', err instanceof Error ? err.message : err);
-      }),
+      });
+      // Email is best-effort and fired in parallel via its own track().
+      const u = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { email: true, status: true },
+      });
+      if (u && u.email && u.status === 'ACTIVE') {
+        void sendEmailNotification(userId, u.email, opts);
+      }
+    })().catch((err: unknown) => {
+      console.warn('[notify] notifyUser failed:', err instanceof Error ? err.message : err);
+    }),
   );
 }
 
 /**
- * Fan-out IN_APP notifications to every ACTIVE HR_ADMINISTRATOR. Pass
- * `excludeUserId` to skip the actor (HR rarely needs a "you just did X"
- * notification for their own action).
- *
- * Single bulk insert via createMany so 50 HR users doesn't mean 50 round-trips.
+ * Fan-out IN_APP + EMAIL notifications to every ACTIVE HR_ADMINISTRATOR.
+ * Pass `excludeUserId` to skip the actor (HR rarely needs a "you just did
+ * X" notification for their own action). IN_APP is one bulk insert;
+ * emails are fired one-per-recipient via sendEmailNotification.
  */
 export function notifyAllHR(
   opts: NotifyOpts & { excludeUserId?: string | null },
@@ -91,7 +151,7 @@ export function notifyAllHR(
           status: 'ACTIVE',
           ...(opts.excludeUserId ? { NOT: { id: opts.excludeUserId } } : {}),
         },
-        select: { id: true },
+        select: { id: true, email: true },
       });
       if (recipients.length === 0) return;
       const now = new Date();
@@ -106,6 +166,9 @@ export function notifyAllHR(
           sentAt: now,
         })),
       });
+      for (const u of recipients) {
+        if (u.email) void sendEmailNotification(u.id, u.email, opts);
+      }
     })().catch((err: unknown) => {
       console.warn('[notify] notifyAllHR failed:', err instanceof Error ? err.message : err);
     }),
