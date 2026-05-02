@@ -982,14 +982,21 @@ onboardingRouter.get('/applications/:id/policies', async (req, res, next) => {
       where: {
         deletedAt: null,
         requiredForOnboarding: true,
-        OR: [
-          { clientId: app.clientId },
-          {
-            clientId: null,
-            industry: client.industry?.toLowerCase() ?? null,
-          },
-          { clientId: null, industry: null },
-        ],
+        // Defensive: a stub policy with no body AND no bodyUrl is
+        // un-acknowledgeable (the UI gates Acknowledge on scroll-to-bottom),
+        // so it would silently block POLICY_ACK from completing. Skip
+        // anything that has no readable content.
+        OR: [{ body: { not: null } }, { bodyUrl: { not: null } }],
+        AND: {
+          OR: [
+            { clientId: app.clientId },
+            {
+              clientId: null,
+              industry: client.industry?.toLowerCase() ?? null,
+            },
+            { clientId: null, industry: null },
+          ],
+        },
       },
       orderBy: [{ industry: 'asc' }, { title: 'asc' }],
     });
@@ -1658,11 +1665,16 @@ onboardingRouter.post('/applications/:id/policy-ack', async (req, res, next) => 
         where: {
           deletedAt: null,
           requiredForOnboarding: true,
-          OR: [
-            { clientId: app.clientId },
-            { clientId: null, industry: client?.industry?.toLowerCase() ?? null },
-            { clientId: null, industry: null },
-          ],
+          // Mirror the GET filter above: skip un-acknowledgeable stubs so
+          // the auto-completion check counts the same set the UI shows.
+          OR: [{ body: { not: null } }, { bodyUrl: { not: null } }],
+          AND: {
+            OR: [
+              { clientId: app.clientId },
+              { clientId: null, industry: client?.industry?.toLowerCase() ?? null },
+              { clientId: null, industry: null },
+            ],
+          },
         },
         select: { id: true },
       });
