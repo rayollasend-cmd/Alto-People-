@@ -209,4 +209,73 @@ describe('E2E: associate next-step after Profile info', () => {
       expect(REAL_KINDS.has(t.kind), `${t.kind} is in seed but missing from UI REAL_KINDS`).toBe(true);
     }
   });
+
+  it('regression guard: empty-body required policies are filtered out, do not block POLICY_ACK', async () => {
+    // Reported 2026-05-02: a stale "Code of Conduct v1.0" with no body
+    // appeared in the required list, the UI gates Acknowledge on
+    // scroll-to-bottom, and the associate sat at N-1 of N forever.
+    // Both /policies (read) and /policies/:id/ack (auto-completion check)
+    // must skip stub rows so one bad data row can't block onboarding.
+    const client = await createClient('Acme Stores');
+    const associate = await prisma.associate.create({
+      data: { firstName: 'Pol', lastName: 'Tester', email: 'pol.tester@example.com' },
+    });
+    const application = await prisma.application.create({
+      data: {
+        associateId: associate.id,
+        clientId: client.id,
+        onboardingTrack: 'STANDARD',
+        status: 'DRAFT',
+        checklist: { create: { tasks: { create: [{ kind: 'POLICY_ACK', title: 'Policies', order: 1 }] } } },
+      },
+      include: { checklist: { include: { tasks: true } } },
+    });
+    const { user } = await createUser({
+      role: 'ASSOCIATE',
+      email: associate.email,
+      associateId: associate.id,
+    });
+
+    // One real policy with body, one stub with neither body nor bodyUrl.
+    const real = await prisma.policy.create({
+      data: {
+        clientId: null,
+        title: 'Real policy',
+        version: 'v1.0',
+        body: 'Real body content the associate can scroll through.',
+        requiredForOnboarding: true,
+      },
+    });
+    const stub = await prisma.policy.create({
+      data: {
+        clientId: null,
+        title: 'Stub policy',
+        version: 'v1.0',
+        body: null,
+        bodyUrl: null,
+        requiredForOnboarding: true,
+      },
+    });
+
+    const a = await loginAs(user.email);
+
+    // The stub MUST NOT appear in the policies list — it would block forever.
+    const list = await a.get(`/onboarding/applications/${application.id}/policies`);
+    expect(list.status).toBe(200);
+    const ids: string[] = list.body.policies.map((p: { id: string }) => p.id);
+    expect(ids).toContain(real.id);
+    expect(ids, 'stub policy with no body must not block onboarding').not.toContain(stub.id);
+
+    // Acknowledging the one real policy should be enough to flip POLICY_ACK
+    // → DONE, since the stub is excluded from the required-set count too.
+    const ack = await a
+      .post(`/onboarding/applications/${application.id}/policy-ack`)
+      .send({ policyId: real.id, signatureName: 'Pol Tester' });
+    expect(ack.status).toBe(204);
+
+    const task = await prisma.onboardingTask.findFirstOrThrow({
+      where: { kind: 'POLICY_ACK', checklist: { applicationId: application.id } },
+    });
+    expect(task.status).toBe('DONE');
+  });
 });
