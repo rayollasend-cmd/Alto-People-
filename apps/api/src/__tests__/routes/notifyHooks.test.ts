@@ -48,29 +48,64 @@ interface World {
   application: { id: string };
   hr: { id: string; email: string };
   hrOther: { id: string; email: string };
+  // A non-HR admin role (also has manage:onboarding via FULL_ADMIN). Used
+  // to verify notifyAllAdmins fans out to every admin role, not just HR.
+  recruiter: { id: string; email: string };
   associateUser: { id: string; email: string };
+  // Manager of the test associate, with their own Associate row + active
+  // User. Used to verify notifyManager sends to the direct manager.
+  managerAssociate: { id: string };
+  managerUser: { id: string; email: string };
+  // Every admin id in one place — when an event fires for "all admins",
+  // assert against this set instead of listing them inline.
+  allAdminIds: string[];
 }
 
 async function seed(): Promise<World> {
   const client = await createClient();
+  // Manager-associate first so we can attach managerId on the worker.
+  const managerAssociate = await createAssociate({ firstName: 'Mona', lastName: 'Manager' });
+  const { user: managerUser } = await createUser({
+    role: 'MANAGER',
+    email: managerAssociate.email,
+    associateId: managerAssociate.id,
+  });
   const associate = await createAssociate();
+  await prisma.associate.update({
+    where: { id: associate.id },
+    data: { managerId: managerAssociate.id },
+  });
   const application = await createApplicationWithChecklist({
     associateId: associate.id,
     clientId: client.id,
   });
   const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
-  // Second HR so we can prove fan-out goes to >1 user.
+  // Second HR so we can prove fan-out goes to >1 user of the same role.
   const { user: hrOther } = await createUser({ role: 'HR_ADMINISTRATOR' });
+  // Non-HR admin role (FULL_ADMIN). Asserts notifyAllAdmins covers them too,
+  // catching the previous bug where notifyAllHR only matched HR_ADMINISTRATOR.
+  const { user: recruiter } = await createUser({ role: 'INTERNAL_RECRUITER' });
   const { user: associateUser } = await createUser({
     role: 'ASSOCIATE',
     email: associate.email,
     associateId: associate.id,
   });
-  return { client, associate, application, hr, hrOther, associateUser };
+  return {
+    client,
+    associate,
+    application,
+    hr,
+    hrOther,
+    recruiter,
+    associateUser,
+    managerAssociate,
+    managerUser,
+    allAdminIds: [hr.id, hrOther.id, recruiter.id, managerUser.id],
+  };
 }
 
 describe('Notification hooks', () => {
-  it('document upload by associate → notifies all active HR (in-app + email)', async () => {
+  it('document upload by associate → notifies every admin role (in-app + email)', async () => {
     const w = await seed();
     const a = await loginAs(w.associateUser.email);
 
@@ -81,22 +116,21 @@ describe('Notification hooks', () => {
     expect(res.status).toBe(201);
     await flushPendingNotifications();
 
-    // Both HR users should have an IN_APP notification in the documents category.
-    const hrInApp = await prisma.notification.findMany({
-      where: { recipientUserId: { in: [w.hr.id, w.hrOther.id] }, category: 'documents', channel: 'IN_APP' },
+    // Every admin (2 HR + 1 INTERNAL_RECRUITER + 1 MANAGER) should get an
+    // IN_APP row — the previous notifyAllHR bug only matched HR_ADMINISTRATOR.
+    const adminInApp = await prisma.notification.findMany({
+      where: { recipientUserId: { in: w.allAdminIds }, category: 'documents', channel: 'IN_APP' },
     });
-    expect(hrInApp).toHaveLength(2);
-    expect(hrInApp[0].body).toMatch(/uploaded.*id/i);
+    expect(adminInApp).toHaveLength(w.allAdminIds.length);
+    expect(adminInApp[0].body).toMatch(/uploaded.*id/i);
 
-    // And an EMAIL row per HR user, addressed to their User.email.
-    const hrEmails = await prisma.notification.findMany({
-      where: { recipientUserId: { in: [w.hr.id, w.hrOther.id] }, category: 'documents', channel: 'EMAIL' },
-      orderBy: { recipientEmail: 'asc' },
+    // And one EMAIL row per admin.
+    const adminEmails = await prisma.notification.findMany({
+      where: { recipientUserId: { in: w.allAdminIds }, category: 'documents', channel: 'EMAIL' },
     });
-    expect(hrEmails).toHaveLength(2);
-    expect(hrEmails.every((n) => n.status === 'SENT')).toBe(true);
-    expect(hrEmails.every((n) => n.recipientEmail !== null)).toBe(true);
-    expect(hrEmails[0].body).toMatch(/uploaded.*id/i);
+    expect(adminEmails).toHaveLength(w.allAdminIds.length);
+    expect(adminEmails.every((n) => n.status === 'SENT')).toBe(true);
+    expect(adminEmails.every((n) => n.recipientEmail !== null)).toBe(true);
   });
 
   it('document rejected → notifies the associate (not HR)', async () => {
@@ -132,11 +166,23 @@ describe('Notification hooks', () => {
     expect(assocEmail[0].recipientEmail).toBe(w.associateUser.email);
     expect(assocEmail[0].body).toMatch(/rejected.*blurry/i);
 
-    // HR should NOT be notified about rejecting their own action — neither bell nor email.
-    const hrSpam = await prisma.notification.findMany({
-      where: { recipientUserId: { in: [w.hr.id, w.hrOther.id] } },
+    // The associate's manager also gets a copy (bell + email) so they know
+    // their direct report is blocked on a re-upload.
+    const mgrInApp = await prisma.notification.findMany({
+      where: { recipientUserId: w.managerUser.id, category: 'documents', channel: 'IN_APP' },
     });
-    expect(hrSpam).toHaveLength(0);
+    expect(mgrInApp).toHaveLength(1);
+    expect(mgrInApp[0].body).toMatch(/direct report/i);
+    const mgrEmail = await prisma.notification.findMany({
+      where: { recipientUserId: w.managerUser.id, category: 'documents', channel: 'EMAIL' },
+    });
+    expect(mgrEmail).toHaveLength(1);
+
+    // HR / recruiter should NOT be notified — doc-rejected is not a fan-out event.
+    const adminSpam = await prisma.notification.findMany({
+      where: { recipientUserId: { in: [w.hr.id, w.hrOther.id, w.recruiter.id] } },
+    });
+    expect(adminSpam).toHaveLength(0);
   });
 
   it('application approved → notifies the associate', async () => {
@@ -166,6 +212,13 @@ describe('Notification hooks', () => {
     expect(email).toHaveLength(1);
     expect(email[0].status).toBe('SENT');
     expect(email[0].recipientEmail).toBe(w.associateUser.email);
+
+    // Manager copy: the new hire's direct manager gets a notice too.
+    const mgrInApp = await prisma.notification.findMany({
+      where: { recipientUserId: w.managerUser.id, category: 'onboarding', channel: 'IN_APP' },
+    });
+    expect(mgrInApp).toHaveLength(1);
+    expect(mgrInApp[0].body).toMatch(/direct report/i);
   });
 
   it('application rejected → notifies the associate with the reason (in-app + email)', async () => {
@@ -191,6 +244,13 @@ describe('Notification hooks', () => {
     expect(email[0].status).toBe('SENT');
     expect(email[0].recipientEmail).toBe(w.associateUser.email);
     expect(email[0].body).toMatch(/declined.*background check/i);
+
+    // Manager copy.
+    const mgrInApp = await prisma.notification.findMany({
+      where: { recipientUserId: w.managerUser.id, category: 'onboarding', channel: 'IN_APP' },
+    });
+    expect(mgrInApp).toHaveLength(1);
+    expect(mgrInApp[0].body).toMatch(/declined/i);
   });
 
   it('checklist 100% → notifies HR exactly once (dedupe via submittedAt)', async () => {
@@ -215,24 +275,26 @@ describe('Notification hooks', () => {
     expect(r1.status).toBe(204);
     await flushPendingNotifications();
 
+    const expectedFanOut = w.allAdminIds.length; // 2 HR + 1 IR + 1 MGR
+
     let inApp = await prisma.notification.findMany({
       where: {
-        recipientUserId: { in: [w.hr.id, w.hrOther.id] },
+        recipientUserId: { in: w.allAdminIds },
         category: 'onboarding',
         channel: 'IN_APP',
       },
     });
-    expect(inApp).toHaveLength(2); // one bell row per HR user, one event
+    expect(inApp).toHaveLength(expectedFanOut);
 
-    // Each HR user also gets an email — same dedupe gate applies.
+    // Each admin also gets an email — same dedupe gate applies.
     let emails = await prisma.notification.findMany({
       where: {
-        recipientUserId: { in: [w.hr.id, w.hrOther.id] },
+        recipientUserId: { in: w.allAdminIds },
         category: 'onboarding',
         channel: 'EMAIL',
       },
     });
-    expect(emails).toHaveLength(2);
+    expect(emails).toHaveLength(expectedFanOut);
     expect(emails.every((n) => n.status === 'SENT')).toBe(true);
 
     // Trigger again; submittedAt is now stamped so notify is a no-op.
@@ -244,21 +306,21 @@ describe('Notification hooks', () => {
     await flushPendingNotifications();
     inApp = await prisma.notification.findMany({
       where: {
-        recipientUserId: { in: [w.hr.id, w.hrOther.id] },
+        recipientUserId: { in: w.allAdminIds },
         category: 'onboarding',
         channel: 'IN_APP',
       },
     });
-    expect(inApp, 'submittedAt dedupe must prevent a second IN_APP fan-out').toHaveLength(2);
+    expect(inApp, 'submittedAt dedupe must prevent a second IN_APP fan-out').toHaveLength(expectedFanOut);
 
     emails = await prisma.notification.findMany({
       where: {
-        recipientUserId: { in: [w.hr.id, w.hrOther.id] },
+        recipientUserId: { in: w.allAdminIds },
         category: 'onboarding',
         channel: 'EMAIL',
       },
     });
-    expect(emails, 'submittedAt dedupe must prevent a second email fan-out').toHaveLength(2);
+    expect(emails, 'submittedAt dedupe must prevent a second email fan-out').toHaveLength(expectedFanOut);
 
     const refreshed = await prisma.application.findUniqueOrThrow({
       where: { id: w.application.id },

@@ -172,6 +172,17 @@ export function hasCapability(role: Role, capability: Capability): boolean {
 }
 
 /**
+ * Every Role that has the given capability. Used by the API's notification
+ * fan-out to target "all admins who can manage X" without hardcoding role
+ * lists that drift when ROLE_CAPABILITIES changes.
+ */
+export function rolesWithCapability(capability: Capability): Role[] {
+  return (Object.keys(ROLE_CAPABILITIES) as Role[]).filter((r) =>
+    ROLE_CAPABILITIES[r].has(capability),
+  );
+}
+
+/**
  * The full set of ASN-namespaced capabilities. Useful when an admin UI
  * mints an "ASN Supervisor" or "ASN Command Desk" key — preselect from
  * this list rather than free-typing strings.

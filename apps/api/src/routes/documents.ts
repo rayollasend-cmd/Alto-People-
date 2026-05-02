@@ -16,7 +16,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopeDocuments } from '../lib/scope.js';
 import { recordDocumentEvent } from '../lib/audit.js';
-import { notifyAllHR, notifyAssociate } from '../lib/notify.js';
+import { notifyAllAdmins, notifyAssociate, notifyManager } from '../lib/notify.js';
 import { resolveStoragePath, UPLOAD_ROOT } from '../lib/storage.js';
 
 export const documentsRouter = Router();
@@ -146,7 +146,7 @@ documentsRouter.post('/me/upload', upload.single('file'), async (req, res, next)
       where: { id: created.associateId },
       select: { firstName: true, lastName: true },
     });
-    void notifyAllHR({
+    void notifyAllAdmins({
       subject: 'Document uploaded — review needed',
       body: `${assoc?.firstName ?? 'An associate'} ${assoc?.lastName ?? ''} uploaded a ${created.kind.replace(/_/g, ' ').toLowerCase()} (${created.filename}). Verify or reject in the associate's Documents tab.`,
       category: 'documents',
@@ -387,6 +387,13 @@ documentsRouter.post('/admin/:id/reject', MANAGE, async (req, res, next) => {
     void notifyAssociate(updated.associateId, {
       subject: 'A document was rejected — please re-upload',
       body: `Your "${updated.filename}" (${updated.kind.replace(/_/g, ' ').toLowerCase()}) was rejected. Reason: ${parsed.data.reason}. Open Identity documents and upload a replacement.`,
+      category: 'documents',
+    });
+    // Manager copy so the associate's direct manager knows their report is
+    // blocked on a re-upload — no-op if the associate has no manager assigned.
+    void notifyManager(updated.associateId, {
+      subject: 'Direct report has a rejected document',
+      body: `${updated.filename} (${updated.kind.replace(/_/g, ' ').toLowerCase()}) was rejected for one of your direct reports. Reason: ${parsed.data.reason}.`,
       category: 'documents',
     });
 

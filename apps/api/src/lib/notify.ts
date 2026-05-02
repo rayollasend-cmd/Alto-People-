@@ -1,16 +1,32 @@
 /**
- * Thin helpers for system-triggered notifications.
+ * Thin helpers for system-triggered notifications (bell + email).
  *
- * Every helper writes an IN_APP Notification (the topbar bell row) AND
+ * Every helper writes an IN_APP Notification row (the topbar bell) AND
  * fires a parallel EMAIL via Resend so the recipient gets the same news
- * even if they're not currently logged in. Both writes are tracked as
- * separate Notification rows (channel='IN_APP' and channel='EMAIL') so
- * the bell view and the email-deliverability audit stay independent.
+ * even if they're not currently logged in. Both writes land as separate
+ * Notification rows (channel='IN_APP' and channel='EMAIL') so the bell
+ * view and the email-deliverability audit stay independent.
+ *
+ * Helper inventory:
+ *   - notifyUser         – one user (any role) gets bell + email
+ *   - notifyAllAdmins    – fan out to every ACTIVE role with manage:onboarding
+ *                          (HR_ADMINISTRATOR + the FULL_ADMIN sibling roles —
+ *                          OPERATIONS_MANAGER, INTERNAL_RECRUITER, MANAGER,
+ *                          WORKFORCE_MANAGER, MARKETING_MANAGER). Excludes
+ *                          the optional excludeUserId (typically the actor).
+ *   - notifyAssociate    – the affected employee (no-op if they have no
+ *                          active User account yet — invited-but-unaccepted
+ *                          accounts have no confirmed inbox to mail)
+ *   - notifyManager      – the affected employee's direct manager (no-op
+ *                          if Associate.managerId is null or the manager has
+ *                          no active User)
+ *   - notifyHrOnApplicationComplete – when a checklist hits 100%, stamp
+ *                          submittedAt (dedupe gate) and call notifyAllAdmins
  *
  * Why a small helper rather than reusing the broadcast/send endpoints:
  * those are user-triggered (HR composing a message). System-triggered
- * notifications (event hooks) skip the auth + delivery-channel layers and
- * just write a row + fire an email.
+ * notifications skip the auth + delivery-channel layers and just write
+ * a row + fire an email.
  *
  * Every helper here is fire-and-forget from the caller's perspective:
  * notification failures must NEVER fail the underlying request that
@@ -22,8 +38,14 @@
  * asserting on the Notification table — same pattern as audit.ts.
  */
 import type { PrismaClient } from '@prisma/client';
+import { rolesWithCapability } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { send } from './notifications.js';
+
+// Snapshot at module load. Drives the notifyAllAdmins recipient query.
+// Capability-based (not a hardcoded role list) so a future role gaining
+// manage:onboarding automatically gets in the loop without code changes here.
+const ONBOARDING_ADMIN_ROLES = rolesWithCapability('manage:onboarding');
 
 const inFlight: Set<Promise<unknown>> = new Set();
 
@@ -135,19 +157,21 @@ export function notifyUser(
 }
 
 /**
- * Fan-out IN_APP + EMAIL notifications to every ACTIVE HR_ADMINISTRATOR.
- * Pass `excludeUserId` to skip the actor (HR rarely needs a "you just did
- * X" notification for their own action). IN_APP is one bulk insert;
- * emails are fired one-per-recipient via sendEmailNotification.
+ * Fan-out IN_APP + EMAIL notifications to every ACTIVE user whose role
+ * grants manage:onboarding. Pass `excludeUserId` to skip the actor. IN_APP
+ * is one bulk insert; emails are fired one-per-recipient.
+ *
+ * The role set is derived from ROLE_CAPABILITIES at module load, so
+ * adding a new admin role to FULL_ADMIN auto-includes them here.
  */
-export function notifyAllHR(
+export function notifyAllAdmins(
   opts: NotifyOpts & { excludeUserId?: string | null },
 ): Promise<void> {
   return track(
     (async () => {
       const recipients = await prisma.user.findMany({
         where: {
-          role: 'HR_ADMINISTRATOR',
+          role: { in: ONBOARDING_ADMIN_ROLES },
           status: 'ACTIVE',
           ...(opts.excludeUserId ? { NOT: { id: opts.excludeUserId } } : {}),
         },
@@ -170,15 +194,15 @@ export function notifyAllHR(
         if (u.email) void sendEmailNotification(u.id, u.email, opts);
       }
     })().catch((err: unknown) => {
-      console.warn('[notify] notifyAllHR failed:', err instanceof Error ? err.message : err);
+      console.warn('[notify] notifyAllAdmins failed:', err instanceof Error ? err.message : err);
     }),
   );
 }
 
 /**
  * Notify the associate (via their User row, if one exists). No-op if the
- * associate has no User account yet — invited but unaccepted associates
- * have no one to notify.
+ * associate has no active User account yet — invited-but-unaccepted
+ * accounts have no confirmed inbox to mail.
  */
 export function notifyAssociate(associateId: string, opts: NotifyOpts): Promise<void> {
   return track(
@@ -196,11 +220,36 @@ export function notifyAssociate(associateId: string, opts: NotifyOpts): Promise<
 }
 
 /**
+ * Notify the associate's direct manager (Associate.managerId → that
+ * manager's Associate → that Associate's active User). No-op if the
+ * associate has no manager assigned, or the manager has no active User.
+ */
+export function notifyManager(associateId: string, opts: NotifyOpts): Promise<void> {
+  return track(
+    (async () => {
+      const associate = await prisma.associate.findUnique({
+        where: { id: associateId },
+        select: { managerId: true },
+      });
+      if (!associate?.managerId) return;
+      const managerUser = await prisma.user.findFirst({
+        where: { associateId: associate.managerId, status: 'ACTIVE' },
+        select: { id: true },
+      });
+      if (!managerUser) return;
+      await notifyUser(managerUser.id, opts);
+    })().catch((err: unknown) => {
+      console.warn('[notify] notifyManager failed:', err instanceof Error ? err.message : err);
+    }),
+  );
+}
+
+/**
  * If `applicationId`'s checklist is now fully complete (every task DONE or
  * SKIPPED) AND the app hasn't been marked submitted yet, stamp `submittedAt`
- * and notify all HR. The submittedAt stamp is the dedupe — same call on a
- * subsequent request is a no-op, so HR gets exactly one "ready for review"
- * notification per application.
+ * and notify all admins. The submittedAt stamp is the dedupe — same call on
+ * a subsequent request is a no-op, so admins get exactly one "ready for
+ * review" notification per application.
  *
  * Call this after any endpoint that marks a checklist task DONE.
  */
@@ -236,7 +285,7 @@ export function notifyHrOnApplicationComplete(applicationId: string): Promise<vo
       });
 
       const who = `${app.associate.firstName} ${app.associate.lastName}`;
-      await notifyAllHR({
+      await notifyAllAdmins({
         subject: 'Onboarding complete — ready for review',
         body: `${who} (${app.client.name}) finished every onboarding task. Open the application to approve or reject.`,
         category: 'onboarding',
@@ -249,3 +298,6 @@ export function notifyHrOnApplicationComplete(applicationId: string): Promise<vo
     }),
   );
 }
+
+/** @deprecated Use notifyAllAdmins. Kept as a thin alias during migration. */
+export const notifyAllHR = notifyAllAdmins;
