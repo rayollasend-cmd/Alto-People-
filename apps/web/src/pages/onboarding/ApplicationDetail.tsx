@@ -14,11 +14,12 @@ import {
   ThumbsUp,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import type {
-  ApplicationDetail as ApplicationDetailType,
-  AuditLogEntry,
-  ChecklistTask,
-  InviteDeliveryInfo,
+import {
+  hasCapability,
+  type ApplicationDetail as ApplicationDetailType,
+  type AuditLogEntry,
+  type ChecklistTask,
+  type InviteDeliveryInfo,
 } from '@alto-people/shared';
 import {
   approveApplication,
@@ -122,8 +123,11 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
   const [approveOpen, setApproveOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
 
-  const canManage =
-    user?.role === 'HR_ADMINISTRATOR' || user?.role === 'OPERATIONS_MANAGER';
+  // Capability check (not a hardcoded role list) so every role granted
+  // manage:onboarding — HR_ADMINISTRATOR, OPERATIONS_MANAGER, MANAGER,
+  // INTERNAL_RECRUITER, WORKFORCE_MANAGER, MARKETING_MANAGER — can
+  // approve/reject. Hardcoded role list here used to lock out recruiters.
+  const canManage = user ? hasCapability(user.role, 'manage:onboarding') : false;
 
   const refresh = useCallback(async () => {
     if (!applicationId) return;
