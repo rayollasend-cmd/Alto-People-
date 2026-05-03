@@ -212,7 +212,7 @@ export function AssociateDocumentsView() {
                     type="button"
                     onClick={() => setDeleteTarget(d)}
                     className="text-xs text-silver/60 hover:text-alert"
-                    title="Delete"
+                    aria-label={`Delete ${d.filename}`}
                   >
                     ✕
                   </button>
