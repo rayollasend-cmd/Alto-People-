@@ -26,8 +26,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
-import { Label, FormHint } from '@/components/ui/Label';
+import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import {
   Table,
@@ -130,14 +132,7 @@ export function BenefitsPlansSection({ clientId }: Props) {
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        {error && (
-          <div
-            className="m-4 p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-            role="alert"
-          >
-            {error}
-          </div>
-        )}
+        {error && <ErrorBanner className="m-4">{error}</ErrorBanner>}
         {!plans && (
           <div className="p-4 space-y-2">
             <Skeleton className="h-10" />
@@ -327,73 +322,79 @@ function PlanDialog({ open, onOpenChange, clientId, existing, onSaved }: PlanDia
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          <div>
-            <Label htmlFor="bp-kind" required>Kind</Label>
-            <select
-              id="bp-kind"
-              value={kind}
-              onChange={(e) => setKind(e.target.value as BenefitsPlanKind)}
-              disabled={!!existing}
-              className="mt-1 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 text-white px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright disabled:opacity-50"
-            >
-              {KIND_OPTIONS.map((k) => (
-                <option key={k} value={k}>
-                  {KIND_LABEL[k]}
-                </option>
-              ))}
-            </select>
-            {existing && (
-              <FormHint>Kind is locked once a plan is created.</FormHint>
+          <Field
+            label="Kind"
+            required
+            hint={existing ? 'Kind is locked once a plan is created.' : undefined}
+          >
+            {(p) => (
+              <Select
+                value={kind}
+                onChange={(e) => setKind(e.target.value as BenefitsPlanKind)}
+                disabled={!!existing}
+                {...p}
+              >
+                {KIND_OPTIONS.map((k) => (
+                  <option key={k} value={k}>
+                    {KIND_LABEL[k]}
+                  </option>
+                ))}
+              </Select>
             )}
-          </div>
-          <div>
-            <Label htmlFor="bp-name" required>Name</Label>
-            <Input
-              id="bp-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Aetna PPO Gold, Fidelity 401(k)…"
-              autoFocus
-            />
-          </div>
-          <div>
-            <Label htmlFor="bp-desc">Description</Label>
-            <Textarea
-              id="bp-desc"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              maxLength={2000}
-              rows={3}
-              placeholder="Plan summary, deductible, coverage details…"
-            />
-          </div>
+          </Field>
+          <Field label="Name" required>
+            {(p) => (
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Aetna PPO Gold, Fidelity 401(k)…"
+                autoFocus
+                {...p}
+              />
+            )}
+          </Field>
+          <Field label="Description">
+            {(p) => (
+              <Textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                maxLength={2000}
+                rows={3}
+                placeholder="Plan summary, deductible, coverage details…"
+                {...p}
+              />
+            )}
+          </Field>
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label htmlFor="bp-emp-default">Default elect (USD/period)</Label>
-              <Input
-                id="bp-emp-default"
-                type="number"
-                step="0.01"
-                min="0"
-                value={employeeDefault}
-                onChange={(e) => setEmployeeDefault(e.target.value)}
-                placeholder="125.00"
-              />
-              <FormHint>Pre-filled at enrollment time.</FormHint>
-            </div>
-            <div>
-              <Label htmlFor="bp-emp-match">Employer match (USD/period)</Label>
-              <Input
-                id="bp-emp-match"
-                type="number"
-                step="0.01"
-                min="0"
-                value={employerMatch}
-                onChange={(e) => setEmployerMatch(e.target.value)}
-                placeholder="50.00"
-              />
-              <FormHint>Reporting only in v1.</FormHint>
-            </div>
+            <Field
+              label="Default elect (USD/period)"
+              hint="Pre-filled at enrollment time."
+            >
+              {(p) => (
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={employeeDefault}
+                  onChange={(e) => setEmployeeDefault(e.target.value)}
+                  placeholder="125.00"
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label="Employer match (USD/period)" hint="Reporting only in v1.">
+              {(p) => (
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={employerMatch}
+                  onChange={(e) => setEmployerMatch(e.target.value)}
+                  placeholder="50.00"
+                  {...p}
+                />
+              )}
+            </Field>
           </div>
           {existing && (
             <label className="text-sm text-silver inline-flex items-center gap-2 cursor-pointer">
