@@ -2499,6 +2499,31 @@ export interface NotificationPreferenceEntry {
 }
 
 /* -------------------------------------------------------------------------- *
+ *  Email change (two-step verification)
+ *
+ *  Request requires re-auth via current password. Confirmation is via a
+ *  single-use ~256-bit token emailed to the NEW address; clicking the
+ *  link confirms ownership and swaps the email. The old address gets a
+ *  separate informational email after the swap so the user can intervene
+ *  if they didn't initiate.
+ * -------------------------------------------------------------------------- */
+
+export const RequestEmailChangeInputSchema = z.object({
+  newEmail: z.string().email().max(254),
+  // Same minimum as login — keeps the password-input UX consistent and
+  // ensures the dummy-hash compare path can always run on a malformed
+  // submission without blowing up.
+  currentPassword: z.string().min(12).max(256),
+});
+export type RequestEmailChangeInput = z.infer<typeof RequestEmailChangeInputSchema>;
+
+export const ConfirmEmailChangeInputSchema = z.object({
+  // ~43-char base64url; cap higher for forward compatibility.
+  token: z.string().min(20).max(200),
+});
+export type ConfirmEmailChangeInput = z.infer<typeof ConfirmEmailChangeInputSchema>;
+
+/* -------------------------------------------------------------------------- *
  *  Phase 26 — Time off (sick-leave accrual + ledger)
  * -------------------------------------------------------------------------- */
 

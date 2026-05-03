@@ -5,6 +5,7 @@ import { Login } from '@/pages/Login';
 import { NotFound } from '@/pages/NotFound';
 import { ForgotPassword } from '@/pages/ForgotPassword';
 import { ResetPassword } from '@/pages/ResetPassword';
+import { ConfirmEmailChange } from '@/pages/ConfirmEmailChange';
 import { Install } from '@/pages/Install';
 import { AcceptInvite } from '@/pages/AcceptInvite';
 import { Dashboard } from '@/pages/Dashboard';
@@ -266,6 +267,14 @@ export const router = createBrowserRouter([
   // accepts the new password.
   { path: '/forgot-password', element: <ForgotPassword />, errorElement: <RouterErrorPage /> },
   { path: '/reset-password/:token', element: <ResetPassword />, errorElement: <RouterErrorPage /> },
+  // Two-step email change — public, the token in the URL is the
+  // authorization. Confirm endpoint swaps the email server-side and
+  // bumps tokenVersion (every existing session is now stale).
+  {
+    path: '/confirm-email-change/:token',
+    element: <ConfirmEmailChange />,
+    errorElement: <RouterErrorPage />,
+  },
   // Public landing for "add this app to your home screen" — no auth, so we
   // can drop the link in invite emails before the associate has a password.
   { path: '/install', element: <Install />, errorElement: <RouterErrorPage /> },

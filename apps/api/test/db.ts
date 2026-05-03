@@ -39,6 +39,7 @@ const TABLES = [
   'PayrollRun',
   'Notification',
   'NotificationPreference',
+  'EmailChangeRequest',
   'PerformanceReview',
   'Candidate',
   'InviteToken',

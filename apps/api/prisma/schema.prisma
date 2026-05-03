@@ -336,6 +336,7 @@ model User {
   inviteTokens                      InviteToken[]
   passwordResetTokens               PasswordResetToken[]
   notificationPreferences           NotificationPreference[]
+  emailChangeRequests               EmailChangeRequest[]
   createdEsignAgreements            EsignAgreement[]             @relation("EsignAgreementCreator")
   payrollDisbursementAttempts       PayrollDisbursementAttempt[] @relation("PayrollDisbursementAttemptActor")
   timeOffLedgerEntriesAuthored      TimeOffLedgerEntry[]
@@ -1632,6 +1633,29 @@ model NotificationPreference {
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, category])
+}
+
+// Two-step self-serve email change. Issuing a request mints a single-use
+// token, hashes it (sha256), and emails the raw token to the NEW address;
+// confirming the link swaps User.email and bumps tokenVersion. Older
+// outstanding rows for the same user are invalidated when a new one is
+// minted — newest request wins.
+model EmailChangeRequest {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tokenHash   String    @unique
+  userId      String    @db.Uuid
+  // The address the user wants to move TO. Already lowercased + validated
+  // server-side. Collision against any active User.email is checked at
+  // request time AND re-checked at confirm time (race cover).
+  newEmail    String    @db.VarChar(254)
+  expiresAt   DateTime  @db.Timestamptz(6)
+  consumedAt  DateTime? @db.Timestamptz(6)
+  requestedIp String?   @db.VarChar(64)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, consumedAt])
+  @@index([expiresAt])
 }
 
 model PerformanceReview {

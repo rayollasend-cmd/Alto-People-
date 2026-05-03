@@ -1,7 +1,9 @@
 import type {
   ChangePasswordInput,
+  ConfirmEmailChangeInput,
   NotificationCategory,
   NotificationPreferenceEntry,
+  RequestEmailChangeInput,
   SupportedTimezone,
   UpdateProfileInput,
 } from '@alto-people/shared';
@@ -66,5 +68,19 @@ export function patchNotificationPreference(
   return apiFetch<void>('/auth/me/notification-preferences', {
     method: 'PATCH',
     body: { category, emailEnabled },
+  });
+}
+
+export function requestEmailChange(body: RequestEmailChangeInput): Promise<void> {
+  return apiFetch<void>('/auth/me/email-change/request', {
+    method: 'POST',
+    body,
+  });
+}
+
+export function confirmEmailChange(body: ConfirmEmailChangeInput): Promise<void> {
+  return apiFetch<void>('/auth/email-change/confirm', {
+    method: 'POST',
+    body,
   });
 }
