@@ -40,7 +40,10 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
+  Field,
   Input,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -49,7 +52,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui';
-import { Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
 
 const STATUS_VARIANT: Record<PositionStatus, 'default' | 'pending' | 'success' | 'destructive' | 'accent'> = {
@@ -125,7 +127,7 @@ export function PositionsTab({
         </div>
       )}
 
-      {error && <p role="alert" className="text-sm text-alert mb-3">{error}</p>}
+      {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
       {!rows && <SkeletonRows count={4} rowHeight="h-12" />}
       {rows && rows.length === 0 && (
         <EmptyState
@@ -386,152 +388,159 @@ function PositionDrawer({
       <DrawerBody>
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label htmlFor="pos-code" required>Code</Label>
-              <Input
-                id="pos-code"
-                value={code}
-                onChange={(e) => setCode(e.target.value.toUpperCase())}
-                maxLength={40}
-                placeholder="LINE-COOK-1"
-                disabled={!canManage}
-              />
-            </div>
-            <div>
-              <Label htmlFor="pos-fte">FTE</Label>
-              <Input
-                id="pos-fte"
-                type="number"
-                step="0.05"
-                min="0.01"
-                max="2"
-                value={fte}
-                onChange={(e) => setFte(e.target.value)}
-                disabled={!canManage}
-              />
-            </div>
+            <Field label="Code" required>
+              {(p) => (
+                <Input
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.toUpperCase())}
+                  maxLength={40}
+                  placeholder="LINE-COOK-1"
+                  disabled={!canManage}
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label="FTE">
+              {(p) => (
+                <Input
+                  type="number"
+                  step="0.05"
+                  min="0.01"
+                  max="2"
+                  value={fte}
+                  onChange={(e) => setFte(e.target.value)}
+                  disabled={!canManage}
+                  {...p}
+                />
+              )}
+            </Field>
           </div>
-          <div>
-            <Label htmlFor="pos-title" required>Title</Label>
-            <Input
-              id="pos-title"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              maxLength={120}
-              disabled={!canManage}
-            />
-          </div>
+          <Field label="Title" required>
+            {(p) => (
+              <Input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                maxLength={120}
+                disabled={!canManage}
+                {...p}
+              />
+            )}
+          </Field>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <Label htmlFor="pos-jp">Job profile</Label>
-              <select
-                id="pos-jp"
-                value={jobProfileId}
-                onChange={(e) => setJobProfileId(e.target.value)}
-                disabled={!canManage}
-                className="w-full h-10 px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
-              >
-                <option value="">—</option>
-                {jobProfiles.map((j) => (
-                  <option key={j.id} value={j.id}>{j.code} · {j.title}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <Label htmlFor="pos-dept">Department</Label>
-              <select
-                id="pos-dept"
-                value={departmentId}
-                onChange={(e) => setDepartmentId(e.target.value)}
-                disabled={!canManage}
-                className="w-full h-10 px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
-              >
-                <option value="">—</option>
-                {departments.map((d) => (
-                  <option key={d.id} value={d.id}>{d.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <Label htmlFor="pos-cc">Cost center</Label>
-              <select
-                id="pos-cc"
-                value={costCenterId}
-                onChange={(e) => setCostCenterId(e.target.value)}
-                disabled={!canManage}
-                className="w-full h-10 px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
-              >
-                <option value="">—</option>
-                {costCenters.map((c) => (
-                  <option key={c.id} value={c.id}>{c.code}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <Label htmlFor="pos-mgr">Reporting manager</Label>
-              <select
-                id="pos-mgr"
-                value={managerId}
-                onChange={(e) => setManagerId(e.target.value)}
-                disabled={!canManage}
-                className="w-full h-10 px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
-              >
-                <option value="">—</option>
-                {associates.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.firstName} {a.lastName}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <Field label="Job profile">
+              {(p) => (
+                <Select
+                  value={jobProfileId}
+                  onChange={(e) => setJobProfileId(e.target.value)}
+                  disabled={!canManage}
+                  {...p}
+                >
+                  <option value="">—</option>
+                  {jobProfiles.map((j) => (
+                    <option key={j.id} value={j.id}>{j.code} · {j.title}</option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+            <Field label="Department">
+              {(p) => (
+                <Select
+                  value={departmentId}
+                  onChange={(e) => setDepartmentId(e.target.value)}
+                  disabled={!canManage}
+                  {...p}
+                >
+                  <option value="">—</option>
+                  {departments.map((d) => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+            <Field label="Cost center">
+              {(p) => (
+                <Select
+                  value={costCenterId}
+                  onChange={(e) => setCostCenterId(e.target.value)}
+                  disabled={!canManage}
+                  {...p}
+                >
+                  <option value="">—</option>
+                  {costCenters.map((c) => (
+                    <option key={c.id} value={c.id}>{c.code}</option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+            <Field label="Reporting manager">
+              {(p) => (
+                <Select
+                  value={managerId}
+                  onChange={(e) => setManagerId(e.target.value)}
+                  disabled={!canManage}
+                  {...p}
+                >
+                  <option value="">—</option>
+                  {associates.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.firstName} {a.lastName}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <Label htmlFor="pos-target">Target start</Label>
-              <Input
-                id="pos-target"
-                type="date"
-                value={targetStartDate ?? ''}
-                onChange={(e) => setTargetStartDate(e.target.value)}
-                disabled={!canManage}
-              />
-            </div>
-            <div>
-              <Label htmlFor="pos-min">Min $/hr</Label>
-              <Input
-                id="pos-min"
-                type="number"
-                step="0.5"
-                value={minRate ?? ''}
-                onChange={(e) => setMinRate(e.target.value)}
-                disabled={!canManage}
-              />
-            </div>
-            <div>
-              <Label htmlFor="pos-max">Max $/hr</Label>
-              <Input
-                id="pos-max"
-                type="number"
-                step="0.5"
-                value={maxRate ?? ''}
-                onChange={(e) => setMaxRate(e.target.value)}
-                disabled={!canManage}
-              />
-            </div>
+            <Field label="Target start">
+              {(p) => (
+                <Input
+                  type="date"
+                  value={targetStartDate ?? ''}
+                  onChange={(e) => setTargetStartDate(e.target.value)}
+                  disabled={!canManage}
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label="Min $/hr">
+              {(p) => (
+                <Input
+                  type="number"
+                  step="0.5"
+                  value={minRate ?? ''}
+                  onChange={(e) => setMinRate(e.target.value)}
+                  disabled={!canManage}
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label="Max $/hr">
+              {(p) => (
+                <Input
+                  type="number"
+                  step="0.5"
+                  value={maxRate ?? ''}
+                  onChange={(e) => setMaxRate(e.target.value)}
+                  disabled={!canManage}
+                  {...p}
+                />
+              )}
+            </Field>
           </div>
 
-          <div>
-            <Label htmlFor="pos-notes">Notes</Label>
-            <Input
-              id="pos-notes"
-              value={notes ?? ''}
-              onChange={(e) => setNotes(e.target.value)}
-              maxLength={1000}
-              disabled={!canManage}
-            />
-          </div>
+          <Field label="Notes">
+            {(p) => (
+              <Input
+                value={notes ?? ''}
+                onChange={(e) => setNotes(e.target.value)}
+                maxLength={1000}
+                disabled={!canManage}
+                {...p}
+              />
+            )}
+          </Field>
 
           {!isNew && canManage && initial!.status !== 'FILLED' && (
             <div className="pt-3 border-t border-navy-secondary space-y-2">
@@ -539,18 +548,20 @@ function PositionDrawer({
                 Assign to
               </div>
               <div className="flex gap-2">
-                <select
-                  value={assignToId}
-                  onChange={(e) => setAssignToId(e.target.value)}
-                  className="flex-1 h-10 px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
-                >
-                  <option value="">— choose an associate —</option>
-                  {associates.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.firstName} {a.lastName}
-                    </option>
-                  ))}
-                </select>
+                <div className="flex-1">
+                  <Select
+                    value={assignToId}
+                    onChange={(e) => setAssignToId(e.target.value)}
+                    aria-label="Choose an associate to assign to this position"
+                  >
+                    <option value="">— choose an associate —</option>
+                    {associates.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.firstName} {a.lastName}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
                 <Button
                   size="sm"
                   onClick={assign}
@@ -563,7 +574,7 @@ function PositionDrawer({
             </div>
           )}
 
-          {error && <p role="alert" className="text-sm text-alert">{error}</p>}
+          {error && <ErrorBanner>{error}</ErrorBanner>}
         </div>
       </DrawerBody>
       <DrawerFooter className="flex-wrap justify-between">
