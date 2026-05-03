@@ -335,6 +335,7 @@ model User {
   authoredReviews                   PerformanceReview[]          @relation("PerformanceReviewer")
   inviteTokens                      InviteToken[]
   passwordResetTokens               PasswordResetToken[]
+  notificationPreferences           NotificationPreference[]
   createdEsignAgreements            EsignAgreement[]             @relation("EsignAgreementCreator")
   payrollDisbursementAttempts       PayrollDisbursementAttempt[] @relation("PayrollDisbursementAttemptActor")
   timeOffLedgerEntriesAuthored      TimeOffLedgerEntry[]
@@ -1614,6 +1615,23 @@ model PasswordResetToken {
 
   @@index([userId, consumedAt])
   @@index([expiresAt])
+}
+
+// Per-user opt-out for transactional EMAIL by category bucket. Default
+// is "send" — a row exists only when the user has actively muted (or
+// re-enabled) something. IN_APP delivery is unaffected; the bell is the
+// authoritative record. Mandatory categories (discipline, probation,
+// security) cannot be muted — the API rejects the PATCH.
+model NotificationPreference {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String   @db.Uuid
+  // Bucket key from NOTIFICATION_CATEGORIES in shared/contracts.
+  category     String   @db.VarChar(64)
+  emailEnabled Boolean  @default(true)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(6)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, category])
 }
 
 model PerformanceReview {

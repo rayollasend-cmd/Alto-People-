@@ -4,10 +4,13 @@ import {
   AcceptInviteInputSchema,
   ChangePasswordInputSchema,
   HUMAN_ROLES,
+  NOTIFICATION_CATEGORIES,
+  PatchNotificationPreferenceInputSchema,
   UpdateProfileInputSchema,
   UpdateTimezoneInputSchema,
   type AuthUser,
   type InviteSummary,
+  type NotificationPreferenceEntry,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
@@ -856,6 +859,71 @@ authRouter.patch('/me/timezone', requireAuth, async (req, res, next) => {
       data: { timezone: parsed.data.timezone },
     });
     invalidateUserCache(req.user!.id);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /auth/me/notification-preferences
+ *
+ * Returns one row per category in the catalog, joining the catalog's
+ * label/description/mandatory fields with the user's stored emailEnabled.
+ * Categories without a stored row default to enabled (the table is
+ * append-on-mute, not pre-seeded). Mandatory categories always report
+ * emailEnabled=true regardless of any stored row — defence in depth in
+ * case a row was inserted directly.
+ */
+authRouter.get('/me/notification-preferences', requireAuth, async (req, res, next) => {
+  try {
+    const stored = await prisma.notificationPreference.findMany({
+      where: { userId: req.user!.id },
+      select: { category: true, emailEnabled: true },
+    });
+    const byCategory = new Map(stored.map((s) => [s.category, s.emailEnabled]));
+
+    const entries: NotificationPreferenceEntry[] = NOTIFICATION_CATEGORIES.map((c) => ({
+      category: c.key,
+      label: c.label,
+      description: c.description,
+      mandatory: c.mandatory,
+      emailEnabled: c.mandatory ? true : (byCategory.get(c.key) ?? true),
+    }));
+
+    res.json({ entries });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PATCH /auth/me/notification-preferences { category, emailEnabled }
+ *
+ * Upserts the (userId, category) row. Refuses to mute mandatory
+ * categories — those are formal HR notices / security alerts the
+ * organisation must be able to deliver.
+ */
+authRouter.patch('/me/notification-preferences', requireAuth, async (req, res, next) => {
+  try {
+    const parsed = PatchNotificationPreferenceInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const { category, emailEnabled } = parsed.data;
+    const meta = NOTIFICATION_CATEGORIES.find((c) => c.key === category);
+    if (meta?.mandatory && !emailEnabled) {
+      throw new HttpError(
+        400,
+        'mandatory_category',
+        'This category cannot be muted.',
+      );
+    }
+    await prisma.notificationPreference.upsert({
+      where: { userId_category: { userId: req.user!.id, category } },
+      create: { userId: req.user!.id, category, emailEnabled },
+      update: { emailEnabled },
+    });
     res.status(204).end();
   } catch (err) {
     next(err);

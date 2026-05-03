@@ -2412,6 +2412,93 @@ export const UpdateTimezoneInputSchema = z.object({
 export type UpdateTimezoneInput = z.infer<typeof UpdateTimezoneInputSchema>;
 
 /* -------------------------------------------------------------------------- *
+ *  Notification preferences (per-user EMAIL opt-out by category)
+ *
+ *  IN_APP delivery is unaffected by these — the bell stays authoritative.
+ *  Mandatory categories cannot be muted (formal HR notices and security
+ *  alerts must reach the user no matter what).
+ *
+ *  Adding a new bucket: append to NOTIFICATION_CATEGORIES AND extend the
+ *  bucketForRawCategory() resolver in apps/api/src/lib/notify.ts so the
+ *  raw category strings the routes pass map back to a user-facing key.
+ * -------------------------------------------------------------------------- */
+
+export const NOTIFICATION_CATEGORIES = [
+  {
+    key: 'onboarding',
+    label: 'Onboarding updates',
+    description:
+      'Application status, invite reminders, e-sign copies, and checklist nudges.',
+    mandatory: false,
+  },
+  {
+    key: 'documents',
+    label: 'Document changes',
+    description: 'Confirmations and rejections for documents you upload.',
+    mandatory: false,
+  },
+  {
+    key: 'time_off',
+    label: 'Time-off decisions',
+    description: 'Approvals, denials, and balance adjustments on PTO requests.',
+    mandatory: false,
+  },
+  {
+    key: 'scheduling',
+    label: 'Schedule changes',
+    description: 'Shifts you are added to, moved off of, or that get cancelled.',
+    mandatory: false,
+  },
+  {
+    key: 'shift_swaps',
+    label: 'Shift swap requests',
+    description: 'Peer swap offers, accepts, declines, and manager decisions.',
+    mandatory: false,
+  },
+  {
+    key: 'discipline',
+    label: 'Disciplinary actions',
+    description: 'Always on — formal HR record required by policy.',
+    mandatory: true,
+  },
+  {
+    key: 'probation',
+    label: 'Probation period',
+    description: 'Always on — required HR notice.',
+    mandatory: true,
+  },
+  {
+    key: 'security',
+    label: 'Account security',
+    description: 'Always on — password resets and other security alerts.',
+    mandatory: true,
+  },
+] as const;
+
+export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number]['key'];
+
+const NOTIFICATION_CATEGORY_KEYS = NOTIFICATION_CATEGORIES.map((c) => c.key) as [
+  NotificationCategory,
+  ...NotificationCategory[],
+];
+
+export const PatchNotificationPreferenceInputSchema = z.object({
+  category: z.enum(NOTIFICATION_CATEGORY_KEYS),
+  emailEnabled: z.boolean(),
+});
+export type PatchNotificationPreferenceInput = z.infer<
+  typeof PatchNotificationPreferenceInputSchema
+>;
+
+export interface NotificationPreferenceEntry {
+  category: NotificationCategory;
+  label: string;
+  description: string;
+  mandatory: boolean;
+  emailEnabled: boolean;
+}
+
+/* -------------------------------------------------------------------------- *
  *  Phase 26 — Time off (sick-leave accrual + ledger)
  * -------------------------------------------------------------------------- */
 

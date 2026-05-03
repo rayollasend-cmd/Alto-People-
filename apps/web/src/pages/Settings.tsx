@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Camera, Clock, History, KeyRound, LogOut, ShieldAlert, Upload, User as UserIcon } from 'lucide-react';
+import { Bell, Camera, Clock, History, KeyRound, Lock, LogOut, ShieldAlert, Upload, User as UserIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -7,6 +7,8 @@ import { useConfirm } from '@/lib/confirm';
 import {
   changePassword,
   getLoginHistory,
+  getNotificationPreferences,
+  patchNotificationPreference,
   revokeOtherSessions,
   updateProfile,
   updateTimezone,
@@ -17,6 +19,8 @@ import {
   ROLE_LABELS,
   SUPPORTED_TIMEZONES,
   TIMEZONE_LABELS,
+  type NotificationCategory,
+  type NotificationPreferenceEntry,
   type SupportedTimezone,
 } from '@/lib/roles';
 import { Avatar } from '@/components/ui/Avatar';
@@ -70,10 +74,125 @@ export function Settings() {
       {user?.associateId && <ProfileCard />}
       {user?.associateId && <ProfilePhotoCard />}
       <TimezoneCard />
+      <NotificationsCard />
       <PasswordCard />
       <SessionsCard />
       <LoginHistoryCard />
     </div>
+  );
+}
+
+function NotificationsCard() {
+  const [entries, setEntries] = useState<NotificationPreferenceEntry[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState<NotificationCategory | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getNotificationPreferences()
+      .then((res) => {
+        if (!cancelled) setEntries(res.entries);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Failed to load preferences.');
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const onToggle = async (entry: NotificationPreferenceEntry) => {
+    if (entry.mandatory) return;
+    setPending(entry.category);
+    const next = !entry.emailEnabled;
+    // Optimistic update — reverts on failure.
+    setEntries((prev) =>
+      prev
+        ? prev.map((e) =>
+            e.category === entry.category ? { ...e, emailEnabled: next } : e,
+          )
+        : prev,
+    );
+    try {
+      await patchNotificationPreference(entry.category, next);
+    } catch (err) {
+      setEntries((prev) =>
+        prev
+          ? prev.map((e) =>
+              e.category === entry.category
+                ? { ...e, emailEnabled: entry.emailEnabled }
+                : e,
+            )
+          : prev,
+      );
+      toast.error(err instanceof ApiError ? err.message : 'Failed to update.');
+    } finally {
+      setPending(null);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Bell className="h-4 w-4 text-gold" />
+          Email notifications
+        </CardTitle>
+        <CardDescription>
+          Choose which emails Alto sends you. The bell on the topbar always
+          shows everything — these toggles only affect email.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {error ? (
+          <div className="text-sm text-red-300">{error}</div>
+        ) : entries === null ? (
+          <div className="space-y-2">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-3/4" />
+          </div>
+        ) : (
+          <ul className="divide-y divide-navy-secondary">
+            {entries.map((e) => (
+              <li
+                key={e.category}
+                className="flex items-start justify-between gap-4 py-3"
+              >
+                <div className="flex-1">
+                  <div className="text-sm text-white flex items-center gap-2">
+                    {e.label}
+                    {e.mandatory && (
+                      <span className="inline-flex items-center gap-1 text-xs text-silver">
+                        <Lock className="h-3 w-3" />
+                        Required
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-silver mt-0.5">{e.description}</div>
+                </div>
+                <label
+                  className={`inline-flex items-center cursor-pointer ${
+                    e.mandatory ? 'opacity-60 cursor-not-allowed' : ''
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    className="sr-only peer"
+                    checked={e.emailEnabled}
+                    disabled={e.mandatory || pending === e.category}
+                    onChange={() => onToggle(e)}
+                  />
+                  <div className="w-11 h-6 bg-navy-secondary peer-focus:outline-none rounded-full peer peer-checked:bg-gold/80 transition relative after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition peer-checked:after:translate-x-5" />
+                </label>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
