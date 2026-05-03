@@ -57,6 +57,25 @@ import { passwordResetTemplate } from '../lib/emailTemplates.js';
 import { HttpError } from '../middleware/error.js';
 import archiver from 'archiver';
 import { buildDataExport } from '../lib/dataExport.js';
+import { generateSecret, generateURI, verifySync } from 'otplib';
+import {
+  decryptMfaSecret,
+  encryptMfaSecret,
+  generateRecoveryCode,
+  hashRecoveryCode,
+} from '../lib/mfaCrypto.js';
+import {
+  MFA_RECOVERY_CODE_COUNT,
+  MFA_TOTP_PERIOD_SECONDS,
+  MfaDisableInputSchema,
+  MfaEnrollConfirmInputSchema,
+} from '@alto-people/shared';
+import { getBrandingSync } from '../lib/branding.js';
+
+// Tolerate one full TOTP period of skew on either side (~30s before/after
+// the current window) so users with mildly drifted phone clocks still
+// verify on the first try.
+const TOTP_EPOCH_TOLERANCE = MFA_TOTP_PERIOD_SECONDS;
 
 export const authRouter = Router();
 
@@ -90,6 +109,10 @@ function toAuthUser(u: {
   lastName?: string | null;
   photoUrl?: string | null;
   timezone?: string | null;
+  // Both shapes are accepted: SessionUser carries `mfaEnabled` (boolean)
+  // pre-computed; raw prisma User carries `mfaEnabledAt` (Date | null).
+  mfaEnabled?: boolean;
+  mfaEnabledAt?: Date | null;
 }): AuthUser {
   return {
     id: u.id,
@@ -102,6 +125,7 @@ function toAuthUser(u: {
     lastName: u.lastName ?? null,
     photoUrl: u.photoUrl ?? null,
     timezone: u.timezone ?? null,
+    mfaEnabled: u.mfaEnabled ?? (u.mfaEnabledAt != null),
   };
 }
 
@@ -849,6 +873,203 @@ authRouter.get('/me/data-export', requireAuth, async (req, res, next) => {
       },
       'data-export'
     );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== TOTP MFA enrollment (settings audit row #3, PR 1) ================
+ *
+ * Three endpoints. Login enforcement (the actual challenge step) ships in
+ * a follow-up PR — for now, enrolling does not gate sign-in. That's
+ * deliberate: rolling out enrollment first lets HR / curious users opt in
+ * and shake out the UI before the second factor is required to sign in.
+ *
+ * State machine on User:
+ *   - mfaSecretEncrypted = NULL,    mfaEnabledAt = NULL  → not enrolled
+ *   - mfaSecretEncrypted = <bytes>, mfaEnabledAt = NULL  → enrollment in flight
+ *   - mfaSecretEncrypted = <bytes>, mfaEnabledAt = <ts>  → fully enrolled
+ *
+ * The "in-flight" state is overwritten on the next /enroll/start call, so
+ * a user who closes the page mid-enrollment has nothing to clean up.
+ */
+
+/**
+ * POST /auth/me/mfa/enroll/start
+ *
+ * Issue a fresh TOTP secret + recovery codes and persist them server-side.
+ * Returns plaintext (secret string for QR/manual entry, recovery codes for
+ * the user to save) — these are the ONLY chance the user will see them.
+ * The secret and codes are stored encrypted/hashed before this responds.
+ *
+ * Calling this on an already-enrolled account starts a new enrollment that
+ * will only become active on /enroll/confirm. Until then, the previous
+ * (still-enabled) configuration keeps working — we don't tear down a
+ * working setup until the user proves they've migrated.
+ *
+ * Note: PR 1 doesn't enforce MFA at login, so currently "enrolled" only
+ * affects the Settings card. The state machine is built right so PR 2 can
+ * just flip the enforcement switch.
+ */
+authRouter.post('/me/mfa/enroll/start', requireAuth, async (req, res, next) => {
+  try {
+    const userId = req.user!.id;
+    const email = req.user!.email;
+
+    const secret = generateSecret();
+    const issuer = getBrandingSync().orgName || 'Alto HR';
+    const provisioningUri = generateURI({ issuer, label: email, secret });
+
+    const codes: string[] = [];
+    const codeRows: { userId: string; codeHash: string }[] = [];
+    for (let i = 0; i < MFA_RECOVERY_CODE_COUNT; i++) {
+      const code = generateRecoveryCode();
+      codes.push(code);
+      codeRows.push({ userId, codeHash: hashRecoveryCode(code) });
+    }
+
+    // Wipe any stale in-flight enrollment row + previous unused codes, then
+    // persist the new pair atomically. If the user re-enrolls while already
+    // enabled, mfaEnabledAt is left intact — flipping back to fully-enabled
+    // happens on /enroll/confirm.
+    await prisma.$transaction([
+      prisma.mfaRecoveryCode.deleteMany({ where: { userId } }),
+      prisma.user.update({
+        where: { id: userId },
+        data: { mfaSecretEncrypted: encryptMfaSecret(secret) },
+      }),
+      prisma.mfaRecoveryCode.createMany({ data: codeRows }),
+    ]);
+
+    res.json({
+      secret,
+      provisioningUri,
+      recoveryCodes: codes,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /auth/me/mfa/enroll/confirm { code }
+ *
+ * Verify a 6-digit TOTP against the stashed secret. On success, set
+ * mfaEnabledAt = now() — the user is now considered fully enrolled and
+ * the Settings card flips to the "MFA is on" state. tokenVersion is NOT
+ * bumped: enabling MFA shouldn't sign anyone out.
+ */
+authRouter.post('/me/mfa/enroll/confirm', requireAuth, async (req, res, next) => {
+  try {
+    const parsed = MfaEnrollConfirmInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Code must be 6 digits', parsed.error.flatten());
+    }
+    const userId = req.user!.id;
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, clientId: true, mfaSecretEncrypted: true },
+    });
+    if (!user || !user.mfaSecretEncrypted) {
+      throw new HttpError(409, 'no_pending_enrollment', 'Start an enrollment first');
+    }
+
+    const secret = decryptMfaSecret(Buffer.from(user.mfaSecretEncrypted));
+    const result = verifySync({
+      token: parsed.data.code,
+      secret,
+      epochTolerance: TOTP_EPOCH_TOLERANCE,
+    });
+    if (!result.valid) {
+      throw new HttpError(401, 'invalid_code', 'That code is incorrect or expired');
+    }
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { mfaEnabledAt: new Date() },
+    });
+    invalidateUserCache(userId);
+
+    enqueueAudit(
+      {
+        actorUserId: userId,
+        clientId: user.clientId ?? null,
+        action: 'auth.mfa_enabled',
+        entityType: 'User',
+        entityId: userId,
+        metadata: {
+          ip: req.ip ?? null,
+          userAgent: req.headers['user-agent'] ?? null,
+        },
+      },
+      'auth.mfa_enabled'
+    );
+
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * DELETE /auth/me/mfa { currentPassword }
+ *
+ * Disable MFA on the caller's account. Requires a fresh password reauth
+ * (cookie alone isn't enough — disabling a security control should always
+ * cost the same as setting it up). Wipes the secret AND every recovery
+ * code so a future re-enroll starts from a clean slate.
+ */
+authRouter.delete('/me/mfa', requireAuth, async (req, res, next) => {
+  try {
+    const parsed = MfaDisableInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const userId = req.user!.id;
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, clientId: true, passwordHash: true, mfaEnabledAt: true },
+    });
+    if (!user || !user.passwordHash) {
+      throw new HttpError(401, 'invalid_credentials', 'Current password is incorrect');
+    }
+    const ok = await verifyPassword(user.passwordHash, parsed.data.currentPassword);
+    if (!ok) {
+      throw new HttpError(401, 'invalid_credentials', 'Current password is incorrect');
+    }
+    if (!user.mfaEnabledAt) {
+      // Idempotent: nothing to disable. Still 204 so the UI flow stays
+      // simple, but skip the audit row — there's no state change.
+      res.status(204).end();
+      return;
+    }
+
+    await prisma.$transaction([
+      prisma.mfaRecoveryCode.deleteMany({ where: { userId } }),
+      prisma.user.update({
+        where: { id: userId },
+        data: { mfaSecretEncrypted: null, mfaEnabledAt: null },
+      }),
+    ]);
+    invalidateUserCache(userId);
+
+    enqueueAudit(
+      {
+        actorUserId: userId,
+        clientId: user.clientId ?? null,
+        action: 'auth.mfa_disabled',
+        entityType: 'User',
+        entityId: userId,
+        metadata: {
+          ip: req.ip ?? null,
+          userAgent: req.headers['user-agent'] ?? null,
+        },
+      },
+      'auth.mfa_disabled'
+    );
+
+    res.status(204).end();
   } catch (err) {
     next(err);
   }

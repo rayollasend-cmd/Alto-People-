@@ -1,6 +1,9 @@
 import type {
   ChangePasswordInput,
   ConfirmEmailChangeInput,
+  MfaDisableInput,
+  MfaEnrollConfirmInput,
+  MfaEnrollStartResponse,
   NotificationCategory,
   NotificationPreferenceEntry,
   RequestEmailChangeInput,
@@ -81,6 +84,26 @@ export function requestEmailChange(body: RequestEmailChangeInput): Promise<void>
 export function confirmEmailChange(body: ConfirmEmailChangeInput): Promise<void> {
   return apiFetch<void>('/auth/email-change/confirm', {
     method: 'POST',
+    body,
+  });
+}
+
+export function startMfaEnrollment(): Promise<MfaEnrollStartResponse> {
+  return apiFetch<MfaEnrollStartResponse>('/auth/me/mfa/enroll/start', {
+    method: 'POST',
+  });
+}
+
+export function confirmMfaEnrollment(body: MfaEnrollConfirmInput): Promise<void> {
+  return apiFetch<void>('/auth/me/mfa/enroll/confirm', {
+    method: 'POST',
+    body,
+  });
+}
+
+export function disableMfa(body: MfaDisableInput): Promise<void> {
+  return apiFetch<void>('/auth/me/mfa', {
+    method: 'DELETE',
     body,
   });
 }

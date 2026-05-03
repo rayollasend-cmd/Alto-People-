@@ -13,6 +13,7 @@ export interface SessionUser {
   lastName: string | null;
   photoUrl: string | null;
   timezone: string | null;
+  mfaEnabled: boolean;
 }
 
 /**

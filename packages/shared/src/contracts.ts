@@ -403,6 +403,10 @@ export const AuthUserSchema = z.object({
   // Phase 39 — IANA timezone preference. Null means "use the browser's
   // locale" on the web side and "fall back to UTC" in email layout.
   timezone: z.string().nullable(),
+  // Phase 47 — TOTP MFA. True iff the user has confirmed enrollment with
+  // a valid 6-digit code. Drives the Settings card and (in a follow-up
+  // PR) the login challenge step.
+  mfaEnabled: z.boolean(),
 });
 export type AuthUser = z.infer<typeof AuthUserSchema>;
 
@@ -3165,4 +3169,34 @@ export const UpdateOrgBrandingInputSchema = z
   })
   .strict();
 export type UpdateOrgBrandingInput = z.infer<typeof UpdateOrgBrandingInputSchema>;
+
+/* -------------------------------------------------------------------------- *
+ *  TOTP MFA enrollment
+ * -------------------------------------------------------------------------- */
+
+export const MFA_TOTP_DIGITS = 6;
+export const MFA_TOTP_PERIOD_SECONDS = 30;
+export const MFA_RECOVERY_CODE_COUNT = 8;
+
+/** Server response when starting enrollment. The plaintext secret and
+ *  recovery codes are shown to the user exactly once — closing the page
+ *  without confirming throws them away (the encrypted secret stored
+ *  server-side is overwritten on the next /enroll/start call). */
+export const MfaEnrollStartResponseSchema = z.object({
+  secret: z.string().min(1),
+  provisioningUri: z.string().url(),
+  recoveryCodes: z.array(z.string().min(1)).length(MFA_RECOVERY_CODE_COUNT),
+});
+export type MfaEnrollStartResponse = z.infer<typeof MfaEnrollStartResponseSchema>;
+
+export const MfaEnrollConfirmInputSchema = z.object({
+  // 6-digit numeric. Server tolerates a single 30s window of skew.
+  code: z.string().regex(/^\d{6}$/, 'Code must be 6 digits.'),
+});
+export type MfaEnrollConfirmInput = z.infer<typeof MfaEnrollConfirmInputSchema>;
+
+export const MfaDisableInputSchema = z.object({
+  currentPassword: z.string().min(1).max(256),
+});
+export type MfaDisableInput = z.infer<typeof MfaDisableInputSchema>;
 
