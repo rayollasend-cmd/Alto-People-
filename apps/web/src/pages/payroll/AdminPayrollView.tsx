@@ -715,7 +715,15 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
         }}
         onSaved={() => {
           if (selected) {
-            getPayrollRun(selected.id).then(setSelected).catch(() => {});
+            getPayrollRun(selected.id)
+              .then(setSelected)
+              .catch((err) => {
+                toast.error(
+                  err instanceof ApiError
+                    ? err.message
+                    : 'Could not refresh the payroll run.',
+                );
+              });
           }
         }}
       />

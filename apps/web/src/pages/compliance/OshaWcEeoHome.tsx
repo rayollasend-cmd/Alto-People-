@@ -121,11 +121,22 @@ function OshaTab({ clientId }: { clientId: string }) {
     setRows(null);
     listOshaIncidents(clientId)
       .then((r) => setRows(r.incidents))
-      .catch(() => setRows([]));
+      .catch((err) => {
+        setRows([]);
+        toast.error(
+          err instanceof ApiError ? err.message : 'Could not load incidents.',
+        );
+      });
   };
   useEffect(() => {
     refresh();
-    get300A(clientId, year).then(setSummary).catch(() => setSummary(null));
+    get300A(clientId, year)
+      .then(setSummary)
+      .catch(() => {
+        // Summary is decorative — the incident list above is what HR
+        // acts on. Drop to em-dashes silently rather than double-toast.
+        setSummary(null);
+      });
   }, [clientId, year]);
 
   return (
