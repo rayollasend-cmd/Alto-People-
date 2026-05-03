@@ -322,17 +322,17 @@ function GarnishmentRow({
         <TableCell className="text-right">
           <div className="flex items-center justify-end gap-1">
             {g.status === 'ACTIVE' && (
-              <Button variant="ghost" size="icon-sm" onClick={onSuspend} title="Suspend">
+              <Button variant="ghost" size="icon-sm" onClick={onSuspend} aria-label="Suspend garnishment">
                 <Pause className="h-3.5 w-3.5" />
               </Button>
             )}
             {g.status === 'SUSPENDED' && (
-              <Button variant="ghost" size="icon-sm" onClick={onResume} title="Resume">
+              <Button variant="ghost" size="icon-sm" onClick={onResume} aria-label="Resume garnishment">
                 <Play className="h-3.5 w-3.5" />
               </Button>
             )}
             {(g.status === 'ACTIVE' || g.status === 'SUSPENDED') && (
-              <Button variant="ghost" size="icon-sm" onClick={onTerminate} title="Terminate">
+              <Button variant="ghost" size="icon-sm" onClick={onTerminate} aria-label="Terminate garnishment">
                 <Square className="h-3.5 w-3.5" />
               </Button>
             )}

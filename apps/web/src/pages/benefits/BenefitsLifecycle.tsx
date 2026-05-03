@@ -149,7 +149,7 @@ function OeTab({ canManage }: { canManage: boolean }) {
                       <div className="md:hidden text-[11px] text-silver/70 truncate">
                         {w.clientName}
                       </div>
-                      <div className="sm:hidden text-[10px] text-silver/60 tabular-nums">
+                      <div className="sm:hidden text-[10px] text-silver/80 tabular-nums">
                         {w.startsOn} → {w.endsOn}
                       </div>
                     </TableCell>

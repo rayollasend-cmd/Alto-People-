@@ -147,14 +147,19 @@ export function PaySchedulesView({ canProcess }: Props) {
                 </div>
                 {canProcess && (
                   <div className="flex items-center gap-1 shrink-0">
-                    <Button variant="ghost" size="icon" onClick={() => setEditing(s)} title="Edit">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setEditing(s)}
+                      aria-label={`Edit ${s.name}`}
+                    >
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
                     <Button
                       variant="ghost"
                       size="icon"
                       onClick={() => setConfirmDelete(s)}
-                      title="Delete"
+                      aria-label={`Delete ${s.name}`}
                       disabled={s.associateCount > 0}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -164,7 +169,7 @@ export function PaySchedulesView({ canProcess }: Props) {
               </CardHeader>
               <CardContent className="space-y-2 text-xs">
                 <Field label="Scope">
-                  {s.clientName ?? <span className="text-silver/50">All clients</span>}
+                  {s.clientName ?? <span className="text-silver/80 italic">All clients</span>}
                 </Field>
                 <Field label="Anchor date">{s.anchorDate}</Field>
                 <Field label="Next period">
