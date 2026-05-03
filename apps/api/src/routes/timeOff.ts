@@ -19,6 +19,8 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { notifyAllAdmins, notifyManager } from '../lib/notify.js';
+import { timeOffRequestTemplate } from '../lib/emailTemplates.js';
+import { env } from '../config/env.js';
 import {
   approveRequest,
   formatDateUTC,
@@ -171,12 +173,25 @@ timeOffRouter.post('/me/requests', async (req, res, next) => {
       formatDateUTC(startDate) === formatDateUTC(endDate)
         ? formatDateUTC(startDate)
         : `${formatDateUTC(startDate)} → ${formatDateUTC(endDate)}`;
-    const subject = 'Time-off request needs review';
-    const body = `${who} requested ${input.hours}h ${input.category.toLowerCase()} for ${range}.${input.reason ? ` Reason: ${input.reason}.` : ''}`;
+    const tpl = timeOffRequestTemplate({
+      associateName: who,
+      category: input.category,
+      hours: input.hours,
+      dateRange: range,
+      reason: input.reason ?? null,
+      submittedAt: new Date(created.createdAt).toISOString().slice(0, 16).replace('T', ' ') + ' UTC',
+      timeOffUrl: `${env.APP_BASE_URL}/admin/time-off`,
+    });
+    const opts = {
+      subject: tpl.subject,
+      body: tpl.text,
+      html: tpl.html,
+      category: 'time-off',
+    };
     if (created.associate.managerId) {
-      void notifyManager(user.associateId, { subject, body, category: 'time-off' });
+      void notifyManager(user.associateId, opts);
     } else {
-      void notifyAllAdmins({ subject, body, category: 'time-off', excludeUserId: user.id });
+      void notifyAllAdmins({ ...opts, excludeUserId: user.id });
     }
 
     res.status(201).json(

@@ -47,6 +47,10 @@ const EnvSchema = z.object({
   RESEND_API_KEY: z.string().optional(),
   // Sender shown in real Resend emails. Required only when RESEND_API_KEY is set.
   RESEND_FROM: z.string().optional(),
+  // Reply-To header on all transactional email. Lets recipients write back
+  // to a monitored mailbox even though Resend itself sends from the no-reply
+  // hr@ address. Set to a real inbox in production (e.g. info@altohr.com).
+  RESEND_REPLY_TO: z.string().optional(),
   // Phase 17 — invite reminder cron. 0 (default) disables. Set e.g. 1800
   // (every 30 min) in production. The threshold for "stale" is hard-coded
   // at 48h in lib/inviteReminder.ts; this only controls scan cadence.

@@ -64,6 +64,12 @@ import {
   notifyManager,
 } from '../lib/notify.js';
 import {
+  applicationApprovedTemplate,
+  applicationRejectedTemplate,
+  i9Section2Template,
+  inviteTemplate,
+} from '../lib/emailTemplates.js';
+import {
   renderCompliancePacket,
   type PacketData,
 } from '../lib/compliancePacket.js';
@@ -323,19 +329,15 @@ async function inviteOneApplicant(
 
   // Email — non-fatal; HR can resend later.
   const acceptUrl = `${env.APP_BASE_URL}/accept-invite/${invite.raw}`;
-  const subject = `You're invited to onboard with ${result.client.name}`;
-  const body = [
-    `Hi ${result.associate.firstName},`,
-    ``,
-    `${result.client.name} has invited you to complete onboarding through Alto People.`,
-    ``,
-    `Click this link to set your password and start your onboarding tasks:`,
-    acceptUrl,
-    ``,
-    `This invitation expires on ${expiresAt.toISOString()}.`,
-    ``,
-    `If you didn't expect this email, you can safely ignore it.`,
-  ].join('\n');
+  const tpl = inviteTemplate({
+    firstName: result.associate.firstName,
+    clientName: result.client.name,
+    hireDate: result.associate.hireDate ? result.associate.hireDate.toISOString().slice(0, 10) : null,
+    magicLink: acceptUrl,
+    linkExpiresAt: expiresAt.toISOString().slice(0, 10),
+  });
+  const subject = tpl.subject;
+  const body = tpl.text;
 
   let emailRef: string | null = null;
   let emailFailed: string | null = null;
@@ -345,6 +347,7 @@ async function inviteOneApplicant(
       recipient: { userId: result.user.id, phone: null, email },
       subject,
       body,
+      html: tpl.html,
     });
     emailRef = r.externalRef;
   } catch (err) {
@@ -724,9 +727,24 @@ onboardingRouter.post(
         req,
       });
 
+      const approvedAssoc = await prisma.associate.findUnique({
+        where: { id: app.associateId },
+        select: { firstName: true, lastName: true },
+      });
+      const approvedClient = await prisma.client.findUnique({
+        where: { id: app.clientId },
+        select: { name: true },
+      });
+      const approvedTpl = applicationApprovedTemplate({
+        firstName: approvedAssoc?.firstName ?? 'there',
+        clientName: approvedClient?.name ?? 'your assigned client',
+        hireDate,
+        appUrl: env.APP_BASE_URL,
+      });
       void notifyAssociate(app.associateId, {
-        subject: 'You\'re officially hired 🎉',
-        body: `Welcome aboard! Your onboarding has been approved${hireDate ? `; your hire date is ${hireDate}` : ''}. Sign in to access your associate dashboard.`,
+        subject: approvedTpl.subject,
+        body: approvedTpl.text,
+        html: approvedTpl.html,
         category: 'onboarding',
       });
       // Manager copy so the new hire's direct manager knows they're cleared
@@ -795,9 +813,24 @@ onboardingRouter.post(
         req,
       });
 
+      const rejAssoc = await prisma.associate.findUnique({
+        where: { id: app.associateId },
+        select: { firstName: true, lastName: true },
+      });
+      const rejClient = await prisma.client.findUnique({
+        where: { id: app.clientId },
+        select: { name: true },
+      });
+      const rejTpl = applicationRejectedTemplate({
+        firstName: rejAssoc?.firstName ?? 'there',
+        clientName: rejClient?.name ?? 'your assigned client',
+        rejectionReason: reason,
+        decisionDate: new Date().toISOString().slice(0, 10),
+      });
       void notifyAssociate(app.associateId, {
-        subject: 'Application update',
-        body: `Your application has been declined. Reason: ${reason}. Please contact HR if you have questions.`,
+        subject: rejTpl.subject,
+        body: rejTpl.text,
+        html: rejTpl.html,
         category: 'onboarding',
       });
       // Manager copy so the team owner knows the candidate isn't joining.
@@ -2313,11 +2346,38 @@ onboardingRouter.post('/applications/:id/i9/section1', async (req, res, next) =>
 
     const assoc = await prisma.associate.findUnique({
       where: { id: app.associateId },
-      select: { firstName: true, lastName: true },
+      select: { firstName: true, lastName: true, hireDate: true },
+    });
+    const i9Client = await prisma.client.findUnique({
+      where: { id: app.clientId },
+      select: { name: true },
+    });
+    const associateName = assoc ? `${assoc.firstName} ${assoc.lastName}` : 'an associate';
+    const hireDateStr = assoc?.hireDate ? assoc.hireDate.toISOString().slice(0, 10) : null;
+    let section2Due: string | null = null;
+    if (assoc?.hireDate) {
+      // Three business days from hire date (cheap calendar approximation —
+      // skips weekends, ignores federal holidays).
+      let due = new Date(assoc.hireDate);
+      let added = 0;
+      while (added < 3) {
+        due = new Date(due.getTime() + 24 * 60 * 60 * 1000);
+        const dow = due.getUTCDay();
+        if (dow !== 0 && dow !== 6) added += 1;
+      }
+      section2Due = due.toISOString().slice(0, 10);
+    }
+    const i9Tpl = i9Section2Template({
+      associateName,
+      clientName: i9Client?.name ?? 'the client',
+      hireDate: hireDateStr,
+      section2DueDate: section2Due,
+      i9Url: `${env.APP_BASE_URL}/admin/applications/${app.id}/i9`,
     });
     void notifyAllAdmins({
-      subject: 'I-9 Section 1 complete — Section 2 needed',
-      body: `${assoc?.firstName ?? 'An associate'} ${assoc?.lastName ?? ''} signed I-9 Section 1. You need to inspect their documents in person and complete Section 2 within 3 business days of their start date.`,
+      subject: i9Tpl.subject,
+      body: i9Tpl.text,
+      html: i9Tpl.html,
       category: 'onboarding',
     });
 

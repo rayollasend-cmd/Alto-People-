@@ -91,7 +91,9 @@ describe('Manager-routed notification hooks', () => {
       where: { recipientUserId: w.managerUser.id, category: 'time-off', channel: 'IN_APP' },
     });
     expect(mgrInApp).toHaveLength(1);
-    expect(mgrInApp[0].body).toMatch(/24h pto/i);
+    expect(mgrInApp[0].body).toMatch(/PTO/);
+    expect(mgrInApp[0].body).toMatch(/24/);
+    expect(mgrInApp[0].body).toMatch(/2026-06-01/);
     const mgrEmail = await prisma.notification.findMany({
       where: { recipientUserId: w.managerUser.id, category: 'time-off', channel: 'EMAIL' },
     });
@@ -130,12 +132,14 @@ describe('Manager-routed notification hooks', () => {
     });
     expect(assocInApp).toHaveLength(1);
     expect(assocInApp[0].body).toMatch(/written warning/i);
+    expect(assocInApp[0].body).toMatch(/Repeated tardiness/);
 
     const mgrInApp = await prisma.notification.findMany({
       where: { recipientUserId: w.managerUser.id, category: 'discipline', channel: 'IN_APP' },
     });
     expect(mgrInApp).toHaveLength(1);
     expect(mgrInApp[0].body).toMatch(/direct report/i);
+    expect(mgrInApp[0].body).toMatch(/written warning/i);
 
     // Both also get an email.
     const assocEmail = await prisma.notification.findMany({
@@ -165,12 +169,14 @@ describe('Manager-routed notification hooks', () => {
     });
     expect(assocInApp).toHaveLength(1);
     expect(assocInApp[0].body).toMatch(/probation/i);
+    expect(assocInApp[0].body).toMatch(/2026-05-02/);
 
     const mgrInApp = await prisma.notification.findMany({
       where: { recipientUserId: w.managerUser.id, category: 'probation', channel: 'IN_APP' },
     });
     expect(mgrInApp).toHaveLength(1);
     expect(mgrInApp[0].body).toMatch(/direct report/i);
+    expect(mgrInApp[0].body).toMatch(/probationary period/i);
   });
 
   it('time-off request without a manager assigned still notifies admins', async () => {

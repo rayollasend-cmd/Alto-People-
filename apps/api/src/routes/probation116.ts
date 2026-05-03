@@ -1,9 +1,14 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { ROLE_LABELS } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { notifyAssociate, notifyManager } from '../lib/notify.js';
+import {
+  probationAssociateTemplate,
+  probationManagerTemplate,
+} from '../lib/emailTemplates.js';
 
 /**
  * Phase 116 — Probation period tracking.
@@ -58,14 +63,48 @@ probation116Router.post('/probations', MANAGE, async (req, res) => {
         createdById: req.user!.id,
       },
     });
+    const actor = await prisma.user.findUnique({
+      where: { id: req.user!.id },
+      select: {
+        email: true,
+        role: true,
+        associate: { select: { firstName: true, lastName: true } },
+      },
+    });
+    const actorName = actor?.associate
+      ? `${actor.associate.firstName} ${actor.associate.lastName}`
+      : actor?.email ?? 'HR';
+    const actorRole = actor?.role ? ROLE_LABELS[actor.role] : 'HR Administrator';
+    const durationDays = Math.max(
+      1,
+      Math.round(
+        (new Date(input.endDate).getTime() - new Date(input.startDate).getTime()) /
+          (24 * 60 * 60 * 1000),
+      ),
+    );
+    const assocTpl = probationAssociateTemplate({
+      firstName: associate.firstName,
+      startDate: input.startDate,
+      endDate: input.endDate,
+      durationDays,
+      actor: { name: actorName, role: actorRole },
+    });
     void notifyAssociate(input.associateId, {
-      subject: 'You\'ve been placed on probation',
-      body: `A probation period was opened ${input.startDate} → ${input.endDate}. Talk to your manager about expectations.`,
+      subject: assocTpl.subject,
+      body: assocTpl.text,
+      html: assocTpl.html,
       category: 'probation',
     });
+    const mgrTpl = probationManagerTemplate({
+      associateName: `${associate.firstName} ${associate.lastName}`,
+      startDate: input.startDate,
+      endDate: input.endDate,
+      actor: { name: actorName, role: actorRole },
+    });
     void notifyManager(input.associateId, {
-      subject: 'Direct report placed on probation',
-      body: `One of your direct reports was placed on probation ${input.startDate} → ${input.endDate}.`,
+      subject: mgrTpl.subject,
+      body: mgrTpl.text,
+      html: mgrTpl.html,
       category: 'probation',
     });
     res.status(201).json({ id: created.id });

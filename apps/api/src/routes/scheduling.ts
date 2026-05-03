@@ -44,6 +44,7 @@ import { scopeShifts } from '../lib/scope.js';
 import { enqueueAudit, recordShiftEvent } from '../lib/audit.js';
 import { formatShiftLine, notifyShift } from '../lib/notifyShift.js';
 import { notifyManager } from '../lib/notify.js';
+import { shiftSwapManagerTemplate } from '../lib/emailTemplates.js';
 import { netWorkedMinutes, startOfWeekUTC, endOfWeekUTC } from '../lib/timeAnomalies.js';
 import {
   evaluateShiftNotice,
@@ -1019,16 +1020,19 @@ schedulingRouter.post('/swap-requests', async (req, res, next) => {
     });
     // Manager copy: the requester's manager should know a swap is in flight
     // so they can intervene if the peer rejects. No-op if no manager.
+    const mgrSwapTpl = shiftSwapManagerTemplate({
+      requesterName: `${created.requester.firstName} ${created.requester.lastName}`,
+      counterpartyName: `${counterparty.firstName} ${counterparty.lastName}`,
+      position: created.shift.position,
+      clientName: created.shift.client?.name ?? 'the client',
+      shiftDate: created.shift.startsAt.toISOString().slice(0, 10),
+      startsAt: created.shift.startsAt.toISOString().slice(11, 16) + ' UTC',
+      endsAt: created.shift.endsAt.toISOString().slice(11, 16) + ' UTC',
+    });
     void notifyManager(user.associateId, {
-      subject: 'Direct report requested a shift swap',
-      body: `${created.requester.firstName} ${created.requester.lastName} asked ${counterparty.firstName} ${counterparty.lastName} to take their ${formatShiftLine(
-        {
-          position: created.shift.position,
-          clientName: created.shift.client?.name ?? null,
-          startsAt: created.shift.startsAt,
-          endsAt: created.shift.endsAt,
-        }
-      )}.`,
+      subject: mgrSwapTpl.subject,
+      body: mgrSwapTpl.text,
+      html: mgrSwapTpl.html,
       category: 'scheduling',
     });
 

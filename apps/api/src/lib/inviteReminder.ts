@@ -3,6 +3,7 @@ import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { send } from './notifications.js';
 import { generateInviteToken } from './inviteToken.js';
+import { onboardingReminderTemplate, inviteTemplate } from './emailTemplates.js';
 
 /**
  * Phase 17 — invite reminder sweep.
@@ -150,23 +151,25 @@ export async function sendReminderForUser(
   const firstName = user.associate?.firstName ?? 'there';
   const clientName = user.associate?.applications?.[0]?.client?.name ?? 'your employer';
   const acceptUrl = `${env.APP_BASE_URL}/accept-invite/${fresh.raw}`;
-  const subject =
+  // Manual resends are treated as a fresh invite (HR clicked Resend); the
+  // 48h cron path is the actual "you forgot" reminder template.
+  const tpl =
     reason === 'manual'
-      ? `Your new onboarding link from ${clientName}`
-      : `Reminder: finish your onboarding with ${clientName}`;
-  const body = [
-    `Hi ${firstName},`,
-    ``,
-    reason === 'manual'
-      ? `${clientName} sent you a fresh onboarding invitation through Alto People.`
-      : `This is a reminder that ${clientName} invited you to onboard through Alto People, but we haven't seen you accept the invitation yet.`,
-    ``,
-    `Click this link to set your password and start your onboarding tasks:`,
-    acceptUrl,
-    ``,
-    `For your security this replaces any earlier link, which no longer works.`,
-    `This invitation expires on ${expiresAt.toISOString()}.`,
-  ].join('\n');
+      ? inviteTemplate({
+          firstName,
+          clientName,
+          magicLink: acceptUrl,
+          linkExpiresAt: expiresAt.toISOString().slice(0, 10),
+        })
+      : onboardingReminderTemplate({
+          firstName,
+          clientName,
+          percentComplete: 0,
+          hireDate: user.associate?.hireDate ? user.associate.hireDate.toISOString().slice(0, 10) : null,
+          magicLink: acceptUrl,
+        });
+  const subject = tpl.subject;
+  const body = tpl.text;
 
   let externalRef: string | null = null;
   let failureReason: string | null = null;
@@ -176,6 +179,7 @@ export async function sendReminderForUser(
       recipient: { userId: user.id, phone: null, email: user.email },
       subject,
       body,
+      html: tpl.html,
     });
     externalRef = r.externalRef;
   } catch (err) {
