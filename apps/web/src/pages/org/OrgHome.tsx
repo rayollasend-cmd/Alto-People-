@@ -45,8 +45,11 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
+  Field,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -59,7 +62,6 @@ import {
   TabsList,
   TabsTrigger,
 } from '@/components/ui';
-import { Label } from '@/components/ui/Label';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { toast } from 'sonner';
 
@@ -203,7 +205,7 @@ function DepartmentsTab({
           </Button>
         )}
       </div>
-      {error && <p role="alert" className="text-sm text-alert mb-3">{error}</p>}
+      {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
       {!rows && <SkeletonRows count={4} rowHeight="h-12" />}
       {rows && rows.length === 0 && (
         <EmptyState
@@ -367,57 +369,60 @@ function DepartmentDrawer({
       </DrawerHeader>
       <DrawerBody>
         <div className="space-y-3">
-          <div>
-            <Label htmlFor="dept-name" required>Name</Label>
-            <Input
-              id="dept-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              maxLength={120}
-              disabled={!canManage}
-            />
-          </div>
-          <div>
-            <Label htmlFor="dept-code">Code</Label>
-            <Input
-              id="dept-code"
-              value={code ?? ''}
-              onChange={(e) => setCode(e.target.value)}
-              maxLength={40}
-              placeholder="HRD"
-              disabled={!canManage}
-            />
-          </div>
-          <div>
-            <Label htmlFor="dept-parent">Parent department</Label>
-            <select
-              id="dept-parent"
-              value={parentId ?? ''}
-              onChange={(e) => setParentId(e.target.value)}
-              disabled={!canManage}
-              className="w-full h-10 px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
-            >
-              <option value="">— None (top-level) —</option>
-              {allDepartments
-                .filter((d) => !isNew && d.id !== initial!.id)
-                .map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
-                  </option>
-                ))}
-            </select>
-          </div>
-          <div>
-            <Label htmlFor="dept-desc">Description</Label>
-            <Input
-              id="dept-desc"
-              value={description ?? ''}
-              onChange={(e) => setDescription(e.target.value)}
-              maxLength={500}
-              disabled={!canManage}
-            />
-          </div>
-          {error && <p role="alert" className="text-sm text-alert">{error}</p>}
+          <Field label="Name" required>
+            {(p) => (
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                maxLength={120}
+                disabled={!canManage}
+                {...p}
+              />
+            )}
+          </Field>
+          <Field label="Code">
+            {(p) => (
+              <Input
+                value={code ?? ''}
+                onChange={(e) => setCode(e.target.value)}
+                maxLength={40}
+                placeholder="HRD"
+                disabled={!canManage}
+                {...p}
+              />
+            )}
+          </Field>
+          <Field label="Parent department">
+            {(p) => (
+              <Select
+                value={parentId ?? ''}
+                onChange={(e) => setParentId(e.target.value)}
+                disabled={!canManage}
+                {...p}
+              >
+                <option value="">— None (top-level) —</option>
+                {allDepartments
+                  .filter((d) => !isNew && d.id !== initial!.id)
+                  .map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                    </option>
+                  ))}
+              </Select>
+            )}
+          </Field>
+          <Field label="Description">
+            {(p) => (
+              <Input
+                value={description ?? ''}
+                onChange={(e) => setDescription(e.target.value)}
+                maxLength={500}
+                disabled={!canManage}
+                {...p}
+              />
+            )}
+          </Field>
+          {error && <ErrorBanner>{error}</ErrorBanner>}
         </div>
       </DrawerBody>
       <DrawerFooter className="justify-between">
@@ -488,7 +493,7 @@ function CostCentersTab({
           </Button>
         )}
       </div>
-      {error && <p role="alert" className="text-sm text-alert mb-3">{error}</p>}
+      {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
       {!rows && <SkeletonRows count={4} rowHeight="h-12" />}
       {rows && rows.length === 0 && (
         <EmptyState
@@ -637,38 +642,41 @@ function CostCenterDrawer({
       </DrawerHeader>
       <DrawerBody>
         <div className="space-y-3">
-          <div>
-            <Label htmlFor="cc-code" required>Code</Label>
-            <Input
-              id="cc-code"
-              value={code}
-              onChange={(e) => setCode(e.target.value.toUpperCase())}
-              maxLength={40}
-              placeholder="HQ-OPS"
-              disabled={!canManage}
-            />
-          </div>
-          <div>
-            <Label htmlFor="cc-name" required>Name</Label>
-            <Input
-              id="cc-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              maxLength={120}
-              disabled={!canManage}
-            />
-          </div>
-          <div>
-            <Label htmlFor="cc-desc">Description</Label>
-            <Input
-              id="cc-desc"
-              value={description ?? ''}
-              onChange={(e) => setDescription(e.target.value)}
-              maxLength={500}
-              disabled={!canManage}
-            />
-          </div>
-          {error && <p role="alert" className="text-sm text-alert">{error}</p>}
+          <Field label="Code" required>
+            {(p) => (
+              <Input
+                value={code}
+                onChange={(e) => setCode(e.target.value.toUpperCase())}
+                maxLength={40}
+                placeholder="HQ-OPS"
+                disabled={!canManage}
+                {...p}
+              />
+            )}
+          </Field>
+          <Field label="Name" required>
+            {(p) => (
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                maxLength={120}
+                disabled={!canManage}
+                {...p}
+              />
+            )}
+          </Field>
+          <Field label="Description">
+            {(p) => (
+              <Input
+                value={description ?? ''}
+                onChange={(e) => setDescription(e.target.value)}
+                maxLength={500}
+                disabled={!canManage}
+                {...p}
+              />
+            )}
+          </Field>
+          {error && <ErrorBanner>{error}</ErrorBanner>}
         </div>
       </DrawerBody>
       <DrawerFooter className="justify-between">
@@ -743,7 +751,7 @@ function JobProfilesTab({
           </Button>
         )}
       </div>
-      {error && <p role="alert" className="text-sm text-alert mb-3">{error}</p>}
+      {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
       {!rows && <SkeletonRows count={4} rowHeight="h-12" />}
       {rows && rows.length === 0 && (
         <EmptyState
@@ -914,50 +922,54 @@ function JobProfileDrawer({
       <DrawerBody>
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label htmlFor="jp-code" required>Code</Label>
+            <Field label="Code" required>
+              {(p) => (
+                <Input
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.toUpperCase())}
+                  maxLength={40}
+                  placeholder="LINE_COOK"
+                  disabled={!canManage}
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label="Level">
+              {(p) => (
+                <Input
+                  value={level ?? ''}
+                  onChange={(e) => setLevel(e.target.value)}
+                  maxLength={40}
+                  placeholder="L2"
+                  disabled={!canManage}
+                  {...p}
+                />
+              )}
+            </Field>
+          </div>
+          <Field label="Title" required>
+            {(p) => (
               <Input
-                id="jp-code"
-                value={code}
-                onChange={(e) => setCode(e.target.value.toUpperCase())}
-                maxLength={40}
-                placeholder="LINE_COOK"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                maxLength={120}
                 disabled={!canManage}
+                {...p}
               />
-            </div>
-            <div>
-              <Label htmlFor="jp-level">Level</Label>
+            )}
+          </Field>
+          <Field label="Family">
+            {(p) => (
               <Input
-                id="jp-level"
-                value={level ?? ''}
-                onChange={(e) => setLevel(e.target.value)}
-                maxLength={40}
-                placeholder="L2"
+                value={family ?? ''}
+                onChange={(e) => setFamily(e.target.value)}
+                maxLength={80}
+                placeholder="Kitchen"
                 disabled={!canManage}
+                {...p}
               />
-            </div>
-          </div>
-          <div>
-            <Label htmlFor="jp-title" required>Title</Label>
-            <Input
-              id="jp-title"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              maxLength={120}
-              disabled={!canManage}
-            />
-          </div>
-          <div>
-            <Label htmlFor="jp-family">Family</Label>
-            <Input
-              id="jp-family"
-              value={family ?? ''}
-              onChange={(e) => setFamily(e.target.value)}
-              maxLength={80}
-              placeholder="Kitchen"
-              disabled={!canManage}
-            />
-          </div>
+            )}
+          </Field>
           <label className="text-sm text-white flex items-center gap-2">
             <input
               type="checkbox"
@@ -967,17 +979,18 @@ function JobProfileDrawer({
             />
             FLSA exempt (salaried, no overtime)
           </label>
-          <div>
-            <Label htmlFor="jp-desc">Description</Label>
-            <Input
-              id="jp-desc"
-              value={description ?? ''}
-              onChange={(e) => setDescription(e.target.value)}
-              maxLength={500}
-              disabled={!canManage}
-            />
-          </div>
-          {error && <p role="alert" className="text-sm text-alert">{error}</p>}
+          <Field label="Description">
+            {(p) => (
+              <Input
+                value={description ?? ''}
+                onChange={(e) => setDescription(e.target.value)}
+                maxLength={500}
+                disabled={!canManage}
+                {...p}
+              />
+            )}
+          </Field>
+          {error && <ErrorBanner>{error}</ErrorBanner>}
         </div>
       </DrawerBody>
       <DrawerFooter className="justify-between">
@@ -1065,7 +1078,7 @@ function PeopleTab({
           Associates · {clientLabel}
         </h2>
       </div>
-      {error && <p role="alert" className="text-sm text-alert mb-3">{error}</p>}
+      {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
       {!rows && <SkeletonRows count={6} rowHeight="h-14" />}
       {rows && rows.length === 0 && (
         <EmptyState
@@ -1221,71 +1234,71 @@ function PersonOrgDrawer({
       </DrawerHeader>
       <DrawerBody>
         <div className="space-y-3">
-          <div>
-            <Label htmlFor="po-manager">Manager</Label>
-            <select
-              id="po-manager"
-              value={managerId}
-              onChange={(e) => setManagerId(e.target.value)}
-              disabled={!canManage}
-              className="w-full h-10 px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
-            >
-              <option value="">—</option>
-              {managerCandidates
-                .filter((c) => c.id !== associate.id)
-                .map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.firstName} {c.lastName}
-                  </option>
+          <Field label="Manager">
+            {(p) => (
+              <Select
+                value={managerId}
+                onChange={(e) => setManagerId(e.target.value)}
+                disabled={!canManage}
+                {...p}
+              >
+                <option value="">—</option>
+                {managerCandidates
+                  .filter((c) => c.id !== associate.id)
+                  .map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.firstName} {c.lastName}
+                    </option>
+                  ))}
+              </Select>
+            )}
+          </Field>
+          <Field label="Department">
+            {(p) => (
+              <Select
+                value={departmentId}
+                onChange={(e) => setDepartmentId(e.target.value)}
+                disabled={!canManage}
+                {...p}
+              >
+                <option value="">—</option>
+                {departments.map((d) => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
                 ))}
-            </select>
-          </div>
-          <div>
-            <Label htmlFor="po-dept">Department</Label>
-            <select
-              id="po-dept"
-              value={departmentId}
-              onChange={(e) => setDepartmentId(e.target.value)}
-              disabled={!canManage}
-              className="w-full h-10 px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
-            >
-              <option value="">—</option>
-              {departments.map((d) => (
-                <option key={d.id} value={d.id}>{d.name}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <Label htmlFor="po-cc">Cost center</Label>
-            <select
-              id="po-cc"
-              value={costCenterId}
-              onChange={(e) => setCostCenterId(e.target.value)}
-              disabled={!canManage}
-              className="w-full h-10 px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
-            >
-              <option value="">—</option>
-              {costCenters.map((c) => (
-                <option key={c.id} value={c.id}>{c.code} · {c.name}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <Label htmlFor="po-jp">Job profile</Label>
-            <select
-              id="po-jp"
-              value={jobProfileId}
-              onChange={(e) => setJobProfileId(e.target.value)}
-              disabled={!canManage}
-              className="w-full h-10 px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
-            >
-              <option value="">—</option>
-              {jobProfiles.map((j) => (
-                <option key={j.id} value={j.id}>{j.code} · {j.title}</option>
-              ))}
-            </select>
-          </div>
-          {error && <p role="alert" className="text-sm text-alert">{error}</p>}
+              </Select>
+            )}
+          </Field>
+          <Field label="Cost center">
+            {(p) => (
+              <Select
+                value={costCenterId}
+                onChange={(e) => setCostCenterId(e.target.value)}
+                disabled={!canManage}
+                {...p}
+              >
+                <option value="">—</option>
+                {costCenters.map((c) => (
+                  <option key={c.id} value={c.id}>{c.code} · {c.name}</option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          <Field label="Job profile">
+            {(p) => (
+              <Select
+                value={jobProfileId}
+                onChange={(e) => setJobProfileId(e.target.value)}
+                disabled={!canManage}
+                {...p}
+              >
+                <option value="">—</option>
+                {jobProfiles.map((j) => (
+                  <option key={j.id} value={j.id}>{j.code} · {j.title}</option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          {error && <ErrorBanner>{error}</ErrorBanner>}
 
           <div className="pt-3 border-t border-navy-secondary">
             <div className="text-[10px] uppercase tracking-widest text-silver/80 mb-2">
