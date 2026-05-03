@@ -315,6 +315,14 @@ model User {
   // and (later) email templates. Nullable — when null, the UI falls back
   // to the browser's locale, the email layer falls back to UTC.
   timezone     String?    @db.VarChar(64)
+  // TOTP MFA. The secret is encrypted with AES-256-GCM keyed off
+  // MFA_SECRET_ENCRYPTION_KEY (falls back to PAYOUT_ENCRYPTION_KEY in dev).
+  // mfaEnabledAt is the canonical "MFA is on" flag — set only after the
+  // user proves they can produce a valid 6-digit code from their app.
+  // mfaSecretEncrypted may exist while mfaEnabledAt is null = enrollment
+  // in flight (the user got a QR but hasn't confirmed yet).
+  mfaSecretEncrypted Bytes?    @db.ByteA
+  mfaEnabledAt       DateTime? @db.Timestamptz(6)
   associateId  String?    @unique @db.Uuid
   clientId     String?    @db.Uuid
   associate    Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)
@@ -335,6 +343,7 @@ model User {
   authoredReviews                   PerformanceReview[]          @relation("PerformanceReviewer")
   inviteTokens                      InviteToken[]
   passwordResetTokens               PasswordResetToken[]
+  mfaRecoveryCodes                  MfaRecoveryCode[]
   notificationPreferences           NotificationPreference[]
   emailChangeRequests               EmailChangeRequest[]
   createdEsignAgreements            EsignAgreement[]             @relation("EsignAgreementCreator")
@@ -1616,6 +1625,21 @@ model PasswordResetToken {
 
   @@index([userId, consumedAt])
   @@index([expiresAt])
+}
+
+// Single-use TOTP recovery codes. The plaintext is shown to the user once
+// at enroll time; we only ever persist sha256(code). Used codes are kept
+// (with usedAt set) so the audit trail can show when a code was consumed,
+// but they cannot be reused. Disabling MFA deletes every row for the user.
+model MfaRecoveryCode {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @db.Uuid
+  codeHash  String    @unique
+  usedAt    DateTime? @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, usedAt])
 }
 
 // Per-user opt-out for transactional EMAIL by category bucket. Default

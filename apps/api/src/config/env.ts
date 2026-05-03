@@ -30,6 +30,14 @@ const EnvSchema = z.object({
   PAYOUT_ENCRYPTION_KEY: z
     .string()
     .min(44, 'PAYOUT_ENCRYPTION_KEY must be base64-encoded 32 bytes (use openssl rand -base64 32)'),
+  // Independent key for encrypting TOTP secrets at rest. Defaults to
+  // PAYOUT_ENCRYPTION_KEY in dev so we don't bloat .env. Production should
+  // set its own — rotation invalidates every enrolled user's secret, so
+  // keeping MFA on a separate key avoids dragging payouts along on rotation.
+  MFA_SECRET_ENCRYPTION_KEY: z
+    .string()
+    .min(44, 'MFA_SECRET_ENCRYPTION_KEY must be base64-encoded 32 bytes (use openssl rand -base64 32)')
+    .optional(),
   // Optional: ping the DB every N seconds to keep Neon's serverless compute
   // from suspending. 0 (default) disables. 240 = every 4 min, comfortably
   // under Neon's 5-min idle threshold. Each ping is a single SELECT 1, but

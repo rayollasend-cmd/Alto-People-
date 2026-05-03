@@ -40,6 +40,7 @@ const TABLES = [
   'Notification',
   'NotificationPreference',
   'EmailChangeRequest',
+  'MfaRecoveryCode',
   'OrgSetting',
   'PerformanceReview',
   'Candidate',

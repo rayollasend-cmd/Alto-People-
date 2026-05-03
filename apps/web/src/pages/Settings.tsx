@@ -1,17 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
-import { AtSign, Bell, Camera, Clock, Download, History, KeyRound, Lock, LogOut, ShieldAlert, Upload, User as UserIcon } from 'lucide-react';
+import { AtSign, Bell, Camera, CheckCircle2, Clock, Copy, Download, History, KeyRound, Lock, LogOut, ShieldAlert, ShieldCheck, Upload, User as UserIcon } from 'lucide-react';
 import { toast } from 'sonner';
+import QRCode from 'qrcode';
+import type { MfaEnrollStartResponse } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import {
   changePassword,
+  confirmMfaEnrollment,
+  disableMfa,
   downloadDataExport,
   getLoginHistory,
   getNotificationPreferences,
   patchNotificationPreference,
   requestEmailChange,
   revokeOtherSessions,
+  startMfaEnrollment,
   updateProfile,
   updateTimezone,
   type LoginEvent,
@@ -79,6 +84,7 @@ export function Settings() {
       <TimezoneCard />
       <NotificationsCard />
       <PasswordCard />
+      <MfaCard />
       <SessionsCard />
       <LoginHistoryCard />
       <DataExportCard />
@@ -119,6 +125,282 @@ function DataExportCard() {
             Download my data
           </Button>
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function MfaCard() {
+  const { user, refreshUser } = useAuth();
+  const [enroll, setEnroll] = useState<MfaEnrollStartResponse | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [code, setCode] = useState('');
+  const [acknowledged, setAcknowledged] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [disablePassword, setDisablePassword] = useState('');
+  const [showDisable, setShowDisable] = useState(false);
+
+  const enabled = user?.mfaEnabled ?? false;
+
+  const onEnable = async () => {
+    setBusy(true);
+    try {
+      const res = await startMfaEnrollment();
+      setEnroll(res);
+      setAcknowledged(false);
+      setCode('');
+      const dataUrl = await QRCode.toDataURL(res.provisioningUri, {
+        margin: 1,
+        width: 192,
+        color: { dark: '#0f172a', light: '#ffffff' },
+      });
+      setQrDataUrl(dataUrl);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not start enrollment.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onConfirm = async () => {
+    if (!/^\d{6}$/.test(code)) {
+      toast.error('Enter the 6-digit code from your authenticator app.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await confirmMfaEnrollment({ code });
+      toast.success('Two-step sign-in is on.');
+      setEnroll(null);
+      setQrDataUrl(null);
+      setCode('');
+      setAcknowledged(false);
+      await refreshUser();
+    } catch (err) {
+      const apiErr = err instanceof ApiError ? err : null;
+      if (apiErr?.code === 'invalid_code') {
+        toast.error('That code is incorrect or expired.');
+      } else if (apiErr?.code === 'no_pending_enrollment') {
+        toast.error('Enrollment expired — start again.');
+        setEnroll(null);
+        setQrDataUrl(null);
+      } else {
+        toast.error(apiErr?.message ?? 'Could not confirm enrollment.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onCancel = () => {
+    setEnroll(null);
+    setQrDataUrl(null);
+    setCode('');
+    setAcknowledged(false);
+  };
+
+  const onDisable = async () => {
+    if (disablePassword.length < 1) {
+      toast.error('Enter your current password.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await disableMfa({ currentPassword: disablePassword });
+      toast.success('Two-step sign-in is off.');
+      setShowDisable(false);
+      setDisablePassword('');
+      await refreshUser();
+    } catch (err) {
+      const apiErr = err instanceof ApiError ? err : null;
+      if (apiErr?.code === 'invalid_credentials') {
+        toast.error('Current password is incorrect.');
+      } else {
+        toast.error(apiErr?.message ?? 'Could not disable.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copy = async (value: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast.success(`${label} copied.`);
+    } catch {
+      toast.error('Copy failed — select and copy manually.');
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <ShieldCheck className="h-4 w-4 text-gold" />
+          Two-step sign-in
+        </CardTitle>
+        <CardDescription>
+          {enabled
+            ? 'Adds a 6-digit code from your phone on top of your password. Already on for this account.'
+            : 'Adds a 6-digit code from your phone on top of your password. We strongly recommend turning this on.'}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {enroll ? (
+          <div className="space-y-4">
+            <div className="rounded-md border border-gold/40 bg-gold/10 px-3 py-2 text-xs text-white">
+              <strong className="text-gold">Save your recovery codes first.</strong>{' '}
+              They are the only way to sign in if you lose your phone. Each code
+              works once.
+            </div>
+            <div className="flex flex-col sm:flex-row gap-4">
+              <div className="shrink-0">
+                {qrDataUrl ? (
+                  <img
+                    src={qrDataUrl}
+                    alt="Scan with your authenticator app"
+                    className="rounded-md border border-navy-secondary bg-white p-2"
+                    width={192}
+                    height={192}
+                  />
+                ) : (
+                  <Skeleton className="h-48 w-48" />
+                )}
+              </div>
+              <div className="flex-1 space-y-3">
+                <div>
+                  <Label>Manual entry secret</Label>
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 rounded-md bg-navy-secondary/60 px-3 py-2 font-mono text-xs text-white break-all">
+                      {enroll.secret}
+                    </code>
+                    <Button
+                      variant="ghost"
+                      onClick={() => copy(enroll.secret, 'Secret')}
+                      type="button"
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <FormHint>
+                    Scan the QR with Google Authenticator, 1Password, Authy, or
+                    similar. Or paste the secret if your app supports manual
+                    entry.
+                  </FormHint>
+                </div>
+                <div>
+                  <Label>Recovery codes</Label>
+                  <ul className="grid grid-cols-2 gap-1.5 rounded-md bg-navy-secondary/60 p-3 font-mono text-xs text-white">
+                    {enroll.recoveryCodes.map((c) => (
+                      <li key={c}>{c}</li>
+                    ))}
+                  </ul>
+                  <div className="flex items-center justify-between mt-1.5">
+                    <FormHint>Print or store in a password manager.</FormHint>
+                    <Button
+                      variant="ghost"
+                      onClick={() => copy(enroll.recoveryCodes.join('\n'), 'Codes')}
+                      type="button"
+                    >
+                      <Copy className="mr-1.5 h-3.5 w-3.5" />
+                      Copy all
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <label className="flex items-start gap-2 text-sm text-white">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={acknowledged}
+                onChange={(e) => setAcknowledged(e.target.checked)}
+              />
+              <span>I've saved my recovery codes somewhere safe.</span>
+            </label>
+            <div>
+              <Label htmlFor="mfa-code" required>
+                6-digit code from your authenticator app
+              </Label>
+              <Input
+                id="mfa-code"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+                placeholder="123456"
+                className="font-mono tracking-widest text-center"
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={onCancel} disabled={busy}>
+                Cancel
+              </Button>
+              <Button
+                onClick={onConfirm}
+                loading={busy}
+                disabled={!acknowledged || code.length !== 6}
+              >
+                Turn on two-step sign-in
+              </Button>
+            </div>
+          </div>
+        ) : enabled ? (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 text-sm text-white">
+              <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+              Two-step sign-in is on.
+            </div>
+            {showDisable ? (
+              <div className="space-y-3 rounded-md border border-navy-secondary bg-navy-secondary/30 p-3">
+                <div>
+                  <Label htmlFor="mfa-disable-pw" required>
+                    Current password
+                  </Label>
+                  <Input
+                    id="mfa-disable-pw"
+                    type="password"
+                    autoComplete="current-password"
+                    value={disablePassword}
+                    onChange={(e) => setDisablePassword(e.target.value)}
+                  />
+                  <FormHint>
+                    We re-check your password before disabling two-step
+                    sign-in.
+                  </FormHint>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button
+                    variant="ghost"
+                    onClick={() => {
+                      setShowDisable(false);
+                      setDisablePassword('');
+                    }}
+                    disabled={busy}
+                  >
+                    Cancel
+                  </Button>
+                  <Button onClick={onDisable} loading={busy}>
+                    Turn off two-step sign-in
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex justify-end">
+                <Button variant="ghost" onClick={() => setShowDisable(true)}>
+                  Turn off two-step sign-in
+                </Button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="flex justify-end">
+            <Button onClick={onEnable} loading={busy}>
+              Set up two-step sign-in
+            </Button>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

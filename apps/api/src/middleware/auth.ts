@@ -109,6 +109,7 @@ export async function attachUser(
         associateId: true,
         tokenVersion: true,
         timezone: true,
+        mfaEnabledAt: true,
         associate: {
           select: {
             id: true,
@@ -134,12 +135,13 @@ export async function attachUser(
       return next();
     }
 
-    const { associate, ...rest } = user;
+    const { associate, mfaEnabledAt, ...rest } = user;
     const sessionUser: SessionUser = {
       ...rest,
       firstName: associate?.firstName ?? null,
       lastName: associate?.lastName ?? null,
       photoUrl: associate ? profilePhotoUrlFor(associate) : null,
+      mfaEnabled: mfaEnabledAt !== null,
     };
     userCache.set(payload.sub, {
       user: sessionUser,
