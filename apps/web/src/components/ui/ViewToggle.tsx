@@ -55,13 +55,13 @@ export function ViewToggle<V extends string = string>({
                 aria-pressed={active}
                 aria-label={opt.label}
                 className={cn(
-                  'inline-flex items-center justify-center h-7 w-7 rounded transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                  'inline-flex items-center justify-center h-9 w-9 rounded transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
                   active
                     ? 'bg-navy text-white shadow-sm'
                     : 'text-silver hover:text-white'
                 )}
               >
-                <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+                <Icon className="h-4 w-4" aria-hidden="true" />
               </button>
             </TooltipTrigger>
             <TooltipContent side="bottom">
