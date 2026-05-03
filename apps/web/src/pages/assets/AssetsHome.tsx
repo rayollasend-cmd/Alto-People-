@@ -37,7 +37,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui';
-import { Label } from '@/components/ui/Label';
+import { FormHint, Label } from '@/components/ui/Label';
 
 const KIND_OPTIONS: AssetKind[] = [
   'LAPTOP',
@@ -314,8 +314,9 @@ function NewAssetDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Kind</Label>
+          <Label htmlFor="new-asset-kind">Kind</Label>
           <select
+            id="new-asset-kind"
             className="mt-1 w-full bg-midnight border border-navy-secondary rounded-md p-2 text-white"
             value={kind}
             onChange={(e) => setKind(e.target.value as AssetKind)}
@@ -328,25 +329,31 @@ function NewAssetDrawer({
           </select>
         </div>
         <div>
-          <Label>Label</Label>
+          <Label htmlFor="new-asset-label">Label</Label>
           <Input
+            id="new-asset-label"
             className="mt-1"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            placeholder="MacBook Pro 14, Front desk badge…"
+            aria-describedby="new-asset-label-hint"
           />
+          <FormHint id="new-asset-label-hint">
+            Examples: "MacBook Pro 14", "Front desk badge".
+          </FormHint>
         </div>
         <div>
-          <Label>Serial</Label>
+          <Label htmlFor="new-asset-serial">Serial</Label>
           <Input
+            id="new-asset-serial"
             className="mt-1 font-mono text-xs"
             value={serial}
             onChange={(e) => setSerial(e.target.value)}
           />
         </div>
         <div>
-          <Label>Model</Label>
+          <Label htmlFor="new-asset-model">Model</Label>
           <Input
+            id="new-asset-model"
             className="mt-1"
             value={model}
             onChange={(e) => setModel(e.target.value)}
@@ -409,8 +416,9 @@ function EditAssetDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Kind</Label>
+          <Label htmlFor="edit-asset-kind">Kind</Label>
           <select
+            id="edit-asset-kind"
             className="mt-1 w-full bg-midnight border border-navy-secondary rounded-md p-2 text-white"
             value={kind}
             onChange={(e) => setKind(e.target.value as AssetKind)}
@@ -423,40 +431,50 @@ function EditAssetDrawer({
           </select>
         </div>
         <div>
-          <Label>Label</Label>
+          <Label htmlFor="edit-asset-label">Label</Label>
           <Input
+            id="edit-asset-label"
             className="mt-1"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            placeholder="MacBook Pro 14, Front desk badge…"
+            aria-describedby="edit-asset-label-hint"
           />
+          <FormHint id="edit-asset-label-hint">
+            Examples: "MacBook Pro 14", "Front desk badge".
+          </FormHint>
         </div>
         <div>
-          <Label>Serial</Label>
+          <Label htmlFor="edit-asset-serial">Serial</Label>
           <Input
+            id="edit-asset-serial"
             className="mt-1 font-mono text-xs"
             value={serial}
             onChange={(e) => setSerial(e.target.value)}
           />
         </div>
         <div>
-          <Label>Model</Label>
+          <Label htmlFor="edit-asset-model">Model</Label>
           <Input
+            id="edit-asset-model"
             className="mt-1"
             value={model}
             onChange={(e) => setModel(e.target.value)}
           />
         </div>
         <div>
-          <Label>Notes</Label>
+          <Label htmlFor="edit-asset-notes">Notes</Label>
           <textarea
+            id="edit-asset-notes"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             rows={3}
             maxLength={2000}
             className="mt-1 w-full px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
-            placeholder="Condition, accessories, anything HR/IT should know"
+            aria-describedby="edit-asset-notes-hint"
           />
+          <FormHint id="edit-asset-notes-hint">
+            Condition, accessories, anything HR/IT should know.
+          </FormHint>
         </div>
       </DrawerBody>
       <DrawerFooter>
@@ -508,13 +526,17 @@ function AssignDrawer({
           {asset.kind} • {asset.serial ?? 'no serial'}
         </div>
         <div>
-          <Label>Associate ID</Label>
+          <Label htmlFor="assign-asset-associate">Associate ID</Label>
           <Input
+            id="assign-asset-associate"
             className="mt-1 font-mono text-xs"
             value={associateId}
             onChange={(e) => setAssociateId(e.target.value)}
-            placeholder="UUID"
+            aria-describedby="assign-asset-associate-hint"
           />
+          <FormHint id="assign-asset-associate-hint">
+            Paste the associate's UUID from the directory.
+          </FormHint>
         </div>
       </DrawerBody>
       <DrawerFooter>

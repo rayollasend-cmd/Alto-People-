@@ -40,7 +40,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui';
-import { Label } from '@/components/ui/Label';
+import { FormHint, Label } from '@/components/ui/Label';
 
 const STATUS_VARIANT: Record<
   AgreementStatus,
@@ -384,16 +384,22 @@ function NewAgreementDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate ID</Label>
+          <Label htmlFor="issue-agreement-associate">Associate ID</Label>
           <Input
+            id="issue-agreement-associate"
             className="mt-1 font-mono text-xs"
             value={associateId}
             onChange={(e) => setAssociateId(e.target.value)}
+            aria-describedby="issue-agreement-associate-hint"
           />
+          <FormHint id="issue-agreement-associate-hint">
+            Paste the associate's UUID from the directory.
+          </FormHint>
         </div>
         <div>
-          <Label>Kind</Label>
+          <Label htmlFor="issue-agreement-kind">Kind</Label>
           <select
+            id="issue-agreement-kind"
             className="mt-1 w-full bg-midnight border border-navy-secondary rounded p-2 text-white text-sm"
             value={kind}
             onChange={(e) => setKind(e.target.value as AgreementKind)}
@@ -407,29 +413,38 @@ function NewAgreementDrawer({
         </div>
         {kind === 'OTHER' && (
           <div>
-            <Label>Custom label</Label>
+            <Label htmlFor="issue-agreement-custom-label">Custom label</Label>
             <Input
+              id="issue-agreement-custom-label"
               className="mt-1"
               value={customLabel}
               onChange={(e) => setCustomLabel(e.target.value)}
-              placeholder="e.g. Mutual confidentiality side letter"
+              aria-describedby="issue-agreement-custom-label-hint"
             />
+            <FormHint id="issue-agreement-custom-label-hint">
+              Example: "Mutual confidentiality side letter".
+            </FormHint>
           </div>
         )}
         <div>
-          <Label>Document URL</Label>
+          <Label htmlFor="issue-agreement-url">Document URL</Label>
           <Input
+            id="issue-agreement-url"
             type="url"
             className="mt-1"
             value={documentUrl}
             onChange={(e) => setDocumentUrl(e.target.value)}
-            placeholder="https://…"
+            aria-describedby="issue-agreement-url-hint"
           />
+          <FormHint id="issue-agreement-url-hint">
+            Public link to the signed PDF or DocuSign envelope.
+          </FormHint>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <Label>Effective</Label>
+            <Label htmlFor="issue-agreement-effective">Effective</Label>
             <Input
+              id="issue-agreement-effective"
               type="date"
               className="mt-1"
               value={effectiveDate}
@@ -437,8 +452,9 @@ function NewAgreementDrawer({
             />
           </div>
           <div>
-            <Label>Expires</Label>
+            <Label htmlFor="issue-agreement-expires">Expires</Label>
             <Input
+              id="issue-agreement-expires"
               type="date"
               className="mt-1"
               value={expiresOn}
@@ -447,8 +463,9 @@ function NewAgreementDrawer({
           </div>
         </div>
         <div>
-          <Label>Notes</Label>
+          <Label htmlFor="issue-agreement-notes">Notes</Label>
           <textarea
+            id="issue-agreement-notes"
             className="mt-1 w-full h-20 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
