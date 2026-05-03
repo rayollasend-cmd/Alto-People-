@@ -22,7 +22,8 @@ export type LoginEventAction =
   | 'auth.login'
   | 'auth.logout'
   | 'auth.password_changed'
-  | 'auth.password_reset_completed';
+  | 'auth.password_reset_completed'
+  | 'auth.sessions_revoked';
 
 export interface LoginEvent {
   id: string;
@@ -34,4 +35,8 @@ export interface LoginEvent {
 
 export function getLoginHistory(): Promise<{ events: LoginEvent[] }> {
   return apiFetch<{ events: LoginEvent[] }>('/auth/me/login-history');
+}
+
+export function revokeOtherSessions(): Promise<void> {
+  return apiFetch<void>('/auth/me/revoke-other-sessions', { method: 'POST' });
 }

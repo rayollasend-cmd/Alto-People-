@@ -437,6 +437,52 @@ authRouter.post('/change-password', requireAuth, changePasswordLimiter, async (r
   }
 });
 
+/**
+ * POST /auth/me/revoke-other-sessions
+ *
+ * Bumps tokenVersion (kills every existing session — same mechanism as
+ * change-password) and re-issues a fresh cookie for the caller so they
+ * stay signed in. Intended for the "I see a sign-in I don't recognise
+ * in my login history" panic button. Cheaper than forcing a full
+ * password change when the user just wants to evict other devices.
+ */
+authRouter.post('/me/revoke-other-sessions', requireAuth, async (req, res, next) => {
+  try {
+    const updated = await prisma.user.update({
+      where: { id: req.user!.id },
+      data: { tokenVersion: { increment: 1 } },
+      select: { id: true, role: true, clientId: true, tokenVersion: true },
+    });
+    invalidateUserCache(updated.id);
+
+    const sessionToken = signSession({
+      sub: updated.id,
+      role: updated.role,
+      ver: updated.tokenVersion,
+    });
+    res.cookie(SESSION_COOKIE, sessionToken, cookieOptions());
+
+    enqueueAudit(
+      {
+        actorUserId: updated.id,
+        clientId: updated.clientId ?? null,
+        action: 'auth.sessions_revoked',
+        entityType: 'User',
+        entityId: updated.id,
+        metadata: {
+          ip: req.ip ?? null,
+          userAgent: req.headers['user-agent'] ?? null,
+        },
+      },
+      'auth.sessions_revoked'
+    );
+
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
 /* ===== Self-serve password reset ======================================= */
 
 const ForgotPasswordSchema = z.object({
@@ -718,7 +764,7 @@ authRouter.get('/me/login-history', requireAuth, async (req, res, next) => {
     const rows = await prisma.auditLog.findMany({
       where: {
         actorUserId: req.user!.id,
-        action: { in: ['auth.login', 'auth.logout', 'auth.password_changed', 'auth.password_reset_completed'] },
+        action: { in: ['auth.login', 'auth.logout', 'auth.password_changed', 'auth.password_reset_completed', 'auth.sessions_revoked'] },
       },
       orderBy: { createdAt: 'desc' },
       take: 25,

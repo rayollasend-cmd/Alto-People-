@@ -1,10 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { Camera, History, KeyRound, ShieldAlert, Upload, User as UserIcon } from 'lucide-react';
+import { Camera, History, KeyRound, LogOut, ShieldAlert, Upload, User as UserIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
-import { changePassword, getLoginHistory, updateProfile, type LoginEvent } from '@/lib/settingsApi';
+import {
+  changePassword,
+  getLoginHistory,
+  revokeOtherSessions,
+  updateProfile,
+  type LoginEvent,
+} from '@/lib/settingsApi';
 import { deleteProfilePhoto, uploadProfilePhoto } from '@/lib/selfApi';
 import { ROLE_LABELS } from '@/lib/roles';
 import { Avatar } from '@/components/ui/Avatar';
@@ -58,8 +64,58 @@ export function Settings() {
       {user?.associateId && <ProfileCard />}
       {user?.associateId && <ProfilePhotoCard />}
       <PasswordCard />
+      <SessionsCard />
       <LoginHistoryCard />
     </div>
+  );
+}
+
+function SessionsCard() {
+  const confirm = useConfirm();
+  const [submitting, setSubmitting] = useState(false);
+
+  const onRevoke = async () => {
+    if (
+      !(await confirm({
+        title: 'Sign out everywhere else?',
+        description:
+          'Every other device or browser signed in to your account will be signed out immediately. This device stays signed in.',
+        destructive: true,
+      }))
+    ) {
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await revokeOtherSessions();
+      toast.success('Other sessions revoked.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to revoke sessions.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <LogOut className="h-4 w-4 text-gold" />
+          Active sessions
+        </CardTitle>
+        <CardDescription>
+          See a sign-in below you don't recognise? Sign out everywhere else
+          immediately. This device keeps its session.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="flex justify-end">
+          <Button onClick={onRevoke} loading={submitting} variant="ghost">
+            Sign out everywhere else
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -360,6 +416,7 @@ const ACTION_LABEL: Record<LoginEvent['action'], string> = {
   'auth.logout': 'Signed out',
   'auth.password_changed': 'Password changed',
   'auth.password_reset_completed': 'Password reset',
+  'auth.sessions_revoked': 'Other sessions revoked',
 };
 
 function shortenAgent(ua: string | null): string {
