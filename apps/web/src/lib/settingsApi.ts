@@ -84,3 +84,32 @@ export function confirmEmailChange(body: ConfirmEmailChangeInput): Promise<void>
     body,
   });
 }
+
+export async function downloadDataExport(): Promise<void> {
+  const res = await fetch('/api/auth/me/data-export', {
+    method: 'GET',
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    let message = 'Could not download your data.';
+    try {
+      const data = await res.json();
+      if (data?.error?.message) message = data.error.message;
+    } catch {
+      /* keep default */
+    }
+    throw new Error(message);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const cd = res.headers.get('content-disposition') ?? '';
+  const m = /filename="([^"]+)"/.exec(cd);
+  const filename = m?.[1] ?? 'alto-data-export.zip';
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}

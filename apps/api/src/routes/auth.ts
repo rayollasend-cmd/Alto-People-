@@ -55,6 +55,8 @@ import {
 import { send } from '../lib/notifications.js';
 import { passwordResetTemplate } from '../lib/emailTemplates.js';
 import { HttpError } from '../middleware/error.js';
+import archiver from 'archiver';
+import { buildDataExport } from '../lib/dataExport.js';
 
 export const authRouter = Router();
 
@@ -800,6 +802,53 @@ authRouter.get('/me/login-history', requireAuth, async (req, res, next) => {
         };
       }),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /auth/me/data-export
+ *
+ * Streams a ZIP archive of the caller's own data: profile, login history,
+ * notification preferences, and (for associate-linked accounts) time
+ * entries, paystubs, and document metadata. File attachments are not
+ * bundled — those have dedicated download endpoints. The build is done
+ * by `buildDataExport` so it can be unit-tested without parsing a stream.
+ */
+authRouter.get('/me/data-export', requireAuth, async (req, res, next) => {
+  try {
+    const userId = req.user!.id;
+    const entries = await buildDataExport(userId);
+    const datestamp = new Date().toISOString().slice(0, 10);
+    const filename = `alto-data-export-${datestamp}.zip`;
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    const archive = archiver('zip', { zlib: { level: 6 } });
+    archive.on('error', (err) => res.destroy(err));
+    archive.pipe(res);
+    for (const entry of entries) {
+      archive.append(entry.contents, { name: entry.filename });
+    }
+    await archive.finalize();
+
+    enqueueAudit(
+      {
+        actorUserId: userId,
+        clientId: req.user!.clientId ?? null,
+        action: 'auth.data_exported',
+        entityType: 'User',
+        entityId: userId,
+        metadata: {
+          ip: req.ip ?? null,
+          userAgent: req.headers['user-agent'] ?? null,
+          fileCount: entries.length,
+        },
+      },
+      'data-export'
+    );
   } catch (err) {
     next(err);
   }
