@@ -42,6 +42,7 @@ import {
   CardTitle,
 } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { Label, FormHint } from '@/components/ui/Label';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -617,35 +618,34 @@ function EmailCard() {
           </div>
         )}
         <div className="space-y-3">
-          <div>
-            <Label htmlFor="set-newemail" required>
-              New email
-            </Label>
-            <Input
-              id="set-newemail"
-              type="email"
-              autoComplete="email"
-              value={newEmail}
-              onChange={(e) => setNewEmail(e.target.value)}
-              maxLength={254}
-              placeholder="you@new-address.com"
-            />
-          </div>
-          <div>
-            <Label htmlFor="set-emailpw" required>
-              Current password
-            </Label>
-            <Input
-              id="set-emailpw"
-              type="password"
-              autoComplete="current-password"
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-            />
-            <FormHint>
-              We re-check your password before sending the confirmation link.
-            </FormHint>
-          </div>
+          <Field label="New email" required>
+            {(p) => (
+              <Input
+                type="email"
+                autoComplete="email"
+                value={newEmail}
+                onChange={(e) => setNewEmail(e.target.value)}
+                maxLength={254}
+                placeholder="you@new-address.com"
+                {...p}
+              />
+            )}
+          </Field>
+          <Field
+            label="Current password"
+            required
+            hint="We re-check your password before sending the confirmation link."
+          >
+            {(p) => (
+              <Input
+                type="password"
+                autoComplete="current-password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                {...p}
+              />
+            )}
+          </Field>
         </div>
         <div className="mt-4 flex justify-end">
           <Button
@@ -819,21 +819,22 @@ function TimezoneCard() {
       </CardHeader>
       <CardContent>
         <div className="flex flex-wrap items-end gap-3">
-          <div className="flex-1 min-w-[240px]">
-            <Label htmlFor="set-tz">Preferred timezone</Label>
-            <Select
-              id="set-tz"
-              value={tz}
-              onChange={(e) => setTz(e.target.value as SupportedTimezone | '')}
-            >
-              <option value="">Follow this device ({browserTz})</option>
-              {SUPPORTED_TIMEZONES.map((z) => (
-                <option key={z} value={z}>
-                  {TIMEZONE_LABELS[z]}
-                </option>
-              ))}
-            </Select>
-          </div>
+          <Field label="Preferred timezone" className="flex-1 min-w-[240px]">
+            {(p) => (
+              <Select
+                value={tz}
+                onChange={(e) => setTz(e.target.value as SupportedTimezone | '')}
+                {...p}
+              >
+                <option value="">Follow this device ({browserTz})</option>
+                {SUPPORTED_TIMEZONES.map((z) => (
+                  <option key={z} value={z}>
+                    {TIMEZONE_LABELS[z]}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
           <Button onClick={submit} loading={submitting} disabled={!dirty}>
             Save timezone
           </Button>
@@ -942,24 +943,26 @@ function ProfileCard() {
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <Label htmlFor="set-first">First name</Label>
-            <Input
-              id="set-first"
-              value={firstName}
-              onChange={(e) => setFirstName(e.target.value)}
-              maxLength={100}
-            />
-          </div>
-          <div>
-            <Label htmlFor="set-last">Last name</Label>
-            <Input
-              id="set-last"
-              value={lastName}
-              onChange={(e) => setLastName(e.target.value)}
-              maxLength={100}
-            />
-          </div>
+          <Field label="First name">
+            {(p) => (
+              <Input
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                maxLength={100}
+                {...p}
+              />
+            )}
+          </Field>
+          <Field label="Last name">
+            {(p) => (
+              <Input
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                maxLength={100}
+                {...p}
+              />
+            )}
+          </Field>
         </div>
         <div className="mt-4 flex justify-end">
           <Button onClick={submit} loading={submitting} disabled={!dirty}>
@@ -1128,46 +1131,50 @@ function PasswordCard() {
       </CardHeader>
       <CardContent>
         <div className="space-y-3">
-          <div>
-            <Label htmlFor="set-current" required>
-              Current password
-            </Label>
-            <Input
-              id="set-current"
-              type="password"
-              autoComplete="current-password"
-              value={currentPassword}
-              onChange={(e) => setCurrent(e.target.value)}
-            />
-          </div>
+          <Field label="Current password" required>
+            {(p) => (
+              <Input
+                type="password"
+                autoComplete="current-password"
+                value={currentPassword}
+                onChange={(e) => setCurrent(e.target.value)}
+                {...p}
+              />
+            )}
+          </Field>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <Label htmlFor="set-new" required>
-                New password
-              </Label>
-              <Input
-                id="set-new"
-                type="password"
-                autoComplete="new-password"
-                value={newPassword}
-                onChange={(e) => setNew(e.target.value)}
-                minLength={12}
-              />
-              <FormHint>At least 12 characters.</FormHint>
-            </div>
-            <div>
-              <Label htmlFor="set-confirm" required>
-                Confirm new password
-              </Label>
-              <Input
-                id="set-confirm"
-                type="password"
-                autoComplete="new-password"
-                value={confirmPassword}
-                onChange={(e) => setConfirm(e.target.value)}
-                minLength={12}
-              />
-            </div>
+            <Field label="New password" required hint="At least 12 characters.">
+              {(p) => (
+                <Input
+                  type="password"
+                  autoComplete="new-password"
+                  value={newPassword}
+                  onChange={(e) => setNew(e.target.value)}
+                  minLength={12}
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field
+              label="Confirm new password"
+              required
+              error={
+                confirmPassword && newPassword !== confirmPassword
+                  ? "Passwords don't match."
+                  : undefined
+              }
+            >
+              {(p) => (
+                <Input
+                  type="password"
+                  autoComplete="new-password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirm(e.target.value)}
+                  minLength={12}
+                  {...p}
+                />
+              )}
+            </Field>
           </div>
         </div>
         <div className="mt-4 flex justify-end">
