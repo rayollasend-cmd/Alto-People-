@@ -311,6 +311,10 @@ model User {
   role         Role
   status       UserStatus @default(INVITED)
   tokenVersion Int        @default(0)
+  // IANA timezone preference for date display in /settings, login history,
+  // and (later) email templates. Nullable — when null, the UI falls back
+  // to the browser's locale, the email layer falls back to UTC.
+  timezone     String?    @db.VarChar(64)
   associateId  String?    @unique @db.Uuid
   clientId     String?    @db.Uuid
   associate    Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)

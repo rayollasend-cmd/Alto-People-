@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Camera, History, KeyRound, LogOut, ShieldAlert, Upload, User as UserIcon } from 'lucide-react';
+import { Camera, Clock, History, KeyRound, LogOut, ShieldAlert, Upload, User as UserIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -9,10 +9,16 @@ import {
   getLoginHistory,
   revokeOtherSessions,
   updateProfile,
+  updateTimezone,
   type LoginEvent,
 } from '@/lib/settingsApi';
 import { deleteProfilePhoto, uploadProfilePhoto } from '@/lib/selfApi';
-import { ROLE_LABELS } from '@/lib/roles';
+import {
+  ROLE_LABELS,
+  SUPPORTED_TIMEZONES,
+  TIMEZONE_LABELS,
+  type SupportedTimezone,
+} from '@/lib/roles';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import {
@@ -63,10 +69,80 @@ export function Settings() {
 
       {user?.associateId && <ProfileCard />}
       {user?.associateId && <ProfilePhotoCard />}
+      <TimezoneCard />
       <PasswordCard />
       <SessionsCard />
       <LoginHistoryCard />
     </div>
+  );
+}
+
+function TimezoneCard() {
+  const { user, refreshUser } = useAuth();
+  const [tz, setTz] = useState<SupportedTimezone | ''>(
+    (user?.timezone as SupportedTimezone | undefined) ?? '',
+  );
+  const [submitting, setSubmitting] = useState(false);
+  const browserTz =
+    typeof Intl !== 'undefined'
+      ? Intl.DateTimeFormat().resolvedOptions().timeZone
+      : 'UTC';
+
+  const dirty = (user?.timezone ?? '') !== tz;
+
+  const submit = async () => {
+    setSubmitting(true);
+    try {
+      await updateTimezone(tz === '' ? null : tz);
+      toast.success(
+        tz === ''
+          ? 'Timezone preference cleared.'
+          : 'Timezone updated.',
+      );
+      await refreshUser();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to update.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Clock className="h-4 w-4 text-gold" />
+          Timezone
+        </CardTitle>
+        <CardDescription>
+          Used to display dates and times across the app. Leave blank to
+          follow this device ({browserTz}).
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex-1 min-w-[240px]">
+            <Label htmlFor="set-tz">Preferred timezone</Label>
+            <select
+              id="set-tz"
+              value={tz}
+              onChange={(e) => setTz(e.target.value as SupportedTimezone | '')}
+              className="h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/50 px-3 text-sm text-white"
+            >
+              <option value="">Follow this device ({browserTz})</option>
+              {SUPPORTED_TIMEZONES.map((z) => (
+                <option key={z} value={z}>
+                  {TIMEZONE_LABELS[z]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <Button onClick={submit} loading={submitting} disabled={!dirty}>
+            Save timezone
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -449,8 +525,28 @@ function shortenAgent(ua: string | null): string {
 }
 
 function LoginHistoryCard() {
+  const { user } = useAuth();
   const [events, setEvents] = useState<LoginEvent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // When the user has a saved timezone, format every timestamp through it
+  // so the table reads consistently across devices. Falls back to the
+  // browser locale when null. Constructed once per render — DateTimeFormat
+  // throws on bad TZ strings, so guard with a try/catch.
+  const formatter = (() => {
+    try {
+      return new Intl.DateTimeFormat(undefined, {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+        timeZone: user?.timezone ?? undefined,
+      });
+    } catch {
+      return new Intl.DateTimeFormat(undefined, {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      });
+    }
+  })();
 
   useEffect(() => {
     let cancelled = false;
@@ -510,7 +606,7 @@ function LoginHistoryCard() {
                 <TableRow key={e.id}>
                   <TableCell className="text-white">{ACTION_LABEL[e.action]}</TableCell>
                   <TableCell className="text-silver">
-                    {new Date(e.at).toLocaleString()}
+                    {formatter.format(new Date(e.at))}
                   </TableCell>
                   <TableCell className="text-silver">
                     {shortenAgent(e.userAgent)}

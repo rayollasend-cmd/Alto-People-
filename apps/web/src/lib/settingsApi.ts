@@ -1,5 +1,6 @@
 import type {
   ChangePasswordInput,
+  SupportedTimezone,
   UpdateProfileInput,
 } from '@alto-people/shared';
 import { apiFetch } from './api';
@@ -39,4 +40,11 @@ export function getLoginHistory(): Promise<{ events: LoginEvent[] }> {
 
 export function revokeOtherSessions(): Promise<void> {
   return apiFetch<void>('/auth/me/revoke-other-sessions', { method: 'POST' });
+}
+
+export function updateTimezone(timezone: SupportedTimezone | null): Promise<void> {
+  return apiFetch<void>('/auth/me/timezone', {
+    method: 'PATCH',
+    body: { timezone },
+  });
 }
