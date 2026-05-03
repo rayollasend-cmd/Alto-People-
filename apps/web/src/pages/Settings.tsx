@@ -344,9 +344,14 @@ function MfaCard() {
                 </div>
                 <div>
                   <Label>Recovery codes</Label>
-                  <ul className="grid grid-cols-2 gap-1.5 rounded-md bg-navy-secondary/60 p-3 font-mono text-xs text-white">
+                  <ul className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-md bg-navy-secondary/60 px-4 py-3 font-mono text-xs tracking-wide text-white">
                     {enroll.recoveryCodes.map((c) => (
-                      <li key={c}>{c}</li>
+                      <li
+                        key={c}
+                        className="border-b border-navy-secondary/60 pb-1.5 last:border-0 last:pb-0 [&:nth-last-child(2)]:border-0 [&:nth-last-child(2)]:pb-0"
+                      >
+                        {c}
+                      </li>
                     ))}
                   </ul>
                   <div className="flex items-center justify-between mt-1.5">
@@ -424,9 +429,14 @@ function MfaCard() {
                   Your previous codes have been invalidated. Each new code works
                   once.
                 </div>
-                <ul className="grid grid-cols-2 gap-1.5 rounded-md bg-navy-secondary/60 p-3 font-mono text-xs text-white">
+                <ul className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-md bg-navy-secondary/60 px-4 py-3 font-mono text-xs tracking-wide text-white">
                   {regeneratedCodes.map((c) => (
-                    <li key={c}>{c}</li>
+                    <li
+                      key={c}
+                      className="border-b border-navy-secondary/60 pb-1.5 last:border-0 last:pb-0 [&:nth-last-child(2)]:border-0 [&:nth-last-child(2)]:pb-0"
+                    >
+                      {c}
+                    </li>
                   ))}
                 </ul>
                 <div className="flex items-center justify-between">
