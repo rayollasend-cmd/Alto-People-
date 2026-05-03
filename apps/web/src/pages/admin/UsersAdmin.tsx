@@ -19,6 +19,7 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Input } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import {
   Table,
@@ -193,11 +194,10 @@ export function UsersAdmin() {
           </div>
           <div>
             <Label htmlFor="users-role">Role</Label>
-            <select
+            <Select
               id="users-role"
               value={role}
               onChange={(e) => setRole(e.target.value as Role | '')}
-              className="h-10 rounded-md border border-navy-secondary bg-navy-secondary/50 px-3 text-sm text-white"
             >
               <option value="">All roles</option>
               {ROLE_OPTIONS.map((r) => (
@@ -205,15 +205,14 @@ export function UsersAdmin() {
                   {ROLE_LABELS[r]}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
           <div>
             <Label htmlFor="users-status">Status</Label>
-            <select
+            <Select
               id="users-status"
               value={status}
               onChange={(e) => setStatus(e.target.value as UserStatus | '')}
-              className="h-10 rounded-md border border-navy-secondary bg-navy-secondary/50 px-3 text-sm text-white"
             >
               <option value="">All statuses</option>
               {STATUS_OPTIONS.map((s) => (
@@ -221,7 +220,7 @@ export function UsersAdmin() {
                   {s}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
           <Button variant="ghost" onClick={load} disabled={loading}>
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />

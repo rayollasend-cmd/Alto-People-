@@ -30,6 +30,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -118,19 +119,20 @@ export function VtoHome() {
         </div>
         <div className="flex gap-2">
           {canManage && tab === 'queue' && (
-            <select
-              className="text-xs bg-midnight border border-navy-secondary rounded p-1.5 text-white"
+            <Select
+              size="sm"
               value={statusFilter}
               onChange={(e) =>
                 setStatusFilter(e.target.value as VtoStatus | 'ALL')
               }
+              aria-label="Filter by status"
             >
               <option value="ALL">All statuses</option>
               <option value="PENDING">Pending</option>
               <option value="APPROVED">Approved</option>
               <option value="MATCHED">Matched</option>
               <option value="REJECTED">Rejected</option>
-            </select>
+            </Select>
           )}
           {tab === 'mine' && (
             <Button onClick={() => setShowNew(true)}>

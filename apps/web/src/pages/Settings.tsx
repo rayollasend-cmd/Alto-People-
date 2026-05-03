@@ -45,6 +45,7 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Input } from '@/components/ui/Input';
 import { Label, FormHint } from '@/components/ui/Label';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import {
   Table,
@@ -820,11 +821,10 @@ function TimezoneCard() {
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex-1 min-w-[240px]">
             <Label htmlFor="set-tz">Preferred timezone</Label>
-            <select
+            <Select
               id="set-tz"
               value={tz}
               onChange={(e) => setTz(e.target.value as SupportedTimezone | '')}
-              className="h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/50 px-3 text-sm text-white"
             >
               <option value="">Follow this device ({browserTz})</option>
               {SUPPORTED_TIMEZONES.map((z) => (
@@ -832,7 +832,7 @@ function TimezoneCard() {
                   {TIMEZONE_LABELS[z]}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
           <Button onClick={submit} loading={submitting} disabled={!dirty}>
             Save timezone
