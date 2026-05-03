@@ -16,8 +16,8 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
-import { Label } from '@/components/ui/Label';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -176,52 +176,58 @@ export function UsersAdmin() {
 
       <Card>
         <CardContent className="p-4 flex flex-wrap items-end gap-3">
-          <div className="flex-1 min-w-[200px]">
-            <Label htmlFor="users-q">Search</Label>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver" />
-              <Input
-                id="users-q"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Email or name…"
-                className="pl-9"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') load();
-                }}
-              />
-            </div>
-          </div>
-          <div>
-            <Label htmlFor="users-role">Role</Label>
-            <Select
-              id="users-role"
-              value={role}
-              onChange={(e) => setRole(e.target.value as Role | '')}
-            >
-              <option value="">All roles</option>
-              {ROLE_OPTIONS.map((r) => (
-                <option key={r} value={r}>
-                  {ROLE_LABELS[r]}
-                </option>
-              ))}
-            </Select>
-          </div>
-          <div>
-            <Label htmlFor="users-status">Status</Label>
-            <Select
-              id="users-status"
-              value={status}
-              onChange={(e) => setStatus(e.target.value as UserStatus | '')}
-            >
-              <option value="">All statuses</option>
-              {STATUS_OPTIONS.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </Select>
-          </div>
+          <Field label="Search" className="flex-1 min-w-[200px]">
+            {(p) => (
+              <div className="relative">
+                <Search
+                  className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver"
+                  aria-hidden="true"
+                />
+                <Input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="Email or name…"
+                  className="pl-9"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') load();
+                  }}
+                  {...p}
+                />
+              </div>
+            )}
+          </Field>
+          <Field label="Role">
+            {(p) => (
+              <Select
+                value={role}
+                onChange={(e) => setRole(e.target.value as Role | '')}
+                {...p}
+              >
+                <option value="">All roles</option>
+                {ROLE_OPTIONS.map((r) => (
+                  <option key={r} value={r}>
+                    {ROLE_LABELS[r]}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          <Field label="Status">
+            {(p) => (
+              <Select
+                value={status}
+                onChange={(e) => setStatus(e.target.value as UserStatus | '')}
+                {...p}
+              >
+                <option value="">All statuses</option>
+                {STATUS_OPTIONS.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
           <Button variant="ghost" onClick={load} disabled={loading}>
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             Refresh
