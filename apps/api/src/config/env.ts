@@ -46,11 +46,48 @@ const EnvSchema = z.object({
   // STUB-EMAIL-... ref is returned so the UI flow still works end-to-end.
   RESEND_API_KEY: z.string().optional(),
   // Sender shown in real Resend emails. Required only when RESEND_API_KEY is set.
-  RESEND_FROM: z.string().optional(),
+  // Must match Resend's accepted formats:
+  //   - bare:        hr@altohr.com
+  //   - with name:   Alto HR <hr@altohr.com>
+  // Whitespace is trimmed; surrounding quotes are stripped (Railway / Heroku
+  // dashboards sometimes preserve literal quotes when an env value contains
+  // angle brackets, which breaks Resend with a 422 validation_error).
+  RESEND_FROM: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (!v) return v;
+      const trimmed = v.trim().replace(/^["']|["']$/g, '').trim();
+      return trimmed.length === 0 ? undefined : trimmed;
+    })
+    .refine(
+      (v) =>
+        v === undefined ||
+        // Bare email: simple ASCII email check (Resend does its own).
+        /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(v) ||
+        // Name + angle-bracketed email: "Display Name <email@host>"
+        /^[^<>]+\s+<[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+>$/.test(v),
+      {
+        message:
+          'RESEND_FROM must be either "email@example.com" or "Name <email@example.com>". ' +
+          'Check for stray quotes, trailing whitespace, or smart quotes in the env value.',
+      },
+    ),
   // Reply-To header on all transactional email. Lets recipients write back
   // to a monitored mailbox even though Resend itself sends from the no-reply
   // hr@ address. Set to a real inbox in production (e.g. info@altohr.com).
-  RESEND_REPLY_TO: z.string().optional(),
+  RESEND_REPLY_TO: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (!v) return v;
+      const trimmed = v.trim().replace(/^["']|["']$/g, '').trim();
+      return trimmed.length === 0 ? undefined : trimmed;
+    })
+    .refine(
+      (v) => v === undefined || /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(v),
+      { message: 'RESEND_REPLY_TO must be a bare email like info@altohr.com.' },
+    ),
   // Phase 17 — invite reminder cron. 0 (default) disables. Set e.g. 1800
   // (every 30 min) in production. The threshold for "stale" is hard-coded
   // at 48h in lib/inviteReminder.ts; this only controls scan cadence.

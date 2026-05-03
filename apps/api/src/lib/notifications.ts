@@ -108,6 +108,22 @@ async function sendEmail(input: SendInput): Promise<{ externalRef: string | null
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
+      // Log the from/reply-to we actually sent so a misconfigured RESEND_FROM
+      // is debuggable from API logs alone (the user-facing error keeps the
+      // raw Resend body for the route handler to surface). The API key is
+      // never logged. Recipient is logged separately on the surrounding
+      // catch/finally chain.
+      console.error(
+        '[notifications.send] Resend rejected payload',
+        JSON.stringify({
+          status: res.status,
+          from: env.RESEND_FROM ?? null,
+          replyTo: env.RESEND_REPLY_TO ?? null,
+          to,
+          subjectLength: (input.subject ?? '').length,
+          response: text.slice(0, 500),
+        }),
+      );
       throw new Error(`Resend ${res.status}: ${text.slice(0, 200)}`);
     }
     const json = (await res.json()) as { id?: string };
