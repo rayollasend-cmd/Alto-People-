@@ -134,13 +134,15 @@ export function ResetPassword() {
                     autoComplete="new-password"
                     required
                     value={confirm}
+                    invalid={mismatch}
+                    aria-describedby={mismatch ? 'reset-confirm-error' : undefined}
                     onChange={(e) => setConfirm(e.target.value)}
                     className="pl-9"
                   />
                 </div>
                 {mismatch && (
-                  <FormHint>
-                    <span className="text-alert">Passwords don't match.</span>
+                  <FormHint id="reset-confirm-error" variant="error">
+                    Passwords don't match.
                   </FormHint>
                 )}
               </div>

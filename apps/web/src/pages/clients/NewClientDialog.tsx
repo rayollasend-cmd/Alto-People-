@@ -106,6 +106,7 @@ export function NewClientDialog({ open, onOpenChange, onCreated }: Props) {
               id="nc-status"
               value={status}
               onChange={(e) => setStatus(e.target.value as ClientStatus)}
+              aria-describedby="nc-status-help"
               className="mt-1 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 text-white px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
             >
               {STATUSES.map((s) => (
@@ -114,7 +115,7 @@ export function NewClientDialog({ open, onOpenChange, onCreated }: Props) {
                 </option>
               ))}
             </select>
-            <FormHint>
+            <FormHint id="nc-status-help">
               PROSPECT is hidden from active-roster counts in dashboards.
             </FormHint>
           </div>
