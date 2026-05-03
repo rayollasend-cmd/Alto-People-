@@ -3105,3 +3105,64 @@ export const ScorecardActionsResponseSchema = z.object({
 });
 export type ScorecardActionsResponse = z.infer<typeof ScorecardActionsResponseSchema>;
 
+// =============================================================================
+// Org branding (settings audit row #8)
+// =============================================================================
+
+// Tight hex regex — must be #RRGGBB (no shorthand). Keeps the email rendering
+// path simple (no need to expand #ABC → #AABBCC) and survives copy-paste from
+// any colour picker.
+export const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
+
+// Logos go inline (data: URI) in HTML emails so we don't depend on a CDN.
+// 1MB cap keeps the row small + the HTML email under most provider limits.
+export const ORG_LOGO_MAX_BYTES = 1024 * 1024;
+export const ORG_LOGO_ALLOWED_TYPES = [
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/svg+xml',
+] as const;
+export type OrgLogoContentType = (typeof ORG_LOGO_ALLOWED_TYPES)[number];
+
+export const OrgBrandingSchema = z.object({
+  orgName: z.string().min(1).max(120),
+  senderName: z.string().min(1).max(120).nullable(),
+  supportEmail: z
+    .string()
+    .max(254)
+    .regex(/^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/, 'Must be a bare email address.')
+    .nullable(),
+  primaryColor: z
+    .string()
+    .regex(HEX_COLOR_REGEX, 'Must be a #RRGGBB hex colour.')
+    .nullable(),
+  // Logo URL on the API host (server reads bytes from DB and serves with
+  // the right content-type). Null when no logo uploaded.
+  logoUrl: z.string().nullable(),
+  logoUpdatedAt: z.string().datetime().nullable(),
+  updatedAt: z.string().datetime(),
+});
+export type OrgBranding = z.infer<typeof OrgBrandingSchema>;
+
+// PATCH body — every field optional; null clears, undefined leaves alone.
+// Logo is uploaded via a separate multipart endpoint, not part of this body.
+export const UpdateOrgBrandingInputSchema = z
+  .object({
+    orgName: z.string().min(1).max(120).optional(),
+    senderName: z.string().min(1).max(120).nullable().optional(),
+    supportEmail: z
+      .string()
+      .max(254)
+      .regex(/^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/, 'Must be a bare email address.')
+      .nullable()
+      .optional(),
+    primaryColor: z
+      .string()
+      .regex(HEX_COLOR_REGEX, 'Must be a #RRGGBB hex colour.')
+      .nullable()
+      .optional(),
+  })
+  .strict();
+export type UpdateOrgBrandingInput = z.infer<typeof UpdateOrgBrandingInputSchema>;
+

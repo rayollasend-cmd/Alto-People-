@@ -4927,3 +4927,30 @@ model VtoPolicy {
 
   client Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
 }
+
+// Singleton org-wide branding settings (Phase: settings audit row #8).
+// Enforced single-row by a CHECK on the literal id 'singleton'. Logo is
+// stored as a Buffer (small assets only, capped at 1MB at the route layer
+// to keep the row from getting silly). Everything is nullable + falls back
+// to the hard-coded brand defaults baked into emailTemplates.ts so the
+// system still ships emails even if HR never visits this page.
+model OrgSetting {
+  id              String    @id @default("singleton") @db.VarChar(16)
+  orgName         String    @default("Alto HR") @db.VarChar(120)
+  // The display name in the From: header — combined at send time as
+  // "{senderName} <{RESEND_FROM bare email}>". When null, the env's
+  // RESEND_FROM is used verbatim.
+  senderName      String?   @db.VarChar(120)
+  // Replaces the hard-coded info@altohr.com support address shown in the
+  // email footer. RESEND_REPLY_TO env still controls the actual Reply-To
+  // header — this is for the displayed address only.
+  supportEmail    String?   @db.VarChar(254)
+  // Hex like "#0F2A44". Validated at the API + UI layer.
+  primaryColor    String?   @db.VarChar(7)
+  // PNG/JPEG/WebP/SVG, ≤1MB. Embedded as data: URI in HTML emails so we
+  // don't depend on a CDN being reachable.
+  logoBytes       Bytes?
+  logoContentType String?   @db.VarChar(64)
+  logoUpdatedAt   DateTime? @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(6)
+}
