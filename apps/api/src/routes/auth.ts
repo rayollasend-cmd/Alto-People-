@@ -700,6 +700,53 @@ authRouter.post('/reset-password', async (req, res, next) => {
 });
 
 /**
+ * GET /auth/me/login-history
+ *
+ * Returns the most recent auth-related AuditLog rows for the current user
+ * so they can spot a session they don't recognise. Includes successful
+ * logins, password changes, password resets, and logouts. Login *failures*
+ * (which carry no actorUserId — see audit.ts) are NOT included here:
+ * surfacing "someone tried to log in as you and failed" to the user is
+ * a separate, noisier security feature; this endpoint is the simple
+ * "where am I logged in" view.
+ *
+ * Capped at 25 entries — the Settings card shows a short table, not a
+ * forensic timeline. The full picture is in /audit for HR.
+ */
+authRouter.get('/me/login-history', requireAuth, async (req, res, next) => {
+  try {
+    const rows = await prisma.auditLog.findMany({
+      where: {
+        actorUserId: req.user!.id,
+        action: { in: ['auth.login', 'auth.logout', 'auth.password_changed', 'auth.password_reset_completed'] },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 25,
+      select: {
+        id: true,
+        action: true,
+        createdAt: true,
+        metadata: true,
+      },
+    });
+    res.json({
+      events: rows.map((r) => {
+        const meta = (r.metadata ?? {}) as { ip?: string | null; userAgent?: string | null };
+        return {
+          id: r.id,
+          action: r.action,
+          at: r.createdAt.toISOString(),
+          ip: meta.ip ?? null,
+          userAgent: meta.userAgent ?? null,
+        };
+      }),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * PATCH /auth/me/profile { firstName?, lastName? }
  * Authenticated. Updates the linked Associate row's display name.
  * Users without an Associate row (HR-only / portal accounts) get a

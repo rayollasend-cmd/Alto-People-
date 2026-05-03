@@ -17,3 +17,21 @@ export function changePassword(body: ChangePasswordInput): Promise<void> {
 export function updateProfile(body: UpdateProfileInput): Promise<ProfileResponse> {
   return apiFetch<ProfileResponse>('/auth/me/profile', { method: 'PATCH', body });
 }
+
+export type LoginEventAction =
+  | 'auth.login'
+  | 'auth.logout'
+  | 'auth.password_changed'
+  | 'auth.password_reset_completed';
+
+export interface LoginEvent {
+  id: string;
+  action: LoginEventAction;
+  at: string;
+  ip: string | null;
+  userAgent: string | null;
+}
+
+export function getLoginHistory(): Promise<{ events: LoginEvent[] }> {
+  return apiFetch<{ events: LoginEvent[] }>('/auth/me/login-history');
+}
