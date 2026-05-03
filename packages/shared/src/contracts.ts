@@ -416,9 +416,26 @@ export const LoginRequestSchema = z.object({
 });
 export type LoginRequest = z.infer<typeof LoginRequestSchema>;
 
-export const LoginResponseSchema = z.object({
+/**
+ * Discriminated on `mfaRequired` so the client can branch without hunting
+ * through optional fields. The MFA path returns no user — completing
+ * sign-in requires a follow-up POST /auth/mfa-challenge with a code.
+ */
+export const LoginSuccessResponseSchema = z.object({
+  mfaRequired: z.literal(false).optional(),
   user: AuthUserSchema,
 });
+export type LoginSuccessResponse = z.infer<typeof LoginSuccessResponseSchema>;
+
+export const LoginMfaRequiredResponseSchema = z.object({
+  mfaRequired: z.literal(true),
+});
+export type LoginMfaRequiredResponse = z.infer<typeof LoginMfaRequiredResponseSchema>;
+
+export const LoginResponseSchema = z.union([
+  LoginSuccessResponseSchema,
+  LoginMfaRequiredResponseSchema,
+]);
 export type LoginResponse = z.infer<typeof LoginResponseSchema>;
 
 /**
@@ -3199,4 +3216,22 @@ export const MfaDisableInputSchema = z.object({
   currentPassword: z.string().min(1).max(256),
 });
 export type MfaDisableInput = z.infer<typeof MfaDisableInputSchema>;
+
+/** Code submitted to /auth/mfa-challenge. Either a 6-digit TOTP or a
+ *  recovery code in `xxxxx-xxxxx` format. The server resolves which
+ *  flavour was provided. */
+export const MfaChallengeInputSchema = z.object({
+  code: z
+    .string()
+    .min(1)
+    .max(20)
+    .transform((s) => s.trim().toLowerCase()),
+});
+export type MfaChallengeInput = z.infer<typeof MfaChallengeInputSchema>;
+
+export const MfaChallengeResponseSchema = z.object({
+  user: AuthUserSchema,
+});
+export type MfaChallengeResponse = z.infer<typeof MfaChallengeResponseSchema>;
+
 

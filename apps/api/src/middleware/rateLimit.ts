@@ -24,6 +24,50 @@ export const loginIpLimiter = rateLimit({
   },
 });
 
+// MFA challenge: brute-force defense for the second login factor. A 6-digit
+// TOTP has only 1M possible values, and the verifier accepts a window of
+// codes (current + previous + next), so a determined attacker who's already
+// stolen a password could grind through the keyspace if we let them. The
+// per-user (mfa_pending sub) limiter is the primary defense — the per-IP
+// limiter catches sharing-IP-across-accounts abuse like NAT'd offices.
+const MFA_CHALLENGE_IP_LIMIT = process.env.NODE_ENV === 'test' ? 100_000 : 30;
+const MFA_CHALLENGE_USER_LIMIT = process.env.NODE_ENV === 'test' ? 100_000 : 5;
+
+/** 30 challenge attempts / 15 min / IP for /auth/mfa-challenge. */
+export const mfaChallengeIpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: MFA_CHALLENGE_IP_LIMIT,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: {
+    error: {
+      code: 'rate_limited',
+      message: 'Too many code attempts. Try again in a few minutes.',
+    },
+  },
+});
+
+/** 5 challenge attempts / 15 min / pending-user for /auth/mfa-challenge.
+ *  Keyed off the mfa_pending JWT subject, set on req by the route handler
+ *  before this middleware runs. Falls back to IP if the cookie is absent
+ *  (the route handler will still 401 those cleanly). */
+export const mfaChallengeUserLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: MFA_CHALLENGE_USER_LIMIT,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => {
+    const sub = (req as Request & { mfaPendingSub?: string }).mfaPendingSub;
+    return sub ? `mfa:${sub}` : `ip:${req.ip ?? 'unknown'}`;
+  },
+  message: {
+    error: {
+      code: 'rate_limited',
+      message: 'Too many code attempts for this sign-in. Sign in again to retry.',
+    },
+  },
+});
+
 /** 5 requests / 15 minutes / email for /auth/login (production only). */
 export const loginEmailLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,

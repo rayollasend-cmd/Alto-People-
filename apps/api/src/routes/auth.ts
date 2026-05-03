@@ -16,7 +16,12 @@ import {
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
-import { signSession } from '../lib/jwt.js';
+import {
+  MFA_PENDING_TTL_SECONDS,
+  signMfaPending,
+  signSession,
+  verifyMfaPending,
+} from '../lib/jwt.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import {
   hashPassword,
@@ -31,6 +36,7 @@ import {
 } from '../lib/audit.js';
 import {
   invalidateUserCache,
+  MFA_PENDING_COOKIE,
   requireAuth,
   SESSION_COOKIE,
 } from '../middleware/auth.js';
@@ -40,6 +46,8 @@ import {
   changePasswordLimiter,
   forgotPasswordIpLimiter,
   forgotPasswordEmailLimiter,
+  mfaChallengeIpLimiter,
+  mfaChallengeUserLimiter,
 } from '../middleware/rateLimit.js';
 import { hashToken } from '../lib/inviteToken.js';
 import {
@@ -67,6 +75,7 @@ import {
 import {
   MFA_RECOVERY_CODE_COUNT,
   MFA_TOTP_PERIOD_SECONDS,
+  MfaChallengeInputSchema,
   MfaDisableInputSchema,
   MfaEnrollConfirmInputSchema,
 } from '@alto-people/shared';
@@ -91,6 +100,19 @@ function cookieOptions() {
     secure: env.NODE_ENV === 'production',
     path: '/',
     maxAge: env.JWT_TTL_SECONDS * 1000,
+  };
+}
+
+// Same flags as the session cookie — only the maxAge differs (5 min vs
+// JWT_TTL_SECONDS). Keeping them aligned means the __Host- prefix's
+// requirements (secure + path=/ + no Domain) match in production.
+function mfaPendingCookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: 'lax' as const,
+    secure: env.NODE_ENV === 'production',
+    path: '/',
+    maxAge: MFA_PENDING_TTL_SECONDS * 1000,
   };
 }
 
@@ -213,6 +235,28 @@ authRouter.post(
         return;
       }
 
+      // MFA gate. Password is correct and the user is in good standing —
+      // but if they've enrolled in two-step sign-in, the password alone
+      // does not produce a session. Instead we issue a short-lived
+      // mfa_pending cookie carrying just enough context for the follow-up
+      // /auth/mfa-challenge call (sub + tokenVersion). No `auth.login`
+      // audit row is written here — that fires from the challenge endpoint
+      // on success, so login-history reflects "I was actually signed in"
+      // rather than "I typed my password right".
+      if (user.mfaEnabledAt) {
+        const pending = signMfaPending({
+          sub: user.id,
+          ver: user.tokenVersion,
+        });
+        res.cookie(MFA_PENDING_COOKIE, pending, mfaPendingCookieOptions());
+        // Defensive: if the user is mid-flow on another tab and re-logs
+        // here, clear any session cookie so we never leave the user with
+        // both a real session AND a pending challenge.
+        res.clearCookie(SESSION_COOKIE, cookieOptions());
+        res.json({ mfaRequired: true });
+        return;
+      }
+
       const token = signSession({
         sub: user.id,
         role: user.role,
@@ -226,6 +270,154 @@ authRouter.post(
         userId: user.id,
         clientId: user.clientId,
       });
+
+      const profile = await loadProfileFor(user.associateId);
+      res.json({ user: toAuthUser({ ...user, ...profile }) });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * POST /auth/mfa-challenge { code }
+ *
+ * Second leg of the two-step sign-in. Reads the mfa_pending cookie set by
+ * /auth/login, verifies the supplied code (TOTP first if it looks numeric,
+ * recovery code as the fallback), and on success swaps the pending cookie
+ * for a real session cookie. The audit row written here uses the regular
+ * `auth.login` action so the login history feed reads naturally.
+ *
+ * Recovery codes are single-use: the matching MfaRecoveryCode row's
+ * `usedAt` is set atomically as part of the verify, so a leaked code
+ * can't be replayed.
+ *
+ * Two rate-limiters layered:
+ *   - mfaChallengeIpLimiter   (30/15min/IP)        — broad abuse cap
+ *   - mfaChallengeUserLimiter (5/15min/pending sub) — primary defense
+ *     against TOTP brute-force on a stolen password
+ */
+authRouter.post(
+  '/mfa-challenge',
+  mfaChallengeIpLimiter,
+  // Read+verify the pending cookie BEFORE the user-keyed limiter so the
+  // limiter has a sub to key off of. Stash it on the request for both the
+  // limiter's keyGenerator and the handler below.
+  (req, _res, next) => {
+    const raw = req.cookies?.[MFA_PENDING_COOKIE] as string | undefined;
+    const payload = raw ? verifyMfaPending(raw) : null;
+    if (payload) {
+      (req as typeof req & { mfaPendingSub?: string }).mfaPendingSub = payload.sub;
+      (req as typeof req & { mfaPendingPayload?: typeof payload }).mfaPendingPayload = payload;
+    }
+    next();
+  },
+  mfaChallengeUserLimiter,
+  async (req, res, next) => {
+    try {
+      const payload = (req as typeof req & {
+        mfaPendingPayload?: { sub: string; ver: number };
+      }).mfaPendingPayload;
+      if (!payload) {
+        throw new HttpError(401, 'mfa_pending_missing', 'Sign in again to continue');
+      }
+
+      const parsed = MfaChallengeInputSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+      }
+      const code = parsed.data.code;
+
+      const user = await prisma.user.findFirst({
+        where: { id: payload.sub, deletedAt: null },
+      });
+      if (
+        !user ||
+        user.status !== 'ACTIVE' ||
+        user.tokenVersion !== payload.ver ||
+        !user.mfaEnabledAt ||
+        !user.mfaSecretEncrypted ||
+        !HUMAN_ROLES.includes(user.role)
+      ) {
+        // Don't leak which condition failed — same generic 401 the password
+        // step uses for similar reasons.
+        res.clearCookie(MFA_PENDING_COOKIE, mfaPendingCookieOptions());
+        throw new HttpError(401, 'mfa_state_invalid', 'Sign in again to continue');
+      }
+
+      // Numeric → try TOTP. Anything else → try recovery code. We don't
+      // try both: a 6-digit string can't collide with the recovery format
+      // (xxxxx-xxxxx), so guessing is unambiguous.
+      let success = false;
+      let usedRecovery = false;
+      if (/^\d{6}$/.test(code)) {
+        const secret = decryptMfaSecret(Buffer.from(user.mfaSecretEncrypted));
+        const result = verifySync({
+          token: code,
+          secret,
+          epochTolerance: TOTP_EPOCH_TOLERANCE,
+        });
+        success = result.valid;
+      } else if (/^[a-z2-9]{5}-[a-z2-9]{5}$/.test(code)) {
+        // Atomic compare-and-consume: only update the row if it matches AND
+        // hasn't been used yet. updateMany returns count=1 on success, 0
+        // when the code doesn't exist or has already been consumed.
+        const consumed = await prisma.mfaRecoveryCode.updateMany({
+          where: {
+            userId: user.id,
+            codeHash: hashRecoveryCode(code),
+            usedAt: null,
+          },
+          data: { usedAt: new Date() },
+        });
+        success = consumed.count === 1;
+        usedRecovery = success;
+      }
+
+      if (!success) {
+        await recordLoginFailure({
+          email: user.email,
+          req,
+          reason: 'mfa_invalid_code',
+        });
+        throw new HttpError(401, 'invalid_code', 'That code is incorrect or expired');
+      }
+
+      // Promote pending cookie → real session.
+      res.clearCookie(MFA_PENDING_COOKIE, mfaPendingCookieOptions());
+      const token = signSession({
+        sub: user.id,
+        role: user.role,
+        ver: user.tokenVersion,
+      });
+      res.cookie(SESSION_COOKIE, token, cookieOptions());
+
+      await recordLoginSuccess({
+        email: user.email,
+        req,
+        userId: user.id,
+        clientId: user.clientId,
+      });
+
+      if (usedRecovery) {
+        // Distinct audit row so HR / the user can see "I had to fall back
+        // to a recovery code" — high signal that the user lost their phone
+        // and should regenerate codes / re-enroll soon.
+        enqueueAudit(
+          {
+            actorUserId: user.id,
+            clientId: user.clientId ?? null,
+            action: 'auth.mfa_recovery_used',
+            entityType: 'User',
+            entityId: user.id,
+            metadata: {
+              ip: req.ip ?? null,
+              userAgent: req.headers['user-agent'] ?? null,
+            },
+          },
+          'auth.mfa_recovery_used'
+        );
+      }
 
       const profile = await loadProfileFor(user.associateId);
       res.json({ user: toAuthUser({ ...user, ...profile }) });

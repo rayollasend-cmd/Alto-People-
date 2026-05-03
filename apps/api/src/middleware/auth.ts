@@ -9,6 +9,15 @@ export const SESSION_COOKIE = env.NODE_ENV === 'production'
   ? '__Host-alto.session'
   : 'alto.session';
 
+// Short-lived cookie carrying the mfa_pending JWT between /auth/login and
+// /auth/mfa-challenge. Same naming convention as the session cookie so it
+// gets the __Host- prefix protections in production (no Domain, secure,
+// path=/ — meaning a same-origin attacker's iframe can't read it any more
+// than the session cookie).
+export const MFA_PENDING_COOKIE = env.NODE_ENV === 'production'
+  ? '__Host-alto.mfa_pending'
+  : 'alto.mfa_pending';
+
 // ---------------------------------------------------------------------------
 // In-process user cache
 //

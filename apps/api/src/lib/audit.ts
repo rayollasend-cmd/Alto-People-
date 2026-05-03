@@ -67,7 +67,12 @@ interface LoginFailureContext extends LoginContext {
     | 'wrong_password'
     | 'disabled'
     | 'soft_deleted'
-    | 'non_human_role';
+    | 'non_human_role'
+    // mfa-challenge: a code was submitted but neither matched a TOTP
+    // window nor an unused recovery code. Distinct so the audit feed can
+    // tell "they didn't know the password" from "they had the password
+    // but couldn't pass MFA" — different incident response.
+    | 'mfa_invalid_code';
 }
 
 interface LogoutContext {

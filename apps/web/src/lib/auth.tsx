@@ -14,6 +14,8 @@ import {
   type Role,
   type LoginResponse,
   type MeResponse,
+  type MfaChallengeInput,
+  type MfaChallengeResponse,
   ROLE_CAPABILITIES,
   hasCapability,
 } from '@alto-people/shared';
@@ -27,7 +29,15 @@ interface AuthState {
   user: AuthUser | null;
   role: Role | null;
   capabilities: ReadonlySet<Capability>;
-  signIn: (email: string, password: string) => Promise<void>;
+  /**
+   * POST /auth/login. Returns `{ mfaRequired: true }` when the account
+   * has two-step sign-in turned on — the caller is expected to drive a
+   * code prompt and finish the flow with `submitMfaChallenge`. Otherwise
+   * the user is signed in and `user` state is set.
+   */
+  signIn: (email: string, password: string) => Promise<{ mfaRequired: boolean }>;
+  /** POST /auth/mfa-challenge. Sets `user` state on success. */
+  submitMfaChallenge: (input: MfaChallengeInput) => Promise<void>;
   signOut: () => Promise<void>;
   /**
    * Re-fetch /auth/me. Use after self-service mutations (profile name,
@@ -87,6 +97,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       method: 'POST',
       body: { email, password },
     });
+    if ('mfaRequired' in res && res.mfaRequired) {
+      // Don't touch user state — the cookie set by the server is the
+      // ephemeral mfa_pending one, not a real session. Caller drives the
+      // next step.
+      return { mfaRequired: true };
+    }
+    setUser(res.user);
+    setIsOffline(false);
+    return { mfaRequired: false };
+  }, []);
+
+  const submitMfaChallenge = useCallback(async (input: MfaChallengeInput) => {
+    const res = await apiFetch<MfaChallengeResponse>('/auth/mfa-challenge', {
+      method: 'POST',
+      body: input,
+    });
     setUser(res.user);
     setIsOffline(false);
   }, []);
@@ -121,11 +147,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       role,
       capabilities,
       signIn,
+      submitMfaChallenge,
       signOut,
       refreshUser,
       can: (cap) => (role ? hasCapability(role, cap) : false),
     };
-  }, [isInitializing, isOffline, user, signIn, signOut, refreshUser]);
+  }, [isInitializing, isOffline, user, signIn, submitMfaChallenge, signOut, refreshUser]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
