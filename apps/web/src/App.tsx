@@ -12,6 +12,7 @@ import { Dashboard } from '@/pages/Dashboard';
 import { ModulePlaceholder } from '@/pages/ModulePlaceholder';
 import { MODULES } from '@/lib/modules';
 import { RequireAuth } from '@/lib/auth';
+import { RequireCapability } from '@/lib/RequireCapability';
 import { RouterErrorPage } from '@/pages/RouterErrorPage';
 
 // ---------------------------------------------------------------------------
@@ -155,11 +156,11 @@ function PublicRouteFallback() {
 const ONBOARDING_ROUTES = [
   { path: 'onboarding', element: <OnboardingHome /> },
   // Phase 61 — template manager (HR/Ops only; component enforces).
-  { path: 'onboarding/templates', element: <TemplatesList /> },
-  { path: 'onboarding/templates/new', element: <TemplateEditor /> },
-  { path: 'onboarding/templates/:id', element: <TemplateEditor /> },
+  { path: 'onboarding/templates', element: <RequireCapability cap="view:hr-admin"><TemplatesList /></RequireCapability> },
+  { path: 'onboarding/templates/new', element: <RequireCapability cap="view:hr-admin"><TemplateEditor /></RequireCapability> },
+  { path: 'onboarding/templates/:id', element: <RequireCapability cap="view:hr-admin"><TemplateEditor /></RequireCapability> },
   // Phase 62 — time-to-completion analytics (view:dashboard required).
-  { path: 'onboarding/analytics', element: <OnboardingAnalytics /> },
+  { path: 'onboarding/analytics', element: <RequireCapability cap="view:analytics"><OnboardingAnalytics /></RequireCapability> },
   {
     path: 'onboarding/applications/:id',
     element: <ApplicationDetail />,
@@ -329,7 +330,9 @@ export const router = createBrowserRouter([
       { path: 'performance', element: <PerformanceHome /> },
       { path: 'recruiting', element: <RecruitingHome /> },
       { path: 'analytics', element: <AnalyticsHome /> },
-      { path: 'settings', element: <Settings /> },
+      // `settings` is universal (every authed user manages their own), so the
+      // base `view:dashboard` cap is enough.
+      { path: 'settings', element: <RequireCapability cap="view:dashboard"><Settings /></RequireCapability> },
       { path: 'admin/users', element: <UsersAdmin /> },
       { path: 'admin/branding', element: <BrandingHome /> },
       { path: 'admin/billing', element: <BillingHome /> },
@@ -366,20 +369,20 @@ export const router = createBrowserRouter([
       { path: 'workflows', element: <WorkflowsHome /> },
       { path: 'me', element: <MeHome /> },
       { path: 'compensation', element: <CompensationHome /> },
-      { path: 'performance/extras', element: <PerformanceExtras /> },
+      { path: 'performance/extras', element: <RequireCapability cap="view:performance"><PerformanceExtras /></RequireCapability> },
       { path: 'marketplace', element: <MarketplaceHome /> },
       { path: 'payrules', element: <PayRulesHome /> },
       { path: 'directory', element: <DirCommsHome /> },
-      { path: 'compliance/osha', element: <OshaWcEeoHome /> },
-      { path: 'templates', element: <TemplatesHome /> },
-      { path: 'recruiting/extras', element: <RecruitingExtras /> },
-      { path: 'payroll/tax', element: <PayrollTaxHome /> },
-      { path: 'benefits/lifecycle', element: <BenefitsLifecycle /> },
-      { path: 'integrations', element: <IntegrationsHome /> },
-      { path: 'learning', element: <LearningHome /> },
-      { path: 'worktags', element: <WorktagsHome /> },
-      { path: 'reports', element: <ReportsHome /> },
-      { path: 'reimbursements', element: <ReimbursementsHome /> },
+      { path: 'compliance/osha', element: <RequireCapability cap="view:compliance"><OshaWcEeoHome /></RequireCapability> },
+      { path: 'templates', element: <RequireCapability cap="view:hr-admin"><TemplatesHome /></RequireCapability> },
+      { path: 'recruiting/extras', element: <RequireCapability cap="view:recruiting"><RecruitingExtras /></RequireCapability> },
+      { path: 'payroll/tax', element: <RequireCapability cap="view:payroll"><PayrollTaxHome /></RequireCapability> },
+      { path: 'benefits/lifecycle', element: <RequireCapability cap="view:hr-admin"><BenefitsLifecycle /></RequireCapability> },
+      { path: 'integrations', element: <RequireCapability cap="view:integrations"><IntegrationsHome /></RequireCapability> },
+      { path: 'learning', element: <RequireCapability cap="view:dashboard"><LearningHome /></RequireCapability> },
+      { path: 'worktags', element: <RequireCapability cap="view:hr-admin"><WorktagsHome /></RequireCapability> },
+      { path: 'reports', element: <RequireCapability cap="view:analytics"><ReportsHome /></RequireCapability> },
+      { path: 'reimbursements', element: <RequireCapability cap="view:dashboard"><ReimbursementsHome /></RequireCapability> },
       { path: 'time-attendance/kiosk', element: <KioskAdmin /> },
       ...ONBOARDING_ROUTES,
       ...PLACEHOLDER_MODULES.map((m) => ({
