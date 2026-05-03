@@ -724,6 +724,13 @@ function NewCobraDrawer({
   );
 }
 
+function formatAcaCell(m: AcaEmployeeMonths['months'][number]): string {
+  if (!m) return '—';
+  const offer = m.offerOfCoverage?.replace('CODE_', '') ?? '—';
+  const safe = m.safeHarbor ?? '—';
+  return `${offer}/${safe}`;
+}
+
 function AcaTab() {
   const [year, setYear] = useState(String(new Date().getFullYear() - 1));
   const [employees, setEmployees] = useState<AcaEmployeeMonths[] | null>(null);
@@ -766,34 +773,64 @@ function AcaTab() {
               description="Upsert AcaMonth rows via /aca/months or wait for the year-end importer."
             />
           ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-max text-xs">
-                <thead className="text-silver">
-                  <tr>
-                    <th className="text-left px-3 py-2">Associate</th>
-                    {Array.from({ length: 12 }, (_, i) => (
-                      <th key={i} className="text-left px-2 py-2">
-                        {new Date(0, i).toLocaleString('en-US', { month: 'short' })}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="text-white">
-                  {employees.map((e) => (
-                    <tr key={e.associateId} className="border-t border-navy-secondary">
-                      <td className="px-3 py-2 font-medium">{e.associateName}</td>
-                      {e.months.map((m, i) => (
-                        <td key={i} className="px-2 py-2 font-mono">
-                          {m
-                            ? `${m.offerOfCoverage?.replace('CODE_', '') ?? '—'}/${m.safeHarbor ?? '—'}`
-                            : '—'}
-                        </td>
+            <>
+              {/* Desktop: 13-column table — month-across, employee-per-row.
+                  This is the IRS 1094/1095-C mental model so HR auditors
+                  can scan a year horizontally before drilling into a row. */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="min-w-max text-xs">
+                  <thead className="text-silver">
+                    <tr>
+                      <th className="text-left px-3 py-2">Associate</th>
+                      {Array.from({ length: 12 }, (_, i) => (
+                        <th key={i} className="text-left px-2 py-2">
+                          {new Date(0, i).toLocaleString('en-US', { month: 'short' })}
+                        </th>
                       ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="text-white">
+                    {employees.map((e) => (
+                      <tr key={e.associateId} className="border-t border-navy-secondary">
+                        <td className="px-3 py-2 font-medium">{e.associateName}</td>
+                        {e.months.map((m, i) => (
+                          <td key={i} className="px-2 py-2 font-mono">
+                            {formatAcaCell(m)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {/* Mobile: card per associate — same data, rotated into a
+                  4×3 month grid so all twelve months stay on-screen
+                  without horizontal scroll. */}
+              <ul className="md:hidden divide-y divide-navy-secondary">
+                {employees.map((e) => (
+                  <li key={e.associateId} className="p-4">
+                    <div className="font-medium text-white text-sm mb-3 truncate">
+                      {e.associateName}
+                    </div>
+                    <div className="grid grid-cols-4 gap-2">
+                      {e.months.map((m, i) => (
+                        <div
+                          key={i}
+                          className="rounded border border-navy-secondary bg-navy-secondary/30 px-2 py-1.5"
+                        >
+                          <div className="text-[10px] uppercase tracking-wider text-silver">
+                            {new Date(0, i).toLocaleString('en-US', { month: 'short' })}
+                          </div>
+                          <div className="font-mono text-xs text-white truncate">
+                            {formatAcaCell(m)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
         </CardContent>
       </Card>
