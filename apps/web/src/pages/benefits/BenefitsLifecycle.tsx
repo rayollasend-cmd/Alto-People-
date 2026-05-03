@@ -466,8 +466,9 @@ function NewQleDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =
           />
         </div>
         <div>
-          <Label>Event kind</Label>
+          <Label htmlFor="bl-event-kind">Event kind</Label>
           <select
+            id="bl-event-kind"
             className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
             value={kind}
             onChange={(e) => setKind(e.target.value as QleKind)}
@@ -679,8 +680,9 @@ function NewCobraDrawer({
           />
         </div>
         <div>
-          <Label>Qualifying event</Label>
+          <Label htmlFor="bl-qualifying-event">Qualifying event</Label>
           <select
+            id="bl-qualifying-event"
             className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
             value={qualifyingEvent}
             onChange={(e) => setQualifyingEvent(e.target.value)}

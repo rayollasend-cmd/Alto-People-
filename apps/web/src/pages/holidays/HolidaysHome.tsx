@@ -307,8 +307,9 @@ function NewHolidayDrawer({
             />
           </div>
           <div>
-            <Label>Type</Label>
+            <Label htmlFor="holiday-type">Type</Label>
             <select
+              id="holiday-type"
               className="mt-1 w-full bg-midnight border border-navy-secondary rounded p-2 text-white text-sm"
               value={type}
               onChange={(e) => setType(e.target.value as HolidayType)}

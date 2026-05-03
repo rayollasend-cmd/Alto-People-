@@ -268,8 +268,9 @@ function NewActionDrawer({
           />
         </div>
         <div>
-          <Label>Kind</Label>
+          <Label htmlFor="discipline-kind">Kind</Label>
           <select
+            id="discipline-kind"
             className="mt-1 w-full bg-midnight border border-navy-secondary rounded p-2 text-white text-sm"
             value={kind}
             onChange={(e) => setKind(e.target.value as DisciplineKind)}

@@ -49,7 +49,7 @@ export function Drawer({ open, onOpenChange, width = 'max-w-md', children }: Dra
           )}
         >
           <DialogPrimitive.Close
-            className="absolute grid place-items-center h-8 w-8 rounded-md text-silver hover:text-white hover:bg-navy-secondary/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright top-[max(0.75rem,env(safe-area-inset-top))] right-[max(0.75rem,env(safe-area-inset-right))]"
+            className="absolute grid place-items-center h-10 w-10 rounded-md text-silver hover:text-white hover:bg-navy-secondary/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright top-[max(0.5rem,env(safe-area-inset-top))] right-[max(0.5rem,env(safe-area-inset-right))]"
             aria-label="Close"
           >
             <X className="h-4 w-4" />

@@ -154,7 +154,7 @@ export function ClientsHome() {
               key={f.value}
               onClick={() => setStatusFilter(f.value)}
               className={cn(
-                'px-3 py-1 text-xs uppercase tracking-wider rounded-sm transition-colors',
+                'px-3 h-9 inline-flex items-center text-xs uppercase tracking-wider rounded-sm transition-colors',
                 statusFilter === f.value
                   ? 'bg-gold text-navy'
                   : 'text-silver hover:text-white'

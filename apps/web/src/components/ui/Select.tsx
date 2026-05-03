@@ -17,13 +17,15 @@ export interface SelectProps
  * appearance:none is required to apply our border + bg tokens.
  */
 export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
-  ({ className, invalid, size = 'md', children, ...props }, ref) => {
+  ({ className, invalid, size = 'md', required, children, ...props }, ref) => {
     const sm = size === 'sm';
     return (
       <div className="relative">
         <select
           ref={ref}
+          required={required}
           aria-invalid={invalid || undefined}
+          aria-required={required || undefined}
           className={cn(
             'appearance-none flex w-full rounded-md border bg-navy-secondary/40 transition-colors',
             'border-navy-secondary hover:border-silver/40 focus:border-gold focus:outline-none focus:ring-2 focus:ring-gold/40',

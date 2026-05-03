@@ -111,7 +111,7 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
             ref={closeButtonRef}
             type="button"
             onClick={onClose}
-            className="text-silver hover:text-white p-1 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+            className="grid place-items-center h-10 w-10 -mr-2 text-silver hover:text-white rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
             aria-label="Close menu"
           >
             <X className="h-5 w-5" />

@@ -8,6 +8,7 @@ import {
   type OrgBranding,
 } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
+import { useConfirm } from '@/lib/confirm';
 import {
   deleteOrgLogo,
   getOrgBranding,
@@ -30,6 +31,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
  * very next email rendered.
  */
 export function BrandingHome() {
+  const confirm = useConfirm();
   const [branding, setBranding] = useState<OrgBranding | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -118,6 +120,17 @@ export function BrandingHome() {
   };
 
   const onRemoveLogo = async () => {
+    if (
+      !(await confirm({
+        title: 'Remove the org logo?',
+        description:
+          'Outbound emails will fall back to plain header text until you upload a replacement.',
+        destructive: true,
+        confirmLabel: 'Remove logo',
+      }))
+    ) {
+      return;
+    }
     setSaving(true);
     try {
       await deleteOrgLogo();
