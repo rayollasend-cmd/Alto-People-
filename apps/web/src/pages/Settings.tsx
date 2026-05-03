@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bell, Camera, Clock, History, KeyRound, Lock, LogOut, ShieldAlert, Upload, User as UserIcon } from 'lucide-react';
+import { AtSign, Bell, Camera, Clock, History, KeyRound, Lock, LogOut, ShieldAlert, Upload, User as UserIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -9,6 +9,7 @@ import {
   getLoginHistory,
   getNotificationPreferences,
   patchNotificationPreference,
+  requestEmailChange,
   revokeOtherSessions,
   updateProfile,
   updateTimezone,
@@ -73,12 +74,125 @@ export function Settings() {
 
       {user?.associateId && <ProfileCard />}
       {user?.associateId && <ProfilePhotoCard />}
+      <EmailCard />
       <TimezoneCard />
       <NotificationsCard />
       <PasswordCard />
       <SessionsCard />
       <LoginHistoryCard />
     </div>
+  );
+}
+
+function EmailCard() {
+  const { user } = useAuth();
+  const [newEmail, setNewEmail] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [sentTo, setSentTo] = useState<string | null>(null);
+
+  const submit = async () => {
+    const target = newEmail.trim().toLowerCase();
+    if (!target) {
+      toast.error('Enter a new email address');
+      return;
+    }
+    if (target === user?.email.toLowerCase()) {
+      toast.error('That is already your email');
+      return;
+    }
+    if (currentPassword.length < 12) {
+      toast.error('Enter your current password to confirm');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await requestEmailChange({ newEmail: target, currentPassword });
+      setSentTo(target);
+      setNewEmail('');
+      setCurrentPassword('');
+      toast.success(`Confirmation link sent to ${target}.`);
+    } catch (err) {
+      const code = err instanceof ApiError ? err.code : null;
+      if (code === 'invalid_credentials') {
+        toast.error('Current password is incorrect');
+      } else if (code === 'email_in_use') {
+        toast.error('That email already belongs to another account');
+      } else if (code === 'same_email') {
+        toast.error('That is already your email');
+      } else {
+        toast.error('Could not request email change', {
+          description: err instanceof Error ? err.message : String(err),
+        });
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <AtSign className="h-4 w-4 text-gold" />
+          Email address
+        </CardTitle>
+        <CardDescription>
+          Current: <span className="text-white">{user?.email}</span>. Changing
+          your email signs you out of every session and emails the old
+          address as a security alert.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {sentTo && (
+          <div className="mb-4 rounded-md border border-gold/40 bg-gold/10 px-3 py-2 text-xs text-white">
+            Confirmation link sent to <span className="font-mono">{sentTo}</span>.
+            It expires in 1 hour. Click the link from that inbox to finish
+            the change.
+          </div>
+        )}
+        <div className="space-y-3">
+          <div>
+            <Label htmlFor="set-newemail" required>
+              New email
+            </Label>
+            <Input
+              id="set-newemail"
+              type="email"
+              autoComplete="email"
+              value={newEmail}
+              onChange={(e) => setNewEmail(e.target.value)}
+              maxLength={254}
+              placeholder="you@new-address.com"
+            />
+          </div>
+          <div>
+            <Label htmlFor="set-emailpw" required>
+              Current password
+            </Label>
+            <Input
+              id="set-emailpw"
+              type="password"
+              autoComplete="current-password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+            />
+            <FormHint>
+              We re-check your password before sending the confirmation link.
+            </FormHint>
+          </div>
+        </div>
+        <div className="mt-4 flex justify-end">
+          <Button
+            onClick={submit}
+            loading={submitting}
+            disabled={!newEmail || !currentPassword}
+          >
+            Send confirmation link
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

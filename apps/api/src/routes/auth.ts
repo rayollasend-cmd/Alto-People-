@@ -3,9 +3,11 @@ import { z } from 'zod';
 import {
   AcceptInviteInputSchema,
   ChangePasswordInputSchema,
+  ConfirmEmailChangeInputSchema,
   HUMAN_ROLES,
   NOTIFICATION_CATEGORIES,
   PatchNotificationPreferenceInputSchema,
+  RequestEmailChangeInputSchema,
   UpdateProfileInputSchema,
   UpdateTimezoneInputSchema,
   type AuthUser,
@@ -45,6 +47,11 @@ import {
   hashResetToken,
   PASSWORD_RESET_TTL_SECONDS,
 } from '../lib/passwordResetToken.js';
+import {
+  generateEmailChangeToken,
+  hashEmailChangeToken,
+  EMAIL_CHANGE_TTL_SECONDS,
+} from '../lib/emailChangeToken.js';
 import { send } from '../lib/notifications.js';
 import { passwordResetTemplate } from '../lib/emailTemplates.js';
 import { HttpError } from '../middleware/error.js';
@@ -924,6 +931,276 @@ authRouter.patch('/me/notification-preferences', requireAuth, async (req, res, n
       create: { userId: req.user!.id, category, emailEnabled },
       update: { emailEnabled },
     });
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Two-step email change ============================================ */
+
+/**
+ * POST /auth/me/email-change/request { newEmail, currentPassword }
+ *
+ * Authenticated. Re-auth via current password (defence against a stolen
+ * session quietly redirecting account takeover to an attacker inbox).
+ * Mints a single-use ~256-bit token, stores its sha256, invalidates any
+ * outstanding requests for the same user, and emails the raw token in a
+ * confirmation link to the NEW address. Always 204 to the caller — the
+ * UI shows a generic "check your inbox" message regardless of outcome.
+ *
+ * Specific failure paths (collision, same email, bad password) DO return
+ * a meaningful error code for the in-app form, since the request is
+ * authenticated (no enumeration risk: the caller is already a known user).
+ */
+authRouter.post('/me/email-change/request', requireAuth, async (req, res, next) => {
+  try {
+    const parsed = RequestEmailChangeInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const newEmail = parsed.data.newEmail.trim().toLowerCase();
+    const { currentPassword } = parsed.data;
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.user!.id },
+      select: {
+        id: true,
+        email: true,
+        passwordHash: true,
+        clientId: true,
+      },
+    });
+    if (!user || !user.passwordHash) {
+      throw new HttpError(401, 'invalid_credentials', 'Current password is incorrect');
+    }
+    const ok = await verifyPassword(user.passwordHash, currentPassword);
+    if (!ok) {
+      throw new HttpError(401, 'invalid_credentials', 'Current password is incorrect');
+    }
+
+    if (newEmail === user.email.toLowerCase()) {
+      throw new HttpError(
+        400,
+        'same_email',
+        'New email is the same as your current email.',
+      );
+    }
+
+    // Collision against any active (non-deleted) account, including INVITED.
+    // Re-checked in the confirm step in case a new account took the address
+    // between request and confirm.
+    const collision = await prisma.user.findFirst({
+      where: { email: newEmail, deletedAt: null, NOT: { id: user.id } },
+      select: { id: true },
+    });
+    if (collision) {
+      throw new HttpError(
+        409,
+        'email_in_use',
+        'That email already belongs to another account.',
+      );
+    }
+
+    const { raw, hash } = generateEmailChangeToken();
+    const expiresAt = new Date(Date.now() + EMAIL_CHANGE_TTL_SECONDS * 1000);
+
+    await prisma.$transaction(async (tx) => {
+      // Newest request wins — any older outstanding row goes dead.
+      await tx.emailChangeRequest.updateMany({
+        where: { userId: user.id, consumedAt: null },
+        data: { consumedAt: new Date() },
+      });
+      await tx.emailChangeRequest.create({
+        data: {
+          tokenHash: hash,
+          userId: user.id,
+          newEmail,
+          expiresAt,
+          requestedIp: req.ip ?? null,
+        },
+      });
+    });
+
+    const confirmUrl = `${env.APP_BASE_URL}/confirm-email-change/${raw}`;
+    const subject = 'Confirm your new Alto People email';
+    const body = [
+      `Hi,`,
+      ``,
+      `Someone (hopefully you) asked to change the email on the Alto People account ${user.email} to this address.`,
+      ``,
+      `Open this link to confirm — it works once and expires in 1 hour:`,
+      ``,
+      confirmUrl,
+      ``,
+      `If you didn't request this, you can ignore this email — your account stays the same.`,
+      ``,
+      `— Alto People`,
+    ].join('\n');
+
+    try {
+      await send({
+        channel: 'EMAIL',
+        recipient: { userId: user.id, phone: null, email: newEmail },
+        subject,
+        body,
+      });
+    } catch (sendErr) {
+      console.error('[auth.email-change-request] email send failed:', sendErr);
+    }
+
+    enqueueAudit(
+      {
+        actorUserId: user.id,
+        clientId: user.clientId ?? null,
+        action: 'auth.email_change_requested',
+        entityType: 'User',
+        entityId: user.id,
+        metadata: {
+          ip: req.ip ?? null,
+          userAgent: req.headers['user-agent'] ?? null,
+          fromEmail: user.email,
+          toEmail: newEmail,
+        },
+      },
+      'auth.email_change_requested',
+    );
+
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /auth/email-change/confirm { token }
+ *
+ * Public — the token IS the authorization (the user must have opened
+ * a link delivered to the NEW address to get here). Re-checks collision
+ * in case another account claimed the address between request and
+ * confirm. On success: swaps User.email, marks the token consumed, kills
+ * sibling tokens, bumps tokenVersion (every existing session dies — the
+ * cookie-bearer must re-auth with the new email), and notifies the OLD
+ * address as a security alert.
+ */
+authRouter.post('/email-change/confirm', async (req, res, next) => {
+  try {
+    const parsed = ConfirmEmailChangeInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_token', 'Confirmation link is invalid or expired');
+    }
+    const tokenHash = hashEmailChangeToken(parsed.data.token);
+
+    const request = await prisma.emailChangeRequest.findUnique({
+      where: { tokenHash },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            status: true,
+            clientId: true,
+            deletedAt: true,
+          },
+        },
+      },
+    });
+    if (
+      !request ||
+      request.consumedAt ||
+      request.expiresAt <= new Date() ||
+      !request.user ||
+      request.user.deletedAt ||
+      request.user.status !== 'ACTIVE'
+    ) {
+      throw new HttpError(400, 'invalid_token', 'Confirmation link is invalid or expired');
+    }
+
+    // Race cover: somebody might have grabbed this address since the request.
+    const collision = await prisma.user.findFirst({
+      where: {
+        email: request.newEmail,
+        deletedAt: null,
+        NOT: { id: request.userId },
+      },
+      select: { id: true },
+    });
+    if (collision) {
+      throw new HttpError(
+        409,
+        'email_in_use',
+        'That email already belongs to another account.',
+      );
+    }
+
+    const oldEmail = request.user.email;
+    const now = new Date();
+
+    await prisma.$transaction(async (tx) => {
+      await tx.emailChangeRequest.update({
+        where: { id: request.id },
+        data: { consumedAt: now },
+      });
+      await tx.emailChangeRequest.updateMany({
+        where: {
+          userId: request.userId,
+          consumedAt: null,
+          id: { not: request.id },
+        },
+        data: { consumedAt: now },
+      });
+      await tx.user.update({
+        where: { id: request.userId },
+        data: {
+          email: request.newEmail,
+          // Sessions key off email implicitly via tokenVersion + the
+          // cached SessionUser email field. Bump so every cookie dies
+          // and the next auth fetches fresh.
+          tokenVersion: { increment: 1 },
+        },
+      });
+    });
+
+    invalidateUserCache(request.userId);
+
+    // Tell the old address — defensive notification, not a confirmation.
+    // Best-effort; don't fail the swap if the email send hiccups.
+    try {
+      await send({
+        channel: 'EMAIL',
+        recipient: { userId: request.userId, phone: null, email: oldEmail },
+        subject: 'Your Alto People email was changed',
+        body: [
+          `Hi,`,
+          ``,
+          `The email on this Alto People account was changed to ${request.newEmail}.`,
+          ``,
+          `If this was you, no action is needed. If you didn't make this change, contact your HR administrator immediately and reset your password — your existing sessions have already been signed out.`,
+          ``,
+          `— Alto People`,
+        ].join('\n'),
+      });
+    } catch (sendErr) {
+      console.error('[auth.email-change-confirm] notify-old send failed:', sendErr);
+    }
+
+    enqueueAudit(
+      {
+        actorUserId: request.userId,
+        clientId: request.user.clientId ?? null,
+        action: 'auth.email_changed',
+        entityType: 'User',
+        entityId: request.userId,
+        metadata: {
+          ip: req.ip ?? null,
+          userAgent: req.headers['user-agent'] ?? null,
+          fromEmail: oldEmail,
+          toEmail: request.newEmail,
+        },
+      },
+      'auth.email_changed',
+    );
+
     res.status(204).end();
   } catch (err) {
     next(err);
