@@ -23,8 +23,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
+import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
-import { Label, FormHint } from '@/components/ui/Label';
+import { Select } from '@/components/ui/Select';
 
 const TRACK_LABEL: Record<string, string> = {
   STANDARD: 'Standard',
@@ -56,13 +57,6 @@ const HIRE_ROLE_POSITION: Record<HireableRole, string | null> = {
   MARKETING_MANAGER: 'Marketing Manager',
   FINANCE_ACCOUNTANT: 'Finance / Accountant',
 };
-
-/** Shared <select> className — matches Input height/border/focus so the
- *  pickers don't read as "different controls" next to each other. */
-const SELECT_CX =
-  'mt-1 w-full h-10 rounded-md border border-navy-secondary bg-navy-secondary/40 text-white px-3 py-2 text-sm appearance-none bg-no-repeat bg-right pr-8 ' +
-  'focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold ' +
-  'disabled:opacity-50 disabled:cursor-not-allowed';
 
 interface Props {
   open: boolean;
@@ -228,177 +222,174 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
         ) : (
           <div className="space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <Label htmlFor="na-first" required>
-                  First name
-                </Label>
+              <Field label="First name" required>
+                {(p) => (
+                  <Input
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                    autoFocus
+                    {...p}
+                  />
+                )}
+              </Field>
+              <Field label="Last name" required>
+                {(p) => (
+                  <Input
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
+                    {...p}
+                  />
+                )}
+              </Field>
+            </div>
+
+            <Field
+              label="Email"
+              required
+              hint="The magic link goes here. Lower-cased on the server."
+            >
+              {(p) => (
                 <Input
-                  id="na-first"
-                  value={firstName}
-                  onChange={(e) => setFirstName(e.target.value)}
-                  autoFocus
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="new.hire@example.com"
+                  {...p}
                 />
-              </div>
-              <div>
-                <Label htmlFor="na-last" required>
-                  Last name
-                </Label>
-                <Input
-                  id="na-last"
-                  value={lastName}
-                  onChange={(e) => setLastName(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <div>
-              <Label htmlFor="na-email" required>
-                Email
-              </Label>
-              <Input
-                id="na-email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="new.hire@example.com"
-              />
-              <FormHint>The magic link goes here. Lower-cased on the server.</FormHint>
-            </div>
-
-            <div>
-              <Label htmlFor="na-hire-role" required>
-                Hire as
-              </Label>
-              <select
-                id="na-hire-role"
-                value={hireRole}
-                onChange={(e) => {
-                  const next = e.target.value as HireableRole;
-                  setHireRole(next);
-                  // Pre-fill position with the role label when HR picks a
-                  // management role and they haven't typed anything yet.
-                  // Don't clobber a value HR already entered.
-                  const prefill = HIRE_ROLE_POSITION[next];
-                  if (prefill && !position.trim()) setPosition(prefill);
-                }}
-                className={SELECT_CX}
-              >
-                {HIREABLE_ROLES.map((r) => (
-                  <option key={r} value={r}>
-                    {HIRE_ROLE_LABEL[r]}
-                  </option>
-                ))}
-              </select>
-              <FormHint>
-                Associate is the default. Pick a management role to onboard
-                a new manager via the same invite + checklist flow — they'll
-                land in the correct sidebar on first login.
-              </FormHint>
-            </div>
-
-            <div>
-              <Label htmlFor="na-client" required>
-                Client
-              </Label>
-              <select
-                id="na-client"
-                value={clientId}
-                onChange={(e) => setClientId(e.target.value)}
-                disabled={clients === null}
-                className={SELECT_CX}
-              >
-                <option value="">
-                  {clients === null ? 'Loading…' : 'Pick a client'}
-                </option>
-                {clients?.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                    {c.state ? ` · ${c.state}` : ''}
-                  </option>
-                ))}
-              </select>
-              {hireRole !== 'ASSOCIATE' && (
-                <FormHint>
-                  For management hires, pick the
-                  {' '}
-                  <span className="text-white">Alto HR — Internal Hires</span>
-                  {' '}
-                  client (or a specific client they'll oversee).
-                </FormHint>
               )}
-            </div>
+            </Field>
 
-            <div>
-              <Label htmlFor="na-template" required>
-                Onboarding template
-              </Label>
-              <select
-                id="na-template"
-                value={templateId}
-                onChange={(e) => setTemplateId(e.target.value)}
-                disabled={templates === null || !clientId}
-                className={SELECT_CX}
-              >
-                <option value="">
-                  {!clientId
-                    ? 'Pick a client first'
-                    : templates === null
-                      ? 'Loading…'
-                      : visibleTemplates.length === 0
-                        ? 'No templates available for this client'
-                        : 'Pick a template'}
-                </option>
-                {visibleTemplates.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name} · {TRACK_LABEL[t.track] ?? t.track}
-                    {t.clientId === null ? ' (global)' : ''}
+            <Field
+              label="Hire as"
+              required
+              hint="Associate is the default. Pick a management role to onboard a new manager via the same invite + checklist flow — they'll land in the correct sidebar on first login."
+            >
+              {(p) => (
+                <Select
+                  value={hireRole}
+                  onChange={(e) => {
+                    const next = e.target.value as HireableRole;
+                    setHireRole(next);
+                    // Pre-fill position with the role label when HR picks a
+                    // management role and they haven't typed anything yet.
+                    // Don't clobber a value HR already entered.
+                    const prefill = HIRE_ROLE_POSITION[next];
+                    if (prefill && !position.trim()) setPosition(prefill);
+                  }}
+                  {...p}
+                >
+                  {HIREABLE_ROLES.map((r) => (
+                    <option key={r} value={r}>
+                      {HIRE_ROLE_LABEL[r]}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+
+            <Field
+              label="Client"
+              required
+              hint={
+                hireRole !== 'ASSOCIATE' ? (
+                  <>
+                    For management hires, pick the{' '}
+                    <span className="text-white">Alto HR — Internal Hires</span>{' '}
+                    client (or a specific client they'll oversee).
+                  </>
+                ) : undefined
+              }
+            >
+              {(p) => (
+                <Select
+                  value={clientId}
+                  onChange={(e) => setClientId(e.target.value)}
+                  disabled={clients === null}
+                  {...p}
+                >
+                  <option value="">
+                    {clients === null ? 'Loading…' : 'Pick a client'}
                   </option>
-                ))}
-              </select>
-              <FormHint>
-                Global templates apply to any client; client-specific ones only show for that client.
-              </FormHint>
-            </div>
+                  {clients?.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                      {c.state ? ` · ${c.state}` : ''}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+
+            <Field
+              label="Onboarding template"
+              required
+              hint="Global templates apply to any client; client-specific ones only show for that client."
+            >
+              {(p) => (
+                <Select
+                  value={templateId}
+                  onChange={(e) => setTemplateId(e.target.value)}
+                  disabled={templates === null || !clientId}
+                  {...p}
+                >
+                  <option value="">
+                    {!clientId
+                      ? 'Pick a client first'
+                      : templates === null
+                        ? 'Loading…'
+                        : visibleTemplates.length === 0
+                          ? 'No templates available for this client'
+                          : 'Pick a template'}
+                  </option>
+                  {visibleTemplates.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} · {TRACK_LABEL[t.track] ?? t.track}
+                      {t.clientId === null ? ' (global)' : ''}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <Label htmlFor="na-position">Position</Label>
-                <Input
-                  id="na-position"
-                  value={position}
-                  onChange={(e) => setPosition(e.target.value)}
-                  placeholder="Server"
-                />
-              </div>
-              <div>
-                <Label htmlFor="na-start">Start date</Label>
-                <Input
-                  id="na-start"
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                />
-              </div>
+              <Field label="Position">
+                {(p) => (
+                  <Input
+                    value={position}
+                    onChange={(e) => setPosition(e.target.value)}
+                    placeholder="Server"
+                    {...p}
+                  />
+                )}
+              </Field>
+              <Field label="Start date">
+                {(p) => (
+                  <Input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    {...p}
+                  />
+                )}
+              </Field>
             </div>
 
-            <div>
-              <Label htmlFor="na-emp-type">Employment type</Label>
-              <select
-                id="na-emp-type"
-                value={employmentType}
-                onChange={(e) => setEmploymentType(e.target.value as EmploymentType)}
-                className={SELECT_CX}
-              >
-                <option value="W2_EMPLOYEE">W-2 employee</option>
-                <option value="CONTRACTOR_1099_INDIVIDUAL">1099 contractor (individual)</option>
-                <option value="CONTRACTOR_1099_BUSINESS">1099 contractor (business)</option>
-              </select>
-              <FormHint>
-                1099 contractors skip the W-4 task and are paid gross — no
-                federal/state withholding, no FICA/Medicare, no employer
-                payroll tax.
-              </FormHint>
-            </div>
+            <Field
+              label="Employment type"
+              hint="1099 contractors skip the W-4 task and are paid gross — no federal/state withholding, no FICA/Medicare, no employer payroll tax."
+            >
+              {(p) => (
+                <Select
+                  value={employmentType}
+                  onChange={(e) => setEmploymentType(e.target.value as EmploymentType)}
+                  {...p}
+                >
+                  <option value="W2_EMPLOYEE">W-2 employee</option>
+                  <option value="CONTRACTOR_1099_INDIVIDUAL">1099 contractor (individual)</option>
+                  <option value="CONTRACTOR_1099_BUSINESS">1099 contractor (business)</option>
+                </Select>
+              )}
+            </Field>
           </div>
         )}
 

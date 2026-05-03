@@ -13,8 +13,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
+import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
-import { Label, FormHint } from '@/components/ui/Label';
+import { Select } from '@/components/ui/Select';
 
 const STATUSES: ClientStatus[] = ['PROSPECT', 'ACTIVE', 'INACTIVE'];
 
@@ -78,57 +79,58 @@ export function NewClientDialog({ open, onOpenChange, onCreated }: Props) {
         </DialogHeader>
 
         <div className="space-y-3">
-          <div>
-            <Label htmlFor="nc-name" required>
-              Name
-            </Label>
-            <Input
-              id="nc-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              maxLength={120}
-              autoFocus
-            />
-          </div>
-          <div>
-            <Label htmlFor="nc-industry">Industry</Label>
-            <Input
-              id="nc-industry"
-              value={industry}
-              onChange={(e) => setIndustry(e.target.value)}
-              maxLength={80}
-              placeholder="e.g. Hospitality, Logistics"
-            />
-          </div>
-          <div>
-            <Label htmlFor="nc-status">Status</Label>
-            <select
-              id="nc-status"
-              value={status}
-              onChange={(e) => setStatus(e.target.value as ClientStatus)}
-              className="mt-1 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 text-white px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-            >
-              {STATUSES.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-            <FormHint>
-              PROSPECT is hidden from active-roster counts in dashboards.
-            </FormHint>
-          </div>
-          <div>
-            <Label htmlFor="nc-email">Contact email</Label>
-            <Input
-              id="nc-email"
-              type="email"
-              value={contactEmail}
-              onChange={(e) => setContactEmail(e.target.value)}
-              maxLength={254}
-              placeholder="ops@example.com"
-            />
-          </div>
+          <Field label="Name" required>
+            {(p) => (
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                maxLength={120}
+                autoFocus
+                {...p}
+              />
+            )}
+          </Field>
+          <Field label="Industry">
+            {(p) => (
+              <Input
+                value={industry}
+                onChange={(e) => setIndustry(e.target.value)}
+                maxLength={80}
+                placeholder="e.g. Hospitality, Logistics"
+                {...p}
+              />
+            )}
+          </Field>
+          <Field
+            label="Status"
+            hint="PROSPECT is hidden from active-roster counts in dashboards."
+          >
+            {(p) => (
+              <Select
+                value={status}
+                onChange={(e) => setStatus(e.target.value as ClientStatus)}
+                {...p}
+              >
+                {STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          <Field label="Contact email">
+            {(p) => (
+              <Input
+                type="email"
+                value={contactEmail}
+                onChange={(e) => setContactEmail(e.target.value)}
+                maxLength={254}
+                placeholder="ops@example.com"
+                {...p}
+              />
+            )}
+          </Field>
         </div>
 
         <DialogFooter>

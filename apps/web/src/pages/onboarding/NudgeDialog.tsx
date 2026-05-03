@@ -12,11 +12,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
+import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
-import { Label, FormHint } from '@/components/ui/Label';
 
 const TEXTAREA_CX =
-  'mt-1 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 text-white px-3 py-2 text-sm ' +
+  'w-full rounded-md border border-navy-secondary bg-navy-secondary/40 text-white px-3 py-2 text-sm ' +
   'focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold';
 
 interface Props {
@@ -114,35 +114,33 @@ export function NudgeDialog({
         </DialogHeader>
 
         <div className="space-y-3">
-          <div>
-            <Label htmlFor="nd-subject" required>
-              Subject
-            </Label>
-            <Input
-              id="nd-subject"
-              value={subject}
-              onChange={(e) => setSubject(e.target.value)}
-              maxLength={200}
-              autoFocus
-            />
-          </div>
-          <div>
-            <Label htmlFor="nd-body" required>
-              Body
-            </Label>
-            <textarea
-              id="nd-body"
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              rows={9}
-              maxLength={4000}
-              className={TEXTAREA_CX}
-            />
-            <FormHint>
-              Plain text. Logged to the application audit and the associate's
-              notification inbox.
-            </FormHint>
-          </div>
+          <Field label="Subject" required>
+            {(p) => (
+              <Input
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                maxLength={200}
+                autoFocus
+                {...p}
+              />
+            )}
+          </Field>
+          <Field
+            label="Body"
+            required
+            hint="Plain text. Logged to the application audit and the associate's notification inbox."
+          >
+            {(p) => (
+              <textarea
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                rows={9}
+                maxLength={4000}
+                className={TEXTAREA_CX}
+                {...p}
+              />
+            )}
+          </Field>
         </div>
 
         <DialogFooter>
