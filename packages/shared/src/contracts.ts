@@ -3234,4 +3234,25 @@ export const MfaChallengeResponseSchema = z.object({
 });
 export type MfaChallengeResponse = z.infer<typeof MfaChallengeResponseSchema>;
 
+/** Snapshot of the caller's MFA state for the Settings card. */
+export const MfaStatusResponseSchema = z.object({
+  enrolled: z.boolean(),
+  enabledAt: z.string().datetime().nullable(),
+  remainingRecoveryCodes: z.number().int().nonnegative(),
+});
+export type MfaStatusResponse = z.infer<typeof MfaStatusResponseSchema>;
+
+/** Regenerate-codes input. Same password-reauth contract as disable —
+ *  rotating recovery codes is destructive (existing codes stop working) so
+ *  we hold it to the same bar. */
+export const MfaRegenerateInputSchema = z.object({
+  currentPassword: z.string().min(1).max(256),
+});
+export type MfaRegenerateInput = z.infer<typeof MfaRegenerateInputSchema>;
+
+export const MfaRegenerateResponseSchema = z.object({
+  recoveryCodes: z.array(z.string().min(1)).length(MFA_RECOVERY_CODE_COUNT),
+});
+export type MfaRegenerateResponse = z.infer<typeof MfaRegenerateResponseSchema>;
+
 

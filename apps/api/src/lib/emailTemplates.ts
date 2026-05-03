@@ -1023,6 +1023,107 @@ export interface OnboardingReminderOpts {
   daysRemaining?: number | null;
   magicLink: string;
 }
+/* ---------------- MFA SECURITY EVENTS ----------------------- */
+
+export interface MfaEventOpts {
+  firstName: string;
+  email: string;
+  occurredAt: string;
+}
+
+export function mfaEnabledTemplate(opts: MfaEventOpts): EmailTemplate {
+  const refId = formatRef();
+  const subject = `[Security] Two-step sign-in turned on`;
+  const heading = `Two-step sign-in turned on`;
+  const intro = `Two-step sign-in is now active on your Alto HR account. Future sign-ins will require a 6-digit code from your authenticator app.`;
+  const dataBlock: DataRow[] = [
+    { label: 'Account', value: opts.email },
+    { label: 'Activated at', value: opts.occurredAt },
+  ];
+  const ifNotYou = `If you did not turn this on, your account may be compromised. Sign in immediately, change your password, and turn off two-step sign-in from /settings to investigate.`;
+  return {
+    subject,
+    text: composeText({
+      greeting: `${opts.firstName},`,
+      intro,
+      dataBlock,
+      body: [ifNotYou],
+      signatory: { kind: 'system' },
+      refId,
+    }),
+    html: wrapHtml({
+      heading,
+      intro: `${escapeHtml(opts.firstName)}, ${escapeHtml(intro)}`,
+      dataBlock,
+      body: [escapeHtml(ifNotYou)],
+      signatory: { kind: 'system' },
+      refId,
+    }),
+  };
+}
+
+export function mfaDisabledTemplate(opts: MfaEventOpts): EmailTemplate {
+  const refId = formatRef();
+  const subject = `[Security] Two-step sign-in turned off`;
+  const heading = `Two-step sign-in turned off`;
+  const intro = `Two-step sign-in has been removed from your Alto HR account. Future sign-ins will only require your password.`;
+  const dataBlock: DataRow[] = [
+    { label: 'Account', value: opts.email },
+    { label: 'Removed at', value: opts.occurredAt },
+  ];
+  const ifNotYou = `If you did not turn this off, your account may be compromised. Sign in immediately, change your password, and re-enable two-step sign-in from /settings.`;
+  return {
+    subject,
+    text: composeText({
+      greeting: `${opts.firstName},`,
+      intro,
+      dataBlock,
+      body: [ifNotYou],
+      signatory: { kind: 'system' },
+      refId,
+    }),
+    html: wrapHtml({
+      heading,
+      intro: `${escapeHtml(opts.firstName)}, ${escapeHtml(intro)}`,
+      dataBlock,
+      body: [escapeHtml(ifNotYou)],
+      signatory: { kind: 'system' },
+      refId,
+    }),
+  };
+}
+
+export function mfaCodesRegeneratedTemplate(opts: MfaEventOpts): EmailTemplate {
+  const refId = formatRef();
+  const subject = `[Security] Recovery codes regenerated`;
+  const heading = `Recovery codes regenerated`;
+  const intro = `Your two-step sign-in recovery codes were regenerated. Any previously-issued recovery codes have been invalidated and will no longer work.`;
+  const dataBlock: DataRow[] = [
+    { label: 'Account', value: opts.email },
+    { label: 'Regenerated at', value: opts.occurredAt },
+  ];
+  const ifNotYou = `If you did not regenerate your codes, your account may be compromised. Sign in immediately, change your password, and review your sign-in history.`;
+  return {
+    subject,
+    text: composeText({
+      greeting: `${opts.firstName},`,
+      intro,
+      dataBlock,
+      body: [ifNotYou],
+      signatory: { kind: 'system' },
+      refId,
+    }),
+    html: wrapHtml({
+      heading,
+      intro: `${escapeHtml(opts.firstName)}, ${escapeHtml(intro)}`,
+      dataBlock,
+      body: [escapeHtml(ifNotYou)],
+      signatory: { kind: 'system' },
+      refId,
+    }),
+  };
+}
+
 export function onboardingReminderTemplate(opts: OnboardingReminderOpts): EmailTemplate {
   const refId = formatRef();
   const subject = `[Reminder] Onboarding completion required — ${opts.clientName}`;

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { AtSign, Bell, Camera, CheckCircle2, Clock, Copy, Download, History, KeyRound, Lock, LogOut, ShieldAlert, ShieldCheck, Upload, User as UserIcon } from 'lucide-react';
+import { AtSign, Bell, Camera, CheckCircle2, Clock, Copy, Download, History, KeyRound, Lock, LogOut, RefreshCw, ShieldAlert, ShieldCheck, Upload, User as UserIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import QRCode from 'qrcode';
-import type { MfaEnrollStartResponse } from '@alto-people/shared';
+import { MFA_RECOVERY_CODE_COUNT, type MfaEnrollStartResponse } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
@@ -12,8 +12,10 @@ import {
   disableMfa,
   downloadDataExport,
   getLoginHistory,
+  getMfaStatus,
   getNotificationPreferences,
   patchNotificationPreference,
+  regenerateMfaCodes,
   requestEmailChange,
   revokeOtherSessions,
   startMfaEnrollment,
@@ -139,8 +141,33 @@ function MfaCard() {
   const [busy, setBusy] = useState(false);
   const [disablePassword, setDisablePassword] = useState('');
   const [showDisable, setShowDisable] = useState(false);
+  const [showRegenerate, setShowRegenerate] = useState(false);
+  const [regeneratePassword, setRegeneratePassword] = useState('');
+  const [regeneratedCodes, setRegeneratedCodes] = useState<string[] | null>(null);
+  const [remaining, setRemaining] = useState<number | null>(null);
 
   const enabled = user?.mfaEnabled ?? false;
+
+  // Pull the recovery-code count when the user is enrolled. This drives the
+  // "X of 8 remaining" indicator and re-fetches after regenerate so the new
+  // count (8 again) shows up without a page refresh.
+  useEffect(() => {
+    if (!enabled) {
+      setRemaining(null);
+      return;
+    }
+    let cancelled = false;
+    getMfaStatus()
+      .then((s) => {
+        if (!cancelled) setRemaining(s.remainingRecoveryCodes);
+      })
+      .catch(() => {
+        if (!cancelled) setRemaining(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, regeneratedCodes]);
 
   const onEnable = async () => {
     setBusy(true);
@@ -210,6 +237,7 @@ function MfaCard() {
       toast.success('Two-step sign-in is off.');
       setShowDisable(false);
       setDisablePassword('');
+      setRegeneratedCodes(null);
       await refreshUser();
     } catch (err) {
       const apiErr = err instanceof ApiError ? err : null;
@@ -217,6 +245,32 @@ function MfaCard() {
         toast.error('Current password is incorrect.');
       } else {
         toast.error(apiErr?.message ?? 'Could not disable.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onRegenerate = async () => {
+    if (regeneratePassword.length < 1) {
+      toast.error('Enter your current password.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await regenerateMfaCodes({ currentPassword: regeneratePassword });
+      setRegeneratedCodes(res.recoveryCodes);
+      setShowRegenerate(false);
+      setRegeneratePassword('');
+      toast.success('Recovery codes regenerated.');
+    } catch (err) {
+      const apiErr = err instanceof ApiError ? err : null;
+      if (apiErr?.code === 'invalid_credentials') {
+        toast.error('Current password is incorrect.');
+      } else if (apiErr?.code === 'mfa_not_enrolled') {
+        toast.error('Two-step sign-in is not turned on.');
+      } else {
+        toast.error(apiErr?.message ?? 'Could not regenerate codes.');
       }
     } finally {
       setBusy(false);
@@ -348,10 +402,55 @@ function MfaCard() {
           </div>
         ) : enabled ? (
           <div className="space-y-3">
-            <div className="flex items-center gap-2 text-sm text-white">
-              <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-              Two-step sign-in is on.
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-sm text-white">
+                <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                Two-step sign-in is on.
+              </div>
+              {remaining !== null && (
+                <span
+                  className={`text-xs ${
+                    remaining <= 2 ? 'text-amber-300' : 'text-silver'
+                  }`}
+                >
+                  {remaining} of {MFA_RECOVERY_CODE_COUNT} recovery codes remaining
+                </span>
+              )}
             </div>
+            {regeneratedCodes && (
+              <div className="space-y-2 rounded-md border border-gold/40 bg-gold/10 p-3">
+                <div className="text-xs text-white">
+                  <strong className="text-gold">Save these codes now.</strong>{' '}
+                  Your previous codes have been invalidated. Each new code works
+                  once.
+                </div>
+                <ul className="grid grid-cols-2 gap-1.5 rounded-md bg-navy-secondary/60 p-3 font-mono text-xs text-white">
+                  {regeneratedCodes.map((c) => (
+                    <li key={c}>{c}</li>
+                  ))}
+                </ul>
+                <div className="flex items-center justify-between">
+                  <FormHint>Print or store in a password manager.</FormHint>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      onClick={() => copy(regeneratedCodes.join('\n'), 'Codes')}
+                      type="button"
+                    >
+                      <Copy className="mr-1.5 h-3.5 w-3.5" />
+                      Copy all
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      onClick={() => setRegeneratedCodes(null)}
+                      type="button"
+                    >
+                      I've saved them
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
             {showDisable ? (
               <div className="space-y-3 rounded-md border border-navy-secondary bg-navy-secondary/30 p-3">
                 <div>
@@ -386,8 +485,52 @@ function MfaCard() {
                   </Button>
                 </div>
               </div>
+            ) : showRegenerate ? (
+              <div className="space-y-3 rounded-md border border-navy-secondary bg-navy-secondary/30 p-3">
+                <div>
+                  <Label htmlFor="mfa-regen-pw" required>
+                    Current password
+                  </Label>
+                  <Input
+                    id="mfa-regen-pw"
+                    type="password"
+                    autoComplete="current-password"
+                    value={regeneratePassword}
+                    onChange={(e) => setRegeneratePassword(e.target.value)}
+                  />
+                  <FormHint>
+                    Regenerating issues 8 fresh codes and invalidates every
+                    code currently on your printout.
+                  </FormHint>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button
+                    variant="ghost"
+                    onClick={() => {
+                      setShowRegenerate(false);
+                      setRegeneratePassword('');
+                    }}
+                    disabled={busy}
+                  >
+                    Cancel
+                  </Button>
+                  <Button onClick={onRegenerate} loading={busy}>
+                    Regenerate codes
+                  </Button>
+                </div>
+              </div>
             ) : (
-              <div className="flex justify-end">
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setShowRegenerate(true);
+                    setRegeneratedCodes(null);
+                  }}
+                >
+                  <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                  Regenerate codes
+                </Button>
                 <Button variant="ghost" onClick={() => setShowDisable(true)}>
                   Turn off two-step sign-in
                 </Button>

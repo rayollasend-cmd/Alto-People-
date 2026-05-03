@@ -4,6 +4,9 @@ import type {
   MfaDisableInput,
   MfaEnrollConfirmInput,
   MfaEnrollStartResponse,
+  MfaRegenerateInput,
+  MfaRegenerateResponse,
+  MfaStatusResponse,
   NotificationCategory,
   NotificationPreferenceEntry,
   RequestEmailChangeInput,
@@ -104,6 +107,19 @@ export function confirmMfaEnrollment(body: MfaEnrollConfirmInput): Promise<void>
 export function disableMfa(body: MfaDisableInput): Promise<void> {
   return apiFetch<void>('/auth/me/mfa', {
     method: 'DELETE',
+    body,
+  });
+}
+
+export function getMfaStatus(): Promise<MfaStatusResponse> {
+  return apiFetch<MfaStatusResponse>('/auth/me/mfa/status');
+}
+
+export function regenerateMfaCodes(
+  body: MfaRegenerateInput,
+): Promise<MfaRegenerateResponse> {
+  return apiFetch<MfaRegenerateResponse>('/auth/me/mfa/recovery-codes/regenerate', {
+    method: 'POST',
     body,
   });
 }

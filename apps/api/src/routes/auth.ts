@@ -61,7 +61,12 @@ import {
   EMAIL_CHANGE_TTL_SECONDS,
 } from '../lib/emailChangeToken.js';
 import { send } from '../lib/notifications.js';
-import { passwordResetTemplate } from '../lib/emailTemplates.js';
+import {
+  mfaCodesRegeneratedTemplate,
+  mfaDisabledTemplate,
+  mfaEnabledTemplate,
+  passwordResetTemplate,
+} from '../lib/emailTemplates.js';
 import { HttpError } from '../middleware/error.js';
 import archiver from 'archiver';
 import { buildDataExport } from '../lib/dataExport.js';
@@ -78,6 +83,7 @@ import {
   MfaChallengeInputSchema,
   MfaDisableInputSchema,
   MfaEnrollConfirmInputSchema,
+  MfaRegenerateInputSchema,
 } from '@alto-people/shared';
 import { getBrandingSync } from '../lib/branding.js';
 
@@ -85,6 +91,45 @@ import { getBrandingSync } from '../lib/branding.js';
 // the current window) so users with mildly drifted phone clocks still
 // verify on the first try.
 const TOTP_EPOCH_TOLERANCE = MFA_TOTP_PERIOD_SECONDS;
+
+/**
+ * Fire a security email about an MFA state change. Best-effort: a Resend
+ * hiccup must not break the user-facing operation, so failures only log.
+ * The template choice is the caller's responsibility — this just looks up
+ * the first name for the greeting and dispatches.
+ */
+type MfaEventTemplate = (opts: {
+  firstName: string;
+  email: string;
+  occurredAt: string;
+}) => { subject: string; text: string; html: string };
+
+async function sendMfaSecurityEmail(
+  userId: string,
+  email: string,
+  template: MfaEventTemplate,
+  context: string,
+): Promise<void> {
+  try {
+    const firstName =
+      (await prisma.user.findUnique({
+        where: { id: userId },
+        select: { associate: { select: { firstName: true } } },
+      }))?.associate?.firstName ?? 'there';
+    const occurredAt =
+      new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+    const tpl = template({ firstName, email, occurredAt });
+    await send({
+      channel: 'EMAIL',
+      recipient: { userId, phone: null, email },
+      subject: tpl.subject,
+      body: tpl.text,
+      html: tpl.html,
+    });
+  } catch (err) {
+    console.error(`[auth.${context}] security email send failed:`, err);
+  }
+}
 
 export const authRouter = Router();
 
@@ -1198,11 +1243,123 @@ authRouter.post('/me/mfa/enroll/confirm', requireAuth, async (req, res, next) =>
       'auth.mfa_enabled'
     );
 
+    void sendMfaSecurityEmail(userId, req.user!.email, mfaEnabledTemplate, 'mfa_enabled');
+
     res.status(204).end();
   } catch (err) {
     next(err);
   }
 });
+
+/**
+ * GET /auth/me/mfa/status
+ *
+ * Snapshot of the caller's MFA state for the Settings card. The card
+ * polls this when it mounts (and after enroll/disable/regenerate) so the
+ * "X of 8 codes remaining" indicator stays current. Kept off /auth/me on
+ * purpose — every authenticated request hits attachUser, and counting
+ * recovery codes there would add a query to the hot path.
+ */
+authRouter.get('/me/mfa/status', requireAuth, async (req, res, next) => {
+  try {
+    const userId = req.user!.id;
+    const [user, remaining] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: { mfaEnabledAt: true },
+      }),
+      prisma.mfaRecoveryCode.count({
+        where: { userId, usedAt: null },
+      }),
+    ]);
+    res.json({
+      enrolled: (user?.mfaEnabledAt ?? null) !== null,
+      enabledAt: user?.mfaEnabledAt?.toISOString() ?? null,
+      remainingRecoveryCodes: remaining,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /auth/me/mfa/recovery-codes/regenerate { currentPassword }
+ *
+ * Issue a fresh batch of 8 recovery codes WITHOUT rotating the TOTP
+ * secret. Authenticator apps keep working. The previous codes are
+ * deleted (used or unused) — by design, so a leaked printed sheet is
+ * neutralised in one click.
+ *
+ * Requires password reauth (same bar as disable). Only valid when the
+ * user is fully enrolled — calling this mid-enrollment or while not
+ * enrolled returns 409 to avoid creating orphan codes.
+ */
+authRouter.post(
+  '/me/mfa/recovery-codes/regenerate',
+  requireAuth,
+  async (req, res, next) => {
+    try {
+      const parsed = MfaRegenerateInputSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+      }
+      const userId = req.user!.id;
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, clientId: true, passwordHash: true, mfaEnabledAt: true },
+      });
+      if (!user || !user.passwordHash) {
+        throw new HttpError(401, 'invalid_credentials', 'Current password is incorrect');
+      }
+      const ok = await verifyPassword(user.passwordHash, parsed.data.currentPassword);
+      if (!ok) {
+        throw new HttpError(401, 'invalid_credentials', 'Current password is incorrect');
+      }
+      if (!user.mfaEnabledAt) {
+        throw new HttpError(409, 'mfa_not_enrolled', 'Two-step sign-in is not turned on');
+      }
+
+      const codes: string[] = [];
+      const codeRows: { userId: string; codeHash: string }[] = [];
+      for (let i = 0; i < MFA_RECOVERY_CODE_COUNT; i++) {
+        const code = generateRecoveryCode();
+        codes.push(code);
+        codeRows.push({ userId, codeHash: hashRecoveryCode(code) });
+      }
+
+      await prisma.$transaction([
+        prisma.mfaRecoveryCode.deleteMany({ where: { userId } }),
+        prisma.mfaRecoveryCode.createMany({ data: codeRows }),
+      ]);
+
+      enqueueAudit(
+        {
+          actorUserId: userId,
+          clientId: user.clientId ?? null,
+          action: 'auth.mfa_codes_regenerated',
+          entityType: 'User',
+          entityId: userId,
+          metadata: {
+            ip: req.ip ?? null,
+            userAgent: req.headers['user-agent'] ?? null,
+          },
+        },
+        'auth.mfa_codes_regenerated'
+      );
+
+      void sendMfaSecurityEmail(
+        userId,
+        req.user!.email,
+        mfaCodesRegeneratedTemplate,
+        'mfa_codes_regenerated',
+      );
+
+      res.json({ recoveryCodes: codes });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 /**
  * DELETE /auth/me/mfa { currentPassword }
@@ -1260,6 +1417,8 @@ authRouter.delete('/me/mfa', requireAuth, async (req, res, next) => {
       },
       'auth.mfa_disabled'
     );
+
+    void sendMfaSecurityEmail(userId, req.user!.email, mfaDisabledTemplate, 'mfa_disabled');
 
     res.status(204).end();
   } catch (err) {
