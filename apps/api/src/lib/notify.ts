@@ -38,7 +38,11 @@
  * asserting on the Notification table — same pattern as audit.ts.
  */
 import type { PrismaClient } from '@prisma/client';
-import { rolesWithCapability } from '@alto-people/shared';
+import {
+  NOTIFICATION_CATEGORIES,
+  rolesWithCapability,
+  type NotificationCategory,
+} from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { send } from './notifications.js';
 import { onboardingCompleteTemplate } from './emailTemplates.js';
@@ -48,6 +52,50 @@ import { env } from '../config/env.js';
 // Capability-based (not a hardcoded role list) so a future role gaining
 // manage:onboarding automatically gets in the loop without code changes here.
 const ONBOARDING_ADMIN_ROLES = rolesWithCapability('manage:onboarding');
+
+const MANDATORY_CATEGORIES = new Set<NotificationCategory>(
+  NOTIFICATION_CATEGORIES.filter((c) => c.mandatory).map((c) => c.key),
+);
+
+/**
+ * Map the route-level category strings (e.g. 'onboarding.invite_reminder',
+ * 'swap_peer_request') down to the user-facing bucket keys exposed in
+ * /settings. Anything we don't recognise falls through to null, which the
+ * opt-out check treats as "always send" (defensive — better to over-deliver
+ * a known event than silently drop one because the bucket map drifted).
+ *
+ * Adding a new bucket: extend NOTIFICATION_CATEGORIES in shared/contracts
+ * AND add the matching prefix here.
+ */
+function bucketForRawCategory(raw: string | undefined): NotificationCategory | null {
+  if (!raw) return null;
+  if (raw === 'discipline') return 'discipline';
+  if (raw === 'probation') return 'probation';
+  if (raw === 'documents') return 'documents';
+  if (raw === 'time-off') return 'time_off';
+  if (raw === 'scheduling' || raw.startsWith('shift_')) return 'scheduling';
+  if (raw.startsWith('swap_')) return 'shift_swaps';
+  if (raw.startsWith('onboarding')) return 'onboarding';
+  return null;
+}
+
+/**
+ * True iff the user has explicitly muted the bucket this raw category
+ * resolves to. Always false for mandatory buckets and unknown raw
+ * strings — see bucketForRawCategory comment.
+ */
+async function isEmailMutedForCategory(
+  userId: string,
+  rawCategory: string | undefined,
+): Promise<boolean> {
+  const bucket = bucketForRawCategory(rawCategory);
+  if (!bucket || MANDATORY_CATEGORIES.has(bucket)) return false;
+  const pref = await prisma.notificationPreference.findUnique({
+    where: { userId_category: { userId, category: bucket } },
+    select: { emailEnabled: true },
+  });
+  return pref ? !pref.emailEnabled : false;
+}
 
 const inFlight: Set<Promise<unknown>> = new Set();
 
@@ -153,12 +201,17 @@ export function notifyUser(
         },
       });
       // Email is best-effort and fired in parallel via its own track().
+      // Skip the send if the user has muted this category bucket; the
+      // IN_APP row above always lands so the bell still surfaces it.
       const u = await prisma.user.findUnique({
         where: { id: userId },
         select: { email: true, status: true },
       });
       if (u && u.email && u.status === 'ACTIVE') {
-        void sendEmailNotification(userId, u.email, opts);
+        const muted = await isEmailMutedForCategory(userId, opts.category);
+        if (!muted) {
+          void sendEmailNotification(userId, u.email, opts);
+        }
       }
     })().catch((err: unknown) => {
       console.warn('[notify] notifyUser failed:', err instanceof Error ? err.message : err);
@@ -200,8 +253,13 @@ export function notifyAllAdmins(
           sentAt: now,
         })),
       });
+      // Honour each recipient's per-category mute. Looked up serially
+      // before the (still-parallel) sends fire — N+1 against a small N
+      // (admin role count, typically ≤10) and indexed on (userId, category).
       for (const u of recipients) {
-        if (u.email) void sendEmailNotification(u.id, u.email, opts);
+        if (!u.email) continue;
+        const muted = await isEmailMutedForCategory(u.id, opts.category);
+        if (!muted) void sendEmailNotification(u.id, u.email, opts);
       }
     })().catch((err: unknown) => {
       console.warn('[notify] notifyAllAdmins failed:', err instanceof Error ? err.message : err);

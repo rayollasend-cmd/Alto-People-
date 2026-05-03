@@ -1,5 +1,7 @@
 import type {
   ChangePasswordInput,
+  NotificationCategory,
+  NotificationPreferenceEntry,
   SupportedTimezone,
   UpdateProfileInput,
 } from '@alto-people/shared';
@@ -46,5 +48,23 @@ export function updateTimezone(timezone: SupportedTimezone | null): Promise<void
   return apiFetch<void>('/auth/me/timezone', {
     method: 'PATCH',
     body: { timezone },
+  });
+}
+
+export function getNotificationPreferences(): Promise<{
+  entries: NotificationPreferenceEntry[];
+}> {
+  return apiFetch<{ entries: NotificationPreferenceEntry[] }>(
+    '/auth/me/notification-preferences',
+  );
+}
+
+export function patchNotificationPreference(
+  category: NotificationCategory,
+  emailEnabled: boolean,
+): Promise<void> {
+  return apiFetch<void>('/auth/me/notification-preferences', {
+    method: 'PATCH',
+    body: { category, emailEnabled },
   });
 }
