@@ -11,6 +11,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -161,15 +162,16 @@ export function BillingHome() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="rounded-md border border-dashed border-navy-secondary p-6 text-center">
-                <div className="text-silver text-sm">No payment method on file.</div>
-                <div className="text-silver/60 text-xs mt-1">
-                  Stripe integration coming soon.
-                </div>
-                <Button variant="outline" disabled className="mt-3">
-                  Add payment method
-                </Button>
-              </div>
+              <EmptyState
+                icon={CreditCard}
+                title="No payment method on file"
+                description="Stripe integration coming soon."
+                action={
+                  <Button variant="outline" disabled>
+                    Add payment method
+                  </Button>
+                }
+              />
             </CardContent>
           </Card>
 
@@ -185,13 +187,16 @@ export function BillingHome() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="rounded-md border border-dashed border-navy-secondary p-6 text-center">
-                <div className="text-silver text-sm">No invoices yet.</div>
-                <div className="text-silver/60 text-xs mt-1">
-                  Past invoices were sent by email — check with{' '}
-                  {supportEmail ?? 'your account manager'} for copies.
-                </div>
-              </div>
+              <EmptyState
+                icon={FileText}
+                title="No invoices yet"
+                description={
+                  <>
+                    Past invoices were sent by email — check with{' '}
+                    {supportEmail ?? 'your account manager'} for copies.
+                  </>
+                }
+              />
             </CardContent>
           </Card>
         </div>
