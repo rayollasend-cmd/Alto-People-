@@ -122,7 +122,9 @@ describe('Notification hooks', () => {
       where: { recipientUserId: { in: w.allAdminIds }, category: 'documents', channel: 'IN_APP' },
     });
     expect(adminInApp).toHaveLength(w.allAdminIds.length);
-    expect(adminInApp[0].body).toMatch(/uploaded.*id/i);
+    // Match against the structured data block produced by documentUploadedTemplate.
+    expect(adminInApp[0].body).toMatch(/Document type/i);
+    expect(adminInApp[0].body).toMatch(/license\.png/);
 
     // And one EMAIL row per admin.
     const adminEmails = await prisma.notification.findMany({
@@ -131,6 +133,9 @@ describe('Notification hooks', () => {
     expect(adminEmails).toHaveLength(w.allAdminIds.length);
     expect(adminEmails.every((n) => n.status === 'SENT')).toBe(true);
     expect(adminEmails.every((n) => n.recipientEmail !== null)).toBe(true);
+    // Every email must include the standard signature line, regardless of template.
+    expect(adminEmails.every((n) => n.body.includes('CONFIDENTIAL'))).toBe(true);
+    expect(adminEmails.every((n) => n.body.includes('Reference: ALT-'))).toBe(true);
   });
 
   it('document rejected → notifies the associate (not HR)', async () => {
@@ -156,7 +161,10 @@ describe('Notification hooks', () => {
       where: { recipientUserId: w.associateUser.id, category: 'documents', channel: 'IN_APP' },
     });
     expect(assocInApp).toHaveLength(1);
-    expect(assocInApp[0].body).toMatch(/rejected.*blurry/i);
+    // The new template surfaces the rejection reason in a structured Reason
+    // row instead of inline prose. Assert the reason text appears anywhere.
+    expect(assocInApp[0].body).toMatch(/blurry/);
+    expect(assocInApp[0].body.toLowerCase()).toContain('re-upload');
 
     const assocEmail = await prisma.notification.findMany({
       where: { recipientUserId: w.associateUser.id, category: 'documents', channel: 'EMAIL' },
@@ -164,7 +172,7 @@ describe('Notification hooks', () => {
     expect(assocEmail).toHaveLength(1);
     expect(assocEmail[0].status).toBe('SENT');
     expect(assocEmail[0].recipientEmail).toBe(w.associateUser.email);
-    expect(assocEmail[0].body).toMatch(/rejected.*blurry/i);
+    expect(assocEmail[0].body).toMatch(/blurry/);
 
     // The associate's manager also gets a copy (bell + email) so they know
     // their direct report is blocked on a re-upload.
@@ -235,7 +243,11 @@ describe('Notification hooks', () => {
       where: { recipientUserId: w.associateUser.id, category: 'onboarding', channel: 'IN_APP' },
     });
     expect(inApp).toHaveLength(1);
-    expect(inApp[0].body).toMatch(/declined.*background check/i);
+    // Template surfaces "Reason on file: Failed background check" in the
+    // structured data block; assert the reason text rather than coupling
+    // to a specific prose phrasing.
+    expect(inApp[0].body).toMatch(/Failed background check/i);
+    expect(inApp[0].body).toMatch(/not be moving forward/i);
 
     const email = await prisma.notification.findMany({
       where: { recipientUserId: w.associateUser.id, category: 'onboarding', channel: 'EMAIL' },
@@ -243,9 +255,9 @@ describe('Notification hooks', () => {
     expect(email).toHaveLength(1);
     expect(email[0].status).toBe('SENT');
     expect(email[0].recipientEmail).toBe(w.associateUser.email);
-    expect(email[0].body).toMatch(/declined.*background check/i);
+    expect(email[0].body).toMatch(/Failed background check/i);
 
-    // Manager copy.
+    // Manager copy (still uses the simpler prose template).
     const mgrInApp = await prisma.notification.findMany({
       where: { recipientUserId: w.managerUser.id, category: 'onboarding', channel: 'IN_APP' },
     });

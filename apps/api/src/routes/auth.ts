@@ -42,6 +42,7 @@ import {
   PASSWORD_RESET_TTL_SECONDS,
 } from '../lib/passwordResetToken.js';
 import { send } from '../lib/notifications.js';
+import { passwordResetTemplate } from '../lib/emailTemplates.js';
 import { HttpError } from '../middleware/error.js';
 
 export const authRouter = Router();
@@ -521,27 +522,27 @@ authRouter.post(
         });
 
         const resetUrl = `${env.APP_BASE_URL}/reset-password/${raw}`;
-        const subject = 'Reset your Alto People password';
-        const body = [
-          `Hi,`,
-          ``,
-          `Someone (hopefully you) asked to reset the password on your Alto People account (${user.email}).`,
-          ``,
-          `Open this link to set a new password — it works once and expires in 1 hour:`,
-          ``,
-          resetUrl,
-          ``,
-          `If you didn't request this, you can ignore this email — your password stays the same.`,
-          ``,
-          `— Alto People`,
-        ].join('\n');
+        // Best-effort first-name lookup for the greeting; falls back to
+        // "there" if the user isn't an associate (e.g. an HR account).
+        const firstName =
+          (await prisma.user.findUnique({
+            where: { id: user.id },
+            select: { associate: { select: { firstName: true } } },
+          }))?.associate?.firstName ?? 'there';
+        const tpl = passwordResetTemplate({
+          firstName,
+          email: user.email,
+          requestedAt: new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC',
+          resetLink: resetUrl,
+        });
 
         try {
           await send({
             channel: 'EMAIL',
             recipient: { userId: user.id, phone: null, email: user.email },
-            subject,
-            body,
+            subject: tpl.subject,
+            body: tpl.text,
+            html: tpl.html,
           });
         } catch (sendErr) {
           // Don't surface to the client (see enumeration note above) but

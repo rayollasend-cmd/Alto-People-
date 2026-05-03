@@ -110,7 +110,9 @@ describe('runInviteReminderSweep', () => {
     expect(notif.status).toBe('SENT');
     expect(notif.body).toContain('Sunset Resort');
     expect(notif.body).toContain('/accept-invite/');
-    expect(notif.body).toMatch(/Hi Riley,/);
+    // Template addresses the recipient by first name (just "Riley," in the
+    // greeting line, no "Hi" prefix per the polished template).
+    expect(notif.body).toMatch(/^Riley,/m);
   });
 
   it('skips tokens younger than the 48h threshold', async () => {
@@ -199,7 +201,10 @@ describe('sendReminderForUser (manual mode)', () => {
     const notif = await prisma.notification.findFirstOrThrow({
       where: { recipientUserId: user.id, category: 'onboarding.invite_reminder' },
     });
-    expect(notif.subject).toMatch(/Your new onboarding link/);
+    // Manual resends use the standard invite template so the subject is
+    // the same "[Action Required] Complete your onboarding…" copy a brand
+    // new invitee receives — not a "reminder" subject.
+    expect(notif.subject).toMatch(/\[Action Required\] Complete your onboarding/);
     expect(notif.body).toContain(result.rawToken);
   });
 

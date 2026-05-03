@@ -21,6 +21,12 @@ export interface SendInput {
   recipient: { userId: string | null; phone: string | null; email: string | null };
   subject: string | null;
   body: string;
+  /**
+   * EMAIL-only. When provided, sent to Resend alongside `body` (text fallback).
+   * Most modern clients render the HTML; the text body is the deliverability
+   * fallback and what spam classifiers read.
+   */
+  html?: string;
   /** EMAIL-only. Resend supports attachments; in stub mode we log size + name. */
   attachments?: SendAttachment[];
 }
@@ -79,6 +85,12 @@ async function sendEmail(input: SendInput): Promise<{ externalRef: string | null
       subject: input.subject ?? '(no subject)',
       text: input.body,
     };
+    if (input.html) {
+      payload.html = input.html;
+    }
+    if (env.RESEND_REPLY_TO) {
+      payload.reply_to = env.RESEND_REPLY_TO;
+    }
     if (input.attachments && input.attachments.length > 0) {
       payload.attachments = input.attachments.map((a) => ({
         filename: a.filename,

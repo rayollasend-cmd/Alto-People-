@@ -1,9 +1,15 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { ROLE_LABELS } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { notifyAssociate, notifyManager } from '../lib/notify.js';
+import {
+  disciplineAssociateTemplate,
+  disciplineManagerTemplate,
+} from '../lib/emailTemplates.js';
+import { env } from '../config/env.js';
 
 /**
  * Phase 118 — Disciplinary action log.
@@ -145,14 +151,46 @@ discipline118Router.post(
       },
     });
     const kindLabel = input.kind.replace(/_/g, ' ').toLowerCase();
+    const actor = await prisma.user.findUnique({
+      where: { id: req.user!.id },
+      select: {
+        email: true,
+        role: true,
+        associate: { select: { firstName: true, lastName: true } },
+      },
+    });
+    const actorName = actor?.associate
+      ? `${actor.associate.firstName} ${actor.associate.lastName}`
+      : actor?.email ?? 'HR';
+    const actorRole = actor?.role ? ROLE_LABELS[actor.role] : 'HR Administrator';
+    const assocTpl = disciplineAssociateTemplate({
+      firstName: associate.firstName,
+      kindLabel,
+      effectiveDate: input.effectiveDate,
+      incidentDate: input.incidentDate,
+      suspensionDays: input.suspensionDays ?? null,
+      description: input.description,
+      expectedAction: input.expectedAction ?? null,
+      actor: { name: actorName, role: actorRole },
+      disciplineUrl: `${env.APP_BASE_URL}/me/discipline/${created.id}`,
+    });
     void notifyAssociate(input.associateId, {
-      subject: `Disciplinary action issued — ${kindLabel}`,
-      body: `A ${kindLabel} was filed effective ${input.effectiveDate}. Open My Profile → Discipline to acknowledge.`,
+      subject: assocTpl.subject,
+      body: assocTpl.text,
+      html: assocTpl.html,
       category: 'discipline',
     });
+    const mgrTpl = disciplineManagerTemplate({
+      associateName: `${associate.firstName} ${associate.lastName}`,
+      kindLabel,
+      effectiveDate: input.effectiveDate,
+      suspensionDays: input.suspensionDays ?? null,
+      actor: { name: actorName, role: actorRole },
+    });
     void notifyManager(input.associateId, {
-      subject: `Disciplinary action filed on direct report`,
-      body: `A ${kindLabel} was filed for one of your direct reports effective ${input.effectiveDate}.`,
+      subject: mgrTpl.subject,
+      body: mgrTpl.text,
+      html: mgrTpl.html,
       category: 'discipline',
     });
     res.status(201).json({ id: created.id });

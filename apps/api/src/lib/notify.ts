@@ -41,6 +41,8 @@ import type { PrismaClient } from '@prisma/client';
 import { rolesWithCapability } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { send } from './notifications.js';
+import { onboardingCompleteTemplate } from './emailTemplates.js';
+import { env } from '../config/env.js';
 
 // Snapshot at module load. Drives the notifyAllAdmins recipient query.
 // Capability-based (not a hardcoded role list) so a future role gaining
@@ -67,6 +69,13 @@ export interface NotifyOpts {
   subject: string | null;
   /** One-to-three-line description of what happened and what to do. */
   body: string;
+  /**
+   * Optional HTML version of the body, sent to Resend alongside `body` (text
+   * fallback). Most email clients render the HTML; the text body is what
+   * spam classifiers read and what shows in plain-text-only clients.
+   * IN_APP rows always store the text body — the bell never renders HTML.
+   */
+  html?: string;
   /** Tag for filtering in the bell ("onboarding", "documents", etc.). */
   category?: string;
 }
@@ -91,6 +100,7 @@ function sendEmailNotification(
           recipient: { userId, phone: null, email },
           subject: opts.subject,
           body: opts.body,
+          html: opts.html,
         });
         externalRef = r.externalRef;
       } catch (err) {
@@ -285,9 +295,16 @@ export function notifyHrOnApplicationComplete(applicationId: string): Promise<vo
       });
 
       const who = `${app.associate.firstName} ${app.associate.lastName}`;
+      const tpl = onboardingCompleteTemplate({
+        associateName: who,
+        clientName: app.client.name,
+        submittedAt: new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC',
+        applicationUrl: `${env.APP_BASE_URL}/admin/applications/${app.id}`,
+      });
       await notifyAllAdmins({
-        subject: 'Onboarding complete — ready for review',
-        body: `${who} (${app.client.name}) finished every onboarding task. Open the application to approve or reject.`,
+        subject: tpl.subject,
+        body: tpl.text,
+        html: tpl.html,
         category: 'onboarding',
       });
     })().catch((err: unknown) => {

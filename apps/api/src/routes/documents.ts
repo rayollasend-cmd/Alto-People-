@@ -17,7 +17,13 @@ import { requireCapability } from '../middleware/auth.js';
 import { scopeDocuments } from '../lib/scope.js';
 import { recordDocumentEvent } from '../lib/audit.js';
 import { notifyAllAdmins, notifyAssociate, notifyManager } from '../lib/notify.js';
+import {
+  documentRejectedAssociateTemplate,
+  documentRejectedManagerTemplate,
+  documentUploadedTemplate,
+} from '../lib/emailTemplates.js';
 import { resolveStoragePath, UPLOAD_ROOT } from '../lib/storage.js';
+import { env } from '../config/env.js';
 
 export const documentsRouter = Router();
 
@@ -146,11 +152,15 @@ documentsRouter.post('/me/upload', upload.single('file'), async (req, res, next)
       where: { id: created.associateId },
       select: { firstName: true, lastName: true },
     });
-    void notifyAllAdmins({
-      subject: 'Document uploaded — review needed',
-      body: `${assoc?.firstName ?? 'An associate'} ${assoc?.lastName ?? ''} uploaded a ${created.kind.replace(/_/g, ' ').toLowerCase()} (${created.filename}). Verify or reject in the associate's Documents tab.`,
-      category: 'documents',
+    const associateName = assoc ? `${assoc.firstName} ${assoc.lastName}` : 'An associate';
+    const tpl = documentUploadedTemplate({
+      associateName,
+      documentKind: created.kind.replace(/_/g, ' ').toLowerCase(),
+      filename: created.filename,
+      uploadedAt: new Date(created.createdAt).toISOString().replace('T', ' ').slice(0, 16) + ' UTC',
+      documentsUrl: `${env.APP_BASE_URL}/admin/associates/${created.associateId}/documents`,
     });
+    void notifyAllAdmins({ subject: tpl.subject, body: tpl.text, html: tpl.html, category: 'documents' });
 
     res.status(201).json(toRecord(created));
   } catch (err) {
@@ -384,16 +394,38 @@ documentsRouter.post('/admin/:id/reject', MANAGE, async (req, res, next) => {
       req,
     });
 
+    const rejAssoc = await prisma.associate.findUnique({
+      where: { id: updated.associateId },
+      select: { firstName: true, lastName: true },
+    });
+    const reviewerName = user.email; // Reviewer's display name (User has no name fields today; surface email).
+    const docKindLabel = updated.kind.replace(/_/g, ' ').toLowerCase();
+    const assocTpl = documentRejectedAssociateTemplate({
+      firstName: rejAssoc?.firstName ?? 'there',
+      documentKind: docKindLabel,
+      filename: updated.filename,
+      rejectionReason: parsed.data.reason,
+      reviewerName,
+      documentsUrl: `${env.APP_BASE_URL}/me/documents`,
+    });
     void notifyAssociate(updated.associateId, {
-      subject: 'A document was rejected — please re-upload',
-      body: `Your "${updated.filename}" (${updated.kind.replace(/_/g, ' ').toLowerCase()}) was rejected. Reason: ${parsed.data.reason}. Open Identity documents and upload a replacement.`,
+      subject: assocTpl.subject,
+      body: assocTpl.text,
+      html: assocTpl.html,
       category: 'documents',
     });
     // Manager copy so the associate's direct manager knows their report is
     // blocked on a re-upload — no-op if the associate has no manager assigned.
+    const mgrTpl = documentRejectedManagerTemplate({
+      associateName: rejAssoc ? `${rejAssoc.firstName} ${rejAssoc.lastName}` : 'an associate',
+      documentKind: docKindLabel,
+      rejectionReason: parsed.data.reason,
+      reviewerName,
+    });
     void notifyManager(updated.associateId, {
-      subject: 'Direct report has a rejected document',
-      body: `${updated.filename} (${updated.kind.replace(/_/g, ' ').toLowerCase()}) was rejected for one of your direct reports. Reason: ${parsed.data.reason}.`,
+      subject: mgrTpl.subject,
+      body: mgrTpl.text,
+      html: mgrTpl.html,
       category: 'documents',
     });
 
