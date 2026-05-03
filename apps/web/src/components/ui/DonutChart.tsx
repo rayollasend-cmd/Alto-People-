@@ -22,14 +22,16 @@ interface DonutChartProps {
   className?: string;
 }
 
+// Bound to CSS vars so the donut tracks light/dark mode automatically
+// instead of freezing the dark-mode hexes into the chart.
 const FALLBACK_COLORS = [
-  '#D9B967', // gold
-  '#34A874', // success
-  '#185FA5', // steel
-  '#E96255', // alert
-  '#A8B8C8', // silver
-  '#EDB23C', // warning
-  '#0F6E56', // teal
+  'rgb(var(--color-gold))',
+  'rgb(var(--color-success))',
+  'rgb(var(--color-steel))',
+  'rgb(var(--color-alert))',
+  'rgb(var(--color-silver))',
+  'rgb(var(--color-warning))',
+  'rgb(var(--color-teal))',
 ];
 
 export function DonutChart({

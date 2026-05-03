@@ -162,7 +162,7 @@ export function VtoHome() {
             </div>
             <div className="w-full bg-navy-secondary rounded-full h-2 overflow-hidden">
               <div
-                className="bg-blue-500 h-full transition-all"
+                className="bg-steel h-full transition-all"
                 style={{
                   width: `${Math.min(100, (mine.usedHours / Math.max(1, mine.capHours)) * 100)}%`,
                 }}

@@ -128,7 +128,7 @@ export function AnalyticsHome() {
             onClick={() => setDays(d)}
             className={`px-3 py-1 rounded-full border transition ${
               days === d
-                ? 'bg-cyan-600 border-cyan-500 text-white'
+                ? 'bg-steel border-steel text-white'
                 : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
             }`}
           >
@@ -308,7 +308,7 @@ function Stat({ label, value, hint, accent, link }: StatProps) {
     <Card
       className={
         link
-          ? 'transition hover:border-cyan-500 hover:bg-navy-secondary/30 cursor-pointer'
+          ? 'transition hover:border-steel hover:bg-navy-secondary/30 cursor-pointer'
           : undefined
       }
     >
