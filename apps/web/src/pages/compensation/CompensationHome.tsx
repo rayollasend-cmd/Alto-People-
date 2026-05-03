@@ -355,8 +355,9 @@ function BandDrawer({
           />
         </div>
         <div>
-          <Label>Pay type</Label>
+          <Label htmlFor="comp-pay-type">Pay type</Label>
           <select
+            id="comp-pay-type"
             className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
             value={draft.payType}
             onChange={(e) =>

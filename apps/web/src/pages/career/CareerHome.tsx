@@ -558,8 +558,9 @@ function AddSkillDrawer({
           />
         </div>
         <div>
-          <Label>Minimum level</Label>
+          <Label htmlFor="career-min-level">Minimum level</Label>
           <select
+            id="career-min-level"
             className="mt-1 w-full bg-midnight border border-navy-secondary rounded p-2 text-white text-sm"
             value={minLevel}
             onChange={(e) => setMinLevel(e.target.value as SkillLevel)}

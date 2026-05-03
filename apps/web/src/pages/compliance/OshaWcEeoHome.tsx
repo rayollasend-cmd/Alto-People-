@@ -315,8 +315,9 @@ function NewIncidentDrawer({
           <Input className="mt-1" value={bodyPart} onChange={(e) => setBodyPart(e.target.value)} />
         </div>
         <div>
-          <Label>Severity</Label>
+          <Label htmlFor="osha-severity">Severity</Label>
           <select
+            id="osha-severity"
             className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
             value={severity}
             onChange={(e) => setSeverity(e.target.value as OshaSeverity)}
