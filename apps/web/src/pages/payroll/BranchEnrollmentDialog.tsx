@@ -18,7 +18,7 @@ import {
   DialogTitle,
 } from '@/components/ui/Dialog';
 import { Input } from '@/components/ui/Input';
-import { Label, FormHint } from '@/components/ui/Label';
+import { Field } from '@/components/ui/Field';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 interface Props {
@@ -188,21 +188,21 @@ export function BranchEnrollmentDialog({
               </div>
             </dl>
 
-            <div>
-              <Label htmlFor="be-branch-card">Branch card / employee id</Label>
-              <Input
-                id="be-branch-card"
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                placeholder="e.g. emp_8f3a2b…"
-                maxLength={64}
-                autoComplete="off"
-              />
-              <FormHint>
-                Card takes priority over the bank account on the next run.
-                Clear it to fall back to ACH.
-              </FormHint>
-            </div>
+            <Field
+              label="Branch card / employee id"
+              hint="Card takes priority over the bank account on the next run. Clear it to fall back to ACH."
+            >
+              {(p) => (
+                <Input
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  placeholder="e.g. emp_8f3a2b…"
+                  maxLength={64}
+                  autoComplete="off"
+                  {...p}
+                />
+              )}
+            </Field>
           </div>
         )}
 

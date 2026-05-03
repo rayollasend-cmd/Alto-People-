@@ -52,7 +52,7 @@ import {
   DialogTitle,
 } from '@/components/ui/Dialog';
 import { Input } from '@/components/ui/Input';
-import { Label } from '@/components/ui/Label';
+import { Field } from '@/components/ui/Field';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { EsignSection } from './EsignSection';
 import { cn } from '@/lib/cn';
@@ -550,18 +550,16 @@ function ApproveDialog({
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="space-y-4">
-          <div>
-            <Label htmlFor="approve-hire-date" required>
-              Hire date
-            </Label>
-            <Input
-              id="approve-hire-date"
-              type="date"
-              required
-              value={hireDate}
-              onChange={(e) => setHireDate(e.target.value)}
-            />
-          </div>
+          <Field label="Hire date" required>
+            {(p) => (
+              <Input
+                type="date"
+                value={hireDate}
+                onChange={(e) => setHireDate(e.target.value)}
+                {...p}
+              />
+            )}
+          </Field>
           <DialogFooter>
             <Button
               type="button"
