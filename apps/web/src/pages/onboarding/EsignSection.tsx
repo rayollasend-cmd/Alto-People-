@@ -24,8 +24,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
-import { Label, FormHint } from '@/components/ui/Label';
+import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 interface Props {
@@ -83,14 +85,7 @@ export function EsignSection({ applicationId, canManage, esignTasks }: Props) {
         </div>
       </CardHeader>
       <CardContent>
-        {error && (
-          <div
-            className="mb-3 p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-            role="alert"
-          >
-            {error}
-          </div>
-        )}
+        {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
         {!items && (
           <div className="space-y-2">
             <Skeleton className="h-10" />
@@ -217,59 +212,57 @@ function CreateAgreementDialog({
         </DialogHeader>
 
         <div className="space-y-3">
-          <div>
-            <Label htmlFor="esign-title" required>
-              Title
-            </Label>
-            <Input
-              id="esign-title"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              maxLength={200}
-              placeholder="Housing Agreement, Confidentiality Addendum, etc."
-              autoFocus
-            />
-          </div>
+          <Field label="Title" required>
+            {(p) => (
+              <Input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                maxLength={200}
+                placeholder="Housing Agreement, Confidentiality Addendum, etc."
+                autoFocus
+                {...p}
+              />
+            )}
+          </Field>
 
           {esignTasks.length > 0 && (
-            <div>
-              <Label htmlFor="esign-task">Link to checklist task (optional)</Label>
-              <select
-                id="esign-task"
-                value={taskId}
-                onChange={(e) => setTaskId(e.target.value)}
-                className="mt-1 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 text-white px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-              >
-                <option value="">— Standalone (no task link) —</option>
-                {esignTasks.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.title} {t.status === 'DONE' ? '(already done)' : ''}
-                  </option>
-                ))}
-              </select>
-              <FormHint>
-                When linked, signing the agreement also marks the checklist task
-                DONE.
-              </FormHint>
-            </div>
+            <Field
+              label="Link to checklist task (optional)"
+              hint="When linked, signing the agreement also marks the checklist task DONE."
+            >
+              {(p) => (
+                <Select
+                  value={taskId}
+                  onChange={(e) => setTaskId(e.target.value)}
+                  {...p}
+                >
+                  <option value="">— Standalone (no task link) —</option>
+                  {esignTasks.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.title} {t.status === 'DONE' ? '(already done)' : ''}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
           )}
 
-          <div>
-            <Label htmlFor="esign-body" required>
-              Body
-            </Label>
-            <Textarea
-              id="esign-body"
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              maxLength={50_000}
-              rows={10}
-              placeholder="Paste the full agreement text. Plain text — line breaks are preserved."
-            />
-            <FormHint>
-              Up to 50,000 chars. Renders in the PDF exactly as typed.
-            </FormHint>
-          </div>
+          <Field
+            label="Body"
+            required
+            hint="Up to 50,000 chars. Renders in the PDF exactly as typed."
+          >
+            {(p) => (
+              <Textarea
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                maxLength={50_000}
+                rows={10}
+                placeholder="Paste the full agreement text. Plain text — line breaks are preserved."
+                {...p}
+              />
+            )}
+          </Field>
         </div>
 
         <DialogFooter>
