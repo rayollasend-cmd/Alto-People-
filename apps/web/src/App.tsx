@@ -119,6 +119,7 @@ const VtoHome = lazyNamed(() => import('@/pages/vto/VtoHome'), 'VtoHome');
 const Settings = lazyNamed(() => import('@/pages/Settings'), 'Settings');
 const UsersAdmin = lazyNamed(() => import('@/pages/admin/UsersAdmin'), 'UsersAdmin');
 const BrandingHome = lazyNamed(() => import('@/pages/admin/BrandingHome'), 'BrandingHome');
+const BillingHome = lazyNamed(() => import('@/pages/admin/BillingHome'), 'BillingHome');
 const AuditHome = lazyNamed(() => import('@/pages/audit/AuditHome'), 'AuditHome');
 const AnalyticsHome = lazyNamed(() => import('@/pages/analytics/AnalyticsHome'), 'AnalyticsHome');
 const MeHome = lazyNamed(() => import('@/pages/me/MeHome'), 'MeHome');
@@ -331,6 +332,7 @@ export const router = createBrowserRouter([
       { path: 'settings', element: <Settings /> },
       { path: 'admin/users', element: <UsersAdmin /> },
       { path: 'admin/branding', element: <BrandingHome /> },
+      { path: 'admin/billing', element: <BillingHome /> },
       { path: 'audit', element: <AuditHome /> },
       { path: 'benefits', element: <BenefitsHome /> },
       { path: 'people', element: <PeopleDirectory /> },

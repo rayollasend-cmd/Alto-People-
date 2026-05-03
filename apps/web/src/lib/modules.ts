@@ -71,7 +71,8 @@ export type ModuleKey =
   | 'dircomms'
   | 'integrations'
   | 'users'
-  | 'branding';
+  | 'branding'
+  | 'billing';
 
 /**
  * Phase 67 — sidebar groupings, F500-style. Modules with the same `group`
@@ -124,7 +125,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon, LogOut as SeparationIcon, Briefcase as InternalJobsIcon, Syringe as VaccinationsIcon, FileSignature as AgreementsIcon, MessageCircle as HrCasesIcon, BookOpen as KbIcon, Target as RampIcon, TrendingUp as CareerIcon, GraduationCap as TuitionIcon, Siren as HotlineIcon, Coins as EquityIcon, Heart as VolunteerIcon, Plug as IntegrationsIcon, Palette as BrandingIcon } from 'lucide-react';
+import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon, LogOut as SeparationIcon, Briefcase as InternalJobsIcon, Syringe as VaccinationsIcon, FileSignature as AgreementsIcon, MessageCircle as HrCasesIcon, BookOpen as KbIcon, Target as RampIcon, TrendingUp as CareerIcon, GraduationCap as TuitionIcon, Siren as HotlineIcon, Coins as EquityIcon, Heart as VolunteerIcon, Plug as IntegrationsIcon, Palette as BrandingIcon, CreditCard as BillingIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -605,6 +606,16 @@ export const MODULES: ModuleNav[] = [
       'Org name, sender display, support email, primary colour, and logo applied to every outbound email.',
     requires: 'view:hr-admin',
     icon: BrandingIcon,
+    group: 'compliance',
+  },
+  {
+    key: 'billing',
+    path: '/admin/billing',
+    label: 'Billing',
+    description:
+      'Plan, seat count, payment method, and invoice history. Manual contract today; self-serve billing on the roadmap.',
+    requires: 'view:hr-admin',
+    icon: BillingIcon,
     group: 'compliance',
   },
   {
