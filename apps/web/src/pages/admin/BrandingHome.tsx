@@ -18,7 +18,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Input } from '@/components/ui/Input';
-import { Label } from '@/components/ui/Label';
+import { FormHint, Label } from '@/components/ui/Label';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 
@@ -38,7 +38,9 @@ export function BrandingHome() {
   const [orgName, setOrgName] = useState('Alto HR');
   const [senderName, setSenderName] = useState('');
   const [supportEmail, setSupportEmail] = useState('');
+  const [supportEmailTouched, setSupportEmailTouched] = useState(false);
   const [primaryColor, setPrimaryColor] = useState('');
+  const [primaryColorTouched, setPrimaryColorTouched] = useState(false);
   const [logoBust, setLogoBust] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -51,7 +53,9 @@ export function BrandingHome() {
       setOrgName(b.orgName);
       setSenderName(b.senderName ?? '');
       setSupportEmail(b.supportEmail ?? '');
+      setSupportEmailTouched(false);
       setPrimaryColor(b.primaryColor ?? '');
+      setPrimaryColorTouched(false);
       setLogoBust((n) => n + 1);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load branding.');
@@ -201,14 +205,23 @@ export function BrandingHome() {
                   type="email"
                   value={supportEmail}
                   onChange={(e) => setSupportEmail(e.target.value)}
+                  onBlur={() => setSupportEmailTouched(true)}
                   maxLength={254}
                   placeholder="info@altohr.com"
-                  aria-invalid={!emailValid}
+                  invalid={supportEmailTouched && !emailValid}
+                  aria-describedby="supportEmail-help"
                 />
-                <p className="text-silver/70 text-xs">
-                  Address shown in the email signature footer. Replaces the
-                  default <code>hr@altohr.com</code>.
-                </p>
+                {supportEmailTouched && !emailValid ? (
+                  <FormHint variant="error">
+                    Support email must be a bare address like
+                    info@example.com.
+                  </FormHint>
+                ) : (
+                  <p id="supportEmail-help" className="text-silver/70 text-xs">
+                    Address shown in the email signature footer. Replaces the
+                    default <code>hr@altohr.com</code>.
+                  </p>
+                )}
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="primaryColor">Primary colour</Label>
@@ -217,9 +230,11 @@ export function BrandingHome() {
                     id="primaryColor"
                     value={primaryColor}
                     onChange={(e) => setPrimaryColor(e.target.value)}
+                    onBlur={() => setPrimaryColorTouched(true)}
                     placeholder="#0F2A44"
                     maxLength={7}
-                    aria-invalid={!colorValid}
+                    invalid={primaryColorTouched && !colorValid}
+                    aria-describedby="primaryColor-help"
                     className="font-mono"
                   />
                   <div
@@ -231,10 +246,16 @@ export function BrandingHome() {
                     aria-hidden
                   />
                 </div>
-                <p className="text-silver/70 text-xs">
-                  Hex format only (<code>#RRGGBB</code>). Used for the email
-                  header band and CTA button background.
-                </p>
+                {primaryColorTouched && !colorValid ? (
+                  <FormHint variant="error">
+                    Use the #RRGGBB hex format, e.g. #0F2A44.
+                  </FormHint>
+                ) : (
+                  <p id="primaryColor-help" className="text-silver/70 text-xs">
+                    Hex format only (<code>#RRGGBB</code>). Used for the email
+                    header band and CTA button background.
+                  </p>
+                )}
               </div>
               <div className="pt-2">
                 <Button onClick={() => void onSave()} disabled={saving}>

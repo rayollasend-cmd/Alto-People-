@@ -1075,6 +1075,7 @@ function PasswordCard() {
   const [newPassword, setNew] = useState('');
   const [confirmPassword, setConfirm] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const mismatch = confirmPassword !== '' && confirmPassword !== newPassword;
 
   const submit = async () => {
     if (newPassword !== confirmPassword) {
@@ -1166,7 +1167,14 @@ function PasswordCard() {
                 value={confirmPassword}
                 onChange={(e) => setConfirm(e.target.value)}
                 minLength={12}
+                invalid={mismatch}
+                aria-describedby={mismatch ? 'set-confirm-error' : undefined}
               />
+              {mismatch && (
+                <FormHint id="set-confirm-error" variant="error">
+                  Passwords don't match.
+                </FormHint>
+              )}
             </div>
           </div>
         </div>
