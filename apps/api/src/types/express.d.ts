@@ -12,6 +12,7 @@ export interface SessionUser {
   firstName: string | null;
   lastName: string | null;
   photoUrl: string | null;
+  timezone: string | null;
 }
 
 /**

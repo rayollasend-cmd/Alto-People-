@@ -5,6 +5,7 @@ import {
   ChangePasswordInputSchema,
   HUMAN_ROLES,
   UpdateProfileInputSchema,
+  UpdateTimezoneInputSchema,
   type AuthUser,
   type InviteSummary,
 } from '@alto-people/shared';
@@ -76,6 +77,7 @@ function toAuthUser(u: {
   firstName?: string | null;
   lastName?: string | null;
   photoUrl?: string | null;
+  timezone?: string | null;
 }): AuthUser {
   return {
     id: u.id,
@@ -87,6 +89,7 @@ function toAuthUser(u: {
     firstName: u.firstName ?? null,
     lastName: u.lastName ?? null,
     photoUrl: u.photoUrl ?? null,
+    timezone: u.timezone ?? null,
   };
 }
 
@@ -826,6 +829,34 @@ authRouter.patch('/me/profile', requireAuth, async (req, res, next) => {
     // than after the 30s TTL.
     invalidateUserCache(req.user!.id);
     res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PATCH /auth/me/timezone { timezone: SupportedTimezone | null }
+ *
+ * Self-serve IANA timezone preference. Validated against the curated
+ * SUPPORTED_TIMEZONES list — submitting an arbitrary string returns
+ * 400. Null clears the preference (web falls back to browser locale).
+ *
+ * Lives on User (not Associate) so HR-only / portal accounts get the
+ * preference too. tokenVersion is NOT bumped — this is a cosmetic
+ * setting, not a security boundary.
+ */
+authRouter.patch('/me/timezone', requireAuth, async (req, res, next) => {
+  try {
+    const parsed = UpdateTimezoneInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    await prisma.user.update({
+      where: { id: req.user!.id },
+      data: { timezone: parsed.data.timezone },
+    });
+    invalidateUserCache(req.user!.id);
+    res.status(204).end();
   } catch (err) {
     next(err);
   }

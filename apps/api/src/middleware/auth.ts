@@ -108,6 +108,7 @@ export async function attachUser(
         clientId: true,
         associateId: true,
         tokenVersion: true,
+        timezone: true,
         associate: {
           select: {
             id: true,
