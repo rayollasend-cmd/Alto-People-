@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { NavLink } from 'react-router-dom';
 import { Briefcase, X, type LucideIcon } from 'lucide-react';
 import {
@@ -26,6 +26,8 @@ interface MobileNavProps {
 export function MobileNav({ open, onClose }: MobileNavProps) {
   const { can } = useAuth();
   const visible = MODULES.filter((m) => can(m.requires));
+  const panelRef = useRef<HTMLElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   const grouped: Partial<Record<ModuleGroup, ModuleNav[]>> = {};
   for (const m of visible) {
@@ -41,6 +43,40 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
     };
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    closeButtonRef.current?.focus();
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+      if (e.key !== 'Tab' || !panelRef.current) return;
+      const focusables = panelRef.current.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      previouslyFocused?.focus?.();
+    };
+  }, [open, onClose]);
+
   if (!open) return null;
 
   return (
@@ -55,7 +91,10 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
         onClick={onClose}
         aria-hidden="true"
       />
-      <aside className="absolute left-0 top-0 h-full w-72 bg-navy border-r border-navy-secondary flex flex-col animate-slide-in-from-right pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
+      <aside
+        ref={panelRef}
+        className="absolute left-0 top-0 h-full w-72 bg-navy border-r border-navy-secondary flex flex-col animate-slide-in-from-right pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]"
+      >
         <div className="px-4 min-h-14 flex items-center justify-between gap-3 border-b border-navy-secondary">
           <div className="flex items-center gap-2 min-w-0">
             <div
@@ -69,6 +108,7 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
             </span>
           </div>
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={onClose}
             className="text-silver hover:text-white p-1 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
