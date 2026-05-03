@@ -453,6 +453,13 @@ function MfaCard() {
             )}
             {showDisable ? (
               <div className="space-y-3 rounded-md border border-navy-secondary bg-navy-secondary/30 p-3">
+                <div
+                  role="alert"
+                  className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning"
+                >
+                  Turning this off removes two-step protection immediately.
+                  Anyone who knows your password will be able to sign in.
+                </div>
                 <div>
                   <Label htmlFor="mfa-disable-pw" required>
                     Current password
