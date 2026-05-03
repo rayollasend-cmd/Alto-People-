@@ -1,5 +1,22 @@
 import type { NotificationChannel } from '@alto-people/shared';
 import { env } from '../config/env.js';
+import { getBrandingSync } from './branding.js';
+
+/**
+ * Resolves the From: header for a Resend send. If the org has set a
+ * `senderName` in /admin/branding, we overlay that as the display name
+ * onto the bare email parsed from RESEND_FROM. Otherwise RESEND_FROM is
+ * forwarded verbatim — preserving any name baked into the env value.
+ */
+function effectiveFrom(): string | undefined {
+  const raw = env.RESEND_FROM;
+  if (!raw) return undefined;
+  const senderName = getBrandingSync().senderName;
+  if (!senderName) return raw;
+  const m = raw.match(/<([^>]+)>/);
+  const bare = m ? m[1] : raw;
+  return `${senderName} <${bare}>`;
+}
 
 /**
  * Notification sender. SMS / PUSH stay stubbed. EMAIL goes through Resend
@@ -79,8 +96,9 @@ async function sendEmail(input: SendInput): Promise<{ externalRef: string | null
   }
   // Real Resend call.
   try {
+    const from = effectiveFrom();
     const payload: Record<string, unknown> = {
-      from: env.RESEND_FROM,
+      from,
       to: [to],
       subject: input.subject ?? '(no subject)',
       text: input.body,
@@ -117,7 +135,8 @@ async function sendEmail(input: SendInput): Promise<{ externalRef: string | null
         '[notifications.send] Resend rejected payload',
         JSON.stringify({
           status: res.status,
-          from: env.RESEND_FROM ?? null,
+          from: from ?? null,
+          envFrom: env.RESEND_FROM ?? null,
           replyTo: env.RESEND_REPLY_TO ?? null,
           to,
           subjectLength: (input.subject ?? '').length,

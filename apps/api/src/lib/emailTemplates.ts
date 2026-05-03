@@ -24,6 +24,7 @@
  *      coordination needed.
  */
 import { env } from '../config/env.js';
+import { getBrandingSync } from './branding.js';
 
 /* ============================================================== */
 /* Types                                                          */
@@ -71,18 +72,43 @@ interface WrapHtmlOpts {
 /* Constants                                                      */
 /* ============================================================== */
 
-const BRAND_COLOR = '#0F2A44'; // deep navy — pick a brand color in design
-const BRAND_ACCENT = '#C9A24C'; // warm gold — for the CTA button accent
+// Hard defaults baked into the codebase. The OrgSetting singleton (managed
+// from /admin/branding) overrides any of these per-org; templates read the
+// overrides via `brand()` below at render time, so HR can re-skin every
+// outgoing email without a code change.
+const DEFAULT_BRAND_COLOR = '#0F2A44'; // deep navy
+const DEFAULT_BRAND_ACCENT = '#C9A24C'; // warm gold
 const TEXT_COLOR = '#1A1A1A';
 const MUTED_COLOR = '#6B6B6B';
 const BORDER_COLOR = '#E5E7EB';
-const COMPANY_NAME = 'Alto HR';
+const DEFAULT_COMPANY_NAME = 'Alto HR';
 const COMPANY_DEPT = 'Workforce Management Operations';
-const COMPANY_EMAIL = 'hr@altohr.com';
+const DEFAULT_COMPANY_EMAIL = 'hr@altohr.com';
 const COMPANY_WEB = 'altohr.com';
-const REPLY_TO_NOTE = env.RESEND_REPLY_TO
-  ? `Replies to this address are not monitored. For assistance, contact ${env.RESEND_REPLY_TO} or your HR administrator.`
-  : 'Replies to this address are not monitored. For assistance, contact your HR administrator.';
+
+interface Brand {
+  color: string;
+  accent: string;
+  name: string;
+  email: string;
+  logoDataUri: string | null;
+  replyToNote: string;
+}
+
+function brand(): Brand {
+  const b = getBrandingSync();
+  const supportEmail = b.supportEmail ?? env.RESEND_REPLY_TO ?? null;
+  return {
+    color: b.primaryColor ?? DEFAULT_BRAND_COLOR,
+    accent: DEFAULT_BRAND_ACCENT,
+    name: b.orgName || DEFAULT_COMPANY_NAME,
+    email: b.supportEmail ?? DEFAULT_COMPANY_EMAIL,
+    logoDataUri: b.logoDataUri,
+    replyToNote: supportEmail
+      ? `Replies to this address are not monitored. For assistance, contact ${supportEmail} or your HR administrator.`
+      : 'Replies to this address are not monitored. For assistance, contact your HR administrator.',
+  };
+}
 
 /* ============================================================== */
 /* Reference ID                                                   */
@@ -104,39 +130,41 @@ export function formatRef(): string {
 /* ============================================================== */
 
 function signatureText(sig: Signatory, refId: string): string {
+  const b = brand();
   const top =
     sig.kind === 'actor'
-      ? `${sig.name}\n${sig.role}, ${COMPANY_NAME}`
-      : `${COMPANY_NAME}\n${COMPANY_DEPT}`;
+      ? `${sig.name}\n${sig.role}, ${b.name}`
+      : `${b.name}\n${COMPANY_DEPT}`;
   return [
     '',
     '———',
     top,
-    `${COMPANY_EMAIL}  ·  ${COMPANY_WEB}`,
+    `${b.email}  ·  ${COMPANY_WEB}`,
     '',
     'CONFIDENTIAL — This message and any attachments are intended solely for',
     'the addressee and may contain confidential, proprietary, or legally',
     'privileged information. If you received this in error, please delete it',
     'and notify the sender immediately.',
     '',
-    REPLY_TO_NOTE,
+    b.replyToNote,
     '',
     `Reference: ${refId}`,
   ].join('\n');
 }
 
 function signatureHtml(sig: Signatory, refId: string): string {
+  const b = brand();
   const top =
     sig.kind === 'actor'
       ? `<div style="font-weight:600;color:${TEXT_COLOR}">${escapeHtml(sig.name)}</div>
-         <div style="color:${MUTED_COLOR};font-size:13px">${escapeHtml(sig.role)}, ${COMPANY_NAME}</div>`
-      : `<div style="font-weight:600;color:${TEXT_COLOR}">${COMPANY_NAME}</div>
+         <div style="color:${MUTED_COLOR};font-size:13px">${escapeHtml(sig.role)}, ${escapeHtml(b.name)}</div>`
+      : `<div style="font-weight:600;color:${TEXT_COLOR}">${escapeHtml(b.name)}</div>
          <div style="color:${MUTED_COLOR};font-size:13px">${COMPANY_DEPT}</div>`;
   return `
     <div style="margin-top:32px;padding-top:24px;border-top:1px solid ${BORDER_COLOR}">
       ${top}
       <div style="margin-top:6px;color:${MUTED_COLOR};font-size:13px">
-        <a href="mailto:${COMPANY_EMAIL}" style="color:${MUTED_COLOR};text-decoration:none">${COMPANY_EMAIL}</a>
+        <a href="mailto:${escapeHtml(b.email)}" style="color:${MUTED_COLOR};text-decoration:none">${escapeHtml(b.email)}</a>
         &nbsp;·&nbsp;
         <a href="https://${COMPANY_WEB}" style="color:${MUTED_COLOR};text-decoration:none">${COMPANY_WEB}</a>
       </div>
@@ -147,7 +175,7 @@ function signatureHtml(sig: Signatory, refId: string): string {
       privileged information. If you received this in error, please delete it and
       notify the sender immediately.
       <br><br>
-      ${REPLY_TO_NOTE}
+      ${b.replyToNote}
       <br><br>
       <span style="font-family:Menlo,Consolas,monospace">Reference: ${refId}</span>
     </div>`;
@@ -183,10 +211,11 @@ function dataBlockHtml(rows: DataRow[]): string {
 }
 
 function ctaHtml(cta: { label: string; url: string }): string {
+  const b = brand();
   return `
     <div style="margin:32px 0;text-align:center">
       <a href="${escapeHtml(cta.url)}"
-         style="display:inline-block;padding:14px 28px;background:${BRAND_COLOR};color:#FFFFFF;text-decoration:none;font-weight:600;font-size:14px;border-radius:6px;border-bottom:3px solid ${BRAND_ACCENT}">
+         style="display:inline-block;padding:14px 28px;background:${b.color};color:#FFFFFF;text-decoration:none;font-weight:600;font-size:14px;border-radius:6px;border-bottom:3px solid ${b.accent}">
         ${escapeHtml(cta.label)}
       </a>
       <div style="margin-top:12px;color:${MUTED_COLOR};font-size:12px;word-break:break-all">
@@ -197,10 +226,17 @@ function ctaHtml(cta: { label: string; url: string }): string {
 }
 
 function wrapHtml(opts: WrapHtmlOpts): string {
+  const b = brand();
   const bodyParas =
     opts.body && opts.body.length > 0
       ? opts.body.map((p) => `<p style="margin:16px 0;color:${TEXT_COLOR};font-size:15px;line-height:1.6">${p}</p>`).join('')
       : '';
+  // Logo is embedded as a data: URI built once on cache-load so the email
+  // renders correctly even if the recipient blocks remote images.
+  const headerBrand = b.logoDataUri
+    ? `<img src="${b.logoDataUri}" alt="${escapeHtml(b.name)}" style="max-height:40px;max-width:240px;display:block">`
+    : `<div style="color:#FFFFFF;font-weight:700;font-size:18px;letter-spacing:0.04em">${escapeHtml(b.name.toUpperCase())}</div>
+       <div style="color:${b.accent};font-size:11px;text-transform:uppercase;letter-spacing:0.18em;margin-top:2px">Workforce Management</div>`;
   return `<!doctype html>
 <html>
 <head>
@@ -214,9 +250,8 @@ function wrapHtml(opts: WrapHtmlOpts): string {
       <td align="center" style="padding:32px 16px">
         <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#FFFFFF;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08)">
           <tr>
-            <td style="background:${BRAND_COLOR};padding:20px 32px">
-              <div style="color:#FFFFFF;font-weight:700;font-size:18px;letter-spacing:0.04em">ALTO HR</div>
-              <div style="color:${BRAND_ACCENT};font-size:11px;text-transform:uppercase;letter-spacing:0.18em;margin-top:2px">Workforce Management</div>
+            <td style="background:${b.color};padding:20px 32px">
+              ${headerBrand}
             </td>
           </tr>
           <tr>
@@ -231,7 +266,7 @@ function wrapHtml(opts: WrapHtmlOpts): string {
           </tr>
         </table>
         <div style="max-width:600px;margin:16px auto 0;color:${MUTED_COLOR};font-size:11px;text-align:center">
-          © ${new Date().getFullYear()} Alto HR. All rights reserved.
+          © ${new Date().getFullYear()} ${escapeHtml(b.name)}. All rights reserved.
         </div>
       </td>
     </tr>

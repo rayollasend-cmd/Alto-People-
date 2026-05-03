@@ -3,6 +3,7 @@ import { createApp } from './app.js';
 import { prisma } from './db.js';
 import { startKeepAlive } from './lib/keepalive.js';
 import { startInviteReminderCron } from './lib/inviteReminder.js';
+import { ensureBrandingLoaded } from './lib/branding.js';
 
 const app = createApp();
 
@@ -33,4 +34,12 @@ app.listen(env.PORT, '0.0.0.0', async () => {
   }
 
   startInviteReminderCron();
+
+  // Best-effort prime of the branding cache so the first email rendered
+  // after boot uses the org's saved logo + colors instead of the
+  // hard-coded defaults. Auto-refreshes every 5 min via ensureBrandingLoaded
+  // call sites.
+  ensureBrandingLoaded(prisma).catch((err) => {
+    console.warn('[alto-people/api] branding preload failed:', err);
+  });
 });

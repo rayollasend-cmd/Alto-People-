@@ -56,7 +56,7 @@ const EnvSchema = z.object({
     .string()
     .optional()
     .transform((v) => {
-      if (!v) return v;
+      if (v === undefined) return undefined;
       const trimmed = v.trim().replace(/^["']|["']$/g, '').trim();
       return trimmed.length === 0 ? undefined : trimmed;
     })
@@ -80,7 +80,7 @@ const EnvSchema = z.object({
     .string()
     .optional()
     .transform((v) => {
-      if (!v) return v;
+      if (v === undefined) return undefined;
       const trimmed = v.trim().replace(/^["']|["']$/g, '').trim();
       return trimmed.length === 0 ? undefined : trimmed;
     })
