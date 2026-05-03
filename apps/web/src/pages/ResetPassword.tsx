@@ -3,8 +3,9 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ChevronLeft, Lock, ShieldCheck } from 'lucide-react';
 import { ApiError, NetworkError, apiFetch } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
-import { Label, FormHint } from '@/components/ui/Label';
 
 /**
  * Public — finishes the password-reset flow. The token comes from the URL
@@ -97,63 +98,61 @@ export function ResetPassword() {
             </p>
 
             <div className="space-y-4">
-              <div>
-                <Label htmlFor="reset-password" required>
-                  New password
-                </Label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/60 pointer-events-none" />
-                  <Input
-                    id="reset-password"
-                    type="password"
-                    autoComplete="new-password"
-                    required
-                    minLength={12}
-                    autoFocus
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="pl-9"
-                  />
-                </div>
-                <FormHint>
-                  {tooShort
+              <Field
+                label="New password"
+                required
+                hint={
+                  tooShort
                     ? `Need ${12 - password.length} more character${12 - password.length === 1 ? '' : 's'}.`
-                    : 'Minimum 12 characters.'}
-                </FormHint>
-              </div>
-
-              <div>
-                <Label htmlFor="reset-confirm" required>
-                  Confirm new password
-                </Label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/60 pointer-events-none" />
-                  <Input
-                    id="reset-confirm"
-                    type="password"
-                    autoComplete="new-password"
-                    required
-                    value={confirm}
-                    onChange={(e) => setConfirm(e.target.value)}
-                    className="pl-9"
-                  />
-                </div>
-                {mismatch && (
-                  <FormHint>
-                    <span className="text-alert">Passwords don't match.</span>
-                  </FormHint>
+                    : 'Minimum 12 characters.'
+                }
+              >
+                {(p) => (
+                  <div className="relative">
+                    <Lock
+                      className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/60 pointer-events-none"
+                      aria-hidden="true"
+                    />
+                    <Input
+                      type="password"
+                      autoComplete="new-password"
+                      minLength={12}
+                      autoFocus
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="pl-9"
+                      {...p}
+                    />
+                  </div>
                 )}
-              </div>
+              </Field>
+
+              <Field
+                label="Confirm new password"
+                required
+                error={mismatch ? "Passwords don't match." : undefined}
+              >
+                {(p) => (
+                  <div className="relative">
+                    <Lock
+                      className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/60 pointer-events-none"
+                      aria-hidden="true"
+                    />
+                    <Input
+                      type="password"
+                      autoComplete="new-password"
+                      minLength={12}
+                      value={confirm}
+                      onChange={(e) => setConfirm(e.target.value)}
+                      className="pl-9"
+                      {...p}
+                    />
+                  </div>
+                )}
+              </Field>
             </div>
 
-            {error && (
-              <div
-                className="mt-4 p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-                role="alert"
-              >
-                {error}
-              </div>
-            )}
+            {error && <ErrorBanner className="mt-4">{error}</ErrorBanner>}
 
             <Button
               type="submit"

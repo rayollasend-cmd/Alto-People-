@@ -8,8 +8,9 @@ import type {
 import { apiFetch, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { Button } from '@/components/ui/Button';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
-import { Label, FormHint } from '@/components/ui/Label';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Logo } from '@/components/Logo';
 
@@ -114,12 +115,7 @@ export function AcceptInvite() {
               <h2 className="font-display text-2xl md:text-3xl text-white mb-3">
                 Invitation problem
               </h2>
-              <div
-                role="alert"
-                className="mb-4 p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-              >
-                {error}
-              </div>
+              <ErrorBanner className="mb-4">{error}</ErrorBanner>
               <Button variant="ghost" onClick={() => navigate('/login')}>
                 Go to sign in
               </Button>
@@ -136,63 +132,61 @@ export function AcceptInvite() {
               </p>
               <p className="text-silver/60 text-xs mb-6">{invite.email}</p>
 
-              <div className="mb-4">
-                <Label htmlFor="invite-password" required>
-                  Password
-                </Label>
-                <div className="relative">
-                  <Lock
-                    className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/60 pointer-events-none"
-                    aria-hidden="true"
-                  />
-                  <Input
-                    id="invite-password"
-                    type="password"
-                    autoComplete="new-password"
-                    required
-                    minLength={12}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="pl-9"
-                  />
-                </div>
-                <FormHint>Minimum 12 characters.</FormHint>
-              </div>
-
-              <div className="mb-2">
-                <Label htmlFor="invite-confirm" required>
-                  Confirm password
-                </Label>
-                <div className="relative">
-                  <Lock
-                    className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/60 pointer-events-none"
-                    aria-hidden="true"
-                  />
-                  <Input
-                    id="invite-confirm"
-                    type="password"
-                    autoComplete="new-password"
-                    required
-                    minLength={12}
-                    value={confirm}
-                    invalid={!!confirm && password !== confirm}
-                    onChange={(e) => setConfirm(e.target.value)}
-                    className="pl-9"
-                  />
-                </div>
-                {confirm && password !== confirm && (
-                  <FormHint variant="error">Passwords don't match.</FormHint>
+              <Field
+                label="Password"
+                required
+                hint="Minimum 12 characters."
+                className="mb-4"
+              >
+                {(p) => (
+                  <div className="relative">
+                    <Lock
+                      className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/60 pointer-events-none"
+                      aria-hidden="true"
+                    />
+                    <Input
+                      type="password"
+                      autoComplete="new-password"
+                      minLength={12}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="pl-9"
+                      {...p}
+                    />
+                  </div>
                 )}
-              </div>
+              </Field>
 
-              {error && (
-                <div
-                  role="alert"
-                  className="mt-4 p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-                >
-                  {error}
-                </div>
-              )}
+              <Field
+                label="Confirm password"
+                required
+                error={
+                  confirm && password !== confirm
+                    ? "Passwords don't match."
+                    : undefined
+                }
+                className="mb-2"
+              >
+                {(p) => (
+                  <div className="relative">
+                    <Lock
+                      className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/60 pointer-events-none"
+                      aria-hidden="true"
+                    />
+                    <Input
+                      type="password"
+                      autoComplete="new-password"
+                      minLength={12}
+                      value={confirm}
+                      onChange={(e) => setConfirm(e.target.value)}
+                      className="pl-9"
+                      {...p}
+                    />
+                  </div>
+                )}
+              </Field>
+
+              {error && <ErrorBanner className="mt-4">{error}</ErrorBanner>}
 
               <Button
                 type="submit"
