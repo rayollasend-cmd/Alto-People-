@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { AtSign, Bell, Camera, Clock, History, KeyRound, Lock, LogOut, ShieldAlert, Upload, User as UserIcon } from 'lucide-react';
+import { AtSign, Bell, Camera, Clock, Download, History, KeyRound, Lock, LogOut, ShieldAlert, Upload, User as UserIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import {
   changePassword,
+  downloadDataExport,
   getLoginHistory,
   getNotificationPreferences,
   patchNotificationPreference,
@@ -80,7 +81,46 @@ export function Settings() {
       <PasswordCard />
       <SessionsCard />
       <LoginHistoryCard />
+      <DataExportCard />
     </div>
+  );
+}
+
+function DataExportCard() {
+  const [submitting, setSubmitting] = useState(false);
+
+  const onDownload = async () => {
+    setSubmitting(true);
+    try {
+      await downloadDataExport();
+      toast.success('Your data export is downloading.');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not download your data.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Download className="h-4 w-4 text-gold" />
+          Download your data
+        </CardTitle>
+        <CardDescription>
+          Bundle your profile, login history, notification preferences,
+          time entries, paystubs, and document records into a ZIP archive.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="flex justify-end">
+          <Button onClick={onDownload} loading={submitting} variant="ghost">
+            Download my data
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
