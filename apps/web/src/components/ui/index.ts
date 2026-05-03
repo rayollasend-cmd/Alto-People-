@@ -14,6 +14,8 @@ export * from './DonutChart';
 export * from './Drawer';
 export * from './DropdownMenu';
 export * from './EmptyState';
+export * from './ErrorBanner';
+export * from './Field';
 export * from './Input';
 export * from './Label';
 export * from './MetricCard';

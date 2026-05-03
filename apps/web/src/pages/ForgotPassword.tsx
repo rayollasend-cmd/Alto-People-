@@ -3,8 +3,9 @@ import { Link } from 'react-router-dom';
 import { ChevronLeft, Mail, ShieldCheck } from 'lucide-react';
 import { ApiError, NetworkError, apiFetch } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
-import { Label } from '@/components/ui/Label';
 
 /**
  * Public — kicks off the password-reset flow. The API ALWAYS returns
@@ -90,33 +91,27 @@ export function ForgotPassword() {
               link that lets you choose a new password.
             </p>
 
-            <div>
-              <Label htmlFor="forgot-email" required>
-                Email
-              </Label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/60 pointer-events-none" />
-                <Input
-                  id="forgot-email"
-                  type="email"
-                  autoComplete="email"
-                  required
-                  autoFocus
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="pl-9"
-                />
-              </div>
-            </div>
+            <Field label="Email" required>
+              {(p) => (
+                <div className="relative">
+                  <Mail
+                    className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/60 pointer-events-none"
+                    aria-hidden="true"
+                  />
+                  <Input
+                    type="email"
+                    autoComplete="email"
+                    autoFocus
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="pl-9"
+                    {...p}
+                  />
+                </div>
+              )}
+            </Field>
 
-            {error && (
-              <div
-                className="mt-4 p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-                role="alert"
-              >
-                {error}
-              </div>
-            )}
+            {error && <ErrorBanner className="mt-4">{error}</ErrorBanner>}
 
             <Button
               type="submit"
