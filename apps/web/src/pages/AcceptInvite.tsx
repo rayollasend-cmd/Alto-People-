@@ -176,12 +176,19 @@ export function AcceptInvite() {
                     minLength={12}
                     value={confirm}
                     invalid={!!confirm && password !== confirm}
+                    aria-describedby={
+                      confirm && password !== confirm
+                        ? 'invite-confirm-error'
+                        : undefined
+                    }
                     onChange={(e) => setConfirm(e.target.value)}
                     className="pl-9"
                   />
                 </div>
                 {confirm && password !== confirm && (
-                  <FormHint variant="error">Passwords don't match.</FormHint>
+                  <FormHint id="invite-confirm-error" variant="error">
+                    Passwords don't match.
+                  </FormHint>
                 )}
               </div>
 
