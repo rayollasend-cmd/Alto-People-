@@ -15,6 +15,7 @@ import {
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Input } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -237,11 +238,7 @@ export function UsersAdmin() {
         </div>
       )}
 
-      {error && (
-        <Card>
-          <CardContent className="p-4 text-sm text-alert">{error}</CardContent>
-        </Card>
-      )}
+      {error && <ErrorBanner>{error}</ErrorBanner>}
 
       <Card>
         <CardContent className="p-0">

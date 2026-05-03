@@ -16,6 +16,7 @@ import {
 } from '@/lib/brandingApi';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Input } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -156,9 +157,7 @@ export function BrandingHome() {
           <Skeleton className="h-48 w-full" />
         </div>
       ) : error ? (
-        <Card>
-          <CardContent className="p-6 text-alert text-sm">{error}</CardContent>
-        </Card>
+        <ErrorBanner>{error}</ErrorBanner>
       ) : (
         <div className="grid gap-6 md:grid-cols-2">
           <Card>

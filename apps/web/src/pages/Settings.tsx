@@ -41,6 +41,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/Card';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Input } from '@/components/ui/Input';
 import { Label, FormHint } from '@/components/ui/Label';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -726,7 +727,7 @@ function NotificationsCard() {
       </CardHeader>
       <CardContent>
         {error ? (
-          <div className="text-sm text-red-300">{error}</div>
+          <ErrorBanner>{error}</ErrorBanner>
         ) : entries === null ? (
           <div className="space-y-2">
             <Skeleton className="h-10 w-full" />
@@ -1280,7 +1281,7 @@ function LoginHistoryCard() {
       </CardHeader>
       <CardContent>
         {error ? (
-          <div className="text-sm text-red-300">{error}</div>
+          <ErrorBanner>{error}</ErrorBanner>
         ) : events === null ? (
           <div className="space-y-2">
             <Skeleton className="h-6 w-full" />

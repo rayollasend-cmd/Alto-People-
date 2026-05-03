@@ -11,6 +11,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/Card';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 
@@ -77,9 +78,7 @@ export function BillingHome() {
       </div>
 
       {error ? (
-        <Card>
-          <CardContent className="p-6 text-alert text-sm">{error}</CardContent>
-        </Card>
+        <ErrorBanner>{error}</ErrorBanner>
       ) : (
         <div className="grid gap-6 md:grid-cols-2">
           <Card>
