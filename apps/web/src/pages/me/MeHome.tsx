@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { Plus, Trash2, Upload } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Plus, Trash2 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
   createBeneficiary,
@@ -9,7 +9,6 @@ import {
   deleteBeneficiary,
   deleteDependent,
   deleteEmergency,
-  deleteProfilePhoto,
   getEmployeeNumber,
   getProfile,
   listBeneficiaries,
@@ -21,7 +20,6 @@ import {
   updateDependent,
   updateEmergency,
   updateSelfProfile,
-  uploadProfilePhoto,
   type Beneficiary,
   type Dependent,
   type EmergencyContact,
@@ -31,9 +29,7 @@ import {
   type TaxDoc,
 } from '@/lib/selfApi';
 import { useConfirm } from '@/lib/confirm';
-import { useAuth } from '@/lib/auth';
 import {
-  Avatar,
   Badge,
   Button,
   Card,
@@ -285,8 +281,6 @@ function ProfilePanel({
   return (
     <Card>
       <CardContent className="p-6 space-y-5">
-        <ProfilePhotoRow profile={profile} onChange={onSaved} />
-
         <EmployeeNumberRow employeeNumber={employeeNumber} />
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -348,108 +342,6 @@ function ProfilePanel({
         </div>
       </CardContent>
     </Card>
-  );
-}
-
-function ProfilePhotoRow({
-  profile,
-  onChange,
-}: {
-  profile: SelfProfile;
-  onChange: () => void;
-}) {
-  const confirm = useConfirm();
-  const { refreshUser } = useAuth();
-  const [busy, setBusy] = useState<'upload' | 'remove' | null>(null);
-  const fileRef = useRef<HTMLInputElement | null>(null);
-
-  const onPick = () => fileRef.current?.click();
-
-  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error('Photo must be 5MB or smaller.');
-      return;
-    }
-    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
-      toast.error('Photo must be PNG, JPEG, or WebP.');
-      return;
-    }
-    setBusy('upload');
-    try {
-      await uploadProfilePhoto(file);
-      toast.success('Photo updated.');
-      onChange();
-      // Re-fetch /auth/me so the chrome (sidebar/topbar) avatar swaps
-      // to the new photo without a page reload.
-      await refreshUser();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to upload.');
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const onRemove = async () => {
-    if (!(await confirm({ title: 'Remove your profile photo?', destructive: true }))) return;
-    setBusy('remove');
-    try {
-      await deleteProfilePhoto();
-      toast.success('Photo removed.');
-      onChange();
-      await refreshUser();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to remove.');
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  return (
-    <div className="flex items-center gap-4">
-      <Avatar
-        src={profile.photoUrl}
-        name={`${profile.firstName} ${profile.lastName}`}
-        email={profile.email}
-        size="lg"
-        ringed
-      />
-      <div className="space-y-1">
-        <div className="text-sm font-medium text-white">Profile photo</div>
-        <div className="text-xs text-silver">
-          Shown on the directory and next to your name across the app. PNG,
-          JPEG, or WebP up to 5MB.
-        </div>
-        <div className="flex items-center gap-2 pt-1">
-          <Button
-            variant="ghost"
-            onClick={onPick}
-            disabled={busy !== null}
-          >
-            <Upload className="mr-2 h-4 w-4" />
-            {profile.photoUrl ? 'Replace photo' : 'Upload photo'}
-          </Button>
-          {profile.photoUrl && (
-            <Button
-              variant="ghost"
-              onClick={onRemove}
-              disabled={busy !== null}
-            >
-              Remove
-            </Button>
-          )}
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            onChange={onFile}
-            className="hidden"
-          />
-        </div>
-      </div>
-    </div>
   );
 }
 

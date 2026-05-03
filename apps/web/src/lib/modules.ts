@@ -69,7 +69,8 @@ export type ModuleKey =
   | 'marketplace'
   | 'payrules'
   | 'dircomms'
-  | 'integrations';
+  | 'integrations'
+  | 'users';
 
 /**
  * Phase 67 — sidebar groupings, F500-style. Modules with the same `group`
@@ -583,6 +584,16 @@ export const MODULES: ModuleNav[] = [
       'Searchable, exportable feed of every auth, onboarding, payroll, and document event.',
     requires: 'view:audit',
     icon: ScrollText,
+    group: 'compliance',
+  },
+  {
+    key: 'users',
+    path: '/admin/users',
+    label: 'Users & access',
+    description:
+      'List every account, change a role or status, and force a password reset (revokes active sessions).',
+    requires: 'view:hr-admin',
+    icon: UsersIcon,
     group: 'compliance',
   },
   {
