@@ -27,8 +27,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
+import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
-import { Label, FormHint } from '@/components/ui/Label';
+import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import {
   Table,
@@ -281,94 +282,97 @@ function EntitlementDialog({ open, onOpenChange, existing, onSaved }: DialogProp
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          <div>
-            <Label htmlFor="ent-assoc" required>
-              Associate ID (UUID)
-            </Label>
-            <Input
-              id="ent-assoc"
-              value={associateId}
-              onChange={(e) => setAssociateId(e.target.value)}
-              disabled={!!existing}
-              placeholder="e.g. 8a3f…"
-              autoFocus={!existing}
-            />
-            <FormHint>
-              Find on the associate's onboarding application detail page.
-            </FormHint>
-          </div>
-          <div>
-            <Label htmlFor="ent-cat" required>
-              Category
-            </Label>
-            <select
-              id="ent-cat"
-              value={category}
-              onChange={(e) => setCategory(e.target.value as TimeOffCategory)}
-              disabled={!!existing}
-              className="mt-1 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 text-white px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright disabled:opacity-50"
+          <Field
+            label="Associate ID (UUID)"
+            required
+            hint="Find on the associate's onboarding application detail page."
+          >
+            {(p) => (
+              <Input
+                value={associateId}
+                onChange={(e) => setAssociateId(e.target.value)}
+                disabled={!!existing}
+                placeholder="e.g. 8a3f…"
+                autoFocus={!existing}
+                {...p}
+              />
+            )}
+          </Field>
+          <Field label="Category" required>
+            {(p) => (
+              <Select
+                value={category}
+                onChange={(e) => setCategory(e.target.value as TimeOffCategory)}
+                disabled={!!existing}
+                {...p}
+              >
+                {CATEGORIES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field
+              label="Annual grant (hours)"
+              required
+              hint="e.g. 80 = 10 days/year."
             >
-              {CATEGORIES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
+              {(p) => (
+                <Input
+                  type="number"
+                  step="0.5"
+                  min="0"
+                  value={annualHours}
+                  onChange={(e) => setAnnualHours(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field
+              label="Carryover cap (hours)"
+              required
+              hint="0 = use it or lose it."
+            >
+              {(p) => (
+                <Input
+                  type="number"
+                  step="0.5"
+                  min="0"
+                  value={carryoverHours}
+                  onChange={(e) => setCarryoverHours(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label htmlFor="ent-annual" required>
-                Annual grant (hours)
-              </Label>
-              <Input
-                id="ent-annual"
-                type="number"
-                step="0.5"
-                min="0"
-                value={annualHours}
-                onChange={(e) => setAnnualHours(e.target.value)}
-              />
-              <FormHint>e.g. 80 = 10 days/year.</FormHint>
-            </div>
-            <div>
-              <Label htmlFor="ent-carry" required>
-                Carryover cap (hours)
-              </Label>
-              <Input
-                id="ent-carry"
-                type="number"
-                step="0.5"
-                min="0"
-                value={carryoverHours}
-                onChange={(e) => setCarryoverHours(e.target.value)}
-              />
-              <FormHint>0 = use it or lose it.</FormHint>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label htmlFor="ent-month">Anchor month</Label>
-              <Input
-                id="ent-month"
-                type="number"
-                min="1"
-                max="12"
-                value={anchorMonth}
-                onChange={(e) => setAnchorMonth(Number(e.target.value))}
-              />
-            </div>
-            <div>
-              <Label htmlFor="ent-day">Anchor day</Label>
-              <Input
-                id="ent-day"
-                type="number"
-                min="1"
-                max="31"
-                value={anchorDay}
-                onChange={(e) => setAnchorDay(Number(e.target.value))}
-              />
-              <FormHint>Reset fires on this date each year.</FormHint>
-            </div>
+            <Field label="Anchor month">
+              {(p) => (
+                <Input
+                  type="number"
+                  min="1"
+                  max="12"
+                  value={anchorMonth}
+                  onChange={(e) => setAnchorMonth(Number(e.target.value))}
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label="Anchor day" hint="Reset fires on this date each year.">
+              {(p) => (
+                <Input
+                  type="number"
+                  min="1"
+                  max="31"
+                  value={anchorDay}
+                  onChange={(e) => setAnchorDay(Number(e.target.value))}
+                  {...p}
+                />
+              )}
+            </Field>
           </div>
         </div>
         <DialogFooter>

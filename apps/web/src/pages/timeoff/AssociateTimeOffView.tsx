@@ -29,8 +29,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
+import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
-import { Label, FormHint } from '@/components/ui/Label';
+import { Select } from '@/components/ui/Select';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Badge } from '@/components/ui/Badge';
@@ -297,74 +298,75 @@ function CreateRequestDialog({ open, onOpenChange, onCreated }: CreateProps) {
         </DialogHeader>
 
         <div className="space-y-3">
-          <div>
-            <Label htmlFor="to-cat">Category</Label>
-            <select
-              id="to-cat"
-              value={category}
-              onChange={(e) => setCategory(e.target.value as Category)}
-              className="mt-1 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 text-white px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-            >
-              {(Object.keys(CATEGORY_LABELS) as Category[]).map((c) => (
-                <option key={c} value={c}>
-                  {CATEGORY_LABELS[c]}
-                </option>
-              ))}
-            </select>
-          </div>
+          <Field label="Category">
+            {(p) => (
+              <Select
+                value={category}
+                onChange={(e) => setCategory(e.target.value as Category)}
+                {...p}
+              >
+                {(Object.keys(CATEGORY_LABELS) as Category[]).map((c) => (
+                  <option key={c} value={c}>
+                    {CATEGORY_LABELS[c]}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
 
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label htmlFor="to-start" required>
-                Start date
-              </Label>
-              <Input
-                id="to-start"
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-              />
-            </div>
-            <div>
-              <Label htmlFor="to-end" required>
-                End date
-              </Label>
-              <Input
-                id="to-end"
-                type="date"
-                value={endDate}
-                min={startDate || undefined}
-                onChange={(e) => setEndDate(e.target.value)}
-              />
-            </div>
+            <Field label="Start date" required>
+              {(p) => (
+                <Input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label="End date" required>
+              {(p) => (
+                <Input
+                  type="date"
+                  value={endDate}
+                  min={startDate || undefined}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
           </div>
 
-          <div>
-            <Label htmlFor="to-hours" required>
-              Total hours
-            </Label>
-            <Input
-              id="to-hours"
-              type="number"
-              step="0.5"
-              min="0.5"
-              value={hours}
-              onChange={(e) => setHours(e.target.value)}
-            />
-            <FormHint>Half-hour granularity. 8 = a full work day.</FormHint>
-          </div>
+          <Field
+            label="Total hours"
+            required
+            hint="Half-hour granularity. 8 = a full work day."
+          >
+            {(p) => (
+              <Input
+                type="number"
+                step="0.5"
+                min="0.5"
+                value={hours}
+                onChange={(e) => setHours(e.target.value)}
+                {...p}
+              />
+            )}
+          </Field>
 
-          <div>
-            <Label htmlFor="to-reason">Reason (optional)</Label>
-            <Input
-              id="to-reason"
-              type="text"
-              maxLength={500}
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="Family event, doctor visit, etc."
-            />
-          </div>
+          <Field label="Reason (optional)">
+            {(p) => (
+              <Input
+                type="text"
+                maxLength={500}
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="Family event, doctor visit, etc."
+                {...p}
+              />
+            )}
+          </Field>
         </div>
 
         <DialogFooter>
