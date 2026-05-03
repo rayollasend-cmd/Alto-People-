@@ -306,7 +306,7 @@ export const MODULES: ModuleNav[] = [
       'Formal warning ladder — verbal, written, final, suspension, termination. Associates can acknowledge; HR can rescind.',
     requires: 'view:hr-admin',
     icon: DisciplineIcon,
-    group: 'workforce',
+    group: 'compliance',
   },
   {
     key: 'separations',
@@ -356,7 +356,7 @@ export const MODULES: ModuleNav[] = [
       'Ticketing for HR. File a question or concern, HR triages and replies. Internal notes stay hidden from the requester.',
     requires: 'view:dashboard',
     icon: HrCasesIcon,
-    group: 'workforce',
+    group: 'compliance',
   },
   {
     key: 'help-center',

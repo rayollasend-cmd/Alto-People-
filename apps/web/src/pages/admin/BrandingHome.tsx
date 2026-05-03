@@ -15,7 +15,8 @@ import {
   uploadOrgLogo,
 } from '@/lib/brandingApi';
 import { Button } from '@/components/ui/Button';
-import { Card, CardContent } from '@/components/ui/Card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Input } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -156,14 +157,14 @@ export function BrandingHome() {
           <Skeleton className="h-48 w-full" />
         </div>
       ) : error ? (
-        <Card>
-          <CardContent className="p-6 text-alert text-sm">{error}</CardContent>
-        </Card>
+        <ErrorBanner>{error}</ErrorBanner>
       ) : (
         <div className="grid gap-6 md:grid-cols-2">
           <Card>
-            <CardContent className="p-6 space-y-4">
-              <h2 className="font-display text-lg text-white">Identity</h2>
+            <CardHeader>
+              <CardTitle>Identity</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="orgName">Organisation name</Label>
                 <Input
@@ -244,8 +245,10 @@ export function BrandingHome() {
           </Card>
 
           <Card>
-            <CardContent className="p-6 space-y-4">
-              <h2 className="font-display text-lg text-white">Logo</h2>
+            <CardHeader>
+              <CardTitle>Logo</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
               <p className="text-silver/80 text-sm">
                 Embedded inline in HTML emails as a data: URI so it renders
                 even when the recipient blocks remote images. PNG, JPEG,

@@ -20,7 +20,10 @@ import {
   CardTitle,
 } from '@/components/ui/Card';
 import { DonutChart, type DonutDatum } from '@/components/ui/DonutChart';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { MetricCard } from '@/components/ui/MetricCard';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 const fmtMoney = (n: number) =>
@@ -122,33 +125,19 @@ export function AnalyticsHome() {
 
       <div className="flex items-center gap-2 mb-6 text-sm">
         <span className="text-silver">Window:</span>
-        {WINDOW_PRESETS.map((d) => (
-          <button
-            key={d}
-            onClick={() => setDays(d)}
-            className={`px-3 py-1 rounded-full border transition ${
-              days === d
-                ? 'bg-cyan-600 border-cyan-500 text-white'
-                : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
-            }`}
-          >
-            {d}d
-          </button>
-        ))}
+        <SegmentedControl
+          ariaLabel="Reporting window"
+          value={days}
+          onChange={(d) => setDays(d as WindowDays)}
+          options={WINDOW_PRESETS.map((d) => ({ value: d, label: `${d}d` }))}
+        />
         <span className="text-xs text-silver/60 ml-2">
           (Affects scheduling & payroll metrics. Headcount, backlogs, and
           status counts are point-in-time.)
         </span>
       </div>
 
-      {error && (
-        <div
-          className="mb-4 p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-          role="alert"
-        >
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
 
       <Section
         title="Workforce"
@@ -304,35 +293,15 @@ interface StatProps {
 }
 
 function Stat({ label, value, hint, accent, link }: StatProps) {
-  const inner = (
-    <Card
-      className={
-        link
-          ? 'transition hover:border-cyan-500 hover:bg-navy-secondary/30 cursor-pointer'
-          : undefined
-      }
-    >
-      <CardContent className="pt-5">
-        <div className="text-[10px] uppercase tracking-widest text-silver">
-          {label}
-        </div>
-        <div
-          className={`font-display text-3xl mt-2 leading-none tabular-nums ${
-            accent ? 'text-warning' : 'text-gold'
-          }`}
-        >
-          {value}
-        </div>
-        {hint && <div className="text-xs text-silver/70 mt-2">{hint}</div>}
-        {link && (
-          <div className="text-[10px] text-silver/60 mt-3">
-            View details →
-          </div>
-        )}
-      </CardContent>
-    </Card>
+  return (
+    <MetricCard
+      label={label}
+      value={value}
+      hint={hint}
+      accent={accent}
+      wrap={link ? (card) => <Link to={link}>{card}</Link> : undefined}
+    />
   );
-  return link ? <Link to={link}>{inner}</Link> : inner;
 }
 
 /**
