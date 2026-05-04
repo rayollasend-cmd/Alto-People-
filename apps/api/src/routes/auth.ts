@@ -48,6 +48,9 @@ import {
   forgotPasswordEmailLimiter,
   mfaChallengeIpLimiter,
   mfaChallengeUserLimiter,
+  acceptInviteIpLimiter,
+  resetPasswordIpLimiter,
+  mfaEnrollConfirmLimiter,
 } from '../middleware/rateLimit.js';
 import { hashToken } from '../lib/inviteToken.js';
 import {
@@ -555,7 +558,7 @@ authRouter.get('/invite/:token', async (req, res, next) => {
  * session cookie. Wrapped in a transaction so a partial failure doesn't
  * leave a consumed token attached to a still-INVITED user.
  */
-authRouter.post('/accept-invite', async (req, res, next) => {
+authRouter.post('/accept-invite', acceptInviteIpLimiter, async (req, res, next) => {
   try {
     const parsed = AcceptInviteInputSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -858,19 +861,18 @@ authRouter.post(
           resetLink: resetUrl,
         });
 
-        try {
-          await send({
-            channel: 'EMAIL',
-            recipient: { userId: user.id, phone: null, email: user.email },
-            subject: tpl.subject,
-            body: tpl.text,
-            html: tpl.html,
-          });
-        } catch (sendErr) {
-          // Don't surface to the client (see enumeration note above) but
-          // do record so HR can investigate undelivered resets.
+        // Fire-and-forget so response time doesn't depend on send latency
+        // (a timing side-channel for "this email exists and was eligible").
+        // Errors are logged for HR to investigate undelivered resets.
+        void send({
+          channel: 'EMAIL',
+          recipient: { userId: user.id, phone: null, email: user.email },
+          subject: tpl.subject,
+          body: tpl.text,
+          html: tpl.html,
+        }).catch((sendErr) => {
           console.error('[auth.forgot-password] email send failed:', sendErr);
-        }
+        });
 
         enqueueAudit(
           {
@@ -934,7 +936,7 @@ authRouter.post(
  * with the new password from a clean state. This is the safer pattern
  * (it confirms the password actually works before they leave the page).
  */
-authRouter.post('/reset-password', async (req, res, next) => {
+authRouter.post('/reset-password', resetPasswordIpLimiter, async (req, res, next) => {
   try {
     const parsed = ResetPasswordSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -1196,7 +1198,7 @@ authRouter.post('/me/mfa/enroll/start', requireAuth, async (req, res, next) => {
  * the Settings card flips to the "MFA is on" state. tokenVersion is NOT
  * bumped: enabling MFA shouldn't sign anyone out.
  */
-authRouter.post('/me/mfa/enroll/confirm', requireAuth, async (req, res, next) => {
+authRouter.post('/me/mfa/enroll/confirm', requireAuth, mfaEnrollConfirmLimiter, async (req, res, next) => {
   try {
     const parsed = MfaEnrollConfirmInputSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -1297,6 +1299,7 @@ authRouter.get('/me/mfa/status', requireAuth, async (req, res, next) => {
 authRouter.post(
   '/me/mfa/recovery-codes/regenerate',
   requireAuth,
+  changePasswordLimiter,
   async (req, res, next) => {
     try {
       const parsed = MfaRegenerateInputSchema.safeParse(req.body);
@@ -1369,7 +1372,7 @@ authRouter.post(
  * cost the same as setting it up). Wipes the secret AND every recovery
  * code so a future re-enroll starts from a clean slate.
  */
-authRouter.delete('/me/mfa', requireAuth, async (req, res, next) => {
+authRouter.delete('/me/mfa', requireAuth, changePasswordLimiter, async (req, res, next) => {
   try {
     const parsed = MfaDisableInputSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -1575,7 +1578,7 @@ authRouter.patch('/me/notification-preferences', requireAuth, async (req, res, n
  * a meaningful error code for the in-app form, since the request is
  * authenticated (no enumeration risk: the caller is already a known user).
  */
-authRouter.post('/me/email-change/request', requireAuth, async (req, res, next) => {
+authRouter.post('/me/email-change/request', requireAuth, changePasswordLimiter, async (req, res, next) => {
   try {
     const parsed = RequestEmailChangeInputSchema.safeParse(req.body);
     if (!parsed.success) {

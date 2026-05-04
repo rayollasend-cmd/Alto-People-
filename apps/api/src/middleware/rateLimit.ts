@@ -159,6 +159,69 @@ export const forgotPasswordEmailLimiter = rateLimit({
   },
 });
 
+// Token-consume endpoints (accept-invite, reset-password) are unauthenticated
+// and consume a high-entropy bearer token. The IP limiter caps a botnet that's
+// already harvested a token from somewhere it shouldn't have been (email
+// archive leak, shoulder-surf) before they can grind through password
+// candidates against the consume step. 10/hour/IP is loose for legitimate
+// "I clicked the link wrong / network hiccup" retries, tight against abuse.
+const TOKEN_CONSUME_IP_LIMIT =
+  process.env.NODE_ENV === 'test' ? 100_000 : 10;
+
+/** 10 requests / hour / IP for /auth/accept-invite. */
+export const acceptInviteIpLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: TOKEN_CONSUME_IP_LIMIT,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: {
+    error: {
+      code: 'rate_limited',
+      message: 'Too many invite attempts. Try again later.',
+    },
+  },
+});
+
+/** 10 requests / hour / IP for /auth/reset-password. */
+export const resetPasswordIpLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: TOKEN_CONSUME_IP_LIMIT,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: {
+    error: {
+      code: 'rate_limited',
+      message: 'Too many reset attempts. Try again later.',
+    },
+  },
+});
+
+// MFA enrollment confirmation. The TOTP verifier accepts a window of 3 codes
+// (current ± 1) out of a 1M keyspace, so each guess is ~3/1M odds of hitting.
+// Without a per-user limit, an attacker with a stolen session could grind
+// the keyspace until they confirm enrollment under their authenticator. Cap
+// at 5/15min — same shape as the mfa-challenge limiter for the login path.
+const MFA_ENROLL_CONFIRM_LIMIT =
+  process.env.NODE_ENV === 'test' ? 100_000 : 5;
+
+/** 5 enroll-confirm attempts / 15 min / user for /auth/me/mfa/enroll/confirm. */
+export const mfaEnrollConfirmLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: MFA_ENROLL_CONFIRM_LIMIT,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => {
+    const userId = req.user?.id;
+    return userId ? `user:${userId}` : `ip:${req.ip ?? 'unknown'}`;
+  },
+  message: {
+    error: {
+      code: 'rate_limited',
+      message: 'Too many code attempts. Try again in a few minutes.',
+    },
+  },
+});
+
 // Public careers apply endpoint is unauthenticated and therefore the most
 // abusable surface in the API. Two limiters layered: per-IP catches a
 // botnet hammering one origin; per-email catches a single account being
