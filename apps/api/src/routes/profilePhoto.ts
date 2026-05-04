@@ -8,6 +8,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { invalidateUserCache, requireAuth } from '../middleware/auth.js';
 import { resolveStoragePath, PROFILE_PHOTO_DIR } from '../lib/storage.js';
+import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 
 /**
  * Profile photos.
@@ -66,10 +67,15 @@ profilePhotoRouter.post(
     if (!req.file) {
       throw new HttpError(400, 'no_file', 'A "file" multipart field is required.');
     }
+    const magicError = verifyFileMagic(req.file.buffer, req.file.mimetype);
+    if (magicError) {
+      throw new HttpError(400, 'invalid_file_contents', magicError);
+    }
 
+    const cleanName = sanitizeUploadFilename(req.file.originalname);
     const ext =
       EXT_BY_MIME[req.file.mimetype] ??
-      (extname(req.file.originalname || '').toLowerCase() || '.bin');
+      (extname(cleanName).toLowerCase() || '.bin');
     const relativeKey = `${PROFILE_PHOTO_DIR}/${associateId}-${randomUUID()}${ext}`;
     const fullPath = resolveStoragePath(relativeKey);
     await writeFile(fullPath, req.file.buffer);

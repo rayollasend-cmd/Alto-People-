@@ -140,9 +140,9 @@ function PreviewBody({ doc }: { doc: DocumentRecord }) {
         title={doc.filename}
         className="w-full h-full bg-white"
         // sandbox lets the PDF viewer run but blocks navigation / popups.
-        // PDF.js needs scripts; pure same-origin embeds don't, but Chromium's
-        // built-in viewer behaves the same with or without `allow-scripts`.
-        sandbox="allow-same-origin allow-scripts allow-popups"
+        // No allow-popups: a malicious PDF should not be able to open new
+        // tabs (phishing surface).
+        sandbox="allow-same-origin allow-scripts"
       />
     );
   }

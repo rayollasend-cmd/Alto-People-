@@ -171,8 +171,9 @@ export function DocumentUploadTask() {
     <TaskShell title="Identity documents" backTo={backTo}>
       <p className="text-silver text-sm mb-4">
         Upload a clear photo or scan of each document. PDF, PNG, JPG, or WebP
-        — up to {fmtSize(MAX_BYTES)} per file. HR will review them; you'll see
-        the status update on your checklist.
+        only — up to {fmtSize(MAX_BYTES)} per file. Word documents aren't
+        supported; export or print to PDF first. HR will review each upload;
+        you'll see the status update on your checklist.
       </p>
 
       <div className="space-y-4">
