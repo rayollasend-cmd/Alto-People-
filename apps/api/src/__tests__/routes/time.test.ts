@@ -45,12 +45,9 @@ async function seedSelfClocker() {
   return { client, associate, user };
 }
 
-// Back-compat alias — many tests below still call this. Same shape.
-const seedAssociate = seedSelfClocker;
-
 describe('GET /time/me/active', () => {
   it('returns null when associate has no active entry', async () => {
-    const { user } = await seedAssociate();
+    const { user } = await seedSelfClocker();
     const a = await loginAs(user.email);
     const res = await a.get('/time/me/active');
     expect(res.status).toBe(200);
@@ -58,7 +55,7 @@ describe('GET /time/me/active', () => {
   });
 
   it('returns the open entry after clock-in', async () => {
-    const { user } = await seedAssociate();
+    const { user } = await seedSelfClocker();
     const a = await loginAs(user.email);
     await a.post('/time/me/clock-in').send({});
     const res = await a.get('/time/me/active');
@@ -70,7 +67,7 @@ describe('GET /time/me/active', () => {
 
 describe('POST /time/me/clock-in', () => {
   it('creates an ACTIVE entry, denormalizes clientId, writes audit log', async () => {
-    const { client, associate, user } = await seedAssociate();
+    const { client, associate, user } = await seedSelfClocker();
     const a = await loginAs(user.email);
 
     const res = await a.post('/time/me/clock-in').send({ notes: 'starting morning shift' });
@@ -90,7 +87,7 @@ describe('POST /time/me/clock-in', () => {
   });
 
   it('returns 409 when already clocked in (partial unique index enforces it)', async () => {
-    const { user } = await seedAssociate();
+    const { user } = await seedSelfClocker();
     const a = await loginAs(user.email);
 
     const ok = await a.post('/time/me/clock-in').send({});
@@ -130,7 +127,7 @@ describe('POST /time/me/clock-in', () => {
 
 describe('POST /time/me/clock-out', () => {
   it('closes the active entry and sets status COMPLETED', async () => {
-    const { user } = await seedAssociate();
+    const { user } = await seedSelfClocker();
     const a = await loginAs(user.email);
 
     const inRes = await a.post('/time/me/clock-in').send({});
@@ -149,7 +146,7 @@ describe('POST /time/me/clock-out', () => {
   });
 
   it('returns 409 when not clocked in', async () => {
-    const { user } = await seedAssociate();
+    const { user } = await seedSelfClocker();
     const a = await loginAs(user.email);
     const res = await a.post('/time/me/clock-out').send({});
     expect(res.status).toBe(409);
@@ -159,7 +156,7 @@ describe('POST /time/me/clock-out', () => {
 
 describe('GET /time/me/entries', () => {
   it('returns this associate\'s entries only, in reverse-chronological order', async () => {
-    const { user, associate } = await seedAssociate();
+    const { user, associate } = await seedSelfClocker();
     const a = await loginAs(user.email);
 
     // Two entries for this associate.
@@ -193,14 +190,19 @@ describe('GET /time/me/entries', () => {
 
 describe('GET /time/admin/entries', () => {
   it('returns 403 to ASSOCIATE (lacks manage:time)', async () => {
-    const { user } = await seedAssociate();
+    const associate = await createAssociate();
+    const { user } = await createUser({
+      role: 'ASSOCIATE',
+      email: associate.email,
+      associateId: associate.id,
+    });
     const a = await loginAs(user.email);
     const res = await a.get('/time/admin/entries');
     expect(res.status).toBe(403);
   });
 
   it('HR_ADMINISTRATOR sees every entry; supports status filter', async () => {
-    const { user: assocUser } = await seedAssociate();
+    const { user: assocUser } = await seedSelfClocker();
     const associateAgent = await loginAs(assocUser.email);
     await associateAgent.post('/time/me/clock-in').send({});
     await associateAgent.post('/time/me/clock-out').send({});
@@ -222,7 +224,7 @@ describe('GET /time/admin/entries', () => {
 
 describe('POST /time/admin/entries/:id/approve', () => {
   it('marks COMPLETED → APPROVED with approver tracked', async () => {
-    const { user: assocUser } = await seedAssociate();
+    const { user: assocUser } = await seedSelfClocker();
     const associateAgent = await loginAs(assocUser.email);
     const inRes = await associateAgent.post('/time/me/clock-in').send({});
     await associateAgent.post('/time/me/clock-out').send({});
@@ -243,7 +245,7 @@ describe('POST /time/admin/entries/:id/approve', () => {
   });
 
   it('returns 409 when entry is still ACTIVE', async () => {
-    const { user: assocUser } = await seedAssociate();
+    const { user: assocUser } = await seedSelfClocker();
     const associateAgent = await loginAs(assocUser.email);
     const inRes = await associateAgent.post('/time/me/clock-in').send({});
 
@@ -281,7 +283,7 @@ describe('POST /time/admin/entries/:id/approve', () => {
 
 describe('POST /time/admin/entries/:id/reject', () => {
   it('marks COMPLETED → REJECTED with the supplied reason', async () => {
-    const { user: assocUser } = await seedAssociate();
+    const { user: assocUser } = await seedSelfClocker();
     const associateAgent = await loginAs(assocUser.email);
     const inRes = await associateAgent.post('/time/me/clock-in').send({});
     await associateAgent.post('/time/me/clock-out').send({});
@@ -306,7 +308,7 @@ describe('POST /time/admin/entries/:id/reject', () => {
   });
 
   it('rejects without a reason is a 400', async () => {
-    const { user: assocUser } = await seedAssociate();
+    const { user: assocUser } = await seedSelfClocker();
     const associateAgent = await loginAs(assocUser.email);
     const inRes = await associateAgent.post('/time/me/clock-in').send({});
     await associateAgent.post('/time/me/clock-out').send({});
