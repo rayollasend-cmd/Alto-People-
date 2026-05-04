@@ -121,6 +121,31 @@ export function scopeTimeEntries(user: SessionUser): Prisma.TimeEntryWhereInput 
 }
 
 /**
+ * Resolves the effective `clientId` filter for a list endpoint that's
+ * reachable by tenant-bounded roles. CLIENT_PORTAL and ASSOCIATE are
+ * always clamped to their own `clientId` — anything they pass in the
+ * query is ignored. FULL_ADMIN holders pass through whatever was
+ * requested (their cross-client access is by design).
+ *
+ * Returns:
+ *   - a uuid string  → "filter to this client (plus globals if the
+ *                       caller's where uses OR clientId IS NULL)"
+ *   - null           → caller is tenant-bounded but has no clientId
+ *                      on file → only company-wide rows are visible
+ *   - undefined      → admin caller with no filter requested → no
+ *                      clientId restriction
+ */
+export function effectiveClientIdFilter(
+  user: SessionUser,
+  requested: string | undefined,
+): string | null | undefined {
+  if (user.role === 'CLIENT_PORTAL' || user.role === 'ASSOCIATE') {
+    return user.clientId ?? null;
+  }
+  return requested;
+}
+
+/**
  * Loads an application the caller is allowed to modify, or throws 404.
  * Use 404 (not 403) so existence isn't leaked across tenants.
  *
