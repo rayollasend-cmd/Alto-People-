@@ -20,6 +20,7 @@ import {
   hireCandidate,
   listCandidates,
 } from '@/lib/recruitingApi';
+import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { CandidateBoard } from './CandidateBoard';
@@ -157,6 +158,7 @@ export function RecruitingHome() {
     setPendingId(c.id);
     try {
       await advanceCandidate(c.id, { stage: target });
+      toast.success(`Moved ${c.firstName} ${c.lastName} to ${target}.`);
       await Promise.all([refresh(), refreshKpis()]);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Advance failed.');
@@ -173,6 +175,9 @@ export function RecruitingHome() {
         stage: 'REJECTED',
         rejectedReason: reason,
       });
+      toast.success(
+        `${dialog.candidate.firstName} ${dialog.candidate.lastName} rejected.`,
+      );
       setDialog(null);
       await Promise.all([refresh(), refreshKpis()]);
     } catch (err) {

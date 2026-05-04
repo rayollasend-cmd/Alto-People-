@@ -121,11 +121,22 @@ function OshaTab({ clientId }: { clientId: string }) {
     setRows(null);
     listOshaIncidents(clientId)
       .then((r) => setRows(r.incidents))
-      .catch(() => setRows([]));
+      .catch((err) => {
+        setRows([]);
+        toast.error(
+          err instanceof ApiError ? err.message : 'Could not load incidents.',
+        );
+      });
   };
   useEffect(() => {
     refresh();
-    get300A(clientId, year).then(setSummary).catch(() => setSummary(null));
+    get300A(clientId, year)
+      .then(setSummary)
+      .catch(() => {
+        // Summary is decorative — the incident list above is what HR
+        // acts on. Drop to em-dashes silently rather than double-toast.
+        setSummary(null);
+      });
   }, [clientId, year]);
 
   return (
@@ -315,8 +326,9 @@ function NewIncidentDrawer({
           <Input className="mt-1" value={bodyPart} onChange={(e) => setBodyPart(e.target.value)} />
         </div>
         <div>
-          <Label>Severity</Label>
+          <Label htmlFor="osha-severity">Severity</Label>
           <select
+            id="osha-severity"
             className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
             value={severity}
             onChange={(e) => setSeverity(e.target.value as OshaSeverity)}

@@ -405,8 +405,9 @@ function NewGrantDrawer({
           />
         </div>
         <div>
-          <Label>Type</Label>
+          <Label htmlFor="equity-grant-type">Type</Label>
           <select
+            id="equity-grant-type"
             className="w-full mt-1 bg-midnight border border-navy-secondary rounded p-2 text-white"
             value={grantType}
             onChange={(e) => setGrantType(e.target.value as EquityGrantType)}

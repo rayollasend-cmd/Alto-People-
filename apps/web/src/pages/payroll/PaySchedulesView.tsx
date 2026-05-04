@@ -165,7 +165,9 @@ export function PaySchedulesView({ canProcess }: Props) {
               </CardHeader>
               <CardContent className="space-y-2 text-xs">
                 <MetaRow label="Scope">
-                  {s.clientName ?? <span className="text-silver/50">All clients</span>}
+                  {s.clientName ?? (
+                    <span className="text-silver/80 italic">All clients</span>
+                  )}
                 </MetaRow>
                 <MetaRow label="Anchor date">{s.anchorDate}</MetaRow>
                 <MetaRow label="Next period">

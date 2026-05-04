@@ -93,7 +93,7 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
       />
       <aside
         ref={panelRef}
-        className="absolute left-0 top-0 h-full w-72 bg-navy border-r border-navy-secondary flex flex-col animate-slide-in-from-right pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]"
+        className="absolute left-0 top-0 h-full w-72 max-w-[calc(100vw-3rem)] bg-navy border-r border-navy-secondary flex flex-col animate-slide-in-from-right pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]"
       >
         <div className="px-4 min-h-14 flex items-center justify-between gap-3 border-b border-navy-secondary">
           <div className="flex items-center gap-2 min-w-0">
@@ -111,7 +111,7 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
             ref={closeButtonRef}
             type="button"
             onClick={onClose}
-            className="text-silver hover:text-white p-1 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+            className="grid place-items-center h-10 w-10 -mr-2 text-silver hover:text-white rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
             aria-label="Close menu"
           >
             <X className="h-5 w-5" />

@@ -815,7 +815,7 @@ function PhoneField({
             type="button"
             onClick={() => setEditing(true)}
             aria-label="Edit phone"
-            className="opacity-0 group-hover:opacity-100 focus:opacity-100 grid place-items-center h-7 w-7 rounded text-silver hover:text-white hover:bg-navy-secondary/60 transition-opacity"
+            className="opacity-0 group-hover:opacity-100 focus:opacity-100 grid place-items-center h-9 w-9 rounded text-silver hover:text-white hover:bg-navy-secondary/60 transition-opacity"
           >
             <Pencil className="h-3.5 w-3.5" />
           </button>

@@ -38,7 +38,9 @@ export function BrandingHome() {
   const [orgName, setOrgName] = useState('Alto HR');
   const [senderName, setSenderName] = useState('');
   const [supportEmail, setSupportEmail] = useState('');
+  const [supportEmailTouched, setSupportEmailTouched] = useState(false);
   const [primaryColor, setPrimaryColor] = useState('');
+  const [primaryColorTouched, setPrimaryColorTouched] = useState(false);
   const [logoBust, setLogoBust] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -51,7 +53,9 @@ export function BrandingHome() {
       setOrgName(b.orgName);
       setSenderName(b.senderName ?? '');
       setSupportEmail(b.supportEmail ?? '');
+      setSupportEmailTouched(false);
       setPrimaryColor(b.primaryColor ?? '');
+      setPrimaryColorTouched(false);
       setLogoBust((n) => n + 1);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load branding.');
@@ -207,13 +211,18 @@ export function BrandingHome() {
                     default <code>hr@altohr.com</code>.
                   </>
                 }
-                error={!emailValid ? 'Enter a valid email address.' : undefined}
+                error={
+                  supportEmailTouched && !emailValid
+                    ? 'Enter a valid email address.'
+                    : undefined
+                }
               >
                 {(p) => (
                   <Input
                     type="email"
                     value={supportEmail}
                     onChange={(e) => setSupportEmail(e.target.value)}
+                    onBlur={() => setSupportEmailTouched(true)}
                     maxLength={254}
                     placeholder="info@altohr.com"
                     {...p}
@@ -228,13 +237,18 @@ export function BrandingHome() {
                     header band and CTA button background.
                   </>
                 }
-                error={!colorValid ? 'Use a hex value like #0F2A44.' : undefined}
+                error={
+                  primaryColorTouched && !colorValid
+                    ? 'Use a hex value like #0F2A44.'
+                    : undefined
+                }
               >
                 {(p) => (
                   <div className="flex items-center gap-2">
                     <Input
                       value={primaryColor}
                       onChange={(e) => setPrimaryColor(e.target.value)}
+                      onBlur={() => setPrimaryColorTouched(true)}
                       placeholder="#0F2A44"
                       maxLength={7}
                       className="font-mono"
