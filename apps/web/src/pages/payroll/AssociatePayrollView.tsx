@@ -145,7 +145,7 @@ function PaystubCard({
             {badge.label}
           </span>
         </div>
-        <div className="grid grid-cols-3 gap-3 text-sm pl-7">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm pl-7">
           <div>
             <div className="text-xs uppercase tracking-widest text-silver/60">Gross</div>
             <div className="text-white tabular-nums">{fmtMoney(item.grossPay)}</div>

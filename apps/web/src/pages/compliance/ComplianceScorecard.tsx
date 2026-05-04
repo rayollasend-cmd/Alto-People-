@@ -460,7 +460,7 @@ function ExpirationsTile({ refreshEpoch }: { refreshEpoch: number }) {
     >
       {data && (
         <>
-          <div className="grid grid-cols-3 gap-2 mb-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
             <BucketTile label="0–30 days" count={data.buckets.red.length} severity="critical" />
             <BucketTile label="31–60 days" count={data.buckets.amber.length} severity="warn" />
             <BucketTile label="61–90 days" count={data.buckets.green.length} severity="ok" />

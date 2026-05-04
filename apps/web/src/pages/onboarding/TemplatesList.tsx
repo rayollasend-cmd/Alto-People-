@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
@@ -102,12 +103,9 @@ export function TemplatesList() {
   if (!canManage) {
     return (
       <div className="max-w-3xl mx-auto">
-        <div
-          className="p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-          role="alert"
-        >
+        <ErrorBanner>
           You don't have permission to manage onboarding templates.
-        </div>
+        </ErrorBanner>
       </div>
     );
   }
@@ -136,14 +134,7 @@ export function TemplatesList() {
         }
       />
 
-      {error && (
-        <div
-          className="mb-4 p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-          role="alert"
-        >
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
 
       {!templates && (
         <div className="space-y-3">

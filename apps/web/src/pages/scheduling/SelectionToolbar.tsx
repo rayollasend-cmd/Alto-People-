@@ -196,7 +196,7 @@ export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
           <Trash2 className="h-3.5 w-3.5" />
           Cancel
         </Button>
-        <span className="text-silver/40">·</span>
+        <span className="text-silver/50">·</span>
         <button
           type="button"
           onClick={onClear}

@@ -21,6 +21,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/Card';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 
@@ -73,12 +74,7 @@ export function AssociateChecklist() {
   if (error) {
     return (
       <div className="max-w-3xl mx-auto">
-        <div
-          className="p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-          role="alert"
-        >
-          {error}
-        </div>
+        <ErrorBanner>{error}</ErrorBanner>
       </div>
     );
   }

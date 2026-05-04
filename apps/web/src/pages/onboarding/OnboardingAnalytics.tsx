@@ -6,6 +6,7 @@ import { getOnboardingAnalytics } from '@/lib/analyticsApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
@@ -69,12 +70,9 @@ export function OnboardingAnalytics() {
   if (!canView) {
     return (
       <div className="max-w-3xl mx-auto">
-        <div
-          className="p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-          role="alert"
-        >
+        <ErrorBanner>
           You don't have permission to view onboarding analytics.
-        </div>
+        </ErrorBanner>
       </div>
     );
   }
@@ -99,14 +97,7 @@ export function OnboardingAnalytics() {
         }
       />
 
-      {error && (
-        <div
-          className="mb-4 p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-          role="alert"
-        >
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
 
       {!data && !error && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

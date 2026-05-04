@@ -44,6 +44,7 @@ import {
   CardTitle,
 } from '@/components/ui/Card';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import {
   Dialog,
   DialogContent,
@@ -158,14 +159,7 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
       : null;
 
   if (error) {
-    return (
-      <div
-        className="p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-        role="alert"
-      >
-        {error}
-      </div>
-    );
+    return <ErrorBanner>{error}</ErrorBanner>;
   }
 
   if (!detail) {
@@ -427,7 +421,7 @@ function DetailMeta({ detail }: { detail: ApplicationDetailType }) {
       <span className="text-white">{detail.clientName}</span>
       {detail.position && (
         <>
-          <span className="text-silver/40">·</span>
+          <span className="text-silver/50">·</span>
           <span>{detail.position}</span>
         </>
       )}

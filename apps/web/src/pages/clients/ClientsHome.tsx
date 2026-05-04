@@ -23,6 +23,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
@@ -138,14 +139,7 @@ export function ClientsHome() {
         }
       />
 
-      {error && (
-        <div
-          className="mb-4 p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-          role="alert"
-        >
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-1 rounded-md border border-navy-secondary p-0.5 bg-navy-secondary/30">
@@ -329,7 +323,7 @@ function ClientCard({ client }: { client: ClientListItem }) {
           </div>
           <div className="text-xs text-silver mt-0.5 flex items-center gap-1.5 flex-wrap">
             {client.industry && <span>{client.industry}</span>}
-            {client.industry && client.state && <span className="text-silver/40">·</span>}
+            {client.industry && client.state && <span className="text-silver/50">·</span>}
             <span className="inline-flex items-center gap-0.5">
               <MapPin className="h-3 w-3" aria-hidden="true" />
               {stateLabel}
@@ -341,7 +335,7 @@ function ClientCard({ client }: { client: ClientListItem }) {
         </Badge>
       </div>
 
-      <div className="grid grid-cols-3 gap-2 pt-2 border-t border-navy-secondary/60">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-2 border-t border-navy-secondary/60">
         <KpiTile
           icon={ClipboardList}
           label="Open apps"

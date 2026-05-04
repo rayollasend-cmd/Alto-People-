@@ -435,7 +435,7 @@ export function RecruitingHome() {
                     {(c.position || c.source) && (
                       <div className="mt-0.5 ml-[2.4rem] text-[11px] text-silver/70 truncate">
                         {c.position ?? '—'}
-                        <span className="mx-1.5 text-silver/40">·</span>
+                        <span className="mx-1.5 text-silver/50">·</span>
                         {c.source ?? 'manual'}
                       </div>
                     )}

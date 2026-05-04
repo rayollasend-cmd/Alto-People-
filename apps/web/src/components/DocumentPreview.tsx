@@ -68,13 +68,13 @@ export function DocumentPreview({ doc, onOpenChange, actions }: DocumentPreviewP
                   <span className="uppercase tracking-wider">
                     {doc.kind.replace(/_/g, ' ')}
                   </span>
-                  <span className="text-silver/40">·</span>
+                  <span className="text-silver/50">·</span>
                   <span>{fmtSize(doc.size)}</span>
-                  <span className="text-silver/40">·</span>
+                  <span className="text-silver/50">·</span>
                   <span>{doc.mimeType}</span>
                   {doc.associateName && (
                     <>
-                      <span className="text-silver/40">·</span>
+                      <span className="text-silver/50">·</span>
                       <span>{doc.associateName}</span>
                     </>
                   )}

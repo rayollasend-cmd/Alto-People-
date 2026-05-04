@@ -94,7 +94,7 @@ export function BillingHome() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <dl className="grid grid-cols-3 gap-4 text-sm">
+              <dl className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
                 <div>
                   <dt className="text-silver/70 text-xs uppercase tracking-wide">
                     Plan

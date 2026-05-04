@@ -28,6 +28,8 @@ import { getDashboardKPIs } from '@/lib/analyticsApi';
 import { searchAuditLogs } from '@/lib/auditApi';
 import { ApiError } from '@/lib/api';
 import { Card, CardContent } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 
@@ -190,15 +192,7 @@ export function AdminDashboard() {
         </p>
       </header>
 
-      {error && (
-        <div
-          role="alert"
-          className="flex items-start gap-2 px-4 py-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-        >
-          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-          <span>{error}</span>
-        </div>
-      )}
+      {error && <ErrorBanner>{error}</ErrorBanner>}
 
       <ActionRequiredSection
         kpis={kpis}
@@ -509,7 +503,7 @@ function KpiTile({ kpi }: { kpi: Kpi }) {
           <div className="text-[10px] md:text-[11px] uppercase tracking-[0.15em] text-silver">
             {kpi.label}
           </div>
-          <Icon className="h-3.5 w-3.5 text-silver/50" aria-hidden="true" />
+          <Icon className="h-3.5 w-3.5 text-silver/70" aria-hidden="true" />
         </div>
         <div className="font-display text-3xl md:text-[2rem] text-white mt-3 leading-none tabular-nums">
           {kpi.value}
@@ -567,20 +561,20 @@ function OnboardingFunnel({ kpis }: { kpis: DashboardKPIs | null }) {
     return (
       <section aria-label="Onboarding funnel" className="space-y-3">
         <SectionTitle icon={ClipboardList}>Onboarding pipeline</SectionTitle>
-        <Card>
-          <CardContent className="py-6 text-center">
-            <div className="text-silver text-sm">
-              No applications yet. New hires will appear here as HR creates them.
-            </div>
+        <EmptyState
+          icon={ClipboardList}
+          title="No applications yet"
+          description="New hires will appear here as HR creates them."
+          action={
             <Link
               to="/onboarding"
-              className="inline-flex items-center gap-1 text-sm text-gold hover:text-gold-bright mt-2"
+              className="inline-flex items-center gap-1 text-sm text-gold hover:text-gold-bright"
             >
               Open onboarding
               <ArrowRight className="h-3.5 w-3.5" />
             </Link>
-          </CardContent>
-        </Card>
+          }
+        />
       </section>
     );
   }

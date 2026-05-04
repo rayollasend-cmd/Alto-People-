@@ -50,7 +50,7 @@ export function Breadcrumb({ segments, className }: BreadcrumbProps) {
             )}
             {!isLast && (
               <ChevronRight
-                className="h-3 w-3 text-silver/40 shrink-0"
+                className="h-3 w-3 text-silver/50 shrink-0"
                 aria-hidden="true"
               />
             )}

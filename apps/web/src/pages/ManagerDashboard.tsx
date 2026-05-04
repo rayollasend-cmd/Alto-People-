@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   Activity,
-  AlertTriangle,
   ArrowRight,
   Calendar,
   CalendarOff,
@@ -29,6 +28,7 @@ import {
 } from '@/lib/teamApi';
 import { Avatar } from '@/components/ui/Avatar';
 import { Card, CardContent } from '@/components/ui/Card';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 
@@ -180,15 +180,7 @@ export function ManagerDashboard() {
         </p>
       </header>
 
-      {error && (
-        <div
-          role="alert"
-          className="flex items-start gap-2 px-4 py-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-        >
-          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-          <span>{error}</span>
-        </div>
-      )}
+      {error && <ErrorBanner>{error}</ErrorBanner>}
 
       <ApprovalsSection
         pendingTimesheets={pendingTimesheets}
@@ -445,7 +437,7 @@ function KpiTile({
           <div className="text-[10px] md:text-[11px] uppercase tracking-[0.15em] text-silver">
             {label}
           </div>
-          <Icon className="h-3.5 w-3.5 text-silver/50" aria-hidden="true" />
+          <Icon className="h-3.5 w-3.5 text-silver/70" aria-hidden="true" />
         </div>
         <div className="font-display text-3xl md:text-[2rem] text-white mt-3 leading-none tabular-nums">
           {value}

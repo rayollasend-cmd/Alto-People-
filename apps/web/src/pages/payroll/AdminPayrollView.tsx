@@ -836,7 +836,7 @@ function PayrollHero({
           </div>
         ) : (
           <div className="flex items-center gap-3 text-silver/60 text-sm">
-            <CalendarDays className="h-5 w-5 text-silver/40" />
+            <CalendarDays className="h-5 w-5 text-silver/50" />
             No active pay schedule. Create one in the <strong>Pay schedules</strong> tab to project the next run.
           </div>
         )}
@@ -1013,7 +1013,7 @@ function RunStatusStepper({
               <span
                 className={cn(
                   'mt-1 text-[10px] uppercase tracking-widest text-center truncate max-w-[80px]',
-                  reached ? 'text-silver' : 'text-silver/40'
+                  reached ? 'text-silver' : 'text-silver/50'
                 )}
               >
                 {s.label}
@@ -1136,7 +1136,7 @@ function PaystubAdminCard({
           </Badge>
         </div>
         <div className="text-right shrink-0">
-          <div className="text-[10px] uppercase tracking-widest text-silver/40">Net</div>
+          <div className="text-[10px] uppercase tracking-widest text-silver/50">Net</div>
           <div className="tabular-nums text-gold">{fmtMoney(item.netPay)}</div>
         </div>
       </button>

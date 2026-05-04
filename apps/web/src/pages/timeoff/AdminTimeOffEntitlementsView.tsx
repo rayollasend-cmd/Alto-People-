@@ -27,6 +27,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -99,14 +100,7 @@ export function AdminTimeOffEntitlementsView({ canManage }: Props) {
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        {error && (
-          <div
-            className="m-4 p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-            role="alert"
-          >
-            {error}
-          </div>
-        )}
+        {error && <ErrorBanner className="m-4">{error}</ErrorBanner>}
         {!items && (
           <div className="p-4 space-y-2">
             <Skeleton className="h-10" />

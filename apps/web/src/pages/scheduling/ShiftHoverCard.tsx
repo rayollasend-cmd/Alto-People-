@@ -130,6 +130,7 @@ export function ShiftHoverCard({
     <div
       ref={cardRef}
       role="dialog"
+      aria-modal="true"
       aria-label={`Shift details: ${shift.position}`}
       onPointerEnter={onPointerEnterCard}
       onPointerLeave={onPointerLeaveCard}
@@ -152,7 +153,7 @@ export function ShiftHoverCard({
         />
         <button
           onClick={onClose}
-          className="absolute right-2 top-2 text-silver/50 hover:text-silver"
+          className="absolute right-2 top-2 text-silver/70 hover:text-white"
           aria-label="Close"
           type="button"
         >

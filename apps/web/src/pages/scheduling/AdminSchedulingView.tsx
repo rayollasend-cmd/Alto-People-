@@ -1612,7 +1612,7 @@ function KpiStrip({ kpis }: { kpis: SchedulingKpis | null }) {
       {kpis.draftShifts > 0 && (
         <Kpi label="Draft" value={String(kpis.draftShifts)} tone="text-silver" />
       )}
-      <div className="text-[10px] uppercase tracking-wider text-silver/40 self-end ml-auto">
+      <div className="text-[10px] uppercase tracking-wider text-silver/50 self-end ml-auto">
         this week
       </div>
     </div>

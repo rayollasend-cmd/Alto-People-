@@ -41,6 +41,7 @@ import {
   DrawerTitle,
 } from '@/components/ui/Drawer';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Input } from '@/components/ui/Input';
 import { Field } from '@/components/ui/Field';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -453,14 +454,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         </span>
       </div>
 
-      {error && (
-        <div
-          className="mb-4 p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-          role="alert"
-        >
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
 
       {view === 'queue' && !docs && !error && (
         <Card>
@@ -676,28 +670,28 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                       {g.uploaded > 0 ? (
                         <Badge variant="pending">{g.uploaded}</Badge>
                       ) : (
-                        <span className="text-silver/40 text-xs">—</span>
+                        <span className="text-silver/50 text-xs">—</span>
                       )}
                     </TableCell>
                     <TableCell className="hidden md:table-cell">
                       {g.verified > 0 ? (
                         <Badge variant="success">{g.verified}</Badge>
                       ) : (
-                        <span className="text-silver/40 text-xs">—</span>
+                        <span className="text-silver/50 text-xs">—</span>
                       )}
                     </TableCell>
                     <TableCell className="hidden md:table-cell">
                       {g.rejected > 0 ? (
                         <Badge variant="destructive">{g.rejected}</Badge>
                       ) : (
-                        <span className="text-silver/40 text-xs">—</span>
+                        <span className="text-silver/50 text-xs">—</span>
                       )}
                     </TableCell>
                     <TableCell className="hidden lg:table-cell">
                       {g.expired > 0 ? (
                         <Badge variant="destructive">{g.expired}</Badge>
                       ) : (
-                        <span className="text-silver/40 text-xs">—</span>
+                        <span className="text-silver/50 text-xs">—</span>
                       )}
                     </TableCell>
                     <TableCell className="hidden lg:table-cell text-silver text-xs tabular-nums">
