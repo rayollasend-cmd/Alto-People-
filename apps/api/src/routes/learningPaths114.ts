@@ -51,6 +51,7 @@ learningPaths114Router.get('/learning-paths', VIEW, async (req, res) => {
     .optional()
     .parse(req.query.status);
   const rows = await prisma.learningPath.findMany({
+    take: 1000,
     where: {
       deletedAt: null,
       ...(status ? { status } : {}),
@@ -244,6 +245,7 @@ learningPaths114Router.post(
     // already have. Idempotent — skip-duplicates dodges the existing
     // associate+course unique.
     const steps = await prisma.learningPathStep.findMany({
+      take: 500,
       where: { pathId: input.pathId },
       select: { courseId: true },
     });
@@ -279,6 +281,7 @@ learningPaths114Router.get(
   VIEW,
   async (req, res) => {
     const enrollments = await prisma.learningPathEnrollment.findMany({
+      take: 500,
       where: { pathId: req.params.id, status: { not: 'WITHDRAWN' } },
       include: {
         associate: {
@@ -318,6 +321,7 @@ learningPaths114Router.get(
     if (!path) throw new HttpError(404, 'not_found', 'Learning path not found.');
     const courseIds = path.steps.map((s) => s.courseId);
     const enrollments = await prisma.courseEnrollment.findMany({
+      take: 500,
       where: {
         associateId,
         courseId: { in: courseIds },
@@ -372,6 +376,7 @@ learningPaths114Router.get('/my/learning-paths', requireAuth, async (req, res) =
     return;
   }
   const enrollments = await prisma.learningPathEnrollment.findMany({
+    take: 500,
     where: {
       associateId: me.associateId,
       status: { not: 'WITHDRAWN' },

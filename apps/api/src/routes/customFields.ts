@@ -51,6 +51,7 @@ customFieldsRouter.get('/definitions', VIEW, async (req: Request, res: Response)
       : {}),
   };
   const rows = await prisma.customFieldDefinition.findMany({
+    take: 1000,
     where,
     orderBy: [{ entityType: 'asc' }, { displayOrder: 'asc' }, { label: 'asc' }],
   });
@@ -169,6 +170,7 @@ customFieldsRouter.get(
       throw new HttpError(400, 'invalid_entity', 'Invalid entity type.');
     }
     const values = await prisma.customFieldValue.findMany({
+      take: 500,
       where: { entityType, entityId },
       include: { definition: true },
     });

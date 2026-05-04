@@ -195,6 +195,7 @@ directoryAndCommsRouter.post(
       ...(b.costCenterId ? { costCenterId: b.costCenterId } : {}),
     };
     const associates = await prisma.associate.findMany({
+      take: 1000,
       where: associateWhere,
       select: { user: { select: { id: true } } },
     });
@@ -342,6 +343,7 @@ directoryAndCommsRouter.get(
   async (req, res) => {
     const surveyId = req.params.id;
     const rows = await prisma.surveyQuestion.findMany({
+      take: 500,
       where: { surveyId },
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
     });
@@ -454,10 +456,12 @@ directoryAndCommsRouter.get(
     if (!survey) throw new HttpError(404, 'not_found', 'Survey not found.');
 
     const responses = await prisma.surveyResponse.findMany({
+      take: 500,
       where: { surveyId },
       include: { answers: true },
     });
     const questions = await prisma.surveyQuestion.findMany({
+      take: 500,
       where: { surveyId },
       orderBy: [{ sortOrder: 'asc' }],
     });

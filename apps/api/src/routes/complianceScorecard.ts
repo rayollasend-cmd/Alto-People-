@@ -72,6 +72,7 @@ const CLAUSE = {
 // scorecard can show client-scoped rollups later.
 async function getActiveAssociates() {
   const apps = await prisma.application.findMany({
+    take: 500,
     where: {
       status: 'APPROVED',
       deletedAt: null,
@@ -151,6 +152,7 @@ async function buildOnboardingTile(): Promise<ScorecardOnboardingResponse> {
   const [drugRows, bgRows, bgDocRows, i9Rows, w4Rows, offerDocs, policyAcks] =
     await Promise.all([
       prisma.documentRecord.findMany({
+        take: 500,
         where: {
           associateId: { in: ids },
           kind: 'DRUG_TEST_RESULT',
@@ -160,10 +162,12 @@ async function buildOnboardingTile(): Promise<ScorecardOnboardingResponse> {
         select: { associateId: true },
       }),
       prisma.backgroundCheck.findMany({
+        take: 500,
         where: { associateId: { in: ids }, status: 'PASSED' },
         select: { associateId: true },
       }),
       prisma.documentRecord.findMany({
+        take: 500,
         where: {
           associateId: { in: ids },
           kind: 'BACKGROUND_CHECK_RESULT',
@@ -172,6 +176,7 @@ async function buildOnboardingTile(): Promise<ScorecardOnboardingResponse> {
         select: { associateId: true },
       }),
       prisma.i9Verification.findMany({
+        take: 500,
         where: {
           associateId: { in: ids },
           section1CompletedAt: { not: null },
@@ -183,10 +188,12 @@ async function buildOnboardingTile(): Promise<ScorecardOnboardingResponse> {
         },
       }),
       prisma.w4Submission.findMany({
+        take: 500,
         where: { associateId: { in: ids } },
         select: { associateId: true },
       }),
       prisma.documentRecord.findMany({
+        take: 500,
         where: {
           associateId: { in: ids },
           kind: 'OFFER_LETTER',
@@ -195,6 +202,7 @@ async function buildOnboardingTile(): Promise<ScorecardOnboardingResponse> {
         select: { associateId: true },
       }),
       prisma.policyAcknowledgment.findMany({
+        take: 500,
         where: { associateId: { in: ids } },
         select: { associateId: true },
         distinct: ['associateId'],
@@ -304,6 +312,7 @@ async function buildExpirationsTile(): Promise<ScorecardExpirationsResponse> {
 
   const [drugDocs, i9Rows, j1Rows, certRows] = await Promise.all([
     prisma.documentRecord.findMany({
+      take: 500,
       where: {
         kind: 'DRUG_TEST_RESULT',
         deletedAt: null,
@@ -317,6 +326,7 @@ async function buildExpirationsTile(): Promise<ScorecardExpirationsResponse> {
       },
     }),
     prisma.i9Verification.findMany({
+      take: 500,
       where: {
         workAuthExpiresAt: { gte: now, lte: ninetyDaysOut },
         associateId: { in: activeIds },
@@ -328,6 +338,7 @@ async function buildExpirationsTile(): Promise<ScorecardExpirationsResponse> {
       },
     }),
     prisma.j1Profile.findMany({
+      take: 500,
       where: {
         programEndDate: { gte: now, lte: ninetyDaysOut },
         associateId: { in: activeIds },
@@ -339,6 +350,7 @@ async function buildExpirationsTile(): Promise<ScorecardExpirationsResponse> {
       },
     }),
     prisma.courseEnrollment.findMany({
+      take: 500,
       where: {
         expiresAt: { gte: now, lte: ninetyDaysOut },
         associateId: { in: activeIds },
@@ -668,6 +680,7 @@ async function buildBillingTile(): Promise<ScorecardBillingResponse> {
   // Pull every active job with a bill rate set; map to expected Walmart SOW
   // rate by name pattern. Mismatches feed the open-actions tile.
   const jobs = await prisma.job.findMany({
+    take: 1000,
     where: { isActive: true, billRate: { not: null } },
     select: {
       id: true,
@@ -752,6 +765,7 @@ async function buildTrainingTile(): Promise<ScorecardTrainingResponse> {
   ];
 
   const courses = await prisma.course.findMany({
+    take: 1000,
     where: { complianceTag: { not: null }, deletedAt: null },
     select: { id: true, complianceTag: true },
   });
@@ -767,6 +781,7 @@ async function buildTrainingTile(): Promise<ScorecardTrainingResponse> {
   const enrollments = allCourseIds.length === 0 || activeIds.length === 0
     ? []
     : await prisma.courseEnrollment.findMany({
+        take: 500,
         where: {
           courseId: { in: allCourseIds },
           associateId: { in: activeIds },

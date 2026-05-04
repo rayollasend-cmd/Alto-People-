@@ -33,6 +33,7 @@ vaccination121Router.get('/vaccinations', VIEW, async (req, res) => {
   const kind = KIND.optional().parse(req.query.kind);
 
   const rows = await prisma.vaccinationRecord.findMany({
+    take: 500,
     where: {
       ...(associateId ? { associateId } : {}),
       ...(kind ? { kind } : {}),
@@ -80,6 +81,7 @@ vaccination121Router.get(
     cutoff.setUTCDate(cutoff.getUTCDate() + days);
 
     const rows = await prisma.vaccinationRecord.findMany({
+      take: 500,
       where: {
         expiresOn: { not: null, lte: cutoff },
       },

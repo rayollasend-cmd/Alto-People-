@@ -124,6 +124,7 @@ async function fetchLatestInviteDeliveryByAssociate(
   if (associateIds.length === 0) return new Map();
 
   const users = await prisma.user.findMany({
+    take: 1000,
     where: { associateId: { in: associateIds } },
     select: { id: true, associateId: true },
   });
@@ -138,6 +139,7 @@ async function fetchLatestInviteDeliveryByAssociate(
   // the first one we see per associate wins. Bounded in practice — even
   // a chronically nudged onboarding only generates a handful of rows.
   const notifications = await prisma.notification.findMany({
+    take: 500,
     where: {
       recipientUserId: { in: Array.from(userIdToAssociate.keys()) },
       category: { in: [...INVITE_NOTIFICATION_CATEGORIES] },
@@ -499,6 +501,7 @@ onboardingRouter.get('/applications/stats', async (req, res, next) => {
         _count: { _all: true },
       }),
       prisma.application.findMany({
+        take: 500,
         where: { ...where, status: { notIn: ['APPROVED', 'REJECTED'] } },
         orderBy: { invitedAt: 'desc' },
         include: {
@@ -850,6 +853,7 @@ onboardingRouter.post(
 onboardingRouter.get('/templates', async (req, res, next) => {
   try {
     const rows = await prisma.onboardingTemplate.findMany({
+      take: 1000,
       where: scopeTemplates(req.user!),
       include: { tasks: { orderBy: { order: 'asc' } } },
       orderBy: [{ track: 'asc' }, { name: 'asc' }],
@@ -1043,6 +1047,7 @@ onboardingRouter.get('/applications/:id/policies', async (req, res, next) => {
     });
 
     const required = await prisma.policy.findMany({
+      take: 1000,
       where: {
         deletedAt: null,
         requiredForOnboarding: true,
@@ -1066,6 +1071,7 @@ onboardingRouter.get('/applications/:id/policies', async (req, res, next) => {
     });
 
     const acks = await prisma.policyAcknowledgment.findMany({
+      take: 500,
       where: {
         associateId: app.associateId,
         policyId: { in: required.map((p) => p.id) },
@@ -1176,16 +1182,19 @@ onboardingRouter.get(
           include: { section2Verifier: { select: { email: true } } },
         }),
         prisma.policyAcknowledgment.findMany({
+          take: 500,
           where: { associateId: app.associateId },
           include: { policy: { select: { title: true, version: true } } },
           orderBy: { acknowledgedAt: 'asc' },
         }),
         prisma.esignAgreement.findMany({
+          take: 500,
           where: { applicationId: app.id },
           include: { signatures: { orderBy: { signedAt: 'asc' }, take: 1 } },
           orderBy: { createdAt: 'asc' },
         }),
         prisma.documentRecord.findMany({
+          take: 500,
           where: { associateId: app.associateId, deletedAt: null },
           include: { verifiedBy: { select: { email: true } } },
           orderBy: { createdAt: 'asc' },
@@ -1729,6 +1738,7 @@ onboardingRouter.post('/applications/:id/policy-ack', async (req, res, next) => 
       });
 
       const required = await tx.policy.findMany({
+        take: 1000,
         where: {
           deletedAt: null,
           requiredForOnboarding: true,
@@ -2475,6 +2485,7 @@ onboardingRouter.get('/applications/:id/i9/documents', async (req, res, next) =>
   try {
     const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
     const rows = await prisma.documentRecord.findMany({
+      take: 500,
       where: {
         associateId: app.associateId,
         deletedAt: null,
@@ -2541,6 +2552,7 @@ onboardingRouter.post(
       const ids = supportingDocIds.map((x) => String(x));
       // Verify every doc belongs to this associate.
       const docs = await prisma.documentRecord.findMany({
+        take: 500,
         where: { id: { in: ids }, associateId: app.associateId, deletedAt: null },
         select: { id: true },
       });
@@ -2676,6 +2688,7 @@ onboardingRouter.get(
     try {
       const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
       const rows = await prisma.esignAgreement.findMany({
+        take: 500,
         where: { applicationId: app.id },
         orderBy: { createdAt: 'desc' },
       });

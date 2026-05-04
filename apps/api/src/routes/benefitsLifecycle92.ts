@@ -337,6 +337,7 @@ benefitsLifecycle92Router.get('/aca/1095c', VIEW, async (req, res) => {
     .preprocess((v) => Number(v), z.number().int().min(2014).max(2100))
     .parse(req.query.year);
   const rows = await prisma.acaMonth.findMany({
+    take: 500,
     where: { year },
     include: {
       associate: { select: { firstName: true, lastName: true, email: true } },

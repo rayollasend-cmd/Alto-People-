@@ -51,6 +51,7 @@ projectsAndPayRouter.get('/projects', VIEW_TIME, async (req, res) => {
   const clientId = z.string().uuid().optional().parse(req.query.clientId);
   const includeInactive = req.query.includeInactive === '1';
   const rows = await prisma.project.findMany({
+    take: 1000,
     where: {
       ...(clientId ? { clientId } : {}),
       ...(includeInactive ? {} : { isActive: true }),
@@ -127,6 +128,7 @@ const PremiumPayRuleSchema = z.object({
 projectsAndPayRouter.get('/premium-pay-rules', VIEW_PAY, async (req, res) => {
   const clientId = z.string().uuid().optional().parse(req.query.clientId);
   const rows = await prisma.premiumPayRule.findMany({
+    take: 1000,
     where: clientId ? { clientId } : {},
     orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
   });
@@ -288,6 +290,7 @@ projectsAndPayRouter.get(
   async (req, res) => {
     const tipPoolId = req.params.id;
     const rows = await prisma.tipPoolAllocation.findMany({
+      take: 500,
       where: { tipPoolId },
       include: {
         associate: { select: { id: true, firstName: true, lastName: true } },
@@ -362,6 +365,7 @@ projectsAndPayRouter.post(
       throw new HttpError(400, 'pool_locked', 'Pool is no longer open.');
     }
     const entries = await prisma.timeEntry.findMany({
+      take: 100,
       where: {
         clientId: pool.clientId,
         clockInAt: { gte: new Date(input.from), lt: new Date(input.to) },

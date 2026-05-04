@@ -59,6 +59,7 @@ orgRouter.get('/departments', VIEW, async (req: Request, res: Response) => {
     ...(clientId ? { clientId } : {}),
   };
   const rows = await prisma.department.findMany({
+    take: 1000,
     where,
     orderBy: [{ name: 'asc' }],
   });
@@ -188,6 +189,7 @@ orgRouter.get('/cost-centers', VIEW, async (req: Request, res: Response) => {
     ...(clientId ? { clientId } : {}),
   };
   const rows = await prisma.costCenter.findMany({
+    take: 1000,
     where,
     orderBy: [{ code: 'asc' }],
   });
@@ -301,6 +303,7 @@ orgRouter.get('/job-profiles', VIEW, async (req: Request, res: Response) => {
     ...(clientId ? { clientId } : {}),
   };
   const rows = await prisma.jobProfile.findMany({
+    take: 1000,
     where,
     orderBy: [{ family: 'asc' }, { level: 'asc' }, { title: 'asc' }],
   });
@@ -425,6 +428,7 @@ orgRouter.get('/associates', VIEW, async (req: Request, res: Response) => {
   const clientId =
     typeof req.query.clientId === 'string' ? req.query.clientId : undefined;
   const rows = await prisma.associate.findMany({
+    take: 1000,
     where: {
       deletedAt: null,
       ...(clientId
@@ -569,6 +573,7 @@ orgRouter.get(
   async (req: Request, res: Response) => {
     const id = req.params.id;
     const rows = await prisma.associateHistory.findMany({
+      take: 500,
       where: { associateId: id },
       orderBy: { effectiveFrom: 'desc' },
       include: {

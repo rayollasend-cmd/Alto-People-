@@ -45,12 +45,14 @@ headcount110Router.get('/headcount/snapshot', VIEW, async (_req, res) => {
   const [depts, clients] = await Promise.all([
     deptIds.length > 0
       ? prisma.department.findMany({
+          take: 1000,
           where: { id: { in: deptIds } },
           select: { id: true, name: true },
         })
       : Promise.resolve([]),
     clientIds.length > 0
       ? prisma.client.findMany({
+          take: 1000,
           where: { id: { in: clientIds } },
           select: { id: true, name: true },
         })
@@ -92,6 +94,7 @@ headcount110Router.get('/headcount/turnover', VIEW, async (req, res) => {
     // Hires = Applications whose startDate fell inside the window. We
     // dedupe on associateId so re-hires count once.
     prisma.application.findMany({
+      take: 500,
       where: {
         deletedAt: null,
         startDate: { gte: since },
@@ -100,6 +103,7 @@ headcount110Router.get('/headcount/turnover', VIEW, async (req, res) => {
       orderBy: { startDate: 'asc' },
     }),
     prisma.associate.findMany({
+      take: 1000,
       where: { deletedAt: { gte: since } },
       select: { id: true, deletedAt: true },
       orderBy: { deletedAt: 'asc' },

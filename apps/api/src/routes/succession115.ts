@@ -37,6 +37,7 @@ const READINESS = z.enum([
 succession115Router.get('/succession/positions', VIEW, async (req, res) => {
   const clientId = z.string().uuid().optional().parse(req.query.clientId);
   const positions = await prisma.position.findMany({
+    take: 1000,
     where: {
       deletedAt: null,
       ...(clientId ? { clientId } : {}),
@@ -87,6 +88,7 @@ succession115Router.get(
       throw new HttpError(404, 'not_found', 'Position not found.');
     }
     const candidates = await prisma.successionCandidate.findMany({
+      take: 500,
       where: { positionId },
       include: {
         associate: {
@@ -136,6 +138,7 @@ succession115Router.get(
   async (req, res) => {
     const associateId = z.string().uuid().parse(req.params.associateId);
     const rows = await prisma.successionCandidate.findMany({
+      take: 500,
       where: { associateId },
       include: {
         position: {

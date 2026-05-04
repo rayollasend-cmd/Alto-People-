@@ -22,6 +22,7 @@ const SKILL_LEVEL = z.enum(['BEGINNER', 'INTERMEDIATE', 'ADVANCED', 'EXPERT']);
 
 career126Router.get('/career-ladders', requireAuth, async (_req, res) => {
   const rows = await prisma.careerLadder.findMany({
+    take: 1000,
     where: { archivedAt: null },
     include: {
       _count: { select: { levels: true } },

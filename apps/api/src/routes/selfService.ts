@@ -144,6 +144,7 @@ const EmergencyContactInputSchema = z.object({
 selfServiceRouter.get('/me/emergency-contacts', async (req, res) => {
   const id = requireAssociate(req);
   const rows = await prisma.emergencyContact.findMany({
+    take: 500,
     where: { associateId: id, deletedAt: null },
     orderBy: [{ isPrimary: 'desc' }, { name: 'asc' }],
   });
@@ -236,6 +237,7 @@ const DependentInputSchema = z.object({
 selfServiceRouter.get('/me/dependents', async (req, res) => {
   const id = requireAssociate(req);
   const rows = await prisma.dependent.findMany({
+    take: 500,
     where: { associateId: id, deletedAt: null },
     orderBy: { lastName: 'asc' },
   });
@@ -313,6 +315,7 @@ const BeneficiaryInputSchema = z.object({
 selfServiceRouter.get('/me/beneficiaries', async (req, res) => {
   const id = requireAssociate(req);
   const rows = await prisma.beneficiary.findMany({
+    take: 500,
     where: { associateId: id, deletedAt: null },
     orderBy: [{ kind: 'asc' }, { name: 'asc' }],
   });
@@ -390,6 +393,7 @@ const LifeEventInputSchema = z.object({
 selfServiceRouter.get('/me/life-events', async (req, res) => {
   const id = requireAssociate(req);
   const rows = await prisma.lifeEvent.findMany({
+    take: 500,
     where: { associateId: id },
     orderBy: { createdAt: 'desc' },
   });
@@ -432,6 +436,7 @@ selfServiceRouter.post('/me/life-events', async (req, res) => {
 selfServiceRouter.get('/me/tax-documents', async (req, res) => {
   const id = requireAssociate(req);
   const rows = await prisma.taxDocument.findMany({
+    take: 500,
     where: { associateId: id },
     orderBy: [{ taxYear: 'desc' }, { kind: 'asc' }],
   });

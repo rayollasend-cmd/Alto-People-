@@ -42,6 +42,7 @@ agreements122Router.get('/agreements', VIEW, async (req, res) => {
     .parse(req.query.status);
 
   const rows = await prisma.agreement.findMany({
+    take: 500,
     where: {
       ...(associateId ? { associateId } : {}),
       ...(kind ? { kind } : {}),
@@ -86,6 +87,7 @@ agreements122Router.get(
       return res.json({ agreements: [] });
     }
     const rows = await prisma.agreement.findMany({
+      take: 500,
       where: { associateId: req.user!.associateId },
       orderBy: { createdAt: 'desc' },
     });

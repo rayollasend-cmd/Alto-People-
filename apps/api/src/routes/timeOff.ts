@@ -84,6 +84,7 @@ timeOffRouter.get('/me/balance', async (req, res, next) => {
     // Phase 43 — fire annual lump-sum grants if the entitlement clock
     // has rolled over since the last read. Idempotent.
     const entitlements = await prisma.timeOffEntitlement.findMany({
+      take: 500,
       where: { associateId: user.associateId },
       select: { category: true },
     });
@@ -97,6 +98,7 @@ timeOffRouter.get('/me/balance', async (req, res, next) => {
 
     const [balances, ledger] = await Promise.all([
       prisma.timeOffBalance.findMany({
+        take: 500,
         where: { associateId: user.associateId },
         orderBy: { category: 'asc' },
       }),
@@ -365,6 +367,7 @@ timeOffRouter.get('/admin/entitlements', MANAGE, async (req, res, next) => {
     const associateIdFilter =
       typeof req.query.associateId === 'string' ? req.query.associateId : undefined;
     const rows = await prisma.timeOffEntitlement.findMany({
+      take: 500,
       where: associateIdFilter ? { associateId: associateIdFilter } : undefined,
       orderBy: [{ associateId: 'asc' }, { category: 'asc' }],
       include: {

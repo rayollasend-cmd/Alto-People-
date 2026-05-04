@@ -193,6 +193,7 @@ kb124Router.get('/kb/admin/articles', MANAGE, async (req, res) => {
     .optional()
     .parse(req.query.status);
   const rows = await prisma.kbArticle.findMany({
+    take: 1000,
     where: status ? { status } : {},
     include: {
       client: { select: { name: true } },

@@ -101,6 +101,7 @@ vto130Router.get('/my/volunteer-entries', requireAuth, async (req, res) => {
   const policy = await resolvePolicy(clientId);
 
   const entries = await prisma.volunteerEntry.findMany({
+    take: 100,
     where: {
       associateId: req.user!.associateId,
       activityDate: { gte: start, lt: end },
@@ -144,6 +145,7 @@ vto130Router.get('/volunteer-entries', MANAGE_HR, async (req, res) => {
     .optional()
     .parse(req.query.status);
   const rows = await prisma.volunteerEntry.findMany({
+    take: 100,
     where: status ? { status } : {},
     include: {
       associate: {

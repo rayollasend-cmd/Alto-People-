@@ -35,6 +35,7 @@ benefitsRouter.get('/plans', async (req, res, next) => {
     }
     const includeInactive = req.query.includeInactive === 'true';
     const rows = await prisma.benefitsPlan.findMany({
+      take: 1000,
       where: {
         clientId,
         ...(includeInactive ? {} : { isActive: true }),
@@ -125,6 +126,7 @@ benefitsRouter.get('/me/enrollments', async (req, res, next) => {
       return;
     }
     const rows = await prisma.benefitsEnrollment.findMany({
+      take: 500,
       where: { associateId: req.user!.associateId },
       orderBy: { effectiveDate: 'desc' },
       include: { plan: { select: { kind: true, name: true } } },

@@ -68,6 +68,7 @@ ramp125Router.get(
 
 ramp125Router.get('/ramp-plans', VIEW, async (_req, res) => {
   const plans = await prisma.rampPlan.findMany({
+    take: 500,
     where: { archivedAt: null },
     include: {
       associate: {

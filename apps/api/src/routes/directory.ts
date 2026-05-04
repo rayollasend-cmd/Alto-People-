@@ -45,6 +45,7 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
     // synthesize the row. `applications` ordered desc so the first one in
     // each array is the freshest.
     const associates = await prisma.associate.findMany({
+      take: 1000,
       where: {
         deletedAt: null,
         ...(filters.employmentType ? { employmentType: filters.employmentType } : {}),
@@ -110,6 +111,7 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
       ids.length === 0
         ? []
         : await prisma.compensationRecord.findMany({
+            take: 500,
             where: { associateId: { in: ids }, effectiveTo: null },
             select: {
               associateId: true,

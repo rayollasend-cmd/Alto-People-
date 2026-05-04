@@ -427,6 +427,7 @@ payrollRouter.get('/upcoming', async (req, res, next) => {
     // getNextPeriod against the schedule's anchor, since today might fall
     // mid-period. Fall back to today's biweekly frame if no schedule.
     const schedules = await prisma.payrollSchedule.findMany({
+      take: 1000,
       where: {
         ...scopePayrollSchedules(req.user!),
         isActive: true,
@@ -782,6 +783,7 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
 
     const adapter = pickAdapter();
     const items = await prisma.payrollItem.findMany({
+      take: 100,
       where: { payrollRunId: run.id, status: 'PENDING' },
       include: {
         associate: {
@@ -881,6 +883,7 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
       });
       if (conn) {
         const allItems = await prisma.payrollItem.findMany({
+          take: 100,
           where: { payrollRunId: updated.id },
         });
         const totals = aggregateForQbo(allItems);
@@ -953,6 +956,7 @@ payrollRouter.post('/runs/:id/retry-failures', PROCESS, async (req, res, next) =
     }
     const adapter = pickAdapter();
     const held = await prisma.payrollItem.findMany({
+      take: 100,
       where: { payrollRunId: run.id, status: 'HELD' },
       include: {
         associate: {
@@ -1144,6 +1148,7 @@ payrollRouter.get('/runs/:runId/paystubs.zip', async (req, res, next) => {
     if (!run) throw new HttpError(404, 'run_not_found', 'Payroll run not found');
 
     const items = await prisma.payrollItem.findMany({
+      take: 100,
       where: { payrollRunId: run.id },
       include: { associate: true },
       orderBy: { associate: { lastName: 'asc' } },
@@ -1443,6 +1448,7 @@ payrollRouter.get('/schedules', PROCESS, async (req, res, next) => {
       ...(includeInactive ? {} : { isActive: true }),
     };
     const rows = await prisma.payrollSchedule.findMany({
+      take: 1000,
       where,
       orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
       include: SCHEDULE_INCLUDE,
@@ -1582,6 +1588,7 @@ payrollRouter.post('/schedules/:id/assign', PROCESS, async (req, res, next) => {
     // matches. For Wave 1.1 we don't enforce this — HR can override — but
     // we do need to make sure the IDs exist.
     const found = await prisma.associate.findMany({
+      take: 1000,
       where: { id: { in: input.associateIds }, deletedAt: null },
       select: { id: true },
     });

@@ -133,6 +133,7 @@ probation116Router.get('/probations', VIEW, async (req, res) => {
     .optional()
     .parse(req.query.status);
   const rows = await prisma.probationPeriod.findMany({
+    take: 100,
     where: status ? { status } : {},
     include: {
       associate: {
@@ -177,6 +178,7 @@ probation116Router.get('/probations/ending-soon', VIEW, async (req, res) => {
   cutoff.setUTCDate(cutoff.getUTCDate() + days);
 
   const rows = await prisma.probationPeriod.findMany({
+    take: 100,
     where: {
       status: 'ACTIVE',
       endDate: { lte: cutoff },

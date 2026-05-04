@@ -258,6 +258,7 @@ equity129Router.get('/equity-grants', MANAGE_COMP, async (req, res) => {
     .optional()
     .parse(req.query.status);
   const rows = await prisma.equityGrant.findMany({
+    take: 500,
     where: status ? { status } : {},
     include: {
       associate: {
@@ -317,6 +318,7 @@ equity129Router.get('/my/equity-grants', requireAuth, async (req, res) => {
     return res.json({ grants: [] });
   }
   const rows = await prisma.equityGrant.findMany({
+    take: 500,
     where: {
       associateId: req.user!.associateId,
       status: { in: ['GRANTED', 'EXERCISED'] },
@@ -383,6 +385,7 @@ equity129Router.get(
         }),
         prisma.equityGrant.count({ where: { status: 'PROPOSED' } }),
         prisma.equityGrant.findMany({
+          take: 500,
           where: { status: 'GRANTED' },
           select: { associateId: true },
           distinct: ['associateId'],

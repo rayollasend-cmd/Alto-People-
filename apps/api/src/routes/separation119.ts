@@ -43,6 +43,7 @@ separation119Router.get('/separations', VIEW, async (req, res) => {
   const reason = REASON.optional().parse(req.query.reason);
 
   const rows = await prisma.separation.findMany({
+    take: 100,
     where: {
       ...(status ? { status } : {}),
       ...(reason ? { reason } : {}),

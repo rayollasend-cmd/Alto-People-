@@ -49,6 +49,7 @@ const QualInputSchema = z.object({
 qualificationsRouter.get('/qualifications', VIEW_SCHED, async (req, res) => {
   const clientId = z.string().uuid().optional().parse(req.query.clientId);
   const rows = await prisma.qualification.findMany({
+    take: 1000,
     where: {
       deletedAt: null,
       ...(clientId
@@ -125,6 +126,7 @@ qualificationsRouter.get(
   async (req, res) => {
     const associateId = req.params.associateId;
     const rows = await prisma.associateQualification.findMany({
+      take: 500,
       where: { associateId, deletedAt: null },
       include: { qualification: true },
     });
@@ -206,6 +208,7 @@ qualificationsRouter.get(
   async (req, res) => {
     const shiftId = req.params.shiftId;
     const rows = await prisma.shiftQualificationRequirement.findMany({
+      take: 500,
       where: { shiftId },
       include: { qualification: true },
     });
@@ -269,6 +272,7 @@ qualificationsRouter.get(
 
     // Fetch live (unexpired) quals once.
     const myQuals = await prisma.associateQualification.findMany({
+      take: 500,
       where: {
         associateId,
         deletedAt: null,
@@ -341,6 +345,7 @@ qualificationsRouter.post(
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const myQuals = await prisma.associateQualification.findMany({
+        take: 500,
         where: {
           associateId,
           deletedAt: null,
