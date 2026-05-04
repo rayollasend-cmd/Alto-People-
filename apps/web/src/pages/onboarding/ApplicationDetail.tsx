@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CheckCircle2,
   Circle,
@@ -117,9 +118,8 @@ interface ApplicationDetailBodyProps {
  */
 export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetailBodyProps) {
   const { user } = useAuth();
-  const [detail, setDetail] = useState<ApplicationDetailType | null>(null);
-  const [audit, setAudit] = useState<AuditLogEntry[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const [mutationError, setMutationError] = useState<string | null>(null);
   const [approveOpen, setApproveOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
 
@@ -129,28 +129,33 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
   // approve/reject. Hardcoded role list here used to lock out recruiters.
   const canManage = user ? hasCapability(user.role, 'manage:onboarding') : false;
 
-  const refresh = useCallback(async () => {
-    if (!applicationId) return;
-    try {
-      const [d, a] = await Promise.all([
-        getApplication(applicationId),
-        canManage
-          ? getApplicationAudit(applicationId).catch(() => ({ entries: [] }))
-          : Promise.resolve({ entries: [] }),
-      ]);
-      setDetail(d);
-      setAudit(a.entries);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
-    }
-  }, [applicationId, canManage]);
+  const detailQuery = useQuery({
+    queryKey: ['application', applicationId],
+    queryFn: () => getApplication(applicationId!),
+    enabled: !!applicationId,
+  });
+  const auditQuery = useQuery({
+    queryKey: ['application', applicationId, 'audit'],
+    queryFn: async () =>
+      (await getApplicationAudit(applicationId!)).entries,
+    enabled: !!applicationId && canManage,
+  });
 
-  useEffect(() => {
-    setDetail(null);
-    setAudit([]);
-    setError(null);
-    refresh();
-  }, [refresh]);
+  const detail: ApplicationDetailType | null = detailQuery.data ?? null;
+  const audit: AuditLogEntry[] = auditQuery.data ?? [];
+  // Prefix-match invalidates ['application', id] AND ['application', id, 'audit'].
+  const refresh = () =>
+    queryClient.invalidateQueries({
+      queryKey: ['application', applicationId],
+    });
+  const setError = setMutationError;
+  const error = mutationError
+    ? mutationError
+    : detailQuery.error
+      ? detailQuery.error instanceof ApiError
+        ? detailQuery.error.message
+        : 'Failed to load.'
+      : null;
 
   if (error) {
     return (

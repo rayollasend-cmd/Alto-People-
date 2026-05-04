@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AtSign, Bell, Camera, CheckCircle2, ChevronDown, ChevronUp, Clock, Copy, Download, History, KeyRound, Lock, LogOut, RefreshCw, ShieldAlert, ShieldCheck, Upload, User as UserIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import QRCode from 'qrcode';
@@ -145,30 +146,27 @@ function MfaCard() {
   const [showRegenerate, setShowRegenerate] = useState(false);
   const [regeneratePassword, setRegeneratePassword] = useState('');
   const [regeneratedCodes, setRegeneratedCodes] = useState<string[] | null>(null);
-  const [remaining, setRemaining] = useState<number | null>(null);
+  const queryClient = useQueryClient();
 
   const enabled = user?.mfaEnabled ?? false;
 
   // Pull the recovery-code count when the user is enrolled. This drives the
-  // "X of 8 remaining" indicator and re-fetches after regenerate so the new
-  // count (8 again) shows up without a page refresh.
+  // "X of 8 remaining" indicator. Cache invalidates after regenerate so the
+  // new count (8 again) shows up without a page refresh.
+  const remainingQuery = useQuery({
+    queryKey: ['mfa', 'status'],
+    queryFn: async () => (await getMfaStatus()).remainingRecoveryCodes,
+    enabled,
+  });
+  const remaining: number | null = enabled
+    ? (remainingQuery.data ?? null)
+    : null;
+
   useEffect(() => {
-    if (!enabled) {
-      setRemaining(null);
-      return;
+    if (regeneratedCodes) {
+      void queryClient.invalidateQueries({ queryKey: ['mfa', 'status'] });
     }
-    let cancelled = false;
-    getMfaStatus()
-      .then((s) => {
-        if (!cancelled) setRemaining(s.remainingRecoveryCodes);
-      })
-      .catch(() => {
-        if (!cancelled) setRemaining(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [enabled, regeneratedCodes]);
+  }, [regeneratedCodes, queryClient]);
 
   const onEnable = async () => {
     setBusy(true);
@@ -662,25 +660,29 @@ function EmailCard() {
 }
 
 function NotificationsCard() {
-  const [entries, setEntries] = useState<NotificationPreferenceEntry[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
   const [pending, setPending] = useState<NotificationCategory | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    getNotificationPreferences()
-      .then((res) => {
-        if (!cancelled) setEntries(res.entries);
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to load preferences.');
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { data: entries, error: entriesError } = useQuery({
+    queryKey: ['notification-preferences'],
+    queryFn: async () => (await getNotificationPreferences()).entries,
+  });
+  const error = entriesError
+    ? entriesError instanceof Error
+      ? entriesError.message
+      : 'Failed to load preferences.'
+    : null;
+
+  const setEntries = (
+    updater: (
+      prev: NotificationPreferenceEntry[] | null,
+    ) => NotificationPreferenceEntry[] | null,
+  ) => {
+    queryClient.setQueryData<NotificationPreferenceEntry[]>(
+      ['notification-preferences'],
+      (old) => updater(old ?? null) ?? old,
+    );
+  };
 
   const onToggle = async (entry: NotificationPreferenceEntry) => {
     if (entry.mandatory) return;
@@ -727,7 +729,7 @@ function NotificationsCard() {
       <CardContent>
         {error ? (
           <ErrorBanner>{error}</ErrorBanner>
-        ) : entries === null ? (
+        ) : !entries ? (
           <div className="space-y-2">
             <Skeleton className="h-10 w-full" />
             <Skeleton className="h-10 w-full" />
@@ -1232,9 +1234,17 @@ const LOGIN_HISTORY_PREVIEW = 5;
 
 function LoginHistoryCard() {
   const { user } = useAuth();
-  const [events, setEvents] = useState<LoginEvent[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
+
+  const { data: events, error: eventsError } = useQuery({
+    queryKey: ['login-history'],
+    queryFn: async () => (await getLoginHistory()).events,
+  });
+  const error = eventsError
+    ? eventsError instanceof Error
+      ? eventsError.message
+      : 'Failed to load activity.'
+    : null;
 
   // When the user has a saved timezone, format every timestamp through it
   // so the table reads consistently across devices. Falls back to the
@@ -1255,22 +1265,6 @@ function LoginHistoryCard() {
     }
   })();
 
-  useEffect(() => {
-    let cancelled = false;
-    getLoginHistory()
-      .then((res) => {
-        if (!cancelled) setEvents(res.events);
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to load activity.');
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   return (
     <Card>
       <CardHeader>
@@ -1290,7 +1284,7 @@ function LoginHistoryCard() {
       <CardContent>
         {error ? (
           <ErrorBanner>{error}</ErrorBanner>
-        ) : events === null ? (
+        ) : !events ? (
           <div className="space-y-2">
             <Skeleton className="h-6 w-full" />
             <Skeleton className="h-6 w-full" />
