@@ -61,8 +61,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
+import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
-import { Label } from '@/components/ui/Label';
+import { Select } from '@/components/ui/Select';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
 
@@ -363,62 +364,64 @@ function Step1(props: {
 }) {
   return (
     <div className="space-y-4">
-      <div>
-        <Label htmlFor="rw-sched">Pay schedule</Label>
-        <select
-          id="rw-sched"
-          className="mt-1 w-full rounded border border-silver/20 bg-black/40 px-2 py-1.5 text-sm text-silver"
-          value={props.scheduleId}
-          onChange={(e) => props.setScheduleId(e.target.value)}
-        >
-          <option value="">— No schedule (custom dates) —</option>
-          {props.schedules?.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name} · {s.frequency.toLowerCase()}
-              {s.clientName ? ` · ${s.clientName}` : ' · all clients'}
-            </option>
-          ))}
-        </select>
-        {props.schedules && props.schedules.length === 0 && (
-          <p className="mt-1 text-xs text-silver/50">
-            No pay schedules defined yet. Create one in the Schedules tab to
-            auto-derive the next period.
-          </p>
+      <Field
+        label="Pay schedule"
+        hint={
+          props.schedules && props.schedules.length === 0
+            ? 'No pay schedules defined yet. Create one in the Schedules tab to auto-derive the next period.'
+            : undefined
+        }
+      >
+        {(p) => (
+          <Select
+            value={props.scheduleId}
+            onChange={(e) => props.setScheduleId(e.target.value)}
+            {...p}
+          >
+            <option value="">— No schedule (custom dates) —</option>
+            {props.schedules?.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name} · {s.frequency.toLowerCase()}
+                {s.clientName ? ` · ${s.clientName}` : ' · all clients'}
+              </option>
+            ))}
+          </Select>
         )}
-      </div>
+      </Field>
       <div className="grid grid-cols-2 gap-3">
-        <div>
-          <Label htmlFor="rw-start" required>Period start</Label>
-          <Input
-            id="rw-start"
-            type="date"
-            required
-            value={props.periodStart}
-            onChange={(e) => props.setPeriodStart(e.target.value)}
-          />
-        </div>
-        <div>
-          <Label htmlFor="rw-end" required>Period end</Label>
-          <Input
-            id="rw-end"
-            type="date"
-            required
-            value={props.periodEnd}
-            onChange={(e) => props.setPeriodEnd(e.target.value)}
-          />
-        </div>
+        <Field label="Period start" required>
+          {(p) => (
+            <Input
+              type="date"
+              value={props.periodStart}
+              onChange={(e) => props.setPeriodStart(e.target.value)}
+              {...p}
+            />
+          )}
+        </Field>
+        <Field label="Period end" required>
+          {(p) => (
+            <Input
+              type="date"
+              value={props.periodEnd}
+              onChange={(e) => props.setPeriodEnd(e.target.value)}
+              {...p}
+            />
+          )}
+        </Field>
       </div>
-      <div>
-        <Label htmlFor="rw-rate">Default hourly rate (used when a shift has none)</Label>
-        <Input
-          id="rw-rate"
-          type="number"
-          min={0}
-          step="0.01"
-          value={props.defaultRate}
-          onChange={(e) => props.setDefaultRate(e.target.value)}
-        />
-      </div>
+      <Field label="Default hourly rate (used when a shift has none)">
+        {(p) => (
+          <Input
+            type="number"
+            min={0}
+            step="0.01"
+            value={props.defaultRate}
+            onChange={(e) => props.setDefaultRate(e.target.value)}
+            {...p}
+          />
+        )}
+      </Field>
     </div>
   );
 }
@@ -1136,16 +1139,17 @@ function Step4({
         </div>
       )}
 
-      <div>
-        <Label htmlFor="rw-notes">Notes (optional)</Label>
-        <Textarea
-          id="rw-notes"
-          rows={2}
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          placeholder="e.g. Holiday week — pay date moved to Thursday"
-        />
-      </div>
+      <Field label="Notes (optional)">
+        {(p) => (
+          <Textarea
+            rows={2}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="e.g. Holiday week — pay date moved to Thursday"
+            {...p}
+          />
+        )}
+      </Field>
     </div>
   );
 }

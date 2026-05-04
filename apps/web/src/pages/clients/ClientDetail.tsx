@@ -24,8 +24,9 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/Card';
+import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
-import { Label, FormHint } from '@/components/ui/Label';
+import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { JobsSection } from './JobsSection';
 import { BenefitsPlansSection } from './BenefitsPlansSection';
@@ -230,56 +231,59 @@ function BasicsEditor({
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <Label htmlFor="cl-name" required>
-              Name
-            </Label>
-            <Input
-              id="cl-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              maxLength={120}
-              disabled={!canManage}
-            />
-          </div>
-          <div>
-            <Label htmlFor="cl-industry">Industry</Label>
-            <Input
-              id="cl-industry"
-              value={industry}
-              onChange={(e) => setIndustry(e.target.value)}
-              maxLength={80}
-              disabled={!canManage}
-            />
-          </div>
-          <div>
-            <Label htmlFor="cl-status">Status</Label>
-            <select
-              id="cl-status"
-              disabled={!canManage}
-              value={status}
-              onChange={(e) => setStatus(e.target.value as ClientStatus)}
-              className="mt-1 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 text-white px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright disabled:opacity-50"
-            >
-              {STATUSES.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <Label htmlFor="cl-email">Contact email</Label>
-            <Input
-              id="cl-email"
-              type="email"
-              value={contactEmail}
-              onChange={(e) => setContactEmail(e.target.value)}
-              maxLength={254}
-              disabled={!canManage}
-            />
-            <FormHint>Leave blank if there's no primary point of contact.</FormHint>
-          </div>
+          <Field label="Name" required>
+            {(p) => (
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                maxLength={120}
+                disabled={!canManage}
+                {...p}
+              />
+            )}
+          </Field>
+          <Field label="Industry">
+            {(p) => (
+              <Input
+                value={industry}
+                onChange={(e) => setIndustry(e.target.value)}
+                maxLength={80}
+                disabled={!canManage}
+                {...p}
+              />
+            )}
+          </Field>
+          <Field label="Status">
+            {(p) => (
+              <Select
+                disabled={!canManage}
+                value={status}
+                onChange={(e) => setStatus(e.target.value as ClientStatus)}
+                {...p}
+              >
+                {STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          <Field
+            label="Contact email"
+            hint="Leave blank if there's no primary point of contact."
+          >
+            {(p) => (
+              <Input
+                type="email"
+                value={contactEmail}
+                onChange={(e) => setContactEmail(e.target.value)}
+                maxLength={254}
+                disabled={!canManage}
+                {...p}
+              />
+            )}
+          </Field>
         </div>
         {canManage && (
           <div className="mt-4">
@@ -347,26 +351,27 @@ function StateEditor({
       </CardHeader>
       <CardContent>
         <div className="flex flex-wrap gap-3 items-end">
-          <div className="flex-1 min-w-[10rem]">
-            <Label htmlFor="cl-state">State (2-letter code)</Label>
-            <select
-              id="cl-state"
-              disabled={!canManage}
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              className="mt-1 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 text-white px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright disabled:opacity-50"
-            >
-              <option value="">— Federal default —</option>
-              {POLICY_STATES.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-            <FormHint>
-              States with policy templates: {POLICY_STATES.join(', ')}.
-            </FormHint>
-          </div>
+          <Field
+            label="State (2-letter code)"
+            className="flex-1 min-w-[10rem]"
+            hint={`States with policy templates: ${POLICY_STATES.join(', ')}.`}
+          >
+            {(p) => (
+              <Select
+                disabled={!canManage}
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                {...p}
+              >
+                <option value="">— Federal default —</option>
+                {POLICY_STATES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
           {canManage && (
             <Button onClick={submit} disabled={!dirty} loading={saving}>
               <Save className="h-4 w-4" />
@@ -475,48 +480,53 @@ function GeofenceEditor({ clientId, initial, canManage, onSaved }: GeofenceEdito
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div>
-            <Label htmlFor="cl-lat">Latitude</Label>
-            <Input
-              id="cl-lat"
-              type="number"
-              step="any"
-              inputMode="decimal"
-              value={lat}
-              onChange={(e) => setLat(e.target.value)}
-              placeholder="40.7128"
-              disabled={!canManage}
-            />
-          </div>
-          <div>
-            <Label htmlFor="cl-lng">Longitude</Label>
-            <Input
-              id="cl-lng"
-              type="number"
-              step="any"
-              inputMode="decimal"
-              value={lng}
-              onChange={(e) => setLng(e.target.value)}
-              placeholder="-74.0060"
-              disabled={!canManage}
-            />
-          </div>
-          <div>
-            <Label htmlFor="cl-rad">Radius (meters)</Label>
-            <Input
-              id="cl-rad"
-              type="number"
-              min="10"
-              max="50000"
-              step="10"
-              inputMode="numeric"
-              value={radius}
-              onChange={(e) => setRadius(e.target.value)}
-              placeholder="150"
-              disabled={!canManage}
-            />
-            <FormHint>10 – 50,000m. ~150m covers a single building.</FormHint>
-          </div>
+          <Field label="Latitude">
+            {(p) => (
+              <Input
+                type="number"
+                step="any"
+                inputMode="decimal"
+                value={lat}
+                onChange={(e) => setLat(e.target.value)}
+                placeholder="40.7128"
+                disabled={!canManage}
+                {...p}
+              />
+            )}
+          </Field>
+          <Field label="Longitude">
+            {(p) => (
+              <Input
+                type="number"
+                step="any"
+                inputMode="decimal"
+                value={lng}
+                onChange={(e) => setLng(e.target.value)}
+                placeholder="-74.0060"
+                disabled={!canManage}
+                {...p}
+              />
+            )}
+          </Field>
+          <Field
+            label="Radius (meters)"
+            hint="10 – 50,000m. ~150m covers a single building."
+          >
+            {(p) => (
+              <Input
+                type="number"
+                min="10"
+                max="50000"
+                step="10"
+                inputMode="numeric"
+                value={radius}
+                onChange={(e) => setRadius(e.target.value)}
+                placeholder="150"
+                disabled={!canManage}
+                {...p}
+              />
+            )}
+          </Field>
         </div>
 
         {canManage && (

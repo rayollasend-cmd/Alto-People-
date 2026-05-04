@@ -29,8 +29,10 @@ import {
 } from '@/components/ui/Dialog';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
+import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import {
   Table,
@@ -443,38 +445,35 @@ function CreateGarnishmentDialog({
         </DialogHeader>
         <form onSubmit={submit} className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <Label htmlFor="g-assoc" required>Associate</Label>
-              <select
-                id="g-assoc"
-                required
-                className="mt-1 w-full rounded border border-silver/20 bg-black/40 px-2 py-1.5 text-sm text-silver"
-                value={associateId}
-                onChange={(e) => setAssociateId(e.target.value)}
-              >
-                <option value="">— Select —</option>
-                {sortedAssociates.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.lastName}, {a.firstName}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <Label htmlFor="g-kind" required>Kind</Label>
-              <select
-                id="g-kind"
-                required
-                className="mt-1 w-full rounded border border-silver/20 bg-black/40 px-2 py-1.5 text-sm text-silver"
-                value={kind}
-                onChange={(e) => setKind(e.target.value as GarnishmentKind)}
-              >
-                {(Object.keys(KIND_LABEL) as GarnishmentKind[]).map((k) => (
-                  <option key={k} value={k}>{KIND_LABEL[k]}</option>
-                ))}
-              </select>
-              <div className="text-[10px] text-silver/50 mt-1">{KIND_HINT[kind]}</div>
-            </div>
+            <Field label="Associate" required>
+              {(p) => (
+                <Select
+                  value={associateId}
+                  onChange={(e) => setAssociateId(e.target.value)}
+                  {...p}
+                >
+                  <option value="">— Select —</option>
+                  {sortedAssociates.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.lastName}, {a.firstName}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+            <Field label="Kind" required hint={KIND_HINT[kind]}>
+              {(p) => (
+                <Select
+                  value={kind}
+                  onChange={(e) => setKind(e.target.value as GarnishmentKind)}
+                  {...p}
+                >
+                  {(Object.keys(KIND_LABEL) as GarnishmentKind[]).map((k) => (
+                    <option key={k} value={k}>{KIND_LABEL[k]}</option>
+                  ))}
+                </Select>
+              )}
+            </Field>
           </div>
 
           <div>
@@ -532,102 +531,110 @@ function CreateGarnishmentDialog({
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label htmlFor="g-case">Case number</Label>
-              <Input
-                id="g-case"
-                value={caseNumber}
-                onChange={(e) => setCaseNumber(e.target.value)}
-                placeholder="Court / agency reference"
-              />
-            </div>
-            <div>
-              <Label htmlFor="g-agency">Agency / creditor</Label>
-              <Input
-                id="g-agency"
-                value={agencyName}
-                onChange={(e) => setAgencyName(e.target.value)}
-              />
-            </div>
+            <Field label="Case number">
+              {(p) => (
+                <Input
+                  value={caseNumber}
+                  onChange={(e) => setCaseNumber(e.target.value)}
+                  placeholder="Court / agency reference"
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label="Agency / creditor">
+              {(p) => (
+                <Input
+                  value={agencyName}
+                  onChange={(e) => setAgencyName(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <Label htmlFor="g-cap">Total cap</Label>
-              <Input
-                id="g-cap"
-                type="number"
-                min={0}
-                step="0.01"
-                value={totalCap}
-                onChange={(e) => setTotalCap(e.target.value)}
-                placeholder="optional"
-              />
-            </div>
-            <div>
-              <Label htmlFor="g-start" required>Start date</Label>
-              <Input
-                id="g-start"
-                type="date"
-                required
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-              />
-            </div>
-            <div>
-              <Label htmlFor="g-end">End date</Label>
-              <Input
-                id="g-end"
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-              />
-            </div>
+            <Field label="Total cap">
+              {(p) => (
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={totalCap}
+                  onChange={(e) => setTotalCap(e.target.value)}
+                  placeholder="optional"
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label="Start date" required>
+              {(p) => (
+                <Input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label="End date">
+              {(p) => (
+                <Input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <Label htmlFor="g-priority">Priority</Label>
-              <Input
-                id="g-priority"
-                type="number"
-                min={1}
-                max={999}
-                value={priority}
-                onChange={(e) => setPriority(e.target.value)}
-              />
-              <div className="text-[10px] text-silver/50 mt-1">
-                Lower runs first when multiple compete for disposable.
-              </div>
-            </div>
-            <div className="col-span-2">
-              <Label htmlFor="g-remitto">Remit payee</Label>
-              <Input
-                id="g-remitto"
-                value={remitTo}
-                onChange={(e) => setRemitTo(e.target.value)}
-              />
-            </div>
+            <Field
+              label="Priority"
+              hint="Lower runs first when multiple compete for disposable."
+            >
+              {(p) => (
+                <Input
+                  type="number"
+                  min={1}
+                  max={999}
+                  value={priority}
+                  onChange={(e) => setPriority(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label="Remit payee" className="col-span-2">
+              {(p) => (
+                <Input
+                  value={remitTo}
+                  onChange={(e) => setRemitTo(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
           </div>
 
-          <div>
-            <Label htmlFor="g-address">Remit address</Label>
-            <Input
-              id="g-address"
-              value={remitAddress}
-              onChange={(e) => setRemitAddress(e.target.value)}
-            />
-          </div>
+          <Field label="Remit address">
+            {(p) => (
+              <Input
+                value={remitAddress}
+                onChange={(e) => setRemitAddress(e.target.value)}
+                {...p}
+              />
+            )}
+          </Field>
 
-          <div>
-            <Label htmlFor="g-notes">Notes</Label>
-            <Textarea
-              id="g-notes"
-              rows={2}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-            />
-          </div>
+          <Field label="Notes">
+            {(p) => (
+              <Textarea
+                rows={2}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                {...p}
+              />
+            )}
+          </Field>
 
           <DialogFooter>
             <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>

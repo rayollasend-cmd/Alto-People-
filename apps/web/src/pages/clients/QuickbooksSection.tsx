@@ -22,7 +22,9 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/Card';
-import { Label, FormHint } from '@/components/ui/Label';
+import { Field } from '@/components/ui/Field';
+import { FormHint } from '@/components/ui/Label';
+import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 interface Props {
@@ -479,7 +481,6 @@ function AccountMappingForm({
         {ACCOUNT_FIELDS.map((f) => (
           <AccountPicker
             key={f.key}
-            id={`qbo-${f.key}`}
             label={f.label}
             hint={f.hint}
             value={values[f.key] ?? ''}
@@ -503,7 +504,6 @@ function AccountMappingForm({
 }
 
 function AccountPicker({
-  id,
   label,
   hint,
   value,
@@ -512,7 +512,6 @@ function AccountPicker({
   classification,
   disabled,
 }: {
-  id: string;
   label: string;
   hint: string;
   value: string;
@@ -529,32 +528,31 @@ function AccountPicker({
   const valueExists = !value || filtered.some((a) => a.id === value);
 
   return (
-    <div>
-      <Label htmlFor={id}>{label}</Label>
-      {accounts === null ? (
-        <Skeleton className="h-9 mt-1" />
-      ) : (
-        <select
-          id={id}
-          className="mt-1 w-full rounded border border-silver/20 bg-black/40 px-2 py-1.5 text-sm text-silver"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          disabled={disabled}
-        >
-          <option value="">— Not mapped —</option>
-          {filtered.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.isSubAccount ? '— ' : ''}
-              {a.name} ({a.accountType})
-            </option>
-          ))}
-          {!valueExists && value && (
-            <option value={value}>(unknown id: {value})</option>
-          )}
-        </select>
-      )}
-      <FormHint>{hint}</FormHint>
-    </div>
+    <Field label={label} hint={hint}>
+      {(p) =>
+        accounts === null ? (
+          <Skeleton className="h-9" />
+        ) : (
+          <Select
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            disabled={disabled}
+            {...p}
+          >
+            <option value="">— Not mapped —</option>
+            {filtered.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.isSubAccount ? '— ' : ''}
+                {a.name} ({a.accountType})
+              </option>
+            ))}
+            {!valueExists && value && (
+              <option value={value}>(unknown id: {value})</option>
+            )}
+          </Select>
+        )
+      }
+    </Field>
   );
 }
 

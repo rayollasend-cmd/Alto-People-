@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { AtSign, Bell, Camera, CheckCircle2, Clock, Copy, Download, History, KeyRound, Lock, LogOut, RefreshCw, ShieldAlert, ShieldCheck, Upload, User as UserIcon } from 'lucide-react';
+import { AtSign, Bell, Camera, CheckCircle2, ChevronDown, ChevronUp, Clock, Copy, Download, History, KeyRound, Lock, LogOut, RefreshCw, ShieldAlert, ShieldCheck, Upload, User as UserIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import QRCode from 'qrcode';
 import { MFA_RECOVERY_CODE_COUNT, type MfaEnrollStartResponse } from '@alto-people/shared';
@@ -42,6 +42,7 @@ import {
   CardTitle,
 } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { Label, FormHint } from '@/components/ui/Label';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -344,14 +345,9 @@ function MfaCard() {
                 </div>
                 <div>
                   <Label>Recovery codes</Label>
-                  <ul className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-md bg-navy-secondary/60 px-4 py-3 font-mono text-xs tracking-wide text-white">
+                  <ul className="grid grid-cols-2 gap-1.5 rounded-md bg-navy-secondary/60 p-3 font-mono text-xs text-white">
                     {enroll.recoveryCodes.map((c) => (
-                      <li
-                        key={c}
-                        className="border-b border-navy-secondary/60 pb-1.5 last:border-0 last:pb-0 [&:nth-last-child(2)]:border-0 [&:nth-last-child(2)]:pb-0"
-                      >
-                        {c}
-                      </li>
+                      <li key={c}>{c}</li>
                     ))}
                   </ul>
                   <div className="flex items-center justify-between mt-1.5">
@@ -429,14 +425,9 @@ function MfaCard() {
                   Your previous codes have been invalidated. Each new code works
                   once.
                 </div>
-                <ul className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-md bg-navy-secondary/60 px-4 py-3 font-mono text-xs tracking-wide text-white">
+                <ul className="grid grid-cols-2 gap-1.5 rounded-md bg-navy-secondary/60 p-3 font-mono text-xs text-white">
                   {regeneratedCodes.map((c) => (
-                    <li
-                      key={c}
-                      className="border-b border-navy-secondary/60 pb-1.5 last:border-0 last:pb-0 [&:nth-last-child(2)]:border-0 [&:nth-last-child(2)]:pb-0"
-                    >
-                      {c}
-                    </li>
+                    <li key={c}>{c}</li>
                   ))}
                 </ul>
                 <div className="flex items-center justify-between">
@@ -463,13 +454,6 @@ function MfaCard() {
             )}
             {showDisable ? (
               <div className="space-y-3 rounded-md border border-navy-secondary bg-navy-secondary/30 p-3">
-                <div
-                  role="alert"
-                  className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning"
-                >
-                  Turning this off removes two-step protection immediately.
-                  Anyone who knows your password will be able to sign in.
-                </div>
                 <div>
                   <Label htmlFor="mfa-disable-pw" required>
                     Current password
@@ -634,35 +618,34 @@ function EmailCard() {
           </div>
         )}
         <div className="space-y-3">
-          <div>
-            <Label htmlFor="set-newemail" required>
-              New email
-            </Label>
-            <Input
-              id="set-newemail"
-              type="email"
-              autoComplete="email"
-              value={newEmail}
-              onChange={(e) => setNewEmail(e.target.value)}
-              maxLength={254}
-              placeholder="you@new-address.com"
-            />
-          </div>
-          <div>
-            <Label htmlFor="set-emailpw" required>
-              Current password
-            </Label>
-            <Input
-              id="set-emailpw"
-              type="password"
-              autoComplete="current-password"
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-            />
-            <FormHint>
-              We re-check your password before sending the confirmation link.
-            </FormHint>
-          </div>
+          <Field label="New email" required>
+            {(p) => (
+              <Input
+                type="email"
+                autoComplete="email"
+                value={newEmail}
+                onChange={(e) => setNewEmail(e.target.value)}
+                maxLength={254}
+                placeholder="you@new-address.com"
+                {...p}
+              />
+            )}
+          </Field>
+          <Field
+            label="Current password"
+            required
+            hint="We re-check your password before sending the confirmation link."
+          >
+            {(p) => (
+              <Input
+                type="password"
+                autoComplete="current-password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                {...p}
+              />
+            )}
+          </Field>
         </div>
         <div className="mt-4 flex justify-end">
           <Button
@@ -836,21 +819,22 @@ function TimezoneCard() {
       </CardHeader>
       <CardContent>
         <div className="flex flex-wrap items-end gap-3">
-          <div className="flex-1 min-w-[240px]">
-            <Label htmlFor="set-tz">Preferred timezone</Label>
-            <Select
-              id="set-tz"
-              value={tz}
-              onChange={(e) => setTz(e.target.value as SupportedTimezone | '')}
-            >
-              <option value="">Follow this device ({browserTz})</option>
-              {SUPPORTED_TIMEZONES.map((z) => (
-                <option key={z} value={z}>
-                  {TIMEZONE_LABELS[z]}
-                </option>
-              ))}
-            </Select>
-          </div>
+          <Field label="Preferred timezone" className="flex-1 min-w-[240px]">
+            {(p) => (
+              <Select
+                value={tz}
+                onChange={(e) => setTz(e.target.value as SupportedTimezone | '')}
+                {...p}
+              >
+                <option value="">Follow this device ({browserTz})</option>
+                {SUPPORTED_TIMEZONES.map((z) => (
+                  <option key={z} value={z}>
+                    {TIMEZONE_LABELS[z]}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
           <Button onClick={submit} loading={submitting} disabled={!dirty}>
             Save timezone
           </Button>
@@ -959,24 +943,26 @@ function ProfileCard() {
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <Label htmlFor="set-first">First name</Label>
-            <Input
-              id="set-first"
-              value={firstName}
-              onChange={(e) => setFirstName(e.target.value)}
-              maxLength={100}
-            />
-          </div>
-          <div>
-            <Label htmlFor="set-last">Last name</Label>
-            <Input
-              id="set-last"
-              value={lastName}
-              onChange={(e) => setLastName(e.target.value)}
-              maxLength={100}
-            />
-          </div>
+          <Field label="First name">
+            {(p) => (
+              <Input
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                maxLength={100}
+                {...p}
+              />
+            )}
+          </Field>
+          <Field label="Last name">
+            {(p) => (
+              <Input
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                maxLength={100}
+                {...p}
+              />
+            )}
+          </Field>
         </div>
         <div className="mt-4 flex justify-end">
           <Button onClick={submit} loading={submitting} disabled={!dirty}>
@@ -1092,7 +1078,6 @@ function PasswordCard() {
   const [newPassword, setNew] = useState('');
   const [confirmPassword, setConfirm] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const mismatch = confirmPassword !== '' && confirmPassword !== newPassword;
 
   const submit = async () => {
     if (newPassword !== confirmPassword) {
@@ -1146,53 +1131,50 @@ function PasswordCard() {
       </CardHeader>
       <CardContent>
         <div className="space-y-3">
-          <div>
-            <Label htmlFor="set-current" required>
-              Current password
-            </Label>
-            <Input
-              id="set-current"
-              type="password"
-              autoComplete="current-password"
-              value={currentPassword}
-              onChange={(e) => setCurrent(e.target.value)}
-            />
-          </div>
+          <Field label="Current password" required>
+            {(p) => (
+              <Input
+                type="password"
+                autoComplete="current-password"
+                value={currentPassword}
+                onChange={(e) => setCurrent(e.target.value)}
+                {...p}
+              />
+            )}
+          </Field>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <Label htmlFor="set-new" required>
-                New password
-              </Label>
-              <Input
-                id="set-new"
-                type="password"
-                autoComplete="new-password"
-                value={newPassword}
-                onChange={(e) => setNew(e.target.value)}
-                minLength={12}
-              />
-              <FormHint>At least 12 characters.</FormHint>
-            </div>
-            <div>
-              <Label htmlFor="set-confirm" required>
-                Confirm new password
-              </Label>
-              <Input
-                id="set-confirm"
-                type="password"
-                autoComplete="new-password"
-                value={confirmPassword}
-                onChange={(e) => setConfirm(e.target.value)}
-                minLength={12}
-                invalid={mismatch}
-                aria-describedby={mismatch ? 'set-confirm-error' : undefined}
-              />
-              {mismatch && (
-                <FormHint id="set-confirm-error" variant="error">
-                  Passwords don't match.
-                </FormHint>
+            <Field label="New password" required hint="At least 12 characters.">
+              {(p) => (
+                <Input
+                  type="password"
+                  autoComplete="new-password"
+                  value={newPassword}
+                  onChange={(e) => setNew(e.target.value)}
+                  minLength={12}
+                  {...p}
+                />
               )}
-            </div>
+            </Field>
+            <Field
+              label="Confirm new password"
+              required
+              error={
+                confirmPassword && newPassword !== confirmPassword
+                  ? "Passwords don't match."
+                  : undefined
+              }
+            >
+              {(p) => (
+                <Input
+                  type="password"
+                  autoComplete="new-password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirm(e.target.value)}
+                  minLength={12}
+                  {...p}
+                />
+              )}
+            </Field>
           </div>
         </div>
         <div className="mt-4 flex justify-end">
@@ -1246,10 +1228,13 @@ function shortenAgent(ua: string | null): string {
   return `${browser} on ${os}`;
 }
 
+const LOGIN_HISTORY_PREVIEW = 5;
+
 function LoginHistoryCard() {
   const { user } = useAuth();
   const [events, setEvents] = useState<LoginEvent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
 
   // When the user has a saved timezone, format every timestamp through it
   // so the table reads consistently across devices. Falls back to the
@@ -1314,32 +1299,56 @@ function LoginHistoryCard() {
         ) : events.length === 0 ? (
           <div className="text-sm text-silver">No activity recorded yet.</div>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Event</TableHead>
-                <TableHead>When</TableHead>
-                <TableHead>Device</TableHead>
-                <TableHead>IP</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {events.map((e) => (
-                <TableRow key={e.id}>
-                  <TableCell className="text-white">{ACTION_LABEL[e.action]}</TableCell>
-                  <TableCell className="text-silver">
-                    {formatter.format(new Date(e.at))}
-                  </TableCell>
-                  <TableCell className="text-silver">
-                    {shortenAgent(e.userAgent)}
-                  </TableCell>
-                  <TableCell className="text-silver font-mono text-xs">
-                    {e.ip ?? '—'}
-                  </TableCell>
+          <>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Event</TableHead>
+                  <TableHead>When</TableHead>
+                  <TableHead>Device</TableHead>
+                  <TableHead>IP</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {(expanded ? events : events.slice(0, LOGIN_HISTORY_PREVIEW)).map((e) => (
+                  <TableRow key={e.id}>
+                    <TableCell className="text-white">{ACTION_LABEL[e.action]}</TableCell>
+                    <TableCell className="text-silver">
+                      {formatter.format(new Date(e.at))}
+                    </TableCell>
+                    <TableCell className="text-silver">
+                      {shortenAgent(e.userAgent)}
+                    </TableCell>
+                    <TableCell className="text-silver font-mono text-xs">
+                      {e.ip ?? '—'}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            {events.length > LOGIN_HISTORY_PREVIEW && (
+              <div className="mt-3 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => setExpanded((v) => !v)}
+                  className="inline-flex items-center gap-1.5 text-xs text-silver hover:text-gold-bright transition-colors"
+                  aria-expanded={expanded}
+                >
+                  {expanded ? (
+                    <>
+                      <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
+                      Show fewer
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+                      Show all {events.length}
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+          </>
         )}
       </CardContent>
     </Card>

@@ -21,8 +21,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
-import { Label, FormHint } from '@/components/ui/Label';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Badge } from '@/components/ui/Badge';
 import {
@@ -124,14 +125,7 @@ export function JobsSection({ clientId }: Props) {
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        {error && (
-          <div
-            className="m-4 p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-            role="alert"
-          >
-            {error}
-          </div>
-        )}
+        {error && <ErrorBanner className="m-4">{error}</ErrorBanner>}
         {!items && (
           <div className="p-4 space-y-2">
             <Skeleton className="h-10" />
@@ -342,43 +336,44 @@ function JobDialog({ open, onOpenChange, clientId, existing, onSaved }: JobDialo
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          <div>
-            <Label htmlFor="job-name" required>Name</Label>
-            <Input
-              id="job-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Server, Bartender, Housekeeper…"
-              autoFocus
-            />
-          </div>
+          <Field label="Name" required>
+            {(p) => (
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Server, Bartender, Housekeeper…"
+                autoFocus
+                {...p}
+              />
+            )}
+          </Field>
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label htmlFor="job-bill">Bill rate (USD/hr)</Label>
-              <Input
-                id="job-bill"
-                type="number"
-                step="0.01"
-                min="0"
-                value={billRate}
-                onChange={(e) => setBillRate(e.target.value)}
-                placeholder="35.00"
-              />
-              <FormHint>What the client is invoiced.</FormHint>
-            </div>
-            <div>
-              <Label htmlFor="job-pay">Pay rate (USD/hr)</Label>
-              <Input
-                id="job-pay"
-                type="number"
-                step="0.01"
-                min="0"
-                value={payRate}
-                onChange={(e) => setPayRate(e.target.value)}
-                placeholder="22.00"
-              />
-              <FormHint>What the associate is paid.</FormHint>
-            </div>
+            <Field label="Bill rate (USD/hr)" hint="What the client is invoiced.">
+              {(p) => (
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={billRate}
+                  onChange={(e) => setBillRate(e.target.value)}
+                  placeholder="35.00"
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label="Pay rate (USD/hr)" hint="What the associate is paid.">
+              {(p) => (
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={payRate}
+                  onChange={(e) => setPayRate(e.target.value)}
+                  placeholder="22.00"
+                  {...p}
+                />
+              )}
+            </Field>
           </div>
           {existing && (
             <label className="text-sm text-silver inline-flex items-center gap-2 cursor-pointer">

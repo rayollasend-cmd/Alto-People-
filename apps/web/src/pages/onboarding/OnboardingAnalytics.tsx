@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Activity, Clock, TrendingUp, Users } from 'lucide-react';
+import { Activity, ChevronDown, ChevronUp, Clock, TrendingUp, Users } from 'lucide-react';
 import type { OnboardingAnalyticsResponse } from '@alto-people/shared';
 import { getOnboardingAnalytics } from '@/lib/analyticsApi';
 import { ApiError } from '@/lib/api';
@@ -41,12 +41,15 @@ const fmtMonth = (yyyymm: string): string => {
   return d.toLocaleDateString(undefined, { month: 'short', year: '2-digit', timeZone: 'UTC' });
 };
 
+const TOP_CLIENTS_PREVIEW = 5;
+
 export function OnboardingAnalytics() {
   const { can } = useAuth();
   const canView = can('view:dashboard');
 
   const [data, setData] = useState<OnboardingAnalyticsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [clientsExpanded, setClientsExpanded] = useState(false);
 
   useEffect(() => {
     if (!canView) return;
@@ -229,7 +232,7 @@ export function OnboardingAnalytics() {
               </CardContent>
             </Card>
 
-            {/* By client (top 10) */}
+            {/* By client */}
             <Card>
               <CardHeader>
                 <CardTitle>Top clients</CardTitle>
@@ -238,17 +241,44 @@ export function OnboardingAnalytics() {
                 {data.byClient.length === 0 ? (
                   <EmptyHint />
                 ) : (
-                  <ul className="space-y-2.5">
-                    {data.byClient.map((c) => (
-                      <BreakdownRow
-                        key={c.clientId}
-                        label={c.clientName}
-                        count={c.count}
-                        medianDays={c.medianDays}
-                        max={Math.max(...data.byClient.map((x) => x.count))}
-                      />
-                    ))}
-                  </ul>
+                  <>
+                    <ul className="space-y-2.5">
+                      {(clientsExpanded
+                        ? data.byClient
+                        : data.byClient.slice(0, TOP_CLIENTS_PREVIEW)
+                      ).map((c) => (
+                        <BreakdownRow
+                          key={c.clientId}
+                          label={c.clientName}
+                          count={c.count}
+                          medianDays={c.medianDays}
+                          max={Math.max(...data.byClient.map((x) => x.count))}
+                        />
+                      ))}
+                    </ul>
+                    {data.byClient.length > TOP_CLIENTS_PREVIEW && (
+                      <div className="mt-3 flex justify-center">
+                        <button
+                          type="button"
+                          onClick={() => setClientsExpanded((v) => !v)}
+                          className="inline-flex items-center gap-1.5 text-xs text-silver hover:text-gold-bright transition-colors"
+                          aria-expanded={clientsExpanded}
+                        >
+                          {clientsExpanded ? (
+                            <>
+                              <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
+                              Show top {TOP_CLIENTS_PREVIEW}
+                            </>
+                          ) : (
+                            <>
+                              <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+                              Show all {data.byClient.length}
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )}
+                  </>
                 )}
               </CardContent>
             </Card>

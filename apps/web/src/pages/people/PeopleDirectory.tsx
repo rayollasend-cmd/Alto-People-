@@ -64,9 +64,11 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  Field,
   Input,
   Label,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -616,7 +618,7 @@ function ProfileTab({
   return (
     <div className="space-y-4">
       <Section title="Contact">
-        <Field
+        <InfoRow
           icon={<Mail className="h-3.5 w-3.5" />}
           label="Email"
           value={
@@ -635,7 +637,7 @@ function ProfileTab({
       </Section>
 
       <Section title="Workplace">
-        <Field
+        <InfoRow
           icon={<Building2 className="h-3.5 w-3.5" />}
           label="Client"
           value={
@@ -651,14 +653,14 @@ function ProfileTab({
             )
           }
         />
-        <Field
+        <InfoRow
           icon={<Briefcase className="h-3.5 w-3.5" />}
           label="Position"
           value={a.position ?? '—'}
         />
-        <Field label="Start date" value={a.startDate ?? '—'} />
+        <InfoRow label="Start date" value={a.startDate ?? '—'} />
         {a.status === 'PENDING' && a.onboardingPercent !== null && (
-          <Field
+          <InfoRow
             label="Onboarding"
             value={
               <div className="flex items-center gap-2">
@@ -685,13 +687,13 @@ function ProfileTab({
       )}
 
       <Section title="Org assignment">
-        <Field label="Manager" value={a.managerName ?? '—'} />
-        <Field label="Department" value={a.departmentName ?? '—'} />
-        <Field label="Job profile" value={a.jobProfileTitle ?? '—'} />
+        <InfoRow label="Manager" value={a.managerName ?? '—'} />
+        <InfoRow label="Department" value={a.departmentName ?? '—'} />
+        <InfoRow label="Job profile" value={a.jobProfileTitle ?? '—'} />
       </Section>
 
       <Section title="On record">
-        <Field
+        <InfoRow
           label="In Alto HR since"
           value={new Date(a.createdAt).toLocaleDateString()}
         />
@@ -795,7 +797,7 @@ function PhoneField({
   }
 
   return (
-    <Field
+    <InfoRow
       icon={<Phone className="h-3.5 w-3.5" />}
       label="Phone"
       value={
@@ -1112,67 +1114,68 @@ function NewRateDialog({
                 />
               </div>
             </div>
-            <div>
-              <Label htmlFor="rate-amount">
-                Amount{payType === 'HOURLY' ? ' / hour' : ' / year'}
-              </Label>
-              <Input
-                id="rate-amount"
-                type="number"
-                inputMode="decimal"
-                step="0.01"
-                min="0"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                placeholder={payType === 'HOURLY' ? '24.50' : '65000'}
-                required
-              />
-            </div>
+            <Field
+              label={`Amount${payType === 'HOURLY' ? ' / hour' : ' / year'}`}
+            >
+              {(p) => (
+                <Input
+                  type="number"
+                  inputMode="decimal"
+                  step="0.01"
+                  min="0"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  placeholder={payType === 'HOURLY' ? '24.50' : '65000'}
+                  {...p}
+                />
+              )}
+            </Field>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label htmlFor="rate-effective">Effective from</Label>
-              <Input
-                id="rate-effective"
-                type="date"
-                value={effectiveFrom}
-                onChange={(e) => setEffectiveFrom(e.target.value)}
-                required
-              />
-            </div>
-            <div>
-              <Label htmlFor="rate-reason">Reason</Label>
-              <select
-                id="rate-reason"
-                value={reason}
-                onChange={(e) =>
-                  setReason(e.target.value as CompChangeReason)
-                }
-                className="mt-1 w-full h-10 px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
-              >
-                <option value="HIRE">Hire</option>
-                <option value="MERIT">Merit</option>
-                <option value="PROMOTION">Promotion</option>
-                <option value="MARKET_ADJUSTMENT">Market adjustment</option>
-                <option value="CORRECTION">Correction</option>
-                <option value="OTHER">Other</option>
-              </select>
-            </div>
+            <Field label="Effective from">
+              {(p) => (
+                <Input
+                  type="date"
+                  value={effectiveFrom}
+                  onChange={(e) => setEffectiveFrom(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label="Reason">
+              {(p) => (
+                <Select
+                  value={reason}
+                  onChange={(e) =>
+                    setReason(e.target.value as CompChangeReason)
+                  }
+                  {...p}
+                >
+                  <option value="HIRE">Hire</option>
+                  <option value="MERIT">Merit</option>
+                  <option value="PROMOTION">Promotion</option>
+                  <option value="MARKET_ADJUSTMENT">Market adjustment</option>
+                  <option value="CORRECTION">Correction</option>
+                  <option value="OTHER">Other</option>
+                </Select>
+              )}
+            </Field>
           </div>
 
-          <div>
-            <Label htmlFor="rate-notes">Notes (optional)</Label>
-            <textarea
-              id="rate-notes"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={3}
-              maxLength={500}
-              className="mt-1 w-full px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
-              placeholder="Context for the change (visible in history)"
-            />
-          </div>
+          <Field label="Notes (optional)">
+            {(p) => (
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={3}
+                maxLength={500}
+                className="w-full px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
+                placeholder="Context for the change (visible in history)"
+                {...p}
+              />
+            )}
+          </Field>
 
           <DialogFooter>
             <Button
@@ -1523,35 +1526,33 @@ function UploadResultDialog({
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <Label htmlFor="upload-kind">Document type</Label>
-            <select
-              id="upload-kind"
-              value={kind}
-              onChange={(e) => setKind(e.target.value as DocumentKind)}
-              className="w-full h-10 rounded-md border border-navy-secondary bg-navy-secondary/30 px-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-gold-bright"
-            >
-              {HR_UPLOAD_KINDS.map((k) => (
-                <option key={k} value={k}>
-                  {DOCUMENT_KIND_LABEL[k]}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <Label htmlFor="upload-file">File</Label>
-            <input
-              ref={fileInputRef}
-              id="upload-file"
-              type="file"
-              accept="application/pdf,image/png,image/jpeg,image/webp"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-              className="block w-full text-xs text-silver file:mr-3 file:rounded-md file:border-0 file:bg-navy-secondary file:px-3 file:py-2 file:text-xs file:font-medium file:text-white hover:file:bg-navy-secondary/80"
-            />
-            <p className="mt-1 text-[10px] text-silver/80">
-              PDF, PNG, JPEG, or WebP. Max 10 MB.
-            </p>
-          </div>
+          <Field label="Document type">
+            {(p) => (
+              <Select
+                value={kind}
+                onChange={(e) => setKind(e.target.value as DocumentKind)}
+                {...p}
+              >
+                {HR_UPLOAD_KINDS.map((k) => (
+                  <option key={k} value={k}>
+                    {DOCUMENT_KIND_LABEL[k]}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          <Field label="File" hint="PDF, PNG, JPEG, or WebP. Max 10 MB.">
+            {(p) => (
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="application/pdf,image/png,image/jpeg,image/webp"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                className="block w-full text-xs text-silver file:mr-3 file:rounded-md file:border-0 file:bg-navy-secondary file:px-3 file:py-2 file:text-xs file:font-medium file:text-white hover:file:bg-navy-secondary/80"
+                {...p}
+              />
+            )}
+          </Field>
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               Cancel
@@ -1578,7 +1579,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function Field({
+function InfoRow({
   icon,
   label,
   value,

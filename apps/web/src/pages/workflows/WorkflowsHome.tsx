@@ -27,8 +27,10 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  Field,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -41,7 +43,6 @@ import {
   TabsList,
   TabsTrigger,
 } from '@/components/ui';
-import { Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
 
 const TRIGGERS: WorkflowTrigger[] = [
@@ -387,40 +388,42 @@ function DefinitionDrawer({
       </DrawerHeader>
       <DrawerBody>
         <div className="space-y-3">
-          <div>
-            <Label htmlFor="wf-name" required>Name</Label>
-            <Input
-              id="wf-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              maxLength={120}
-              disabled={!canManage}
-            />
-          </div>
-          <div>
-            <Label htmlFor="wf-desc">Description</Label>
-            <Input
-              id="wf-desc"
-              value={description ?? ''}
-              onChange={(e) => setDescription(e.target.value)}
-              maxLength={500}
-              disabled={!canManage}
-            />
-          </div>
-          <div>
-            <Label htmlFor="wf-trigger">Trigger</Label>
-            <select
-              id="wf-trigger"
-              value={trigger}
-              onChange={(e) => setTrigger(e.target.value as WorkflowTrigger)}
-              disabled={!canManage}
-              className="w-full h-10 px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
-            >
-              {TRIGGERS.map((t) => (
-                <option key={t} value={t}>{t}</option>
-              ))}
-            </select>
-          </div>
+          <Field label="Name" required>
+            {(p) => (
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                maxLength={120}
+                disabled={!canManage}
+                {...p}
+              />
+            )}
+          </Field>
+          <Field label="Description">
+            {(p) => (
+              <Input
+                value={description ?? ''}
+                onChange={(e) => setDescription(e.target.value)}
+                maxLength={500}
+                disabled={!canManage}
+                {...p}
+              />
+            )}
+          </Field>
+          <Field label="Trigger">
+            {(p) => (
+              <Select
+                value={trigger}
+                onChange={(e) => setTrigger(e.target.value as WorkflowTrigger)}
+                disabled={!canManage}
+                {...p}
+              >
+                {TRIGGERS.map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </Select>
+            )}
+          </Field>
           <label className="text-sm text-white flex items-center gap-2">
             <input
               type="checkbox"
@@ -431,18 +434,19 @@ function DefinitionDrawer({
             Active (fires on matching trigger events)
           </label>
 
-          <div>
-            <Label htmlFor="wf-cond">Conditions (JSON)</Label>
-            <textarea
-              id="wf-cond"
-              value={conditionsJson}
-              onChange={(e) => setConditionsJson(e.target.value)}
-              disabled={!canManage}
-              rows={4}
-              className="w-full px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-xs font-mono"
-              placeholder='{ "and": [{ "field": "associate.state", "op": "eq", "value": "CA" }] }'
-            />
-          </div>
+          <Field label="Conditions (JSON)">
+            {(p) => (
+              <textarea
+                value={conditionsJson}
+                onChange={(e) => setConditionsJson(e.target.value)}
+                disabled={!canManage}
+                rows={4}
+                className="w-full px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-xs font-mono"
+                placeholder='{ "and": [{ "field": "associate.state", "op": "eq", "value": "CA" }] }'
+                {...p}
+              />
+            )}
+          </Field>
 
           <div className="pt-3 border-t border-navy-secondary">
             <div className="flex items-center justify-between mb-2">

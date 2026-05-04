@@ -4,8 +4,9 @@ import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { Logo } from '@/components/Logo';
 import { Button } from '@/components/ui/Button';
+import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
-import { Label, FormHint } from '@/components/ui/Label';
+import { Select } from '@/components/ui/Select';
 import { Badge } from '@/components/ui/Badge';
 import { cn } from '@/lib/cn';
 import {
@@ -144,71 +145,70 @@ function FileForm({ onFiled }: { onFiled: (code: string) => void }) {
       }}
       noValidate
     >
-      <div>
-        <Label htmlFor="report-category" required>
-          Category
-        </Label>
-        <select
-          id="report-category"
-          className="w-full h-10 px-3 rounded-md bg-navy border border-navy-secondary text-white text-sm focus:outline-none focus:ring-2 focus:ring-gold-bright focus:border-transparent"
-          value={category}
-          onChange={(e) => setCategory(e.target.value as ReportCategory)}
-        >
-          {(Object.keys(CATEGORY_LABELS) as ReportCategory[]).map((k) => (
-            <option key={k} value={k}>
-              {CATEGORY_LABELS[k]}
-            </option>
-          ))}
-        </select>
-      </div>
+      <Field label="Category" required>
+        {(p) => (
+          <Select
+            value={category}
+            onChange={(e) => setCategory(e.target.value as ReportCategory)}
+            {...p}
+          >
+            {(Object.keys(CATEGORY_LABELS) as ReportCategory[]).map((k) => (
+              <option key={k} value={k}>
+                {CATEGORY_LABELS[k]}
+              </option>
+            ))}
+          </Select>
+        )}
+      </Field>
 
-      <div>
-        <Label htmlFor="report-subject" required>
-          Subject
-        </Label>
-        <Input
-          id="report-subject"
-          value={subject}
-          onChange={(e) => setSubject(e.target.value)}
-          placeholder="Short headline of the concern"
-          maxLength={200}
-          required
-        />
-      </div>
+      <Field label="Subject" required>
+        {(p) => (
+          <Input
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            placeholder="Short headline of the concern"
+            maxLength={200}
+            {...p}
+          />
+        )}
+      </Field>
 
-      <div>
-        <Label htmlFor="report-description" required>
-          What happened?
-        </Label>
-        <Textarea
-          id="report-description"
-          rows={8}
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="Describe the events, who was involved, when and where it happened. Be as specific as you can — but do not include your own name unless you choose to."
-          maxLength={20000}
-          required
-        />
-        <FormHint>{description.length} / 20,000 characters</FormHint>
-      </div>
+      <Field
+        label="What happened?"
+        required
+        hint={`${description.length} / 20,000 characters`}
+      >
+        {(p) => (
+          <Textarea
+            rows={8}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Describe the events, who was involved, when and where it happened. Be as specific as you can — but do not include your own name unless you choose to."
+            maxLength={20000}
+            {...p}
+          />
+        )}
+      </Field>
 
-      <div>
-        <Label htmlFor="report-contact">
-          Contact email <span className="text-silver/70">(optional)</span>
-        </Label>
-        <Input
-          id="report-contact"
-          type="email"
-          value={contactEmail}
-          onChange={(e) => setContactEmail(e.target.value)}
-          placeholder="leave blank to stay fully anonymous"
-          autoComplete="email"
-        />
-        <FormHint>
-          Only fill this in if you want HR to be able to reach you directly.
-          You can still follow up using your tracking code without it.
-        </FormHint>
-      </div>
+      <Field
+        label={
+          <>
+            Contact email <span className="text-silver/70">(optional)</span>
+          </>
+        }
+        hint="Only fill this in if you want HR to be able to reach you directly. You can still follow up using your tracking code without it."
+      >
+        {(p) => (
+          <Input
+            type="email"
+            value={contactEmail}
+            onChange={(e) => setContactEmail(e.target.value)}
+            placeholder="leave blank to stay fully anonymous"
+            autoComplete="email"
+            {...p}
+          />
+        )}
+      </Field>
 
       <Button
         type="submit"
@@ -315,20 +315,19 @@ function LookupForm() {
         }}
         noValidate
       >
-        <div>
-          <Label htmlFor="tracking-code" required>
-            Tracking code
-          </Label>
-          <Input
-            id="tracking-code"
-            value={code}
-            onChange={(e) => setCode(e.target.value.toUpperCase())}
-            placeholder="e.g. 7K2P9XQR3WN5HT4M"
-            maxLength={32}
-            className="font-mono tracking-wider uppercase"
-            autoComplete="off"
-          />
-        </div>
+        <Field label="Tracking code" required>
+          {(p) => (
+            <Input
+              value={code}
+              onChange={(e) => setCode(e.target.value.toUpperCase())}
+              placeholder="e.g. 7K2P9XQR3WN5HT4M"
+              maxLength={32}
+              className="font-mono tracking-wider uppercase"
+              autoComplete="off"
+              {...p}
+            />
+          )}
+        </Field>
         <Button
           type="submit"
           size="lg"
@@ -409,15 +408,18 @@ function LookupForm() {
 
       {report.status !== 'CLOSED' && (
         <div className="space-y-2 pt-4 border-t border-navy-secondary">
-          <Label htmlFor="reply-body">Add a follow-up message</Label>
-          <Textarea
-            id="reply-body"
-            rows={4}
-            value={reply}
-            onChange={(e) => setReply(e.target.value)}
-            placeholder="Additional details, questions for HR…"
-            maxLength={20000}
-          />
+          <Field label="Add a follow-up message">
+            {(p) => (
+              <Textarea
+                rows={4}
+                value={reply}
+                onChange={(e) => setReply(e.target.value)}
+                placeholder="Additional details, questions for HR…"
+                maxLength={20000}
+                {...p}
+              />
+            )}
+          </Field>
           <Button
             onClick={() => void sendReply()}
             loading={busy}

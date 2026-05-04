@@ -27,8 +27,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
+import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
-import { Label } from '@/components/ui/Label';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Badge } from '@/components/ui/Badge';
@@ -296,18 +296,17 @@ function DenyDialog({ target, onClose }: DenyProps) {
             The associate will see your note in their request history.
           </DialogDescription>
         </DialogHeader>
-        <div>
-          <Label htmlFor="deny-note" required>
-            Note
-          </Label>
-          <Input
-            id="deny-note"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="Coverage gap that week, etc."
-            maxLength={500}
-          />
-        </div>
+        <Field label="Note" required>
+          {(p) => (
+            <Input
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Coverage gap that week, etc."
+              maxLength={500}
+              {...p}
+            />
+          )}
+        </Field>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onClose(false)}>
             Cancel

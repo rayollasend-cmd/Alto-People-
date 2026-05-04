@@ -28,15 +28,11 @@ import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
-import { Label, FormHint } from '@/components/ui/Label';
+import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { cn } from '@/lib/cn';
-
-const SELECT_CX =
-  'w-full h-10 rounded-md border border-navy-secondary bg-navy-secondary/40 text-white px-3 py-2 text-sm appearance-none bg-no-repeat bg-right pr-8 ' +
-  'focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold ' +
-  'disabled:opacity-50 disabled:cursor-not-allowed';
 
 const TEXTAREA_CX =
   'w-full rounded-md border border-navy-secondary bg-navy-secondary/40 text-white px-3 py-2 text-sm ' +
@@ -211,12 +207,9 @@ export function TemplateEditor() {
   if (!canManage) {
     return (
       <div className="max-w-3xl mx-auto">
-        <div
-          className="p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-          role="alert"
-        >
+        <ErrorBanner>
           You don't have permission to manage onboarding templates.
-        </div>
+        </ErrorBanner>
       </div>
     );
   }
@@ -252,71 +245,63 @@ export function TemplateEditor() {
         </p>
       </header>
 
-      {error && (
-        <div
-          className="mb-4 p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-          role="alert"
-        >
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
 
       <Card className="p-5 mb-5">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <Label htmlFor="te-name" required>
-              Name
-            </Label>
-            <Input
-              id="te-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Standard restaurant onboarding"
-              maxLength={80}
-              autoFocus
-            />
-          </div>
-          <div>
-            <Label htmlFor="te-track" required>
-              Track
-            </Label>
-            <select
-              id="te-track"
-              value={track}
-              onChange={(e) => setTrack(e.target.value as OnboardingTrack)}
-              className={cn(SELECT_CX, 'mt-1')}
-            >
-              {TRACK_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-            <FormHint>
-              One template per (client, track) pair. STANDARD/J-1 are usually
-              global; CLIENT_SPECIFIC always needs a client.
-            </FormHint>
-          </div>
-          <div className="md:col-span-2">
-            <Label htmlFor="te-client">
-              Client {track === 'CLIENT_SPECIFIC' && <span className="text-alert">*</span>}
-            </Label>
-            <select
-              id="te-client"
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-              disabled={clients === null}
-              className={cn(SELECT_CX, 'mt-1')}
-            >
-              <option value="">{clients === null ? 'Loading…' : 'Global (all clients)'}</option>
-              {clients?.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                  {c.state ? ` · ${c.state}` : ''}
-                </option>
-              ))}
-            </select>
-          </div>
+          <Field label="Name" required>
+            {(p) => (
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Standard restaurant onboarding"
+                maxLength={80}
+                autoFocus
+                {...p}
+              />
+            )}
+          </Field>
+          <Field
+            label="Track"
+            required
+            hint="One template per (client, track) pair. STANDARD/J-1 are usually global; CLIENT_SPECIFIC always needs a client."
+          >
+            {(p) => (
+              <Select
+                value={track}
+                onChange={(e) => setTrack(e.target.value as OnboardingTrack)}
+                {...p}
+              >
+                {TRACK_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          <Field
+            label="Client"
+            required={track === 'CLIENT_SPECIFIC'}
+            className="md:col-span-2"
+          >
+            {(p) => (
+              <Select
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+                disabled={clients === null}
+                {...p}
+              >
+                <option value="">{clients === null ? 'Loading…' : 'Global (all clients)'}</option>
+                {clients?.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                    {c.state ? ` · ${c.state}` : ''}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
         </div>
       </Card>
 
@@ -357,46 +342,46 @@ export function TemplateEditor() {
                 </button>
               </div>
               <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                <div>
-                  <Label htmlFor={`te-task-${i}-kind`}>Kind</Label>
-                  <select
-                    id={`te-task-${i}-kind`}
-                    value={t.kind}
-                    onChange={(e) =>
-                      updateTask(i, { kind: e.target.value as TaskKind })
-                    }
-                    className={cn(SELECT_CX, 'mt-1')}
-                  >
-                    {TASK_KIND_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <Label htmlFor={`te-task-${i}-title`} required>
-                    Title
-                  </Label>
-                  <Input
-                    id={`te-task-${i}-title`}
-                    value={t.title}
-                    onChange={(e) => updateTask(i, { title: e.target.value })}
-                    maxLength={120}
-                  />
-                </div>
-                <div className="md:col-span-2">
-                  <Label htmlFor={`te-task-${i}-desc`}>Description</Label>
-                  <textarea
-                    id={`te-task-${i}-desc`}
-                    value={t.description ?? ''}
-                    onChange={(e) => updateTask(i, { description: e.target.value })}
-                    rows={2}
-                    maxLength={500}
-                    className={cn(TEXTAREA_CX, 'mt-1')}
-                    placeholder="What the associate should know about this step (optional)"
-                  />
-                </div>
+                <Field label="Kind">
+                  {(p) => (
+                    <Select
+                      value={t.kind}
+                      onChange={(e) =>
+                        updateTask(i, { kind: e.target.value as TaskKind })
+                      }
+                      {...p}
+                    >
+                      {TASK_KIND_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </Select>
+                  )}
+                </Field>
+                <Field label="Title" required>
+                  {(p) => (
+                    <Input
+                      value={t.title}
+                      onChange={(e) => updateTask(i, { title: e.target.value })}
+                      maxLength={120}
+                      {...p}
+                    />
+                  )}
+                </Field>
+                <Field label="Description" className="md:col-span-2">
+                  {(p) => (
+                    <textarea
+                      value={t.description ?? ''}
+                      onChange={(e) => updateTask(i, { description: e.target.value })}
+                      rows={2}
+                      maxLength={500}
+                      className={TEXTAREA_CX}
+                      placeholder="What the associate should know about this step (optional)"
+                      {...p}
+                    />
+                  )}
+                </Field>
               </div>
               <button
                 type="button"

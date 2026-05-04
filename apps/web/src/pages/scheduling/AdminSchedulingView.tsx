@@ -68,8 +68,10 @@ import {
   DialogTitle,
 } from '@/components/ui/Dialog';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
+import { Select } from '@/components/ui/Select';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 import {
@@ -2026,20 +2028,18 @@ function CancelDialog({
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="space-y-3">
-          <div>
-            <Label htmlFor="cancel-reason" required>
-              Cancellation reason
-            </Label>
-            <Textarea
-              id="cancel-reason"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="Required for the audit trail."
-              autoFocus
-              rows={3}
-              required
-            />
-          </div>
+          <Field label="Cancellation reason" required>
+            {(p) => (
+              <Textarea
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="Required for the audit trail."
+                autoFocus
+                rows={3}
+                {...p}
+              />
+            )}
+          </Field>
           <DialogFooter>
             <Button type="button" variant="secondary" onClick={onClose}>
               Keep shift
@@ -2411,46 +2411,40 @@ function CreateShiftDialog({
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <Label htmlFor="cs-client" required>
-                Client
-              </Label>
-              {clients.length > 0 ? (
-                <select
-                  id="cs-client"
-                  value={clientId}
-                  onChange={(e) => setClientId(e.target.value)}
-                  required
-                  className="flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 py-2 text-sm text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
-                >
-                  {clients.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              ) : (
+            <Field label="Client" required>
+              {(p) =>
+                clients.length > 0 ? (
+                  <Select
+                    value={clientId}
+                    onChange={(e) => setClientId(e.target.value)}
+                    {...p}
+                  >
+                    {clients.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </Select>
+                ) : (
+                  <Input
+                    placeholder="Client UUID"
+                    value={clientId}
+                    onChange={(e) => setClientId(e.target.value)}
+                    {...p}
+                  />
+                )
+              }
+            </Field>
+            <Field label="Position" required>
+              {(p) => (
                 <Input
-                  id="cs-client"
-                  required
-                  placeholder="Client UUID"
-                  value={clientId}
-                  onChange={(e) => setClientId(e.target.value)}
+                  value={position}
+                  onChange={(e) => setPosition(e.target.value)}
+                  placeholder="e.g. Server"
+                  {...p}
                 />
               )}
-            </div>
-            <div>
-              <Label htmlFor="cs-position" required>
-                Position
-              </Label>
-              <Input
-                id="cs-position"
-                required
-                value={position}
-                onChange={(e) => setPosition(e.target.value)}
-                placeholder="e.g. Server"
-              />
-            </div>
+            </Field>
             {anchorDay ? (
               <>
                 <div className="md:col-span-2 -mb-1">
@@ -2490,67 +2484,60 @@ function CreateShiftDialog({
                     </button>
                   </div>
                 </div>
-                <div>
-                  <Label htmlFor="cs-start-time" required>
-                    Start time
-                  </Label>
-                  <Input
-                    id="cs-start-time"
-                    type="time"
-                    required
-                    value={startTime}
-                    onChange={(e) => setStartTime(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="cs-end-time" required>
-                    End time
-                  </Label>
-                  <Input
-                    id="cs-end-time"
-                    type="time"
-                    required
-                    value={endTime}
-                    onChange={(e) => setEndTime(e.target.value)}
-                  />
-                </div>
+                <Field label="Start time" required>
+                  {(p) => (
+                    <Input
+                      type="time"
+                      value={startTime}
+                      onChange={(e) => setStartTime(e.target.value)}
+                      {...p}
+                    />
+                  )}
+                </Field>
+                <Field label="End time" required>
+                  {(p) => (
+                    <Input
+                      type="time"
+                      value={endTime}
+                      onChange={(e) => setEndTime(e.target.value)}
+                      {...p}
+                    />
+                  )}
+                </Field>
               </>
             ) : (
               <>
-                <div>
-                  <Label htmlFor="cs-starts" required>
-                    Starts at
-                  </Label>
-                  <Input
-                    id="cs-starts"
-                    type="datetime-local"
-                    required
-                    value={startsAt}
-                    onChange={(e) => setStartsAt(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="cs-ends" required>
-                    Ends at
-                  </Label>
-                  <Input
-                    id="cs-ends"
-                    type="datetime-local"
-                    required
-                    value={endsAt}
-                    onChange={(e) => setEndsAt(e.target.value)}
-                  />
-                </div>
+                <Field label="Starts at" required>
+                  {(p) => (
+                    <Input
+                      type="datetime-local"
+                      value={startsAt}
+                      onChange={(e) => setStartsAt(e.target.value)}
+                      {...p}
+                    />
+                  )}
+                </Field>
+                <Field label="Ends at" required>
+                  {(p) => (
+                    <Input
+                      type="datetime-local"
+                      value={endsAt}
+                      onChange={(e) => setEndsAt(e.target.value)}
+                      {...p}
+                    />
+                  )}
+                </Field>
               </>
             )}
-            <div>
-              <Label htmlFor="cs-location">Location</Label>
-              <Input
-                id="cs-location"
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-              />
-            </div>
+            <Field label="Location">
+              {(p) => (
+                <Input
+                  value={location}
+                  onChange={(e) => setLocation(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
           </div>
 
           {/* Advanced — rates, late-notice. Hidden by default because
@@ -2571,54 +2558,56 @@ function CreateShiftDialog({
             </button>
             {showAdvanced && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
-                <div>
-                  <Label htmlFor="cs-pay-rate">Pay rate ($/hr)</Label>
-                  <Input
-                    id="cs-pay-rate"
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={payRate}
-                    onChange={(e) => setPayRate(e.target.value)}
-                    placeholder="What the associate is paid"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="cs-rate">Bill rate ($/hr)</Label>
-                  <Input
-                    id="cs-rate"
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={hourlyRate}
-                    onChange={(e) => setHourlyRate(e.target.value)}
-                    placeholder="What the client is billed"
-                  />
-                </div>
-                <div className="md:col-span-2">
-                  <Label htmlFor="cs-late">
-                    Late-notice reason
-                  </Label>
-                  <Textarea
-                    id="cs-late"
-                    rows={2}
-                    value={lateNoticeReason}
-                    onChange={(e) => setLateNoticeReason(e.target.value)}
-                    placeholder="Only required for fair-workweek states inside the 14-day window"
-                  />
-                </div>
+                <Field label="Pay rate ($/hr)">
+                  {(p) => (
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={payRate}
+                      onChange={(e) => setPayRate(e.target.value)}
+                      placeholder="What the associate is paid"
+                      {...p}
+                    />
+                  )}
+                </Field>
+                <Field label="Bill rate ($/hr)">
+                  {(p) => (
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={hourlyRate}
+                      onChange={(e) => setHourlyRate(e.target.value)}
+                      placeholder="What the client is billed"
+                      {...p}
+                    />
+                  )}
+                </Field>
+                <Field label="Late-notice reason" className="md:col-span-2">
+                  {(p) => (
+                    <Textarea
+                      rows={2}
+                      value={lateNoticeReason}
+                      onChange={(e) => setLateNoticeReason(e.target.value)}
+                      placeholder="Only required for fair-workweek states inside the 14-day window"
+                      {...p}
+                    />
+                  )}
+                </Field>
               </div>
             )}
           </div>
-          <div>
-            <Label htmlFor="cs-notes">Notes</Label>
-            <Textarea
-              id="cs-notes"
-              rows={2}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-            />
-          </div>
+          <Field label="Notes">
+            {(p) => (
+              <Textarea
+                rows={2}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                {...p}
+              />
+            )}
+          </Field>
           {/* Publish-now toggle. Default off → save as draft, which lets
               the manager build the whole week privately before broadcasting.
               Flipping on creates an OPEN shift visible to associates the
@@ -2884,60 +2873,85 @@ function CreateTemplateDialog({
         </DialogHeader>
         <form onSubmit={submit} className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <Label htmlFor="ct-name" required>Name</Label>
-              <Input id="ct-name" value={name} onChange={(e) => setName(e.target.value)} required maxLength={80} />
-            </div>
-            <div>
-              <Label htmlFor="ct-position" required>Position</Label>
-              <Input id="ct-position" value={position} onChange={(e) => setPosition(e.target.value)} required maxLength={120} />
-            </div>
-            <div>
-              <Label htmlFor="ct-client">Client (or global)</Label>
-              <select
-                id="ct-client"
-                value={clientId}
-                onChange={(e) => setClientId(e.target.value)}
-                className="flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 py-2 text-sm text-white focus:border-gold focus:outline-none"
-              >
-                <option value="">— Global —</option>
-                {clients.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <Label htmlFor="ct-day" required>Day of week</Label>
-              <select
-                id="ct-day"
-                value={dayOfWeek}
-                onChange={(e) => setDayOfWeek(Number(e.target.value))}
-                className="flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 py-2 text-sm text-white focus:border-gold focus:outline-none"
-              >
-                {DAY_NAMES.map((n, i) => (
-                  <option key={i} value={i}>{n}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <Label htmlFor="ct-start" required>Start time</Label>
-              <Input id="ct-start" type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} required />
-            </div>
-            <div>
-              <Label htmlFor="ct-end" required>End time</Label>
-              <Input id="ct-end" type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} required />
-            </div>
-            <div>
-              <Label htmlFor="ct-rate">Hourly rate ($)</Label>
-              <Input
-                id="ct-rate"
-                type="number"
-                min={0}
-                step="0.01"
-                value={hourlyRate}
-                onChange={(e) => setHourlyRate(e.target.value)}
-              />
-            </div>
+            <Field label="Name" required>
+              {(p) => (
+                <Input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  maxLength={80}
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label="Position" required>
+              {(p) => (
+                <Input
+                  value={position}
+                  onChange={(e) => setPosition(e.target.value)}
+                  maxLength={120}
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label="Client (or global)">
+              {(p) => (
+                <Select
+                  value={clientId}
+                  onChange={(e) => setClientId(e.target.value)}
+                  {...p}
+                >
+                  <option value="">— Global —</option>
+                  {clients.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+            <Field label="Day of week" required>
+              {(p) => (
+                <Select
+                  value={dayOfWeek}
+                  onChange={(e) => setDayOfWeek(Number(e.target.value))}
+                  {...p}
+                >
+                  {DAY_NAMES.map((n, i) => (
+                    <option key={i} value={i}>{n}</option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+            <Field label="Start time" required>
+              {(p) => (
+                <Input
+                  type="time"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label="End time" required>
+              {(p) => (
+                <Input
+                  type="time"
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label="Hourly rate ($)">
+              {(p) => (
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={hourlyRate}
+                  onChange={(e) => setHourlyRate(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
           </div>
           <DialogFooter>
             <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>

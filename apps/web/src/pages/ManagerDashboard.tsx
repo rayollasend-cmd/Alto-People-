@@ -7,6 +7,8 @@ import {
   Calendar,
   CalendarOff,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   ClipboardList,
   Clock,
   Users,
@@ -470,6 +472,8 @@ const TODAY_KEY = () => {
   return d.toISOString().slice(0, 10);
 };
 
+const TEAM_ROSTER_PREVIEW = 8;
+
 function TeamRoster({
   reports,
   activeByReport,
@@ -479,6 +483,8 @@ function TeamRoster({
   activeByReport: Map<string, TeamTimeEntry>;
   pendingPto: TeamTimeOffRequest[] | null;
 }) {
+  const [expanded, setExpanded] = useState(false);
+
   // Mark anyone with a PENDING PTO that overlaps today so the manager
   // sees "out today (pending)" status. Approved PTO would use a
   // different feed; for v1 this is the most useful signal.
@@ -528,42 +534,65 @@ function TeamRoster({
               to your associate ID, they'll show up here.
             </div>
           ) : (
-            <ul className="divide-y divide-navy-secondary/60">
-              {reports.slice(0, 8).map((r) => {
-                const active = activeByReport.get(r.id);
-                const isPto = pendingPtoToday.has(r.id);
-                return (
-                  <li
-                    key={r.id}
-                    className="px-5 py-3 flex items-center gap-3 hover:bg-navy-secondary/20 transition-colors"
+            <>
+              <ul className="divide-y divide-navy-secondary/60">
+                {(expanded
+                  ? reports
+                  : reports.slice(0, TEAM_ROSTER_PREVIEW)
+                ).map((r) => {
+                  const active = activeByReport.get(r.id);
+                  const isPto = pendingPtoToday.has(r.id);
+                  return (
+                    <li
+                      key={r.id}
+                      className="px-5 py-3 flex items-center gap-3 hover:bg-navy-secondary/20 transition-colors"
+                    >
+                      <Avatar
+                        name={`${r.firstName} ${r.lastName}`}
+                        email={r.email}
+                        size="sm"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium text-white truncate">
+                          {r.firstName} {r.lastName}
+                        </div>
+                        <div className="text-[11px] text-silver/80 truncate">
+                          {r.jobTitle ?? '—'}
+                          {r.departmentName ? ` · ${r.departmentName}` : ''}
+                        </div>
+                      </div>
+                      <StatusPill active={active} pto={isPto} />
+                    </li>
+                  );
+                })}
+              </ul>
+              {reports.length > TEAM_ROSTER_PREVIEW && (
+                <div className="px-5 py-3 flex justify-center border-t border-navy-secondary/60">
+                  <button
+                    type="button"
+                    onClick={() => setExpanded((v) => !v)}
+                    className="inline-flex items-center gap-1.5 text-xs text-silver hover:text-gold-bright transition-colors"
+                    aria-expanded={expanded}
                   >
-                    <Avatar
-                      name={`${r.firstName} ${r.lastName}`}
-                      email={r.email}
-                      size="sm"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium text-white truncate">
-                        {r.firstName} {r.lastName}
-                      </div>
-                      <div className="text-[11px] text-silver/80 truncate">
-                        {r.jobTitle ?? '—'}
-                        {r.departmentName ? ` · ${r.departmentName}` : ''}
-                      </div>
-                    </div>
-                    <StatusPill active={active} pto={isPto} />
-                  </li>
-                );
-              })}
-              {reports.length > 8 && (
-                <li className="px-5 py-2 text-xs text-silver/70 text-center">
-                  +{reports.length - 8} more on{' '}
-                  <Link to="/team" className="text-gold hover:text-gold-bright">
-                    the team page
-                  </Link>
-                </li>
+                    {expanded ? (
+                      <>
+                        <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
+                        Show fewer
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown
+                          className="h-3.5 w-3.5"
+                          aria-hidden="true"
+                        />
+                        Show all {reports.length}
+                      </>
+                    )}
+                  </button>
+                </div>
               )}
-            </ul>
+            </>
+
           )}
         </CardContent>
       </Card>

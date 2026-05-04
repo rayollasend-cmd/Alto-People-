@@ -21,7 +21,10 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
+  Field,
   Input,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -30,7 +33,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui';
-import { Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
 
 const ENTITY_TYPES: CustomFieldEntity[] = ['ASSOCIATE', 'POSITION', 'CLIENT'];
@@ -82,7 +84,7 @@ export function CustomFieldsTab({
           </Button>
         )}
       </div>
-      {error && <p role="alert" className="text-sm text-alert mb-3">{error}</p>}
+      {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
       {!rows && <SkeletonRows count={4} rowHeight="h-12" />}
       {rows && rows.length === 0 && (
         <EmptyState
@@ -259,77 +261,81 @@ function DefinitionDrawer({
       </DrawerHeader>
       <DrawerBody>
         <div className="space-y-3">
-          <div>
-            <Label htmlFor="cf-entity">Entity</Label>
-            <select
-              id="cf-entity"
-              value={entityType}
-              onChange={(e) => setEntityType(e.target.value as CustomFieldEntity)}
-              disabled={!canManage || !isNew}
-              className="w-full h-10 px-3 rounded-md bg-navy-secondary/40 border border-navy-secondary text-white text-sm"
-            >
-              {ENTITY_TYPES.map((t) => (
-                <option key={t} value={t}>{t}</option>
-              ))}
-            </select>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label htmlFor="cf-key" required>Key</Label>
-              <Input
-                id="cf-key"
-                value={key}
-                onChange={(e) => setKey(e.target.value)}
+          <Field label="Entity">
+            {(p) => (
+              <Select
+                value={entityType}
+                onChange={(e) => setEntityType(e.target.value as CustomFieldEntity)}
                 disabled={!canManage || !isNew}
-                placeholder="favorite_shift_pattern"
-              />
-            </div>
-            <div>
-              <Label htmlFor="cf-type">Type</Label>
-              <select
-                id="cf-type"
-                value={type}
-                onChange={(e) => setType(e.target.value as CustomFieldType)}
-                disabled={!canManage || !isNew}
-                className="w-full h-10 px-3 rounded-md bg-navy-secondary/40 border border-navy-secondary text-white text-sm"
+                {...p}
               >
-                {TYPES.map((t) => (
+                {ENTITY_TYPES.map((t) => (
                   <option key={t} value={t}>{t}</option>
                 ))}
-              </select>
-            </div>
+              </Select>
+            )}
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Key" required>
+              {(p) => (
+                <Input
+                  value={key}
+                  onChange={(e) => setKey(e.target.value)}
+                  disabled={!canManage || !isNew}
+                  placeholder="favorite_shift_pattern"
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label="Type">
+              {(p) => (
+                <Select
+                  value={type}
+                  onChange={(e) => setType(e.target.value as CustomFieldType)}
+                  disabled={!canManage || !isNew}
+                  {...p}
+                >
+                  {TYPES.map((t) => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </Select>
+              )}
+            </Field>
           </div>
-          <div>
-            <Label htmlFor="cf-label" required>Label</Label>
-            <Input
-              id="cf-label"
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              disabled={!canManage}
-              maxLength={120}
-            />
-          </div>
-          <div>
-            <Label htmlFor="cf-help">Help text</Label>
-            <Input
-              id="cf-help"
-              value={helpText ?? ''}
-              onChange={(e) => setHelpText(e.target.value)}
-              disabled={!canManage}
-              maxLength={500}
-            />
-          </div>
-          {(type === 'SELECT' || type === 'MULTISELECT') && (
-            <div>
-              <Label htmlFor="cf-opts">Options (comma-separated)</Label>
+          <Field label="Label" required>
+            {(p) => (
               <Input
-                id="cf-opts"
-                value={optionsText}
-                onChange={(e) => setOptionsText(e.target.value)}
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
                 disabled={!canManage}
-                placeholder="A, B, C"
+                maxLength={120}
+                {...p}
               />
-            </div>
+            )}
+          </Field>
+          <Field label="Help text">
+            {(p) => (
+              <Input
+                value={helpText ?? ''}
+                onChange={(e) => setHelpText(e.target.value)}
+                disabled={!canManage}
+                maxLength={500}
+                {...p}
+              />
+            )}
+          </Field>
+          {(type === 'SELECT' || type === 'MULTISELECT') && (
+            <Field label="Options (comma-separated)">
+              {(p) => (
+                <Input
+                  value={optionsText}
+                  onChange={(e) => setOptionsText(e.target.value)}
+                  disabled={!canManage}
+                  placeholder="A, B, C"
+                  {...p}
+                />
+              )}
+            </Field>
           )}
           <div className="flex items-center gap-4 pt-2">
             <label className="text-sm text-white flex items-center gap-2">
@@ -352,21 +358,21 @@ function DefinitionDrawer({
             </label>
           </div>
           {clientId && (
-            <div>
-              <Label htmlFor="cf-scope">Scope</Label>
-              <select
-                id="cf-scope"
-                value={scope}
-                onChange={(e) => setScope(e.target.value as 'global' | 'client')}
-                disabled={!canManage || !isNew}
-                className="w-full h-10 px-3 rounded-md bg-navy-secondary/40 border border-navy-secondary text-white text-sm"
-              >
-                <option value="global">Global (all clients)</option>
-                <option value="client">This client only</option>
-              </select>
-            </div>
+            <Field label="Scope">
+              {(p) => (
+                <Select
+                  value={scope}
+                  onChange={(e) => setScope(e.target.value as 'global' | 'client')}
+                  disabled={!canManage || !isNew}
+                  {...p}
+                >
+                  <option value="global">Global (all clients)</option>
+                  <option value="client">This client only</option>
+                </Select>
+              )}
+            </Field>
           )}
-          {error && <p role="alert" className="text-sm text-alert">{error}</p>}
+          {error && <ErrorBanner>{error}</ErrorBanner>}
         </div>
       </DrawerBody>
       <DrawerFooter className="justify-between">

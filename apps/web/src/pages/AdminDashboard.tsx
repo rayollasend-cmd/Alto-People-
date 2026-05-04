@@ -5,6 +5,8 @@ import {
   AlertTriangle,
   ArrowRight,
   Calendar,
+  ChevronDown,
+  ChevronUp,
   ClipboardList,
   Clock,
   DollarSign,
@@ -144,7 +146,7 @@ export function AdminDashboard() {
         const [k, a] = await Promise.all([
           getDashboardKPIs(),
           canSeeAudit
-            ? searchAuditLogs({ limit: 8 }).catch(() => ({
+            ? searchAuditLogs({ limit: 15 }).catch(() => ({
                 entries: [] as AuditSearchEntry[],
                 nextBefore: null,
               }))
@@ -657,7 +659,19 @@ function OnboardingFunnel({ kpis }: { kpis: DashboardKPIs | null }) {
 
 /* ============================== Activity feed ============================ */
 
+const ACTIVITY_FEED_PREVIEW = 6;
+
 function ActivityFeed({ entries }: { entries: AuditSearchEntry[] | null }) {
+  const [expanded, setExpanded] = useState(false);
+  const collapsible =
+    entries !== null && entries.length > ACTIVITY_FEED_PREVIEW;
+  const visible =
+    entries === null
+      ? null
+      : expanded
+        ? entries
+        : entries.slice(0, ACTIVITY_FEED_PREVIEW);
+
   return (
     <section aria-label="Recent activity" className="space-y-3">
       <div className="flex items-end justify-between gap-3">
@@ -690,35 +704,62 @@ function ActivityFeed({ entries }: { entries: AuditSearchEntry[] | null }) {
               people use the platform.
             </div>
           ) : (
-            <ul className="divide-y divide-navy-secondary/60">
-              {entries.slice(0, 6).map((e) => (
-                <li
-                  key={e.id}
-                  className="px-5 py-3 flex items-center gap-3 hover:bg-navy-secondary/20 transition-colors"
-                >
-                  <div className="h-8 w-8 rounded-full bg-navy-secondary/60 grid place-items-center shrink-0 text-silver text-xs">
-                    {(e.actorEmail ?? 'S')
-                      .split(/[@._-]+/)[0]
-                      ?.slice(0, 2)
-                      .toUpperCase() ?? '••'}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm text-white truncate">
-                      <span className="text-silver">
-                        {e.actorEmail ?? 'System'}
-                      </span>{' '}
-                      {humanizeAction(e.action)}
+            <>
+              <ul className="divide-y divide-navy-secondary/60">
+                {visible!.map((e) => (
+                  <li
+                    key={e.id}
+                    className="px-5 py-3 flex items-center gap-3 hover:bg-navy-secondary/20 transition-colors"
+                  >
+                    <div className="h-8 w-8 rounded-full bg-navy-secondary/60 grid place-items-center shrink-0 text-silver text-xs">
+                      {(e.actorEmail ?? 'S')
+                        .split(/[@._-]+/)[0]
+                        ?.slice(0, 2)
+                        .toUpperCase() ?? '••'}
                     </div>
-                    <div className="text-[11px] text-silver/70">
-                      {e.entityType} ·{' '}
-                      <span className="tabular-nums">
-                        {fmtRelative(e.createdAt)}
-                      </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm text-white truncate">
+                        <span className="text-silver">
+                          {e.actorEmail ?? 'System'}
+                        </span>{' '}
+                        {humanizeAction(e.action)}
+                      </div>
+                      <div className="text-[11px] text-silver/70">
+                        {e.entityType} ·{' '}
+                        <span className="tabular-nums">
+                          {fmtRelative(e.createdAt)}
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                </li>
-              ))}
-            </ul>
+                  </li>
+                ))}
+              </ul>
+              {collapsible && (
+                <div className="px-5 py-3 flex justify-center border-t border-navy-secondary/60">
+                  <button
+                    type="button"
+                    onClick={() => setExpanded((v) => !v)}
+                    className="inline-flex items-center gap-1.5 text-xs text-silver hover:text-gold-bright transition-colors"
+                    aria-expanded={expanded}
+                  >
+                    {expanded ? (
+                      <>
+                        <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
+                        Show fewer
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown
+                          className="h-3.5 w-3.5"
+                          aria-hidden="true"
+                        />
+                        Show all {entries.length}
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </CardContent>
       </Card>

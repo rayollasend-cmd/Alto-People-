@@ -29,8 +29,9 @@ import {
 } from '@/components/ui/Dialog';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
-import { Label } from '@/components/ui/Label';
+import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
@@ -147,19 +148,14 @@ export function PaySchedulesView({ canProcess }: Props) {
                 </div>
                 {canProcess && (
                   <div className="flex items-center gap-1 shrink-0">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setEditing(s)}
-                      aria-label={`Edit ${s.name}`}
-                    >
+                    <Button variant="ghost" size="icon" onClick={() => setEditing(s)} title="Edit">
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
                     <Button
                       variant="ghost"
                       size="icon"
                       onClick={() => setConfirmDelete(s)}
-                      aria-label={`Delete ${s.name}`}
+                      title="Delete"
                       disabled={s.associateCount > 0}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -168,25 +164,27 @@ export function PaySchedulesView({ canProcess }: Props) {
                 )}
               </CardHeader>
               <CardContent className="space-y-2 text-xs">
-                <Field label="Scope">
-                  {s.clientName ?? <span className="text-silver/80 italic">All clients</span>}
-                </Field>
-                <Field label="Anchor date">{s.anchorDate}</Field>
-                <Field label="Next period">
+                <MetaRow label="Scope">
+                  {s.clientName ?? (
+                    <span className="text-silver/80 italic">All clients</span>
+                  )}
+                </MetaRow>
+                <MetaRow label="Anchor date">{s.anchorDate}</MetaRow>
+                <MetaRow label="Next period">
                   {s.nextPeriodStart} → {s.nextPeriodEnd}
-                </Field>
-                <Field label="Next pay date">
+                </MetaRow>
+                <MetaRow label="Next pay date">
                   <span className="text-gold">{s.nextPayDate}</span>
                   <span className="text-silver/50 ml-1">
                     (+{s.payDateOffsetDays}d after period end)
                   </span>
-                </Field>
-                <Field label="Assigned associates">
+                </MetaRow>
+                <MetaRow label="Assigned associates">
                   <span className="inline-flex items-center gap-1">
                     <Users className="h-3 w-3" />
                     {s.associateCount}
                   </span>
-                </Field>
+                </MetaRow>
                 {!s.isActive && (
                   <div className="text-[10px] uppercase tracking-widest text-silver/40 mt-2">
                     Inactive
@@ -227,7 +225,7 @@ export function PaySchedulesView({ canProcess }: Props) {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function MetaRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-baseline justify-between gap-3">
       <span className="text-silver/50 text-[10px] uppercase tracking-widest">{label}</span>
@@ -317,67 +315,68 @@ function ScheduleFormDialog({
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-3">
-          <div>
-            <Label htmlFor="ps-name" required>Name</Label>
-            <Input
-              id="ps-name"
-              required
-              maxLength={120}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Hourly biweekly"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label htmlFor="ps-freq" required>Frequency</Label>
-              <select
-                id="ps-freq"
-                className="mt-1 w-full rounded border border-silver/20 bg-black/40 px-2 py-1.5 text-sm text-silver"
-                value={frequency}
-                onChange={(e) => setFrequency(e.target.value as PayrollFrequency)}
-              >
-                {(['WEEKLY', 'BIWEEKLY', 'SEMIMONTHLY', 'MONTHLY'] as PayrollFrequency[]).map((f) => (
-                  <option key={f} value={f}>{FREQ_LABEL[f]}</option>
-                ))}
-              </select>
-              <div className="text-[10px] text-silver/50 mt-1">{FREQ_HINT[frequency]}</div>
-            </div>
-            <div>
-              <Label htmlFor="ps-anchor" required>Anchor date</Label>
+          <Field label="Name" required>
+            {(p) => (
               <Input
-                id="ps-anchor"
-                type="date"
-                required
-                value={anchorDate}
-                onChange={(e) => setAnchorDate(e.target.value)}
+                maxLength={120}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. Hourly biweekly"
+                {...p}
               />
-              <div className="text-[10px] text-silver/50 mt-1">
-                For weekly/biweekly: any date inside the first period. For
-                semi-monthly/monthly: just used as a tiebreaker.
-              </div>
-            </div>
+            )}
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Frequency" required hint={FREQ_HINT[frequency]}>
+              {(p) => (
+                <Select
+                  value={frequency}
+                  onChange={(e) => setFrequency(e.target.value as PayrollFrequency)}
+                  {...p}
+                >
+                  {(['WEEKLY', 'BIWEEKLY', 'SEMIMONTHLY', 'MONTHLY'] as PayrollFrequency[]).map((f) => (
+                    <option key={f} value={f}>{FREQ_LABEL[f]}</option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+            <Field
+              label="Anchor date"
+              required
+              hint="For weekly/biweekly: any date inside the first period. For semi-monthly/monthly: just used as a tiebreaker."
+            >
+              {(p) => (
+                <Input
+                  type="date"
+                  value={anchorDate}
+                  onChange={(e) => setAnchorDate(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
           </div>
-          <div>
-            <Label htmlFor="ps-offset">Pay date offset (days after period end)</Label>
-            <Input
-              id="ps-offset"
-              type="number"
-              min={0}
-              max={31}
-              value={payOffset}
-              onChange={(e) => setPayOffset(e.target.value)}
-            />
-          </div>
-          <div>
-            <Label htmlFor="ps-notes">Notes</Label>
-            <Textarea
-              id="ps-notes"
-              rows={2}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-            />
-          </div>
+          <Field label="Pay date offset (days after period end)">
+            {(p) => (
+              <Input
+                type="number"
+                min={0}
+                max={31}
+                value={payOffset}
+                onChange={(e) => setPayOffset(e.target.value)}
+                {...p}
+              />
+            )}
+          </Field>
+          <Field label="Notes">
+            {(p) => (
+              <Textarea
+                rows={2}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                {...p}
+              />
+            )}
+          </Field>
           {existing && (
             <label className="inline-flex items-center gap-2 text-sm text-silver">
               <input

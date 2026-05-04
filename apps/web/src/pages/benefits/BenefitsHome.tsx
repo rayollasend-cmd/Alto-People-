@@ -32,8 +32,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
+import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
-import { Label, FormHint } from '@/components/ui/Label';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { listClients } from '@/lib/onboardingApi';
@@ -364,23 +364,23 @@ function EnrollDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          <div>
-            <Label htmlFor="be-amount" required>
-              Election amount (USD/period)
-            </Label>
-            <Input
-              id="be-amount"
-              type="number"
-              step="0.01"
-              min="0"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              autoFocus
-            />
-            <FormHint>
-              Pre-tax — reduces your taxable wages on the paystub.
-            </FormHint>
-          </div>
+          <Field
+            label="Election amount (USD/period)"
+            required
+            hint="Pre-tax — reduces your taxable wages on the paystub."
+          >
+            {(p) => (
+              <Input
+                type="number"
+                step="0.01"
+                min="0"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                autoFocus
+                {...p}
+              />
+            )}
+          </Field>
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>

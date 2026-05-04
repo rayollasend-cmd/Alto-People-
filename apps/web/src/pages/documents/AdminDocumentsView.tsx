@@ -42,7 +42,7 @@ import {
 } from '@/components/ui/Drawer';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
-import { Label } from '@/components/ui/Label';
+import { Field } from '@/components/ui/Field';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import {
@@ -936,21 +936,20 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                   {rejectTarget.associateName ? ` · ${rejectTarget.associateName}` : ''}
                 </div>
               </div>
-              <div>
-                <Label htmlFor="rd-reason" required>
-                  Reason
-                </Label>
-                <textarea
-                  id="rd-reason"
-                  value={rejectReason}
-                  onChange={(e) => setRejectReason(e.target.value)}
-                  rows={4}
-                  maxLength={500}
-                  placeholder="e.g. Document is blurry — please re-upload a clearer scan."
-                  className={TEXTAREA_CX}
-                  autoFocus
-                />
-              </div>
+              <Field label="Reason" required>
+                {(p) => (
+                  <textarea
+                    value={rejectReason}
+                    onChange={(e) => setRejectReason(e.target.value)}
+                    rows={4}
+                    maxLength={500}
+                    placeholder="e.g. Document is blurry — please re-upload a clearer scan."
+                    className={TEXTAREA_CX}
+                    autoFocus
+                    {...p}
+                  />
+                )}
+              </Field>
             </div>
           )}
           <DialogFooter>

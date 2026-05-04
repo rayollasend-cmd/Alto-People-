@@ -19,7 +19,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
-import { Label, FormHint } from '@/components/ui/Label';
+import { Field } from '@/components/ui/Field';
+import { Select } from '@/components/ui/Select';
 import { cn } from '@/lib/cn';
 
 const TRACK_LABEL: Record<string, string> = {
@@ -28,13 +29,8 @@ const TRACK_LABEL: Record<string, string> = {
   CLIENT_SPECIFIC: 'Client-specific',
 };
 
-const SELECT_CX =
-  'mt-1 w-full h-10 rounded-md border border-navy-secondary bg-navy-secondary/40 text-white px-3 py-2 text-sm appearance-none bg-no-repeat bg-right pr-8 ' +
-  'focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold ' +
-  'disabled:opacity-50 disabled:cursor-not-allowed';
-
 const TEXTAREA_CX =
-  'mt-1 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 text-white px-3 py-2 text-sm font-mono ' +
+  'w-full rounded-md border border-navy-secondary bg-navy-secondary/40 text-white px-3 py-2 text-sm font-mono ' +
   'focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold';
 
 interface ParsedRow {
@@ -261,93 +257,94 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
         ) : (
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label htmlFor="bi-client" required>
-                  Client
-                </Label>
-                <select
-                  id="bi-client"
-                  value={clientId}
-                  onChange={(e) => setClientId(e.target.value)}
-                  disabled={clients === null}
-                  className={SELECT_CX}
-                >
-                  <option value="">
-                    {clients === null ? 'Loading…' : 'Pick a client'}
-                  </option>
-                  {clients?.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                      {c.state ? ` · ${c.state}` : ''}
+              <Field label="Client" required>
+                {(p) => (
+                  <Select
+                    value={clientId}
+                    onChange={(e) => setClientId(e.target.value)}
+                    disabled={clients === null}
+                    {...p}
+                  >
+                    <option value="">
+                      {clients === null ? 'Loading…' : 'Pick a client'}
                     </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <Label htmlFor="bi-template" required>
-                  Template
-                </Label>
-                <select
-                  id="bi-template"
-                  value={templateId}
-                  onChange={(e) => setTemplateId(e.target.value)}
-                  disabled={templates === null || !clientId}
-                  className={SELECT_CX}
-                >
-                  <option value="">
-                    {!clientId
-                      ? 'Pick client first'
-                      : templates === null
-                        ? 'Loading…'
-                        : visibleTemplates.length === 0
-                          ? 'No templates'
-                          : 'Pick a template'}
-                  </option>
-                  {visibleTemplates.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name} · {TRACK_LABEL[t.track] ?? t.track}
-                      {t.clientId === null ? ' (global)' : ''}
+                    {clients?.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                        {c.state ? ` · ${c.state}` : ''}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+              <Field label="Template" required>
+                {(p) => (
+                  <Select
+                    value={templateId}
+                    onChange={(e) => setTemplateId(e.target.value)}
+                    disabled={templates === null || !clientId}
+                    {...p}
+                  >
+                    <option value="">
+                      {!clientId
+                        ? 'Pick client first'
+                        : templates === null
+                          ? 'Loading…'
+                          : visibleTemplates.length === 0
+                            ? 'No templates'
+                            : 'Pick a template'}
                     </option>
-                  ))}
-                </select>
-              </div>
+                    {visibleTemplates.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name} · {TRACK_LABEL[t.track] ?? t.track}
+                        {t.clientId === null ? ' (global)' : ''}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
             </div>
 
-            <div>
-              <Label htmlFor="bi-emp-type">Employment type</Label>
-              <select
-                id="bi-emp-type"
-                value={employmentType}
-                onChange={(e) => setEmploymentType(e.target.value as EmploymentType)}
-                className={SELECT_CX}
-              >
-                <option value="W2_EMPLOYEE">W-2 employee</option>
-                <option value="CONTRACTOR_1099_INDIVIDUAL">1099 contractor (individual)</option>
-                <option value="CONTRACTOR_1099_BUSINESS">1099 contractor (business)</option>
-              </select>
-            </div>
+            <Field label="Employment type">
+              {(p) => (
+                <Select
+                  value={employmentType}
+                  onChange={(e) => setEmploymentType(e.target.value as EmploymentType)}
+                  {...p}
+                >
+                  <option value="W2_EMPLOYEE">W-2 employee</option>
+                  <option value="CONTRACTOR_1099_INDIVIDUAL">1099 contractor (individual)</option>
+                  <option value="CONTRACTOR_1099_BUSINESS">1099 contractor (business)</option>
+                </Select>
+              )}
+            </Field>
 
-            <div>
-              <Label htmlFor="bi-paste" required>
-                Applicants
-              </Label>
-              <textarea
-                id="bi-paste"
-                value={paste}
-                onChange={(e) => setPaste(e.target.value)}
-                rows={8}
-                placeholder={[
-                  'alice@example.com',
-                  'bob@example.com,Bob,Smith',
-                  'Carol Diaz <carol@example.com>',
-                ].join('\n')}
-                className={TEXTAREA_CX}
-              />
-              <FormHint>
-                Accepts plain email, "email,first,last", or "Name &lt;email&gt;". Up to 200
-                rows. Names default to the email local-part if missing.
-              </FormHint>
-            </div>
+            <Field
+              label="Applicants"
+              required
+              hint={
+                <>
+                  Accepts plain email, &ldquo;email,first,last&rdquo;, or
+                  &ldquo;Name &lt;email&gt;&rdquo;. Up to 200 rows. Names
+                  default to the email local-part if missing.
+                </>
+              }
+            >
+              {(p) => (
+                <textarea
+                  value={paste}
+                  onChange={(e) => setPaste(e.target.value)}
+                  rows={8}
+                  placeholder={[
+                    'alice@example.com',
+                    'bob@example.com,Bob,Smith',
+                    'Carol Diaz <carol@example.com>',
+                  ].join('\n')}
+                  className={TEXTAREA_CX}
+                  {...p}
+                />
+              )}
+            </Field>
 
             {parsed.length > 0 && (
               <div className="text-xs flex items-center gap-3">

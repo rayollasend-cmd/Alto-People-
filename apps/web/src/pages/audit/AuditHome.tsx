@@ -15,8 +15,9 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/Card';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
-import { Label } from '@/components/ui/Label';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 import {
@@ -135,87 +136,93 @@ export function AuditHome() {
         <CardContent>
           <form onSubmit={apply} className="space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              <div>
-                <Label htmlFor="aud-q">Action contains</Label>
-                <Input
-                  id="aud-q"
-                  value={filters.q ?? ''}
-                  onChange={(e) =>
-                    setFilters((f) => ({ ...f, q: e.target.value || undefined }))
-                  }
-                  placeholder="e.g. payroll, login_failed"
-                />
-              </div>
-              <div>
-                <Label htmlFor="aud-entityType">Entity type</Label>
-                <Input
-                  id="aud-entityType"
-                  value={filters.entityType ?? ''}
-                  onChange={(e) =>
-                    setFilters((f) => ({
-                      ...f,
-                      entityType: e.target.value || undefined,
-                    }))
-                  }
-                  placeholder="Application, User, PayrollRun…"
-                />
-              </div>
-              <div>
-                <Label htmlFor="aud-entityId">Entity ID</Label>
-                <Input
-                  id="aud-entityId"
-                  value={filters.entityId ?? ''}
-                  onChange={(e) =>
-                    setFilters((f) => ({
-                      ...f,
-                      entityId: e.target.value || undefined,
-                    }))
-                  }
-                  placeholder="UUID or email"
-                />
-              </div>
-              <div>
-                <Label htmlFor="aud-actor">Actor user ID</Label>
-                <Input
-                  id="aud-actor"
-                  value={filters.actorUserId ?? ''}
-                  onChange={(e) =>
-                    setFilters((f) => ({
-                      ...f,
-                      actorUserId: e.target.value || undefined,
-                    }))
-                  }
-                  placeholder="UUID"
-                />
-              </div>
-              <div>
-                <Label htmlFor="aud-since">Since</Label>
-                <Input
-                  id="aud-since"
-                  type="datetime-local"
-                  value={isoToLocal(filters.since)}
-                  onChange={(e) =>
-                    setFilters((f) => ({
-                      ...f,
-                      since: localToIso(e.target.value),
-                    }))
-                  }
-                />
-              </div>
-              <div>
-                <Label htmlFor="aud-before">Before</Label>
-                <Input
-                  id="aud-before"
-                  type="datetime-local"
-                  value={isoToLocal(filters.before)}
-                  onChange={(e) =>
-                    setFilters((f) => ({
-                      ...f,
-                      before: localToIso(e.target.value),
-                    }))
-                  }
-                />
-              </div>
+              <Field label="Action contains">
+                {(p) => (
+                  <Input
+                    value={filters.q ?? ''}
+                    onChange={(e) =>
+                      setFilters((f) => ({ ...f, q: e.target.value || undefined }))
+                    }
+                    placeholder="e.g. payroll, login_failed"
+                    {...p}
+                  />
+                )}
+              </Field>
+              <Field label="Entity type">
+                {(p) => (
+                  <Input
+                    value={filters.entityType ?? ''}
+                    onChange={(e) =>
+                      setFilters((f) => ({
+                        ...f,
+                        entityType: e.target.value || undefined,
+                      }))
+                    }
+                    placeholder="Application, User, PayrollRun…"
+                    {...p}
+                  />
+                )}
+              </Field>
+              <Field label="Entity ID">
+                {(p) => (
+                  <Input
+                    value={filters.entityId ?? ''}
+                    onChange={(e) =>
+                      setFilters((f) => ({
+                        ...f,
+                        entityId: e.target.value || undefined,
+                      }))
+                    }
+                    placeholder="UUID or email"
+                    {...p}
+                  />
+                )}
+              </Field>
+              <Field label="Actor user ID">
+                {(p) => (
+                  <Input
+                    value={filters.actorUserId ?? ''}
+                    onChange={(e) =>
+                      setFilters((f) => ({
+                        ...f,
+                        actorUserId: e.target.value || undefined,
+                      }))
+                    }
+                    placeholder="UUID"
+                    {...p}
+                  />
+                )}
+              </Field>
+              <Field label="Since">
+                {(p) => (
+                  <Input
+                    type="datetime-local"
+                    value={isoToLocal(filters.since)}
+                    onChange={(e) =>
+                      setFilters((f) => ({
+                        ...f,
+                        since: localToIso(e.target.value),
+                      }))
+                    }
+                    {...p}
+                  />
+                )}
+              </Field>
+              <Field label="Before">
+                {(p) => (
+                  <Input
+                    type="datetime-local"
+                    value={isoToLocal(filters.before)}
+                    onChange={(e) =>
+                      setFilters((f) => ({
+                        ...f,
+                        before: localToIso(e.target.value),
+                      }))
+                    }
+                    {...p}
+                  />
+                )}
+              </Field>
             </div>
             <div className="flex justify-end gap-2">
               <Button type="button" variant="ghost" onClick={reset}>
@@ -230,14 +237,7 @@ export function AuditHome() {
         </CardContent>
       </Card>
 
-      {error && (
-        <div
-          className="mb-4 p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-          role="alert"
-        >
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
 
       <Card>
         <CardContent className="p-0">
