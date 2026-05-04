@@ -136,6 +136,7 @@ oshaWcEeoRouter.get('/osha/300a', VIEW_COMP, async (req, res) => {
   const start = new Date(`${year}-01-01T00:00:00Z`);
   const end = new Date(`${year + 1}-01-01T00:00:00Z`);
   const rows = await prisma.oshaIncident.findMany({
+    take: 500,
     where: {
       clientId,
       occurredAt: { gte: start, lt: end },
@@ -180,6 +181,7 @@ const WcInputSchema = z.object({
 oshaWcEeoRouter.get('/wc/class-codes', VIEW_COMP, async (req, res) => {
   const stateCode = z.string().length(2).optional().parse(req.query.stateCode);
   const rows = await prisma.wcClassCode.findMany({
+    take: 1000,
     where: stateCode ? { stateCode } : {},
     orderBy: [{ stateCode: 'asc' }, { code: 'asc' }, { effectiveFrom: 'desc' }],
   });
@@ -315,6 +317,7 @@ oshaWcEeoRouter.get('/eeo/report', VIEW_COMP, async (req, res) => {
   // associate may have applications across clients. Phase 76's
   // ClientPortal scoping already takes this approach.
   const associates = await prisma.associate.findMany({
+    take: 1000,
     where: {
       deletedAt: null,
       applications: { some: { clientId } },

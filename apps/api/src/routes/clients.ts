@@ -69,6 +69,7 @@ clientsRouter.get('/', async (req, res, next) => {
     }
 
     const rows = await prisma.client.findMany({
+      take: 1000,
       where,
       orderBy: { name: 'asc' },
     });

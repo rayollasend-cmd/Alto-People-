@@ -34,6 +34,7 @@ internalMobility120Router.get(
   async (req, res) => {
     const associateId = req.user!.associateId;
     const postings = await prisma.jobPosting.findMany({
+      take: 100,
       where: { status: 'OPEN' },
       include: {
         client: { select: { name: true } },
@@ -176,6 +177,7 @@ internalMobility120Router.get(
       return res.json({ applications: [] });
     }
     const apps = await prisma.internalJobApplication.findMany({
+      take: 100,
       where: { associateId: req.user!.associateId },
       include: {
         posting: {
@@ -234,6 +236,7 @@ internalMobility120Router.get(
     const postingId = z.string().uuid().parse(req.params.id);
     const status = STATUS.optional().parse(req.query.status);
     const apps = await prisma.internalJobApplication.findMany({
+      take: 100,
       where: { postingId, ...(status ? { status } : {}) },
       include: {
         associate: {

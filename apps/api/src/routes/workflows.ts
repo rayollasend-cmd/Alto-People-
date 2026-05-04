@@ -59,6 +59,7 @@ workflowsRouter.get('/', VIEW, async (req: Request, res: Response) => {
     ...(trigger ? { trigger: trigger as WorkflowTrigger } : {}),
   };
   const rows = await prisma.workflowDefinition.findMany({
+    take: 100,
     where,
     orderBy: [{ trigger: 'asc' }, { name: 'asc' }],
     include: { _count: { select: { runs: true } } },

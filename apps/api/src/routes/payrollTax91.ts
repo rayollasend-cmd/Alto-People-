@@ -335,6 +335,7 @@ payrollTax91Router.get('/tax-forms/build/941', VIEW, async (req, res) => {
   const periodEnd = new Date(Date.UTC(taxYear, startMonth + 3, 0));
 
   const runs = await prisma.payrollRun.findMany({
+    take: 100,
     where: {
       periodStart: { gte: periodStart, lte: periodEnd },
       status: { in: ['FINALIZED', 'DISBURSED'] },

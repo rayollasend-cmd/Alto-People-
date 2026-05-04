@@ -159,6 +159,7 @@ anonReport128Router.get('/anonymous-reports', MANAGE_PERF, async (req, res) => {
     .optional()
     .parse(req.query.status);
   const rows = await prisma.anonymousReport.findMany({
+    take: 100,
     where: status ? { status } : {},
     include: {
       assignedTo: { select: { email: true } },

@@ -68,6 +68,7 @@ teamRouter.get('/reports', VIEW, async (req: Request, res: Response) => {
     return;
   }
   const reports = await prisma.associate.findMany({
+    take: 1000,
     where: managerScope(user),
     select: {
       id: true,
@@ -109,6 +110,7 @@ teamRouter.get('/dashboard', VIEW, async (req: Request, res: Response) => {
     return;
   }
   const reportIdsRows = await prisma.associate.findMany({
+    take: 1000,
     where: managerScope(user),
     select: { id: true },
   });
@@ -155,6 +157,7 @@ teamRouter.get('/timesheets', VIEW, async (req: Request, res: Response) => {
     return;
   }
   const reportIds = await prisma.associate.findMany({
+    take: 1000,
     where: managerScope(user),
     select: { id: true },
   });
@@ -182,6 +185,7 @@ teamRouter.get('/timesheets', VIEW, async (req: Request, res: Response) => {
   const clientNameById = new Map<string, string>();
   if (clientIds.length > 0) {
     const cs = await prisma.client.findMany({
+      take: 1000,
       where: { id: { in: clientIds } },
       select: { id: true, name: true },
     });
@@ -308,6 +312,7 @@ teamRouter.get('/timeoff', VIEW, async (req: Request, res: Response) => {
     return;
   }
   const reportIds = await prisma.associate.findMany({
+    take: 1000,
     where: managerScope(user),
     select: { id: true },
   });

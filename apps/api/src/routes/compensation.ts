@@ -113,6 +113,7 @@ compensationRouter.get(
   async (req, res) => {
     const associateId = req.params.id;
     const rows = await prisma.compensationRecord.findMany({
+      take: 500,
       where: { associateId },
       orderBy: { effectiveFrom: 'desc' },
     });
@@ -185,6 +186,7 @@ compensationRouter.get(
   async (req, res) => {
     const clientId = z.string().uuid().optional().parse(req.query.clientId);
     const rows = await prisma.compBand.findMany({
+      take: 1000,
       where: {
         deletedAt: null,
         ...(clientId ? { clientId } : {}),
@@ -301,6 +303,7 @@ compensationRouter.get(
   async (req, res) => {
     const clientId = z.string().uuid().optional().parse(req.query.clientId);
     const rows = await prisma.meritCycle.findMany({
+      take: 500,
       where: clientId ? { clientId } : {},
       orderBy: { createdAt: 'desc' },
     });
@@ -345,6 +348,7 @@ compensationRouter.get(
   async (req, res) => {
     const cycleId = req.params.id;
     const rows = await prisma.meritProposal.findMany({
+      take: 500,
       where: { cycleId },
       include: {
         associate: { select: { id: true, firstName: true, lastName: true } },
@@ -388,6 +392,7 @@ compensationRouter.post(
     // All active associates with at least one current comp record. We can't
     // propose for someone whose comp baseline we don't know.
     const associates = await prisma.associate.findMany({
+      take: 1000,
       where: {
         deletedAt: null,
         compRecords: { some: { effectiveTo: null } },
@@ -395,6 +400,7 @@ compensationRouter.post(
       select: { id: true },
     });
     const existing = await prisma.meritProposal.findMany({
+      take: 500,
       where: { cycleId },
       select: { associateId: true },
     });
@@ -483,6 +489,7 @@ compensationRouter.post(
       throw new HttpError(400, 'wrong_state', 'Cycle is not open.');
     }
     const approved = await prisma.meritProposal.findMany({
+      take: 500,
       where: { cycleId, status: 'APPROVED' },
     });
     let applied = 0;

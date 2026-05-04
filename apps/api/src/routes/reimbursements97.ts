@@ -38,6 +38,7 @@ const LineInputSchema = z.object({
 
 async function recomputeTotal(reimbursementId: string): Promise<void> {
   const lines = await prisma.expenseLine.findMany({
+    take: 100,
     where: { reimbursementId },
     select: { amount: true },
   });

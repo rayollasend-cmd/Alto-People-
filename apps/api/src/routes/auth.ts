@@ -1506,6 +1506,7 @@ authRouter.patch('/me/timezone', requireAuth, async (req, res, next) => {
 authRouter.get('/me/notification-preferences', requireAuth, async (req, res, next) => {
   try {
     const stored = await prisma.notificationPreference.findMany({
+      take: 500,
       where: { userId: req.user!.id },
       select: { category: true, emailEnabled: true },
     });

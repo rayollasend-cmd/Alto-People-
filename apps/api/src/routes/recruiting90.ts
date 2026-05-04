@@ -45,6 +45,7 @@ const InterviewKitInputSchema = z.object({
 recruiting90Router.get('/interview-kits', VIEW, async (req, res) => {
   const clientId = z.string().uuid().optional().parse(req.query.clientId);
   const rows = await prisma.interviewKit.findMany({
+    take: 1000,
     where: {
       deletedAt: null,
       ...(clientId ? { OR: [{ clientId }, { clientId: null }] } : {}),

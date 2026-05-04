@@ -43,6 +43,7 @@ const GoalUpdateSchema = z.object({
 performance84Router.get('/goals', VIEW, async (req, res) => {
   const associateId = z.string().uuid().optional().parse(req.query.associateId);
   const rows = await prisma.goal.findMany({
+    take: 500,
     where: { deletedAt: null, ...(associateId ? { associateId } : {}) },
     include: { keyResults: true },
     orderBy: { createdAt: 'desc' },
@@ -448,6 +449,7 @@ performance84Router.get('/reviews360/:id/aggregate', VIEW, async (req, res) => {
   const review = await prisma.review360.findUnique({ where: { id: reviewId } });
   if (!review) throw new HttpError(404, 'not_found', 'Review not found.');
   const feedback = await prisma.review360Feedback.findMany({
+    take: 500,
     where: { reviewId },
     orderBy: { submittedAt: 'desc' },
   });

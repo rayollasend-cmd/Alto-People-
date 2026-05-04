@@ -115,6 +115,7 @@ pulseSurveysRouter.get(
     });
     if (!survey) throw new HttpError(404, 'not_found', 'Survey not found.');
     const responses = await prisma.pulseResponse.findMany({
+      take: 500,
       where: { surveyId: survey.id },
       select: { scoreValue: true, comment: true, submittedAt: true },
       orderBy: { submittedAt: 'desc' },
@@ -183,6 +184,7 @@ pulseSurveysRouter.get('/my/pulse-surveys', ANY_USER, async (req, res) => {
   const myClientId = me?.clientId ?? null;
   const now = new Date();
   const open = await prisma.pulseSurvey.findMany({
+    take: 500,
     where: {
       openFrom: { lte: now },
       openUntil: { gte: now },
@@ -201,6 +203,7 @@ pulseSurveysRouter.get('/my/pulse-surveys', ANY_USER, async (req, res) => {
   // Filter out surveys the user has already answered.
   const hashes = open.map((s) => responderHash(req.user!.id, s.id));
   const answered = await prisma.pulseResponse.findMany({
+    take: 500,
     where: {
       surveyId: { in: open.map((s) => s.id) },
       responderHash: { in: hashes },

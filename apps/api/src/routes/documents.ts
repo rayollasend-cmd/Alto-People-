@@ -91,6 +91,7 @@ documentsRouter.get('/me', async (req, res, next) => {
       return;
     }
     const rows = await prisma.documentRecord.findMany({
+      take: 500,
       where: { associateId: user.associateId, deletedAt: null },
       orderBy: { createdAt: 'desc' },
       include: DOC_INCLUDE,

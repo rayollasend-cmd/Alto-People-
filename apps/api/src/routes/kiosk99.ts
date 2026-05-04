@@ -60,6 +60,7 @@ const DeviceInputSchema = z.object({
 kiosk99Router.get('/kiosk-devices', VIEW, async (req, res) => {
   const clientId = z.string().uuid().optional().parse(req.query.clientId);
   const rows = await prisma.kioskDevice.findMany({
+    take: 500,
     where: { ...(clientId ? { clientId } : {}) },
     include: {
       client: { select: { name: true } },
@@ -152,6 +153,7 @@ const PinInputSchema = z.object({
 kiosk99Router.get('/kiosk-pins', VIEW, async (req, res) => {
   const clientId = z.string().uuid().parse(req.query.clientId);
   const rows = await prisma.kioskPin.findMany({
+    take: 500,
     where: { clientId },
     include: {
       associate: { select: { firstName: true, lastName: true, email: true } },
@@ -353,6 +355,7 @@ kiosk99Router.post('/kiosk-punches/:id/review', MANAGE, async (req, res) => {
 
 kiosk99Router.get('/kiosk-face-references', VIEW, async (_req, res) => {
   const rows = await prisma.kioskFaceReference.findMany({
+    take: 500,
     include: {
       associate: { select: { firstName: true, lastName: true, email: true } },
     },
@@ -549,6 +552,7 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
   // For typical deployments that's a few dozen rows — cheap. If this ever
   // becomes hot, add a token-prefix index column.
   const devices = await prisma.kioskDevice.findMany({
+    take: 500,
     where: { isActive: true },
     select: {
       id: true,

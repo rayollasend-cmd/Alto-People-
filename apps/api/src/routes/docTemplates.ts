@@ -74,6 +74,7 @@ const VersionInputSchema = z.object({
 docTemplatesRouter.get('/document-templates', VIEW, async (req, res) => {
   const clientId = z.string().uuid().optional().parse(req.query.clientId);
   const rows = await prisma.documentTemplate.findMany({
+    take: 1000,
     where: {
       deletedAt: null,
       ...(clientId
@@ -135,6 +136,7 @@ docTemplatesRouter.get(
   async (req, res) => {
     const templateId = req.params.id;
     const rows = await prisma.documentTemplateVersion.findMany({
+      take: 500,
       where: { templateId },
       orderBy: { version: 'desc' },
     });

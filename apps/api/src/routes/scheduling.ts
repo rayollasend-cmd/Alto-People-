@@ -191,6 +191,7 @@ schedulingRouter.get('/kpis', MANAGE, async (req, res, next) => {
     // (no SQL helper for computed durations in Prisma). Pull duration + the
     // two rate columns and roll up.
     const rows = await prisma.shift.findMany({
+      take: 100,
       where,
       select: { startsAt: true, endsAt: true, payRate: true },
     });
@@ -700,6 +701,7 @@ schedulingRouter.get('/shifts/:id/conflicts', MANAGE, async (req, res, next) => 
 
     const [overlaps, ptoOverlaps] = await Promise.all([
       prisma.shift.findMany({
+        take: 100,
         where: {
           assignedAssociateId: associateId,
           id: { not: target.id },
@@ -712,6 +714,7 @@ schedulingRouter.get('/shifts/:id/conflicts', MANAGE, async (req, res, next) => 
       }),
       // Phase 52 — APPROVED time-off that intersects the shift's day range.
       prisma.timeOffRequest.findMany({
+        take: 100,
         where: {
           associateId,
           status: 'APPROVED',
@@ -785,6 +788,7 @@ schedulingRouter.get('/shifts/:id/auto-fill', MANAGE, async (req, res, next) => 
       // Phase 52 — APPROVED PTO covering the shift's day window. One query
       // for the whole pool; we bucket by associateId in memory.
       prisma.timeOffRequest.findMany({
+        take: 100,
         where: {
           status: 'APPROVED',
           startDate: { lte: targetDayEnd },
@@ -861,6 +865,7 @@ schedulingRouter.get('/me/availability', async (req, res, next) => {
       return;
     }
     const rows = await prisma.associateAvailability.findMany({
+      take: 500,
       where: { associateId: user.associateId },
       orderBy: [{ dayOfWeek: 'asc' }, { startMinute: 'asc' }],
     });
@@ -903,6 +908,7 @@ schedulingRouter.put('/me/availability', async (req, res, next) => {
     ]);
 
     const rows = await prisma.associateAvailability.findMany({
+      take: 500,
       where: { associateId: user.associateId },
       orderBy: [{ dayOfWeek: 'asc' }, { startMinute: 'asc' }],
     });
@@ -1042,6 +1048,7 @@ schedulingRouter.get('/swap-requests/me/incoming', async (req, res, next) => {
       return;
     }
     const rows = await prisma.shiftSwapRequest.findMany({
+      take: 500,
       where: { counterpartyAssociateId: user.associateId },
       orderBy: { createdAt: 'desc' },
       include: SWAP_INCLUDE,
@@ -1060,6 +1067,7 @@ schedulingRouter.get('/swap-requests/me/outgoing', async (req, res, next) => {
       return;
     }
     const rows = await prisma.shiftSwapRequest.findMany({
+      take: 500,
       where: { requesterAssociateId: user.associateId },
       orderBy: { createdAt: 'desc' },
       include: SWAP_INCLUDE,
@@ -1364,6 +1372,7 @@ schedulingRouter.get('/templates', MANAGE, async (req, res, next) => {
       ...(clientId ? { OR: [{ clientId }, { clientId: null }] } : {}),
     };
     const rows = await prisma.shiftTemplate.findMany({
+      take: 1000,
       where,
       orderBy: [{ dayOfWeek: 'asc' }, { startMinute: 'asc' }],
       include: TEMPLATE_INCLUDE,
@@ -1529,7 +1538,7 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
       status: { not: 'CANCELLED' },
       ...(parsed.data.clientId ? { clientId: parsed.data.clientId } : {}),
     };
-    const sourceShifts = await prisma.shift.findMany({ where });
+    const sourceShifts = await prisma.shift.findMany({ take: 100, where });
     if (sourceShifts.length === 0) {
       const empty: CopyWeekResponse = { created: 0, skipped: 0 };
       res.json(empty);
@@ -1609,6 +1618,7 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
       ...(parsed.data.clientId ? { clientId: parsed.data.clientId } : {}),
     };
     const drafts = await prisma.shift.findMany({
+      take: 100,
       where,
       include: {
         client: { select: { state: true, name: true } },
@@ -1785,6 +1795,7 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
         take: 1000,
       }),
       prisma.timeOffRequest.findMany({
+        take: 100,
         where: {
           status: 'APPROVED',
           startDate: { lte: end },

@@ -70,6 +70,7 @@ tuition127Router.get('/my/tuition-requests', requireAuth, async (req, res) => {
     return res.json({ requests: [] });
   }
   const rows = await prisma.tuitionRequest.findMany({
+    take: 100,
     where: { associateId: req.user!.associateId },
     orderBy: { createdAt: 'desc' },
   });
@@ -129,6 +130,7 @@ tuition127Router.get('/tuition-requests', PROCESS_PAYROLL, async (req, res) => {
     .optional()
     .parse(req.query.status);
   const rows = await prisma.tuitionRequest.findMany({
+    take: 100,
     where: status ? { status } : {},
     include: {
       associate: {

@@ -226,6 +226,7 @@ async function runReport(
 
 reports96Router.get('/reports', VIEW, async (req, res) => {
   const rows = await prisma.report.findMany({
+    take: 1000,
     where: {
       deletedAt: null,
       OR: [{ isPublic: true }, { createdById: req.user!.id }],
@@ -354,6 +355,7 @@ reports96Router.post('/reports/:id/schedules', VIEW, async (req, res) => {
 
 reports96Router.get('/reports/:id/schedules', VIEW, async (req, res) => {
   const rows = await prisma.reportSchedule.findMany({
+    take: 500,
     where: { reportId: req.params.id },
     orderBy: { createdAt: 'desc' },
   });

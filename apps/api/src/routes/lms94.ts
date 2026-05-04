@@ -43,6 +43,7 @@ lms94Router.get('/courses', VIEW, async (req, res) => {
     .optional()
     .parse(req.query.status);
   const rows = await prisma.course.findMany({
+    take: 1000,
     where: {
       deletedAt: null,
       ...(clientId ? { OR: [{ clientId }, { clientId: null }] } : {}),
@@ -112,6 +113,7 @@ lms94Router.delete('/courses/:id', MANAGE, async (req, res) => {
 
 lms94Router.get('/courses/:id/modules', VIEW, async (req, res) => {
   const rows = await prisma.courseModule.findMany({
+    take: 500,
     where: { courseId: req.params.id },
     orderBy: { order: 'asc' },
   });
@@ -270,6 +272,7 @@ lms94Router.get('/lms/expiring', VIEW, async (req, res) => {
     .parse(req.query.days);
   const cutoff = new Date(Date.now() + days * 24 * 3600 * 1000);
   const rows = await prisma.courseEnrollment.findMany({
+    take: 500,
     where: {
       status: 'COMPLETED',
       expiresAt: { not: null, lte: cutoff },

@@ -47,6 +47,7 @@ holiday117Router.get('/holidays', VIEW, async (req, res) => {
   }
 
   const rows = await prisma.holiday.findMany({
+    take: 1000,
     where,
     include: { client: { select: { name: true } } },
     orderBy: { date: 'asc' },
@@ -80,6 +81,7 @@ holiday117Router.get('/holidays/upcoming', VIEW, async (req, res) => {
   cutoff.setUTCDate(cutoff.getUTCDate() + days);
 
   const rows = await prisma.holiday.findMany({
+    take: 1000,
     where: {
       date: { gte: today, lte: cutoff },
       ...(clientId

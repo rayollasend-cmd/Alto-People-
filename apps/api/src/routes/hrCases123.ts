@@ -76,6 +76,7 @@ hrCases123Router.get('/my/hr-cases', requireAuth, async (req, res) => {
     return res.json({ cases: [] });
   }
   const rows = await prisma.hrCase.findMany({
+    take: 100,
     where: { associateId: req.user!.associateId },
     include: {
       assignedTo: { select: { email: true } },
@@ -110,6 +111,7 @@ hrCases123Router.get('/hr-cases', MANAGE, async (req, res) => {
     .parse(req.query.assignedToMe);
 
   const rows = await prisma.hrCase.findMany({
+    take: 100,
     where: {
       ...(status ? { status } : {}),
       ...(category ? { category } : {}),

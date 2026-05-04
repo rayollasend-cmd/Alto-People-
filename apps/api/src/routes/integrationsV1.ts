@@ -376,6 +376,7 @@ integrationsV1Router.get(
         _count: { _all: true },
       }),
       prisma.shift.findMany({
+        take: 100,
         where: { ...baseWhere, assignedAssociateId: { not: null } },
         select: { assignedAssociateId: true },
         distinct: ['assignedAssociateId'],

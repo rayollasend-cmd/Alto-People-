@@ -314,6 +314,7 @@ timeRouter.post('/me/clock-out', async (req, res, next) => {
     const weekStart = startOfWeekUTC(active.clockInAt);
     const weekEnd = endOfWeekUTC(active.clockInAt);
     const weeklyEntries = await prisma.timeEntry.findMany({
+      take: 100,
       where: {
         associateId: active.associateId,
         clockInAt: { gte: weekStart, lt: weekEnd },
@@ -500,6 +501,7 @@ timeRouter.get('/admin/active', MANAGE, async (req, res, next) => {
       ...(clientId ? { clientId } : {}),
     };
     const rows = await prisma.timeEntry.findMany({
+      take: 100,
       where,
       orderBy: { clockInAt: 'asc' },
       include: {
@@ -510,6 +512,7 @@ timeRouter.get('/admin/active', MANAGE, async (req, res, next) => {
     });
     const clientIds = Array.from(new Set(rows.map((r) => r.clientId).filter(Boolean) as string[]));
     const clients = await prisma.client.findMany({
+      take: 1000,
       where: { id: { in: clientIds } },
       select: { id: true, name: true, latitude: true, longitude: true, geofenceRadiusMeters: true },
     });
@@ -934,6 +937,7 @@ timeRouter.post('/admin/export.csv', MANAGE, async (req, res, next) => {
     const clientMap = new Map<string, string>();
     if (clientIds.length > 0) {
       const cs = await prisma.client.findMany({
+        take: 1000,
         where: { id: { in: clientIds } },
         select: { id: true, name: true },
       });
@@ -989,6 +993,7 @@ timeRouter.post('/admin/export.pdf', MANAGE, async (req, res, next) => {
     const clientMap = new Map<string, string>();
     if (clientIds.length > 0) {
       const cs = await prisma.client.findMany({
+        take: 1000,
         where: { id: { in: clientIds } },
         select: { id: true, name: true },
       });

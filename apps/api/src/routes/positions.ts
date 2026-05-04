@@ -103,6 +103,7 @@ positionsRouter.get('/', VIEW, async (req: Request, res: Response) => {
     ...(status ? { status: status as Position['status'] } : {}),
   };
   const rows = await prisma.position.findMany({
+    take: 1000,
     where,
     include: POS_INCLUDE,
     orderBy: [{ status: 'asc' }, { code: 'asc' }],

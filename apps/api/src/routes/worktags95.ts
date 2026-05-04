@@ -35,6 +35,7 @@ const CategoryInputSchema = z.object({
 
 worktags95Router.get('/worktag-categories', VIEW, async (_req, res) => {
   const rows = await prisma.worktagCategory.findMany({
+    take: 1000,
     include: { _count: { select: { worktags: true } } },
     orderBy: { label: 'asc' },
   });
@@ -142,6 +143,7 @@ worktags95Router.post('/worktag-assignments', VIEW, async (req, res) => {
   const input = AssignInputSchema.parse(req.body);
 
   const worktags = await prisma.worktag.findMany({
+    take: 1000,
     where: { id: { in: input.worktagIds }, isActive: true },
     select: { id: true, categoryId: true },
   });
@@ -189,6 +191,7 @@ worktags95Router.get('/worktag-assignments', VIEW, async (req, res) => {
   const entityKind = z.enum(ENTITY_KINDS).parse(req.query.entityKind);
   const entityId = z.string().uuid().parse(req.query.entityId);
   const rows = await prisma.worktagAssignment.findMany({
+    take: 500,
     where: { entityKind, entityId },
     include: {
       worktag: {
@@ -230,6 +233,7 @@ worktags95Router.get('/worktags/report', VIEW, async (req, res) => {
   if (!category) throw new HttpError(404, 'not_found', 'Category not found.');
 
   const assignments = await prisma.worktagAssignment.findMany({
+    take: 500,
     where: {
       entityKind,
       worktag: { categoryId: category.id },

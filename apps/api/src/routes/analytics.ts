@@ -164,6 +164,7 @@ analyticsRouter.get('/onboarding', async (_req, res, next) => {
     // Window: applications invited within the lookback. Used for the
     // completion / track / client / monthly stats.
     const inWindow = await prisma.application.findMany({
+      take: 500,
       where: { deletedAt: null, invitedAt: { gte: windowStart } },
       select: {
         clientId: true,
@@ -237,6 +238,7 @@ analyticsRouter.get('/onboarding', async (_req, res, next) => {
     // the completion stats. Pull both invited and completed events that
     // fall in the last N months.
     const monthlyApps = await prisma.application.findMany({
+      take: 500,
       where: {
         deletedAt: null,
         OR: [

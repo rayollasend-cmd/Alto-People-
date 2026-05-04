@@ -180,6 +180,7 @@ communicationsRouter.post('/admin/broadcast', MANAGE, async (req, res, next) => 
     if (i.audience === 'ALL_HR') where.role = 'HR_ADMINISTRATOR';
 
     const recipients = await prisma.user.findMany({
+      take: 1000,
       where,
       select: { id: true },
     });

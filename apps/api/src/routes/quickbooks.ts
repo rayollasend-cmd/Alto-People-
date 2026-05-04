@@ -251,6 +251,7 @@ quickbooksRouter.post('/sync-run/:runId', MANAGE, async (req, res, next) => {
         // any aren't, rather than skipping silently and producing an
         // unbalanced ledger.
         const items = await prisma.payrollItem.findMany({
+          take: 100,
           where: { payrollRunId: run.id },
           include: {
             associate: {
@@ -373,6 +374,7 @@ quickbooksRouter.post('/sync-associates', MANAGE, async (req, res, next) => {
     // here" relationship; LIVE_ASN-style operational mappings are a
     // separate phase.
     const associates = await prisma.associate.findMany({
+      take: 1000,
       where: {
         deletedAt: null,
         applications: { some: { clientId, deletedAt: null } },

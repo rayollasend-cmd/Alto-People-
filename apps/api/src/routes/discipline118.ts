@@ -47,6 +47,7 @@ discipline118Router.get('/disciplinary-actions', VIEW, async (req, res) => {
   const kind = KIND.optional().parse(req.query.kind);
 
   const rows = await prisma.disciplinaryAction.findMany({
+    take: 100,
     where: {
       ...(associateId ? { associateId } : {}),
       ...(status ? { status } : {}),

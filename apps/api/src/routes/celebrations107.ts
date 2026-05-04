@@ -43,6 +43,7 @@ celebrationsRouter.get('/celebrations/upcoming', VIEW, async (req, res) => {
     .parse(req.query.days);
 
   const associates = await prisma.associate.findMany({
+    take: 1000,
     where: { deletedAt: null },
     select: {
       id: true,

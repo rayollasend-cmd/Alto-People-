@@ -150,6 +150,7 @@ skills111Router.get('/associate-skills', VIEW, async (req, res) => {
     throw new HttpError(400, 'associate_required', 'associateId is required.');
   }
   const rows = await prisma.associateSkill.findMany({
+    take: 500,
     where: { associateId },
     include: {
       skill: { select: { id: true, name: true, category: true } },

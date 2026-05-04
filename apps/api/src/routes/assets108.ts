@@ -38,6 +38,7 @@ assetsRouter.get('/assets', VIEW, async (req, res) => {
   const status = z.enum(ALL_STATUSES).optional().parse(req.query.status);
   const kind = z.enum(ALL_KINDS).optional().parse(req.query.kind);
   const rows = await prisma.asset.findMany({
+    take: 1000,
     where: {
       ...(status ? { status } : {}),
       ...(kind ? { kind } : {}),
