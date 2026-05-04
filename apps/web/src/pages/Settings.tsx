@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AtSign, Bell, Camera, CheckCircle2, ChevronDown, ChevronUp, Clock, Copy, Download, History, KeyRound, Lock, LogOut, RefreshCw, ShieldAlert, ShieldCheck, Upload, User as UserIcon } from 'lucide-react';
 import { toast } from 'sonner';
-import QRCode from 'qrcode';
 import { MFA_RECOVERY_CODE_COUNT, type MfaEnrollStartResponse } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -175,6 +174,8 @@ function MfaCard() {
       setEnroll(res);
       setAcknowledged(false);
       setCode('');
+      // Lazy-load qrcode (~50 KB) — only fires when a user enrolls in MFA.
+      const { default: QRCode } = await import('qrcode');
       const dataUrl = await QRCode.toDataURL(res.provisioningUri, {
         margin: 1,
         width: 192,

@@ -38,6 +38,16 @@ export default defineConfig({
           if (!id.includes('node_modules')) return undefined;
           if (id.includes('@radix-ui')) return 'radix';
           if (id.includes('framer-motion')) return 'motion';
+          // face-api.js is a 600+ KB ML library used only by the kiosk
+          // punch flow. Naming the chunk so the build output isn't a
+          // confusing second `index.js`.
+          if (id.includes('/face-api.js/')) return 'face-api';
+          // recharts is shared between the analytics donut and the
+          // compliance scorecard donut — bucket it so it's downloaded
+          // once and cached across both routes.
+          if (id.includes('/recharts/') || id.includes('/d3-')) {
+            return 'recharts';
+          }
           if (
             id.includes('/react/') ||
             id.includes('/react-dom/') ||

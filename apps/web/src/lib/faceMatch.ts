@@ -7,14 +7,29 @@
  *   - face_landmark_68_model        (~350KB)  — 68 facial landmarks
  *   - face_recognition_model        (~6MB)    — descriptor net
  *
- * They're lazy-loaded on first use so the rest of the app pays nothing.
- * Default URL is jsDelivr; deployments with no internet access can host
- * the weights themselves and set VITE_FACE_MODELS_URL to that path.
+ * The library itself (~250KB minified) is also lazy-loaded via dynamic
+ * import — the kiosk shell paints instantly, and face-api downloads
+ * the first time someone reaches the selfie step. Default models URL is
+ * jsDelivr; deployments with no internet access can host the weights
+ * themselves and set VITE_FACE_MODELS_URL to that path.
  */
-import * as faceapi from 'face-api.js';
 
 const DEFAULT_MODELS_URL =
   'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights';
+
+type FaceApi = typeof import('face-api.js');
+
+let faceApiPromise: Promise<FaceApi> | null = null;
+
+function getFaceApi(): Promise<FaceApi> {
+  if (!faceApiPromise) {
+    faceApiPromise = import('face-api.js').catch((err) => {
+      faceApiPromise = null;
+      throw err;
+    });
+  }
+  return faceApiPromise;
+}
 
 let modelsPromise: Promise<void> | null = null;
 
@@ -24,6 +39,7 @@ export function loadFaceModels(): Promise<void> {
     (import.meta.env.VITE_FACE_MODELS_URL as string | undefined)?.trim() ||
     DEFAULT_MODELS_URL;
   modelsPromise = (async () => {
+    const faceapi = await getFaceApi();
     await Promise.all([
       faceapi.nets.tinyFaceDetector.loadFromUri(url),
       faceapi.nets.faceLandmark68Net.loadFromUri(url),
@@ -45,6 +61,7 @@ export function loadFaceModels(): Promise<void> {
 export async function extractDescriptor(
   source: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement,
 ): Promise<number[] | null> {
+  const faceapi = await getFaceApi();
   const result = await faceapi
     .detectSingleFace(source, new faceapi.TinyFaceDetectorOptions({
       // Higher threshold = fewer false detections of door frames / posters.
