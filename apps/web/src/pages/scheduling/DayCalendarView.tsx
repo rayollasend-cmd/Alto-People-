@@ -498,7 +498,7 @@ function DayShiftChip({
       <div
         {...listeners}
         {...attributes}
-        className="absolute left-1.5 top-1 text-silver/40 hover:text-gold cursor-grab active:cursor-grabbing no-print"
+        className="absolute left-1.5 top-1 text-silver/50 hover:text-gold cursor-grab active:cursor-grabbing no-print"
         aria-label={`Move ${shift.position}`}
       >
         <GripVertical className="h-3 w-3" />

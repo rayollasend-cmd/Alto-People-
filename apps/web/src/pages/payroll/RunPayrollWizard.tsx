@@ -339,7 +339,7 @@ function Stepper({ step }: { step: Step }) {
                 ? 'bg-gold text-black'
                 : s < step
                 ? 'bg-silver/20 text-silver'
-                : 'bg-silver/10 text-silver/40'
+                : 'bg-silver/10 text-silver/50'
             )}
           >
             {s < step ? '✓' : s}
@@ -738,7 +738,7 @@ function CardStat({
 }) {
   return (
     <div>
-      <div className="text-[10px] uppercase tracking-widest text-silver/40">
+      <div className="text-[10px] uppercase tracking-widest text-silver/50">
         {label}
       </div>
       <div className={cn('tabular-nums text-sm', highlight ? 'text-gold' : 'text-white')}>
@@ -760,7 +760,7 @@ function InfoTip({ text }: { text: string }) {
       <TooltipTrigger asChild>
         <button
           type="button"
-          className="inline-flex items-center justify-center text-silver/40 hover:text-silver focus:outline-none focus-visible:text-gold align-middle ml-1"
+          className="inline-flex items-center justify-center text-silver/50 hover:text-silver focus:outline-none focus-visible:text-gold align-middle ml-1"
           aria-label={`What is this?`}
         >
           <HelpCircle className="h-3 w-3" />

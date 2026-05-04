@@ -155,7 +155,7 @@ export function TemplatesRail({ clientId, onManage }: Props) {
           <Plus className="h-3.5 w-3.5" />
           New template
         </Button>
-        <div className="mt-1.5 text-[10px] text-silver/40 text-center">
+        <div className="mt-1.5 text-[10px] text-silver/50 text-center">
           Drag a template onto a cell to apply.
         </div>
       </div>

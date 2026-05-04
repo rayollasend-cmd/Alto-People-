@@ -5,6 +5,7 @@ import { useAuth } from '@/lib/auth';
 import { ApiError, NetworkError } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import { Field } from '@/components/ui/Field';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Input } from '@/components/ui/Input';
 import { Label, FormHint } from '@/components/ui/Label';
 
@@ -163,14 +164,7 @@ export function Login() {
               </div>
             </div>
 
-            {error && (
-              <div
-                className="mt-4 p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-                role="alert"
-              >
-                {error}
-              </div>
-            )}
+            {error && <ErrorBanner className="mt-4">{error}</ErrorBanner>}
 
             <Button
               type="submit"
@@ -231,14 +225,7 @@ export function Login() {
               />
             </div>
 
-            {error && (
-              <div
-                className="mt-4 p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-                role="alert"
-              >
-                {error}
-              </div>
-            )}
+            {error && <ErrorBanner className="mt-4">{error}</ErrorBanner>}
 
             <Button
               type="submit"

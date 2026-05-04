@@ -186,7 +186,7 @@ export function PaySchedulesView({ canProcess }: Props) {
                   </span>
                 </MetaRow>
                 {!s.isActive && (
-                  <div className="text-[10px] uppercase tracking-widest text-silver/40 mt-2">
+                  <div className="text-[10px] uppercase tracking-widest text-silver/50 mt-2">
                     Inactive
                   </div>
                 )}
@@ -326,7 +326,7 @@ function ScheduleFormDialog({
               />
             )}
           </Field>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Frequency" required hint={FREQ_HINT[frequency]}>
               {(p) => (
                 <Select

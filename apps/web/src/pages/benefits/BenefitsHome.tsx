@@ -32,6 +32,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -127,14 +129,7 @@ export function BenefitsHome() {
         subtitle="Pre-tax elections come out of every paycheck before federal, FICA, Medicare, and state tax. Your take-home goes down by less than the elected amount."
       />
 
-      {error && (
-        <div
-          className="p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-          role="alert"
-        >
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner>{error}</ErrorBanner>}
 
       {!enrollments && (
         <div className="space-y-2">
@@ -157,9 +152,11 @@ export function BenefitsHome() {
           </CardHeader>
           <CardContent className="p-0">
             {enrollments.length === 0 ? (
-              <p className="text-sm text-silver p-6 text-center">
-                You haven't enrolled in any benefits yet.
-              </p>
+              <EmptyState
+                icon={HeartPulse}
+                title="No active benefits"
+                description="When HR opens enrollment, plans you're eligible for will appear below to elect."
+              />
             ) : (
               <ul className="divide-y divide-navy-secondary/60">
                 {enrollments.map((e) => (

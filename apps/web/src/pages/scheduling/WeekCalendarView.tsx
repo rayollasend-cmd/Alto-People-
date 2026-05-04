@@ -446,7 +446,7 @@ export function WeekCalendarView({
                 )}
               >
                 {count === 0 ? (
-                  <div className="text-[11px] text-silver/40">—</div>
+                  <div className="text-[11px] text-silver/50">—</div>
                 ) : (
                   <div className="flex items-baseline gap-2 text-[11px] tabular-nums">
                     <span className="text-white font-medium">{count}</span>
@@ -684,7 +684,7 @@ function Cell({
             <button
               type="button"
               onClick={onCreate}
-              className="text-[10px] text-silver/40 hover:text-gold inline-flex items-center justify-center gap-1 mt-auto opacity-60 group-hover:opacity-100 transition-opacity"
+              className="text-[10px] text-silver/50 hover:text-gold inline-flex items-center justify-center gap-1 mt-auto opacity-60 group-hover:opacity-100 transition-opacity"
               aria-label="Add another shift"
             >
               <Plus className="h-3 w-3" />
@@ -828,7 +828,7 @@ function ShiftChip({
       <div
         {...listeners}
         {...attributes}
-        className="absolute left-1.5 top-1.5 text-silver/40 hover:text-gold cursor-grab active:cursor-grabbing no-print"
+        className="absolute left-1.5 top-1.5 text-silver/50 hover:text-gold cursor-grab active:cursor-grabbing no-print"
         aria-label={`Move ${shift.position}`}
       >
         <GripVertical className="h-3 w-3" />

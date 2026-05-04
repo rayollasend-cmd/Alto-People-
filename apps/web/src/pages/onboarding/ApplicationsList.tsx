@@ -42,6 +42,7 @@ import {
   DrawerTitle,
 } from '@/components/ui/Drawer';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
@@ -544,14 +545,7 @@ export function ApplicationsList() {
         </div>
       )}
 
-      {error && (
-        <div
-          className="mb-4 p-3 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-          role="alert"
-        >
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
 
       {!items && !error && (
         <Card>
