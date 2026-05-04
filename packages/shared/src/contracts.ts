@@ -1643,6 +1643,26 @@ export const PayrollUpcomingSummarySchema = z.object({
 });
 export type PayrollUpcomingSummary = z.infer<typeof PayrollUpcomingSummarySchema>;
 
+// Read-only view of one row from the payroll_config DB table. Powers the
+// /payroll/config admin page so HR can sanity-check what tax tables the
+// withholding engine is about to use without reading the migration SQL.
+export const PayrollConfigBracketSchema = z.object({
+  over: z.number(),
+  flat: z.number(),
+  rate: z.number(),
+});
+export const PayrollConfigSchema = z.object({
+  year: z.number().int(),
+  ssWageBase: z.number(),
+  medicareSurchargeThreshold: z.number(),
+  fedBracketsSingle: z.array(PayrollConfigBracketSchema),
+  fedBracketsMfj: z.array(PayrollConfigBracketSchema),
+  fedBracketsHoh: z.array(PayrollConfigBracketSchema),
+  updatedAt: z.string().datetime(),
+});
+export type PayrollConfigBracket = z.infer<typeof PayrollConfigBracketSchema>;
+export type PayrollConfig = z.infer<typeof PayrollConfigSchema>;
+
 /* -------------------------------------------------------------------------- *
  *  Documents — Phase 9 (local-fs storage; S3 swap is future work)
  * -------------------------------------------------------------------------- */

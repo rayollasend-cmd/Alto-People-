@@ -4,6 +4,7 @@ import { prisma } from './db.js';
 import { startKeepAlive } from './lib/keepalive.js';
 import { startInviteReminderCron } from './lib/inviteReminder.js';
 import { ensureBrandingLoaded } from './lib/branding.js';
+import { preloadPayrollTaxConfig } from './lib/payrollTax.js';
 
 const app = createApp();
 
@@ -42,4 +43,25 @@ app.listen(env.PORT, '0.0.0.0', async () => {
   ensureBrandingLoaded(prisma).catch((err) => {
     console.warn('[alto-people/api] branding preload failed:', err);
   });
+
+  // Load the federal payroll-tax constants for the current calendar year
+  // into the in-memory cache the engine reads from. Failure here is loud
+  // but not fatal — /health and unrelated routes still serve so ops can
+  // diagnose. The first payroll-tax computation will throw with the same
+  // message until a row for the current year is inserted into
+  // payroll_config. Re-runs every January catch missing-IRS-tables drift.
+  const currentYear = new Date().getFullYear();
+  try {
+    await preloadPayrollTaxConfig(prisma, currentYear);
+    console.log(`[alto-people/api] payroll tax config loaded for year ${currentYear}`);
+  } catch (err) {
+    console.warn(
+      `[alto-people/api] WARNING: payroll tax config NOT loaded for year ${currentYear} —`,
+      err instanceof Error ? err.message : err,
+    );
+    console.warn(
+      '[alto-people/api] Insert a payroll_config row for the current year ' +
+        '(see prisma/migrations/*_add_payroll_config) before running payroll.',
+    );
+  }
 });

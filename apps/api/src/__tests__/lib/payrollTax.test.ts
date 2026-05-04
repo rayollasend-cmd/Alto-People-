@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import {
   FUTA_RATE_NET,
   FUTA_WAGE_BASE,
@@ -7,7 +7,8 @@ import {
   MEDICARE_SURCHARGE_THRESHOLD,
   NO_SIT_STATES,
   SS_RATE,
-  SS_WAGE_BASE_2024,
+  SS_WAGE_BASE,
+  __setPayrollTaxConfigForTesting,
   computeEmployerTaxes,
   computeFederalIncomeTax,
   computeMedicare,
@@ -20,7 +21,52 @@ import {
 
 const close = (a: number, b: number, eps = 0.02) => Math.abs(a - b) < eps;
 
-describe('computeFederalIncomeTax (IRS Pub 15-T 2024 percentage method)', () => {
+// IRS Pub 15-T 2026, Worksheet 1A — Standard Withholding Rate Schedules
+// (W-4 Step 2 NOT checked). Mirrors the row seeded by the
+// add_payroll_config migration so prod and unit tests reason about the
+// same numbers. If the migration's seeded brackets ever drift from these,
+// payroll output diverges from prod — keep them in sync.
+beforeAll(() => {
+  __setPayrollTaxConfigForTesting({
+    year: 2026,
+    fedBrackets: {
+      SINGLE: [
+        { over: 0, flat: 0, rate: 0 },
+        { over: 7_500, flat: 0, rate: 0.1 },
+        { over: 19_900, flat: 1_240, rate: 0.12 },
+        { over: 57_900, flat: 5_800, rate: 0.22 },
+        { over: 113_200, flat: 17_966, rate: 0.24 },
+        { over: 209_275, flat: 41_024, rate: 0.32 },
+        { over: 263_725, flat: 58_448, rate: 0.35 },
+        { over: 648_100, flat: 192_979.25, rate: 0.37 },
+      ],
+      MARRIED_FILING_JOINTLY: [
+        { over: 0, flat: 0, rate: 0 },
+        { over: 19_300, flat: 0, rate: 0.1 },
+        { over: 44_100, flat: 2_480, rate: 0.12 },
+        { over: 120_100, flat: 11_600, rate: 0.22 },
+        { over: 230_700, flat: 35_932, rate: 0.24 },
+        { over: 422_850, flat: 82_048, rate: 0.32 },
+        { over: 531_750, flat: 116_896, rate: 0.35 },
+        { over: 788_000, flat: 206_583.5, rate: 0.37 },
+      ],
+      HEAD_OF_HOUSEHOLD: [
+        { over: 0, flat: 0, rate: 0 },
+        { over: 15_550, flat: 0, rate: 0.1 },
+        { over: 33_250, flat: 1_770, rate: 0.12 },
+        { over: 83_000, flat: 7_740, rate: 0.22 },
+        { over: 121_250, flat: 16_155, rate: 0.24 },
+        { over: 217_300, flat: 39_207, rate: 0.32 },
+        { over: 271_750, flat: 56_631, rate: 0.35 },
+        { over: 656_150, flat: 191_171, rate: 0.37 },
+      ],
+    },
+    ssWageBase: 176_100,
+    medicareSurchargeThreshold: 200_000,
+  });
+});
+
+describe('computeFederalIncomeTax (IRS Pub 15-T 2026 percentage method)', () => {
   it('zero-tax bracket: $200 biweekly single → $0 fed', () => {
     const w = computeFederalIncomeTax({
       grossPay: 200,
@@ -31,15 +77,15 @@ describe('computeFederalIncomeTax (IRS Pub 15-T 2024 percentage method)', () => 
   });
 
   it('mid-bracket single biweekly: $2000 biweekly ≈ annualized $52000', () => {
-    // Annual $52000 → bracket "over 17600 flat $1160 + 12% of overage".
-    // Excess: 52000 - 17600 = 34400; 34400*0.12 = 4128; +1160 = 5288 annual.
-    // Per cycle: 5288/26 ≈ 203.38.
+    // Annual $52000 → 2026 SINGLE bracket "over 19900 flat $1240 + 12% of overage".
+    // Excess: 52000 - 19900 = 32100; 32100*0.12 = 3852; +1240 = 5092 annual.
+    // Per cycle: 5092/26 ≈ 195.85.
     const w = computeFederalIncomeTax({
       grossPay: 2000,
       filingStatus: 'SINGLE',
       payFrequency: 'BIWEEKLY',
     });
-    expect(close(w, 203.38, 0.05)).toBe(true);
+    expect(close(w, 195.85, 0.05)).toBe(true);
   });
 
   it('MFJ pays less than SINGLE on the same paycheck', () => {
@@ -102,9 +148,9 @@ describe('computeSocialSecurity (FICA)', () => {
     expect(close(ss, 5000 * SS_RATE)).toBe(true);
   });
 
-  it('caps at the SS wage base ($168,600 in 2024)', () => {
+  it('caps at the SS wage base ($176,100 in 2026)', () => {
     // Already at the cap → no FICA owed on this paycheck.
-    const ss = computeSocialSecurity({ grossPay: 5000, ytdWages: SS_WAGE_BASE_2024 });
+    const ss = computeSocialSecurity({ grossPay: 5000, ytdWages: SS_WAGE_BASE() });
     expect(ss).toBe(0);
   });
 
@@ -112,7 +158,7 @@ describe('computeSocialSecurity (FICA)', () => {
     // 1000 of headroom remaining before the cap; this paycheck is 5000.
     const ss = computeSocialSecurity({
       grossPay: 5000,
-      ytdWages: SS_WAGE_BASE_2024 - 1000,
+      ytdWages: SS_WAGE_BASE() - 1000,
     });
     expect(close(ss, 1000 * SS_RATE)).toBe(true);
   });
@@ -138,7 +184,7 @@ describe('computeMedicare', () => {
   });
 
   it('threshold constant is $200,000 (matches IRC §3101(b)(2))', () => {
-    expect(MEDICARE_SURCHARGE_THRESHOLD).toBe(200_000);
+    expect(MEDICARE_SURCHARGE_THRESHOLD()).toBe(200_000);
   });
 });
 

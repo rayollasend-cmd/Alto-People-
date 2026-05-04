@@ -305,31 +305,31 @@ enum PositionStatus {
 // =============================================================================
 
 model User {
-  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  email        String     @unique
-  passwordHash String?    @db.VarChar(255)
-  role         Role
-  status       UserStatus @default(INVITED)
-  tokenVersion Int        @default(0)
+  id                 String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email              String     @unique
+  passwordHash       String?    @db.VarChar(255)
+  role               Role
+  status             UserStatus @default(INVITED)
+  tokenVersion       Int        @default(0)
   // IANA timezone preference for date display in /settings, login history,
   // and (later) email templates. Nullable — when null, the UI falls back
   // to the browser's locale, the email layer falls back to UTC.
-  timezone     String?    @db.VarChar(64)
+  timezone           String?    @db.VarChar(64)
   // TOTP MFA. The secret is encrypted with AES-256-GCM keyed off
   // MFA_SECRET_ENCRYPTION_KEY (falls back to PAYOUT_ENCRYPTION_KEY in dev).
   // mfaEnabledAt is the canonical "MFA is on" flag — set only after the
   // user proves they can produce a valid 6-digit code from their app.
   // mfaSecretEncrypted may exist while mfaEnabledAt is null = enrollment
   // in flight (the user got a QR but hasn't confirmed yet).
-  mfaSecretEncrypted Bytes?    @db.ByteA
-  mfaEnabledAt       DateTime? @db.Timestamptz(6)
-  associateId  String?    @unique @db.Uuid
-  clientId     String?    @db.Uuid
-  associate    Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)
-  client       Client?    @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  createdAt    DateTime   @default(now()) @db.Timestamptz(6)
-  updatedAt    DateTime   @updatedAt @db.Timestamptz(6)
-  deletedAt    DateTime?  @db.Timestamptz(6)
+  mfaSecretEncrypted Bytes?     @db.ByteA
+  mfaEnabledAt       DateTime?  @db.Timestamptz(6)
+  associateId        String?    @unique @db.Uuid
+  clientId           String?    @db.Uuid
+  associate          Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)
+  client             Client?    @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  createdAt          DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime   @updatedAt @db.Timestamptz(6)
+  deletedAt          DateTime?  @db.Timestamptz(6)
 
   signaturesGiven                   Signature[]                  @relation("UserSignatures")
   i9VerificationsAsRep              I9Verification[]             @relation("I9Verifier")
@@ -3545,22 +3545,22 @@ enum CourseModuleKind {
 }
 
 model Course {
-  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId     String?      @db.Uuid
-  title        String
-  description  String?
-  isRequired   Boolean      @default(false)
-  validityDays Int?
-  status       CourseStatus @default(DRAFT)
+  id            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId      String?        @db.Uuid
+  title         String
+  description   String?
+  isRequired    Boolean        @default(false)
+  validityDays  Int?
+  status        CourseStatus   @default(DRAFT)
   // Phase add-on — categorizes the course for the compliance scorecard's
   // training-completeness tile. Nullable so existing free-text courses
   // stay untagged; HR sets this on courses that satisfy a specific
   // regulatory requirement (Walmart MTSA Section 5a, etc.).
   complianceTag ComplianceTag?
-  createdById  String?      @db.Uuid
-  createdAt    DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt    DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt    DateTime?    @db.Timestamptz(6)
+  createdById   String?        @db.Uuid
+  createdAt     DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime       @updatedAt @db.Timestamptz(6)
+  deletedAt     DateTime?      @db.Timestamptz(6)
 
   client      Client?            @relation(fields: [clientId], references: [id], onDelete: Cascade)
   createdBy   User?              @relation("CourseCreator", fields: [createdById], references: [id], onDelete: SetNull)
@@ -4977,4 +4977,33 @@ model OrgSetting {
   logoContentType String?   @db.VarChar(64)
   logoUpdatedAt   DateTime? @db.Timestamptz(6)
   updatedAt       DateTime  @updatedAt @db.Timestamptz(6)
+}
+
+// IRS payroll-tax constants that change yearly. One row per calendar year.
+// The withholding engine in lib/payrollTax.ts loads the row matching the
+// pay-date year at boot, caches it in-process, and uses it for the life
+// of the process. SUTA per-state tables and state income brackets stay
+// as code constants — they're not affected by federal annual updates and
+// the org is Florida-only anyway. See seed-of-record at the bottom of
+// the add_payroll_config migration.
+model PayrollConfig {
+  id                         String   @id @default(uuid()) @db.Uuid
+  year                       Int      @unique
+  // IRS Pub 15-T Worksheet 1A annual percentage method, "Standard
+  // Withholding Rate Schedules" (W-4 Step 2 box NOT checked). Each value
+  // is a JSON array of { over, flat, rate } objects, ascending by `over`.
+  fedBracketsSingle          Json
+  fedBracketsMfj             Json
+  fedBracketsHoh             Json
+  // SSA wage base for the year. Wages above this in YTD are not subject
+  // to the 6.2% Social Security tax.
+  ssWageBase                 Decimal  @db.Decimal(12, 2)
+  // Additional 0.9% Medicare surcharge YTD threshold (IRC §3101(b)(2)).
+  // Has held at $200,000 since 2013; lives here so the engine reads
+  // every parameter from one source.
+  medicareSurchargeThreshold Decimal  @db.Decimal(12, 2)
+  createdAt                  DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt                  DateTime @updatedAt @db.Timestamptz(6)
+
+  @@map("payroll_config")
 }

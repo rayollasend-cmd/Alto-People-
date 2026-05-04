@@ -14,6 +14,7 @@ import {
   PayrollScheduleSchema,
   PayrollScheduleUpdateInputSchema,
   PayrollUpcomingSummarySchema,
+  type PayrollConfig as PayrollConfigDto,
   type PayrollException,
   type PayrollExceptionsResponse,
   type PayrollItem,
@@ -1610,6 +1611,45 @@ payrollRouter.post('/schedules/:id/assign', PROCESS, async (req, res, next) => {
       'assignPayrollSchedule'
     );
     res.json({ assigned: result.count });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Read-only view of the payroll_config row that's driving the withholding
+ * engine right now. Lets HR sanity-check what tax tables are loaded
+ * without reading the migration SQL or shelling into the DB. Returns the
+ * row for `?year=YYYY` if provided, otherwise the current calendar year.
+ *
+ * Gated by process:payroll (matches who runs payroll). Read-only for
+ * everyone — federal-bracket edits go through a migration, not this UI.
+ */
+payrollRouter.get('/config', PROCESS, async (req, res, next) => {
+  try {
+    const yearRaw = (req.query.year ?? '').toString();
+    const year = yearRaw ? Number(yearRaw) : new Date().getFullYear();
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+      throw new HttpError(400, 'invalid_year', 'year must be a 4-digit calendar year');
+    }
+    const row = await prisma.payrollConfig.findUnique({ where: { year } });
+    if (!row) {
+      throw new HttpError(
+        404,
+        'not_found',
+        `No payroll_config row for year ${year}. Insert one via migration.`,
+      );
+    }
+    const dto: PayrollConfigDto = {
+      year: row.year,
+      ssWageBase: Number(row.ssWageBase),
+      medicareSurchargeThreshold: Number(row.medicareSurchargeThreshold),
+      fedBracketsSingle: row.fedBracketsSingle as unknown as PayrollConfigDto['fedBracketsSingle'],
+      fedBracketsMfj: row.fedBracketsMfj as unknown as PayrollConfigDto['fedBracketsMfj'],
+      fedBracketsHoh: row.fedBracketsHoh as unknown as PayrollConfigDto['fedBracketsHoh'],
+      updatedAt: row.updatedAt.toISOString(),
+    };
+    res.json(dto);
   } catch (err) {
     next(err);
   }

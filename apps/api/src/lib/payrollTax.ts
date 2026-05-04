@@ -1,4 +1,4 @@
-import type { W4FilingStatus } from '@prisma/client';
+import type { Prisma, PrismaClient, W4FilingStatus } from '@prisma/client';
 import { round2 } from './payroll.js';
 
 /**
@@ -9,28 +9,36 @@ import { round2 } from './payroll.js';
  * additional Medicare surcharge), state income tax, and the employer-side
  * matches that the company itself owes.
  *
- * Numbers anchored to **calendar year 2024** IRS Pub 15-T + SSA wage base.
- * Bumping years means editing the constants in this file — no callers
- * change. NOT a drop-in replacement for a payroll-tax SaaS like Symmetry,
- * Avalara, or Gusto Embedded; this is good enough for an internal HR
- * platform processing W-2 wages where the business has accepted the
- * compliance responsibility for keeping these tables current.
+ * The federal-side numbers (income-tax brackets, SS wage base, Medicare
+ * surcharge threshold) are loaded from the `payroll_config` table at boot
+ * — preloadPayrollTaxConfig() in lib/payrollTaxConfig wires this. SUTA
+ * per-state tables, FUTA, and state income brackets stay as code constants
+ * because they're not federal-annual updates and the org is FL-only.
+ * Bumping a federal year is a `payroll_config` row insert, not a code edit.
+ *
+ * NOT a drop-in replacement for a payroll-tax SaaS like Symmetry, Avalara,
+ * or Gusto Embedded; this is good enough for an internal HR platform
+ * processing W-2 wages where the business has accepted the compliance
+ * responsibility for keeping these tables current.
  *
  * Design choices:
- *  - Pure functions, no IO. Caller passes in YTD snapshots and we return
- *    the breakdown — keeps the engine trivially testable.
+ *  - Compute functions are sync. The DB-loaded config sits in a module
+ *    cache so per-paycheck math doesn't pay a roundtrip. Boot preloads
+ *    the current calendar year's row; tests inject via the __set helper.
+ *  - Pure aside from the cache read. Callers pass in YTD snapshots and
+ *    we return the breakdown — trivially testable with a fixture config.
  *  - Bi-weekly is the default pay frequency. Other frequencies need their
  *    own bracket tables; we expose `payFrequency` so future work plugs in.
  *  - State income tax uses a real progressive table for CA + NY (the two
  *    largest non-zero-tax states by associate count for hospitality/J-1),
  *    explicit zero for the nine no-SIT states, and a flat 4% fallback for
- *    everywhere else with a TODO for proper per-state tables. The fallback
- *    is intentionally on the high side so we never under-withhold.
+ *    everywhere else. The fallback is intentionally on the high side so
+ *    we never under-withhold.
  */
 
 export type PayFrequency = 'WEEKLY' | 'BIWEEKLY' | 'SEMIMONTHLY' | 'MONTHLY';
 
-// ---------- Federal income tax (IRS Pub 15-T 2024, percentage method) ------
+// ---------- Federal income tax (IRS Pub 15-T, percentage method) -----------
 
 interface Bracket {
   /** Lower bound of this bracket (inclusive). */
@@ -41,41 +49,91 @@ interface Bracket {
   rate: number;
 }
 
-// Annualized brackets for the percentage method, "Standard withholding"
-// (W-4 step 2 box NOT checked). Source: IRS Pub 15-T 2024, Worksheet 1A.
-// We annualize the per-cycle gross before lookup, then divide back.
-const FED_BRACKETS_2024: Record<W4FilingStatus, Bracket[]> = {
-  SINGLE: [
-    { over: 0, flat: 0, rate: 0 },
-    { over: 6_000, flat: 0, rate: 0.1 }, // first 6000 of taxable wages exempt via standard deduction adjustment
-    { over: 17_600, flat: 1_160, rate: 0.12 },
-    { over: 53_150, flat: 5_426, rate: 0.22 },
-    { over: 100_525, flat: 15_840.5, rate: 0.24 },
-    { over: 187_025, flat: 36_600.5, rate: 0.32 },
-    { over: 233_750, flat: 51_552.5, rate: 0.35 },
-    { over: 578_125, flat: 172_623.75, rate: 0.37 },
-  ],
-  MARRIED_FILING_JOINTLY: [
-    { over: 0, flat: 0, rate: 0 },
-    { over: 16_300, flat: 0, rate: 0.1 },
-    { over: 39_500, flat: 2_320, rate: 0.12 },
-    { over: 110_600, flat: 10_852, rate: 0.22 },
-    { over: 205_350, flat: 31_697, rate: 0.24 },
-    { over: 378_350, flat: 73_217, rate: 0.32 },
-    { over: 471_800, flat: 103_121, rate: 0.35 },
-    { over: 691_750, flat: 180_104, rate: 0.37 },
-  ],
-  HEAD_OF_HOUSEHOLD: [
-    { over: 0, flat: 0, rate: 0 },
-    { over: 13_300, flat: 0, rate: 0.1 },
-    { over: 29_850, flat: 1_655, rate: 0.12 },
-    { over: 76_400, flat: 7_241, rate: 0.22 },
-    { over: 113_800, flat: 15_469, rate: 0.24 },
-    { over: 200_300, flat: 36_229, rate: 0.32 },
-    { over: 247_025, flat: 51_181, rate: 0.35 },
-    { over: 591_400, flat: 171_712.25, rate: 0.37 },
-  ],
-};
+/**
+ * In-memory snapshot of the current year's federal payroll-tax constants,
+ * loaded once from the `payroll_config` table at boot. The compute
+ * functions read this synchronously — preloadPayrollTaxConfig() (or the
+ * test-only setter) MUST run before any compute call or they will throw.
+ */
+export interface PayrollTaxConfig {
+  year: number;
+  fedBrackets: Record<W4FilingStatus, Bracket[]>;
+  ssWageBase: number;
+  medicareSurchargeThreshold: number;
+}
+
+let CONFIG_CACHE: PayrollTaxConfig | null = null;
+
+type PrismaLike = Pick<PrismaClient, 'payrollConfig'>;
+
+/**
+ * Load the payroll-tax config row for `year` from the DB and cache it
+ * in-process. Idempotent — replaces the cache on each call. Server boot
+ * calls this once after DB warm-up; if you need a different year (e.g.,
+ * backdated payroll), preload that year explicitly before the run.
+ */
+export async function preloadPayrollTaxConfig(
+  prisma: PrismaLike,
+  year: number = new Date().getFullYear(),
+): Promise<void> {
+  const row = await prisma.payrollConfig.findUnique({ where: { year } });
+  if (!row) {
+    throw new Error(
+      `payrollTax: no payroll_config row for year ${year}. ` +
+        'Run the add_payroll_config migration or insert the year manually.',
+    );
+  }
+  CONFIG_CACHE = configFromRow(row);
+}
+
+/**
+ * Test-only helper: set the in-memory config without a DB roundtrip.
+ * Lets unit tests run without standing up a Prisma client. The leading
+ * underscores are a "do not use in app code" signal.
+ */
+export function __setPayrollTaxConfigForTesting(cfg: PayrollTaxConfig | null): void {
+  CONFIG_CACHE = cfg;
+}
+
+function configFromRow(row: {
+  year: number;
+  fedBracketsSingle: Prisma.JsonValue;
+  fedBracketsMfj: Prisma.JsonValue;
+  fedBracketsHoh: Prisma.JsonValue;
+  ssWageBase: Prisma.Decimal;
+  medicareSurchargeThreshold: Prisma.Decimal;
+}): PayrollTaxConfig {
+  return {
+    year: row.year,
+    fedBrackets: {
+      SINGLE: row.fedBracketsSingle as unknown as Bracket[],
+      MARRIED_FILING_JOINTLY: row.fedBracketsMfj as unknown as Bracket[],
+      HEAD_OF_HOUSEHOLD: row.fedBracketsHoh as unknown as Bracket[],
+    },
+    ssWageBase: Number(row.ssWageBase),
+    medicareSurchargeThreshold: Number(row.medicareSurchargeThreshold),
+  };
+}
+
+function getCachedConfig(): PayrollTaxConfig {
+  if (!CONFIG_CACHE) {
+    throw new Error(
+      'payrollTax: config cache empty. Call preloadPayrollTaxConfig() at ' +
+        'server boot or __setPayrollTaxConfigForTesting() in unit tests.',
+    );
+  }
+  return CONFIG_CACHE;
+}
+
+/** Year-agnostic SS wage base, read from the cached config. */
+export function SS_WAGE_BASE(): number {
+  return getCachedConfig().ssWageBase;
+}
+
+/** Additional 0.9% Medicare surcharge YTD threshold (IRC §3101(b)(2)). */
+export function MEDICARE_SURCHARGE_THRESHOLD(): number {
+  return getCachedConfig().medicareSurchargeThreshold;
+}
 
 const PERIODS_PER_YEAR: Record<PayFrequency, number> = {
   WEEKLY: 52,
@@ -116,7 +174,7 @@ export function computeFederalIncomeTax(input: FederalInput): number {
     input.grossPay * periods + Math.max(0, input.otherIncome ?? 0);
   const annualTaxable = Math.max(0, annualGross - Math.max(0, input.deductions ?? 0));
 
-  const bracket = pickBracket(FED_BRACKETS_2024[status], annualTaxable);
+  const bracket = pickBracket(getCachedConfig().fedBrackets[status], annualTaxable);
   const annualTax = bracket.flat + (annualTaxable - bracket.over) * bracket.rate;
   const annualCredits = Math.max(0, input.dependentsAmount ?? 0);
   const annualWithholding = Math.max(0, annualTax - annualCredits);
@@ -128,8 +186,6 @@ export function computeFederalIncomeTax(input: FederalInput): number {
 
 // ---------- FICA: Social Security ------------------------------------------
 
-/** 2024 Social Security wage base. Wages above this are not subject to FICA. */
-export const SS_WAGE_BASE_2024 = 168_600;
 export const SS_RATE = 0.062;
 
 export interface FicaInput {
@@ -139,7 +195,7 @@ export interface FicaInput {
 }
 
 export function computeSocialSecurity(input: FicaInput): number {
-  const remaining = Math.max(0, SS_WAGE_BASE_2024 - input.ytdWages);
+  const remaining = Math.max(0, SS_WAGE_BASE() - input.ytdWages);
   const taxable = Math.min(input.grossPay, remaining);
   return round2(Math.max(0, taxable) * SS_RATE);
 }
@@ -148,7 +204,6 @@ export function computeSocialSecurity(input: FicaInput): number {
 
 export const MEDICARE_RATE = 0.0145;
 export const MEDICARE_SURCHARGE_RATE = 0.009;
-export const MEDICARE_SURCHARGE_THRESHOLD = 200_000;
 
 export interface MedicareInput {
   grossPay: number;
@@ -158,11 +213,12 @@ export interface MedicareInput {
 
 export function computeMedicare(input: MedicareInput): number {
   const base = input.grossPay * MEDICARE_RATE;
-  // Additional 0.9% on the portion of YTD+current that exceeds $200k.
+  // Additional 0.9% on the portion of YTD+current that exceeds the threshold.
   const after = input.ytdMedicareWages + input.grossPay;
+  const threshold = MEDICARE_SURCHARGE_THRESHOLD();
   let surcharge = 0;
-  if (after > MEDICARE_SURCHARGE_THRESHOLD) {
-    const overflow = Math.min(input.grossPay, after - MEDICARE_SURCHARGE_THRESHOLD);
+  if (after > threshold) {
+    const overflow = Math.min(input.grossPay, after - threshold);
     surcharge = overflow * MEDICARE_SURCHARGE_RATE;
   }
   return round2(base + surcharge);
@@ -416,7 +472,7 @@ export interface EmployerBreakdown {
 }
 
 export function computeEmployerTaxes(input: EmployerInput): EmployerBreakdown {
-  const ssRemaining = Math.max(0, SS_WAGE_BASE_2024 - input.ytdWages);
+  const ssRemaining = Math.max(0, SS_WAGE_BASE() - input.ytdWages);
   const ssTaxable = Math.min(input.grossPay, ssRemaining);
   const fica = round2(ssTaxable * SS_RATE);
 

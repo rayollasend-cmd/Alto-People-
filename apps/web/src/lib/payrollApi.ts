@@ -1,4 +1,5 @@
 import type {
+  PayrollConfig,
   PayrollExceptionsInput,
   PayrollExceptionsResponse,
   PayrollItemListResponse,
@@ -14,6 +15,11 @@ import type {
   PayrollUpcomingSummary,
 } from '@alto-people/shared';
 import { apiFetch } from './api';
+
+export function getPayrollConfig(year?: number): Promise<PayrollConfig> {
+  const qs = year ? `?year=${year}` : '';
+  return apiFetch<PayrollConfig>(`/payroll/config${qs}`);
+}
 
 export function listPayrollRuns(
   filters: { status?: PayrollRunStatus } = {}
