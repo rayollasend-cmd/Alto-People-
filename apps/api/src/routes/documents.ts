@@ -23,6 +23,11 @@ import {
   documentUploadedTemplate,
 } from '../lib/emailTemplates.js';
 import { resolveStoragePath, UPLOAD_ROOT } from '../lib/storage.js';
+import {
+  safeContentDisposition,
+  sanitizeUploadFilename,
+  verifyFileMagic,
+} from '../lib/uploads.js';
 import { env } from '../config/env.js';
 
 export const documentsRouter = Router();
@@ -115,11 +120,16 @@ documentsRouter.post('/me/upload', upload.single('file'), async (req, res, next)
     if (!kindParse.success) {
       throw new HttpError(400, 'invalid_kind', 'Invalid or missing "kind" field');
     }
+    const magicError = verifyFileMagic(req.file.buffer, req.file.mimetype);
+    if (magicError) {
+      throw new HttpError(400, 'invalid_file_contents', magicError);
+    }
+    const cleanName = sanitizeUploadFilename(req.file.originalname);
 
     // Content-addressed path so the same upload twice stays the same blob.
     const sha = createHash('sha256').update(req.file.buffer).digest('hex').slice(0, 16);
     const id = randomUUID();
-    const ext = extname(req.file.originalname || '').toLowerCase();
+    const ext = extname(cleanName).toLowerCase();
     const relativeKey = `${id}-${sha}${ext}`;
     const fullPath = resolveStoragePath(relativeKey);
     await writeFile(fullPath, req.file.buffer);
@@ -131,7 +141,7 @@ documentsRouter.post('/me/upload', upload.single('file'), async (req, res, next)
         clientId: user.clientId,
         kind: kindParse.data,
         s3Key: relativeKey,
-        filename: req.file.originalname || 'upload',
+        filename: cleanName,
         mimeType: req.file.mimetype,
         size: req.file.size,
         status: 'UPLOADED',
@@ -145,7 +155,12 @@ documentsRouter.post('/me/upload', upload.single('file'), async (req, res, next)
       documentId: created.id,
       associateId: created.associateId,
       clientId: created.clientId,
-      metadata: { kind: created.kind, size: created.size, mime: created.mimeType },
+      metadata: {
+        kind: created.kind,
+        size: created.size,
+        mime: created.mimeType,
+        filename: created.filename,
+      },
       req,
     });
 
@@ -213,9 +228,15 @@ documentsRouter.post(
         select: { clientId: true },
       });
 
+      const magicError = verifyFileMagic(req.file.buffer, req.file.mimetype);
+      if (magicError) {
+        throw new HttpError(400, 'invalid_file_contents', magicError);
+      }
+      const cleanName = sanitizeUploadFilename(req.file.originalname);
+
       const sha = createHash('sha256').update(req.file.buffer).digest('hex').slice(0, 16);
       const id = randomUUID();
-      const ext = extname(req.file.originalname || '').toLowerCase();
+      const ext = extname(cleanName).toLowerCase();
       const relativeKey = `${id}-${sha}${ext}`;
       await writeFile(resolveStoragePath(relativeKey), req.file.buffer);
 
@@ -226,7 +247,7 @@ documentsRouter.post(
           clientId: recentApp?.clientId ?? null,
           kind: kindParse.data,
           s3Key: relativeKey,
-          filename: req.file.originalname || 'upload',
+          filename: cleanName,
           mimeType: req.file.mimetype,
           size: req.file.size,
           status: 'VERIFIED',
@@ -242,7 +263,12 @@ documentsRouter.post(
         documentId: created.id,
         associateId: created.associateId,
         clientId: created.clientId,
-        metadata: { kind: created.kind, size: created.size, mime: created.mimeType },
+        metadata: {
+          kind: created.kind,
+          size: created.size,
+          mime: created.mimeType,
+          filename: created.filename,
+        },
         req,
       });
 
@@ -281,14 +307,15 @@ documentsRouter.get('/:id/download', async (req, res, next) => {
     }
     const wantInline =
       req.query.inline === '1' && INLINEABLE_MIMES.has(doc.mimeType);
-    const safeName = doc.filename.replace(/"/g, '');
     res.setHeader('Content-Type', doc.mimeType);
     res.setHeader(
       'Content-Disposition',
-      `${wantInline ? 'inline' : 'attachment'}; filename="${safeName}"`
+      safeContentDisposition(doc.filename, wantInline),
     );
     // Belt-and-braces against framing/sniffing on the inline path.
     res.setHeader('X-Content-Type-Options', 'nosniff');
+    // Identity docs / I-9 papers: keep them out of shared & disk caches.
+    res.setHeader('Cache-Control', 'private, no-store');
     if (wantInline) {
       res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; object-src 'self'; frame-ancestors 'self'");
     }
@@ -375,6 +402,17 @@ documentsRouter.post('/admin/:id/reject', MANAGE, async (req, res, next) => {
     });
     if (!doc) throw new HttpError(404, 'document_not_found', 'Document not found');
 
+    // Drop the blob — the row stays for audit, but a rejected file shouldn't
+    // linger on disk where it can still be downloaded. Clearing s3Key makes
+    // the download endpoint 404 cleanly.
+    if (doc.s3Key) {
+      try {
+        await unlink(resolveStoragePath(doc.s3Key));
+      } catch {
+        // Best-effort: if the blob is already missing we proceed.
+      }
+    }
+
     const updated = await prisma.documentRecord.update({
       where: { id: doc.id },
       data: {
@@ -382,6 +420,7 @@ documentsRouter.post('/admin/:id/reject', MANAGE, async (req, res, next) => {
         rejectionReason: parsed.data.reason,
         verifiedById: user.id,
         verifiedAt: new Date(),
+        s3Key: null,
       },
       include: DOC_INCLUDE,
     });
@@ -391,7 +430,7 @@ documentsRouter.post('/admin/:id/reject', MANAGE, async (req, res, next) => {
       documentId: updated.id,
       associateId: updated.associateId,
       clientId: updated.clientId,
-      metadata: { reason: parsed.data.reason },
+      metadata: { reason: parsed.data.reason, filename: updated.filename },
       req,
     });
 

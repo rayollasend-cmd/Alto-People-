@@ -146,6 +146,9 @@ export function AssociateDocumentsView() {
               accept="application/pdf,image/png,image/jpeg,image/webp"
               className={cn(inputCls, 'file:text-silver file:bg-navy-secondary file:border-0 file:px-2 file:py-1 file:mr-3 file:rounded')}
             />
+            <span className="block text-xs text-silver/70 mt-1">
+              Word documents aren't supported — export to PDF first.
+            </span>
           </label>
         </div>
         {error && (
