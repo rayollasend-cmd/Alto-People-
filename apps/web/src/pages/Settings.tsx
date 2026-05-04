@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { AtSign, Bell, Camera, CheckCircle2, Clock, Copy, Download, History, KeyRound, Lock, LogOut, RefreshCw, ShieldAlert, ShieldCheck, Upload, User as UserIcon } from 'lucide-react';
+import { AtSign, Bell, Camera, CheckCircle2, ChevronDown, ChevronUp, Clock, Copy, Download, History, KeyRound, Lock, LogOut, RefreshCw, ShieldAlert, ShieldCheck, Upload, User as UserIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import QRCode from 'qrcode';
 import { MFA_RECOVERY_CODE_COUNT, type MfaEnrollStartResponse } from '@alto-people/shared';
@@ -1228,10 +1228,13 @@ function shortenAgent(ua: string | null): string {
   return `${browser} on ${os}`;
 }
 
+const LOGIN_HISTORY_PREVIEW = 5;
+
 function LoginHistoryCard() {
   const { user } = useAuth();
   const [events, setEvents] = useState<LoginEvent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
 
   // When the user has a saved timezone, format every timestamp through it
   // so the table reads consistently across devices. Falls back to the
@@ -1296,32 +1299,56 @@ function LoginHistoryCard() {
         ) : events.length === 0 ? (
           <div className="text-sm text-silver">No activity recorded yet.</div>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Event</TableHead>
-                <TableHead>When</TableHead>
-                <TableHead>Device</TableHead>
-                <TableHead>IP</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {events.map((e) => (
-                <TableRow key={e.id}>
-                  <TableCell className="text-white">{ACTION_LABEL[e.action]}</TableCell>
-                  <TableCell className="text-silver">
-                    {formatter.format(new Date(e.at))}
-                  </TableCell>
-                  <TableCell className="text-silver">
-                    {shortenAgent(e.userAgent)}
-                  </TableCell>
-                  <TableCell className="text-silver font-mono text-xs">
-                    {e.ip ?? '—'}
-                  </TableCell>
+          <>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Event</TableHead>
+                  <TableHead>When</TableHead>
+                  <TableHead>Device</TableHead>
+                  <TableHead>IP</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {(expanded ? events : events.slice(0, LOGIN_HISTORY_PREVIEW)).map((e) => (
+                  <TableRow key={e.id}>
+                    <TableCell className="text-white">{ACTION_LABEL[e.action]}</TableCell>
+                    <TableCell className="text-silver">
+                      {formatter.format(new Date(e.at))}
+                    </TableCell>
+                    <TableCell className="text-silver">
+                      {shortenAgent(e.userAgent)}
+                    </TableCell>
+                    <TableCell className="text-silver font-mono text-xs">
+                      {e.ip ?? '—'}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            {events.length > LOGIN_HISTORY_PREVIEW && (
+              <div className="mt-3 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => setExpanded((v) => !v)}
+                  className="inline-flex items-center gap-1.5 text-xs text-silver hover:text-gold-bright transition-colors"
+                  aria-expanded={expanded}
+                >
+                  {expanded ? (
+                    <>
+                      <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
+                      Show fewer
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+                      Show all {events.length}
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+          </>
         )}
       </CardContent>
     </Card>
