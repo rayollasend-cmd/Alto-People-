@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Activity,
@@ -19,7 +19,14 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/Card';
-import { DonutChart, type DonutDatum } from '@/components/ui/DonutChart';
+import type { DonutDatum } from '@/components/ui/DonutChart';
+
+// Recharts is ~290 KB. Defer it so the page paints first and the chart
+// streams in after — most users see the metric cards above the chart
+// before the donut is even on screen.
+const DonutChart = lazy(() =>
+  import('@/components/ui/DonutChart').then((m) => ({ default: m.DonutChart })),
+);
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -243,10 +250,12 @@ export function AnalyticsHome() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <DonutChart
-                    centerSublabel="Applications"
-                    data={buildStatusBreakdown(kpis.applicationStatusCounts)}
-                  />
+                  <Suspense fallback={<Skeleton className="h-64" />}>
+                    <DonutChart
+                      centerSublabel="Applications"
+                      data={buildStatusBreakdown(kpis.applicationStatusCounts)}
+                    />
+                  </Suspense>
                 </CardContent>
               </Card>
             )}
