@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { Briefcase, AlertCircle } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { listApplications } from '@/lib/onboardingApi';
@@ -21,34 +21,21 @@ export function OnboardingHome() {
 }
 
 function AssociateRedirect() {
-  const [applicationId, setApplicationId] = useState<string | null | undefined>(
-    undefined
-  );
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    // Associates only ever have a handful of applications and we just need
-    // the most recent one to redirect into. pageSize=1 keeps the response
-    // tiny even though the API would scope this to the current associate
-    // anyway.
-    listApplications({ pageSize: 1 })
-      .then((res) => {
-        if (cancelled) return;
-        setApplicationId(res.applications[0]?.id ?? null);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        if (err instanceof ApiError) {
-          setError(err.message);
-        } else {
-          setError('Failed to load your onboarding.');
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  // Associates only ever have a handful of applications and we just need
+  // the most recent one to redirect into. pageSize=1 keeps the response
+  // tiny even though the API would scope this to the current associate
+  // anyway.
+  const { data, error: queryError, isPending } = useQuery({
+    queryKey: ['onboarding', 'associate-most-recent'],
+    queryFn: async () =>
+      (await listApplications({ pageSize: 1 })).applications[0]?.id ?? null,
+  });
+  const error = queryError
+    ? queryError instanceof ApiError
+      ? queryError.message
+      : 'Failed to load your onboarding.'
+    : null;
+  const applicationId = isPending ? undefined : (data ?? null);
 
   if (error) {
     return (

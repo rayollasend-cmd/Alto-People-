@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { RouterProvider } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { router } from './App';
 import { AuthProvider } from '@/lib/auth';
 import { ThemeProvider } from '@/lib/theme';
@@ -8,6 +9,22 @@ import { DensityProvider } from '@/lib/density';
 import { PageTitleProvider } from '@/lib/pageTitle';
 import { ConfirmProvider } from '@/lib/confirm';
 import { Toaster } from '@/components/ui/Toaster';
+
+// TanStack Query — caches API reads so back-nav and revisits within
+// a session are instant. Defaults are tuned for our cold-start-prone
+// Neon Free tier: keep cached data for 5 min, mark fresh for 30 s,
+// don't refetch on window focus (too aggressive when the DB might be
+// suspended), and retry only once instead of three times.
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30_000,
+      gcTime: 5 * 60_000,
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  },
+});
 
 // Self-hosted variable fonts. Both ship as a single woff2 covering the
 // full weight range, served from our own bundle — no third-party CDN
@@ -64,17 +81,19 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
 
 ReactDOM.createRoot(rootEl).render(
   <React.StrictMode>
-    <ThemeProvider>
-      <DensityProvider>
-        <AuthProvider>
-          <PageTitleProvider>
-            <ConfirmProvider>
-              <RouterProvider router={router} />
-              <Toaster />
-            </ConfirmProvider>
-          </PageTitleProvider>
-        </AuthProvider>
-      </DensityProvider>
-    </ThemeProvider>
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider>
+        <DensityProvider>
+          <AuthProvider>
+            <PageTitleProvider>
+              <ConfirmProvider>
+                <RouterProvider router={router} />
+                <Toaster />
+              </ConfirmProvider>
+            </PageTitleProvider>
+          </AuthProvider>
+        </DensityProvider>
+      </ThemeProvider>
+    </QueryClientProvider>
   </React.StrictMode>
 );

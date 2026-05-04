@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
   Activity,
   AlertTriangle,
@@ -95,18 +96,6 @@ const CATEGORY_LABEL: Record<string, string> = {
  */
 export function ManagerDashboard() {
   const { user } = useAuth();
-  const [summary, setSummary] = useState<TeamDashboard | null>(null);
-  const [reports, setReports] = useState<DirectReport[] | null>(null);
-  const [activeEntries, setActiveEntries] = useState<TeamTimeEntry[] | null>(
-    null,
-  );
-  const [pendingTimesheets, setPendingTimesheets] = useState<
-    TeamTimeEntry[] | null
-  >(null);
-  const [pendingPto, setPendingPto] = useState<TeamTimeOffRequest[] | null>(
-    null,
-  );
-  const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
@@ -114,42 +103,46 @@ export function ManagerDashboard() {
     return () => clearInterval(t);
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const [s, r, active, ts, pto] = await Promise.all([
-          getTeamDashboard(),
-          listReports(),
-          listTeamTimesheets('ACTIVE').catch(() => ({
-            entries: [] as TeamTimeEntry[],
-          })),
-          listTeamTimesheets('COMPLETED').catch(() => ({
-            entries: [] as TeamTimeEntry[],
-          })),
-          listTeamTimeOff('PENDING').catch(() => ({
-            requests: [] as TeamTimeOffRequest[],
-          })),
-        ]);
-        if (cancelled) return;
-        setSummary(s);
-        setReports(r.reports);
-        setActiveEntries(active.entries);
-        setPendingTimesheets(ts.entries);
-        setPendingPto(pto.requests);
-      } catch (err) {
-        if (cancelled) return;
-        setError(
-          err instanceof ApiError
-            ? err.message
-            : 'Failed to load team data.',
-        );
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  // The five team queries run in parallel via useQuery — same wire shape
+  // as the previous Promise.all, but each result is independently cached
+  // so revisiting the page is instant.
+  const summaryQuery = useQuery({
+    queryKey: ['team', 'dashboard'],
+    queryFn: () => getTeamDashboard(),
+  });
+  const reportsQuery = useQuery({
+    queryKey: ['team', 'reports'],
+    queryFn: async () => (await listReports()).reports,
+  });
+  const activeQuery = useQuery({
+    queryKey: ['team', 'timesheets', 'ACTIVE'],
+    queryFn: async () => (await listTeamTimesheets('ACTIVE')).entries,
+  });
+  const pendingTimesheetsQuery = useQuery({
+    queryKey: ['team', 'timesheets', 'COMPLETED'],
+    queryFn: async () => (await listTeamTimesheets('COMPLETED')).entries,
+  });
+  const pendingPtoQuery = useQuery({
+    queryKey: ['team', 'timeoff', 'PENDING'],
+    queryFn: async () => (await listTeamTimeOff('PENDING')).requests,
+  });
+
+  const summary: TeamDashboard | null = summaryQuery.data ?? null;
+  const reports: DirectReport[] | null = reportsQuery.data ?? null;
+  const activeEntries: TeamTimeEntry[] | null = activeQuery.data ?? null;
+  const pendingTimesheets: TeamTimeEntry[] | null =
+    pendingTimesheetsQuery.data ?? null;
+  const pendingPto: TeamTimeOffRequest[] | null =
+    pendingPtoQuery.data ?? null;
+
+  // Only the two essential queries surface a banner. The other three are
+  // best-effort (mirror previous .catch(() => empty) behaviour).
+  const fatalErr = summaryQuery.error ?? reportsQuery.error;
+  const error = fatalErr
+    ? fatalErr instanceof ApiError
+      ? fatalErr.message
+      : 'Failed to load team data.'
+    : null;
 
   const greetingName = user?.email ? firstNameFromEmail(user.email) : 'there';
   const greeting = greetingFor(now.getHours());

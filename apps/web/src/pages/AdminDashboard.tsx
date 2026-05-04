@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
   Activity,
   AlertTriangle,
@@ -122,9 +123,6 @@ const humanizeAction = (action: string): string => {
 
 export function AdminDashboard() {
   const { user, role, can } = useAuth();
-  const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
-  const [activity, setActivity] = useState<AuditSearchEntry[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
 
   // Live header time, ticking every minute. Cheap.
@@ -139,38 +137,25 @@ export function AdminDashboard() {
   const canSeeAudit = can('view:audit');
   const canSeeOnboarding = can('view:onboarding');
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const [k, a] = await Promise.all([
-          getDashboardKPIs(),
-          canSeeAudit
-            ? searchAuditLogs({ limit: 15 }).catch(() => ({
-                entries: [] as AuditSearchEntry[],
-                nextBefore: null,
-              }))
-            : Promise.resolve({
-                entries: [] as AuditSearchEntry[],
-                nextBefore: null,
-              }),
-        ]);
-        if (cancelled) return;
-        setKpis(k);
-        setActivity(a.entries);
-      } catch (err) {
-        if (cancelled) return;
-        setError(
-          err instanceof ApiError
-            ? err.message
-            : 'Failed to load dashboard data.',
-        );
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [canSeeAudit]);
+  const kpisQuery = useQuery({
+    queryKey: ['dashboard', 'kpis'],
+    queryFn: () => getDashboardKPIs(),
+  });
+  const activityQuery = useQuery({
+    queryKey: ['audit', 'recent', 15],
+    queryFn: () => searchAuditLogs({ limit: 15 }),
+    enabled: canSeeAudit,
+  });
+  const kpis: DashboardKPIs | null = kpisQuery.data ?? null;
+  const activity: AuditSearchEntry[] | null = canSeeAudit
+    ? (activityQuery.data?.entries ?? null)
+    : [];
+  // KPIs are required; audit failure is silent (the section just shows empty).
+  const error = kpisQuery.error
+    ? kpisQuery.error instanceof ApiError
+      ? kpisQuery.error.message
+      : 'Failed to load dashboard data.'
+    : null;
 
   const greetingName = user?.email
     ? firstNameFromEmail(user.email)

@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
+import {
   Briefcase,
   Building2,
   Check,
@@ -135,9 +140,7 @@ function fmtPay(amount: string | null, type: string | null, currency: string | n
  * detail pages (org structure, agreements, documents, comp history).
  */
 export function PeopleDirectory() {
-  const [rows, setRows] = useState<DirectoryEntry[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [clients, setClients] = useState<ClientListItem[]>([]);
+  const queryClient = useQueryClient();
   const [filters, setFilters] = useState<DirectoryFilters>({});
   const [search, setSearch] = useState('');
   const [target, setTarget] = useState<DirectoryEntry | null>(null);
@@ -155,21 +158,28 @@ export function PeopleDirectory() {
     return () => clearTimeout(id);
   }, [search]);
 
-  useEffect(() => {
-    listClients()
-      .then((r) => setClients(r.clients))
-      .catch(() => {
-        // Non-fatal — directory still renders without the client filter.
-      });
-  }, []);
+  // Clients change rarely; cache for a long time so the filter dropdown
+  // is instant on revisit. Failures are silent — the dropdown just shows
+  // "All clients" without specific options.
+  const { data: clients = [] as ClientListItem[] } = useQuery({
+    queryKey: ['clients', 'list'],
+    queryFn: async () => (await listClients()).clients,
+    staleTime: 5 * 60_000,
+  });
 
-  useEffect(() => {
-    setRows(null);
-    setError(null);
-    listDirectory(filters)
-      .then((r) => setRows(r.associates))
-      .catch((err) => setError(err instanceof ApiError ? err.message : 'Failed to load.'));
-  }, [filters]);
+  // keepPreviousData makes filter/search changes show the old rows
+  // (faded by isFetching) until the new ones arrive instead of flashing
+  // a skeleton — much smoother on slow connections.
+  const { data: rows, error: rowsError } = useQuery({
+    queryKey: ['directory', filters],
+    queryFn: async () => (await listDirectory(filters)).associates,
+    placeholderData: keepPreviousData,
+  });
+  const error = rowsError
+    ? rowsError instanceof ApiError
+      ? rowsError.message
+      : 'Failed to load.'
+    : null;
 
   const stats = useMemo(() => {
     if (!rows) return null;
@@ -484,8 +494,10 @@ export function PeopleDirectory() {
             onAssociateChange={(patch) => {
               const updated = { ...target, ...patch };
               setTarget(updated);
-              setRows((prev) =>
-                prev ? prev.map((r) => (r.id === updated.id ? updated : r)) : prev,
+              queryClient.setQueryData<DirectoryEntry[]>(
+                ['directory', filters],
+                (old) =>
+                  old ? old.map((r) => (r.id === updated.id ? updated : r)) : old,
               );
             }}
           />
@@ -901,29 +913,19 @@ const REASON_LABEL: Record<CompChangeReason, string> = {
 };
 
 function CompensationTab({ associate: a }: { associate: DirectoryEntry }) {
-  const [records, setRecords] = useState<CompRecord[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
   const [editOpen, setEditOpen] = useState(false);
-  const [reloadTick, setReloadTick] = useState(0);
 
-  useEffect(() => {
-    let cancelled = false;
-    setRecords(null);
-    setError(null);
-    listRecords(a.id)
-      .then((r) => {
-        if (cancelled) return;
-        // Newest first — server sorts ASC by effectiveFrom; we flip for display.
-        setRecords([...r.records].reverse());
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(err instanceof ApiError ? err.message : 'Failed to load.');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [a.id, reloadTick]);
+  const { data: records, error: recordsError } = useQuery({
+    queryKey: ['comp-records', a.id],
+    // Newest first — server sorts ASC by effectiveFrom; we flip for display.
+    queryFn: async () => [...(await listRecords(a.id)).records].reverse(),
+  });
+  const error = recordsError
+    ? recordsError instanceof ApiError
+      ? recordsError.message
+      : 'Failed to load.'
+    : null;
 
   const current = records?.find((r) => r.effectiveTo === null) ?? null;
 
@@ -1017,7 +1019,9 @@ function CompensationTab({ associate: a }: { associate: DirectoryEntry }) {
         currentRecord={current}
         onSaved={() => {
           setEditOpen(false);
-          setReloadTick((n) => n + 1);
+          void queryClient.invalidateQueries({
+            queryKey: ['comp-records', a.id],
+          });
         }}
       />
     </div>
@@ -1262,38 +1266,34 @@ const DOC_STATUS_VARIANT: Record<
 };
 
 function DocumentsTab({ associateId }: { associateId: string }) {
-  const [docs, setDocs] = useState<DocumentRecord[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
   const [actingId, setActingId] = useState<string | null>(null);
   const [rejectTarget, setRejectTarget] = useState<DocumentRecord | null>(null);
   const [showUpload, setShowUpload] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    setDocs(null);
-    setError(null);
-    listAdminDocuments({ associateId })
-      .then((r) => {
-        if (cancelled) return;
-        setDocs(r.documents);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(err instanceof ApiError ? err.message : 'Failed to load.');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [associateId]);
+  const { data: docs, error: docsError } = useQuery({
+    queryKey: ['associate-docs', associateId],
+    queryFn: async () => (await listAdminDocuments({ associateId })).documents,
+  });
+  const error = docsError
+    ? docsError instanceof ApiError
+      ? docsError.message
+      : 'Failed to load.'
+    : null;
 
   function replaceDoc(updated: DocumentRecord) {
-    setDocs((prev) =>
-      prev ? prev.map((d) => (d.id === updated.id ? updated : d)) : prev,
+    queryClient.setQueryData<DocumentRecord[]>(
+      ['associate-docs', associateId],
+      (old) =>
+        old ? old.map((d) => (d.id === updated.id ? updated : d)) : old,
     );
   }
 
   function prependDoc(created: DocumentRecord) {
-    setDocs((prev) => (prev ? [created, ...prev] : [created]));
+    queryClient.setQueryData<DocumentRecord[]>(
+      ['associate-docs', associateId],
+      (old) => (old ? [created, ...old] : [created]),
+    );
   }
 
   async function handleVerify(d: DocumentRecord) {
