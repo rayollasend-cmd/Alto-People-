@@ -272,7 +272,7 @@ function ProfilePanel({
       toast.success('Profile updated.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to save.');
+      toast.error(err instanceof ApiError ? err.message : 'Save failed.');
     } finally {
       setSaving(false);
     }
@@ -564,7 +564,7 @@ function ContactDrawer({
       toast.success(draft.id ? 'Contact updated.' : 'Contact added.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to save.');
+      toast.error(err instanceof ApiError ? err.message : 'Save failed.');
     } finally {
       setSaving(false);
     }
@@ -801,7 +801,7 @@ function DependentDrawer({
       toast.success(draft.id ? 'Dependent updated.' : 'Dependent added.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to save.');
+      toast.error(err instanceof ApiError ? err.message : 'Save failed.');
     } finally {
       setSaving(false);
     }
@@ -1039,7 +1039,7 @@ function BeneficiaryDrawer({
   const [saving, setSaving] = useState(false);
   const onSubmit = async () => {
     if (!draft.name.trim()) {
-      toast.error('Name is required.');
+      toast.error('Name required.');
       return;
     }
     if (draft.percentage < 0 || draft.percentage > 100) {
@@ -1059,7 +1059,7 @@ function BeneficiaryDrawer({
       toast.success(draft.id ? 'Beneficiary updated.' : 'Beneficiary added.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to save.');
+      toast.error(err instanceof ApiError ? err.message : 'Save failed.');
     } finally {
       setSaving(false);
     }

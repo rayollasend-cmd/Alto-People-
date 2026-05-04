@@ -196,7 +196,7 @@ function BasicsEditor({
   const submit = async () => {
     const trimmed = name.trim();
     if (trimmed.length === 0) {
-      toast.error('Name is required.');
+      toast.error('Name required.');
       return;
     }
     setSaving(true);

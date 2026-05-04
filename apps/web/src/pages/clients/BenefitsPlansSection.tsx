@@ -265,7 +265,7 @@ function PlanDialog({ open, onOpenChange, clientId, existing, onSaved }: PlanDia
   const submit = async () => {
     const trimmedName = name.trim();
     if (!trimmedName) {
-      toast.error('Name is required');
+      toast.error('Name required.');
       return;
     }
     const empDefault = employeeDefault.trim() ? Math.round(Number(employeeDefault) * 100) : 0;
