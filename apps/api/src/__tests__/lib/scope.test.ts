@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { Role } from '@prisma/client';
-import { scopeApplications, scopeClients, scopeTemplates } from '../../lib/scope.js';
+import {
+  effectiveClientIdFilter,
+  scopeApplications,
+  scopeClients,
+  scopeTemplates,
+} from '../../lib/scope.js';
 import type { SessionUser } from '../../types/express.js';
 
 const baseUser = (role: Role, overrides: Partial<SessionUser> = {}): SessionUser => ({
@@ -80,5 +85,49 @@ describe('scopeTemplates', () => {
 
   it('CLIENT_PORTAL without clientId falls back to all (route still authz-gates)', () => {
     expect(scopeTemplates(baseUser('CLIENT_PORTAL', { clientId: null }))).toEqual({});
+  });
+});
+
+describe('effectiveClientIdFilter', () => {
+  it('CLIENT_PORTAL with a clientId clamps to their own, ignoring requested', () => {
+    expect(
+      effectiveClientIdFilter(
+        baseUser('CLIENT_PORTAL', { clientId: 'client-A' }),
+        'client-B',
+      ),
+    ).toBe('client-A');
+  });
+
+  it('ASSOCIATE with a clientId clamps to their own, ignoring requested', () => {
+    expect(
+      effectiveClientIdFilter(
+        baseUser('ASSOCIATE', { clientId: 'client-A' }),
+        'client-B',
+      ),
+    ).toBe('client-A');
+  });
+
+  it('CLIENT_PORTAL with no clientId on file → null (globals only)', () => {
+    expect(
+      effectiveClientIdFilter(baseUser('CLIENT_PORTAL', { clientId: null }), 'client-B'),
+    ).toBeNull();
+  });
+
+  it('ASSOCIATE with no clientId on file → null (globals only)', () => {
+    expect(
+      effectiveClientIdFilter(baseUser('ASSOCIATE', { clientId: null }), 'client-B'),
+    ).toBeNull();
+  });
+
+  it('HR_ADMINISTRATOR passes through requested clientId', () => {
+    expect(
+      effectiveClientIdFilter(baseUser('HR_ADMINISTRATOR'), 'client-B'),
+    ).toBe('client-B');
+  });
+
+  it('HR_ADMINISTRATOR with no requested → undefined (no restriction)', () => {
+    expect(
+      effectiveClientIdFilter(baseUser('HR_ADMINISTRATOR'), undefined),
+    ).toBeUndefined();
   });
 });

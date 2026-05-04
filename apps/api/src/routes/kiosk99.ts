@@ -38,7 +38,10 @@ import { encryptString, decryptString } from '../lib/crypto.js';
 
 export const kiosk99Router = Router();
 
-const VIEW = requireCapability('view:time');
+// Both list endpoints below are HR-administrative — they expose device
+// metadata and decrypted clock-in PINs. Gate them on manage:time so an
+// ASSOCIATE (who has view:time for their own punches) can't enumerate
+// other associates' kiosk credentials.
 const MANAGE = requireCapability('manage:time');
 
 // ----- Admin: KioskDevice ------------------------------------------------
@@ -57,7 +60,7 @@ const DeviceInputSchema = z.object({
   geofence: GeofenceSchema.optional(),
 });
 
-kiosk99Router.get('/kiosk-devices', VIEW, async (req, res) => {
+kiosk99Router.get('/kiosk-devices', MANAGE, async (req, res) => {
   const clientId = z.string().uuid().optional().parse(req.query.clientId);
   const rows = await prisma.kioskDevice.findMany({
     take: 500,
@@ -150,7 +153,7 @@ const PinInputSchema = z.object({
     .optional(),
 });
 
-kiosk99Router.get('/kiosk-pins', VIEW, async (req, res) => {
+kiosk99Router.get('/kiosk-pins', MANAGE, async (req, res) => {
   const clientId = z.string().uuid().parse(req.query.clientId);
   const rows = await prisma.kioskPin.findMany({
     take: 500,
@@ -252,7 +255,7 @@ kiosk99Router.delete('/kiosk-pins/:id', MANAGE, async (req, res) => {
 
 // ----- Forensics --------------------------------------------------------
 
-kiosk99Router.get('/kiosk-punches', VIEW, async (req, res) => {
+kiosk99Router.get('/kiosk-punches', MANAGE, async (req, res) => {
   const associateId = z.string().uuid().optional().parse(req.query.associateId);
   const deviceId = z.string().uuid().optional().parse(req.query.deviceId);
   const reviewStatus = z
@@ -353,7 +356,7 @@ kiosk99Router.post('/kiosk-punches/:id/review', MANAGE, async (req, res) => {
 
 // ----- Face references (Phase 101) ---------------------------------------
 
-kiosk99Router.get('/kiosk-face-references', VIEW, async (_req, res) => {
+kiosk99Router.get('/kiosk-face-references', MANAGE, async (_req, res) => {
   const rows = await prisma.kioskFaceReference.findMany({
     take: 500,
     include: {
@@ -390,7 +393,7 @@ kiosk99Router.delete(
 );
 
 // Serve the selfie image. Inline so HR can audit visually.
-kiosk99Router.get('/kiosk-punches/:id/selfie', VIEW, async (req, res) => {
+kiosk99Router.get('/kiosk-punches/:id/selfie', MANAGE, async (req, res) => {
   const p = await prisma.kioskPunch.findUnique({
     where: { id: req.params.id },
     select: { selfie: true },

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { effectiveClientIdFilter } from '../lib/scope.js';
 
 /**
  * Phase 117 — Holiday calendar.
@@ -28,7 +29,8 @@ holiday117Router.get('/holidays', VIEW, async (req, res) => {
   const year = z.coerce.number().int().min(1900).max(2100).optional().parse(
     req.query.year,
   );
-  const clientId = z.string().uuid().optional().parse(req.query.clientId);
+  const requested = z.string().uuid().optional().parse(req.query.clientId);
+  const clientId = effectiveClientIdFilter(req.user!, requested);
   const type = TYPE.optional().parse(req.query.type);
 
   const where: Record<string, unknown> = {};
@@ -38,7 +40,10 @@ holiday117Router.get('/holidays', VIEW, async (req, res) => {
       lt: new Date(`${year + 1}-01-01`),
     };
   }
-  if (clientId !== undefined) {
+  if (clientId === null) {
+    // Tenant-bounded caller with no clientId on file → company-wide only.
+    where.clientId = null;
+  } else if (clientId !== undefined) {
     // Show company-wide AND this client's holidays.
     where.OR = [{ clientId: null }, { clientId }];
   }
@@ -74,7 +79,8 @@ holiday117Router.get('/holidays/upcoming', VIEW, async (req, res) => {
   const days = z.coerce.number().int().min(1).max(365).default(30).parse(
     req.query.days,
   );
-  const clientId = z.string().uuid().optional().parse(req.query.clientId);
+  const requested = z.string().uuid().optional().parse(req.query.clientId);
+  const clientId = effectiveClientIdFilter(req.user!, requested);
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
   const cutoff = new Date(today);
@@ -84,9 +90,11 @@ holiday117Router.get('/holidays/upcoming', VIEW, async (req, res) => {
     take: 1000,
     where: {
       date: { gte: today, lte: cutoff },
-      ...(clientId
-        ? { OR: [{ clientId: null }, { clientId }] }
-        : {}),
+      ...(clientId === null
+        ? { clientId: null }
+        : clientId
+          ? { OR: [{ clientId: null }, { clientId }] }
+          : {}),
     },
     include: { client: { select: { name: true } } },
     orderBy: { date: 'asc' },

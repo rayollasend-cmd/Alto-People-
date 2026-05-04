@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { effectiveClientIdFilter } from '../lib/scope.js';
 
 /**
  * Phase 85 — Qualifications + open-shift marketplace.
@@ -47,14 +48,17 @@ const QualInputSchema = z.object({
 });
 
 qualificationsRouter.get('/qualifications', VIEW_SCHED, async (req, res) => {
-  const clientId = z.string().uuid().optional().parse(req.query.clientId);
+  const requested = z.string().uuid().optional().parse(req.query.clientId);
+  const clientId = effectiveClientIdFilter(req.user!, requested);
   const rows = await prisma.qualification.findMany({
     take: 1000,
     where: {
       deletedAt: null,
-      ...(clientId
-        ? { OR: [{ clientId }, { clientId: null }] }
-        : {}),
+      ...(clientId === null
+        ? { clientId: null }
+        : clientId
+          ? { OR: [{ clientId }, { clientId: null }] }
+          : {}),
     },
     orderBy: [{ clientId: 'asc' }, { name: 'asc' }],
   });
@@ -125,6 +129,14 @@ qualificationsRouter.get(
   VIEW_SCHED,
   async (req, res) => {
     const associateId = req.params.associateId;
+    // ASSOCIATE callers can only ever read their own qualifications via this
+    // endpoint. 404 (not 403) so they can't probe for which IDs exist.
+    if (
+      req.user!.role === 'ASSOCIATE' &&
+      req.user!.associateId !== associateId
+    ) {
+      throw new HttpError(404, 'not_found', 'Not found.');
+    }
     const rows = await prisma.associateQualification.findMany({
       take: 500,
       where: { associateId, deletedAt: null },
