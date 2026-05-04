@@ -287,7 +287,7 @@ function NewAssetDrawer({
 
   const submit = async () => {
     if (!label.trim()) {
-      toast.error('Label is required.');
+      toast.error('Label required.');
       return;
     }
     setSaving(true);
@@ -381,7 +381,7 @@ function EditAssetDrawer({
 
   const submit = async () => {
     if (!label.trim()) {
-      toast.error('Label is required.');
+      toast.error('Label required.');
       return;
     }
     setSaving(true);

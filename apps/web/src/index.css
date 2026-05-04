@@ -121,6 +121,18 @@
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
+/* `bg-black/30` and `bg-black/40` show up across the payroll views as
+   "subdued surface" backgrounds. In dark mode they read correctly; in
+   light mode the raw black ramp punches through the page background.
+   Remap to a soft slate tint so the secondary surface is still visible
+   but doesn't fight the white page. */
+:root[data-theme='light'] .bg-black\/30 {
+  background-color: rgba(15, 23, 42, 0.04);
+}
+:root[data-theme='light'] .bg-black\/40 {
+  background-color: rgba(15, 23, 42, 0.06);
+}
+
 /* ---------------------------------------------------------------------------
  * Theme-aware modal/drawer backdrop.
  *

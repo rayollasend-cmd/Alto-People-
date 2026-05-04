@@ -86,14 +86,14 @@ export function AssociateDashboard() {
       const body = geo ? { geo } : {};
       if (isClockedIn) {
         await clockOut(body);
-        toast.success('Clocked out');
+        toast.success('Clocked out.');
       } else {
         await clockIn(body);
-        toast.success('Clocked in');
+        toast.success('Clocked in.');
       }
       await refreshAll();
     } catch (err) {
-      toast.error(isClockedIn ? 'Could not clock out' : 'Could not clock in', {
+      toast.error(isClockedIn ? 'Could not clock out.' : 'Could not clock in.', {
         description: err instanceof Error ? err.message : String(err),
       });
     } finally {

@@ -276,7 +276,7 @@ function JobDialog({ open, onOpenChange, clientId, existing, onSaved }: JobDialo
   const submit = async () => {
     const trimmed = name.trim();
     if (trimmed.length === 0) {
-      toast.error('Name is required');
+      toast.error('Name required.');
       return;
     }
     const billN = billRate.trim() ? Number(billRate) : null;

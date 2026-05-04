@@ -244,11 +244,11 @@ function EnrollmentRow({
       await terminateMyEnrollment(enrollment.id, {
         terminationDate: new Date().toISOString(),
       });
-      toast.success('Enrollment ended');
+      toast.success('Enrollment ended.');
       setShowConfirm(false);
       onTerminated();
     } catch (err) {
-      toast.error('Could not stop', {
+      toast.error('Could not stop enrollment.', {
         description: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -329,7 +329,7 @@ function EnrollDialog({
     if (!plan) return;
     const cents = Math.round(Number(amount) * 100);
     if (!Number.isFinite(cents) || cents < 0) {
-      toast.error('Election amount must be a non-negative number');
+      toast.error('Election amount must be a non-negative number.');
       return;
     }
     setSubmitting(true);
@@ -339,10 +339,10 @@ function EnrollDialog({
         electedAmountCentsPerPeriod: cents,
         effectiveDate: new Date().toISOString(),
       });
-      toast.success(`Enrolled in ${plan.name}`);
+      toast.success(`Enrolled in ${plan.name}.`);
       onEnrolled();
     } catch (err) {
-      toast.error('Could not enroll', {
+      toast.error('Could not enroll.', {
         description: err instanceof Error ? err.message : String(err),
       });
     } finally {

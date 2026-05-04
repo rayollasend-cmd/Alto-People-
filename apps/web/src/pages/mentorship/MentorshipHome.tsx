@@ -185,7 +185,7 @@ export function MentorshipHome() {
         onOpenChange={(o) => !o && setCompleteTarget(null)}
         title="Complete mentorship"
         description="Mark this pairing as completed. Outcome notes are optional but help future matching."
-        confirmLabel="Mark completed"
+        confirmLabel="Mark complete"
         requireReason="optional"
         reasonLabel="Outcome notes (what went well, what to apply next time)"
         reasonPlaceholder="Optional"
