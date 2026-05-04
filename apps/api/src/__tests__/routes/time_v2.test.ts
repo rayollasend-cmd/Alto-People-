@@ -33,7 +33,10 @@ async function loginAs(email: string): Promise<TestAgent<Test>> {
 const TALLY = { lat: 30.4383, lng: -84.2807 };
 const FAR_AWAY = { lat: 30.6954, lng: -88.0399 };  // Mobile, AL — ~390 km
 
-async function seedAssociateAtTally(opts: { withGeofence?: boolean } = {}) {
+// Self-clocker = a non-ASSOCIATE role with an Associate record. Hourly
+// ASSOCIATEs are blocked from /me/clock-* and must use the kiosk PIN
+// flow, so we use MANAGER to exercise the /me/* code paths.
+async function seedSelfClockerAtTally(opts: { withGeofence?: boolean } = {}) {
   const client = await createClient();
   if (opts.withGeofence) {
     await prisma.client.update({
@@ -47,7 +50,7 @@ async function seedAssociateAtTally(opts: { withGeofence?: boolean } = {}) {
   }
   const associate = await createAssociate();
   const { user } = await createUser({
-    role: 'ASSOCIATE',
+    role: 'MANAGER',
     email: associate.email,
     associateId: associate.id,
     clientId: client.id,
@@ -57,7 +60,7 @@ async function seedAssociateAtTally(opts: { withGeofence?: boolean } = {}) {
 
 describe('Geofencing on clock-in', () => {
   it('clock-in inside the geofence has no GEOFENCE_VIOLATION_IN', async () => {
-    const { user } = await seedAssociateAtTally({ withGeofence: true });
+    const { user } = await seedSelfClockerAtTally({ withGeofence: true });
     const a = await loginAs(user.email);
     const res = await a.post('/time/me/clock-in').send({ geo: TALLY });
     expect(res.status).toBe(201);
@@ -66,7 +69,7 @@ describe('Geofencing on clock-in', () => {
   });
 
   it('clock-in outside the geofence flags GEOFENCE_VIOLATION_IN', async () => {
-    const { user } = await seedAssociateAtTally({ withGeofence: true });
+    const { user } = await seedSelfClockerAtTally({ withGeofence: true });
     const a = await loginAs(user.email);
     const res = await a.post('/time/me/clock-in').send({ geo: FAR_AWAY });
     expect(res.status).toBe(201);
@@ -74,7 +77,7 @@ describe('Geofencing on clock-in', () => {
   });
 
   it('clock-in with no geo + geofence enforced flags violation', async () => {
-    const { user } = await seedAssociateAtTally({ withGeofence: true });
+    const { user } = await seedSelfClockerAtTally({ withGeofence: true });
     const a = await loginAs(user.email);
     const res = await a.post('/time/me/clock-in').send({});
     expect(res.status).toBe(201);
@@ -82,7 +85,7 @@ describe('Geofencing on clock-in', () => {
   });
 
   it('client without geofence does not flag', async () => {
-    const { user } = await seedAssociateAtTally({ withGeofence: false });
+    const { user } = await seedSelfClockerAtTally({ withGeofence: false });
     const a = await loginAs(user.email);
     const res = await a.post('/time/me/clock-in').send({ geo: FAR_AWAY });
     expect(res.status).toBe(201);
@@ -92,14 +95,7 @@ describe('Geofencing on clock-in', () => {
 
 describe('Job-tagged clock-in', () => {
   it('clock-in with jobId snapshots payRate from the Job', async () => {
-    const client = await createClient();
-    const associate = await createAssociate();
-    const { user } = await createUser({
-      role: 'ASSOCIATE',
-      email: associate.email,
-      associateId: associate.id,
-      clientId: client.id,
-    });
+    const { client, user } = await seedSelfClockerAtTally();
     const job = await prisma.job.create({
       data: {
         clientId: client.id,
@@ -116,7 +112,7 @@ describe('Job-tagged clock-in', () => {
   });
 
   it('clock-in with unknown jobId → 404', async () => {
-    const { user } = await seedAssociateAtTally();
+    const { user } = await seedSelfClockerAtTally();
     const a = await loginAs(user.email);
     const res = await a.post('/time/me/clock-in').send({
       jobId: '00000000-0000-4000-8000-000000000000',
@@ -125,7 +121,7 @@ describe('Job-tagged clock-in', () => {
   });
 
   it('clock-in with inactive job → 404', async () => {
-    const { client, user } = await seedAssociateAtTally();
+    const { client, user } = await seedSelfClockerAtTally();
     const job = await prisma.job.create({
       data: { clientId: client.id, name: 'Old role', isActive: false },
     });
@@ -137,7 +133,7 @@ describe('Job-tagged clock-in', () => {
 
 describe('Break tracking + anomalies on clock-out', () => {
   it('start break → end break → clock-out has no NO_BREAK', async () => {
-    const { user } = await seedAssociateAtTally();
+    const { user } = await seedSelfClockerAtTally();
     const a = await loginAs(user.email);
     const ci = await a.post('/time/me/clock-in').send({});
     expect(ci.status).toBe(201);
@@ -154,7 +150,7 @@ describe('Break tracking + anomalies on clock-out', () => {
   });
 
   it('cannot start a second break while one is open', async () => {
-    const { user } = await seedAssociateAtTally();
+    const { user } = await seedSelfClockerAtTally();
     const a = await loginAs(user.email);
     await a.post('/time/me/clock-in').send({});
     await a.post('/time/me/break/start').send({ type: 'REST' });
@@ -164,7 +160,7 @@ describe('Break tracking + anomalies on clock-out', () => {
   });
 
   it('clock-out auto-closes an open break', async () => {
-    const { user } = await seedAssociateAtTally();
+    const { user } = await seedSelfClockerAtTally();
     const a = await loginAs(user.email);
     const ci = await a.post('/time/me/clock-in').send({});
     await a.post('/time/me/break/start').send({ type: 'REST' });
@@ -180,7 +176,7 @@ describe('Break tracking + anomalies on clock-out', () => {
 
 describe('Real-time active dashboard', () => {
   it('returns currently clocked-in associates with elapsed minutes', async () => {
-    const { user } = await seedAssociateAtTally({ withGeofence: true });
+    const { user } = await seedSelfClockerAtTally({ withGeofence: true });
     const a = await loginAs(user.email);
     await a.post('/time/me/clock-in').send({ geo: TALLY });
 
@@ -196,7 +192,7 @@ describe('Real-time active dashboard', () => {
   });
 
   it('shows onBreak=true when an open break exists', async () => {
-    const { user } = await seedAssociateAtTally();
+    const { user } = await seedSelfClockerAtTally();
     const a = await loginAs(user.email);
     await a.post('/time/me/clock-in').send({});
     await a.post('/time/me/break/start').send({ type: 'MEAL' });
@@ -208,7 +204,12 @@ describe('Real-time active dashboard', () => {
   });
 
   it('ASSOCIATE cannot access /admin/active', async () => {
-    const { user } = await seedAssociateAtTally();
+    const associate = await createAssociate();
+    const { user } = await createUser({
+      role: 'ASSOCIATE',
+      email: associate.email,
+      associateId: associate.id,
+    });
     const a = await loginAs(user.email);
     const res = await a.get('/time/admin/active');
     expect(res.status).toBe(403);
