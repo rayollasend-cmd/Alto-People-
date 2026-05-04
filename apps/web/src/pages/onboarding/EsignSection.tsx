@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, FileSignature, Plus } from 'lucide-react';
+import { CheckCircle2, ChevronDown, ChevronUp, FileSignature, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ChecklistTask } from '@alto-people/shared';
 import {
@@ -43,10 +43,13 @@ interface Props {
  * with optional E_SIGN-task link); the associate signs it via the
  * existing /onboarding/me/.../tasks/e_sign flow.
  */
+const ESIGN_PREVIEW = 4;
+
 export function EsignSection({ applicationId, canManage, esignTasks }: Props) {
   const [items, setItems] = useState<EsignAgreement[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openCreate, setOpenCreate] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -99,29 +102,53 @@ export function EsignSection({ applicationId, canManage, esignTasks }: Props) {
           </p>
         )}
         {items && items.length > 0 && (
-          <ul className="divide-y divide-navy-secondary/60 -my-2">
-            {items.map((a) => (
-              <li key={a.id} className="py-2.5 flex items-center gap-3">
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm text-white truncate font-medium">
-                    {a.title}
+          <>
+            <ul className="divide-y divide-navy-secondary/60 -my-2">
+              {(expanded ? items : items.slice(0, ESIGN_PREVIEW)).map((a) => (
+                <li key={a.id} className="py-2.5 flex items-center gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm text-white truncate font-medium">
+                      {a.title}
+                    </div>
+                    <div className="text-xs text-silver/70 mt-0.5">
+                      Drafted {new Date(a.createdAt).toLocaleDateString()}
+                      {a.taskId && ' · linked to a checklist task'}
+                    </div>
                   </div>
-                  <div className="text-xs text-silver/70 mt-0.5">
-                    Drafted {new Date(a.createdAt).toLocaleDateString()}
-                    {a.taskId && ' · linked to a checklist task'}
-                  </div>
-                </div>
-                {a.signedAt ? (
-                  <span className="inline-flex items-center gap-1 text-xs text-success">
-                    <CheckCircle2 className="h-3 w-3" />
-                    Signed {new Date(a.signedAt).toLocaleDateString()}
-                  </span>
-                ) : (
-                  <span className="text-xs text-silver/70">Awaiting signature</span>
-                )}
-              </li>
-            ))}
-          </ul>
+                  {a.signedAt ? (
+                    <span className="inline-flex items-center gap-1 text-xs text-success">
+                      <CheckCircle2 className="h-3 w-3" />
+                      Signed {new Date(a.signedAt).toLocaleDateString()}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-silver/70">Awaiting signature</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+            {items.length > ESIGN_PREVIEW && (
+              <div className="mt-3 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => setExpanded((v) => !v)}
+                  className="inline-flex items-center gap-1.5 text-xs text-silver hover:text-gold-bright transition-colors"
+                  aria-expanded={expanded}
+                >
+                  {expanded ? (
+                    <>
+                      <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
+                      Show fewer
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+                      Show all {items.length}
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+          </>
         )}
       </CardContent>
 
