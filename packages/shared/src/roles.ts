@@ -53,6 +53,12 @@ export type Capability =
   // FINANCE_ACCOUNTANT and OPERATIONS_MANAGER both have process:payroll
   // but cannot void or amend disbursed runs.
   | 'view:payroll' | 'process:payroll' | 'void:payroll'
+  // Gap 10 — Reimbursement workflow caps (three-step split mirrors the
+  // time-entry pattern). submit:reimbursement is the associate-side cap
+  // for creating + submitting drafts. approve:reimbursement is the manager
+  // step. settle:reimbursement is the HR/Finance step that flips a row
+  // to SETTLED so it gets folded into the next REGULAR payroll run.
+  | 'submit:reimbursement' | 'approve:reimbursement' | 'settle:reimbursement'
   | 'view:documents' | 'manage:documents'
   | 'view:communications' | 'manage:communications'
   | 'view:clients' | 'manage:clients'
@@ -132,8 +138,21 @@ const FULL_ADMIN: Capability[] = [...ALL_VIEWS, ...ALL_MANAGE, 'view:audit'];
 
 export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
   EXECUTIVE_CHAIRMAN: new Set<Capability>([...ALL_VIEWS, 'view:audit']),
-  HR_ADMINISTRATOR: new Set<Capability>([...FULL_ADMIN, 'void:payroll']),
-  OPERATIONS_MANAGER: new Set<Capability>(FULL_ADMIN),
+  // Gap 10 — HR Admin holds all three reimbursement caps so they can act
+  // as the manager fallback when an associate has no direct manager and
+  // perform the HR/Finance settle step.
+  HR_ADMINISTRATOR: new Set<Capability>([
+    ...FULL_ADMIN,
+    'void:payroll',
+    'submit:reimbursement',
+    'approve:reimbursement',
+    'settle:reimbursement',
+  ]),
+  OPERATIONS_MANAGER: new Set<Capability>([
+    ...FULL_ADMIN,
+    'submit:reimbursement',
+    'approve:reimbursement',
+  ]),
   LIVE_ASN: new Set<Capability>(),
   ASSOCIATE: new Set<Capability>([
     'view:dashboard',
@@ -147,6 +166,8 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     // /communications/me/inbox. Send/broadcast paths still gated on
     // manage:communications.
     'view:communications',
+    // Gap 10 — submit own reimbursement requests.
+    'submit:reimbursement',
   ]),
   CLIENT_PORTAL: new Set<Capability>([
     'view:dashboard',
@@ -165,9 +186,18 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'process:payroll',
     'view:comp',
     'view:analytics',
+    // Gap 10 — Finance settles approved reimbursements into the next
+    // REGULAR run. Cannot approve at the manager step.
+    'settle:reimbursement',
   ]),
   INTERNAL_RECRUITER: new Set<Capability>(FULL_ADMIN),
-  MANAGER: new Set<Capability>(FULL_ADMIN),
+  MANAGER: new Set<Capability>([
+    ...FULL_ADMIN,
+    // Gap 10 — Managers approve their direct reports' reimbursements.
+    // Settlement stays with HR / Finance.
+    'submit:reimbursement',
+    'approve:reimbursement',
+  ]),
   WORKFORCE_MANAGER: new Set<Capability>(FULL_ADMIN),
   MARKETING_MANAGER: new Set<Capability>(FULL_ADMIN),
 };

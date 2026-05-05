@@ -4,11 +4,13 @@ import { ApiError } from '@/lib/api';
 import {
   addExpenseLine,
   createReimbursement,
-  decideReimbursement,
   deleteExpenseLine,
   getReimbursement,
   listReimbursements,
-  markPaidReimbursement,
+  managerApproveReimbursement,
+  RECOMMENDED_CATEGORIES,
+  rejectReimbursement,
+  settleReimbursement,
   submitReimbursement,
   type ExpenseLineKind,
   type ReimbursementFull,
@@ -16,7 +18,7 @@ import {
   type ReimbursementSummary,
 } from '@/lib/reimbursements97Api';
 import { useAuth } from '@/lib/auth';
-import { useConfirm, usePrompt } from '@/lib/confirm';
+import { usePrompt } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -46,9 +48,19 @@ import { toast } from 'sonner';
 const STATUS_BADGE: Record<ReimbursementStatus, 'pending' | 'accent' | 'success' | 'destructive' | 'default'> = {
   DRAFT: 'default',
   SUBMITTED: 'pending',
-  APPROVED: 'accent',
+  MANAGER_APPROVED: 'pending',
+  SETTLED: 'accent',
   REJECTED: 'destructive',
   PAID: 'success',
+};
+
+const STATUS_LABEL: Record<ReimbursementStatus, string> = {
+  DRAFT: 'Draft',
+  SUBMITTED: 'Submitted',
+  MANAGER_APPROVED: 'Manager approved',
+  SETTLED: 'Settled — queued',
+  REJECTED: 'Rejected',
+  PAID: 'Paid',
 };
 
 const KIND_LABEL: Record<ExpenseLineKind, string> = {
@@ -60,7 +72,8 @@ const KIND_LABEL: Record<ExpenseLineKind, string> = {
 
 export function ReimbursementsHome() {
   const { user } = useAuth();
-  const canManage = user ? hasCapability(user.role, 'process:payroll') : false;
+  const canApprove = user ? hasCapability(user.role, 'approve:reimbursement') : false;
+  const canSettle = user ? hasCapability(user.role, 'settle:reimbursement') : false;
   const [rows, setRows] = useState<ReimbursementSummary[] | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [active, setActive] = useState<ReimbursementSummary | null>(null);
@@ -123,7 +136,7 @@ export function ReimbursementsHome() {
                       {r.currency} {Number(r.totalAmount).toFixed(2)}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={STATUS_BADGE[r.status]}>{r.status}</Badge>
+                      <Badge variant={STATUS_BADGE[r.status]}>{STATUS_LABEL[r.status]}</Badge>
                     </TableCell>
                     <TableCell>
                       {r.submittedAt
@@ -149,7 +162,8 @@ export function ReimbursementsHome() {
       {active && (
         <ReimbursementDrawer
           summary={active}
-          canManage={canManage}
+          canApprove={canApprove}
+          canSettle={canSettle}
           onClose={() => setActive(null)}
           onChanged={refresh}
         />
@@ -226,19 +240,21 @@ function NewReportDrawer({
 
 function ReimbursementDrawer({
   summary,
-  canManage,
+  canApprove,
+  canSettle,
   onClose,
   onChanged,
 }: {
   summary: ReimbursementSummary;
-  canManage: boolean;
+  canApprove: boolean;
+  canSettle: boolean;
   onClose: () => void;
   onChanged: () => void;
 }) {
-  const confirm = useConfirm();
   const prompt = usePrompt();
   const [data, setData] = useState<ReimbursementFull | null>(null);
   const [showAddLine, setShowAddLine] = useState(false);
+  const [showSettle, setShowSettle] = useState(false);
 
   const refresh = () => {
     getReimbursement(summary.id)
@@ -261,21 +277,17 @@ function ReimbursementDrawer({
     }
   };
 
-  const onDecide = async (decision: 'APPROVED' | 'REJECTED') => {
-    let reason: string | undefined;
-    if (decision === 'REJECTED') {
-      const r = await prompt({
-        title: 'Reject reimbursement',
-        reasonLabel: 'Rejection reason',
-        confirmLabel: 'Reject',
-        destructive: true,
-      });
-      if (!r) return;
-      reason = r;
-    }
+  const onManagerApprove = async () => {
+    const note = await prompt({
+      title: 'Manager approval',
+      reasonLabel: 'Note (optional)',
+      confirmLabel: 'Approve',
+      required: false,
+    });
+    if (note === null) return;
     try {
-      await decideReimbursement(summary.id, decision, reason);
-      toast.success(`${decision.toLowerCase()}.`);
+      await managerApproveReimbursement(summary.id, note || undefined);
+      toast.success('Manager approved — sent to HR/Finance to settle.');
       refresh();
       onChanged();
     } catch (err) {
@@ -283,11 +295,17 @@ function ReimbursementDrawer({
     }
   };
 
-  const onMarkPaid = async () => {
-    if (!(await confirm({ title: 'Mark as paid?' }))) return;
+  const onReject = async () => {
+    const reason = await prompt({
+      title: 'Reject reimbursement',
+      reasonLabel: 'Rejection reason',
+      confirmLabel: 'Reject',
+      destructive: true,
+    });
+    if (!reason) return;
     try {
-      await markPaidReimbursement(summary.id);
-      toast.success('Marked paid.');
+      await rejectReimbursement(summary.id, reason);
+      toast.success('Rejected.');
       refresh();
       onChanged();
     } catch (err) {
@@ -318,11 +336,34 @@ function ReimbursementDrawer({
         ) : (
           <>
             <div className="flex items-center gap-3">
-              <Badge variant={STATUS_BADGE[data.status]}>{data.status}</Badge>
+              <Badge variant={STATUS_BADGE[data.status]}>{STATUS_LABEL[data.status]}</Badge>
               <div className="text-sm text-silver">
                 Total: {data.currency} {Number(data.totalAmount).toFixed(2)}
               </div>
             </div>
+            {data.managerNote && (
+              <div className="bg-navy-secondary/40 border border-navy-secondary rounded-md p-3 text-sm">
+                <div className="font-medium text-white">Manager note:</div>
+                <div className="text-silver">{data.managerNote}</div>
+              </div>
+            )}
+            {data.settleNote && (
+              <div className="bg-navy-secondary/40 border border-navy-secondary rounded-md p-3 text-sm">
+                <div className="font-medium text-white">Settlement note:</div>
+                <div className="text-silver">{data.settleNote}</div>
+              </div>
+            )}
+            {data.status === 'SETTLED' && (
+              <div className="bg-accent/10 border border-accent/40 rounded-md p-3 text-sm text-white">
+                Queued for the next regular payroll run. Will be added to net pay
+                (after taxes) when that run is created.
+              </div>
+            )}
+            {data.status === 'PAID' && (
+              <div className="bg-success/10 border border-success/40 rounded-md p-3 text-sm text-white">
+                Paid out on payroll item {data.payrollItemId ?? '—'}.
+              </div>
+            )}
             {data.rejectionReason && (
               <div className="bg-destructive/20 border border-destructive/40 rounded-md p-3 text-sm text-white">
                 <div className="font-medium">Rejection reason:</div>
@@ -380,16 +421,23 @@ function ReimbursementDrawer({
               {editable && data.lines.length > 0 && (
                 <Button onClick={onSubmit}>Submit for approval</Button>
               )}
-              {canManage && data.status === 'SUBMITTED' && (
+              {canApprove && data.status === 'SUBMITTED' && (
                 <>
-                  <Button onClick={() => onDecide('APPROVED')}>Approve</Button>
-                  <Button variant="ghost" onClick={() => onDecide('REJECTED')}>
+                  <Button onClick={onManagerApprove}>Approve as manager</Button>
+                  <Button variant="ghost" onClick={onReject}>
                     Reject
                   </Button>
                 </>
               )}
-              {canManage && data.status === 'APPROVED' && (
-                <Button onClick={onMarkPaid}>Mark paid</Button>
+              {canSettle && data.status === 'MANAGER_APPROVED' && (
+                <>
+                  <Button onClick={() => setShowSettle(true)}>
+                    Settle (queue for payroll)
+                  </Button>
+                  <Button variant="ghost" onClick={onReject}>
+                    Reject
+                  </Button>
+                </>
               )}
             </div>
           </>
@@ -411,6 +459,109 @@ function ReimbursementDrawer({
           }}
         />
       )}
+      {showSettle && data && (
+        <SettleDialog
+          data={data}
+          onClose={() => setShowSettle(false)}
+          onDone={() => {
+            setShowSettle(false);
+            refresh();
+            onChanged();
+          }}
+        />
+      )}
+    </Drawer>
+  );
+}
+
+function SettleDialog({
+  data,
+  onClose,
+  onDone,
+}: {
+  data: ReimbursementFull;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const missingReceipts = data.lines.filter(
+    (l) => l.kind === 'RECEIPT' && !l.receiptUrl,
+  );
+  const needsWaiver = missingReceipts.length > 0;
+  const [note, setNote] = useState('');
+  const [waiverNote, setWaiverNote] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const onConfirm = async () => {
+    if (needsWaiver && !waiverNote.trim()) {
+      toast.error('Waiver note required.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await settleReimbursement(data.id, {
+        note: note.trim() || undefined,
+        waiveMissingReceipts: needsWaiver,
+        waiverNote: needsWaiver ? waiverNote.trim() : undefined,
+      });
+      toast.success('Settled — queued for next payroll.');
+      onDone();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+      <DrawerHeader>
+        <DrawerTitle>Settle reimbursement</DrawerTitle>
+      </DrawerHeader>
+      <DrawerBody className="space-y-4">
+        <div className="text-sm text-silver">
+          This will queue {data.currency} {Number(data.totalAmount).toFixed(2)} to
+          be added to {data.associateName}'s next regular payroll, after taxes.
+        </div>
+        {needsWaiver && (
+          <div className="bg-destructive/15 border border-destructive/40 rounded-md p-3 text-sm text-white space-y-2">
+            <div className="font-medium">
+              {missingReceipts.length} receipt line(s) are missing a receipt.
+            </div>
+            <div className="text-silver">
+              You can override the receipt-required guard by providing a waiver
+              note below. The note is permanently stored on the audit log.
+            </div>
+          </div>
+        )}
+        <div>
+          <Label>Settlement note (optional)</Label>
+          <Textarea
+            className="mt-1"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Internal note shown to the associate."
+          />
+        </div>
+        {needsWaiver && (
+          <div>
+            <Label>Waiver justification (required)</Label>
+            <Textarea
+              className="mt-1"
+              value={waiverNote}
+              onChange={(e) => setWaiverNote(e.target.value)}
+              placeholder="Why is this being settled without all receipts?"
+            />
+          </div>
+        )}
+      </DrawerBody>
+      <DrawerFooter>
+        <Button variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button onClick={onConfirm} disabled={saving}>
+          {saving ? 'Settling…' : needsWaiver ? 'Settle (with waiver)' : 'Settle'}
+        </Button>
+      </DrawerFooter>
     </Drawer>
   );
 }
@@ -558,7 +709,13 @@ function AddLineDrawer({
               value={category}
               onChange={(e) => setCategory(e.target.value)}
               placeholder="Travel"
+              list="reimbursement-categories"
             />
+            <datalist id="reimbursement-categories">
+              {RECOMMENDED_CATEGORIES.map((c) => (
+                <option key={c} value={c} />
+              ))}
+            </datalist>
           </div>
         </div>
         <div>

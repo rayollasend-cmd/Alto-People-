@@ -44,6 +44,14 @@ export interface PaystubData {
     issuedAt: string; // ISO datetime
   };
   /**
+   * Gap 10 — non-taxable reimbursements rolled into this paycheck. Total
+   * is added to net pay AFTER taxes (accountable-plan rule); never affects
+   * grossPay or any wage base. Only rendered when total > 0.
+   */
+  reimbursements?: {
+    total: number;
+  };
+  /**
    * Gap 3 — populated only on AMENDMENT runs. The reason is HR-supplied
    * free text captured at amend time, rendered verbatim near the top of
    * the PDF so the recipient sees why their paystub was corrected.
@@ -141,8 +149,35 @@ export async function renderPaystubPdf(data: PaystubData): Promise<Buffer> {
     rule(doc, taxesTop + 100);
     row(doc, taxesTop + 106, ['Total tax', '', '', `-$${f(data.totals.totalEmployeeTax, 2)}`], true);
 
+    // Gap 10 — non-taxable reimbursements block. Rendered between taxes and
+    // net pay so the math reads top-to-bottom: gross → tax → +reimburse → net.
+    // Skipped when total is 0 to keep the layout tight on the common case.
+    let extraOffset = 0;
+    if (data.reimbursements && data.reimbursements.total > 0) {
+      const rTop = taxesTop + 130;
+      sectionHeader(doc, 'REIMBURSEMENTS (NON-TAXABLE)', rTop);
+      row(doc, rTop + 22, [
+        'Expense reimbursements',
+        '',
+        '',
+        `+$${f(data.reimbursements.total, 2)}`,
+      ]);
+      doc
+        .font('Helvetica')
+        .fontSize(8)
+        .fillColor('#666')
+        .text(
+          'Added to net pay after taxes. Not included in gross wages or any tax base (accountable-plan rule).',
+          50,
+          rTop + 38,
+          { width: 510 },
+        );
+      doc.fillColor('#000');
+      extraOffset = 70;
+    }
+
     // Summary
-    const summaryTop = taxesTop + 145;
+    const summaryTop = taxesTop + 145 + extraOffset;
     sectionHeader(doc, 'NET PAY', summaryTop);
     doc.font('Helvetica-Bold').fontSize(20).text(`$${f(data.totals.netPay, 2)}`, 50, summaryTop + 24);
 

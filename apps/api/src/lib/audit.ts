@@ -244,6 +244,37 @@ export async function recordPayrollEvent(ctx: PayrollEventContext) {
   );
 }
 
+interface ReimbursementEventContext {
+  actorUserId: string | null;
+  action: string; // e.g. 'reimbursement.submitted'
+  reimbursementId: string;
+  associateId: string;
+  clientId?: string | null;
+  metadata?: Record<string, unknown>;
+  req?: Request;
+}
+
+export async function recordReimbursementEvent(ctx: ReimbursementEventContext) {
+  const reqMeta = ctx.req
+    ? { ip: ctx.req.ip ?? null, userAgent: ctx.req.headers['user-agent'] ?? null }
+    : {};
+  enqueueAudit(
+    {
+      actorUserId: ctx.actorUserId,
+      clientId: ctx.clientId ?? null,
+      action: ctx.action,
+      entityType: 'Reimbursement',
+      entityId: ctx.reimbursementId,
+      metadata: {
+        associateId: ctx.associateId,
+        ...reqMeta,
+        ...(ctx.metadata ?? {}),
+      },
+    },
+    'recordReimbursementEvent'
+  );
+}
+
 interface ShiftEventContext {
   actorUserId: string | null;
   action: string; // e.g. 'shift.created'
