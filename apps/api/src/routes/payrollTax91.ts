@@ -708,48 +708,76 @@ payrollTax91Router.get('/tax-forms/w2/bulk.zip', MANAGE, async (req, res, next) 
   }
 });
 
-// EFW2 e-file generator. Caller supplies the submitter block (BSO User
-// ID + contact info) per request because that data isn't stored on the
-// org today — adding a SubmitterProfile table is a future step. Full
-// disclaimer in lib/efw2.ts: field positions still need finance
-// review against SSA Pub 42-007 + AccuWage Online before BSO upload.
+// ----- Submitter profile (Gap 1) -----------------------------------------
+
+// Singleton row carrying the SSA BSO submitter info used at the top of
+// every EFW2 file. HR sets it once during BSO enrollment; the EFW2 route
+// reads it instead of accepting per-request body.
 const EinPattern = /^\d{9}$/; // EFW2 wants no dashes
-const Efw2BodySchema = z.object({
-  taxYear: z.number().int().min(2000).max(2100),
-  clientId: z.string().uuid(),
-  submitter: z.object({
-    ein: z.string().regex(EinPattern, 'EIN must be 9 digits, no dashes'),
-    userId: z.string().min(1).max(17),
-    name: z.string().min(1).max(57),
-    addressLine1: z.string().min(1).max(22),
-    addressLine2: z.string().max(22).optional().nullable(),
-    city: z.string().min(1).max(22),
-    state: z.string().length(2),
-    zip5: z.string().regex(/^\d{5}$/),
-    zip4: z
-      .string()
-      .regex(/^\d{4}$/)
-      .optional()
-      .nullable(),
-    contactName: z.string().min(1).max(57),
-    contactPhone: z.string().min(7).max(20),
-    contactEmail: z.string().email().max(40),
-  }),
+const SubmitterProfileBodySchema = z.object({
+  ein: z.string().regex(EinPattern, 'EIN must be 9 digits, no dashes'),
+  userId: z.string().min(1).max(17),
+  name: z.string().min(1).max(57),
+  addressLine1: z.string().min(1).max(22),
+  addressLine2: z.string().max(22).optional().nullable(),
+  city: z.string().min(1).max(22),
+  state: z.string().length(2),
+  zip5: z.string().regex(/^\d{5}$/),
+  zip4: z.string().regex(/^\d{4}$/).optional().nullable(),
+  contactName: z.string().min(1).max(57),
+  contactPhone: z.string().min(7).max(20),
+  contactEmail: z.string().email().max(40),
 });
 
+payrollTax91Router.get('/tax-forms/submitter', VIEW, async (_req, res) => {
+  const row = await prisma.submitterProfile.findUnique({ where: { id: 'singleton' } });
+  res.json({ profile: row ?? null });
+});
+
+payrollTax91Router.post('/tax-forms/submitter', MANAGE, async (req, res) => {
+  const input = SubmitterProfileBodySchema.parse(req.body);
+  const row = await prisma.submitterProfile.upsert({
+    where: { id: 'singleton' },
+    create: { id: 'singleton', ...input, addressLine2: input.addressLine2 ?? null, zip4: input.zip4 ?? null },
+    update: { ...input, addressLine2: input.addressLine2 ?? null, zip4: input.zip4 ?? null },
+  });
+  res.json({ profile: row });
+});
+
+// ----- EFW2 generator (Gap 1) --------------------------------------------
+
 /**
- * POST /tax-forms/w2/efw2.txt — builds and streams the EFW2 e-file for
- * a year + client. Includes every non-VOIDED W-2 row whose associate
- * has a disbursed run for that client in the year. Capability:
- * process:payroll. Output is plain ASCII (Windows-1252 compatible).
+ * GET /tax-forms/w2/efw2.txt?taxYear=YYYY&clientId=UUID — builds and
+ * streams the EFW2 e-file. Includes every non-VOIDED W-2 row whose
+ * associate has a disbursed run for that client in the year. GET so
+ * the admin UI can trigger the download with a plain anchor tag.
  *
- * The submitter block is supplied per request because BSO User ID +
- * filing contact info aren't stored on the org yet. HR admin types
- * them in once per filing — a SubmitterProfile table is a follow-up.
+ * Submitter block is read from the SubmitterProfile singleton — finance
+ * sets it up once via POST /tax-forms/submitter. The route 400s with a
+ * clear error if the profile is missing.
+ *
+ * Output is plain ASCII (Windows-1252 compatible). Capability:
+ * process:payroll.
  */
-payrollTax91Router.post('/tax-forms/w2/efw2.txt', MANAGE, async (req, res, next) => {
+payrollTax91Router.get('/tax-forms/w2/efw2.txt', MANAGE, async (req, res, next) => {
   try {
-    const input = Efw2BodySchema.parse(req.body);
+    const input = {
+      taxYear: z
+        .preprocess((v) => Number(v), z.number().int().min(2000).max(2100))
+        .parse(req.query.taxYear),
+      clientId: z.string().uuid().parse(req.query.clientId),
+    };
+
+    const submitter = await prisma.submitterProfile.findUnique({
+      where: { id: 'singleton' },
+    });
+    if (!submitter) {
+      throw new HttpError(
+        400,
+        'submitter_profile_missing',
+        'No SubmitterProfile on file. HR must POST /tax-forms/submitter with the BSO User ID + contact info before generating an EFW2 file.',
+      );
+    }
 
     const client = await prisma.client.findUnique({
       where: { id: input.clientId },
@@ -874,18 +902,18 @@ payrollTax91Router.post('/tax-forms/w2/efw2.txt', MANAGE, async (req, res, next)
 
     const efw2Input: Efw2File = {
       submitter: {
-        ein: input.submitter.ein,
-        userId: input.submitter.userId,
-        name: input.submitter.name,
-        addressLine1: input.submitter.addressLine1,
-        addressLine2: input.submitter.addressLine2 ?? undefined,
-        city: input.submitter.city,
-        state: input.submitter.state,
-        zip5: input.submitter.zip5,
-        zip4: input.submitter.zip4 ?? undefined,
-        contactName: input.submitter.contactName,
-        contactPhone: input.submitter.contactPhone,
-        contactEmail: input.submitter.contactEmail,
+        ein: submitter.ein,
+        userId: submitter.userId,
+        name: submitter.name,
+        addressLine1: submitter.addressLine1,
+        addressLine2: submitter.addressLine2 ?? undefined,
+        city: submitter.city,
+        state: submitter.state,
+        zip5: submitter.zip5,
+        zip4: submitter.zip4 ?? undefined,
+        contactName: submitter.contactName,
+        contactPhone: submitter.contactPhone,
+        contactEmail: submitter.contactEmail,
       },
       employer: {
         ein: employerEin,

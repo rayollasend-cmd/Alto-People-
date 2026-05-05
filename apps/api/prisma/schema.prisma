@@ -5179,6 +5179,30 @@ model PayrollConfig {
   @@map("payroll_config")
 }
 
+// Gap 1 — Singleton row carrying the SSA BSO submitter block used at the
+// top of every EFW2 e-file we generate. HR fills this in once during BSO
+// enrollment; subsequent filings read from here so finance never has to
+// re-enter the User ID. Same fixed-id-of-'singleton' pattern as OrgSetting.
+model SubmitterProfile {
+  id            String    @id @default("singleton") @db.VarChar(16)
+  // 9-digit EIN, no dashes (validated by CHECK in the migration).
+  ein           String    @db.VarChar(9)
+  // BSO User ID — assigned by SSA when the company registers for the
+  // Business Services Online portal. Required to file electronically.
+  userId        String    @db.VarChar(17)
+  name          String    @db.VarChar(57)
+  addressLine1  String    @db.VarChar(22)
+  addressLine2  String?   @db.VarChar(22)
+  city          String    @db.VarChar(22)
+  state         String    @db.VarChar(2)
+  zip5          String    @db.VarChar(5)
+  zip4          String?   @db.VarChar(4)
+  contactName   String    @db.VarChar(57)
+  contactPhone  String    @db.VarChar(20)
+  contactEmail  String    @db.VarChar(40)
+  updatedAt     DateTime  @updatedAt @db.Timestamptz(6)
+}
+
 // Status of OUR processing of a Branch webhook delivery — distinct from
 // the Branch payment lifecycle status carried in the payload.
 enum BranchWebhookStatus {

@@ -150,3 +150,52 @@ export const w2BulkZipUrl = (taxYear: number, clientId?: string | null): string 
   if (clientId) q.set('clientId', clientId);
   return `/api/tax-forms/w2/bulk.zip?${q.toString()}`;
 };
+
+/** Direct URL for the EFW2 e-file (year + client required). */
+export const w2Efw2Url = (taxYear: number, clientId: string): string => {
+  const q = new URLSearchParams({ taxYear: String(taxYear), clientId });
+  return `/api/tax-forms/w2/efw2.txt?${q.toString()}`;
+};
+
+// ----- Submitter profile (Gap 1) ----------------------------------------
+
+export interface SubmitterProfile {
+  id: 'singleton';
+  ein: string;
+  userId: string;
+  name: string;
+  addressLine1: string;
+  addressLine2: string | null;
+  city: string;
+  state: string;
+  zip5: string;
+  zip4: string | null;
+  contactName: string;
+  contactPhone: string;
+  contactEmail: string;
+  updatedAt: string;
+}
+
+export interface SubmitterProfileInput {
+  ein: string;
+  userId: string;
+  name: string;
+  addressLine1: string;
+  addressLine2?: string | null;
+  city: string;
+  state: string;
+  zip5: string;
+  zip4?: string | null;
+  contactName: string;
+  contactPhone: string;
+  contactEmail: string;
+}
+
+export const getSubmitterProfile = () =>
+  apiFetch<{ profile: SubmitterProfile | null }>('/tax-forms/submitter');
+
+export const saveSubmitterProfile = (input: SubmitterProfileInput) =>
+  apiFetch<{ profile: SubmitterProfile }>('/tax-forms/submitter', {
+    method: 'POST',
+    body: input,
+  });

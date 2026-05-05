@@ -7,15 +7,20 @@ import {
   createTaxForm,
   fileTaxForm,
   generateW2s,
+  getSubmitterProfile,
   listGarnishments,
   listTaxForms,
+  saveSubmitterProfile,
   setGarnishmentStatus,
   taxFormPdfUrl,
   voidTaxForm,
   w2BulkZipUrl,
+  w2Efw2Url,
   type Garnishment,
   type GarnishmentKind,
   type GarnishmentStatus,
+  type SubmitterProfile,
+  type SubmitterProfileInput,
   type TaxForm,
   type TaxFormKind,
 } from '@/lib/payrollTax91Api';
@@ -419,6 +424,7 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
   const [showNew, setShowNew] = useState(false);
   const [show941Builder, setShow941Builder] = useState(false);
   const [showW2Generate, setShowW2Generate] = useState(false);
+  const [showSubmitter, setShowSubmitter] = useState(false);
 
   const refresh = () => {
     setRows(null);
@@ -456,6 +462,9 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
     <div className="space-y-4">
       {canManage && (
         <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={() => setShowSubmitter(true)}>
+            Submitter profile
+          </Button>
           <Button variant="ghost" onClick={() => setShow941Builder(true)}>
             Build 941
           </Button>
@@ -553,6 +562,9 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
           }}
         />
       )}
+      {showSubmitter && (
+        <SubmitterProfileDrawer onClose={() => setShowSubmitter(false)} />
+      )}
     </div>
   );
 }
@@ -625,14 +637,32 @@ function W2GenerateDrawer({
             <div>Created: {result.createdCount}</div>
             <div>Skipped (already on file): {result.skippedCount}</div>
             {result.createdCount > 0 && (
-              <Button asChild variant="ghost" size="sm" className="mt-1">
-                <a
-                  href={w2BulkZipUrl(Number(taxYear), clientId.trim() || null)}
-                  download
-                >
-                  <Download className="mr-1 h-3 w-3" /> Download all as ZIP
-                </a>
-              </Button>
+              <div className="flex flex-wrap gap-2 mt-1">
+                <Button asChild variant="ghost" size="sm">
+                  <a
+                    href={w2BulkZipUrl(Number(taxYear), clientId.trim() || null)}
+                    download
+                  >
+                    <Download className="mr-1 h-3 w-3" /> Download all as ZIP
+                  </a>
+                </Button>
+                {clientId.trim() && (
+                  <Button asChild variant="ghost" size="sm">
+                    <a
+                      href={w2Efw2Url(Number(taxYear), clientId.trim())}
+                      download
+                    >
+                      <Download className="mr-1 h-3 w-3" /> Download EFW2 e-file
+                    </a>
+                  </Button>
+                )}
+              </div>
+            )}
+            {result.createdCount > 0 && !clientId.trim() && (
+              <div className="text-xs text-silver">
+                EFW2 e-file requires a specific clientId — pick one client
+                and re-generate to enable the e-file download.
+              </div>
             )}
           </div>
         )}
@@ -842,6 +872,196 @@ function Form941BuilderDrawer({ onClose }: { onClose: () => void }) {
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>
           Close
+        </Button>
+      </DrawerFooter>
+    </Drawer>
+  );
+}
+
+function SubmitterProfileDrawer({ onClose }: { onClose: () => void }) {
+  const [profile, setProfile] = useState<SubmitterProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState<SubmitterProfileInput>({
+    ein: '',
+    userId: '',
+    name: '',
+    addressLine1: '',
+    addressLine2: '',
+    city: '',
+    state: '',
+    zip5: '',
+    zip4: '',
+    contactName: '',
+    contactPhone: '',
+    contactEmail: '',
+  });
+
+  useEffect(() => {
+    getSubmitterProfile()
+      .then((r) => {
+        if (r.profile) {
+          setProfile(r.profile);
+          setForm({
+            ein: r.profile.ein,
+            userId: r.profile.userId,
+            name: r.profile.name,
+            addressLine1: r.profile.addressLine1,
+            addressLine2: r.profile.addressLine2 ?? '',
+            city: r.profile.city,
+            state: r.profile.state,
+            zip5: r.profile.zip5,
+            zip4: r.profile.zip4 ?? '',
+            contactName: r.profile.contactName,
+            contactPhone: r.profile.contactPhone,
+            contactEmail: r.profile.contactEmail,
+          });
+        }
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  const onSave = async () => {
+    setSaving(true);
+    try {
+      const r = await saveSubmitterProfile({
+        ...form,
+        addressLine2: form.addressLine2?.trim() || null,
+        zip4: form.zip4?.trim() || null,
+      });
+      setProfile(r.profile);
+      toast.success('Submitter profile saved.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const update = (k: keyof SubmitterProfileInput) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  return (
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()} width="max-w-2xl">
+      <DrawerHeader>
+        <DrawerTitle>SSA submitter profile</DrawerTitle>
+      </DrawerHeader>
+      <DrawerBody className="space-y-4">
+        <div className="text-sm text-silver">
+          Used as the RA submitter record at the top of every EFW2 e-file.
+          The BSO User ID is assigned by SSA during Business Services Online
+          enrollment and is required to submit electronically.
+        </div>
+        {loading ? (
+          <SkeletonRows count={3} />
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>EIN (9 digits, no dashes)</Label>
+                <Input
+                  className="mt-1 font-mono"
+                  value={form.ein}
+                  onChange={update('ein')}
+                  placeholder="123456789"
+                />
+              </div>
+              <div>
+                <Label>BSO User ID</Label>
+                <Input
+                  className="mt-1 font-mono"
+                  value={form.userId}
+                  onChange={update('userId')}
+                />
+              </div>
+            </div>
+            <div>
+              <Label>Submitter name (max 57 chars)</Label>
+              <Input className="mt-1" value={form.name} onChange={update('name')} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Address line 1</Label>
+                <Input
+                  className="mt-1"
+                  value={form.addressLine1}
+                  onChange={update('addressLine1')}
+                />
+              </div>
+              <div>
+                <Label>Address line 2 (optional)</Label>
+                <Input
+                  className="mt-1"
+                  value={form.addressLine2 ?? ''}
+                  onChange={update('addressLine2')}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-4 gap-3">
+              <div className="col-span-2">
+                <Label>City</Label>
+                <Input className="mt-1" value={form.city} onChange={update('city')} />
+              </div>
+              <div>
+                <Label>State</Label>
+                <Input
+                  className="mt-1"
+                  maxLength={2}
+                  value={form.state}
+                  onChange={update('state')}
+                />
+              </div>
+              <div>
+                <Label>ZIP</Label>
+                <Input
+                  className="mt-1"
+                  maxLength={5}
+                  value={form.zip5}
+                  onChange={update('zip5')}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <Label>Contact name</Label>
+                <Input
+                  className="mt-1"
+                  value={form.contactName}
+                  onChange={update('contactName')}
+                />
+              </div>
+              <div>
+                <Label>Contact phone</Label>
+                <Input
+                  className="mt-1"
+                  value={form.contactPhone}
+                  onChange={update('contactPhone')}
+                />
+              </div>
+              <div>
+                <Label>Contact email</Label>
+                <Input
+                  className="mt-1"
+                  type="email"
+                  value={form.contactEmail}
+                  onChange={update('contactEmail')}
+                />
+              </div>
+            </div>
+            {profile && (
+              <div className="text-xs text-silver">
+                Last updated: {new Date(profile.updatedAt).toLocaleString()}
+              </div>
+            )}
+          </>
+        )}
+      </DrawerBody>
+      <DrawerFooter>
+        <Button variant="ghost" onClick={onClose}>
+          Close
+        </Button>
+        <Button onClick={onSave} disabled={saving || loading}>
+          {saving ? 'Saving…' : profile ? 'Save changes' : 'Create profile'}
         </Button>
       </DrawerFooter>
     </Drawer>
