@@ -41,5 +41,8 @@ Desktop.ini
 # Document storage (Phase 9 — local fs; S3 in production)
 apps/api/uploads/
 
+# Generated sample EFW2/EFW2C files for AccuWage validation (script output)
+apps/api/scripts/output/
+
 # Local Claude Code agent state
 .claude/
