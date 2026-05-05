@@ -34,6 +34,7 @@ import { requireCapability } from '../middleware/auth.js';
 import { scopePayrollRuns, scopePayrollSchedules } from '../lib/scope.js';
 import { getCurrentPeriod, getNextPeriod } from '../lib/payrollSchedule.js';
 import { round2 } from '../lib/payroll.js';
+import { isStateTaxSupported } from '../lib/payrollTax.js';
 import { aggregatePayrollProjection } from '../lib/payrollAggregator.js';
 import { consumePendingDeductions } from '../lib/payrollYtd.js';
 import { computePayrollExceptions } from '../lib/payrollExceptions.js';
@@ -2160,6 +2161,95 @@ payrollRouter.get('/config', PROCESS, async (req, res, next) => {
       updatedAt: row.updatedAt.toISOString(),
     };
     res.json(dto);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Payroll readiness dashboard ====================================== */
+
+/**
+ * GET /payroll/readiness — one row per active associate, with five
+ * green/red flags so HR can fix missing data BEFORE the run is created
+ * (rather than discovering it during the wizard).
+ *
+ *   - w4OnFile          W-2 employees: W4Submission row exists.
+ *                       1099 contractors: tinEncrypted is non-null
+ *                       (W-9 capture). Same column, polymorphic by
+ *                       employmentType — the column header in the UI
+ *                       reads "W-4 / TIN".
+ *   - taxStateSet       Associate.state non-null AND in the supported
+ *                       state-tax table (FL passes — it's a no-SIT
+ *                       state in the supported set).
+ *   - payoutMethodOnFile  Primary PayoutMethod with at least one rail:
+ *                         a Branch card OR encrypted bank account.
+ *   - payScheduleAssigned  Associate.payrollScheduleId non-null.
+ *   - userLinked        A User row points at this Associate.
+ *
+ * Read-only. The web UI links each red flag to the associate's profile
+ * with a `?focus=` query param so HR lands on the right field.
+ */
+payrollRouter.get('/readiness', PROCESS, async (_req, res, next) => {
+  try {
+    const associates = await prisma.associate.findMany({
+      where: { deletedAt: null },
+      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        state: true,
+        employmentType: true,
+        payrollScheduleId: true,
+        tinEncrypted: true,
+        w4Submission: { select: { id: true } },
+        user: { select: { id: true } },
+        payoutMethods: {
+          where: { isPrimary: true },
+          take: 1,
+          select: { branchCardId: true, accountNumberEnc: true },
+        },
+      },
+    });
+
+    const rows = associates.map((a) => {
+      const primary = a.payoutMethods[0] ?? null;
+      const w4OnFile =
+        a.employmentType === 'W2_EMPLOYEE'
+          ? a.w4Submission !== null
+          : a.tinEncrypted !== null;
+      const taxStateSet = isStateTaxSupported(a.state);
+      const payoutMethodOnFile =
+        !!primary && (primary.branchCardId !== null || primary.accountNumberEnc !== null);
+      const payScheduleAssigned = a.payrollScheduleId !== null;
+      const userLinked = a.user !== null;
+      const ready =
+        w4OnFile && taxStateSet && payoutMethodOnFile && payScheduleAssigned && userLinked;
+      return {
+        associateId: a.id,
+        firstName: a.firstName,
+        lastName: a.lastName,
+        email: a.email,
+        employmentType: a.employmentType,
+        flags: {
+          w4OnFile,
+          taxStateSet,
+          payoutMethodOnFile,
+          payScheduleAssigned,
+          userLinked,
+        },
+        ready,
+      };
+    });
+
+    const readyCount = rows.filter((r) => r.ready).length;
+    res.json({
+      total: rows.length,
+      readyCount,
+      missingCount: rows.length - readyCount,
+      rows,
+    });
   } catch (err) {
     next(err);
   }
