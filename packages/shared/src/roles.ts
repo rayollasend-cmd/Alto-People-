@@ -47,7 +47,12 @@ export type Capability =
   | 'view:onboarding' | 'manage:onboarding'
   | 'view:time' | 'manage:time'
   | 'view:scheduling' | 'manage:scheduling'
-  | 'view:payroll' | 'process:payroll'
+  // Gap 3 — `void:payroll` is intentionally NOT part of FULL_ADMIN.
+  // Voiding a disbursed run reverses a QBO journal entry and marks
+  // associate paystubs as VOIDED. Granted to HR_ADMINISTRATOR only.
+  // FINANCE_ACCOUNTANT and OPERATIONS_MANAGER both have process:payroll
+  // but cannot void or amend disbursed runs.
+  | 'view:payroll' | 'process:payroll' | 'void:payroll'
   | 'view:documents' | 'manage:documents'
   | 'view:communications' | 'manage:communications'
   | 'view:clients' | 'manage:clients'
@@ -127,7 +132,7 @@ const FULL_ADMIN: Capability[] = [...ALL_VIEWS, ...ALL_MANAGE, 'view:audit'];
 
 export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
   EXECUTIVE_CHAIRMAN: new Set<Capability>([...ALL_VIEWS, 'view:audit']),
-  HR_ADMINISTRATOR: new Set<Capability>(FULL_ADMIN),
+  HR_ADMINISTRATOR: new Set<Capability>([...FULL_ADMIN, 'void:payroll']),
   OPERATIONS_MANAGER: new Set<Capability>(FULL_ADMIN),
   LIVE_ASN: new Set<Capability>(),
   ASSOCIATE: new Set<Capability>([

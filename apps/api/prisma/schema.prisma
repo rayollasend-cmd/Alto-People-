@@ -205,7 +205,15 @@ enum PayrollRunStatus {
   DRAFT // newly created, items aggregated, can be edited
   FINALIZED // locked for review, ready to disburse
   DISBURSED // funds sent (real or stubbed)
-  CANCELLED
+  CANCELLED // voided after disbursement (Gap 3)
+}
+
+// Gap 3 — distinguishes regular periodic runs from off-cycle bonus/terminal-pay
+// runs and from amendment runs that correct a prior disbursed run.
+enum PayrollRunKind {
+  REGULAR
+  OFF_CYCLE
+  AMENDMENT
 }
 
 enum PayrollItemStatus {
@@ -213,6 +221,7 @@ enum PayrollItemStatus {
   DISBURSED // sent (with disbursementRef)
   FAILED // disbursement attempt failed
   HELD // HR put a hold on this single item
+  VOIDED // Gap 3 — set when the parent run is voided
 }
 
 // Wave 1.1 — Pay schedule cadence. Mirrors QuickBooks Online Payroll's four
@@ -337,6 +346,7 @@ model User {
   timeApprovals                     TimeEntry[]                  @relation("TimeApprover")
   createdShifts                     Shift[]                      @relation("ShiftCreator")
   createdPayrollRuns                PayrollRun[]                 @relation("PayrollRunCreator")
+  cancelledPayrollRuns              PayrollRun[]                 @relation("PayrollRunCanceller")
   verifiedDocuments                 DocumentRecord[]             @relation("DocumentVerifier")
   sentNotifications                 Notification[]               @relation("NotificationSender")
   receivedNotifications             Notification[]               @relation("NotificationRecipient")
@@ -598,6 +608,7 @@ model Associate {
   timeEntries             TimeEntry[]
   assignedShifts          Shift[]
   payrollItems            PayrollItem[]
+  pendingPayrollDeductions PendingPayrollDeduction[]
   performanceReviews      PerformanceReview[]
   availability            AssociateAvailability[]
   swapsRequested          ShiftSwapRequest[]       @relation("SwapRequester")
@@ -1361,6 +1372,11 @@ model PayrollRun {
   periodStart           DateTime               @db.Date
   periodEnd             DateTime               @db.Date
   status                PayrollRunStatus       @default(DRAFT)
+  // Gap 3 — REGULAR (default), OFF_CYCLE (bonuses, terminal pay), or
+  // AMENDMENT (correction of a prior disbursed run; pairs with amendsRunId
+  // and amendmentReason, both required when kind=AMENDMENT, enforced by
+  // CHECK constraints in the migration).
+  kind                  PayrollRunKind         @default(REGULAR)
   totalGross            Decimal                @default(0) @db.Decimal(12, 2)
   totalTax              Decimal                @default(0) @db.Decimal(12, 2)
   totalNet              Decimal                @default(0) @db.Decimal(12, 2)
@@ -1372,6 +1388,18 @@ model PayrollRun {
   finalizedAt           DateTime?              @db.Timestamptz(6)
   disbursedAt           DateTime?              @db.Timestamptz(6)
   cancelledAt           DateTime?              @db.Timestamptz(6)
+  // Gap 3 — void metadata. cancelledById = HR Admin who voided. cancelReason
+  // is the mandatory free-text justification (CHECK enforces non-empty when
+  // status=CANCELLED). voidJournalEntryId is the QBO reversing JE id.
+  cancelledById         String?                @db.Uuid
+  cancelReason          String?
+  voidJournalEntryId    String?                @db.VarChar(64)
+  // Gap 3 — amendment metadata. amendsRunId points to the run this run
+  // corrects (required + non-self when kind=AMENDMENT). amendmentReason is
+  // the mandatory free-text justification (CHECK enforces non-empty when
+  // kind=AMENDMENT) — rendered on the amendment paystub PDF.
+  amendsRunId           String?                @db.Uuid
+  amendmentReason       String?
   // Phase 44 — QuickBooks Online journal-entry sync. Set to the QBO
   // JournalEntry.Id on first successful sync; qboSyncError carries the
   // last failure reason so HR can retry from the UI.
@@ -1380,16 +1408,23 @@ model PayrollRun {
   qboSyncError          String?
   client                Client?                @relation(fields: [clientId], references: [id], onDelete: SetNull)
   createdBy             User?                  @relation("PayrollRunCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  cancelledBy           User?                  @relation("PayrollRunCanceller", fields: [cancelledById], references: [id], onDelete: SetNull)
+  amendsRun             PayrollRun?            @relation("PayrollRunAmendments", fields: [amendsRunId], references: [id], onDelete: Restrict)
+  amendments            PayrollRun[]           @relation("PayrollRunAmendments")
   items                 PayrollItem[]
   // Phase 91 — garnishment deductions sourced from this run.
   garnishmentDeductions GarnishmentDeduction[]
   // Phase 97 — reimbursements paid in this run.
   reimbursementsPaid    Reimbursement[]
+  // Gap 3 — pending deductions consumed by this run (overpayment clawbacks).
+  pendingDeductionsApplied PendingPayrollDeduction[] @relation("PendingDeductionAppliedRun")
   createdAt             DateTime               @default(now()) @db.Timestamptz(6)
   updatedAt             DateTime               @updatedAt @db.Timestamptz(6)
 
   @@index([clientId, periodStart])
   @@index([status])
+  @@index([kind])
+  @@index([amendsRunId])
 }
 
 model PayrollItem {
@@ -1442,8 +1477,19 @@ model PayrollItem {
   disbursementRef    String?
   disbursedAt        DateTime?         @db.Timestamptz(6)
   failureReason      String?
+  // Gap 3 — set when the parent run is voided; mirrors the run's
+  // cancelledAt at void time. Lets the paystub PDF render a "VOID"
+  // watermark dated to this timestamp.
+  voidedAt           DateTime?         @db.Timestamptz(6)
+  // Gap 3 — points to the original PayrollItem this row corrects.
+  // Required when the parent run is kind=AMENDMENT (route handler
+  // enforces; cross-row CHECK is awkward in Postgres). The live YTD
+  // recalc joins on this column to sum original + amendment items.
+  amendsItemId       String?           @db.Uuid
   payrollRun         PayrollRun        @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
   associate          Associate         @relation(fields: [associateId], references: [id], onDelete: Restrict)
+  amendsItem         PayrollItem?      @relation("PayrollItemAmendments", fields: [amendsItemId], references: [id], onDelete: Restrict)
+  amendments         PayrollItem[]     @relation("PayrollItemAmendments")
   createdAt          DateTime          @default(now()) @db.Timestamptz(6)
   updatedAt          DateTime          @updatedAt @db.Timestamptz(6)
 
@@ -1462,11 +1508,18 @@ model PayrollItem {
   // for "what state did Branch tell us about this payment, and when".
   branchWebhookEvents BranchWebhookEvent[]
 
+  // Gap 3 — pending deductions sourced from this item (when an AMENDMENT
+  // item carries a negative net) and pending deductions applied on this
+  // item (when it's a regular run absorbing a clawback).
+  pendingDeductionsCreated PendingPayrollDeduction[] @relation("PendingDeductionSource")
+  pendingDeductionsApplied PendingPayrollDeduction[] @relation("PendingDeductionAppliedItem")
+
   // One paystub per (run, associate) — re-aggregating updates in place
   // rather than duplicating.
   @@unique([payrollRunId, associateId])
   @@index([associateId])
   @@index([status])
+  @@index([amendsItemId])
 }
 
 // Wave 1.2 — One row per earning line on a paystub. The sum of all
@@ -1490,6 +1543,46 @@ model PayrollItemEarning {
   createdAt     DateTime           @default(now()) @db.Timestamptz(6)
 
   @@index([payrollItemId])
+}
+
+// Gap 3 — Overpayment clawback queue. When an AMENDMENT run finalizes with
+// a negative-net item (HR is taking back money that was overpaid), we don't
+// touch the rail — instead we enqueue a row here. The next REGULAR run for
+// the same associate drains open rows and applies them as a post-tax
+// deduction line. If the associate's net pay is too small to absorb the
+// full amount, the consumer marks this row applied and inserts a residual
+// row so the remainder rolls forward until fully recovered.
+model PendingPayrollDeduction {
+  id                    String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId           String       @db.Uuid
+  // The AMENDMENT PayrollItem that created this pending deduction. Lets
+  // the associate-facing copy explain "this $X comes from your amended
+  // pay for period {original}".
+  sourceAmendmentItemId String       @db.Uuid
+  // Always positive — magnitude to deduct. Original signed delta on the
+  // amendment item is negative (overpayment clawback), but we store the
+  // absolute value here for readability and CHECK > 0 enforcement.
+  amount                Decimal      @db.Decimal(12, 2)
+  // Wizard-supplied explanation; surfaces verbatim on the deduction line
+  // ("Correction for missed-clock punch on 2026-04-29").
+  note                  String
+  // Set when this row is consumed by a regular run. Until then, the
+  // partial index `(associateId) WHERE appliedRunId IS NULL` keeps the
+  // open-deductions query fast.
+  appliedRunId          String?      @db.Uuid
+  appliedItemId         String?      @db.Uuid
+  appliedAt             DateTime?    @db.Timestamptz(6)
+  associate             Associate    @relation(fields: [associateId], references: [id], onDelete: Restrict)
+  sourceAmendmentItem   PayrollItem  @relation("PendingDeductionSource", fields: [sourceAmendmentItemId], references: [id], onDelete: Restrict)
+  appliedRun            PayrollRun?  @relation("PendingDeductionAppliedRun", fields: [appliedRunId], references: [id], onDelete: SetNull)
+  appliedItem           PayrollItem? @relation("PendingDeductionAppliedItem", fields: [appliedItemId], references: [id], onDelete: SetNull)
+  createdAt             DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime     @updatedAt @db.Timestamptz(6)
+
+  // No @@index([associateId]) here — the migration creates a partial
+  // index `WHERE appliedRunId IS NULL` instead, which Prisma can't yet
+  // express in schema. The full B-tree would be redundant.
+  @@index([sourceAmendmentItemId])
 }
 
 // Phase 22 — disbursement attempt log. One row per provider call, regardless

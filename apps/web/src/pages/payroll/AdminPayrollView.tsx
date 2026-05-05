@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ArrowDownUp,
   ArrowUpDown,
+  Ban,
   CalendarDays,
   CheckCircle2,
   ChevronDown,
@@ -13,10 +14,12 @@ import {
   Download,
   FileText,
   Link as LinkIcon,
+  Pencil,
   Play,
   Plus,
   RotateCw,
   Send,
+  ShieldAlert,
   Users,
 } from 'lucide-react';
 import type {
@@ -32,8 +35,10 @@ import {
   getPayrollUpcoming,
   listPayrollRuns,
   retryRunFailures,
+  voidPayrollRun,
 } from '@/lib/payrollApi';
 import { syncRun as syncRunToQbo } from '@/lib/quickbooksApi';
+import { AmendPayrollWizard } from './AmendPayrollWizard';
 import { BranchEnrollmentDialog } from './BranchEnrollmentDialog';
 import { RunPayrollWizard } from './RunPayrollWizard';
 import { PaySchedulesView } from './PaySchedulesView';
@@ -61,6 +66,8 @@ import {
   DrawerTitle,
 } from '@/components/ui/Drawer';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Field } from '@/components/ui/Field';
+import { Input, Textarea } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 import {
@@ -97,18 +104,47 @@ const RUN_STATUS_VARIANT: Record<
 
 interface AdminPayrollViewProps {
   canProcess: boolean;
+  /** Gap 3 — void:payroll. HR Admin only; gates void + amend buttons. */
+  canVoid: boolean;
 }
 
 type SortKey = 'periodEnd' | 'totalGross' | 'totalNet' | 'itemCount' | 'status';
 type SortDir = 'asc' | 'desc';
 
-export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
+// Gap 3 — voids are only allowed within this window post-disbursement.
+// Mirrors the server-side guard in POST /payroll/runs/:id/void; UI hides
+// the affordance instead of letting the user click and 409.
+const VOID_WINDOW_DAYS = 30;
+
+/**
+ * The typed-confirmation string the HR Admin must enter to void a run —
+ * "MM/DD/YYYY - MM/DD/YYYY" (start - end). Required by product spec for
+ * destructive financial operations: a yes/no confirmation isn't enough.
+ */
+function expectedVoidConfirmation(periodStartYmd: string, periodEndYmd: string): string {
+  // periodStartYmd / periodEndYmd are 'YYYY-MM-DD' strings from the API.
+  const fmt = (s: string) => {
+    const [y, m, d] = s.split('-');
+    return `${m}/${d}/${y}`;
+  };
+  return `${fmt(periodStartYmd)} - ${fmt(periodEndYmd)}`;
+}
+
+export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps) {
   const [tab, setTab] = useState<'runs' | 'schedules' | 'garnishments'>('runs');
   const [filter, setFilter] = useState<PayrollRunStatus | 'ALL'>('DRAFT');
   const [runs, setRuns] = useState<PayrollRunSummary[] | null>(null);
   const [selected, setSelected] = useState<PayrollRunDetail | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [confirmDisburse, setConfirmDisburse] = useState(false);
+  // Gap 3 — void confirmation modal. The user has to type the run's pay
+  // period in MM/DD/YYYY - MM/DD/YYYY format AND supply a free-text
+  // reason before the Void button enables. A yes/no confirmation isn't
+  // enough for a destructive financial operation.
+  const [voidOpen, setVoidOpen] = useState(false);
+  const [voidPeriodInput, setVoidPeriodInput] = useState('');
+  const [voidReasonInput, setVoidReasonInput] = useState('');
+  const [amendOpen, setAmendOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [enrollFor, setEnrollFor] = useState<{ id: string; name: string | null } | null>(null);
   // Wave 8 — hero summary card. One fetch, hydrates from /payroll/upcoming.
@@ -280,6 +316,54 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
       setBusy(false);
     }
   };
+
+  const expectedVoidString = selected
+    ? expectedVoidConfirmation(selected.periodStart, selected.periodEnd)
+    : '';
+  const voidPeriodMatches = voidPeriodInput.trim() === expectedVoidString;
+  const voidReasonValid = voidReasonInput.trim().length > 0;
+  const voidEnabled = voidPeriodMatches && voidReasonValid && !busy;
+
+  const openVoidModal = () => {
+    setVoidPeriodInput('');
+    setVoidReasonInput('');
+    setVoidOpen(true);
+  };
+
+  const onVoid = async () => {
+    if (!selected || !voidEnabled) return;
+    setBusy(true);
+    try {
+      const updated = await voidPayrollRun(selected.id, voidReasonInput.trim());
+      setSelected(updated);
+      setVoidOpen(false);
+      toast.success('Run voided.');
+      refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Void failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Mirrors the server-side 30-day post-disbursement guard. We hide the
+  // affordance instead of letting the user click and 409 back.
+  const canShowVoidButton =
+    !!selected &&
+    canVoid &&
+    selected.status === 'DISBURSED' &&
+    selected.disbursedAt !== null &&
+    Date.now() - new Date(selected.disbursedAt).getTime() <
+      VOID_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+
+  // Amendments are allowed against any non-CANCELLED run that has items.
+  // Server enforces the same; UI gates on canVoid because amend lives on
+  // the same destructive-ops capability.
+  const canShowAmendButton =
+    !!selected &&
+    canVoid &&
+    selected.status !== 'CANCELLED' &&
+    selected.items.length > 0;
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -475,7 +559,10 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
                           )}
                         </TableCell>
                         <TableCell>
-                          <Badge variant={RUN_STATUS_VARIANT[r.status]}>{r.status}</Badge>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <Badge variant={RUN_STATUS_VARIANT[r.status]}>{r.status}</Badge>
+                            {r.kind !== 'REGULAR' && <RunKindBadge kind={r.kind} />}
+                          </div>
                         </TableCell>
                         <TableCell className="text-right tabular-nums text-silver">
                           {r.itemCount}
@@ -520,9 +607,12 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
                             </div>
                           )}
                         </div>
-                        <Badge variant={RUN_STATUS_VARIANT[r.status]} className="shrink-0">
-                          {r.status}
-                        </Badge>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {r.kind !== 'REGULAR' && <RunKindBadge kind={r.kind} />}
+                          <Badge variant={RUN_STATUS_VARIANT[r.status]}>
+                            {r.status}
+                          </Badge>
+                        </div>
                       </div>
                       <div className="mt-2 flex items-end justify-between gap-3">
                         <div className="text-[11px] text-silver/70">
@@ -572,6 +662,69 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
               </DrawerDescription>
             </DrawerHeader>
             <DrawerBody>
+              {/* Gap 3 — CANCELLED banner. When the run was voided, surface
+                  who/when/why above everything else and link the reversing
+                  JE if QBO sync was wired up. */}
+              {selected.status === 'CANCELLED' && (
+                <div className="mb-4 rounded border border-alert/40 bg-alert/5 p-3 text-xs">
+                  <div className="flex items-center gap-2 text-alert font-medium mb-1">
+                    <Ban className="h-4 w-4" />
+                    Run voided
+                    {selected.cancelledAt && (
+                      <span className="text-silver/70 font-normal">
+                        — {new Date(selected.cancelledAt).toLocaleString()}
+                      </span>
+                    )}
+                  </div>
+                  {selected.cancelReason && (
+                    <div className="text-silver mt-1">
+                      <span className="text-silver/60">Reason: </span>
+                      {selected.cancelReason}
+                    </div>
+                  )}
+                  {selected.voidJournalEntryId && (
+                    <div className="text-silver/70 mt-1">
+                      Reversing JE{' '}
+                      <span className="font-mono text-silver">
+                        {selected.voidJournalEntryId}
+                      </span>{' '}
+                      filed in QuickBooks.
+                    </div>
+                  )}
+                  <div className="text-silver/60 mt-1.5">
+                    Alto did not pull funds back from associates. Recover
+                    disbursed amounts out-of-band or via amendment + next-run
+                    deduction.
+                  </div>
+                </div>
+              )}
+
+              {/* Gap 3 — AMENDMENT banner. Shows the link back to the source
+                  run + the mandatory reason captured at amend time. */}
+              {selected.kind === 'AMENDMENT' && (
+                <div className="mb-4 rounded border border-amber-500/30 bg-amber-500/5 p-3 text-xs">
+                  <div className="flex items-center gap-2 text-amber-300 font-medium mb-1">
+                    <Pencil className="h-4 w-4" />
+                    Amendment run
+                  </div>
+                  {selected.amendmentReason && (
+                    <div className="text-silver mt-1">
+                      <span className="text-silver/60">Reason: </span>
+                      {selected.amendmentReason}
+                    </div>
+                  )}
+                  {selected.amendsRunId && (
+                    <button
+                      type="button"
+                      onClick={() => openRun(selected.amendsRunId!)}
+                      className="mt-1 text-silver/70 hover:text-gold focus:outline-none focus-visible:text-gold underline-offset-2 hover:underline"
+                    >
+                      View source run
+                    </button>
+                  )}
+                </div>
+              )}
+
               {/* Wave 9 — QBO-style status progress bar shown across the top
                   of the drawer. Tracks the run state through the four
                   human-meaningful checkpoints. */}
@@ -707,6 +860,18 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
                       {selected.qboJournalEntryId ? 'Re-sync to QuickBooks' : 'Sync to QuickBooks'}
                     </Button>
                   )}
+                {canShowAmendButton && (
+                  <Button variant="secondary" onClick={() => setAmendOpen(true)} disabled={busy}>
+                    <Pencil className="h-4 w-4" />
+                    Amend
+                  </Button>
+                )}
+                {canShowVoidButton && (
+                  <Button variant="destructive" onClick={openVoidModal} disabled={busy}>
+                    <Ban className="h-4 w-4" />
+                    Void run
+                  </Button>
+                )}
               </DrawerFooter>
             )}
           </>
@@ -732,6 +897,106 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Gap 3 — Void confirmation modal. Typed pay-period confirmation +
+          mandatory free-text reason. Yes/no isn't enough for a destructive
+          financial op, so the HR Admin has to actually transcribe the run's
+          pay period as MM/DD/YYYY - MM/DD/YYYY. The reason is stored on the
+          PayrollRun and surfaces on the cancelled banner + associate email. */}
+      <Dialog open={voidOpen} onOpenChange={(v) => !busy && setVoidOpen(v)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldAlert className="h-5 w-5 text-alert" />
+              Void this payroll run?
+            </DialogTitle>
+            <DialogDescription>
+              Voiding files a reversing journal entry in QuickBooks and notifies
+              every associate that their paystub was reversed. <strong>Alto does
+              not auto-claw funds back from associates.</strong> Disbursed money
+              must be recovered out-of-band (e.g. next paycheck deduction or
+              direct repayment).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2 text-sm">
+            <div className="rounded border border-alert/30 bg-alert/5 px-3 py-2 text-alert text-xs">
+              This action can't be undone. The run will be marked CANCELLED and
+              its paystubs marked VOIDED.
+            </div>
+            <Field
+              label={
+                <>
+                  Type the pay period to confirm:{' '}
+                  <span className="font-mono text-white">{expectedVoidString}</span>
+                </>
+              }
+              hint="Format MM/DD/YYYY - MM/DD/YYYY (the spaces around the dash matter)."
+              required
+            >
+              {(p) => (
+                <Input
+                  {...p}
+                  value={voidPeriodInput}
+                  onChange={(e) => setVoidPeriodInput(e.target.value)}
+                  placeholder={expectedVoidString}
+                  autoComplete="off"
+                  disabled={busy}
+                />
+              )}
+            </Field>
+            <Field
+              label="Reason for voiding"
+              hint="Stored on the run and shown to affected associates."
+              required
+            >
+              {(p) => (
+                <Textarea
+                  {...p}
+                  value={voidReasonInput}
+                  onChange={(e) => setVoidReasonInput(e.target.value)}
+                  placeholder="e.g. Wrong pay period — corrected rate sheet not applied. Re-running with correct figures."
+                  rows={3}
+                  disabled={busy}
+                />
+              )}
+            </Field>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="secondary"
+              onClick={() => setVoidOpen(false)}
+              disabled={busy}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={onVoid}
+              loading={busy}
+              disabled={!voidEnabled}
+            >
+              <Ban className="h-4 w-4" />
+              Void run
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Gap 3 — Amend wizard. Loads the source run, lets HR edit per-item
+          values, captures a mandatory reason, and POSTs to /amend. Wraps in
+          its own component so this file stays scannable. */}
+      {selected && canShowAmendButton && (
+        <AmendPayrollWizard
+          open={amendOpen}
+          onOpenChange={setAmendOpen}
+          sourceRun={selected}
+          onAmended={(detail) => {
+            setAmendOpen(false);
+            setSelected(detail);
+            refresh();
+          }}
+        />
+      )}
 
       <BranchEnrollmentDialog
         associateId={enrollFor?.id ?? null}
@@ -1057,6 +1322,30 @@ function RunStatusStepper({
         );
       })}
     </ol>
+  );
+}
+
+/* -------------------------------------------------------------------------- *
+ *  Gap 3 — Run-kind badge.
+ *
+ *  Surfaces non-REGULAR runs in the runs list so HR can tell at a glance
+ *  whether a row is a one-off OFF_CYCLE bonus run or an AMENDMENT to a
+ *  prior run. REGULAR is the default and gets no chrome.
+ * -------------------------------------------------------------------------- */
+
+function RunKindBadge({ kind }: { kind: 'OFF_CYCLE' | 'AMENDMENT' }) {
+  if (kind === 'AMENDMENT') {
+    return (
+      <Badge variant="default" className="border-amber-500/40 bg-amber-500/10 text-amber-300">
+        <Pencil className="h-3 w-3" />
+        Amendment
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="default" className="border-blue-500/40 bg-blue-500/10 text-blue-300">
+      Off-cycle
+    </Badge>
   );
 }
 

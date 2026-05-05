@@ -72,6 +72,47 @@ export function retryRunFailures(
   );
 }
 
+// Gap 3 — destructive payroll ops. Both gated server-side on the new
+// `void:payroll` capability (HR_ADMINISTRATOR only). UI hides these
+// affordances unless the user has the capability.
+export function voidPayrollRun(
+  id: string,
+  reason: string,
+): Promise<PayrollRunDetail> {
+  return apiFetch<PayrollRunDetail>(`/payroll/runs/${id}/void`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export interface AmendCorrection {
+  associateId: string;
+  hoursWorked: number;
+  hourlyRate: number;
+  grossPay: number;
+  federalWithholding: number;
+  fica: number;
+  medicare: number;
+  stateWithholding: number;
+  preTaxDeductions?: number;
+  postTaxDeductions?: number;
+  employerFica?: number;
+  employerMedicare?: number;
+  employerFuta?: number;
+  employerSuta?: number;
+  taxState?: string | null;
+}
+
+export function amendPayrollRun(
+  id: string,
+  body: { reason: string; corrections: AmendCorrection[] },
+): Promise<PayrollRunDetail> {
+  return apiFetch<PayrollRunDetail>(`/payroll/runs/${id}/amend`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
 export interface BranchEnrollment {
   associateId: string;
   firstName: string;
