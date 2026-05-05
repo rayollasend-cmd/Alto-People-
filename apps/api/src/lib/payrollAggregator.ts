@@ -25,6 +25,7 @@ import {
   type PayFrequency,
 } from './payrollTax.js';
 import { computeGarnishmentDeductions } from './garnishments.js';
+import { computeYtdMedicareWages, computeYtdWages } from './payrollYtd.js';
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
@@ -173,15 +174,11 @@ export async function aggregatePayrollProjection(
     const overtimePay = round2(otSplit.overtimeHours * hourlyRate * 1.5);
     const grossPay = round2(regularPay + overtimePay);
 
-    const priorYtd = await tx.payrollItem.aggregate({
-      where: {
-        associateId,
-        payrollRun: { periodStart: { gte: yearStart, lt: periodStart } },
-      },
-      _sum: { grossPay: true },
-    });
-    const ytdWages = Number(priorYtd._sum.grossPay ?? 0);
-    const ytdMedicareWages = ytdWages;
+    // Gap 8 — live YTD aggregation. Excludes CANCELLED (voided) runs and
+    // non-DISBURSED items; AMENDMENT items contribute signed deltas so
+    // corrections naturally land in the result.
+    const ytdWages = await computeYtdWages(tx, associateId, yearStart, periodStart);
+    const ytdMedicareWages = await computeYtdMedicareWages(tx, associateId, yearStart, periodStart);
 
     const w4 = group[0].associate.w4Submission;
     const associateState = group[0].associate.state ?? null;

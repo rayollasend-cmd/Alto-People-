@@ -1318,8 +1318,15 @@ export const PayrollItemStatusSchema = z.enum([
   'DISBURSED',
   'FAILED',
   'HELD',
+  // Gap 3 — set when the parent run is voided.
+  'VOIDED',
 ]);
 export type PayrollItemStatus = z.infer<typeof PayrollItemStatusSchema>;
+
+// Gap 3 — distinguishes regular periodic runs from off-cycle bonus/terminal-pay
+// runs and from amendment runs that correct a prior disbursed run.
+export const PayrollRunKindSchema = z.enum(['REGULAR', 'OFF_CYCLE', 'AMENDMENT']);
+export type PayrollRunKind = z.infer<typeof PayrollRunKindSchema>;
 
 // Wave 1.2 — earning kinds. Mirrors PayrollEarningKind in schema.prisma.
 export const PayrollEarningKindSchema = z.enum([
@@ -1402,6 +1409,19 @@ export const PayrollRunSummarySchema = z.object({
   qboJournalEntryId: z.string().nullable(),
   qboSyncedAt: z.string().datetime().nullable(),
   qboSyncError: z.string().nullable(),
+  // Gap 3 — kind + amendment / void metadata. kind is REGULAR for any run
+  // created before this lands (default migration value). amendsRunId,
+  // amendmentReason are populated only on AMENDMENT runs. cancelledAt /
+  // cancelledById / cancelReason / voidJournalEntryId are populated only
+  // on voided runs (status=CANCELLED). All optional in the contract so
+  // historical responses remain valid.
+  kind: PayrollRunKindSchema,
+  amendsRunId: UuidSchema.nullable(),
+  amendmentReason: z.string().nullable(),
+  cancelledAt: z.string().datetime().nullable(),
+  cancelledById: UuidSchema.nullable(),
+  cancelReason: z.string().nullable(),
+  voidJournalEntryId: z.string().nullable(),
 });
 export type PayrollRunSummary = z.infer<typeof PayrollRunSummarySchema>;
 
@@ -1414,6 +1434,39 @@ export const PayrollRunDetailSchema = PayrollRunSummarySchema.extend({
   items: z.array(PayrollItemSchema),
 });
 export type PayrollRunDetail = z.infer<typeof PayrollRunDetailSchema>;
+
+// Gap 3 — POST /payroll/runs/:id/amend body. HR sends ABSOLUTE corrected
+// values per affected associate; the server fetches the originals and
+// stores signed deltas on the new AMENDMENT run's items. `reason` is
+// rendered verbatim on the amendment paystub PDF and stored on
+// PayrollRun.amendmentReason — required, non-empty (whitespace stripped).
+export const PayrollRunAmendInputSchema = z.object({
+  reason: z.string().trim().min(1, 'reason is required'),
+  corrections: z
+    .array(
+      z.object({
+        associateId: UuidSchema,
+        hoursWorked: z.number(),
+        hourlyRate: z.number().nonnegative(),
+        grossPay: z.number(),
+        federalWithholding: z.number(),
+        fica: z.number(),
+        medicare: z.number(),
+        stateWithholding: z.number(),
+        preTaxDeductions: z.number().default(0),
+        postTaxDeductions: z.number().default(0),
+        employerFica: z.number().default(0),
+        employerMedicare: z.number().default(0),
+        employerFuta: z.number().default(0),
+        employerSuta: z.number().default(0),
+        // Optional override; when omitted the server preserves the
+        // original item's taxState.
+        taxState: z.string().nullable().optional(),
+      })
+    )
+    .min(1, 'at least one correction is required'),
+});
+export type PayrollRunAmendInput = z.infer<typeof PayrollRunAmendInputSchema>;
 
 export const PayrollRunCreateInputSchema = z
   .object({

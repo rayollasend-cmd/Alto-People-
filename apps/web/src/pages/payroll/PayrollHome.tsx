@@ -7,5 +7,10 @@ export function PayrollHome() {
   if (user?.role === 'ASSOCIATE') {
     return <AssociatePayrollView />;
   }
-  return <AdminPayrollView canProcess={can('process:payroll')} />;
+  return (
+    <AdminPayrollView
+      canProcess={can('process:payroll')}
+      canVoid={can('void:payroll')}
+    />
+  );
 }

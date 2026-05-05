@@ -4,6 +4,7 @@ import {
   PayrollExceptionsInputSchema,
   PayrollExceptionsResponseSchema,
   PayrollItemListResponseSchema,
+  PayrollRunAmendInputSchema,
   PayrollRunCreateInputSchema,
   PayrollRunDetailSchema,
   PayrollRunListResponseSchema,
@@ -34,6 +35,7 @@ import { scopePayrollRuns, scopePayrollSchedules } from '../lib/scope.js';
 import { getCurrentPeriod, getNextPeriod } from '../lib/payrollSchedule.js';
 import { round2 } from '../lib/payroll.js';
 import { aggregatePayrollProjection } from '../lib/payrollAggregator.js';
+import { consumePendingDeductions } from '../lib/payrollYtd.js';
 import { computePayrollExceptions } from '../lib/payrollExceptions.js';
 import { hashPdf, renderPaystubPdf, type PaystubData } from '../lib/paystub.js';
 import { pickAdapter, type DisbursementInput } from '../lib/disbursement.js';
@@ -43,12 +45,15 @@ import { enqueueAudit, recordPayrollEvent } from '../lib/audit.js';
 import {
   isStubMode as qboIsStubMode,
   postPayrollJournalEntry,
+  postReversingJournalEntry,
 } from '../lib/quickbooks.js';
+import { notifyAssociatesOfRunVoid } from '../lib/payrollVoidNotify.js';
 import archiver from 'archiver';
 
 export const payrollRouter = Router();
 
 const PROCESS = requireCapability('process:payroll');
+const VOID = requireCapability('void:payroll');
 
 const TX_OPTS = { timeout: 60_000, maxWait: 10_000 };
 
@@ -133,6 +138,13 @@ function toSummary(r: RawRun): PayrollRunSummary {
     qboJournalEntryId: r.qboJournalEntryId,
     qboSyncedAt: r.qboSyncedAt ? r.qboSyncedAt.toISOString() : null,
     qboSyncError: r.qboSyncError,
+    kind: r.kind,
+    amendsRunId: r.amendsRunId,
+    amendmentReason: r.amendmentReason,
+    cancelledAt: r.cancelledAt ? r.cancelledAt.toISOString() : null,
+    cancelledById: r.cancelledById,
+    cancelReason: r.cancelReason,
+    voidJournalEntryId: r.voidJournalEntryId,
   };
 }
 
@@ -657,6 +669,27 @@ payrollRouter.post('/runs', PROCESS, async (req, res, next) => {
           },
         });
 
+        // Gap 3 — drain open overpayment-clawback deductions for this
+        // associate, capped at the item's current net. Touches DB rows
+        // so it lives only on the writing path (preview never calls this).
+        const consumed = await consumePendingDeductions(tx, {
+          associateId: p.associateId,
+          availableNet: Number(upserted.netPay),
+          payrollRunId: run.id,
+          payrollItemId: upserted.id,
+        });
+        if (consumed.totalApplied > 0) {
+          await tx.payrollItem.update({
+            where: { id: upserted.id },
+            data: {
+              postTaxDeductions: round2(
+                Number(upserted.postTaxDeductions) + consumed.totalApplied
+              ),
+              netPay: round2(Number(upserted.netPay) - consumed.totalApplied),
+            },
+          });
+        }
+
         // Replace earning lines on every (re-)aggregation.
         await tx.payrollItemEarning.deleteMany({ where: { payrollItemId: upserted.id } });
         if (p.earnings.length > 0) {
@@ -705,13 +738,49 @@ payrollRouter.post('/runs', PROCESS, async (req, res, next) => {
         }
       }
 
+      // Re-read totals from the persisted items so any deduction-consumer
+      // adjustments are reflected at the run level (the projection was
+      // computed before pending overpayment clawbacks were drained).
+      const persisted = await tx.payrollItem.findMany({
+        where: { payrollRunId: run.id },
+        select: {
+          grossPay: true,
+          federalWithholding: true,
+          fica: true,
+          medicare: true,
+          stateWithholding: true,
+          netPay: true,
+          employerFica: true,
+          employerMedicare: true,
+          employerFuta: true,
+          employerSuta: true,
+        },
+      });
+      const totals = persisted.reduce(
+        (acc, i) => {
+          acc.totalGross += Number(i.grossPay);
+          acc.totalTax +=
+            Number(i.federalWithholding) +
+            Number(i.fica) +
+            Number(i.medicare) +
+            Number(i.stateWithholding);
+          acc.totalNet += Number(i.netPay);
+          acc.totalEmployerTax +=
+            Number(i.employerFica) +
+            Number(i.employerMedicare) +
+            Number(i.employerFuta) +
+            Number(i.employerSuta);
+          return acc;
+        },
+        { totalGross: 0, totalTax: 0, totalNet: 0, totalEmployerTax: 0 }
+      );
       await tx.payrollRun.update({
         where: { id: run.id },
         data: {
-          totalGross: projection.totals.totalGross,
-          totalTax: projection.totals.totalEmployeeTax,
-          totalNet: projection.totals.totalNet,
-          totalEmployerTax: projection.totals.totalEmployerTax,
+          totalGross: round2(totals.totalGross),
+          totalTax: round2(totals.totalTax),
+          totalNet: round2(totals.totalNet),
+          totalEmployerTax: round2(totals.totalEmployerTax),
         },
       });
 
@@ -800,9 +869,36 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
     let allSucceeded = true;
     const now = new Date();
     for (const item of items) {
+      // Gap 3 — AMENDMENT runs with non-positive net: no rail call. A
+      // negative net is an overpayment clawback (queued as a
+      // PendingPayrollDeduction the next REGULAR run will absorb); a
+      // zero net is a cosmetic correction (e.g. fixing taxState only).
+      // Either way, mark the item DISBURSED — "settled in Alto" — and
+      // skip the adapter entirely.
+      const netPayNum = Number(item.netPay);
+      if (run.kind === 'AMENDMENT' && netPayNum <= 0) {
+        if (netPayNum < 0) {
+          await prisma.pendingPayrollDeduction.create({
+            data: {
+              associateId: item.associateId,
+              sourceAmendmentItemId: item.id,
+              amount: Math.abs(netPayNum),
+              note:
+                `Overpayment clawback from amended pay period ` +
+                `${ymd(run.periodStart)}–${ymd(run.periodEnd)}`,
+            },
+          });
+        }
+        await prisma.payrollItem.update({
+          where: { id: item.id },
+          data: { status: 'DISBURSED', disbursedAt: now, failureReason: null },
+        });
+        continue;
+      }
+
       const primary = item.associate.payoutMethods[0] ?? null;
       const result = await adapter.disburse({
-        amount: Number(item.netPay),
+        amount: netPayNum,
         currency: 'USD',
         recipient: recipientFromPayoutMethod(item.associate, primary),
         idempotencyKey: item.id,
@@ -1052,6 +1148,330 @@ payrollRouter.post('/runs/:id/retry-failures', PROCESS, async (req, res, next) =
 });
 
 /**
+ * POST /payroll/runs/:id/void
+ *
+ * Gap 3 — destructive financial operation. HR Admin only (`void:payroll`
+ * capability — narrower than process:payroll).
+ *
+ * Voids a DISBURSED run as a system record correction. Items flip
+ * DISBURSED -> VOIDED, the run flips DISBURSED -> CANCELLED, and a
+ * reversing JournalEntry is posted to QBO so the period's accounting
+ * unwinds. Money is NOT clawed back from the rail — that conversation
+ * happens between HR and the associate outside Alto. Each affected
+ * associate gets an IN_APP notification with the HR-supplied reason.
+ *
+ * Guards (return 409 with a code so the UI can render specific copy):
+ *   - run.status must be DISBURSED                      → not_disbursed
+ *   - disbursedAt must be within the last 30 days       → window_expired
+ *   - run must not already have a downstream amendment  → has_amendment
+ *
+ * Body: { reason: string } — required, non-empty. Stored verbatim on
+ * run.cancelReason and surfaces in the QBO reversal memo and the
+ * associate notification.
+ */
+payrollRouter.post('/runs/:id/void', VOID, async (req, res, next) => {
+  try {
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+    if (!reason) {
+      throw new HttpError(400, 'invalid_body', 'reason is required');
+    }
+
+    const run = await prisma.payrollRun.findFirst({
+      where: { id: req.params.id, ...scopePayrollRuns(req.user!) },
+      include: {
+        items: {
+          include: {
+            associate: {
+              select: { id: true, firstName: true, lastName: true, user: { select: { id: true } } },
+            },
+          },
+        },
+      },
+    });
+    if (!run) throw new HttpError(404, 'run_not_found', 'Payroll run not found');
+
+    if (run.status !== 'DISBURSED') {
+      throw new HttpError(409, 'not_disbursed', 'Only DISBURSED runs can be voided');
+    }
+    if (!run.disbursedAt) {
+      // Defensive — DISBURSED without a disbursedAt would be a data
+      // integrity bug, but it's the field we're gating the window on so
+      // refuse rather than silently void a run we can't time-bound.
+      throw new HttpError(409, 'not_disbursed', 'Run has no disbursedAt timestamp');
+    }
+    const now = new Date();
+    const ageMs = now.getTime() - run.disbursedAt.getTime();
+    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+    if (ageMs > THIRTY_DAYS_MS) {
+      throw new HttpError(
+        409,
+        'window_expired',
+        'Run is more than 30 days past disbursement and can no longer be voided'
+      );
+    }
+    const downstreamAmendment = await prisma.payrollRun.findFirst({
+      where: { amendsRunId: run.id },
+      select: { id: true },
+    });
+    if (downstreamAmendment) {
+      throw new HttpError(
+        409,
+        'has_amendment',
+        'Run has a downstream amendment — unwind the amendment before voiding'
+      );
+    }
+
+    // Single transaction — flip run + every item that's currently
+    // DISBURSED. Items that ended up HELD/FAILED stay as-is (their money
+    // never moved, so there's nothing to void). PENDING items are
+    // similarly left alone — voiding a run with PENDING items is a
+    // pathological state, but we'd want HR to retry-or-hold first; the
+    // not_disbursed guard above already blocks that path because the run
+    // can only be DISBURSED if everything settled.
+    const updated = await prisma.$transaction(async (tx) => {
+      await tx.payrollItem.updateMany({
+        where: { payrollRunId: run.id, status: 'DISBURSED' },
+        data: { status: 'VOIDED', voidedAt: now },
+      });
+      return tx.payrollRun.update({
+        where: { id: run.id },
+        data: {
+          status: 'CANCELLED',
+          cancelledAt: now,
+          cancelledById: req.user!.id,
+          cancelReason: reason,
+        },
+        include: RUN_INCLUDE,
+      });
+    }, TX_OPTS);
+
+    // Best-effort reversing JE — same posture as forward-sync on
+    // disburse: failures stamp qboSyncError but never fail the void.
+    if (run.qboJournalEntryId && updated.clientId) {
+      const conn = await prisma.quickbooksConnection.findUnique({
+        where: { clientId: updated.clientId },
+      });
+      if (conn) {
+        const totals = aggregateForQbo(run.items);
+        try {
+          const result = await postReversingJournalEntry(prisma, updated.clientId, {
+            txnDate: now,
+            memo: `Payroll ${ymd(updated.periodStart)}–${ymd(updated.periodEnd)} (REVERSAL)`,
+            ...totals,
+            originalJournalEntryId: run.qboJournalEntryId,
+            periodStart: run.periodStart,
+            periodEnd: run.periodEnd,
+            voidDate: now,
+            reason,
+          });
+          await prisma.payrollRun.update({
+            where: { id: updated.id },
+            data: { voidJournalEntryId: result.journalEntryId, qboSyncError: null },
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await prisma.payrollRun.update({
+            where: { id: updated.id },
+            data: { qboSyncError: msg.slice(0, 500) },
+          });
+        }
+      }
+    }
+
+    // Audit at the run scope. Metadata captures the reason so audit-log
+    // viewers see why without joining the run row.
+    await recordPayrollEvent({
+      actorUserId: req.user!.id,
+      action: 'payroll.run_voided',
+      payrollRunId: updated.id,
+      clientId: updated.clientId,
+      metadata: {
+        reason,
+        items: run.items.length,
+        voidedItems: run.items.filter((i) => i.status === 'DISBURSED').length,
+        ageDays: Math.round(ageMs / (24 * 60 * 60 * 1000)),
+      },
+      req,
+    });
+
+    // Fan out — only associates with an actual user account get a
+    // notification (no point creating a row no one can read).
+    const recipients = run.items
+      .map((i) => ({
+        userId: i.associate.user?.id ?? null,
+        name: `${i.associate.firstName} ${i.associate.lastName}`,
+      }))
+      .filter((r): r is { userId: string; name: string } => r.userId !== null);
+    await notifyAssociatesOfRunVoid(prisma, {
+      payrollRunId: updated.id,
+      periodStart: run.periodStart,
+      periodEnd: run.periodEnd,
+      reason,
+      associates: recipients,
+    });
+
+    res.json(toDetail(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /payroll/runs/:id/amend
+ *
+ * Gap 3 — destructive financial operation. HR Admin only (`void:payroll`
+ * capability — same gate as void; both touch settled financial records).
+ *
+ * Creates a new AMENDMENT run that references the original (`amendsRunId`)
+ * and carries one PayrollItem per corrected associate, where each item
+ * stores SIGNED DELTAS vs. the original (positive = supplemental pay,
+ * negative = clawback). The new run lands in DRAFT so HR can review the
+ * computed deltas in the UI before finalizing.
+ *
+ * Body: `{ reason: string, corrections: [{ associateId, ... corrected
+ * absolute values ... }] }`. Server matches each correction to the
+ * original item by associateId, computes the delta, and persists. The
+ * mandatory free-text `reason` lands on PayrollRun.amendmentReason and
+ * is rendered on the amendment paystub PDF.
+ *
+ * Guards (409 with code):
+ *   - run.status === CANCELLED → 'run_cancelled' (can't amend a voided run)
+ *   - any correction's associateId not on the original run → 'unknown_associate'
+ */
+payrollRouter.post('/runs/:id/amend', VOID, async (req, res, next) => {
+  try {
+    const parsed = PayrollRunAmendInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const { reason, corrections } = parsed.data;
+
+    const original = await prisma.payrollRun.findFirst({
+      where: { id: req.params.id, ...scopePayrollRuns(req.user!) },
+      include: { items: true },
+    });
+    if (!original) throw new HttpError(404, 'run_not_found', 'Payroll run not found');
+
+    if (original.status === 'CANCELLED') {
+      throw new HttpError(409, 'run_cancelled', 'Cannot amend a voided run');
+    }
+
+    // Build a lookup of original items by associateId so we can validate
+    // every correction targets a real associate on the run AND compute
+    // deltas in a single pass.
+    const originalByAssociate = new Map(
+      original.items.map((i) => [i.associateId, i] as const)
+    );
+    for (const c of corrections) {
+      if (!originalByAssociate.has(c.associateId)) {
+        throw new HttpError(
+          409,
+          'unknown_associate',
+          `Associate ${c.associateId} is not on the original run`,
+        );
+      }
+    }
+
+    // Server-computed delta per correction. We store the magnitude on
+    // every column so the engine + reports + paystub PDF can render the
+    // before/after picture without re-fetching the original.
+    const amendmentItems = corrections.map((c) => {
+      const orig = originalByAssociate.get(c.associateId)!;
+      const correctedNet =
+        c.grossPay -
+        c.federalWithholding -
+        c.fica -
+        c.medicare -
+        c.stateWithholding -
+        c.preTaxDeductions -
+        c.postTaxDeductions;
+      const origNet = Number(orig.netPay);
+      const dx = (corrected: number, origVal: Prisma.Decimal | number) =>
+        round2(corrected - Number(origVal));
+      return {
+        associateId: c.associateId,
+        amendsItemId: orig.id,
+        hoursWorked: dx(c.hoursWorked, orig.hoursWorked),
+        // hourlyRate isn't a delta — it's a rate; we copy what HR sent.
+        hourlyRate: c.hourlyRate,
+        grossPay: dx(c.grossPay, orig.grossPay),
+        federalWithholding: dx(c.federalWithholding, orig.federalWithholding),
+        fica: dx(c.fica, orig.fica),
+        medicare: dx(c.medicare, orig.medicare),
+        stateWithholding: dx(c.stateWithholding, orig.stateWithholding),
+        preTaxDeductions: dx(c.preTaxDeductions, orig.preTaxDeductions),
+        postTaxDeductions: dx(c.postTaxDeductions, orig.postTaxDeductions),
+        employerFica: dx(c.employerFica, orig.employerFica),
+        employerMedicare: dx(c.employerMedicare, orig.employerMedicare),
+        employerFuta: dx(c.employerFuta, orig.employerFuta),
+        employerSuta: dx(c.employerSuta, orig.employerSuta),
+        netPay: round2(correctedNet - origNet),
+        // YTD snapshot fields are kept at zero on amendment items —
+        // computeYtdWages sums signed grossPay across DISBURSED items
+        // so the snapshot column on the amendment row isn't load-bearing.
+        ytdWages: 0,
+        ytdMedicareWages: 0,
+        taxState: c.taxState ?? orig.taxState,
+        status: 'PENDING' as const,
+      };
+    });
+
+    // Run-level totals are deltas too — sum the per-associate deltas.
+    const totals = amendmentItems.reduce(
+      (acc, i) => {
+        acc.totalGross += i.grossPay;
+        acc.totalTax +=
+          i.federalWithholding + i.fica + i.medicare + i.stateWithholding;
+        acc.totalNet += i.netPay;
+        acc.totalEmployerTax +=
+          i.employerFica + i.employerMedicare + i.employerFuta + i.employerSuta;
+        return acc;
+      },
+      { totalGross: 0, totalTax: 0, totalNet: 0, totalEmployerTax: 0 }
+    );
+
+    const amendment = await prisma.payrollRun.create({
+      data: {
+        clientId: original.clientId,
+        periodStart: original.periodStart,
+        periodEnd: original.periodEnd,
+        status: 'DRAFT',
+        kind: 'AMENDMENT',
+        amendsRunId: original.id,
+        amendmentReason: reason,
+        createdById: req.user!.id,
+        totalGross: round2(totals.totalGross),
+        totalTax: round2(totals.totalTax),
+        totalNet: round2(totals.totalNet),
+        totalEmployerTax: round2(totals.totalEmployerTax),
+        items: {
+          create: amendmentItems,
+        },
+      },
+      include: RUN_INCLUDE,
+    });
+
+    await recordPayrollEvent({
+      actorUserId: req.user!.id,
+      action: 'payroll.run_amended',
+      payrollRunId: amendment.id,
+      clientId: amendment.clientId,
+      metadata: {
+        reason,
+        amendsRunId: original.id,
+        corrections: corrections.length,
+        netDeltaTotal: round2(totals.totalNet),
+      },
+      req,
+    });
+
+    res.status(201).json(toDetail(amendment));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * Build the adapter recipient block from an associate's primary payout
  * method. Decrypts the routing/account ciphertext only at the call site
  * (never store decrypted bank numbers in any object that lingers). When
@@ -1217,6 +1637,23 @@ payrollRouter.get('/runs/:runId/paystubs.zip', async (req, res, next) => {
           suta: Number(item.employerSuta),
         },
         meta: { runId: run.id, itemId: item.id, issuedAt },
+        // Gap 3 — amendment banner + voided watermark for the audit trail.
+        ...(run.kind === 'AMENDMENT' && run.amendsRunId
+          ? {
+              amendment: {
+                reason: run.amendmentReason ?? '',
+                sourceRunId: run.amendsRunId,
+              },
+            }
+          : {}),
+        ...(run.status === 'CANCELLED' || item.status === 'VOIDED'
+          ? {
+              voided: {
+                voidedAt: (run.cancelledAt ?? item.voidedAt ?? new Date()).toISOString(),
+                reason: run.cancelReason,
+              },
+            }
+          : {}),
       };
       const pdf = await renderPaystubPdf(data);
       const hash = hashPdf(pdf);
@@ -1330,6 +1767,25 @@ payrollRouter.get('/items/:itemId/paystub.pdf', async (req, res, next) => {
         itemId: item.id,
         issuedAt: new Date().toISOString(),
       },
+      // Gap 3 — amendment banner + voided watermark for the audit trail.
+      ...(item.payrollRun.kind === 'AMENDMENT' && item.payrollRun.amendsRunId
+        ? {
+            amendment: {
+              reason: item.payrollRun.amendmentReason ?? '',
+              sourceRunId: item.payrollRun.amendsRunId,
+            },
+          }
+        : {}),
+      ...(item.payrollRun.status === 'CANCELLED' || item.status === 'VOIDED'
+        ? {
+            voided: {
+              voidedAt: (
+                item.payrollRun.cancelledAt ?? item.voidedAt ?? new Date()
+              ).toISOString(),
+              reason: item.payrollRun.cancelReason,
+            },
+          }
+        : {}),
     };
 
     const pdf = await renderPaystubPdf(data);

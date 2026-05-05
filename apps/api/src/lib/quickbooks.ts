@@ -385,6 +385,154 @@ export async function postPayrollJournalEntry(
   return { journalEntryId: id };
 }
 
+// --- Gap 3 — Reversing JournalEntry (void path) --------------------------
+
+export interface PayrollReversalSource extends PayrollJournalSource {
+  /** QBO JournalEntry.Id of the run we are reversing. Memo references it. */
+  originalJournalEntryId: string;
+  /** Start of the original pay period — included in memo for accountant matching. */
+  periodStart: Date;
+  /** End of the original pay period — included in memo for accountant matching. */
+  periodEnd: Date;
+  /** Timestamp the void was actioned at (= run.cancelledAt). Memo references it. */
+  voidDate: Date;
+  /** HR Admin's mandatory void reason; appended to memo verbatim. */
+  reason: string;
+}
+
+/**
+ * Post a balanced REVERSING JournalEntry to QBO. Debits and credits are
+ * exactly swapped from postPayrollJournalEntry — the original posted:
+ *
+ *   DEBIT  Salaries Expense
+ *   CREDIT Federal Tax Payable, State Tax Payable, FICA, Medicare,
+ *          Benefits Payable, Net Pay Payable
+ *
+ * The reversal posts:
+ *
+ *   CREDIT Salaries Expense
+ *   DEBIT  Federal Tax Payable, State Tax Payable, FICA, Medicare,
+ *          Benefits Payable, Net Pay Payable
+ *
+ * Sum of debits still equals sum of credits (QBO rejects unbalanced JEs).
+ * Net effect across the original + reversal is zero on every account.
+ *
+ * Memo follows a strict shape so the accountant can match every reversal
+ * to its original without manual research:
+ *
+ *   "REVERSAL of JE-{originalId} — Payroll period {start} to {end}
+ *      — Voided {voidDate} — Reason: {cancelReason}"
+ *
+ * txnDate on the reversal is the void date — the original period's
+ * reports stay tied to the original JE; the reversal lands in the period
+ * it was actioned.
+ */
+export async function postReversingJournalEntry(
+  prisma: PrismaClient,
+  clientId: string,
+  source: PayrollReversalSource
+): Promise<JournalEntryResult> {
+  const conn = await prisma.quickbooksConnection.findUnique({
+    where: { clientId },
+  });
+  if (!conn) throw new Error('No QuickBooks connection for this client');
+
+  const accounts = chooseAccounts(conn);
+  // Same account/amount set as the original, but each line's posting type
+  // flips. Variable name `taxLines` reflects what these lines are about
+  // (tax/benefit/net-pay payables); they were CREDITs in the original
+  // and become DEBITs on the reversal.
+  const taxLines: Array<{ accountRef: string; amount: number; memo: string }> = [
+    { accountRef: accounts.federalTaxPayable, amount: source.totalFederal,  memo: 'REVERSAL — Federal income tax withheld' },
+    { accountRef: accounts.stateTaxPayable,   amount: source.totalState,    memo: 'REVERSAL — State income tax withheld' },
+    { accountRef: accounts.ficaPayable,       amount: source.totalFica,     memo: 'REVERSAL — Social Security (FICA)' },
+    { accountRef: accounts.medicarePayable,   amount: source.totalMedicare, memo: 'REVERSAL — Medicare' },
+    { accountRef: accounts.benefitsPayable,   amount: source.totalBenefits, memo: 'REVERSAL — Pre-tax benefit deductions' },
+    { accountRef: accounts.netPayPayable,     amount: source.totalNet,      memo: 'REVERSAL — Net pay payable' },
+  ].filter((c) => c.amount > 0);
+
+  const creditTotal = taxLines.reduce((s, c) => s + c.amount, 0);
+
+  const detailExtras = source.entityRef
+    ? {
+        Entity: {
+          Type: source.entityRef.type,
+          EntityRef: { value: source.entityRef.value },
+        },
+      }
+    : {};
+
+  const ymd = (d: Date) => d.toISOString().slice(0, 10);
+  const privateNote =
+    `REVERSAL of JE-${source.originalJournalEntryId}` +
+    ` — Payroll period ${ymd(source.periodStart)} to ${ymd(source.periodEnd)}` +
+    ` — Voided ${ymd(source.voidDate)}` +
+    ` — Reason: ${source.reason}`;
+
+  const payload = {
+    TxnDate: ymd(source.voidDate),
+    PrivateNote: privateNote,
+    Line: [
+      // Single CREDIT on Salaries Expense, sized to balance — mirror of
+      // the original's single DEBIT line.
+      {
+        DetailType: 'JournalEntryLineDetail',
+        Amount: round2(creditTotal),
+        Description: 'REVERSAL — Total payroll expense',
+        JournalEntryLineDetail: {
+          PostingType: 'Credit',
+          AccountRef: { value: accounts.salariesExpense },
+          ...detailExtras,
+        },
+      },
+      // The original CREDIT lines become DEBITs.
+      ...taxLines.map((c) => ({
+        DetailType: 'JournalEntryLineDetail',
+        Amount: round2(c.amount),
+        Description: c.memo,
+        JournalEntryLineDetail: {
+          PostingType: 'Debit',
+          AccountRef: { value: c.accountRef },
+          ...detailExtras,
+        },
+      })),
+    ],
+  };
+
+  if (isStubMode()) {
+    const id = `STUB-QBO-REV-${Date.now().toString(36)}`;
+    console.info(
+      `[quickbooks/stub] Would post REVERSING JournalEntry id=${id} for client=${clientId} (reverses ${source.originalJournalEntryId})`,
+      JSON.stringify(payload, null, 2)
+    );
+    return { journalEntryId: id };
+  }
+
+  const tokens = await getValidAccessToken(prisma, clientId);
+  if (!tokens) throw new Error('No valid access token');
+
+  const res = await fetch(
+    `${endpoints().apiBase}/v3/company/${tokens.realmId}/journalentry?minorversion=70`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${tokens.accessToken}`,
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    }
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Intuit reversing JE POST failed (${res.status}): ${text}`);
+  }
+  const body = (await res.json()) as { JournalEntry?: { Id?: string } };
+  const id = body.JournalEntry?.Id;
+  if (!id) throw new Error('Intuit response missing JournalEntry.Id');
+  return { journalEntryId: id };
+}
+
 // --- Wave 3.1 — Chart of accounts auto-discovery --------------------------
 
 export interface QboAccount {
