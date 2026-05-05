@@ -4,6 +4,12 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { decryptString } from '../lib/crypto.js';
+import {
+  aggregateW2Wages,
+  listW2EligibleAssociates,
+} from '../lib/w2Aggregator.js';
+import { hashW2Pdf, renderW2Pdf, type W2PdfData } from '../lib/w2Pdf.js';
 
 /**
  * Phase 91 — Garnishments + tax forms (941, 940, W-2, 1099-NEC).
@@ -375,4 +381,216 @@ payrollTax91Router.get('/tax-forms/build/941', VIEW, async (req, res) => {
     periodStart: periodStart.toISOString().slice(0, 10),
     periodEnd: periodEnd.toISOString().slice(0, 10),
   });
+});
+
+// ----- W-2 generation (Gap 1) --------------------------------------------
+
+const GenerateW2BodySchema = z.object({
+  taxYear: z.number().int().min(2000).max(2100),
+  // Null / omitted = generate W-2s for every client. Specific UUID = scope
+  // to one client (the typical case from the admin UI's per-client view).
+  clientId: z.string().uuid().nullable().optional(),
+});
+
+/**
+ * POST /tax-forms/w2/generate { taxYear, clientId? } — for every associate
+ * with at least one disbursed paystub in the year, run the aggregator and
+ * persist a TaxForm(kind=W2, status=DRAFT) row carrying the box totals.
+ *
+ * Idempotent at the per-associate level: if a non-VOIDED W-2 already
+ * exists for {associate, year}, it is skipped (re-runs are safe). The
+ * caller can void an existing form first to force regeneration.
+ */
+payrollTax91Router.post('/tax-forms/w2/generate', MANAGE, async (req, res) => {
+  const input = GenerateW2BodySchema.parse(req.body ?? {});
+  const associateIds = await listW2EligibleAssociates(
+    prisma,
+    input.taxYear,
+    input.clientId ?? null,
+  );
+
+  let createdCount = 0;
+  let skippedCount = 0;
+  const created: { id: string; associateId: string }[] = [];
+
+  for (const associateId of associateIds) {
+    const existing = await prisma.taxForm.findFirst({
+      where: {
+        kind: 'W2',
+        taxYear: input.taxYear,
+        associateId,
+        status: { not: 'VOIDED' },
+      },
+      select: { id: true },
+    });
+    if (existing) {
+      skippedCount += 1;
+      continue;
+    }
+
+    const boxes = await aggregateW2Wages(prisma, associateId, input.taxYear);
+
+    const row = await prisma.taxForm.create({
+      data: {
+        kind: 'W2',
+        taxYear: input.taxYear,
+        associateId,
+        amounts: boxes as unknown as Prisma.InputJsonValue,
+        status: 'DRAFT',
+      },
+    });
+    created.push({ id: row.id, associateId });
+    createdCount += 1;
+  }
+
+  res.json({
+    eligibleAssociateCount: associateIds.length,
+    createdCount,
+    skippedCount,
+    created,
+  });
+});
+
+/**
+ * GET /tax-forms/:id/pdf — renders the PDF for a TaxForm. W-2 only at this
+ * phase; other kinds 400 until their renderers land. Stamps `pdfHash` on
+ * first download (matching the paystub immutability contract).
+ *
+ * Scope: associates may download their own form; HR/Finance/Manager can
+ * download any. Mirrors /payroll/items/:itemId/paystub.pdf scoping.
+ */
+payrollTax91Router.get('/tax-forms/:id/pdf', async (req, res, next) => {
+  try {
+    const form = await prisma.taxForm.findUnique({
+      where: { id: req.params.id },
+      include: {
+        associate: {
+          include: {
+            w4Submission: { select: { ssnEncrypted: true } },
+          },
+        },
+      },
+    });
+    if (!form) throw new HttpError(404, 'not_found', 'Form not found.');
+    if (form.kind !== 'W2') {
+      throw new HttpError(
+        400,
+        'unsupported_kind',
+        `PDF rendering is only supported for W-2 today. ${form.kind} renderers land in a follow-up.`,
+      );
+    }
+    if (!form.associateId || !form.associate) {
+      throw new HttpError(500, 'malformed_form', 'W-2 has no associate row.');
+    }
+
+    const user = req.user!;
+    const isOwner = user.associateId && user.associateId === form.associateId;
+    const canManage = [
+      'HR_ADMINISTRATOR',
+      'OPERATIONS_MANAGER',
+      'FINANCE_ACCOUNTANT',
+      'EXECUTIVE_CHAIRMAN',
+    ].includes(user.role);
+    if (!isOwner && !canManage) {
+      throw new HttpError(404, 'not_found', 'Form not found.');
+    }
+
+    if (!form.associate.w4Submission?.ssnEncrypted) {
+      throw new HttpError(
+        400,
+        'missing_ssn',
+        'Cannot render W-2: associate has no SSN on file (W-4 not yet completed).',
+      );
+    }
+
+    // Pick the run-scoped client whose info goes on the employer block.
+    // We use the most recent disbursed payroll run for the associate in
+    // the W-2's tax year; for cross-client years the first one wins.
+    const yearStart = new Date(Date.UTC(form.taxYear, 0, 1));
+    const yearEndExclusive = new Date(Date.UTC(form.taxYear + 1, 0, 1));
+    const sampleItem = await prisma.payrollItem.findFirst({
+      where: {
+        associateId: form.associateId,
+        payrollRun: {
+          status: { not: 'CANCELLED' },
+          disbursedAt: { gte: yearStart, lt: yearEndExclusive },
+        },
+      },
+      include: { payrollRun: { include: { client: true } } },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const client = sampleItem?.payrollRun.client ?? null;
+    if (!client?.legalName || !client.ein) {
+      throw new HttpError(
+        400,
+        'missing_employer_info',
+        'Cannot render W-2: client is missing legalName or EIN. HR must fill these in on the client record before generating tax forms.',
+      );
+    }
+
+    const ssn = decryptString(form.associate.w4Submission.ssnEncrypted);
+    const ssnFormatted =
+      ssn.length === 9
+        ? `${ssn.slice(0, 3)}-${ssn.slice(3, 5)}-${ssn.slice(5)}`
+        : ssn;
+
+    const pdfData: W2PdfData = {
+      taxYear: form.taxYear,
+      employer: {
+        ein: client.ein,
+        name: client.legalName,
+        addressLine1: client.addressLine1,
+        addressLine2: client.addressLine2,
+        city: client.city,
+        state: client.state,
+        zip: client.zip,
+      },
+      employee: {
+        ssn: ssnFormatted,
+        firstName: form.associate.firstName,
+        lastName: form.associate.lastName,
+        addressLine1: form.associate.addressLine1,
+        addressLine2: form.associate.addressLine2,
+        city: form.associate.city,
+        state: form.associate.state,
+        zip: form.associate.zip,
+      },
+      // Control number (Box d) — short, stable per form. The form id's
+      // first 8 chars give finance a quick lookup key without leaking the
+      // full UUID on a printed page.
+      controlNumber: form.id.slice(0, 8).toUpperCase(),
+      boxes: form.amounts as unknown as W2PdfData['boxes'],
+      meta: { formId: form.id, generatedAt: new Date().toISOString() },
+    };
+
+    const pdf = await renderW2Pdf(pdfData);
+    const hash = hashW2Pdf(pdf);
+
+    if (!form.pdfHash) {
+      await prisma.taxForm.update({
+        where: { id: form.id },
+        data: { pdfHash: hash },
+      });
+    } else if (form.pdfHash !== hash) {
+      // Layout change between renders. Surface in logs but still serve
+      // the bytes — finance shouldn't be blocked by a font swap or PDF
+      // engine update. Hash mismatch is observable via the audit log.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[w2] pdfHash mismatch for TaxForm ${form.id}: stored ${form.pdfHash}, current ${hash}`,
+      );
+    }
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="W2-${form.taxYear}-${form.associate.lastName}-${form.associate.firstName}.pdf"`
+        .toLowerCase()
+        .replace(/[^\x20-\x7e]/g, ''),
+    );
+    res.send(pdf);
+  } catch (err) {
+    next(err);
+  }
 });

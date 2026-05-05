@@ -462,6 +462,18 @@ model Client {
   industry             String?
   status               ClientStatus @default(ACTIVE)
   contactEmail         String?
+  // Gap 1 — Employer identity used on tax forms (W-2, 941, 1099-NEC).
+  // legalName is the IRS-registered name shown on the W-2 employer block;
+  // it can differ from `name` (the brand / display name). ein is the EIN
+  // formatted as "XX-XXXXXXX". HR fills these in before generating W-2s.
+  legalName            String?      @db.VarChar(255)
+  ein                  String?      @db.VarChar(20)
+  // Gap 1 — Employer address used on tax forms. `state` already lives
+  // below as the work-site code; reused for the W-2 employer block too.
+  addressLine1         String?      @db.VarChar(255)
+  addressLine2         String?      @db.VarChar(255)
+  city                 String?      @db.VarChar(120)
+  zip                  String?      @db.VarChar(10)
   // Two-letter USPS code of the work site. Drives Phase 23 OT/meal-break
   // policy AND Phase 25 predictive-scheduling enforcement (NY, IL, WA, PA,
   // OR demand 14-day notice). Null = federal default = no state-specific
@@ -3433,6 +3445,10 @@ model TaxForm {
   filedAt     DateTime?     @db.Timestamptz(6)
   filedById   String?       @db.Uuid
   ein         String?       @db.VarChar(20)
+  // Gap 1 — sha256 of the rendered W-2 PDF, stamped on first download.
+  // Subsequent renders must produce the same hash (same as Phase 18's
+  // PayrollItem.paystubHash pattern). Null until the form is rendered.
+  pdfHash     String?       @db.VarChar(64)
   createdAt   DateTime      @default(now()) @db.Timestamptz(6)
   updatedAt   DateTime      @updatedAt @db.Timestamptz(6)
 
