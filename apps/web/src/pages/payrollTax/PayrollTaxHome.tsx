@@ -1,15 +1,18 @@
 import { useEffect, useState } from 'react';
-import { FileText, Plus, Receipt, Scale } from 'lucide-react';
+import { Download, FileText, Plus, Receipt, Scale } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
   build941,
   createGarnishment,
   createTaxForm,
   fileTaxForm,
+  generateW2s,
   listGarnishments,
   listTaxForms,
   setGarnishmentStatus,
+  taxFormPdfUrl,
   voidTaxForm,
+  w2BulkZipUrl,
   type Garnishment,
   type GarnishmentKind,
   type GarnishmentStatus,
@@ -415,6 +418,7 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
   const [rows, setRows] = useState<TaxForm[] | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [show941Builder, setShow941Builder] = useState(false);
+  const [showW2Generate, setShowW2Generate] = useState(false);
 
   const refresh = () => {
     setRows(null);
@@ -454,6 +458,9 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={() => setShow941Builder(true)}>
             Build 941
+          </Button>
+          <Button variant="ghost" onClick={() => setShowW2Generate(true)}>
+            Generate W-2s
           </Button>
           <Button onClick={() => setShowNew(true)}>
             <Plus className="mr-2 h-4 w-4" /> New form
@@ -500,6 +507,13 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
                       {f.filedAt ? new Date(f.filedAt).toLocaleDateString() : '—'}
                     </TableCell>
                     <TableCell className="text-right space-x-2">
+                      {f.kind === 'W2' && f.status !== 'VOIDED' && (
+                        <Button size="sm" variant="ghost" asChild>
+                          <a href={taxFormPdfUrl(f.id)} download>
+                            <Download className="mr-1 h-3 w-3" /> PDF
+                          </a>
+                        </Button>
+                      )}
                       {canManage && f.status === 'DRAFT' && (
                         <Button size="sm" onClick={() => onFile(f.id)}>
                           File
@@ -530,7 +544,106 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
       {show941Builder && (
         <Form941BuilderDrawer onClose={() => setShow941Builder(false)} />
       )}
+      {showW2Generate && (
+        <W2GenerateDrawer
+          onClose={() => setShowW2Generate(false)}
+          onDone={() => {
+            setShowW2Generate(false);
+            refresh();
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function W2GenerateDrawer({
+  onClose,
+  onDone,
+}: {
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [taxYear, setTaxYear] = useState(String(new Date().getFullYear() - 1));
+  const [clientId, setClientId] = useState('');
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<Awaited<ReturnType<typeof generateW2s>> | null>(null);
+
+  const onGenerate = async () => {
+    setRunning(true);
+    try {
+      const r = await generateW2s({
+        taxYear: Number(taxYear),
+        clientId: clientId.trim() || null,
+      });
+      setResult(r);
+      toast.success(
+        `Created ${r.createdCount} W-2(s); skipped ${r.skippedCount} (already on file).`,
+      );
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+      <DrawerHeader>
+        <DrawerTitle>Generate W-2s</DrawerTitle>
+      </DrawerHeader>
+      <DrawerBody className="space-y-4">
+        <div className="text-sm text-silver">
+          Walks every associate with at least one disbursed paystub in the
+          year and creates a DRAFT W-2. Idempotent — already-generated forms
+          are skipped. Void an existing W-2 first to force regeneration.
+        </div>
+        <div>
+          <Label>Tax year</Label>
+          <Input
+            type="number"
+            className="mt-1"
+            value={taxYear}
+            onChange={(e) => setTaxYear(e.target.value)}
+          />
+        </div>
+        <div>
+          <Label>Client ID (optional — leave blank for all clients)</Label>
+          <Input
+            className="mt-1 font-mono text-xs"
+            value={clientId}
+            onChange={(e) => setClientId(e.target.value)}
+            placeholder="UUID"
+          />
+        </div>
+        <Button onClick={onGenerate} disabled={running}>
+          {running ? 'Generating…' : 'Generate'}
+        </Button>
+        {result && (
+          <div className="space-y-2 rounded-md border border-navy-secondary bg-navy-secondary/40 p-3 text-sm text-white">
+            <div>Eligible associates: {result.eligibleAssociateCount}</div>
+            <div>Created: {result.createdCount}</div>
+            <div>Skipped (already on file): {result.skippedCount}</div>
+            {result.createdCount > 0 && (
+              <Button asChild variant="ghost" size="sm" className="mt-1">
+                <a
+                  href={w2BulkZipUrl(Number(taxYear), clientId.trim() || null)}
+                  download
+                >
+                  <Download className="mr-1 h-3 w-3" /> Download all as ZIP
+                </a>
+              </Button>
+            )}
+          </div>
+        )}
+      </DrawerBody>
+      <DrawerFooter>
+        <Button variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button onClick={onDone}>Done</Button>
+      </DrawerFooter>
+    </Drawer>
   );
 }
 

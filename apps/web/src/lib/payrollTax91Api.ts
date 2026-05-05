@@ -125,3 +125,28 @@ export const build941 = (taxYear: number, quarter: number) =>
     periodStart: string;
     periodEnd: string;
   }>(`/tax-forms/build/941?taxYear=${taxYear}&quarter=${quarter}`);
+
+// ----- W-2 generation (Gap 1) -------------------------------------------
+
+export interface GenerateW2Result {
+  eligibleAssociateCount: number;
+  createdCount: number;
+  skippedCount: number;
+  created: { id: string; associateId: string }[];
+}
+
+export const generateW2s = (input: { taxYear: number; clientId?: string | null }) =>
+  apiFetch<GenerateW2Result>('/tax-forms/w2/generate', {
+    method: 'POST',
+    body: input,
+  });
+
+/** Direct URL — used as href for an <a download> tag. */
+export const taxFormPdfUrl = (id: string): string => `/api/tax-forms/${id}/pdf`;
+
+/** Direct URL for the bulk-download zip (year + optional client scope). */
+export const w2BulkZipUrl = (taxYear: number, clientId?: string | null): string => {
+  const q = new URLSearchParams({ taxYear: String(taxYear) });
+  if (clientId) q.set('clientId', clientId);
+  return `/api/tax-forms/w2/bulk.zip?${q.toString()}`;
+};

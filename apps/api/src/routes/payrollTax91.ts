@@ -10,6 +10,7 @@ import {
   listW2EligibleAssociates,
 } from '../lib/w2Aggregator.js';
 import { hashW2Pdf, renderW2Pdf, type W2PdfData } from '../lib/w2Pdf.js';
+import { buildEfw2File, type Efw2Employee, type Efw2File } from '../lib/efw2.js';
 
 /**
  * Phase 91 — Garnishments + tax forms (941, 940, W-2, 1099-NEC).
@@ -451,6 +452,112 @@ payrollTax91Router.post('/tax-forms/w2/generate', MANAGE, async (req, res) => {
   });
 });
 
+// Shared helper — pulls the form + associate + W-4, looks up an employer
+// block from the associate's first disbursed run in the year, and renders
+// the W-2 PDF. Used by both the single-PDF and bulk-zip routes. Throws
+// HttpError on missing inputs so the caller's catch block produces a clean
+// HTTP response. The pdfHash stamp lives at the call site so the bulk
+// route can opt into a single batched update.
+async function renderW2ForForm(formId: string): Promise<{
+  pdf: Buffer;
+  hash: string;
+  form: NonNullable<Awaited<ReturnType<typeof loadW2Form>>>;
+  filename: string;
+}> {
+  const form = await loadW2Form(formId);
+  if (!form) throw new HttpError(404, 'not_found', 'Form not found.');
+  if (form.kind !== 'W2') {
+    throw new HttpError(
+      400,
+      'unsupported_kind',
+      `PDF rendering is only supported for W-2 today. ${form.kind} renderers land in a follow-up.`,
+    );
+  }
+  if (!form.associateId || !form.associate) {
+    throw new HttpError(500, 'malformed_form', 'W-2 has no associate row.');
+  }
+  if (!form.associate.w4Submission?.ssnEncrypted) {
+    throw new HttpError(
+      400,
+      'missing_ssn',
+      'Cannot render W-2: associate has no SSN on file (W-4 not yet completed).',
+    );
+  }
+
+  const yearStart = new Date(Date.UTC(form.taxYear, 0, 1));
+  const yearEndExclusive = new Date(Date.UTC(form.taxYear + 1, 0, 1));
+  const sampleItem = await prisma.payrollItem.findFirst({
+    where: {
+      associateId: form.associateId,
+      payrollRun: {
+        status: { not: 'CANCELLED' },
+        disbursedAt: { gte: yearStart, lt: yearEndExclusive },
+      },
+    },
+    include: { payrollRun: { include: { client: true } } },
+    orderBy: { createdAt: 'asc' },
+  });
+  const client = sampleItem?.payrollRun.client ?? null;
+  if (!client?.legalName || !client.ein) {
+    throw new HttpError(
+      400,
+      'missing_employer_info',
+      'Cannot render W-2: client is missing legalName or EIN. HR must fill these in on the client record before generating tax forms.',
+    );
+  }
+
+  const ssn = decryptString(form.associate.w4Submission.ssnEncrypted);
+  const ssnFormatted =
+    ssn.length === 9
+      ? `${ssn.slice(0, 3)}-${ssn.slice(3, 5)}-${ssn.slice(5)}`
+      : ssn;
+
+  const pdfData: W2PdfData = {
+    taxYear: form.taxYear,
+    employer: {
+      ein: client.ein,
+      name: client.legalName,
+      addressLine1: client.addressLine1,
+      addressLine2: client.addressLine2,
+      city: client.city,
+      state: client.state,
+      zip: client.zip,
+    },
+    employee: {
+      ssn: ssnFormatted,
+      firstName: form.associate.firstName,
+      lastName: form.associate.lastName,
+      addressLine1: form.associate.addressLine1,
+      addressLine2: form.associate.addressLine2,
+      city: form.associate.city,
+      state: form.associate.state,
+      zip: form.associate.zip,
+    },
+    controlNumber: form.id.slice(0, 8).toUpperCase(),
+    boxes: form.amounts as unknown as W2PdfData['boxes'],
+    meta: { formId: form.id, generatedAt: new Date().toISOString() },
+  };
+
+  const pdf = await renderW2Pdf(pdfData);
+  const hash = hashW2Pdf(pdf);
+  const filename =
+    `W2-${form.taxYear}-${form.associate.lastName}-${form.associate.firstName}.pdf`
+      .toLowerCase()
+      .replace(/[^\x20-\x7e]/g, '');
+  return { pdf, hash, form, filename };
+}
+
+async function loadW2Form(formId: string) {
+  return prisma.taxForm.findUnique({
+    where: { id: formId },
+    include: {
+      associate: {
+        include: { w4Submission: { select: { ssnEncrypted: true } } },
+      },
+    },
+  });
+}
+
 /**
  * GET /tax-forms/:id/pdf — renders the PDF for a TaxForm. W-2 only at this
  * phase; other kinds 400 until their renderers land. Stamps `pdfHash` on
@@ -461,27 +568,8 @@ payrollTax91Router.post('/tax-forms/w2/generate', MANAGE, async (req, res) => {
  */
 payrollTax91Router.get('/tax-forms/:id/pdf', async (req, res, next) => {
   try {
-    const form = await prisma.taxForm.findUnique({
-      where: { id: req.params.id },
-      include: {
-        associate: {
-          include: {
-            w4Submission: { select: { ssnEncrypted: true } },
-          },
-        },
-      },
-    });
+    const form = await loadW2Form(req.params.id);
     if (!form) throw new HttpError(404, 'not_found', 'Form not found.');
-    if (form.kind !== 'W2') {
-      throw new HttpError(
-        400,
-        'unsupported_kind',
-        `PDF rendering is only supported for W-2 today. ${form.kind} renderers land in a follow-up.`,
-      );
-    }
-    if (!form.associateId || !form.associate) {
-      throw new HttpError(500, 'malformed_form', 'W-2 has no associate row.');
-    }
 
     const user = req.user!;
     const isOwner = user.associateId && user.associateId === form.associateId;
@@ -495,77 +583,7 @@ payrollTax91Router.get('/tax-forms/:id/pdf', async (req, res, next) => {
       throw new HttpError(404, 'not_found', 'Form not found.');
     }
 
-    if (!form.associate.w4Submission?.ssnEncrypted) {
-      throw new HttpError(
-        400,
-        'missing_ssn',
-        'Cannot render W-2: associate has no SSN on file (W-4 not yet completed).',
-      );
-    }
-
-    // Pick the run-scoped client whose info goes on the employer block.
-    // We use the most recent disbursed payroll run for the associate in
-    // the W-2's tax year; for cross-client years the first one wins.
-    const yearStart = new Date(Date.UTC(form.taxYear, 0, 1));
-    const yearEndExclusive = new Date(Date.UTC(form.taxYear + 1, 0, 1));
-    const sampleItem = await prisma.payrollItem.findFirst({
-      where: {
-        associateId: form.associateId,
-        payrollRun: {
-          status: { not: 'CANCELLED' },
-          disbursedAt: { gte: yearStart, lt: yearEndExclusive },
-        },
-      },
-      include: { payrollRun: { include: { client: true } } },
-      orderBy: { createdAt: 'asc' },
-    });
-
-    const client = sampleItem?.payrollRun.client ?? null;
-    if (!client?.legalName || !client.ein) {
-      throw new HttpError(
-        400,
-        'missing_employer_info',
-        'Cannot render W-2: client is missing legalName or EIN. HR must fill these in on the client record before generating tax forms.',
-      );
-    }
-
-    const ssn = decryptString(form.associate.w4Submission.ssnEncrypted);
-    const ssnFormatted =
-      ssn.length === 9
-        ? `${ssn.slice(0, 3)}-${ssn.slice(3, 5)}-${ssn.slice(5)}`
-        : ssn;
-
-    const pdfData: W2PdfData = {
-      taxYear: form.taxYear,
-      employer: {
-        ein: client.ein,
-        name: client.legalName,
-        addressLine1: client.addressLine1,
-        addressLine2: client.addressLine2,
-        city: client.city,
-        state: client.state,
-        zip: client.zip,
-      },
-      employee: {
-        ssn: ssnFormatted,
-        firstName: form.associate.firstName,
-        lastName: form.associate.lastName,
-        addressLine1: form.associate.addressLine1,
-        addressLine2: form.associate.addressLine2,
-        city: form.associate.city,
-        state: form.associate.state,
-        zip: form.associate.zip,
-      },
-      // Control number (Box d) — short, stable per form. The form id's
-      // first 8 chars give finance a quick lookup key without leaking the
-      // full UUID on a printed page.
-      controlNumber: form.id.slice(0, 8).toUpperCase(),
-      boxes: form.amounts as unknown as W2PdfData['boxes'],
-      meta: { formId: form.id, generatedAt: new Date().toISOString() },
-    };
-
-    const pdf = await renderW2Pdf(pdfData);
-    const hash = hashW2Pdf(pdf);
+    const { pdf, hash, filename } = await renderW2ForForm(req.params.id);
 
     if (!form.pdfHash) {
       await prisma.taxForm.update({
@@ -583,13 +601,320 @@ payrollTax91Router.get('/tax-forms/:id/pdf', async (req, res, next) => {
     }
 
     res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(pdf);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /tax-forms/w2/bulk.zip?taxYear=YYYY&clientId=UUID — streams a zip of
+ * every non-VOIDED W-2 PDF for the year (and optional client scope). Skips
+ * forms that fail to render (missing SSN / employer info) and surfaces the
+ * skip count in a manifest.txt at the root of the zip so finance can spot
+ * gaps.
+ *
+ * Capability: process:payroll. Associates can't bulk-download (they only
+ * see their own via the per-form route).
+ */
+payrollTax91Router.get('/tax-forms/w2/bulk.zip', MANAGE, async (req, res, next) => {
+  try {
+    const taxYear = z
+      .preprocess((v) => Number(v), z.number().int().min(2000).max(2100))
+      .parse(req.query.taxYear);
+    const clientId = z.string().uuid().optional().parse(req.query.clientId);
+
+    const where: Prisma.TaxFormWhereInput = {
+      kind: 'W2',
+      taxYear,
+      status: { not: 'VOIDED' },
+    };
+    if (clientId) {
+      // Filter to associates who had at least one disbursed run for this
+      // client in the year. The W-2 row itself doesn't carry clientId, so
+      // we resolve it via the associate's payroll history.
+      const yearStart = new Date(Date.UTC(taxYear, 0, 1));
+      const yearEndExclusive = new Date(Date.UTC(taxYear + 1, 0, 1));
+      const eligible = await prisma.payrollItem.findMany({
+        where: {
+          payrollRun: {
+            clientId,
+            status: { not: 'CANCELLED' },
+            disbursedAt: { gte: yearStart, lt: yearEndExclusive },
+          },
+        },
+        select: { associateId: true },
+        distinct: ['associateId'],
+      });
+      where.associateId = { in: eligible.map((e) => e.associateId) };
+    }
+
+    const forms = await prisma.taxForm.findMany({
+      where,
+      select: { id: true },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    if (forms.length === 0) {
+      throw new HttpError(
+        404,
+        'no_forms',
+        `No W-2 forms found for year ${taxYear}${clientId ? ` and client ${clientId}` : ''}. Generate them first.`,
+      );
+    }
+
+    // Lazy-import archiver so the route file's startup cost stays tiny.
+    const { default: archiver } = await import('archiver');
+
+    res.setHeader('Content-Type', 'application/zip');
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="W2-${form.taxYear}-${form.associate.lastName}-${form.associate.firstName}.pdf"`
-        .toLowerCase()
-        .replace(/[^\x20-\x7e]/g, ''),
+      `attachment; filename="w2-${taxYear}${clientId ? `-${clientId.slice(0, 8)}` : ''}.zip"`,
     );
-    res.send(pdf);
+
+    const zip = archiver('zip', { zlib: { level: 6 } });
+    zip.on('error', (err) => res.destroy(err));
+    zip.pipe(res);
+
+    const skipped: { formId: string; reason: string }[] = [];
+    for (const { id } of forms) {
+      try {
+        const { pdf, filename, hash, form } = await renderW2ForForm(id);
+        if (!form.pdfHash) {
+          await prisma.taxForm.update({
+            where: { id: form.id },
+            data: { pdfHash: hash },
+          });
+        }
+        zip.append(pdf, { name: filename });
+      } catch (err) {
+        const reason = err instanceof HttpError ? err.code : 'unknown';
+        skipped.push({ formId: id, reason });
+      }
+    }
+
+    if (skipped.length > 0) {
+      const manifest =
+        `Skipped ${skipped.length} of ${forms.length} W-2 forms.\n\n` +
+        skipped.map((s) => `${s.formId}\t${s.reason}`).join('\n') +
+        '\n';
+      zip.append(manifest, { name: 'manifest.txt' });
+    }
+
+    await zip.finalize();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// EFW2 e-file generator. Caller supplies the submitter block (BSO User
+// ID + contact info) per request because that data isn't stored on the
+// org today — adding a SubmitterProfile table is a future step. Full
+// disclaimer in lib/efw2.ts: field positions still need finance
+// review against SSA Pub 42-007 + AccuWage Online before BSO upload.
+const EinPattern = /^\d{9}$/; // EFW2 wants no dashes
+const Efw2BodySchema = z.object({
+  taxYear: z.number().int().min(2000).max(2100),
+  clientId: z.string().uuid(),
+  submitter: z.object({
+    ein: z.string().regex(EinPattern, 'EIN must be 9 digits, no dashes'),
+    userId: z.string().min(1).max(17),
+    name: z.string().min(1).max(57),
+    addressLine1: z.string().min(1).max(22),
+    addressLine2: z.string().max(22).optional().nullable(),
+    city: z.string().min(1).max(22),
+    state: z.string().length(2),
+    zip5: z.string().regex(/^\d{5}$/),
+    zip4: z
+      .string()
+      .regex(/^\d{4}$/)
+      .optional()
+      .nullable(),
+    contactName: z.string().min(1).max(57),
+    contactPhone: z.string().min(7).max(20),
+    contactEmail: z.string().email().max(40),
+  }),
+});
+
+/**
+ * POST /tax-forms/w2/efw2.txt — builds and streams the EFW2 e-file for
+ * a year + client. Includes every non-VOIDED W-2 row whose associate
+ * has a disbursed run for that client in the year. Capability:
+ * process:payroll. Output is plain ASCII (Windows-1252 compatible).
+ *
+ * The submitter block is supplied per request because BSO User ID +
+ * filing contact info aren't stored on the org yet. HR admin types
+ * them in once per filing — a SubmitterProfile table is a follow-up.
+ */
+payrollTax91Router.post('/tax-forms/w2/efw2.txt', MANAGE, async (req, res, next) => {
+  try {
+    const input = Efw2BodySchema.parse(req.body);
+
+    const client = await prisma.client.findUnique({
+      where: { id: input.clientId },
+    });
+    if (!client) throw new HttpError(404, 'client_not_found', 'Client not found.');
+    if (!client.legalName || !client.ein) {
+      throw new HttpError(
+        400,
+        'missing_employer_info',
+        'Client missing legalName or EIN.',
+      );
+    }
+    if (!client.addressLine1 || !client.city || !client.state || !client.zip) {
+      throw new HttpError(
+        400,
+        'missing_employer_address',
+        'EFW2 requires a full employer address (line1, city, state, ZIP).',
+      );
+    }
+
+    // Pull eligible associates and their W-2 forms for this client + year.
+    const yearStart = new Date(Date.UTC(input.taxYear, 0, 1));
+    const yearEndExclusive = new Date(Date.UTC(input.taxYear + 1, 0, 1));
+    const eligible = await prisma.payrollItem.findMany({
+      where: {
+        payrollRun: {
+          clientId: input.clientId,
+          status: { not: 'CANCELLED' },
+          disbursedAt: { gte: yearStart, lt: yearEndExclusive },
+        },
+      },
+      select: { associateId: true },
+      distinct: ['associateId'],
+    });
+    const associateIds = eligible.map((e) => e.associateId);
+
+    const forms = await prisma.taxForm.findMany({
+      where: {
+        kind: 'W2',
+        taxYear: input.taxYear,
+        status: { not: 'VOIDED' },
+        associateId: { in: associateIds },
+      },
+      include: {
+        associate: {
+          include: {
+            w4Submission: { select: { ssnEncrypted: true } },
+          },
+        },
+      },
+    });
+    if (forms.length === 0) {
+      throw new HttpError(
+        404,
+        'no_forms',
+        `No W-2 forms found for year ${input.taxYear} and client ${input.clientId}. Generate them first.`,
+      );
+    }
+
+    const employees: Efw2Employee[] = [];
+    const skipped: { associateId: string; reason: string }[] = [];
+    for (const f of forms) {
+      if (!f.associate) {
+        skipped.push({ associateId: f.associateId ?? 'unknown', reason: 'no_associate' });
+        continue;
+      }
+      if (!f.associate.w4Submission?.ssnEncrypted) {
+        skipped.push({ associateId: f.associate.id, reason: 'missing_ssn' });
+        continue;
+      }
+      if (
+        !f.associate.addressLine1 ||
+        !f.associate.city ||
+        !f.associate.state ||
+        !f.associate.zip
+      ) {
+        skipped.push({ associateId: f.associate.id, reason: 'missing_address' });
+        continue;
+      }
+      const ssn = decryptString(f.associate.w4Submission.ssnEncrypted);
+      const cleanedSsn = ssn.replace(/[^0-9]/g, '');
+      if (cleanedSsn.length !== 9) {
+        skipped.push({ associateId: f.associate.id, reason: 'invalid_ssn' });
+        continue;
+      }
+      const zip = f.associate.zip;
+      const zipMatch = zip.match(/^(\d{5})(?:[- ]?(\d{4}))?$/);
+      if (!zipMatch) {
+        skipped.push({ associateId: f.associate.id, reason: 'invalid_zip' });
+        continue;
+      }
+      employees.push({
+        ssn: cleanedSsn,
+        firstName: f.associate.firstName,
+        lastName: f.associate.lastName,
+        addressLine1: f.associate.addressLine1,
+        addressLine2: f.associate.addressLine2 ?? undefined,
+        city: f.associate.city,
+        state: f.associate.state,
+        zip5: zipMatch[1],
+        zip4: zipMatch[2] ?? undefined,
+        boxes: f.amounts as unknown as Efw2Employee['boxes'],
+      });
+    }
+
+    if (employees.length === 0) {
+      throw new HttpError(
+        400,
+        'no_eligible_employees',
+        `Every W-2 was skipped due to missing data: ${skipped.map((s) => s.reason).join(', ')}.`,
+      );
+    }
+
+    const employerZip = client.zip!.match(/^(\d{5})(?:[- ]?(\d{4}))?$/);
+    if (!employerZip) {
+      throw new HttpError(400, 'invalid_employer_zip', 'Client ZIP must be 5 or 9 digits.');
+    }
+    const employerEin = client.ein!.replace(/[^0-9]/g, '');
+    if (employerEin.length !== 9) {
+      throw new HttpError(400, 'invalid_employer_ein', 'Client EIN must be 9 digits.');
+    }
+
+    const efw2Input: Efw2File = {
+      submitter: {
+        ein: input.submitter.ein,
+        userId: input.submitter.userId,
+        name: input.submitter.name,
+        addressLine1: input.submitter.addressLine1,
+        addressLine2: input.submitter.addressLine2 ?? undefined,
+        city: input.submitter.city,
+        state: input.submitter.state,
+        zip5: input.submitter.zip5,
+        zip4: input.submitter.zip4 ?? undefined,
+        contactName: input.submitter.contactName,
+        contactPhone: input.submitter.contactPhone,
+        contactEmail: input.submitter.contactEmail,
+      },
+      employer: {
+        ein: employerEin,
+        taxYear: input.taxYear,
+        name: client.legalName!,
+        addressLine1: client.addressLine1!,
+        addressLine2: client.addressLine2 ?? undefined,
+        city: client.city!,
+        state: client.state ?? '',
+        zip5: employerZip[1],
+        zip4: employerZip[2] ?? undefined,
+      },
+      employees,
+    };
+
+    const fileBody = buildEfw2File(efw2Input);
+
+    res.setHeader('Content-Type', 'text/plain; charset=us-ascii');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="W2_REPORT_${input.taxYear}_${employerEin}.txt"`,
+    );
+    if (skipped.length > 0) {
+      res.setHeader(
+        'X-EFW2-Skipped',
+        JSON.stringify(skipped).slice(0, 4096),
+      );
+    }
+    res.send(fileBody);
   } catch (err) {
     next(err);
   }
