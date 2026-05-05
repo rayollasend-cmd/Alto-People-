@@ -5,6 +5,7 @@ import {
   build941,
   createGarnishment,
   createTaxForm,
+  createW2c,
   fileTaxForm,
   generateW2s,
   getSubmitterProfile,
@@ -16,6 +17,7 @@ import {
   voidTaxForm,
   w2BulkZipUrl,
   w2Efw2Url,
+  w2Efw2cUrl,
   type Garnishment,
   type GarnishmentKind,
   type GarnishmentStatus,
@@ -25,7 +27,7 @@ import {
   type TaxFormKind,
 } from '@/lib/payrollTax91Api';
 import { useAuth } from '@/lib/auth';
-import { useConfirm } from '@/lib/confirm';
+import { useConfirm, usePrompt } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -408,6 +410,7 @@ const FORM_KIND_LABEL: Record<TaxFormKind, string> = {
   F941: 'Form 941 (Quarterly federal)',
   F940: 'Form 940 (Annual FUTA)',
   W2: 'W-2 (Annual employee)',
+  W2C: 'W-2c (Correction)',
   F1099_NEC: '1099-NEC (Annual contractor)',
 };
 
@@ -420,6 +423,7 @@ const FORM_STATUS_BADGE: Record<TaxForm['status'], 'pending' | 'success' | 'defa
 
 function TaxFormsTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
+  const prompt = usePrompt();
   const [rows, setRows] = useState<TaxForm[] | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [show941Builder, setShow941Builder] = useState(false);
@@ -452,6 +456,28 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
     try {
       await voidTaxForm(id);
       toast.success('Form voided.');
+      refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    }
+  };
+
+  const onCorrect = async (originalW2FormId: string) => {
+    const reason = await prompt({
+      title: 'Correct this W-2 (W-2c)',
+      description:
+        'Reason is required and appears on the W-2c the employee receives. The route ' +
+        'recomputes the corrected totals from current payroll items — run any AMENDMENT ' +
+        'pay runs first.',
+      reasonLabel: 'Reason for correction',
+      confirmLabel: 'Create W-2c',
+    });
+    if (!reason) return;
+    try {
+      const r = await createW2c({ originalW2FormId, correctionReason: reason });
+      toast.success(
+        `W-2c created. Box 1 delta: ${r.delta.box1.toFixed(2)}, Box 2 delta: ${r.delta.box2.toFixed(2)}.`,
+      );
       refresh();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -516,19 +542,30 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
                       {f.filedAt ? new Date(f.filedAt).toLocaleDateString() : '—'}
                     </TableCell>
                     <TableCell className="text-right space-x-2">
-                      {f.kind === 'W2' && f.status !== 'VOIDED' && (
+                      {(f.kind === 'W2' || f.kind === 'W2C') && f.status !== 'VOIDED' && (
                         <Button size="sm" variant="ghost" asChild>
                           <a href={taxFormPdfUrl(f.id)} download>
                             <Download className="mr-1 h-3 w-3" /> PDF
                           </a>
                         </Button>
                       )}
+                      {canManage &&
+                        f.kind === 'W2' &&
+                        (f.status === 'FILED' || f.status === 'AMENDED') && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => onCorrect(f.id)}
+                          >
+                            Correct (W-2c)
+                          </Button>
+                        )}
                       {canManage && f.status === 'DRAFT' && (
                         <Button size="sm" onClick={() => onFile(f.id)}>
                           File
                         </Button>
                       )}
-                      {canManage && f.status === 'FILED' && (
+                      {canManage && f.status === 'FILED' && f.kind !== 'W2' && (
                         <Button size="sm" variant="ghost" onClick={() => onVoid(f.id)}>
                           Void
                         </Button>
@@ -647,14 +684,24 @@ function W2GenerateDrawer({
                   </a>
                 </Button>
                 {clientId.trim() && (
-                  <Button asChild variant="ghost" size="sm">
-                    <a
-                      href={w2Efw2Url(Number(taxYear), clientId.trim())}
-                      download
-                    >
-                      <Download className="mr-1 h-3 w-3" /> Download EFW2 e-file
-                    </a>
-                  </Button>
+                  <>
+                    <Button asChild variant="ghost" size="sm">
+                      <a
+                        href={w2Efw2Url(Number(taxYear), clientId.trim())}
+                        download
+                      >
+                        <Download className="mr-1 h-3 w-3" /> Download EFW2 e-file
+                      </a>
+                    </Button>
+                    <Button asChild variant="ghost" size="sm">
+                      <a
+                        href={w2Efw2cUrl(Number(taxYear), clientId.trim())}
+                        download
+                      >
+                        <Download className="mr-1 h-3 w-3" /> EFW2C corrections
+                      </a>
+                    </Button>
+                  </>
                 )}
               </div>
             )}

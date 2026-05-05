@@ -14,6 +14,7 @@ import { hashW2Pdf, renderW2Pdf, type W2PdfData } from '../lib/w2Pdf.js';
 import { hashW2cPdf, renderW2cPdf, type W2cPdfData } from '../lib/w2cPdf.js';
 import { hasW2cDelta, type W2cAmounts } from '../lib/w2cAggregator.js';
 import { buildEfw2File, type Efw2Employee, type Efw2File } from '../lib/efw2.js';
+import { buildEfw2cFile, type Efw2cEmployee, type Efw2cFile } from '../lib/efw2c.js';
 
 /**
  * Phase 91 — Garnishments + tax forms (941, 940, W-2, 1099-NEC).
@@ -1130,3 +1131,205 @@ payrollTax91Router.get('/tax-forms/w2/efw2.txt', MANAGE, async (req, res, next) 
     next(err);
   }
 });
+
+/**
+ * GET /tax-forms/w2/efw2c.txt?taxYear=YYYY&clientId=UUID — streams the
+ * EFW2C correction e-file. Includes every non-VOIDED W-2c row whose
+ * associate has a disbursed run for that client in the year. Same
+ * caveats as the EFW2 route: spec verification needed before BSO upload
+ * (this one against SSA Pub 42-014 + AccuWage W-2c validator).
+ */
+payrollTax91Router.get(
+  '/tax-forms/w2/efw2c.txt',
+  MANAGE,
+  async (req, res, next) => {
+    try {
+      const input = {
+        taxYear: z
+          .preprocess((v) => Number(v), z.number().int().min(2000).max(2100))
+          .parse(req.query.taxYear),
+        clientId: z.string().uuid().parse(req.query.clientId),
+      };
+
+      const submitter = await prisma.submitterProfile.findUnique({
+        where: { id: 'singleton' },
+      });
+      if (!submitter) {
+        throw new HttpError(
+          400,
+          'submitter_profile_missing',
+          'No SubmitterProfile on file. POST /tax-forms/submitter first.',
+        );
+      }
+
+      const client = await prisma.client.findUnique({
+        where: { id: input.clientId },
+      });
+      if (!client) throw new HttpError(404, 'client_not_found', 'Client not found.');
+      if (!client.legalName || !client.ein) {
+        throw new HttpError(
+          400,
+          'missing_employer_info',
+          'Client missing legalName or EIN.',
+        );
+      }
+      if (!client.addressLine1 || !client.city || !client.state || !client.zip) {
+        throw new HttpError(
+          400,
+          'missing_employer_address',
+          'EFW2C requires a full employer address (line1, city, state, ZIP).',
+        );
+      }
+
+      const yearStart = new Date(Date.UTC(input.taxYear, 0, 1));
+      const yearEndExclusive = new Date(Date.UTC(input.taxYear + 1, 0, 1));
+      const eligible = await prisma.payrollItem.findMany({
+        where: {
+          payrollRun: {
+            clientId: input.clientId,
+            status: { not: 'CANCELLED' },
+            disbursedAt: { gte: yearStart, lt: yearEndExclusive },
+          },
+        },
+        select: { associateId: true },
+        distinct: ['associateId'],
+      });
+      const associateIds = eligible.map((e) => e.associateId);
+
+      const forms = await prisma.taxForm.findMany({
+        where: {
+          kind: 'W2C',
+          taxYear: input.taxYear,
+          status: { not: 'VOIDED' },
+          associateId: { in: associateIds },
+        },
+        include: {
+          associate: {
+            include: { w4Submission: { select: { ssnEncrypted: true } } },
+          },
+        },
+      });
+      if (forms.length === 0) {
+        throw new HttpError(
+          404,
+          'no_forms',
+          `No W-2c forms found for year ${input.taxYear} and client ${input.clientId}. Generate corrections first.`,
+        );
+      }
+
+      const employees: Efw2cEmployee[] = [];
+      const skipped: { associateId: string; reason: string }[] = [];
+      for (const f of forms) {
+        if (!f.associate) {
+          skipped.push({ associateId: f.associateId ?? 'unknown', reason: 'no_associate' });
+          continue;
+        }
+        if (!f.associate.w4Submission?.ssnEncrypted) {
+          skipped.push({ associateId: f.associate.id, reason: 'missing_ssn' });
+          continue;
+        }
+        if (
+          !f.associate.addressLine1 ||
+          !f.associate.city ||
+          !f.associate.state ||
+          !f.associate.zip
+        ) {
+          skipped.push({ associateId: f.associate.id, reason: 'missing_address' });
+          continue;
+        }
+        const ssn = decryptString(f.associate.w4Submission.ssnEncrypted);
+        const cleanedSsn = ssn.replace(/[^0-9]/g, '');
+        if (cleanedSsn.length !== 9) {
+          skipped.push({ associateId: f.associate.id, reason: 'invalid_ssn' });
+          continue;
+        }
+        const zip = f.associate.zip;
+        const zipMatch = zip.match(/^(\d{5})(?:[- ]?(\d{4}))?$/);
+        if (!zipMatch) {
+          skipped.push({ associateId: f.associate.id, reason: 'invalid_zip' });
+          continue;
+        }
+        const amounts = f.amounts as unknown as {
+          previous: W2Boxes;
+          corrected: W2Boxes;
+        };
+        employees.push({
+          ssn: cleanedSsn,
+          firstName: f.associate.firstName,
+          lastName: f.associate.lastName,
+          addressLine1: f.associate.addressLine1,
+          addressLine2: f.associate.addressLine2 ?? undefined,
+          city: f.associate.city,
+          state: f.associate.state,
+          zip5: zipMatch[1],
+          zip4: zipMatch[2] ?? undefined,
+          previous: amounts.previous,
+          corrected: amounts.corrected,
+        });
+      }
+
+      if (employees.length === 0) {
+        throw new HttpError(
+          400,
+          'no_eligible_employees',
+          `Every W-2c was skipped due to missing data: ${skipped.map((s) => s.reason).join(', ')}.`,
+        );
+      }
+
+      const employerZip = client.zip!.match(/^(\d{5})(?:[- ]?(\d{4}))?$/);
+      if (!employerZip) {
+        throw new HttpError(400, 'invalid_employer_zip', 'Client ZIP must be 5 or 9 digits.');
+      }
+      const employerEin = client.ein!.replace(/[^0-9]/g, '');
+      if (employerEin.length !== 9) {
+        throw new HttpError(400, 'invalid_employer_ein', 'Client EIN must be 9 digits.');
+      }
+
+      const efw2cInput: Efw2cFile = {
+        submitter: {
+          ein: submitter.ein,
+          userId: submitter.userId,
+          name: submitter.name,
+          addressLine1: submitter.addressLine1,
+          addressLine2: submitter.addressLine2 ?? undefined,
+          city: submitter.city,
+          state: submitter.state,
+          zip5: submitter.zip5,
+          zip4: submitter.zip4 ?? undefined,
+          contactName: submitter.contactName,
+          contactPhone: submitter.contactPhone,
+          contactEmail: submitter.contactEmail,
+        },
+        employer: {
+          ein: employerEin,
+          taxYear: input.taxYear,
+          name: client.legalName!,
+          addressLine1: client.addressLine1!,
+          addressLine2: client.addressLine2 ?? undefined,
+          city: client.city!,
+          state: client.state ?? '',
+          zip5: employerZip[1],
+          zip4: employerZip[2] ?? undefined,
+        },
+        employees,
+      };
+
+      const fileBody = buildEfw2cFile(efw2cInput);
+
+      res.setHeader('Content-Type', 'text/plain; charset=us-ascii');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="W2C_REPORT_${input.taxYear}_${employerEin}.txt"`,
+      );
+      if (skipped.length > 0) {
+        res.setHeader(
+          'X-EFW2C-Skipped',
+          JSON.stringify(skipped).slice(0, 4096),
+        );
+      }
+      res.send(fileBody);
+    } catch (err) {
+      next(err);
+    }
+  },
+);

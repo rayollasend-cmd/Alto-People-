@@ -73,7 +73,7 @@ export const setGarnishmentStatus = (id: string, status: GarnishmentStatus) =>
 
 // ----- Tax forms ---------------------------------------------------------
 
-export type TaxFormKind = 'F941' | 'F940' | 'W2' | 'F1099_NEC';
+export type TaxFormKind = 'F941' | 'F940' | 'W2' | 'W2C' | 'F1099_NEC';
 
 export type TaxFormStatus = 'DRAFT' | 'FILED' | 'AMENDED' | 'VOIDED';
 
@@ -156,6 +156,36 @@ export const w2Efw2Url = (taxYear: number, clientId: string): string => {
   const q = new URLSearchParams({ taxYear: String(taxYear), clientId });
   return `/api/tax-forms/w2/efw2.txt?${q.toString()}`;
 };
+
+/** Direct URL for the EFW2C correction e-file (year + client required). */
+export const w2Efw2cUrl = (taxYear: number, clientId: string): string => {
+  const q = new URLSearchParams({ taxYear: String(taxYear), clientId });
+  return `/api/tax-forms/w2/efw2c.txt?${q.toString()}`;
+};
+
+// W-2c create endpoint
+export interface CreateW2cInput {
+  originalW2FormId: string;
+  correctionReason: string;
+  correctedBoxes?: {
+    box1Wages: number;
+    box2FitWithheld: number;
+    box3SsWages: number;
+    box4SsTax: number;
+    box5MedicareWages: number;
+    box6MedicareTax: number;
+    stateLines: { state: string; stateWages: number; stateIncomeTax: number }[];
+  };
+}
+
+export interface CreateW2cResult {
+  id: string;
+  amendsTaxFormId: string;
+  delta: { box1: number; box2: number; box3: number; box4: number; box5: number; box6: number };
+}
+
+export const createW2c = (input: CreateW2cInput) =>
+  apiFetch<CreateW2cResult>('/tax-forms/w2c', { method: 'POST', body: input });
 
 // ----- Submitter profile (Gap 1) ----------------------------------------
 
