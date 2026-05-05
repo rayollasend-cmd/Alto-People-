@@ -40,6 +40,8 @@ function statusBadge(status: PayrollItem['status']): { label: string; cls: strin
       return { label: 'Failed', cls: 'bg-alert/15 text-alert border-alert/30' };
     case 'HELD':
       return { label: 'Held', cls: 'bg-gold/20 text-gold border-gold/40' };
+    case 'VOIDED':
+      return { label: 'Voided', cls: 'bg-alert/10 text-alert/80 border-alert/20' };
   }
 }
 
