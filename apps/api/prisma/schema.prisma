@@ -3380,6 +3380,9 @@ enum TaxFormKind {
   F941
   F940
   W2
+  // Gap 1 — W-2 correction (Form W-2c). Carries amendsTaxFormId pointing
+  // at the original W-2 it corrects. The DB CHECK enforces the link.
+  W2C
   F1099_NEC
 }
 
@@ -3449,14 +3452,22 @@ model TaxForm {
   // Subsequent renders must produce the same hash (same as Phase 18's
   // PayrollItem.paystubHash pattern). Null until the form is rendered.
   pdfHash     String?       @db.VarChar(64)
+  // Gap 1 — when kind=W2C, points at the original W-2 row this form
+  // corrects. Required for W2C, forbidden for any other kind (CHECK
+  // enforced at the migration). The original is flipped to AMENDED at
+  // W-2c create time so the UI hides it from the active list.
+  amendsTaxFormId String?   @db.Uuid
   createdAt   DateTime      @default(now()) @db.Timestamptz(6)
   updatedAt   DateTime      @updatedAt @db.Timestamptz(6)
 
-  associate Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)
-  filedBy   User?      @relation("TaxFormFiler", fields: [filedById], references: [id], onDelete: SetNull)
+  associate    Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)
+  filedBy      User?      @relation("TaxFormFiler", fields: [filedById], references: [id], onDelete: SetNull)
+  amendsTaxForm TaxForm?  @relation("TaxFormAmendments", fields: [amendsTaxFormId], references: [id], onDelete: SetNull)
+  amendments   TaxForm[]  @relation("TaxFormAmendments")
 
   @@index([kind, taxYear])
   @@index([associateId])
+  @@index([amendsTaxFormId])
 }
 
 // Phase 92 — Open enrollment, qualifying life events, COBRA, ACA.

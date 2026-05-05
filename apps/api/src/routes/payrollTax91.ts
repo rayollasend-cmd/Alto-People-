@@ -8,8 +8,11 @@ import { decryptString } from '../lib/crypto.js';
 import {
   aggregateW2Wages,
   listW2EligibleAssociates,
+  type W2Boxes,
 } from '../lib/w2Aggregator.js';
 import { hashW2Pdf, renderW2Pdf, type W2PdfData } from '../lib/w2Pdf.js';
+import { hashW2cPdf, renderW2cPdf, type W2cPdfData } from '../lib/w2cPdf.js';
+import { hasW2cDelta, type W2cAmounts } from '../lib/w2cAggregator.js';
 import { buildEfw2File, type Efw2Employee, type Efw2File } from '../lib/efw2.js';
 
 /**
@@ -452,9 +455,141 @@ payrollTax91Router.post('/tax-forms/w2/generate', MANAGE, async (req, res) => {
   });
 });
 
+// ----- W-2c (corrections) ------------------------------------------------
+
+const W2cBodySchema = z
+  .object({
+    originalW2FormId: z.string().uuid(),
+    /**
+     * Reason is required and surfaced on the W-2c PDF so the recipient
+     * knows why their W-2 changed (e.g. "Bonus paid in Q4 was missed
+     * from the original filing").
+     */
+    correctionReason: z.string().trim().min(1).max(500),
+    /**
+     * Optional explicit corrected box values. When omitted the route
+     * recomputes from current PayrollItems via aggregateW2Wages —
+     * the typical case after an AMENDMENT run posts to a year that's
+     * already been W-2'd. When supplied, the caller is expressing a
+     * manual override (e.g. spotted a data-entry mistake).
+     */
+    correctedBoxes: z
+      .object({
+        box1Wages: z.number(),
+        box2FitWithheld: z.number(),
+        box3SsWages: z.number(),
+        box4SsTax: z.number(),
+        box5MedicareWages: z.number(),
+        box6MedicareTax: z.number(),
+        stateLines: z.array(
+          z.object({
+            state: z.string().length(2),
+            stateWages: z.number(),
+            stateIncomeTax: z.number(),
+          }),
+        ),
+      })
+      .optional(),
+  })
+  .strict();
+
+/**
+ * POST /tax-forms/w2c — creates a W-2c TaxForm correcting an existing
+ * W-2. The original must be FILED or AMENDED (you don't W-2c a DRAFT —
+ * just edit and re-generate). On success the original flips to AMENDED
+ * (it stays in the table; the IRS keeps it as the historical record)
+ * and the new W2C row is returned.
+ *
+ * Idempotency: if `correctedBoxes` is omitted and the recomputed totals
+ * match the original exactly, returns 409 — no point creating a no-op
+ * correction.
+ */
+payrollTax91Router.post('/tax-forms/w2c', MANAGE, async (req, res) => {
+  const input = W2cBodySchema.parse(req.body);
+
+  const original = await prisma.taxForm.findUnique({
+    where: { id: input.originalW2FormId },
+  });
+  if (!original) throw new HttpError(404, 'not_found', 'Original W-2 not found.');
+  if (original.kind !== 'W2') {
+    throw new HttpError(
+      400,
+      'invalid_kind',
+      `Cannot W-2c a ${original.kind} form. Only kind=W2 supports correction.`,
+    );
+  }
+  if (!original.associateId) {
+    throw new HttpError(500, 'malformed_form', 'Original W-2 has no associate.');
+  }
+  if (original.status !== 'FILED' && original.status !== 'AMENDED') {
+    throw new HttpError(
+      409,
+      'invalid_state',
+      `Cannot correct a ${original.status} W-2. File the original first, or edit it directly while it's still DRAFT.`,
+    );
+  }
+
+  // Resolve corrected boxes — caller-supplied or recomputed from current
+  // PayrollItems (the AMENDMENT-run case).
+  const corrected: W2Boxes = input.correctedBoxes
+    ? { ...input.correctedBoxes, sourceItemCount: 0 }
+    : await aggregateW2Wages(prisma, original.associateId, original.taxYear);
+
+  const previous = original.amounts as unknown as W2Boxes;
+  if (!hasW2cDelta(previous, corrected)) {
+    throw new HttpError(
+      409,
+      'no_delta',
+      'Corrected totals match the original. Nothing to amend.',
+    );
+  }
+
+  const w2cAmounts = {
+    previous,
+    corrected,
+    correctionReason: input.correctionReason,
+  };
+
+  const w2c = await prisma.$transaction(async (tx) => {
+    const created = await tx.taxForm.create({
+      data: {
+        kind: 'W2C',
+        taxYear: original.taxYear,
+        associateId: original.associateId,
+        amounts: w2cAmounts as unknown as Prisma.InputJsonValue,
+        status: 'DRAFT',
+        amendsTaxFormId: original.id,
+      },
+    });
+    // Flip the original to AMENDED so the active-list filter
+    // (status: { not: 'AMENDED' }) hides it. The IRS still has the
+    // FILED bytes; our UI just stops surfacing it as the live record.
+    if (original.status !== 'AMENDED') {
+      await tx.taxForm.update({
+        where: { id: original.id },
+        data: { status: 'AMENDED' },
+      });
+    }
+    return created;
+  });
+
+  res.status(201).json({
+    id: w2c.id,
+    amendsTaxFormId: original.id,
+    delta: {
+      box1: corrected.box1Wages - previous.box1Wages,
+      box2: corrected.box2FitWithheld - previous.box2FitWithheld,
+      box3: corrected.box3SsWages - previous.box3SsWages,
+      box4: corrected.box4SsTax - previous.box4SsTax,
+      box5: corrected.box5MedicareWages - previous.box5MedicareWages,
+      box6: corrected.box6MedicareTax - previous.box6MedicareTax,
+    },
+  });
+});
+
 // Shared helper — pulls the form + associate + W-4, looks up an employer
 // block from the associate's first disbursed run in the year, and renders
-// the W-2 PDF. Used by both the single-PDF and bulk-zip routes. Throws
+// the W-2 (or W-2c) PDF. Used by single-PDF and bulk-zip routes. Throws
 // HttpError on missing inputs so the caller's catch block produces a clean
 // HTTP response. The pdfHash stamp lives at the call site so the bulk
 // route can opt into a single batched update.
@@ -466,11 +601,11 @@ async function renderW2ForForm(formId: string): Promise<{
 }> {
   const form = await loadW2Form(formId);
   if (!form) throw new HttpError(404, 'not_found', 'Form not found.');
-  if (form.kind !== 'W2') {
+  if (form.kind !== 'W2' && form.kind !== 'W2C') {
     throw new HttpError(
       400,
       'unsupported_kind',
-      `PDF rendering is only supported for W-2 today. ${form.kind} renderers land in a follow-up.`,
+      `PDF rendering is only supported for W-2 / W-2c today. ${form.kind} renderers land in a follow-up.`,
     );
   }
   if (!form.associateId || !form.associate) {
@@ -511,6 +646,54 @@ async function renderW2ForForm(formId: string): Promise<{
     ssn.length === 9
       ? `${ssn.slice(0, 3)}-${ssn.slice(3, 5)}-${ssn.slice(5)}`
       : ssn;
+
+  if (form.kind === 'W2C') {
+    const amounts = form.amounts as unknown as W2cAmounts;
+    const pdfData: W2cPdfData = {
+      taxYear: form.taxYear,
+      employer: {
+        ein: client.ein,
+        name: client.legalName,
+        addressLine1: client.addressLine1,
+        addressLine2: client.addressLine2,
+        city: client.city,
+        state: client.state,
+        zip: client.zip,
+      },
+      employee: {
+        ssn: ssnFormatted,
+        firstName: form.associate.firstName,
+        lastName: form.associate.lastName,
+        addressLine1: form.associate.addressLine1,
+        addressLine2: form.associate.addressLine2,
+        city: form.associate.city,
+        state: form.associate.state,
+        zip: form.associate.zip,
+      },
+      // The control number on a W-2c carries over from the original W-2
+      // so the IRS can match the correction back to the prior submission.
+      // We store the original form id on amendsTaxFormId.
+      controlNumber: (form.amendsTaxFormId ?? form.id).slice(0, 8).toUpperCase(),
+      amounts,
+      // Reason is stored alongside amounts for the W-2c. Loose typing
+      // because the JSON column can carry it; route validation set it.
+      correctionReason:
+        ((form.amounts as unknown as { correctionReason?: string | null })
+          .correctionReason ?? null),
+      meta: {
+        formId: form.id,
+        originalFormId: form.amendsTaxFormId ?? form.id,
+        generatedAt: new Date().toISOString(),
+      },
+    };
+    const pdf = await renderW2cPdf(pdfData);
+    const hash = hashW2cPdf(pdf);
+    const filename =
+      `W2c-${form.taxYear}-${form.associate.lastName}-${form.associate.firstName}.pdf`
+        .toLowerCase()
+        .replace(/[^\x20-\x7e]/g, '');
+    return { pdf, hash, form, filename };
+  }
 
   const pdfData: W2PdfData = {
     taxYear: form.taxYear,
