@@ -25,7 +25,12 @@ import {
   renderForm1099NecPdf,
   type Form1099NecPdfData,
 } from '../lib/f1099NecPdf.js';
-import { buildIrsFireFile, type IrsFireFile, type IrsFirePayee } from '../lib/irsFire.js';
+import {
+  buildIrsFireFile,
+  IRS_CFSF_STATE_CODES,
+  type IrsFireFile,
+  type IrsFirePayee,
+} from '../lib/irsFire.js';
 
 /**
  * Phase 91 — Garnishments + tax forms (941, 940, W-2, 1099-NEC).
@@ -1665,6 +1670,21 @@ payrollTax91Router.get(
           .preprocess((v) => Number(v), z.number().int().min(2000).max(2100))
           .parse(req.query.taxYear),
         clientId: z.string().uuid().parse(req.query.clientId),
+        // Optional CSV of USPS state codes to enrol in Combined Federal/
+        // State Filing — e.g. ?cfsf=FL,CA,NY. Empty / omitted = federal
+        // only, no K records emitted. Each state must be in
+        // IRS_CFSF_STATE_CODES; per-year participation is the caller's
+        // call (not every state participates every year).
+        cfsfStates: z
+          .string()
+          .optional()
+          .transform((s) =>
+            (s ?? '')
+              .split(',')
+              .map((p) => p.trim().toUpperCase())
+              .filter(Boolean),
+          )
+          .parse(req.query.cfsf),
       };
 
       const submitter = await prisma.submitterProfile.findUnique({
@@ -1804,6 +1824,18 @@ payrollTax91Router.get(
         throw new HttpError(400, 'invalid_payer_ein', 'Client EIN must be 9 digits.');
       }
 
+      const cfsf = input.cfsfStates.map((s) => {
+        const code = IRS_CFSF_STATE_CODES[s];
+        if (!code) {
+          throw new HttpError(
+            400,
+            'invalid_cfsf_state',
+            `Unknown CF/SF state "${s}". Pass USPS 2-letter codes for participating states only.`,
+          );
+        }
+        return { state: s, cfsfCode: code };
+      });
+
       const fireInput: IrsFireFile = {
         transmitter: {
           tcc: submitter.irsTcc,
@@ -1824,6 +1856,7 @@ payrollTax91Router.get(
           zip4: payerZip[2] ?? undefined,
         },
         payees,
+        cfsf: cfsf.length > 0 ? cfsf : undefined,
       };
 
       const fileBody = buildIrsFireFile(fireInput);

@@ -10,11 +10,13 @@
 //   A  Payer         — opens a payer-EIN block
 //   B  Payee         — one per 1099-NEC, immediately after its A
 //   C  End-of-Payer  — closes the A block, sums B totals
+//   K  State Totals  — optional, one per CF/SF state, between C and F
 //   F  End-of-File   — one per file, last record, total payee count
 //
-// Combined Federal/State Filing (the K record) is out of scope for now;
-// states that don't participate in CF/SF require separate state filings,
-// which we surface in the per-state UI instead of trying to bundle here.
+// Combined Federal/State Filing: pass `cfsf` on the input to opt in.
+// The IRS then forwards each B record (whose state is in the cfsf list)
+// to that state, sparing a separate state filing — for participating
+// states only. Non-participating states still require their own filing.
 //
 // =============================================================================
 // !!  IRS FIRE test-system validation required before any production submission  !!
@@ -89,11 +91,52 @@ export interface IrsFirePayee {
   boxes: Form1099NecBoxes;
 }
 
+export interface IrsFireCfsfState {
+  /** USPS 2-letter code matching IrsFirePayee.state. */
+  state: string;
+  /**
+   * IRS-assigned numeric Combined Federal/State Filing code, typically
+   * 2 digits (e.g. "12" = FL, "06" = CA). See Pub 1220 §G "State
+   * Abbreviation Codes." Pass only states approved for CF/SF; the
+   * caller is responsible for current participation status.
+   */
+  cfsfCode: string;
+}
+
 export interface IrsFireFile {
   transmitter: IrsFireTransmitter;
   payer: IrsFirePayer;
   payees: IrsFirePayee[];
+  /**
+   * Optional Combined Federal/State Filing list. When present + non-
+   * empty, the A record's CF/SF Filer flag flips on, every B record
+   * whose state is listed gets the CF/SF code stamped at positions
+   * 747-748, and one K record is emitted per state with payees in it
+   * (between the C and F records). When omitted/empty, this is a
+   * federal-only file — same behavior as before.
+   */
+  cfsf?: IrsFireCfsfState[];
 }
+
+/**
+ * IRS Pub 1220 §G "State Abbreviation Codes" — FIPS-derived numeric
+ * codes for use in K-record CF/SF and B-record state stamping. Note:
+ * not every state participates in Combined Federal/State Filing every
+ * year. This table covers all 50 states + DC; the caller is responsible
+ * for confirming current-year CF/SF participation before passing a
+ * state in the cfsf list. Unparticipating states still need a separate
+ * state filing.
+ */
+export const IRS_CFSF_STATE_CODES: Readonly<Record<string, string>> = Object.freeze({
+  AL: '01', AK: '02', AZ: '04', AR: '05', CA: '06', CO: '08', CT: '09',
+  DE: '10', DC: '11', FL: '12', GA: '13', HI: '15', ID: '16', IL: '17',
+  IN: '18', IA: '19', KS: '20', KY: '21', LA: '22', ME: '23', MD: '24',
+  MA: '25', MI: '26', MN: '27', MS: '28', MO: '29', MT: '30', NE: '31',
+  NV: '32', NH: '33', NJ: '34', NM: '35', NY: '36', NC: '37', ND: '38',
+  OH: '39', OK: '40', OR: '41', PA: '42', RI: '44', SC: '45', SD: '46',
+  TN: '47', TX: '48', UT: '49', VT: '50', VA: '51', WA: '53', WV: '54',
+  WI: '55', WY: '56',
+});
 
 /**
  * Builds the full IRS FIRE file as a single string (CRLF-joined records,
@@ -103,22 +146,65 @@ export interface IrsFireFile {
 export function buildIrsFireFile(input: IrsFireFile): string {
   const records: string[] = [];
 
-  records.push(buildT(input.transmitter));
-  records.push(buildA(input.payer, input.transmitter.taxYear));
+  // CF/SF lookup, normalised to upper-case USPS codes. Pre-validated
+  // here so a bad code can't slip into a B/K record positional field.
+  const cfsfMap = new Map<string, string>();
+  for (const entry of input.cfsf ?? []) {
+    if (!/^[A-Z]{2}$/.test(entry.state.toUpperCase())) {
+      throw new Error(`IRS FIRE CF/SF state "${entry.state}" must be a 2-letter USPS code`);
+    }
+    if (!/^\d{1,4}$/.test(entry.cfsfCode)) {
+      throw new Error(`IRS FIRE CF/SF code "${entry.cfsfCode}" must be 1-4 digits`);
+    }
+    cfsfMap.set(entry.state.toUpperCase(), entry.cfsfCode);
+  }
+  const cfsfActive = cfsfMap.size > 0;
 
-  // Per-payer totals for the C record.
+  records.push(buildT(input.transmitter));
+  records.push(buildA(input.payer, input.transmitter.taxYear, cfsfActive));
+
+  // Per-payer totals for the C record + per-state totals for K records.
   const totals = newPayerTotals();
-  let payeeSequence = 1;
+  const stateTotals = new Map<string, StateTotals>();
+  let recordSequence = 1;
+
   for (const payee of input.payees) {
-    records.push(buildB(payee, payeeSequence, input.transmitter.taxYear));
+    const stateKey = payee.state.toUpperCase();
+    const cfsfCode = cfsfMap.get(stateKey) ?? null;
+
+    records.push(buildB(payee, recordSequence, input.transmitter.taxYear, cfsfCode));
     totals.payeeCount += 1;
     totals.box1 += payee.boxes.box1NonemployeeCompensation;
     totals.box4 += payee.boxes.box4FitWithheld;
-    payeeSequence += 1;
+
+    if (cfsfCode) {
+      const st = stateTotals.get(stateKey) ?? newStateTotals();
+      st.payeeCount += 1;
+      st.box1 += payee.boxes.box1NonemployeeCompensation;
+      st.box4 += payee.boxes.box4FitWithheld;
+      // State withholding lives on the matched stateLine, not box4
+      // (which is *federal* backup withholding). K record's "State
+      // Income Tax Withheld Total" needs the state slice only.
+      const sl = payee.boxes.stateLines.find((l) => l.state.toUpperCase() === stateKey);
+      if (sl) st.stateTaxWithheld += sl.stateTaxWithheld;
+      stateTotals.set(stateKey, st);
+    }
+    recordSequence += 1;
   }
 
-  records.push(buildC(totals, payeeSequence));
-  records.push(buildF({ payeeCount: totals.payeeCount }, payeeSequence + 1));
+  records.push(buildC(totals, recordSequence));
+  recordSequence += 1;
+
+  // K records — one per CF/SF state with at least one payee, sorted by
+  // state code so the file is byte-stable across re-runs.
+  for (const stateKey of [...stateTotals.keys()].sort()) {
+    const st = stateTotals.get(stateKey)!;
+    const cfsfCode = cfsfMap.get(stateKey)!;
+    records.push(buildK(st, cfsfCode, recordSequence));
+    recordSequence += 1;
+  }
+
+  records.push(buildF({ payeeCount: totals.payeeCount }, recordSequence));
 
   return records.join('\r\n');
 }
@@ -158,16 +244,18 @@ function buildT(t: IrsFireTransmitter): string {
   return assemble(fields);
 }
 
-function buildA(p: IrsFirePayer, taxYear: number): string {
+function buildA(p: IrsFirePayer, taxYear: number, cfsfActive: boolean): string {
   // A PAYER RECORD — opens a payer-EIN block. The Type of Return field
   // ("NE") is the official IRS code for 1099-NEC; an Amount Codes field
   // bitmap tells the IRS which Box payments to expect (1 + 4 here:
-  // Nonemployee compensation + Federal income tax withheld).
+  // Nonemployee compensation + Federal income tax withheld). Position
+  // 6 is the Combined Federal/State Filer flag — "1" when at least
+  // one K record follows, blank for federal-only files.
   const fields: Field[] = [
     fixed('A', 1, 1),
     digits(String(taxYear), 2, 5),
-    blank(6, 6),
-    blank(7, 11), // Combined Federal/State Filer (K-record-driven; blank = no)
+    text(cfsfActive ? '1' : '', 6, 6), // Combined Federal/State Filer
+    blank(7, 11), // Reserved
     blank(12, 16), // Reserved
     digits(p.ein, 17, 25),
     text(p.name, 26, 65),
@@ -192,7 +280,12 @@ function buildA(p: IrsFirePayer, taxYear: number): string {
   return assemble(fields);
 }
 
-function buildB(p: IrsFirePayee, sequence: number, taxYear: number): string {
+function buildB(
+  p: IrsFirePayee,
+  sequence: number,
+  taxYear: number,
+  cfsfCode: string | null,
+): string {
   // B PAYEE RECORD — one per 1099-NEC. The amount fields live at fixed
   // positions per the Type of Return; for NE the IRS uses "Payment
   // Amount 1" (Box 1) and "Payment Amount 4" (Box 4). We zero the
@@ -243,7 +336,8 @@ function buildB(p: IrsFirePayee, sequence: number, taxYear: number): string {
     blank(673, 707),
     text('NE', 708, 709), // Type of Return — re-stated for some validators
     text('14', 710, 725), // Amount Codes — re-stated
-    blank(726, 748),
+    blank(726, 746),
+    text(cfsfCode ?? '', 747, 748), // Combined Federal/State Code (CF/SF only)
     blank(749, 750),
   ];
   return assemble(fields);
@@ -283,6 +377,54 @@ function buildC(totals: PayerTotals, sequence: number): string {
     blank(250, 499),
     digits(String(sequence).padStart(8, '0'), 500, 507),
     blank(508, 748),
+    blank(749, 750),
+  ];
+  return assemble(fields);
+}
+
+interface StateTotals {
+  payeeCount: number;
+  box1: number;
+  box4: number;
+  stateTaxWithheld: number;
+}
+
+function newStateTotals(): StateTotals {
+  return { payeeCount: 0, box1: 0, box4: 0, stateTaxWithheld: 0 };
+}
+
+function buildK(state: StateTotals, cfsfCode: string, sequence: number): string {
+  // K STATE TOTALS RECORD — emitted once per CF/SF participating state
+  // between the C and F records. Same Control-Total layout (positions
+  // 16-249) as the C record, but the trailer (707-746) carries state-
+  // specific totals: state tax withheld, local tax withheld (we don't
+  // track local — zero), and the IRS CF/SF state code right-justified
+  // in a 4-char field. Sequence number is part of the file-wide chain
+  // so K records show up between C (last B in payer block) and F.
+  const fields: Field[] = [
+    fixed('K', 1, 1),
+    digits(String(state.payeeCount).padStart(8, '0'), 2, 9),
+    blank(10, 15),
+    money(state.box1, 16, 33), // Control Total 1 (Box 1)
+    money(0, 34, 51),  // CT 2
+    money(0, 52, 69),  // CT 3
+    money(state.box4, 70, 87), // CT 4 (Box 4)
+    money(0, 88, 105), // CT 5
+    money(0, 106, 123),
+    money(0, 124, 141),
+    money(0, 142, 159),
+    money(0, 160, 177),
+    money(0, 178, 195),
+    money(0, 196, 213),
+    money(0, 214, 231),
+    money(0, 232, 249),
+    blank(250, 499),
+    digits(String(sequence).padStart(8, '0'), 500, 507),
+    blank(508, 706),
+    money(state.stateTaxWithheld, 707, 724), // State Income Tax Withheld Total
+    money(0, 725, 742), // Local Income Tax Withheld Total (we don't track)
+    digits(cfsfCode.padStart(4, '0'), 743, 746), // CF/SF Code, right-justified
+    blank(747, 748),
     blank(749, 750),
   ];
   return assemble(fields);

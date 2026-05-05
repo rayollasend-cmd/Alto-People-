@@ -860,8 +860,14 @@ function F1099NecGenerateDrawer({
 }) {
   const [taxYear, setTaxYear] = useState(String(new Date().getFullYear() - 1));
   const [clientId, setClientId] = useState('');
+  const [cfsfStates, setCfsfStates] = useState('');
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<Awaited<ReturnType<typeof generate1099Necs>> | null>(null);
+
+  const cfsfList = cfsfStates
+    .split(',')
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
 
   const onGenerate = async () => {
     setRunning(true);
@@ -913,6 +919,23 @@ function F1099NecGenerateDrawer({
             placeholder="UUID"
           />
         </div>
+        <div>
+          <Label>
+            CF/SF states (optional — CSV of USPS codes for Combined
+            Federal/State Filing)
+          </Label>
+          <Input
+            className="mt-1 font-mono text-xs uppercase"
+            value={cfsfStates}
+            onChange={(e) => setCfsfStates(e.target.value)}
+            placeholder="FL, CA, NY"
+          />
+          <p className="mt-1 text-xs text-silver">
+            Pass only states that participate in CF/SF in the filing year.
+            Listed states get K records appended; the IRS forwards to
+            them so a separate state filing isn't needed.
+          </p>
+        </div>
         <Button onClick={onGenerate} disabled={running}>
           {running ? 'Generating…' : 'Generate'}
         </Button>
@@ -934,10 +957,17 @@ function F1099NecGenerateDrawer({
                 {clientId.trim() && (
                   <Button asChild variant="ghost" size="sm">
                     <a
-                      href={f1099NecFireUrl(Number(taxYear), clientId.trim())}
+                      href={f1099NecFireUrl(
+                        Number(taxYear),
+                        clientId.trim(),
+                        cfsfList.length > 0 ? cfsfList : undefined,
+                      )}
                       download
                     >
-                      <Download className="mr-1 h-3 w-3" /> IRS FIRE e-file
+                      <Download className="mr-1 h-3 w-3" />
+                      {cfsfList.length > 0
+                        ? `IRS FIRE e-file (CF/SF: ${cfsfList.join(', ')})`
+                        : 'IRS FIRE e-file'}
                     </a>
                   </Button>
                 )}

@@ -178,9 +178,21 @@ export const f1099NecBulkZipUrl = (taxYear: number, clientId?: string | null): s
   return `/api/tax-forms/1099-nec/bulk.zip?${q.toString()}`;
 };
 
-/** Direct URL for the IRS FIRE 1099-NEC e-file (year + client required). */
-export const f1099NecFireUrl = (taxYear: number, clientId: string): string => {
+/**
+ * Direct URL for the IRS FIRE 1099-NEC e-file (year + client required).
+ * Pass `cfsfStates` (USPS 2-letter codes) to opt into Combined Federal/
+ * State Filing — the IRS forwards data to listed participating states
+ * so a separate state filing isn't needed.
+ */
+export const f1099NecFireUrl = (
+  taxYear: number,
+  clientId: string,
+  cfsfStates?: string[],
+): string => {
   const q = new URLSearchParams({ taxYear: String(taxYear), clientId });
+  if (cfsfStates && cfsfStates.length > 0) {
+    q.set('cfsf', cfsfStates.join(','));
+  }
   return `/api/tax-forms/1099-nec/fire.txt?${q.toString()}`;
 };
 

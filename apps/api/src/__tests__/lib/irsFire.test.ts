@@ -157,4 +157,137 @@ describe('buildIrsFireFile — Gap 11', () => {
     expect(bLine[10]).toBe('2');
     expect(bLine.slice(11, 20)).toBe('987654321');
   });
+
+  // ---- CF/SF (Combined Federal/State Filing) ----------------------------
+  //
+  // Activated by passing a non-empty `cfsf` list. When active:
+  //   1. A record position 6 = "1"
+  //   2. B record positions 747-748 = CF/SF state code (per matched payee)
+  //   3. K records emitted between C and F, one per state with payees
+
+  it('CF/SF: omitting cfsf leaves federal-only file (A pos 6 blank, no K records)', () => {
+    const file: IrsFireFile = {
+      transmitter: submitter,
+      payer,
+      payees: [payee()],
+    };
+    const out = buildIrsFireFile(file);
+    const lines = out.split('\r\n');
+    const aLine = lines.find((l) => l.startsWith('A'))!;
+    expect(aLine[5]).toBe(' ');
+    expect(lines.some((l) => l.startsWith('K'))).toBe(false);
+  });
+
+  it('CF/SF: A record CF/SF Filer flag flips to "1" when cfsf is non-empty', () => {
+    const file: IrsFireFile = {
+      transmitter: submitter,
+      payer,
+      payees: [payee()],
+      cfsf: [{ state: 'FL', cfsfCode: '12' }],
+    };
+    const out = buildIrsFireFile(file);
+    const aLine = out.split('\r\n').find((l) => l.startsWith('A'))!;
+    expect(aLine[5]).toBe('1');
+  });
+
+  it('CF/SF: B record stamps state code at 747-748 for matched state, blank otherwise', () => {
+    const flPayee = { ...payee(), state: 'FL' };
+    const caPayee = { ...payee({ tin: '222334444' }), state: 'CA' };
+    const nyPayee = { ...payee({ tin: '555667777' }), state: 'NY' }; // NY not in cfsf list
+    const file: IrsFireFile = {
+      transmitter: submitter,
+      payer,
+      payees: [flPayee, caPayee, nyPayee],
+      cfsf: [
+        { state: 'FL', cfsfCode: '12' },
+        { state: 'CA', cfsfCode: '06' },
+      ],
+    };
+    const out = buildIrsFireFile(file);
+    const bLines = out.split('\r\n').filter((l) => l.startsWith('B'));
+    expect(bLines[0].slice(746, 748)).toBe('12'); // FL
+    expect(bLines[1].slice(746, 748)).toBe('06'); // CA
+    expect(bLines[2].slice(746, 748)).toBe('  '); // NY → no CF/SF, blank
+  });
+
+  it('CF/SF: emits one K record per participating state with payees, in sorted order', () => {
+    const stateLine = (s: string, tax: number, income: number) => ({
+      state: s,
+      stateTaxWithheld: tax,
+      stateIncome: income,
+    });
+    const flPayee = {
+      ...payee({ box1: 5000, box4: 0 }),
+      state: 'FL',
+      boxes: {
+        ...payee({ box1: 5000 }).boxes,
+        stateLines: [stateLine('FL', 0, 5000)],
+      },
+    };
+    const caPayee = {
+      ...payee({ tin: '222334444', box1: 8000, box4: 1920 }),
+      state: 'CA',
+      boxes: {
+        ...payee({ tin: '222334444', box1: 8000, box4: 1920 }).boxes,
+        stateLines: [stateLine('CA', 800, 8000)],
+      },
+    };
+    const file: IrsFireFile = {
+      transmitter: submitter,
+      payer,
+      payees: [flPayee, caPayee],
+      cfsf: [
+        { state: 'FL', cfsfCode: '12' },
+        { state: 'CA', cfsfCode: '06' },
+      ],
+    };
+    const out = buildIrsFireFile(file);
+    const lines = out.split('\r\n');
+    expect(lines.map((l) => l[0])).toEqual(['T', 'A', 'B', 'B', 'C', 'K', 'K', 'F']);
+
+    const kLines = lines.filter((l) => l.startsWith('K'));
+    // Sorted alphabetically by state key — CA before FL
+    expect(Number(kLines[0].slice(742, 746))).toBe(6);   // CA cfsfCode "06" → 0006
+    expect(Number(kLines[1].slice(742, 746))).toBe(12);  // FL cfsfCode "12" → 0012
+    // CA payee count + box1 + state withholding
+    expect(Number(kLines[0].slice(1, 9))).toBe(1);
+    expect(Number(kLines[0].slice(15, 33))).toBe(8000 * 100);
+    expect(Number(kLines[0].slice(706, 724))).toBe(800 * 100);
+    // FL state withholding 0
+    expect(Number(kLines[1].slice(706, 724))).toBe(0);
+  });
+
+  it('CF/SF: throws on bad state code or non-numeric cfsfCode', () => {
+    const file: IrsFireFile = {
+      transmitter: submitter,
+      payer,
+      payees: [payee()],
+      cfsf: [{ state: 'FLA', cfsfCode: '12' }],
+    };
+    expect(() => buildIrsFireFile(file)).toThrow(/2-letter USPS code/);
+
+    const file2: IrsFireFile = {
+      transmitter: submitter,
+      payer,
+      payees: [payee()],
+      cfsf: [{ state: 'FL', cfsfCode: 'AB' }],
+    };
+    expect(() => buildIrsFireFile(file2)).toThrow(/1-4 digits/);
+  });
+
+  it('CF/SF: F-record sequence accounts for K records (so chain stays contiguous)', () => {
+    const file: IrsFireFile = {
+      transmitter: submitter,
+      payer,
+      payees: [payee()],
+      cfsf: [{ state: 'FL', cfsfCode: '12' }],
+    };
+    const out = buildIrsFireFile(file);
+    const lines = out.split('\r\n');
+    // T A B C K F = 6 records.  Sequence numbers live on B/C/K/F.
+    // B sequence is positions 665-672, C/K/F at 500-507. Verify F is
+    // at sequence 4 (B=1, C=2, K=3, F=4).
+    const fLine = lines[lines.length - 1];
+    expect(fLine.slice(499, 507)).toBe('00000004');
+  });
 });
