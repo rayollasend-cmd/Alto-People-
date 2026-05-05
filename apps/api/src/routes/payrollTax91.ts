@@ -25,6 +25,7 @@ import {
   renderForm1099NecPdf,
   type Form1099NecPdfData,
 } from '../lib/f1099NecPdf.js';
+import { buildIrsFireFile, type IrsFireFile, type IrsFirePayee } from '../lib/irsFire.js';
 
 /**
  * Phase 91 — Garnishments + tax forms (941, 940, W-2, 1099-NEC).
@@ -1197,6 +1198,14 @@ const SubmitterProfileBodySchema = z.object({
   contactName: z.string().min(1).max(57),
   contactPhone: z.string().min(7).max(20),
   contactEmail: z.string().email().max(40),
+  // Gap 11 — IRS FIRE Transmitter Control Code, 5 chars, IRS-assigned.
+  // Required for 1099-NEC e-file; nullable so W-2-only filers can save
+  // a profile without it. Validated as exactly 5 alphanumerics when set.
+  irsTcc: z
+    .string()
+    .regex(/^[A-Z0-9]{5}$/, 'IRS TCC must be 5 uppercase alphanumerics')
+    .optional()
+    .nullable(),
 });
 
 payrollTax91Router.get('/tax-forms/submitter', VIEW, async (_req, res) => {
@@ -1206,10 +1215,16 @@ payrollTax91Router.get('/tax-forms/submitter', VIEW, async (_req, res) => {
 
 payrollTax91Router.post('/tax-forms/submitter', MANAGE, async (req, res) => {
   const input = SubmitterProfileBodySchema.parse(req.body);
+  const data = {
+    ...input,
+    addressLine2: input.addressLine2 ?? null,
+    zip4: input.zip4 ?? null,
+    irsTcc: input.irsTcc ?? null,
+  };
   const row = await prisma.submitterProfile.upsert({
     where: { id: 'singleton' },
-    create: { id: 'singleton', ...input, addressLine2: input.addressLine2 ?? null, zip4: input.zip4 ?? null },
-    update: { ...input, addressLine2: input.addressLine2 ?? null, zip4: input.zip4 ?? null },
+    create: { id: 'singleton', ...data },
+    update: data,
   });
   res.json({ profile: row });
 });
@@ -1610,6 +1625,217 @@ payrollTax91Router.get(
       if (skipped.length > 0) {
         res.setHeader(
           'X-EFW2C-Skipped',
+          JSON.stringify(skipped).slice(0, 4096),
+        );
+      }
+      res.send(fileBody);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ----- IRS FIRE 1099-NEC generator (Gap 11) ------------------------------
+
+/**
+ * GET /tax-forms/1099-nec/fire.txt?taxYear=YYYY&clientId=UUID — streams
+ * the IRS FIRE-format e-file for every non-VOIDED 1099-NEC whose
+ * recipient was paid by this client in the year. Distinct from EFW2/
+ * EFW2C (those file with SSA via BSO; this files with the IRS via
+ * fire.test.irs.gov / fire.irs.gov).
+ *
+ * Required state:
+ *   - SubmitterProfile.irsTcc must be set (5-char IRS-assigned code)
+ *   - Each contractor must have tinEncrypted and a valid 5-or-9 ZIP
+ *   - Client must have legalName / EIN / address fields
+ * Surfaces missing inputs as 400s with actionable codes; surfaces
+ * per-recipient skips via X-IrsFire-Skipped response header so finance
+ * can chase data quality without re-running the route.
+ *
+ * Capability: process:payroll. The body is plain ASCII; downloader is
+ * an <a download> link.
+ */
+payrollTax91Router.get(
+  '/tax-forms/1099-nec/fire.txt',
+  MANAGE,
+  async (req, res, next) => {
+    try {
+      const input = {
+        taxYear: z
+          .preprocess((v) => Number(v), z.number().int().min(2000).max(2100))
+          .parse(req.query.taxYear),
+        clientId: z.string().uuid().parse(req.query.clientId),
+      };
+
+      const submitter = await prisma.submitterProfile.findUnique({
+        where: { id: 'singleton' },
+      });
+      if (!submitter) {
+        throw new HttpError(
+          400,
+          'submitter_profile_missing',
+          'No SubmitterProfile on file. POST /tax-forms/submitter first.',
+        );
+      }
+      if (!submitter.irsTcc) {
+        throw new HttpError(
+          400,
+          'submitter_tcc_missing',
+          'SubmitterProfile.irsTcc is null. Register for IRS FIRE and save the 5-char Transmitter Control Code on the submitter profile before generating 1099-NEC e-files.',
+        );
+      }
+
+      const client = await prisma.client.findUnique({
+        where: { id: input.clientId },
+      });
+      if (!client) throw new HttpError(404, 'client_not_found', 'Client not found.');
+      if (!client.legalName || !client.ein) {
+        throw new HttpError(
+          400,
+          'missing_payer_info',
+          'Client missing legalName or EIN.',
+        );
+      }
+      if (!client.addressLine1 || !client.city || !client.state || !client.zip) {
+        throw new HttpError(
+          400,
+          'missing_payer_address',
+          'IRS FIRE requires a full payer address (line1, city, state, ZIP).',
+        );
+      }
+
+      const forms = await prisma.taxForm.findMany({
+        where: {
+          kind: 'F1099_NEC',
+          taxYear: input.taxYear,
+          status: { not: 'VOIDED' },
+        },
+        include: { associate: true },
+      });
+      // Filter to forms whose recipient was paid by THIS client in the
+      // year (form rows don't carry clientId — resolve via PayrollItem).
+      const yearStart = new Date(Date.UTC(input.taxYear, 0, 1));
+      const yearEndExclusive = new Date(Date.UTC(input.taxYear + 1, 0, 1));
+      const eligibleAssociateIds = new Set<string>(
+        (
+          await prisma.payrollItem.findMany({
+            where: {
+              payrollRun: {
+                clientId: input.clientId,
+                status: { not: 'CANCELLED' },
+                disbursedAt: { gte: yearStart, lt: yearEndExclusive },
+              },
+            },
+            select: { associateId: true },
+            distinct: ['associateId'],
+          })
+        ).map((e) => e.associateId),
+      );
+      const scopedForms = forms.filter(
+        (f) => f.associateId && eligibleAssociateIds.has(f.associateId),
+      );
+      if (scopedForms.length === 0) {
+        throw new HttpError(
+          404,
+          'no_forms',
+          `No 1099-NEC forms found for year ${input.taxYear} and client ${input.clientId}. Generate them first.`,
+        );
+      }
+
+      const payees: IrsFirePayee[] = [];
+      const skipped: { associateId: string; reason: string }[] = [];
+      for (const f of scopedForms) {
+        if (!f.associate) {
+          skipped.push({ associateId: f.associateId ?? 'unknown', reason: 'no_associate' });
+          continue;
+        }
+        if (!f.associate.tinEncrypted) {
+          skipped.push({ associateId: f.associate.id, reason: 'missing_tin' });
+          continue;
+        }
+        if (
+          !f.associate.addressLine1 ||
+          !f.associate.city ||
+          !f.associate.state ||
+          !f.associate.zip
+        ) {
+          skipped.push({ associateId: f.associate.id, reason: 'missing_address' });
+          continue;
+        }
+        const tin = decryptString(f.associate.tinEncrypted).replace(/[^0-9]/g, '');
+        if (tin.length !== 9) {
+          skipped.push({ associateId: f.associate.id, reason: 'invalid_tin' });
+          continue;
+        }
+        const zipMatch = f.associate.zip.match(/^(\d{5})(?:[- ]?(\d{4}))?$/);
+        if (!zipMatch) {
+          skipped.push({ associateId: f.associate.id, reason: 'invalid_zip' });
+          continue;
+        }
+        payees.push({
+          tin,
+          tinTypeCode:
+            f.associate.employmentType === 'CONTRACTOR_1099_BUSINESS' ? '2' : '1',
+          name: `${f.associate.firstName} ${f.associate.lastName}`.trim(),
+          addressLine1: f.associate.addressLine1,
+          city: f.associate.city,
+          state: f.associate.state,
+          zip5: zipMatch[1],
+          zip4: zipMatch[2] ?? undefined,
+          accountNumber: f.id.slice(0, 12).toUpperCase(),
+          boxes: f.amounts as unknown as Form1099NecBoxes,
+        });
+      }
+
+      if (payees.length === 0) {
+        throw new HttpError(
+          400,
+          'no_eligible_payees',
+          `Every 1099-NEC was skipped due to missing data: ${skipped.map((s) => s.reason).join(', ')}.`,
+        );
+      }
+
+      const payerZip = client.zip!.match(/^(\d{5})(?:[- ]?(\d{4}))?$/);
+      if (!payerZip) {
+        throw new HttpError(400, 'invalid_payer_zip', 'Client ZIP must be 5 or 9 digits.');
+      }
+      const payerEin = client.ein!.replace(/[^0-9]/g, '');
+      if (payerEin.length !== 9) {
+        throw new HttpError(400, 'invalid_payer_ein', 'Client EIN must be 9 digits.');
+      }
+
+      const fireInput: IrsFireFile = {
+        transmitter: {
+          tcc: submitter.irsTcc,
+          ein: submitter.ein,
+          name: submitter.name,
+          contactName: submitter.contactName,
+          contactPhone: submitter.contactPhone,
+          contactEmail: submitter.contactEmail,
+          taxYear: input.taxYear,
+        },
+        payer: {
+          ein: payerEin,
+          name: client.legalName!,
+          addressLine1: client.addressLine1!,
+          city: client.city!,
+          state: client.state ?? '',
+          zip5: payerZip[1],
+          zip4: payerZip[2] ?? undefined,
+        },
+        payees,
+      };
+
+      const fileBody = buildIrsFireFile(fireInput);
+
+      res.setHeader('Content-Type', 'text/plain; charset=us-ascii');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="IRS_FIRE_1099NEC_${input.taxYear}_${payerEin}.txt"`,
+      );
+      if (skipped.length > 0) {
+        res.setHeader(
+          'X-IrsFire-Skipped',
           JSON.stringify(skipped).slice(0, 4096),
         );
       }

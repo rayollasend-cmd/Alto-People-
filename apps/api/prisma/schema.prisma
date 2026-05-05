@@ -5223,6 +5223,10 @@ model SubmitterProfile {
   contactName   String    @db.VarChar(57)
   contactPhone  String    @db.VarChar(20)
   contactEmail  String    @db.VarChar(40)
+  // Gap 11 — IRS FIRE Transmitter Control Code (5 chars, IRS-assigned).
+  // Required for 1099-NEC e-file via FIRE; null when the transmitter
+  // only does W-2 SSA filings.
+  irsTcc        String?   @db.VarChar(5)
   updatedAt     DateTime  @updatedAt @db.Timestamptz(6)
 }
 
