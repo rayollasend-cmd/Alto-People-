@@ -10,6 +10,10 @@ export const prisma = new PrismaClient();
 // _prisma_migrations.
 const TABLES = [
   'AuditLog',
+  // BranchWebhookEvent FK to PayrollItem is ON DELETE SET NULL, so rows
+  // would persist across tests with payrollItemId=null and trip the
+  // branchEventId unique constraint on the next test that reuses an id.
+  'BranchWebhookEvent',
   'PolicyAcknowledgment',
   'EsignAgreement',
   'Signature',

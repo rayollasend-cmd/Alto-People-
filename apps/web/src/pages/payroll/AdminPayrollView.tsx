@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
   ArrowDownUp,
@@ -184,6 +185,25 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
   useEffect(() => {
     refreshUpcoming();
   }, [refreshUpcoming]);
+
+  // Deeplink — accept ?run={id} so notifications can land HR directly on
+  // the run drawer (e.g. payroll failure → /payroll?run=xxx). Strips the
+  // param after opening so a refresh doesn't re-open if HR closed it.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const runId = searchParams.get('run');
+    if (!runId) return;
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('run');
+      return next;
+    }, { replace: true });
+    getPayrollRun(runId)
+      .then((detail) => setSelected(detail))
+      .catch((err) => {
+        toast.error(err instanceof ApiError ? err.message : 'Failed to open run.');
+      });
+  }, [searchParams, setSearchParams]);
 
   const openRun = async (id: string) => {
     try {
@@ -582,6 +602,12 @@ export function AdminPayrollView({ canProcess }: AdminPayrollViewProps) {
                   description="No approved time entries fell inside this period."
                 />
               )}
+              <FailedPaymentsSummary
+                items={selected.items}
+                canProcess={canProcess}
+                onRetry={onRetryFailures}
+                busy={busy}
+              />
               {selected.items.length > 0 && (
                 <div>
                   <div className="flex items-center justify-between mb-2">
@@ -1064,6 +1090,71 @@ function DrawerStat({
         {value}
       </div>
     </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- *
+ *  Failed-payments summary card. Renders only when the run has any HELD
+ *  items (Branch reported FAILED / CANCELLED / RETURNED, or HR put the
+ *  item on hold). Sits at the top of the paystubs section so HR sees
+ *  failures before scrolling. The "Retry failed disbursements" button is
+ *  the same action as the drawer footer button — exposed here so HR
+ *  doesn't have to scroll past the paystubs list to find it.
+ * -------------------------------------------------------------------------- */
+
+function FailedPaymentsSummary({
+  items,
+  canProcess,
+  onRetry,
+  busy,
+}: {
+  items: import('@alto-people/shared').PayrollItem[];
+  canProcess: boolean;
+  onRetry: () => void;
+  busy: boolean;
+}) {
+  const failed = items.filter((it) => it.status === 'HELD' || it.status === 'FAILED');
+  if (failed.length === 0) return null;
+  return (
+    <Card className="mb-4 border-alert/40 bg-alert/5">
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-base text-alert">
+          <AlertTriangle className="h-4 w-4" />
+          {failed.length} payment{failed.length === 1 ? '' : 's'} need attention
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-1.5">
+        <ul className="space-y-1">
+          {failed.map((it) => (
+            <li
+              key={it.id}
+              className="flex items-start justify-between gap-3 text-sm rounded border border-alert/20 bg-black/30 px-2.5 py-1.5"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="text-white truncate">{it.associateName ?? '—'}</div>
+                <div className="text-[11px] text-silver/70">
+                  {it.failureReason ?? 'Held by HR'}
+                </div>
+              </div>
+              <div className="text-right shrink-0">
+                <div className="tabular-nums text-gold">{fmtMoney(it.netPay)}</div>
+                <div className="text-[10px] uppercase tracking-widest text-alert/80">
+                  {it.status}
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+        {canProcess && (
+          <div className="pt-1">
+            <Button variant="secondary" size="sm" onClick={onRetry} loading={busy}>
+              <RotateCw className="h-3.5 w-3.5" />
+              Retry failed disbursements
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

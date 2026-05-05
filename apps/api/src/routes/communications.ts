@@ -37,6 +37,7 @@ function toNotif(row: RawNotif): Notification {
     readAt: row.readAt ? row.readAt.toISOString() : null,
     senderUserId: row.senderUserId,
     senderEmail: row.senderUser?.email ?? null,
+    linkUrl: row.linkUrl ?? null,
     createdAt: row.createdAt.toISOString(),
   };
 }

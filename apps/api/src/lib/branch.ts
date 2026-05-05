@@ -26,6 +26,11 @@ export type BranchPaymentStatus =
   | 'COMPLETED'
   | 'FAILED'
   | 'CANCELLED'
+  // ACH return after settlement (R01–R85). Distinct from FAILED/CANCELLED
+  // because the funds DID move, then bounced — finance reconciliation
+  // path differs. In our internal triple this still maps to FAILED so
+  // the item lands HELD and HR retries via the dashboard.
+  | 'RETURNED'
   | 'UNKNOWN';
 
 export interface BranchBankRail {
@@ -71,6 +76,14 @@ export interface CreatePaymentResult {
 }
 
 export interface BranchWebhookPayload {
+  /**
+   * Per-event identifier. Used as the idempotency key against
+   * BranchWebhookEvent.branchEventId. We expect a top-level `id` field
+   * per Branch's documented webhook envelope; if a real delivery shows
+   * the field under a different name (e.g. `event_id`), this is a
+   * one-line adjustment — the dedup logic stays unchanged.
+   */
+  id: string;
   event: string;
   payment: {
     id: string;
@@ -102,6 +115,12 @@ export function mapBranchStatus(
       return 'SUCCESS';
     case 'FAILED':
     case 'CANCELLED':
+    // RETURNED (ACH bounce) collapses to FAILED in our triple — same
+    // remediation path: the item lands HELD and HR retries. The raw
+    // BranchPaymentStatus is preserved on the BranchWebhookEvent row
+    // so finance can distinguish a never-settled FAILED from a
+    // settled-then-bounced RETURNED at reconcile time.
+    case 'RETURNED':
       return 'FAILED';
     case 'PROCESSING':
     case 'UNKNOWN':
@@ -192,7 +211,8 @@ function normalizeStatus(s: string): BranchPaymentStatus {
     upper === 'PROCESSING' ||
     upper === 'COMPLETED' ||
     upper === 'FAILED' ||
-    upper === 'CANCELLED'
+    upper === 'CANCELLED' ||
+    upper === 'RETURNED'
   ) {
     return upper;
   }

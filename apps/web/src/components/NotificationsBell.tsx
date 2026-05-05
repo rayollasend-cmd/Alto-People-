@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Bell, BellRing, CheckCheck, Inbox } from 'lucide-react';
 import type { Notification } from '@alto-people/shared';
 import { listMyInbox, markRead } from '@/lib/communicationsApi';
@@ -55,16 +56,23 @@ export function NotificationsBell() {
   const unread = (items ?? []).filter((n) => !n.readAt);
   const unreadCount = unread.length;
 
+  const navigate = useNavigate();
+
   const onItemClick = async (n: Notification) => {
-    if (n.readAt) return;
-    try {
-      await markRead(n.id);
-      // Optimistic update so the badge drops immediately.
+    // Mark read first (optimistic) so the badge drops even if navigation
+    // tears down this component before the network call lands.
+    if (!n.readAt) {
       setItems((prev) =>
         prev?.map((x) => (x.id === n.id ? { ...x, readAt: new Date().toISOString() } : x)) ?? null
       );
-    } catch {
-      // Soft fail — refresh on next poll.
+      markRead(n.id).catch(() => {
+        // Soft fail — refresh on next poll.
+      });
+    }
+    // Deeplink if the notification has one (e.g., payroll failure → run drawer).
+    if (n.linkUrl) {
+      setOpen(false);
+      navigate(n.linkUrl);
     }
   };
 

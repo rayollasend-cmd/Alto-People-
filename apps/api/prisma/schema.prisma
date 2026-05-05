@@ -1458,6 +1458,10 @@ model PayrollItem {
   // breakdown going forward.
   earnings PayrollItemEarning[]
 
+  // Inbound Branch webhook deliveries that referenced this item. Audit trail
+  // for "what state did Branch tell us about this payment, and when".
+  branchWebhookEvents BranchWebhookEvent[]
+
   // One paystub per (run, associate) — re-aggregating updates in place
   // rather than duplicating.
   @@unique([payrollRunId, associateId])
@@ -1725,6 +1729,10 @@ model Notification {
   readAt          DateTime?           @db.Timestamptz(6)
   // Sender: HR user, or null for system-triggered notifications.
   senderUserId    String?             @db.Uuid
+  // Optional deeplink for IN_APP notifications. The bell renders the row
+  // as a link when set; un-set means click only marks-read. First use:
+  // payroll Branch-webhook FAILED/RETURNED → "/payroll?run={runId}".
+  linkUrl         String?
   recipientUser   User?               @relation("NotificationRecipient", fields: [recipientUserId], references: [id], onDelete: SetNull)
   senderUser      User?               @relation("NotificationSender", fields: [senderUserId], references: [id], onDelete: SetNull)
   createdAt       DateTime            @default(now()) @db.Timestamptz(6)
@@ -5006,4 +5014,38 @@ model PayrollConfig {
   updatedAt                  DateTime @updatedAt @db.Timestamptz(6)
 
   @@map("payroll_config")
+}
+
+// Status of OUR processing of a Branch webhook delivery — distinct from
+// the Branch payment lifecycle status carried in the payload.
+enum BranchWebhookStatus {
+  PROCESSED // applied to PayrollItem / PayrollRun as expected
+  IGNORED // valid signature, but no matching PayrollItem (cross-env, race)
+  DUPLICATE // event ID already processed — short-circuited
+  ERROR // exception during processing; admin needs to investigate
+}
+
+// Audit log of every inbound Branch webhook delivery + idempotency mechanism.
+// branchEventId is UNIQUE so a duplicate POST collapses at INSERT and the
+// handler skips reprocessing. Full raw payload is preserved so finance can
+// reconcile even if PayrollItem / PayrollDisbursementAttempt rows are
+// edited later.
+model BranchWebhookEvent {
+  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchEventId String              @unique
+  // payment.completed, payment.failed, payment.returned, etc.
+  eventType     String
+  payload       Json
+  status        BranchWebhookStatus @default(PROCESSED)
+  // Matched PayrollItem when applicable; null for IGNORED/DUPLICATE.
+  payrollItemId String?             @db.Uuid
+  // Free-text "why" for non-PROCESSED rows (unknown payment, parse error).
+  notes         String?
+  receivedAt    DateTime            @default(now()) @db.Timestamptz(6)
+  processedAt   DateTime?           @db.Timestamptz(6)
+
+  payrollItem PayrollItem? @relation(fields: [payrollItemId], references: [id], onDelete: SetNull)
+
+  @@index([eventType, receivedAt])
+  @@index([status, receivedAt])
 }

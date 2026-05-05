@@ -1900,6 +1900,10 @@ export const NotificationSchema = z.object({
   readAt: z.string().datetime().nullable(),
   senderUserId: UuidSchema.nullable(),
   senderEmail: z.string().email().nullable(),
+  // Optional in-app deeplink. When set, the bell renders the row as a
+  // link rather than just marking-read on click. First user: payroll
+  // failure notifications point at /payroll?run={runId}.
+  linkUrl: z.string().nullable(),
   createdAt: z.string().datetime(),
 });
 export type Notification = z.infer<typeof NotificationSchema>;

@@ -11,6 +11,12 @@ if (process.env.NODE_ENV !== 'test') {
   throw new Error('test/setup.ts: NODE_ENV is not "test"; check apps/api/.env.test');
 }
 
+// Deterministic Branch webhook secret for tests. Lives here rather than in
+// .env.test (which is gitignored) so the value ships with the repo and CI
+// runs without a separate env config. Tests sign their payloads with the
+// same string in branchWebhook.test.ts. Real prod value comes from Railway.
+process.env.BRANCH_WEBHOOK_SECRET = 'test-branch-webhook-secret-do-not-use-outside-tests';
+
 // Preload the payroll tax config cache from the alto_test DB. Route-level
 // tests that drive the payroll engine (paystub, disbursement, payroll)
 // would otherwise throw "config cache empty" at compute time. Test files
