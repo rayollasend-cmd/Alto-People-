@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
-import { decryptString } from '../lib/crypto.js';
+import { decryptString, encryptString } from '../lib/crypto.js';
 import {
   aggregateW2Wages,
   listW2EligibleAssociates,
@@ -1845,3 +1845,111 @@ payrollTax91Router.get(
     }
   },
 );
+
+// ----- W-9 / Recipient TIN (Gap 11) --------------------------------------
+//
+// Captures the contractor's Taxpayer Identification Number — SSN for
+// individuals, EIN for businesses. Encrypted at rest with the same
+// PAYOUT_ENCRYPTION_KEY scheme as W4Submission.ssnEncrypted. The 1099-
+// NEC PDF + IRS FIRE routes refuse to render until this is set.
+//
+// We don't accept full W-9 forms in this iteration; HR captures the TIN
+// directly. A real W-9 model (signed PDF, audit trail) can hang off the
+// same column later — the column survives the abstraction.
+
+const TinBodySchema = z.object({
+  /** 9-digit TIN, dashes optional (we strip them). */
+  tin: z.string().min(9).max(11),
+});
+
+payrollTax91Router.get('/associates/:id/tin', VIEW, async (req, res, next) => {
+  try {
+    const id = z.string().uuid().parse(req.params.id);
+    const a = await prisma.associate.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        employmentType: true,
+        tinEncrypted: true,
+      },
+    });
+    if (!a) throw new HttpError(404, 'not_found', 'Associate not found.');
+    // Don't return the raw TIN — only whether one is on file. The PDF /
+    // IRS FIRE routes are the only things that read it, and they go
+    // straight from DB to the file body.
+    res.json({
+      associateId: a.id,
+      employmentType: a.employmentType,
+      hasTin: a.tinEncrypted !== null,
+      // Last 4 if present, for HR confirmation only.
+      tinLast4: a.tinEncrypted
+        ? decryptString(a.tinEncrypted).replace(/[^0-9]/g, '').slice(-4)
+        : null,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+payrollTax91Router.post('/associates/:id/tin', MANAGE, async (req, res, next) => {
+  try {
+    const id = z.string().uuid().parse(req.params.id);
+    const input = TinBodySchema.parse(req.body);
+    const cleaned = input.tin.replace(/[^0-9]/g, '');
+    if (cleaned.length !== 9) {
+      throw new HttpError(
+        400,
+        'invalid_tin',
+        'TIN must be exactly 9 digits (dashes are optional and stripped).',
+      );
+    }
+
+    const a = await prisma.associate.findUnique({
+      where: { id },
+      select: { id: true, employmentType: true },
+    });
+    if (!a) throw new HttpError(404, 'not_found', 'Associate not found.');
+    if (
+      a.employmentType !== 'CONTRACTOR_1099_INDIVIDUAL' &&
+      a.employmentType !== 'CONTRACTOR_1099_BUSINESS'
+    ) {
+      throw new HttpError(
+        409,
+        'not_a_contractor',
+        'TIN is only captured for 1099 contractors; W-2 employees use W4Submission.ssnEncrypted instead.',
+      );
+    }
+
+    await prisma.associate.update({
+      where: { id },
+      data: { tinEncrypted: encryptString(cleaned) },
+    });
+    res.json({
+      associateId: id,
+      hasTin: true,
+      tinLast4: cleaned.slice(-4),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+payrollTax91Router.delete('/associates/:id/tin', MANAGE, async (req, res, next) => {
+  try {
+    const id = z.string().uuid().parse(req.params.id);
+    const a = await prisma.associate.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!a) throw new HttpError(404, 'not_found', 'Associate not found.');
+    await prisma.associate.update({
+      where: { id },
+      data: { tinEncrypted: null },
+    });
+    res.json({ associateId: id, hasTin: false });
+  } catch (err) {
+    next(err);
+  }
+});

@@ -163,6 +163,52 @@ export const w2Efw2cUrl = (taxYear: number, clientId: string): string => {
   return `/api/tax-forms/w2/efw2c.txt?${q.toString()}`;
 };
 
+// ----- 1099-NEC generation (Gap 11) -------------------------------------
+
+export const generate1099Necs = (input: { taxYear: number; clientId?: string | null }) =>
+  apiFetch<GenerateW2Result>('/tax-forms/1099-nec/generate', {
+    method: 'POST',
+    body: input,
+  });
+
+/** Direct URL for the 1099-NEC bulk-download zip. */
+export const f1099NecBulkZipUrl = (taxYear: number, clientId?: string | null): string => {
+  const q = new URLSearchParams({ taxYear: String(taxYear) });
+  if (clientId) q.set('clientId', clientId);
+  return `/api/tax-forms/1099-nec/bulk.zip?${q.toString()}`;
+};
+
+/** Direct URL for the IRS FIRE 1099-NEC e-file (year + client required). */
+export const f1099NecFireUrl = (taxYear: number, clientId: string): string => {
+  const q = new URLSearchParams({ taxYear: String(taxYear), clientId });
+  return `/api/tax-forms/1099-nec/fire.txt?${q.toString()}`;
+};
+
+// ----- W-9 / Contractor TIN (Gap 11) ------------------------------------
+
+export interface ContractorTinSummary {
+  associateId: string;
+  employmentType: 'W2_EMPLOYEE' | 'CONTRACTOR_1099_INDIVIDUAL' | 'CONTRACTOR_1099_BUSINESS';
+  hasTin: boolean;
+  /** Last 4 digits of TIN — for HR confirmation only; never the full value. */
+  tinLast4: string | null;
+}
+
+export const getAssociateTin = (associateId: string) =>
+  apiFetch<ContractorTinSummary>(`/associates/${associateId}/tin`);
+
+export const saveAssociateTin = (associateId: string, tin: string) =>
+  apiFetch<{ associateId: string; hasTin: true; tinLast4: string }>(
+    `/associates/${associateId}/tin`,
+    { method: 'POST', body: { tin } },
+  );
+
+export const clearAssociateTin = (associateId: string) =>
+  apiFetch<{ associateId: string; hasTin: false }>(
+    `/associates/${associateId}/tin`,
+    { method: 'DELETE', body: {} },
+  );
+
 // W-2c create endpoint
 export interface CreateW2cInput {
   originalW2FormId: string;
@@ -203,6 +249,8 @@ export interface SubmitterProfile {
   contactName: string;
   contactPhone: string;
   contactEmail: string;
+  /** Gap 11 — IRS FIRE Transmitter Control Code; nullable for W-2-only filers. */
+  irsTcc: string | null;
   updatedAt: string;
 }
 
@@ -219,6 +267,7 @@ export interface SubmitterProfileInput {
   contactName: string;
   contactPhone: string;
   contactEmail: string;
+  irsTcc?: string | null;
 }
 
 export const getSubmitterProfile = () =>
