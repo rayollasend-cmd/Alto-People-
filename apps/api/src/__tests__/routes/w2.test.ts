@@ -51,6 +51,7 @@ async function seedDisbursedItem(opts: {
   disbursedAt: Date;
   grossPay: number;
   preTaxDeductions?: number;
+  preTaxRetirement?: number;
   federalWithholding: number;
   fica: number;
   medicare: number;
@@ -91,6 +92,7 @@ async function seedDisbursedItem(opts: {
       hourlyRate: new Prisma.Decimal(opts.grossPay / 80),
       grossPay: new Prisma.Decimal(opts.grossPay),
       preTaxDeductions: new Prisma.Decimal(opts.preTaxDeductions ?? 0),
+      preTaxRetirement: new Prisma.Decimal(opts.preTaxRetirement ?? 0),
       federalWithholding: new Prisma.Decimal(opts.federalWithholding),
       fica: new Prisma.Decimal(opts.fica),
       medicare: new Prisma.Decimal(opts.medicare),
@@ -378,6 +380,96 @@ describe('W-2 generation — Gap 1', () => {
       .send({ taxYear: 2026, clientId: client.id });
     expect(r2.body.createdCount).toBe(0);
     expect(r2.body.skippedCount).toBe(1);
+  });
+
+  it('401(k) deduction reduces Box 1 but NOT Box 3/5 (retirement is FICA-includable)', async () => {
+    const client = await createClient();
+    await prisma.client.update({
+      where: { id: client.id },
+      data: { legalName: 'Acme', ein: '12-3456789' },
+    });
+    const associate = await createAssociate();
+    await prisma.w4Submission.create({
+      data: {
+        associateId: associate.id,
+        filingStatus: 'SINGLE',
+        ssnEncrypted: encryptString('123456789'),
+      },
+    });
+
+    // $2000 gross with $200 pre-tax, all of which is 401(k). Box 1 should
+    // be 2000 - 200 = 1800. Box 3/5 should be 2000 (retirement adds back).
+    await seedDisbursedItem({
+      associateId: associate.id,
+      clientId: client.id,
+      disbursedAt: new Date('2026-04-15T12:00:00Z'),
+      grossPay: 2000,
+      preTaxDeductions: 200,
+      preTaxRetirement: 200,
+      federalWithholding: 180,
+      fica: 124,
+      medicare: 29,
+    });
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+    const gen = await hrAgent
+      .post('/tax-forms/w2/generate')
+      .send({ taxYear: 2026, clientId: client.id });
+    expect(gen.status).toBe(200);
+
+    const form = await prisma.taxForm.findUniqueOrThrow({
+      where: { id: gen.body.created[0].id },
+    });
+    const amounts = form.amounts as Record<string, unknown>;
+    expect(amounts.box1Wages).toBe(1800);
+    expect(amounts.box3SsWages).toBe(2000);
+    expect(amounts.box5MedicareWages).toBe(2000);
+  });
+
+  it('Mixed Section 125 + 401(k): only the §125 slice reduces Box 3/5', async () => {
+    const client = await createClient();
+    await prisma.client.update({
+      where: { id: client.id },
+      data: { legalName: 'Acme', ein: '12-3456789' },
+    });
+    const associate = await createAssociate();
+    await prisma.w4Submission.create({
+      data: {
+        associateId: associate.id,
+        filingStatus: 'SINGLE',
+        ssnEncrypted: encryptString('123456789'),
+      },
+    });
+
+    // $3000 gross, $300 pre-tax = $100 §125 (health) + $200 401(k).
+    // Box 1 = 3000 - 300 = 2700.
+    // Box 3/5 = 3000 - (300 - 200) = 2900 (only §125 reduces FICA base).
+    await seedDisbursedItem({
+      associateId: associate.id,
+      clientId: client.id,
+      disbursedAt: new Date('2026-05-15T12:00:00Z'),
+      grossPay: 3000,
+      preTaxDeductions: 300,
+      preTaxRetirement: 200,
+      federalWithholding: 270,
+      fica: 179.8,
+      medicare: 42.05,
+    });
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+    const gen = await hrAgent
+      .post('/tax-forms/w2/generate')
+      .send({ taxYear: 2026, clientId: client.id });
+
+    const form = await prisma.taxForm.findUniqueOrThrow({
+      where: { id: gen.body.created[0].id },
+    });
+    const amounts = form.amounts as Record<string, unknown>;
+    expect(amounts.box1Wages).toBe(2700);
+    expect(amounts.box3SsWages).toBe(2900);
+    expect(amounts.box5MedicareWages).toBe(2900);
   });
 
   it('W-2c: amend a FILED W-2 by recomputing — original flips to AMENDED, W2C row stores previous + corrected', async () => {

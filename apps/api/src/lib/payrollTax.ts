@@ -503,7 +503,21 @@ function sutaFor(
 // ---------- Aggregate ------------------------------------------------------
 
 export interface PaycheckTaxInput {
+  /**
+   * Wages used for FIT + state income tax. Net of all pre-tax deductions
+   * (Section 125, HSA, FSA, AND traditional 401(k)/403(b)). This is the
+   * Box 1 base on the W-2.
+   */
   grossPay: number;
+  /**
+   * Wages used for FICA (Social Security) + Medicare. Net of Section 125
+   * + HSA + FSA only — does NOT subtract retirement contributions, since
+   * 401(k)/403(b) are FIT-deferred but FICA-includable. Defaults to
+   * grossPay for back-compat (callers that don't have a retirement
+   * bucket) — equivalent to "no retirement deduction in this paycheck."
+   * This is the Box 3 / Box 5 base on the W-2.
+   */
+  ficaMedicareGross?: number;
   filingStatus: W4FilingStatus | null;
   payFrequency: PayFrequency;
   state: string | null;
@@ -544,10 +558,13 @@ export function zeroTaxBreakdown(grossPay: number): PaycheckTaxBreakdown {
 }
 
 export function computePaycheckTaxes(input: PaycheckTaxInput): PaycheckTaxBreakdown {
+  // FICA + Medicare base falls back to FIT base when caller didn't split
+  // — keeps every existing call site working unchanged.
+  const ficaGross = input.ficaMedicareGross ?? input.grossPay;
   const fit = computeFederalIncomeTax(input);
-  const ss = computeSocialSecurity({ grossPay: input.grossPay, ytdWages: input.ytdWages });
+  const ss = computeSocialSecurity({ grossPay: ficaGross, ytdWages: input.ytdWages });
   const med = computeMedicare({
-    grossPay: input.grossPay,
+    grossPay: ficaGross,
     ytdMedicareWages: input.ytdMedicareWages,
   });
   const sit = computeStateIncomeTax({
@@ -556,9 +573,14 @@ export function computePaycheckTaxes(input: PaycheckTaxInput): PaycheckTaxBreakd
     payFrequency: input.payFrequency,
   });
   const totalEmployeeTax = round2(fit + ss + med + sit);
+  // Net is computed against the FIT base because that's the actual cash
+  // hitting the bank — FICA-only-includable retirement contributions are
+  // already withheld from the same gross. Using grossPay (= FIT base)
+  // here preserves the prior contract.
   const netPay = round2(input.grossPay - totalEmployeeTax);
   const employer = computeEmployerTaxes({
-    grossPay: input.grossPay,
+    // Employer FICA/Medicare/FUTA/SUTA all match the employee FICA base.
+    grossPay: ficaGross,
     ytdWages: input.ytdWages,
     ytdMedicareWages: input.ytdMedicareWages,
     state: input.state,

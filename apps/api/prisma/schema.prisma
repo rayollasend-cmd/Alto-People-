@@ -1479,6 +1479,11 @@ model PayrollItem {
   // NOT affect FIT/FICA/Medicare/SIT bases. Per-deduction breakdown for
   // garnishments lives in GarnishmentDeduction rows tied to the run.
   postTaxDeductions  Decimal           @default(0) @db.Decimal(12, 2)
+  // Gap 1 — sub-bucket of preTaxDeductions that reduces FIT base only,
+  // NOT FICA / Medicare base (traditional 401(k) / 403(b)). Section-125
+  // pre-tax = preTaxDeductions - preTaxRetirement. CHECK enforces
+  // preTaxRetirement <= preTaxDeductions at the DB layer.
+  preTaxRetirement   Decimal           @default(0) @db.Decimal(12, 2)
   // Gap 10 — sum of folded reimbursement amounts on this item. Added to
   // netPay after taxes / deductions; never affects grossPay or any wage
   // base (accountable-plan rule). Per-row breakdown lives on PayrollItem-

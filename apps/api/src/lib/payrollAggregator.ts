@@ -12,13 +12,31 @@
 // no writes, so it's safe to call from a read-only endpoint and trivial to
 // re-run after fixing inputs.
 
-import type { Prisma, PrismaClient } from '@prisma/client';
+import type { BenefitsPlanKind, Prisma, PrismaClient } from '@prisma/client';
 import {
   pickHourlyRate,
   round2,
   splitWeeklyOvertime,
   sumApprovedHours,
 } from './payroll.js';
+
+/**
+ * Gap 1 — IRS pre-tax classification. Traditional retirement (401k/403b)
+ * is FIT-deferred but FICA-includable, so it must NOT reduce the FICA /
+ * Medicare wage base. Section 125 cafeteria-plan items (health/dental/
+ * vision/HSA/FSA) reduce all three. Imputed-income items (life/disability
+ * over the §79 threshold) are out of scope here — assume cafeteria-plan
+ * for now and revisit if HR ever offers >$50k group-term life.
+ */
+function classifyPreTax(kind: BenefitsPlanKind): 'FIT_ONLY' | 'ALL_THREE' {
+  switch (kind) {
+    case 'RETIREMENT_401K':
+    case 'RETIREMENT_403B':
+      return 'FIT_ONLY';
+    default:
+      return 'ALL_THREE';
+  }
+}
 import {
   computePaycheckTaxes,
   zeroTaxBreakdown,
@@ -65,6 +83,13 @@ export interface ProjectedItem {
   earnings: ProjectedEarning[];
   grossPay: number;
   preTaxDeductions: number;
+  /**
+   * Gap 1 — sub-bucket of preTaxDeductions covering 401(k)/403(b) only.
+   * This portion reduces the FIT base but NOT the FICA / Medicare /
+   * employer-tax base, so the W-2 aggregator can compute Box 1 vs Box 3/5
+   * correctly. Section-125 pre-tax = preTaxDeductions - preTaxRetirement.
+   */
+  preTaxRetirement: number;
   /** Tax breakdown — zero when employmentType is 1099. */
   federalIncomeTax: number;
   fica: number;
@@ -196,6 +221,7 @@ export async function aggregatePayrollProjection(
       group[0].associate.payrollSchedule?.frequency ?? 'BIWEEKLY';
 
     let preTaxDeductions = 0;
+    let preTaxRetirement = 0;
     if (employmentType === 'W2_EMPLOYEE') {
       const enrollments = await tx.benefitsEnrollment.findMany({
         where: {
@@ -206,20 +232,35 @@ export async function aggregatePayrollProjection(
             { terminationDate: { gte: periodStart } },
           ],
         },
-        select: { electedAmountCentsPerPeriod: true },
+        select: {
+          electedAmountCentsPerPeriod: true,
+          plan: { select: { kind: true } },
+        },
       });
-      const totalCents = enrollments.reduce(
-        (acc, e) => acc + e.electedAmountCentsPerPeriod,
-        0
-      );
+      let totalCents = 0;
+      let retirementCents = 0;
+      for (const e of enrollments) {
+        totalCents += e.electedAmountCentsPerPeriod;
+        if (classifyPreTax(e.plan.kind) === 'FIT_ONLY') {
+          retirementCents += e.electedAmountCentsPerPeriod;
+        }
+      }
       preTaxDeductions = round2(totalCents / 100);
+      preTaxRetirement = round2(retirementCents / 100);
     }
-    const taxableGross = round2(Math.max(0, grossPay - preTaxDeductions));
+    // FIT base subtracts ALL pre-tax (Section 125 + retirement).
+    // FICA / Medicare base subtracts ONLY the Section 125 slice — retirement
+    // contributions are FIT-deferred but FICA-includable per IRS rules.
+    const fitGross = round2(Math.max(0, grossPay - preTaxDeductions));
+    const ficaMedicareGross = round2(
+      Math.max(0, grossPay - (preTaxDeductions - preTaxRetirement)),
+    );
 
     const breakdown =
       employmentType === 'W2_EMPLOYEE'
         ? computePaycheckTaxes({
-            grossPay: taxableGross,
+            grossPay: fitGross,
+            ficaMedicareGross,
             filingStatus: w4?.filingStatus ?? null,
             payFrequency,
             state: associateState,
@@ -327,6 +368,7 @@ export async function aggregatePayrollProjection(
       earnings,
       grossPay,
       preTaxDeductions,
+      preTaxRetirement,
       federalIncomeTax: breakdown.federalIncomeTax,
       fica: breakdown.socialSecurity,
       medicare: breakdown.medicare,
