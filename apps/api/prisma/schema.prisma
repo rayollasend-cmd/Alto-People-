@@ -575,6 +575,13 @@ model Associate {
   // Phase 41 — W-2 vs 1099. Default W2 keeps every existing record's
   // payroll math identical; 1099 records skip W-4 / FICA / Medicare.
   employmentType    EmploymentType @default(W2_EMPLOYEE)
+  // Gap 11 — Recipient TIN for Form 1099-NEC. SSN for
+  // CONTRACTOR_1099_INDIVIDUAL, EIN for CONTRACTOR_1099_BUSINESS.
+  // Encrypted at rest with the same PAYOUT_ENCRYPTION_KEY scheme as
+  // W4Submission.ssnEncrypted. Null for W-2 employees (their SSN
+  // lives on W4Submission). Surfaces as `missing_tin` 400 in the
+  // 1099-NEC PDF + IRS-FIRE routes when null.
+  tinEncrypted      Bytes?
   // Phase 76 — org hierarchy. All four are nullable: existing rows
   // continue to work with NULLs and HR fills them in over time. The
   // managerId self-reference enables direct-reports queries.
@@ -3389,6 +3396,7 @@ enum TaxFormKind {
   // at the original W-2 it corrects. The DB CHECK enforces the link.
   W2C
   F1099_NEC
+  F1099_MISC
 }
 
 enum TaxFormStatus {
@@ -5216,6 +5224,10 @@ model SubmitterProfile {
   contactName   String    @db.VarChar(57)
   contactPhone  String    @db.VarChar(20)
   contactEmail  String    @db.VarChar(40)
+  // Gap 11 — IRS FIRE Transmitter Control Code (5 chars, IRS-assigned).
+  // Required for 1099-NEC e-file via FIRE; null when the transmitter
+  // only does W-2 SSA filings.
+  irsTcc        String?   @db.VarChar(5)
   updatedAt     DateTime  @updatedAt @db.Timestamptz(6)
 }
 

@@ -73,7 +73,7 @@ export const setGarnishmentStatus = (id: string, status: GarnishmentStatus) =>
 
 // ----- Tax forms ---------------------------------------------------------
 
-export type TaxFormKind = 'F941' | 'F940' | 'W2' | 'W2C' | 'F1099_NEC';
+export type TaxFormKind = 'F941' | 'F940' | 'W2' | 'W2C' | 'F1099_NEC' | 'F1099_MISC';
 
 export type TaxFormStatus = 'DRAFT' | 'FILED' | 'AMENDED' | 'VOIDED';
 
@@ -182,6 +182,95 @@ export const w2Efw2cUrl = (taxYear: number, clientId: string): string => {
   return `/api/tax-forms/w2/efw2c.txt?${q.toString()}`;
 };
 
+// ----- 1099-NEC generation (Gap 11) -------------------------------------
+
+export const generate1099Necs = (input: { taxYear: number; clientId?: string | null }) =>
+  apiFetch<GenerateW2Result>('/tax-forms/1099-nec/generate', {
+    method: 'POST',
+    body: input,
+  });
+
+/** Direct URL for the 1099-NEC bulk-download zip. */
+export const f1099NecBulkZipUrl = (taxYear: number, clientId?: string | null): string => {
+  const q = new URLSearchParams({ taxYear: String(taxYear) });
+  if (clientId) q.set('clientId', clientId);
+  return `/api/tax-forms/1099-nec/bulk.zip?${q.toString()}`;
+};
+
+/**
+ * Direct URL for the IRS FIRE 1099-NEC e-file (year + client required).
+ * Pass `cfsfStates` (USPS 2-letter codes) to opt into Combined Federal/
+ * State Filing — the IRS forwards data to listed participating states
+ * so a separate state filing isn't needed.
+ */
+export const f1099NecFireUrl = (
+  taxYear: number,
+  clientId: string,
+  cfsfStates?: string[],
+): string => {
+  const q = new URLSearchParams({ taxYear: String(taxYear), clientId });
+  if (cfsfStates && cfsfStates.length > 0) {
+    q.set('cfsf', cfsfStates.join(','));
+  }
+  return `/api/tax-forms/1099-nec/fire.txt?${q.toString()}`;
+};
+
+// ----- 1099-MISC generation (Gap 11 — Phase 8) --------------------------
+
+export const generate1099Miscs = (input: { taxYear: number; clientId?: string | null }) =>
+  apiFetch<GenerateW2Result>('/tax-forms/1099-misc/generate', {
+    method: 'POST',
+    body: input,
+  });
+
+/** Direct URL for the 1099-MISC bulk-download zip. */
+export const f1099MiscBulkZipUrl = (taxYear: number, clientId?: string | null): string => {
+  const q = new URLSearchParams({ taxYear: String(taxYear) });
+  if (clientId) q.set('clientId', clientId);
+  return `/api/tax-forms/1099-misc/bulk.zip?${q.toString()}`;
+};
+
+/**
+ * Direct URL for the IRS FIRE 1099-MISC e-file (year + client required).
+ * Same CF/SF semantics as the 1099-NEC sibling.
+ */
+export const f1099MiscFireUrl = (
+  taxYear: number,
+  clientId: string,
+  cfsfStates?: string[],
+): string => {
+  const q = new URLSearchParams({ taxYear: String(taxYear), clientId });
+  if (cfsfStates && cfsfStates.length > 0) {
+    q.set('cfsf', cfsfStates.join(','));
+  }
+  return `/api/tax-forms/1099-misc/fire.txt?${q.toString()}`;
+};
+
+// ----- W-9 / Contractor TIN (Gap 11) ------------------------------------
+
+export interface ContractorTinSummary {
+  associateId: string;
+  employmentType: 'W2_EMPLOYEE' | 'CONTRACTOR_1099_INDIVIDUAL' | 'CONTRACTOR_1099_BUSINESS';
+  hasTin: boolean;
+  /** Last 4 digits of TIN — for HR confirmation only; never the full value. */
+  tinLast4: string | null;
+}
+
+export const getAssociateTin = (associateId: string) =>
+  apiFetch<ContractorTinSummary>(`/associates/${associateId}/tin`);
+
+export const saveAssociateTin = (associateId: string, tin: string) =>
+  apiFetch<{ associateId: string; hasTin: true; tinLast4: string }>(
+    `/associates/${associateId}/tin`,
+    { method: 'POST', body: { tin } },
+  );
+
+export const clearAssociateTin = (associateId: string) =>
+  apiFetch<{ associateId: string; hasTin: false }>(
+    `/associates/${associateId}/tin`,
+    { method: 'DELETE', body: {} },
+  );
+
 // W-2c create endpoint
 export interface CreateW2cInput {
   originalW2FormId: string;
@@ -222,6 +311,8 @@ export interface SubmitterProfile {
   contactName: string;
   contactPhone: string;
   contactEmail: string;
+  /** Gap 11 — IRS FIRE Transmitter Control Code; nullable for W-2-only filers. */
+  irsTcc: string | null;
   updatedAt: string;
 }
 
@@ -238,6 +329,7 @@ export interface SubmitterProfileInput {
   contactName: string;
   contactPhone: string;
   contactEmail: string;
+  irsTcc?: string | null;
 }
 
 export const getSubmitterProfile = () =>

@@ -20,7 +20,7 @@
 // W-2c mode — AccuWage is the only authoritative cross-check (SSA
 // rejects the entire file on a single positional mismatch).
 //
-//   $ npx tsx apps/api/scripts/sample-efw2.ts
+//   $ npx tsx apps/api/scripts/sample-efile.ts
 //
 // generates a paired sample EFW2 + EFW2C file from real, exercised
 // code paths. Upload both to https://www.ssa.gov/employer/accuwage/

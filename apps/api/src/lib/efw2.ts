@@ -20,7 +20,7 @@
 // AccuWage is the only authoritative cross-check (SSA rejects the
 // entire file on a single positional mismatch).
 //
-//   $ npx tsx apps/api/scripts/sample-efw2.ts
+//   $ npx tsx apps/api/scripts/sample-efile.ts
 //
 // generates a sample file from real, exercised code paths. Upload it
 // to https://www.ssa.gov/employer/accuwage/ and reconcile any errors
