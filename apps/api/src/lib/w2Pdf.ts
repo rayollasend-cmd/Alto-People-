@@ -1,23 +1,50 @@
-// Gap 1 — Form W-2 Copy B (employee copy, IRS-filed-by-employee) renderer.
+// Gap 1 — Form W-2 plain-paper renderer.
 //
-// Plain-paper layout — text only, no graphics, designed to print on a
-// blank sheet of letter paper. Boxes are positioned and labeled the way
-// the IRS substitute-form rules require: numbered boxes with a/b/c/d
-// identifiers and a header that says "Form W-2 Wage and Tax Statement",
-// the year, and "Copy B—To Be Filed With Employee's FEDERAL Tax Return."
+// One layout, five copy variants (A/B/C/D/2) — the only material
+// difference between the recipient copies is the header label per IRS
+// Pub 1141 §4.05. Copy A is the SSA submission copy; Copy B is the
+// employee's federal-return attachment; Copy C is the employee's
+// personal record; Copy 2 is the employee's state/local-return
+// attachment; Copy D is the employer's record.
 //
-// The output is intentionally austere; Rippling/Gusto's plain-paper W-2
-// looks essentially identical. Substitute-form approval (per IRS Pub
-// 1141) is a separate process — this renderer is a starting point that
-// finance can review before we commit to either pursuing approval or
-// shipping pre-printed forms.
+// Practical reality: most employers (this product included) submit
+// Copy A *electronically* via EFW2 — paper Copy A on red drop-out
+// ink with prior IRS approval is rare. We still render a Copy A
+// variant so a finance reviewer can compare the form's shape, and so
+// the 4-up multi-copy layout below has all the labels it needs.
+//
+// Output is intentionally austere; Rippling/Gusto's plain-paper W-2
+// looks essentially identical. Substitute-form approval (Pub 1141) is
+// a separate process — this renderer is a starting point that finance
+// can review before we commit to either pursuing approval or shipping
+// pre-printed forms.
 
 import PDFDocument from 'pdfkit';
 import { createHash } from 'node:crypto';
 import type { W2Boxes, W2StateLine } from './w2Aggregator.js';
 
+/**
+ * Which copy of the W-2 to render. Header label and footer disclaimer
+ * change per IRS Pub 1141; everything else is identical.
+ */
+export type W2CopyVariant = 'A' | 'B' | 'C' | 'D' | '2';
+
+const COPY_LABEL: Record<W2CopyVariant, string> = {
+  A: 'Copy A—For Social Security Administration. Send this entire page with Form W-3 to the SSA; photocopies are not acceptable.',
+  B: "Copy B—To Be Filed With Employee's FEDERAL Tax Return.",
+  C: "Copy C—For EMPLOYEE'S RECORDS (See Notice to Employee on the back of Copy B.)",
+  D: 'Copy D—For Employer.',
+  '2': "Copy 2—To Be Filed With Employee's State, City, or Local Income Tax Return.",
+};
+
 export interface W2PdfData {
   taxYear: number;
+  /**
+   * Which copy to render. Defaults to Copy B (employee files with their
+   * federal return) — the most-requested copy. The 4-up layout below
+   * passes B/C/2/2 explicitly.
+   */
+  copyVariant?: W2CopyVariant;
   /** Employer block (Box b/c). */
   employer: {
     /** EIN formatted "XX-XXXXXXX" (Box b). */
@@ -71,6 +98,69 @@ export async function renderW2Pdf(data: W2PdfData): Promise<Buffer> {
   });
 }
 
+/**
+ * 4-up multi-copy paper layout — packs Copy B (federal), Copy C
+ * (employee record), and two Copy 2's (state/local) onto one Letter-
+ * size sheet. This is the standard payroll-house format that's
+ * pre-perforated by 1099/W-2 paper vendors so the employee can tear
+ * off each copy.
+ *
+ * Page divides into four 4×5.5" quadrants (top-left, top-right,
+ * bottom-left, bottom-right) with a shared header strip across the
+ * top and a thin tear/cut line down the middle and across the
+ * horizontal seam. Each quadrant uses PDFKit's `save/translate/scale`
+ * to reuse the single-copy layout at half scale — no duplicated
+ * draw code.
+ */
+export async function renderW2Pdf4Up(data: W2PdfData): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'LETTER', margin: 0 });
+    const chunks: Buffer[] = [];
+    doc.on('data', (c: Buffer) => chunks.push(c));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    // Letter @ 72dpi = 612 × 792. Each quadrant is 306 × 396.
+    const W = 612;
+    const H = 792;
+    const halfW = W / 2;
+    const halfH = H / 2;
+
+    // Tear/cut guides — single-pixel hairlines at the seams.
+    doc
+      .strokeColor('#999')
+      .lineWidth(0.3)
+      .moveTo(halfW, 0).lineTo(halfW, H).stroke()
+      .moveTo(0, halfH).lineTo(W, halfH).stroke();
+
+    // The four quadrants — Copy B (federal) / C (employee record)
+    // top, two Copy 2's (state) bottom. This matches every paper
+    // vendor's preprinted W-2 stock I've checked.
+    const quadrants: Array<{ x: number; y: number; copy: W2CopyVariant }> = [
+      { x: 0,     y: 0,     copy: 'B' },
+      { x: halfW, y: 0,     copy: 'C' },
+      { x: 0,     y: halfH, copy: '2' },
+      { x: halfW, y: halfH, copy: '2' },
+    ];
+
+    for (const q of quadrants) {
+      doc.save();
+      // The single-copy renderer assumes a full 612×792 canvas; squeeze
+      // it into the quadrant by translating to the quadrant's origin
+      // and scaling by 0.5.
+      doc.translate(q.x, q.y).scale(0.5);
+      drawHeader(doc, { ...data, copyVariant: q.copy });
+      drawIdBlock(doc, data);
+      drawWageBoxes(doc, data.boxes);
+      drawStateLines(doc, data.boxes.stateLines);
+      drawFooter(doc, { ...data, copyVariant: q.copy });
+      doc.restore();
+    }
+
+    doc.end();
+  });
+}
+
 export function hashW2Pdf(buf: Buffer): string {
   return createHash('sha256').update(buf).digest('hex');
 }
@@ -78,6 +168,7 @@ export function hashW2Pdf(buf: Buffer): string {
 // ---- Layout helpers ------------------------------------------------------
 
 function drawHeader(doc: PDFKit.PDFDocument, data: W2PdfData): void {
+  const variant = data.copyVariant ?? 'B';
   // Title strip
   doc
     .font('Helvetica-Bold')
@@ -90,12 +181,7 @@ function drawHeader(doc: PDFKit.PDFDocument, data: W2PdfData): void {
     .font('Helvetica')
     .fontSize(8)
     .fillColor('#444')
-    .text(
-      `Copy B—To Be Filed With Employee's FEDERAL Tax Return.`,
-      36,
-      54,
-      { width: 540 },
-    );
+    .text(COPY_LABEL[variant], 36, 54, { width: 540 });
   doc.fillColor('#000');
   // Department footer line at top — IRS substitute forms typically carry
   // this so a recipient can verify the form's source.
@@ -241,12 +327,13 @@ function drawStateLines(doc: PDFKit.PDFDocument, lines: W2StateLine[]): void {
 }
 
 function drawFooter(doc: PDFKit.PDFDocument, data: W2PdfData): void {
+  const variant = data.copyVariant ?? 'B';
   doc
     .font('Helvetica')
     .fontSize(7)
     .fillColor('#666')
     .text(
-      `Form W-2 (${data.taxYear})  ·  ID ${data.meta.formId.slice(0, 8)}  ·  ` +
+      `Form W-2 (${data.taxYear})  ·  Copy ${variant}  ·  ID ${data.meta.formId.slice(0, 8)}  ·  ` +
         `Generated by Alto People at ${data.meta.generatedAt}`,
       36,
       702,

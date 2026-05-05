@@ -382,6 +382,122 @@ describe('W-2 generation — Gap 1', () => {
     expect(r2.body.skippedCount).toBe(1);
   });
 
+  it('renders the requested copy variant — ?copy=C / D / 2 / A all 200 with copy-coded filename', async () => {
+    const client = await createClient();
+    await prisma.client.update({
+      where: { id: client.id },
+      data: { legalName: 'Acme', ein: '12-3456789', addressLine1: '1 Way', city: 'Tampa', state: 'FL', zip: '33601' },
+    });
+    const associate = await createAssociate({ firstName: 'Lee', lastName: 'Park' });
+    await prisma.associate.update({
+      where: { id: associate.id },
+      data: { addressLine1: '2 Oak', city: 'Tampa', state: 'FL', zip: '33602' },
+    });
+    await prisma.w4Submission.create({
+      data: {
+        associateId: associate.id,
+        filingStatus: 'SINGLE',
+        ssnEncrypted: encryptString('123456789'),
+      },
+    });
+    await seedDisbursedItem({
+      associateId: associate.id,
+      clientId: client.id,
+      disbursedAt: new Date('2026-03-15T12:00:00Z'),
+      grossPay: 1000,
+      federalWithholding: 100,
+      fica: 62,
+      medicare: 14.5,
+    });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+    const gen = await hrAgent
+      .post('/tax-forms/w2/generate')
+      .send({ taxYear: 2026, clientId: client.id });
+    const formId = gen.body.created[0].id as string;
+
+    // Copy B (default + canonical) — pdfHash gets stamped here.
+    const rB = await hrAgent.get(`/tax-forms/${formId}/pdf`);
+    expect(rB.status).toBe(200);
+    expect(rB.headers['content-disposition']).toMatch(/w2-2026-park-lee\.pdf/);
+    const stampedB = await prisma.taxForm.findUniqueOrThrow({ where: { id: formId } });
+    expect(stampedB.pdfHash).not.toBeNull();
+    const canonicalHash = stampedB.pdfHash!;
+
+    // Variants — each 200, each filename suffixed with the copy code,
+    // and none of them touch the canonical pdfHash stamp.
+    for (const copy of ['C', 'D', '2', 'A'] as const) {
+      const r = await hrAgent.get(`/tax-forms/${formId}/pdf?copy=${copy}`);
+      expect(r.status).toBe(200);
+      expect(r.headers['content-type']).toBe('application/pdf');
+      expect(r.body.length).toBeGreaterThan(1000);
+      expect(r.headers['content-disposition']).toMatch(
+        new RegExp(`w2-2026-park-lee-copy${copy.toLowerCase()}\\.pdf`),
+      );
+    }
+    const afterVariants = await prisma.taxForm.findUniqueOrThrow({
+      where: { id: formId },
+    });
+    expect(afterVariants.pdfHash).toBe(canonicalHash);
+
+    // Bad copy code → 400.
+    const bad = await hrAgent.get(`/tax-forms/${formId}/pdf?copy=Z`);
+    expect(bad.status).toBe(400);
+    expect(bad.body.error.code).toBe('invalid_copy');
+  });
+
+  it('renders the 4-up multi-copy paper sheet at ?layout=4up — 200 + 4up filename', async () => {
+    const client = await createClient();
+    await prisma.client.update({
+      where: { id: client.id },
+      data: { legalName: 'Acme', ein: '12-3456789', addressLine1: '1 Way', city: 'Tampa', state: 'FL', zip: '33601' },
+    });
+    const associate = await createAssociate({ firstName: 'Mo', lastName: 'Diaz' });
+    await prisma.associate.update({
+      where: { id: associate.id },
+      data: { addressLine1: '3 Birch', city: 'Tampa', state: 'FL', zip: '33602' },
+    });
+    await prisma.w4Submission.create({
+      data: {
+        associateId: associate.id,
+        filingStatus: 'SINGLE',
+        ssnEncrypted: encryptString('123456789'),
+      },
+    });
+    await seedDisbursedItem({
+      associateId: associate.id,
+      clientId: client.id,
+      disbursedAt: new Date('2026-03-15T12:00:00Z'),
+      grossPay: 1500,
+      federalWithholding: 150,
+      fica: 93,
+      medicare: 21.75,
+      stateWithholding: 50,
+      taxState: 'CA',
+    });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+    const gen = await hrAgent
+      .post('/tax-forms/w2/generate')
+      .send({ taxYear: 2026, clientId: client.id });
+    const formId = gen.body.created[0].id as string;
+
+    const r = await hrAgent.get(`/tax-forms/${formId}/pdf?layout=4up`);
+    expect(r.status).toBe(200);
+    expect(r.headers['content-type']).toBe('application/pdf');
+    expect(r.body.length).toBeGreaterThan(1000);
+    expect(r.headers['content-disposition']).toMatch(/w2-2026-diaz-mo-4up\.pdf/);
+
+    // 4-up never stamps pdfHash (only canonical Copy B does).
+    const form = await prisma.taxForm.findUniqueOrThrow({ where: { id: formId } });
+    expect(form.pdfHash).toBeNull();
+
+    // Bad layout → 400.
+    const bad = await hrAgent.get(`/tax-forms/${formId}/pdf?layout=8up`);
+    expect(bad.status).toBe(400);
+    expect(bad.body.error.code).toBe('invalid_layout');
+  });
+
   it('401(k) deduction reduces Box 1 but NOT Box 3/5 (retirement is FICA-includable)', async () => {
     const client = await createClient();
     await prisma.client.update({

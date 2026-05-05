@@ -10,7 +10,13 @@ import {
   listW2EligibleAssociates,
   type W2Boxes,
 } from '../lib/w2Aggregator.js';
-import { hashW2Pdf, renderW2Pdf, type W2PdfData } from '../lib/w2Pdf.js';
+import {
+  hashW2Pdf,
+  renderW2Pdf,
+  renderW2Pdf4Up,
+  type W2CopyVariant,
+  type W2PdfData,
+} from '../lib/w2Pdf.js';
 import { hashW2cPdf, renderW2cPdf, type W2cPdfData } from '../lib/w2cPdf.js';
 import { hasW2cDelta, type W2cAmounts } from '../lib/w2cAggregator.js';
 import { buildEfw2File, type Efw2Employee, type Efw2File } from '../lib/efw2.js';
@@ -762,7 +768,22 @@ payrollTax91Router.post('/tax-forms/w2c', MANAGE, async (req, res) => {
 // HttpError on missing inputs so the caller's catch block produces a clean
 // HTTP response. The pdfHash stamp lives at the call site so the bulk
 // route can opt into a single batched update.
-async function renderW2ForForm(formId: string): Promise<{
+/**
+ * Render options for a W-2 PDF. `layout: 'single'` (default) renders one
+ * full-page copy of `copy` (defaults to B). `layout: '4up'` renders the
+ * payroll-house-standard 4-up sheet (B/C/2/2 quadrants) and ignores
+ * `copy`. W-2c renders are always single full-page (the form's not
+ * meaningful in 4-up).
+ */
+interface W2RenderOptions {
+  layout?: 'single' | '4up';
+  copy?: W2CopyVariant;
+}
+
+async function renderW2ForForm(
+  formId: string,
+  options: W2RenderOptions = {},
+): Promise<{
   pdf: Buffer;
   hash: string;
   form: NonNullable<Awaited<ReturnType<typeof loadW2Form>>>;
@@ -864,8 +885,11 @@ async function renderW2ForForm(formId: string): Promise<{
     return { pdf, hash, form, filename };
   }
 
+  const layout = options.layout ?? 'single';
+  const copy = options.copy ?? 'B';
   const pdfData: W2PdfData = {
     taxYear: form.taxYear,
+    copyVariant: copy,
     employer: {
       ein: client.ein,
       name: client.legalName,
@@ -890,10 +914,16 @@ async function renderW2ForForm(formId: string): Promise<{
     meta: { formId: form.id, generatedAt: new Date().toISOString() },
   };
 
-  const pdf = await renderW2Pdf(pdfData);
+  const pdf =
+    layout === '4up' ? await renderW2Pdf4Up(pdfData) : await renderW2Pdf(pdfData);
   const hash = hashW2Pdf(pdf);
+  // Filename suffix encodes the chosen layout/copy so a finance reviewer
+  // can tell at a glance which sheet they're holding (and so a re-download
+  // of the same TaxForm in a different mode doesn't overwrite the prior).
+  const variantSuffix =
+    layout === '4up' ? '-4up' : copy === 'B' ? '' : `-copy${copy}`;
   const filename =
-    `W2-${form.taxYear}-${form.associate.lastName}-${form.associate.firstName}.pdf`
+    `W2-${form.taxYear}-${form.associate.lastName}-${form.associate.firstName}${variantSuffix}.pdf`
       .toLowerCase()
       .replace(/[^\x20-\x7e]/g, '');
   return { pdf, hash, form, filename };
@@ -912,6 +942,8 @@ async function loadW2Form(formId: string) {
     },
   });
 }
+
+const COPY_VARIANTS: readonly W2CopyVariant[] = ['A', 'B', 'C', 'D', '2'];
 
 /**
  * Renders Form 1099-NEC for one TaxForm row. Mirrors renderW2ForForm but
@@ -1121,6 +1153,17 @@ async function renderF1099MiscForForm(formId: string): Promise<{
  * contract). Same hash semantics across kinds; the per-helper hash
  * function returns sha256 of the rendered bytes.
  *
+ * Optional query params (W-2 only — ignored for W-2c):
+ *   ?copy=A|B|C|D|2  → which single-copy variant to render. Defaults
+ *                      to B (employee files with federal return).
+ *   ?layout=4up      → renders the 4-up multi-copy paper sheet (B/C/2/2
+ *                      quadrants). Mutually exclusive with ?copy=.
+ *
+ * The pdfHash stamp deliberately tracks Copy B (the canonical single-
+ * copy render). Other copies/layouts always re-render and don't update
+ * the stamp; a one-time hash mismatch warning is fine because variants
+ * legitimately differ from the canonical bytes.
+ *
  * Scope: associates may download their own form; HR/Finance/Manager can
  * download any. Mirrors /payroll/items/:itemId/paystub.pdf scoping.
  */
@@ -1141,26 +1184,61 @@ payrollTax91Router.get('/tax-forms/:id/pdf', async (req, res, next) => {
       throw new HttpError(404, 'not_found', 'Form not found.');
     }
 
+    // Parse W-2 render options. layout/copy are honoured on W-2 only;
+    // W-2cs and 1099-NEC/MISC ignore them (single canonical layout).
+    const layoutParam = typeof req.query.layout === 'string' ? req.query.layout : null;
+    const copyParam = typeof req.query.copy === 'string' ? req.query.copy : null;
+    if (layoutParam !== null && layoutParam !== '4up' && layoutParam !== 'single') {
+      throw new HttpError(
+        400,
+        'invalid_layout',
+        `layout must be 'single' or '4up'; got '${layoutParam}'`,
+      );
+    }
+    if (copyParam !== null && !COPY_VARIANTS.includes(copyParam as W2CopyVariant)) {
+      throw new HttpError(
+        400,
+        'invalid_copy',
+        `copy must be one of ${COPY_VARIANTS.join(', ')}; got '${copyParam}'`,
+      );
+    }
+    const renderOptions: W2RenderOptions = {
+      layout: layoutParam === '4up' ? '4up' : 'single',
+      copy: (copyParam as W2CopyVariant | null) ?? 'B',
+    };
+    const isCanonicalW2 =
+      form.kind === 'W2' &&
+      renderOptions.layout === 'single' &&
+      renderOptions.copy === 'B';
+
     const { pdf, hash, filename } =
       form.kind === 'F1099_NEC'
         ? await renderF1099NecForForm(req.params.id)
         : form.kind === 'F1099_MISC'
           ? await renderF1099MiscForForm(req.params.id)
-          : await renderW2ForForm(req.params.id);
+          : await renderW2ForForm(req.params.id, renderOptions);
 
-    if (!form.pdfHash) {
-      await prisma.taxForm.update({
-        where: { id: form.id },
-        data: { pdfHash: hash },
-      });
-    } else if (form.pdfHash !== hash) {
-      // Layout change between renders. Surface in logs but still serve
-      // the bytes — finance shouldn't be blocked by a font swap or PDF
-      // engine update. Hash mismatch is observable via the audit log.
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[w2] pdfHash mismatch for TaxForm ${form.id}: stored ${form.pdfHash}, current ${hash}`,
-      );
+    // Stamp pdfHash only on the canonical render path. Non-canonical W-2
+    // variants (4-up, copy A/C/D/2) are exploratory views and shouldn't
+    // overwrite the immutability anchor; 1099 routes have a single
+    // canonical layout, so they always stamp.
+    const shouldStamp =
+      isCanonicalW2 || form.kind === 'F1099_NEC' || form.kind === 'F1099_MISC';
+    if (shouldStamp) {
+      if (!form.pdfHash) {
+        await prisma.taxForm.update({
+          where: { id: form.id },
+          data: { pdfHash: hash },
+        });
+      } else if (form.pdfHash !== hash) {
+        // Layout change between renders. Surface in logs but still serve
+        // the bytes — finance shouldn't be blocked by a font swap or PDF
+        // engine update. Hash mismatch is observable via the audit log.
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[w2] pdfHash mismatch for TaxForm ${form.id}: stored ${form.pdfHash}, current ${hash}`,
+        );
+      }
     }
 
     res.setHeader('Content-Type', 'application/pdf');

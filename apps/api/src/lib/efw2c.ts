@@ -13,11 +13,24 @@
 //   RCF  Final       — one per file, last record, total RCW count
 //
 // =============================================================================
-// !!  IMPORTANT  !!
-// Field positions below are written from spec memory. Like EFW2, they
-// MUST be cross-checked against SSA Pub 42-014 + the AccuWage Online
-// W-2c validator before any production BSO upload. Until that pass is
-// done, treat output as a draft, not a filing-ready file.
+// !!  AccuWage W-2c validation required before any production BSO upload  !!
+//
+// Field positions below are written from the SSA Pub 42-014 (Tax Year
+// 2024) spec but have not been validated against AccuWage Online's
+// W-2c mode — AccuWage is the only authoritative cross-check (SSA
+// rejects the entire file on a single positional mismatch).
+//
+//   $ npx tsx apps/api/scripts/sample-efile.ts
+//
+// generates a paired sample EFW2 + EFW2C file from real, exercised
+// code paths. Upload both to https://www.ssa.gov/employer/accuwage/
+// and reconcile every error the validator reports BEFORE filing.
+//
+// EFW2C carries previous + corrected pairs in every RCW; the RCT
+// total record sums SIGNED deltas (corrected − previous) and uses
+// the leading-character sign convention to encode negatives. Pay
+// extra attention to RCT positions and the prev/curr field
+// alternation in RCW when reading AccuWage's report.
 // =============================================================================
 
 import type { W2Boxes } from './w2Aggregator.js';

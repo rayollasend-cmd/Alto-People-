@@ -33,7 +33,7 @@
 // (https://fire.test.irs.gov). The IRS rejects the entire file on any
 // positional mismatch.
 //
-//   $ npx tsx apps/api/scripts/sample-efw2.ts
+//   $ npx tsx apps/api/scripts/sample-efile.ts
 //
 // generates a sample IRS-FIRE file alongside the EFW2/EFW2C samples.
 // Take the output to fire.test.irs.gov, run a test transmission, and

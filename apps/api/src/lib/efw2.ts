@@ -13,16 +13,27 @@
 //   RF  Final       — one per file, last record, total RW count + grand totals
 //
 // =============================================================================
-// !!  IMPORTANT  !!
-// Field positions below are written to the SSA Pub 42-007 (Tax Year 2024)
-// spec to the best of my knowledge. They MUST be cross-checked against
-// the spec PDF before this file is uploaded to BSO. SSA validation is
-// strict and rejects the entire file on any field-position mismatch. A
-// finance reviewer should:
-//   1. Generate a sample file from this code
-//   2. Run it through the SSA AccuWage Online validator
-//   3. Fix any positions that AccuWage flags before submitting via BSO
-// Until that's done, treat this output as a draft, not a filing-ready file.
+// !!  AccuWage validation required before any production BSO upload  !!
+//
+// Field positions below are written from the SSA Pub 42-007 (Tax Year
+// 2024) spec but have not been validated against AccuWage Online —
+// AccuWage is the only authoritative cross-check (SSA rejects the
+// entire file on a single positional mismatch).
+//
+//   $ npx tsx apps/api/scripts/sample-efile.ts
+//
+// generates a sample file from real, exercised code paths. Upload it
+// to https://www.ssa.gov/employer/accuwage/ and reconcile any errors
+// the validator reports against this file BEFORE filing.
+//
+// Areas I am LEAST sure of and finance should pay extra attention to:
+//   - RA position 31     (Resub Indicator: 1 char per spec; current
+//                        code lays it across positions 31-32)
+//   - RA position 200-201 (commented "Country Code" but spec section
+//                        for that range is "Foreign State / Province")
+//   - RS position 3-4    (USPS code in current code; spec may want
+//                        FIPS numeric — already flagged inline as TODO)
+// Until the AccuWage pass lands, treat this output as a draft.
 // =============================================================================
 
 import type { W2Boxes } from './w2Aggregator.js';
