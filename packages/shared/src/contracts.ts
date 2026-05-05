@@ -1454,6 +1454,10 @@ export const PayrollRunAmendInputSchema = z.object({
         medicare: z.number(),
         stateWithholding: z.number(),
         preTaxDeductions: z.number().default(0),
+        // Gap 1 — sub-bucket of preTaxDeductions covering 401(k)/403(b)
+        // contributions. Defaults to 0 when omitted (current state — no
+        // live retirement plans). Drives Box 3/5 add-back on the W-2.
+        preTaxRetirement: z.number().default(0),
         postTaxDeductions: z.number().default(0),
         employerFica: z.number().default(0),
         employerMedicare: z.number().default(0),
@@ -1497,6 +1501,8 @@ export const PayrollRunPreviewItemSchema = z.object({
   overtimeHours: z.number().nonnegative(),
   grossPay: z.number().nonnegative(),
   preTaxDeductions: z.number().nonnegative(),
+  /** Gap 1 — 401(k)/403(b) sub-bucket; reduces FIT only, not FICA/Medicare. */
+  preTaxRetirement: z.number().nonnegative(),
   federalIncomeTax: z.number().nonnegative(),
   fica: z.number().nonnegative(),
   medicare: z.number().nonnegative(),

@@ -1479,6 +1479,11 @@ model PayrollItem {
   // NOT affect FIT/FICA/Medicare/SIT bases. Per-deduction breakdown for
   // garnishments lives in GarnishmentDeduction rows tied to the run.
   postTaxDeductions  Decimal           @default(0) @db.Decimal(12, 2)
+  // Gap 1 — sub-bucket of preTaxDeductions that reduces FIT base only,
+  // NOT FICA / Medicare base (traditional 401(k) / 403(b)). Section-125
+  // pre-tax = preTaxDeductions - preTaxRetirement. CHECK enforces
+  // preTaxRetirement <= preTaxDeductions at the DB layer.
+  preTaxRetirement   Decimal           @default(0) @db.Decimal(12, 2)
   // Gap 10 — sum of folded reimbursement amounts on this item. Added to
   // netPay after taxes / deductions; never affects grossPay or any wage
   // base (accountable-plan rule). Per-row breakdown lives on PayrollItem-
@@ -3380,6 +3385,9 @@ enum TaxFormKind {
   F941
   F940
   W2
+  // Gap 1 — W-2 correction (Form W-2c). Carries amendsTaxFormId pointing
+  // at the original W-2 it corrects. The DB CHECK enforces the link.
+  W2C
   F1099_NEC
 }
 
@@ -3449,14 +3457,22 @@ model TaxForm {
   // Subsequent renders must produce the same hash (same as Phase 18's
   // PayrollItem.paystubHash pattern). Null until the form is rendered.
   pdfHash     String?       @db.VarChar(64)
+  // Gap 1 — when kind=W2C, points at the original W-2 row this form
+  // corrects. Required for W2C, forbidden for any other kind (CHECK
+  // enforced at the migration). The original is flipped to AMENDED at
+  // W-2c create time so the UI hides it from the active list.
+  amendsTaxFormId String?   @db.Uuid
   createdAt   DateTime      @default(now()) @db.Timestamptz(6)
   updatedAt   DateTime      @updatedAt @db.Timestamptz(6)
 
-  associate Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)
-  filedBy   User?      @relation("TaxFormFiler", fields: [filedById], references: [id], onDelete: SetNull)
+  associate    Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)
+  filedBy      User?      @relation("TaxFormFiler", fields: [filedById], references: [id], onDelete: SetNull)
+  amendsTaxForm TaxForm?  @relation("TaxFormAmendments", fields: [amendsTaxFormId], references: [id], onDelete: SetNull)
+  amendments   TaxForm[]  @relation("TaxFormAmendments")
 
   @@index([kind, taxYear])
   @@index([associateId])
+  @@index([amendsTaxFormId])
 }
 
 // Phase 92 — Open enrollment, qualifying life events, COBRA, ACA.
@@ -5177,6 +5193,30 @@ model PayrollConfig {
   updatedAt                  DateTime @updatedAt @db.Timestamptz(6)
 
   @@map("payroll_config")
+}
+
+// Gap 1 — Singleton row carrying the SSA BSO submitter block used at the
+// top of every EFW2 e-file we generate. HR fills this in once during BSO
+// enrollment; subsequent filings read from here so finance never has to
+// re-enter the User ID. Same fixed-id-of-'singleton' pattern as OrgSetting.
+model SubmitterProfile {
+  id            String    @id @default("singleton") @db.VarChar(16)
+  // 9-digit EIN, no dashes (validated by CHECK in the migration).
+  ein           String    @db.VarChar(9)
+  // BSO User ID — assigned by SSA when the company registers for the
+  // Business Services Online portal. Required to file electronically.
+  userId        String    @db.VarChar(17)
+  name          String    @db.VarChar(57)
+  addressLine1  String    @db.VarChar(22)
+  addressLine2  String?   @db.VarChar(22)
+  city          String    @db.VarChar(22)
+  state         String    @db.VarChar(2)
+  zip5          String    @db.VarChar(5)
+  zip4          String?   @db.VarChar(4)
+  contactName   String    @db.VarChar(57)
+  contactPhone  String    @db.VarChar(20)
+  contactEmail  String    @db.VarChar(40)
+  updatedAt     DateTime  @updatedAt @db.Timestamptz(6)
 }
 
 // Status of OUR processing of a Branch webhook delivery — distinct from

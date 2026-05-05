@@ -13,11 +13,12 @@
 // way payrollYtd.ts already does for live YTD aggregation, so a
 // correction lands on the same year as the run that paid it out.
 //
-// Pre-tax handling caveat: today the schema carries a single
-// `preTaxDeductions` column without a Section 125 vs 401(k) breakdown.
-// This aggregator treats every pre-tax dollar as Section 125 (exempt
-// from FIT, FICA, Medicare). When 401(k) lands the aggregator will need
-// a per-deduction-kind breakdown so Box 1 < Box 3/5.
+// Pre-tax IRS rules:
+//   · Section 125 cafeteria plans (health/dental/vision/HSA/FSA premiums)
+//     reduce Box 1, Box 3, AND Box 5.
+//   · Traditional 401(k)/403(b) reduces Box 1 ONLY. Box 3/5 are computed
+//     against the un-retirement-reduced wage base — that's why the
+//     `preTaxRetirement` sub-bucket on PayrollItem is added back below.
 
 import type { Prisma, PrismaClient } from '@prisma/client';
 
@@ -97,6 +98,7 @@ export async function aggregateW2Wages(
     select: {
       grossPay: true,
       preTaxDeductions: true,
+      preTaxRetirement: true,
       federalWithholding: true,
       fica: true,
       medicare: true,
@@ -116,19 +118,25 @@ export async function aggregateW2Wages(
   for (const item of items) {
     const gross = Number(item.grossPay);
     const preTax = Number(item.preTaxDeductions);
-    // Section-125 simplification: pre-tax reduces all three wage bases.
-    const fitWages = gross - preTax;
+    const retirement = Number(item.preTaxRetirement);
+    // Box 1 (FIT base) subtracts ALL pre-tax — Section 125 + 401(k).
+    const box1Slice = gross - preTax;
+    // Box 3/5 (FICA / Medicare base) only subtracts Section 125,
+    // i.e. add back the retirement slice that Box 1 just removed.
+    const box35Slice = gross - (preTax - retirement);
 
-    box1Wages += fitWages;
+    box1Wages += box1Slice;
     box2FitWithheld += Number(item.federalWithholding);
-    box5MedicareWages += fitWages;
+    box5MedicareWages += box35Slice;
     box6MedicareTax += Number(item.medicare);
-    preCapSsWages += fitWages;
+    preCapSsWages += box35Slice;
     box4SsTax += Number(item.fica);
 
     if (item.taxState) {
       const b = stateBuckets.get(item.taxState) ?? { wages: 0, tax: 0 };
-      b.wages += fitWages;
+      // State wages mirror Box 1 — most states piggy-back on FIT base.
+      // Per-state retirement-conformity is on the long-tail TODO list.
+      b.wages += box1Slice;
       b.tax += Number(item.stateWithholding);
       stateBuckets.set(item.taxState, b);
     }

@@ -51,6 +51,7 @@ async function seedDisbursedItem(opts: {
   disbursedAt: Date;
   grossPay: number;
   preTaxDeductions?: number;
+  preTaxRetirement?: number;
   federalWithholding: number;
   fica: number;
   medicare: number;
@@ -91,6 +92,7 @@ async function seedDisbursedItem(opts: {
       hourlyRate: new Prisma.Decimal(opts.grossPay / 80),
       grossPay: new Prisma.Decimal(opts.grossPay),
       preTaxDeductions: new Prisma.Decimal(opts.preTaxDeductions ?? 0),
+      preTaxRetirement: new Prisma.Decimal(opts.preTaxRetirement ?? 0),
       federalWithholding: new Prisma.Decimal(opts.federalWithholding),
       fica: new Prisma.Decimal(opts.fica),
       medicare: new Prisma.Decimal(opts.medicare),
@@ -378,6 +380,305 @@ describe('W-2 generation — Gap 1', () => {
       .send({ taxYear: 2026, clientId: client.id });
     expect(r2.body.createdCount).toBe(0);
     expect(r2.body.skippedCount).toBe(1);
+  });
+
+  it('401(k) deduction reduces Box 1 but NOT Box 3/5 (retirement is FICA-includable)', async () => {
+    const client = await createClient();
+    await prisma.client.update({
+      where: { id: client.id },
+      data: { legalName: 'Acme', ein: '12-3456789' },
+    });
+    const associate = await createAssociate();
+    await prisma.w4Submission.create({
+      data: {
+        associateId: associate.id,
+        filingStatus: 'SINGLE',
+        ssnEncrypted: encryptString('123456789'),
+      },
+    });
+
+    // $2000 gross with $200 pre-tax, all of which is 401(k). Box 1 should
+    // be 2000 - 200 = 1800. Box 3/5 should be 2000 (retirement adds back).
+    await seedDisbursedItem({
+      associateId: associate.id,
+      clientId: client.id,
+      disbursedAt: new Date('2026-04-15T12:00:00Z'),
+      grossPay: 2000,
+      preTaxDeductions: 200,
+      preTaxRetirement: 200,
+      federalWithholding: 180,
+      fica: 124,
+      medicare: 29,
+    });
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+    const gen = await hrAgent
+      .post('/tax-forms/w2/generate')
+      .send({ taxYear: 2026, clientId: client.id });
+    expect(gen.status).toBe(200);
+
+    const form = await prisma.taxForm.findUniqueOrThrow({
+      where: { id: gen.body.created[0].id },
+    });
+    const amounts = form.amounts as Record<string, unknown>;
+    expect(amounts.box1Wages).toBe(1800);
+    expect(amounts.box3SsWages).toBe(2000);
+    expect(amounts.box5MedicareWages).toBe(2000);
+  });
+
+  it('Mixed Section 125 + 401(k): only the §125 slice reduces Box 3/5', async () => {
+    const client = await createClient();
+    await prisma.client.update({
+      where: { id: client.id },
+      data: { legalName: 'Acme', ein: '12-3456789' },
+    });
+    const associate = await createAssociate();
+    await prisma.w4Submission.create({
+      data: {
+        associateId: associate.id,
+        filingStatus: 'SINGLE',
+        ssnEncrypted: encryptString('123456789'),
+      },
+    });
+
+    // $3000 gross, $300 pre-tax = $100 §125 (health) + $200 401(k).
+    // Box 1 = 3000 - 300 = 2700.
+    // Box 3/5 = 3000 - (300 - 200) = 2900 (only §125 reduces FICA base).
+    await seedDisbursedItem({
+      associateId: associate.id,
+      clientId: client.id,
+      disbursedAt: new Date('2026-05-15T12:00:00Z'),
+      grossPay: 3000,
+      preTaxDeductions: 300,
+      preTaxRetirement: 200,
+      federalWithholding: 270,
+      fica: 179.8,
+      medicare: 42.05,
+    });
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+    const gen = await hrAgent
+      .post('/tax-forms/w2/generate')
+      .send({ taxYear: 2026, clientId: client.id });
+
+    const form = await prisma.taxForm.findUniqueOrThrow({
+      where: { id: gen.body.created[0].id },
+    });
+    const amounts = form.amounts as Record<string, unknown>;
+    expect(amounts.box1Wages).toBe(2700);
+    expect(amounts.box3SsWages).toBe(2900);
+    expect(amounts.box5MedicareWages).toBe(2900);
+  });
+
+  it('W-2c: amend a FILED W-2 by recomputing — original flips to AMENDED, W2C row stores previous + corrected', async () => {
+    const client = await createClient();
+    await prisma.client.update({
+      where: { id: client.id },
+      data: {
+        legalName: 'Acme Test Co LLC',
+        ein: '12-3456789',
+        addressLine1: '1 Acme Way',
+        city: 'Tampa',
+        state: 'FL',
+        zip: '33601',
+      },
+    });
+    const associate = await createAssociate({ firstName: 'Sam', lastName: 'Patel' });
+    await prisma.associate.update({
+      where: { id: associate.id },
+      data: {
+        addressLine1: '12 Main St',
+        city: 'Tampa',
+        state: 'FL',
+        zip: '33601',
+      },
+    });
+    await prisma.w4Submission.create({
+      data: {
+        associateId: associate.id,
+        filingStatus: 'SINGLE',
+        ssnEncrypted: encryptString('123456789'),
+      },
+    });
+
+    const orig = await seedDisbursedItem({
+      associateId: associate.id,
+      clientId: client.id,
+      disbursedAt: new Date('2026-09-15T12:00:00Z'),
+      grossPay: 1000,
+      federalWithholding: 100,
+      fica: 62,
+      medicare: 14.5,
+    });
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+
+    const gen = await hrAgent
+      .post('/tax-forms/w2/generate')
+      .send({ taxYear: 2026, clientId: client.id });
+    const w2Id = gen.body.created[0].id as string;
+
+    // Mark the original as FILED — that's the gate the W-2c route requires.
+    await prisma.taxForm.update({
+      where: { id: w2Id },
+      data: { status: 'FILED', filedAt: new Date() },
+    });
+
+    // Now post an AMENDMENT run that bumps wages by $100 in the same year.
+    const amendRun = await prisma.payrollRun.create({
+      data: {
+        clientId: client.id,
+        periodStart: new Date('2026-09-01'),
+        periodEnd: new Date('2026-09-14'),
+        status: 'DISBURSED',
+        kind: 'AMENDMENT',
+        amendsRunId: orig.runId,
+        amendmentReason: 'Forgotten bonus',
+        disbursedAt: new Date('2026-10-01T12:00:00Z'),
+        totalGross: new Prisma.Decimal(100),
+        totalTax: new Prisma.Decimal(10),
+        totalNet: new Prisma.Decimal(82.35),
+      },
+    });
+    await prisma.payrollItem.create({
+      data: {
+        payrollRunId: amendRun.id,
+        associateId: associate.id,
+        amendsItemId: orig.itemId,
+        hoursWorked: 0,
+        hourlyRate: new Prisma.Decimal(0),
+        grossPay: new Prisma.Decimal(100),
+        federalWithholding: new Prisma.Decimal(10),
+        fica: new Prisma.Decimal(6.2),
+        medicare: new Prisma.Decimal(1.45),
+        netPay: new Prisma.Decimal(82.35),
+        status: 'DISBURSED',
+      },
+    });
+
+    const w2cResp = await hrAgent
+      .post('/tax-forms/w2c')
+      .send({
+        originalW2FormId: w2Id,
+        correctionReason: 'Bonus paid in Q4 was missing from the original filing.',
+      });
+    expect(w2cResp.status).toBe(201);
+    expect(w2cResp.body.amendsTaxFormId).toBe(w2Id);
+    expect(w2cResp.body.delta.box1).toBeCloseTo(100, 2);
+    expect(w2cResp.body.delta.box2).toBeCloseTo(10, 2);
+
+    // The original W-2 must now be AMENDED — IRS rule says you don't void
+    // a filed W-2; you correct it with a W-2c.
+    const orig2 = await prisma.taxForm.findUniqueOrThrow({ where: { id: w2Id } });
+    expect(orig2.status).toBe('AMENDED');
+
+    // W2C amounts carry both previous + corrected.
+    const w2c = await prisma.taxForm.findUniqueOrThrow({
+      where: { id: w2cResp.body.id },
+    });
+    expect(w2c.kind).toBe('W2C');
+    expect(w2c.amendsTaxFormId).toBe(w2Id);
+    const amounts = w2c.amounts as Record<string, unknown>;
+    expect((amounts.previous as Record<string, number>).box1Wages).toBe(1000);
+    expect((amounts.corrected as Record<string, number>).box1Wages).toBe(1100);
+
+    // The PDF route renders the W-2c.
+    const pdf = await hrAgent.get(`/tax-forms/${w2c.id}/pdf`);
+    expect(pdf.status).toBe(200);
+    expect(pdf.headers['content-type']).toBe('application/pdf');
+    expect(pdf.body.length).toBeGreaterThan(1000);
+  });
+
+  it('W-2c: rejects if there is no delta between previous and corrected', async () => {
+    const client = await createClient();
+    await prisma.client.update({
+      where: { id: client.id },
+      data: { legalName: 'Acme', ein: '12-3456789' },
+    });
+    const associate = await createAssociate();
+    await prisma.w4Submission.create({
+      data: {
+        associateId: associate.id,
+        filingStatus: 'SINGLE',
+        ssnEncrypted: encryptString('123456789'),
+      },
+    });
+    await seedDisbursedItem({
+      associateId: associate.id,
+      clientId: client.id,
+      disbursedAt: new Date('2026-11-15T12:00:00Z'),
+      grossPay: 500,
+      federalWithholding: 50,
+      fica: 31,
+      medicare: 7.25,
+    });
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+    const gen = await hrAgent
+      .post('/tax-forms/w2/generate')
+      .send({ taxYear: 2026, clientId: client.id });
+    const w2Id = gen.body.created[0].id as string;
+    await prisma.taxForm.update({
+      where: { id: w2Id },
+      data: { status: 'FILED', filedAt: new Date() },
+    });
+
+    // No new amendment run, so recompute hits the same totals as the
+    // original. The route must refuse to create a no-op W-2c.
+    const r = await hrAgent
+      .post('/tax-forms/w2c')
+      .send({
+        originalW2FormId: w2Id,
+        correctionReason: 'Just in case',
+      });
+    expect(r.status).toBe(409);
+    expect(r.body.error.code).toBe('no_delta');
+  });
+
+  it('W-2c: rejects if the original is still DRAFT (not yet filed)', async () => {
+    const client = await createClient();
+    await prisma.client.update({
+      where: { id: client.id },
+      data: { legalName: 'Acme', ein: '12-3456789' },
+    });
+    const associate = await createAssociate();
+    await prisma.w4Submission.create({
+      data: {
+        associateId: associate.id,
+        filingStatus: 'SINGLE',
+        ssnEncrypted: encryptString('123456789'),
+      },
+    });
+    await seedDisbursedItem({
+      associateId: associate.id,
+      clientId: client.id,
+      disbursedAt: new Date('2026-12-15T12:00:00Z'),
+      grossPay: 500,
+      federalWithholding: 50,
+      fica: 31,
+      medicare: 7.25,
+    });
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+    const gen = await hrAgent
+      .post('/tax-forms/w2/generate')
+      .send({ taxYear: 2026, clientId: client.id });
+    const w2Id = gen.body.created[0].id as string;
+    // Status is still DRAFT at this point.
+
+    const r = await hrAgent
+      .post('/tax-forms/w2c')
+      .send({
+        originalW2FormId: w2Id,
+        correctionReason: 'Spotted an error',
+      });
+    expect(r.status).toBe(409);
+    expect(r.body.error.code).toBe('invalid_state');
   });
 
   it('400s the PDF route when the client is missing legalName / EIN', async () => {

@@ -73,7 +73,7 @@ export const setGarnishmentStatus = (id: string, status: GarnishmentStatus) =>
 
 // ----- Tax forms ---------------------------------------------------------
 
-export type TaxFormKind = 'F941' | 'F940' | 'W2' | 'F1099_NEC';
+export type TaxFormKind = 'F941' | 'F940' | 'W2' | 'W2C' | 'F1099_NEC';
 
 export type TaxFormStatus = 'DRAFT' | 'FILED' | 'AMENDED' | 'VOIDED';
 
@@ -125,3 +125,107 @@ export const build941 = (taxYear: number, quarter: number) =>
     periodStart: string;
     periodEnd: string;
   }>(`/tax-forms/build/941?taxYear=${taxYear}&quarter=${quarter}`);
+
+// ----- W-2 generation (Gap 1) -------------------------------------------
+
+export interface GenerateW2Result {
+  eligibleAssociateCount: number;
+  createdCount: number;
+  skippedCount: number;
+  created: { id: string; associateId: string }[];
+}
+
+export const generateW2s = (input: { taxYear: number; clientId?: string | null }) =>
+  apiFetch<GenerateW2Result>('/tax-forms/w2/generate', {
+    method: 'POST',
+    body: input,
+  });
+
+/** Direct URL — used as href for an <a download> tag. */
+export const taxFormPdfUrl = (id: string): string => `/api/tax-forms/${id}/pdf`;
+
+/** Direct URL for the bulk-download zip (year + optional client scope). */
+export const w2BulkZipUrl = (taxYear: number, clientId?: string | null): string => {
+  const q = new URLSearchParams({ taxYear: String(taxYear) });
+  if (clientId) q.set('clientId', clientId);
+  return `/api/tax-forms/w2/bulk.zip?${q.toString()}`;
+};
+
+/** Direct URL for the EFW2 e-file (year + client required). */
+export const w2Efw2Url = (taxYear: number, clientId: string): string => {
+  const q = new URLSearchParams({ taxYear: String(taxYear), clientId });
+  return `/api/tax-forms/w2/efw2.txt?${q.toString()}`;
+};
+
+/** Direct URL for the EFW2C correction e-file (year + client required). */
+export const w2Efw2cUrl = (taxYear: number, clientId: string): string => {
+  const q = new URLSearchParams({ taxYear: String(taxYear), clientId });
+  return `/api/tax-forms/w2/efw2c.txt?${q.toString()}`;
+};
+
+// W-2c create endpoint
+export interface CreateW2cInput {
+  originalW2FormId: string;
+  correctionReason: string;
+  correctedBoxes?: {
+    box1Wages: number;
+    box2FitWithheld: number;
+    box3SsWages: number;
+    box4SsTax: number;
+    box5MedicareWages: number;
+    box6MedicareTax: number;
+    stateLines: { state: string; stateWages: number; stateIncomeTax: number }[];
+  };
+}
+
+export interface CreateW2cResult {
+  id: string;
+  amendsTaxFormId: string;
+  delta: { box1: number; box2: number; box3: number; box4: number; box5: number; box6: number };
+}
+
+export const createW2c = (input: CreateW2cInput) =>
+  apiFetch<CreateW2cResult>('/tax-forms/w2c', { method: 'POST', body: input });
+
+// ----- Submitter profile (Gap 1) ----------------------------------------
+
+export interface SubmitterProfile {
+  id: 'singleton';
+  ein: string;
+  userId: string;
+  name: string;
+  addressLine1: string;
+  addressLine2: string | null;
+  city: string;
+  state: string;
+  zip5: string;
+  zip4: string | null;
+  contactName: string;
+  contactPhone: string;
+  contactEmail: string;
+  updatedAt: string;
+}
+
+export interface SubmitterProfileInput {
+  ein: string;
+  userId: string;
+  name: string;
+  addressLine1: string;
+  addressLine2?: string | null;
+  city: string;
+  state: string;
+  zip5: string;
+  zip4?: string | null;
+  contactName: string;
+  contactPhone: string;
+  contactEmail: string;
+}
+
+export const getSubmitterProfile = () =>
+  apiFetch<{ profile: SubmitterProfile | null }>('/tax-forms/submitter');
+
+export const saveSubmitterProfile = (input: SubmitterProfileInput) =>
+  apiFetch<{ profile: SubmitterProfile }>('/tax-forms/submitter', {
+    method: 'POST',
+    body: input,
+  });
