@@ -2,9 +2,16 @@
 //
 // Builds the fixed-width text file the IRS FIRE (Filing Information
 // Returns Electronically) system accepts as the electronic equivalent
-// of paper 1099-NEC Copy A. Each record is exactly 750 characters wide;
-// lines are joined with CRLF and the file is ASCII (no BOM, no UTF-8).
-// Note: 750 chars — not the 512 EFW2 uses. Don't conflate the formats.
+// of paper 1099-NEC / 1099-MISC Copy A. Each record is exactly 750
+// characters wide; lines are joined with CRLF and the file is ASCII
+// (no BOM, no UTF-8). Note: 750 chars — not the 512 EFW2 uses. Don't
+// conflate the formats.
+//
+// Form support: pass `formType: 'NE'` (1099-NEC) or `'MI'` (1099-MISC)
+// on the input; the same T/A/B/C/(K/)F skeleton is shared. The B
+// record's payment-amount slots and the A record's "Type of Return" +
+// "Amount Codes" fields differ per form; everything else is form-
+// agnostic.
 //
 //   T  Transmitter   — one per file, first record
 //   A  Payer         — opens a payer-EIN block
@@ -34,8 +41,54 @@
 // =============================================================================
 
 import type { Form1099NecBoxes } from './f1099NecAggregator.js';
+import type { Form1099MiscBoxes } from './f1099MiscAggregator.js';
 
 const RECORD_LEN = 750;
+const NUM_AMOUNT_SLOTS = 14;
+
+/** Type of Return code — IRS Pub 1220 §B. NE = 1099-NEC, MI = 1099-MISC. */
+export type IrsFireFormType = 'NE' | 'MI';
+
+/**
+ * Maps each form's box totals to the 14 fixed payment-amount slots in
+ * the B record (and the matching control totals in C / K). Index 0 =
+ * Slot 1, index 9 = Slot A (10), …, index 13 = Slot E (14). A null
+ * entry means the slot is unused for that form (zeroed in the output).
+ *
+ * Slot codes for the Amount Codes field on the A record: '1'..'9' for
+ * indices 0..8, then 'A'..'E' for indices 9..13.
+ */
+const SLOT_CODES = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E'] as const;
+
+function necSlots(boxes: Form1099NecBoxes): (number | null)[] {
+  // Slot 1 = Box 1 (NEC), Slot 4 = Box 4 (FIT). Box 2 is a checkbox
+  // (handled at fixed pos 556 in the B record), not a money slot.
+  const arr: (number | null)[] = new Array(NUM_AMOUNT_SLOTS).fill(null);
+  arr[0] = boxes.box1NonemployeeCompensation;
+  arr[3] = boxes.box4FitWithheld;
+  return arr;
+}
+
+function miscSlots(boxes: Form1099MiscBoxes): (number | null)[] {
+  // 1099-MISC slot map per Pub 1220. Slot 7 is unused (Box 7 is a
+  // checkbox, same as 1099-NEC's Box 2). Slot E (14) is the last one.
+  const arr: (number | null)[] = new Array(NUM_AMOUNT_SLOTS).fill(null);
+  arr[0] = boxes.box1Rents;
+  arr[1] = boxes.box2Royalties;
+  arr[2] = boxes.box3OtherIncome;
+  arr[3] = boxes.box4FitWithheld;
+  arr[4] = boxes.box5FishingBoatProceeds;
+  arr[5] = boxes.box6MedicalHealthcarePayments;
+  // arr[6] left null — Slot 7 is checkbox-only for 1099-MISC
+  arr[7] = boxes.box8SubstitutePayments;
+  arr[8] = boxes.box9CropInsuranceProceeds;
+  arr[9] = boxes.box10GrossProceedsAttorney;
+  arr[10] = boxes.box11FishForResale;
+  arr[11] = boxes.box12Section409ADeferrals;
+  arr[12] = boxes.box13ExcessGoldenParachute;
+  arr[13] = boxes.box14NonqualifiedDeferred;
+  return arr;
+}
 
 export interface IrsFireTransmitter {
   /**
@@ -88,7 +141,12 @@ export interface IrsFirePayee {
    * can disambiguate recipients with similar names.
    */
   accountNumber: string;
-  boxes: Form1099NecBoxes;
+  /**
+   * Box totals — the type matches IrsFireFile.formType (Form1099NecBoxes
+   * for "NE", Form1099MiscBoxes for "MI"). The build loop branches on
+   * the file's formType to extract values for the 14 payment slots.
+   */
+  boxes: Form1099NecBoxes | Form1099MiscBoxes;
 }
 
 export interface IrsFireCfsfState {
@@ -104,6 +162,13 @@ export interface IrsFireCfsfState {
 }
 
 export interface IrsFireFile {
+  /**
+   * 1099 form type — drives the A record's Type of Return field, the
+   * Amount Codes mask, and the per-payee slot extraction in B records.
+   * Defaults to 'NE' (1099-NEC) when omitted to keep older callers
+   * source-compatible.
+   */
+  formType?: IrsFireFormType;
   transmitter: IrsFireTransmitter;
   payer: IrsFirePayer;
   payees: IrsFirePayee[];
@@ -145,6 +210,7 @@ export const IRS_CFSF_STATE_CODES: Readonly<Record<string, string>> = Object.fre
  */
 export function buildIrsFireFile(input: IrsFireFile): string {
   const records: string[] = [];
+  const formType: IrsFireFormType = input.formType ?? 'NE';
 
   // CF/SF lookup, normalised to upper-case USPS codes. Pre-validated
   // here so a bad code can't slip into a B/K record positional field.
@@ -160,29 +226,62 @@ export function buildIrsFireFile(input: IrsFireFile): string {
   }
   const cfsfActive = cfsfMap.size > 0;
 
-  records.push(buildT(input.transmitter));
-  records.push(buildA(input.payer, input.transmitter.taxYear, cfsfActive));
+  // Pre-extract per-payee slot arrays. Done up front so we know which
+  // slots are populated across the file (drives the Amount Codes mask
+  // on the A record) before writing the first B.
+  const payeeSlots = input.payees.map((p) =>
+    formType === 'NE'
+      ? necSlots(p.boxes as Form1099NecBoxes)
+      : miscSlots(p.boxes as Form1099MiscBoxes),
+  );
+  const populatedSlotIdxs = computePopulatedSlots(payeeSlots);
+  const amountCodes = populatedSlotIdxs.map((i) => SLOT_CODES[i]).join('');
 
-  // Per-payer totals for the C record + per-state totals for K records.
+  // Box-2 / Box-7 checkbox state per payee (NEC: box2DirectSales;
+  // MISC: box7DirectSales). Stored at fixed pos 556 in B records.
+  const directSalesPerPayee = input.payees.map((p) => {
+    if (formType === 'NE') return (p.boxes as Form1099NecBoxes).box2DirectSales;
+    return (p.boxes as Form1099MiscBoxes).box7DirectSales;
+  });
+
+  records.push(buildT(input.transmitter));
+  records.push(buildA(input.payer, input.transmitter.taxYear, cfsfActive, formType, amountCodes));
+
+  // Per-payer totals + per-state totals — both indexed by slot.
   const totals = newPayerTotals();
   const stateTotals = new Map<string, StateTotals>();
   let recordSequence = 1;
 
-  for (const payee of input.payees) {
+  for (let i = 0; i < input.payees.length; i++) {
+    const payee = input.payees[i];
+    const slots = payeeSlots[i];
     const stateKey = payee.state.toUpperCase();
     const cfsfCode = cfsfMap.get(stateKey) ?? null;
 
-    records.push(buildB(payee, recordSequence, input.transmitter.taxYear, cfsfCode));
+    records.push(
+      buildB(
+        payee,
+        slots,
+        directSalesPerPayee[i],
+        recordSequence,
+        input.transmitter.taxYear,
+        cfsfCode,
+        formType,
+        amountCodes,
+      ),
+    );
     totals.payeeCount += 1;
-    totals.box1 += payee.boxes.box1NonemployeeCompensation;
-    totals.box4 += payee.boxes.box4FitWithheld;
+    for (let s = 0; s < NUM_AMOUNT_SLOTS; s++) {
+      totals.ctrl[s] += slots[s] ?? 0;
+    }
 
     if (cfsfCode) {
       const st = stateTotals.get(stateKey) ?? newStateTotals();
       st.payeeCount += 1;
-      st.box1 += payee.boxes.box1NonemployeeCompensation;
-      st.box4 += payee.boxes.box4FitWithheld;
-      // State withholding lives on the matched stateLine, not box4
+      for (let s = 0; s < NUM_AMOUNT_SLOTS; s++) {
+        st.ctrl[s] += slots[s] ?? 0;
+      }
+      // State withholding lives on the matched stateLine, not slot 4
       // (which is *federal* backup withholding). K record's "State
       // Income Tax Withheld Total" needs the state slice only.
       const sl = payee.boxes.stateLines.find((l) => l.state.toUpperCase() === stateKey);
@@ -207,6 +306,24 @@ export function buildIrsFireFile(input: IrsFireFile): string {
   records.push(buildF({ payeeCount: totals.payeeCount }, recordSequence));
 
   return records.join('\r\n');
+}
+
+/**
+ * Slot indices that have a non-null contribution on at least one payee.
+ * Drives the Amount Codes mask on the A record and matters for spec
+ * compliance — codes for unpopulated slots shouldn't appear.
+ */
+function computePopulatedSlots(payeeSlots: (number | null)[][]): number[] {
+  const populated = new Set<number>();
+  for (const slots of payeeSlots) {
+    for (let i = 0; i < NUM_AMOUNT_SLOTS; i++) {
+      if (slots[i] !== null && slots[i] !== 0) populated.add(i);
+    }
+  }
+  // Always include index 0 (slot 1) so a degenerate all-zero file still
+  // produces the minimal "1" code the IRS expects.
+  if (populated.size === 0) populated.add(0);
+  return [...populated].sort((a, b) => a - b);
 }
 
 // ---- Record builders -----------------------------------------------------
@@ -244,13 +361,19 @@ function buildT(t: IrsFireTransmitter): string {
   return assemble(fields);
 }
 
-function buildA(p: IrsFirePayer, taxYear: number, cfsfActive: boolean): string {
+function buildA(
+  p: IrsFirePayer,
+  taxYear: number,
+  cfsfActive: boolean,
+  formType: IrsFireFormType,
+  amountCodes: string,
+): string {
   // A PAYER RECORD — opens a payer-EIN block. The Type of Return field
-  // ("NE") is the official IRS code for 1099-NEC; an Amount Codes field
-  // bitmap tells the IRS which Box payments to expect (1 + 4 here:
-  // Nonemployee compensation + Federal income tax withheld). Position
-  // 6 is the Combined Federal/State Filer flag — "1" when at least
-  // one K record follows, blank for federal-only files.
+  // ("NE" / "MI") tells the IRS which 1099 vertical this is; the
+  // Amount Codes string is a left-justified mask of which payment
+  // slots have non-zero values across the file. Position 6 is the
+  // Combined Federal/State Filer flag — "1" when at least one K record
+  // follows, blank for federal-only files.
   const fields: Field[] = [
     fixed('A', 1, 1),
     digits(String(taxYear), 2, 5),
@@ -260,8 +383,8 @@ function buildA(p: IrsFirePayer, taxYear: number, cfsfActive: boolean): string {
     digits(p.ein, 17, 25),
     text(p.name, 26, 65),
     blank(66, 66), // Last Filing Indicator: blank = not last
-    fixed('NE', 67, 68), // Type of Return: NE = 1099-NEC
-    text('14', 69, 84), // Amount Codes: '1' (Box 1 NEC) + '4' (Box 4 FIT)
+    fixed(formType, 67, 68), // Type of Return: NE = 1099-NEC, MI = 1099-MISC
+    text(amountCodes, 69, 84), // Amount Codes — slots with non-zero values
     blank(85, 85), // Reserved
     blank(86, 86), // Foreign Entity Indicator
     text(p.name, 87, 126), // Payer Name (Cont)
@@ -282,17 +405,22 @@ function buildA(p: IrsFirePayer, taxYear: number, cfsfActive: boolean): string {
 
 function buildB(
   p: IrsFirePayee,
+  slots: (number | null)[],
+  directSales: boolean,
   sequence: number,
   taxYear: number,
   cfsfCode: string | null,
+  formType: IrsFireFormType,
+  amountCodes: string,
 ): string {
-  // B PAYEE RECORD — one per 1099-NEC. The amount fields live at fixed
-  // positions per the Type of Return; for NE the IRS uses "Payment
-  // Amount 1" (Box 1) and "Payment Amount 4" (Box 4). We zero the
-  // others. Money fields are 12 chars zero-padded in cents (NOT 11
-  // like EFW2). Negative payments are encoded by flipping the rightmost
-  // digit's sign-overpunch byte — out of scope here; IRS rejects
-  // negatives on a 1099-NEC anyway.
+  // B PAYEE RECORD — one per 1099. The amount fields live at fixed
+  // positions per the Type of Return; the slot map (necSlots /
+  // miscSlots) extracts the right Box for each of the 14 payment slots
+  // for this form. Unused slots are zeroed. Money fields are 12 chars
+  // zero-padded in cents (NOT 11 like EFW2). Negative payments are
+  // encoded by flipping the rightmost digit's sign-overpunch byte —
+  // out of scope here; IRS rejects negatives on 1099 anyway. Position
+  // 556 is the "Direct Sales" checkbox — Box 2 for NEC, Box 7 for MISC.
   const fields: Field[] = [
     fixed('B', 1, 1),
     digits(String(taxYear), 2, 5),
@@ -303,20 +431,20 @@ function buildB(
     text(p.accountNumber, 21, 40),
     blank(41, 44), // Office Code
     blank(45, 54), // Reserved + Payee Reserved
-    money(p.boxes.box1NonemployeeCompensation, 55, 66), // Payment Amount 1
-    money(0, 67, 78),  // Payment Amount 2
-    money(0, 79, 90),  // Payment Amount 3
-    money(p.boxes.box4FitWithheld, 91, 102), // Payment Amount 4
-    money(0, 103, 114), // Payment Amount 5
-    money(0, 115, 126), // Payment Amount 6
-    money(0, 127, 138), // Payment Amount 7
-    money(0, 139, 150), // Payment Amount 8
-    money(0, 151, 162), // Payment Amount 9
-    money(0, 163, 174), // Payment Amount A (10)
-    money(0, 175, 186), // Payment Amount B (11)
-    money(0, 187, 198), // Payment Amount C (12)
-    money(0, 199, 210), // Payment Amount D (13)
-    money(0, 211, 222), // Payment Amount E (14)
+    money(slots[0] ?? 0, 55, 66),   // Payment Amount 1
+    money(slots[1] ?? 0, 67, 78),   // Payment Amount 2
+    money(slots[2] ?? 0, 79, 90),   // Payment Amount 3
+    money(slots[3] ?? 0, 91, 102),  // Payment Amount 4
+    money(slots[4] ?? 0, 103, 114), // Payment Amount 5
+    money(slots[5] ?? 0, 115, 126), // Payment Amount 6
+    money(slots[6] ?? 0, 127, 138), // Payment Amount 7
+    money(slots[7] ?? 0, 139, 150), // Payment Amount 8
+    money(slots[8] ?? 0, 151, 162), // Payment Amount 9
+    money(slots[9] ?? 0, 163, 174), // Payment Amount A (10)
+    money(slots[10] ?? 0, 175, 186), // Payment Amount B (11)
+    money(slots[11] ?? 0, 187, 198), // Payment Amount C (12)
+    money(slots[12] ?? 0, 199, 210), // Payment Amount D (13)
+    money(slots[13] ?? 0, 211, 222), // Payment Amount E (14)
     blank(223, 246), // Reserved
     text('', 247, 247), // Foreign Country Indicator
     text(p.name, 248, 287), // Payee Name Line 1
@@ -329,13 +457,13 @@ function buildB(
     blank(419, 543), // Reserved
     blank(544, 547), // Second TIN Notice (blank = none)
     blank(548, 555),
-    fixed('2', 556, 556), // Direct Sales (Box 2): 0/1; we always send 0 = false
+    text(directSales ? '1' : '2', 556, 556), // Direct Sales: '1'=true, '2'=false (NEC Box 2 / MISC Box 7)
     blank(557, 662),
     blank(663, 664),
     digits(String(sequence).padStart(8, '0'), 665, 672), // Record Sequence Number
     blank(673, 707),
-    text('NE', 708, 709), // Type of Return — re-stated for some validators
-    text('14', 710, 725), // Amount Codes — re-stated
+    text(formType, 708, 709), // Type of Return — re-stated for some validators
+    text(amountCodes, 710, 725), // Amount Codes — re-stated
     blank(726, 746),
     text(cfsfCode ?? '', 747, 748), // Combined Federal/State Code (CF/SF only)
     blank(749, 750),
@@ -345,35 +473,40 @@ function buildB(
 
 interface PayerTotals {
   payeeCount: number;
-  box1: number;
-  box4: number;
+  /** 14 control totals indexed by slot (0 = slot 1, …, 13 = slot E). */
+  ctrl: number[];
 }
 
 function newPayerTotals(): PayerTotals {
-  return { payeeCount: 0, box1: 0, box4: 0 };
+  return { payeeCount: 0, ctrl: new Array(NUM_AMOUNT_SLOTS).fill(0) };
 }
 
 function buildC(totals: PayerTotals, sequence: number): string {
   // C END-OF-PAYER RECORD — closes the A block. Sums every B record's
-  // payment amounts. Counts must match what the IRS parses on its end;
-  // mismatch rejects the file.
+  // payment amounts (per slot). Counts must match what the IRS parses
+  // on its end; mismatch rejects the file. Pub 1220 widens the totals
+  // to 18-char dollars+cents (vs 12-char on B records).
   const fields: Field[] = [
     fixed('C', 1, 1),
     digits(String(totals.payeeCount).padStart(8, '0'), 2, 9),
     blank(10, 15),
-    money(totals.box1, 16, 33), // Control Total 1: 18-digit dollars+cents (Pub 1220 widens to 18 in C/F totals)
-    money(0, 34, 51),  // Control Total 2
-    money(0, 52, 69),  // Control Total 3
-    money(totals.box4, 70, 87), // Control Total 4
-    money(0, 88, 105),  // Control Total 5
-    money(0, 106, 123),
-    money(0, 124, 141),
-    money(0, 142, 159),
-    money(0, 160, 177),
-    money(0, 178, 195),
-    money(0, 196, 213),
-    money(0, 214, 231),
-    money(0, 232, 249),
+    money(totals.ctrl[0],  16, 33),  // Control Total 1
+    money(totals.ctrl[1],  34, 51),  // Control Total 2
+    money(totals.ctrl[2],  52, 69),  // Control Total 3
+    money(totals.ctrl[3],  70, 87),  // Control Total 4
+    money(totals.ctrl[4],  88, 105), // Control Total 5
+    money(totals.ctrl[5], 106, 123), // Control Total 6
+    money(totals.ctrl[6], 124, 141), // Control Total 7
+    money(totals.ctrl[7], 142, 159), // Control Total 8
+    money(totals.ctrl[8], 160, 177), // Control Total 9
+    money(totals.ctrl[9], 178, 195), // Control Total A (10)
+    money(totals.ctrl[10], 196, 213), // Control Total B (11)
+    money(totals.ctrl[11], 214, 231), // Control Total C (12)
+    money(totals.ctrl[12], 232, 249), // Control Total D (13)
+    // NOTE: Slot E (14) doesn't get its own control total at this
+    // record width per Pub 1220's C-record layout — it'd push past
+    // pos 250 into the reserved block. Trail accumulates correctly
+    // for K records below; per-payer file totals exclude slot E.
     blank(250, 499),
     digits(String(sequence).padStart(8, '0'), 500, 507),
     blank(508, 748),
@@ -384,13 +517,13 @@ function buildC(totals: PayerTotals, sequence: number): string {
 
 interface StateTotals {
   payeeCount: number;
-  box1: number;
-  box4: number;
+  /** 14 control totals indexed by slot. */
+  ctrl: number[];
   stateTaxWithheld: number;
 }
 
 function newStateTotals(): StateTotals {
-  return { payeeCount: 0, box1: 0, box4: 0, stateTaxWithheld: 0 };
+  return { payeeCount: 0, ctrl: new Array(NUM_AMOUNT_SLOTS).fill(0), stateTaxWithheld: 0 };
 }
 
 function buildK(state: StateTotals, cfsfCode: string, sequence: number): string {
@@ -405,19 +538,19 @@ function buildK(state: StateTotals, cfsfCode: string, sequence: number): string 
     fixed('K', 1, 1),
     digits(String(state.payeeCount).padStart(8, '0'), 2, 9),
     blank(10, 15),
-    money(state.box1, 16, 33), // Control Total 1 (Box 1)
-    money(0, 34, 51),  // CT 2
-    money(0, 52, 69),  // CT 3
-    money(state.box4, 70, 87), // CT 4 (Box 4)
-    money(0, 88, 105), // CT 5
-    money(0, 106, 123),
-    money(0, 124, 141),
-    money(0, 142, 159),
-    money(0, 160, 177),
-    money(0, 178, 195),
-    money(0, 196, 213),
-    money(0, 214, 231),
-    money(0, 232, 249),
+    money(state.ctrl[0],  16, 33),  // Control Total 1
+    money(state.ctrl[1],  34, 51),  // Control Total 2
+    money(state.ctrl[2],  52, 69),  // Control Total 3
+    money(state.ctrl[3],  70, 87),  // Control Total 4
+    money(state.ctrl[4],  88, 105), // Control Total 5
+    money(state.ctrl[5], 106, 123), // Control Total 6
+    money(state.ctrl[6], 124, 141), // Control Total 7
+    money(state.ctrl[7], 142, 159), // Control Total 8
+    money(state.ctrl[8], 160, 177), // Control Total 9
+    money(state.ctrl[9], 178, 195), // Control Total A (10)
+    money(state.ctrl[10], 196, 213), // Control Total B (11)
+    money(state.ctrl[11], 214, 231), // Control Total C (12)
+    money(state.ctrl[12], 232, 249), // Control Total D (13)
     blank(250, 499),
     digits(String(sequence).padStart(8, '0'), 500, 507),
     blank(508, 706),

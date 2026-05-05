@@ -73,7 +73,7 @@ export const setGarnishmentStatus = (id: string, status: GarnishmentStatus) =>
 
 // ----- Tax forms ---------------------------------------------------------
 
-export type TaxFormKind = 'F941' | 'F940' | 'W2' | 'W2C' | 'F1099_NEC';
+export type TaxFormKind = 'F941' | 'F940' | 'W2' | 'W2C' | 'F1099_NEC' | 'F1099_MISC';
 
 export type TaxFormStatus = 'DRAFT' | 'FILED' | 'AMENDED' | 'VOIDED';
 
@@ -194,6 +194,37 @@ export const f1099NecFireUrl = (
     q.set('cfsf', cfsfStates.join(','));
   }
   return `/api/tax-forms/1099-nec/fire.txt?${q.toString()}`;
+};
+
+// ----- 1099-MISC generation (Gap 11 — Phase 8) --------------------------
+
+export const generate1099Miscs = (input: { taxYear: number; clientId?: string | null }) =>
+  apiFetch<GenerateW2Result>('/tax-forms/1099-misc/generate', {
+    method: 'POST',
+    body: input,
+  });
+
+/** Direct URL for the 1099-MISC bulk-download zip. */
+export const f1099MiscBulkZipUrl = (taxYear: number, clientId?: string | null): string => {
+  const q = new URLSearchParams({ taxYear: String(taxYear) });
+  if (clientId) q.set('clientId', clientId);
+  return `/api/tax-forms/1099-misc/bulk.zip?${q.toString()}`;
+};
+
+/**
+ * Direct URL for the IRS FIRE 1099-MISC e-file (year + client required).
+ * Same CF/SF semantics as the 1099-NEC sibling.
+ */
+export const f1099MiscFireUrl = (
+  taxYear: number,
+  clientId: string,
+  cfsfStates?: string[],
+): string => {
+  const q = new URLSearchParams({ taxYear: String(taxYear), clientId });
+  if (cfsfStates && cfsfStates.length > 0) {
+    q.set('cfsf', cfsfStates.join(','));
+  }
+  return `/api/tax-forms/1099-misc/fire.txt?${q.toString()}`;
 };
 
 // ----- W-9 / Contractor TIN (Gap 11) ------------------------------------

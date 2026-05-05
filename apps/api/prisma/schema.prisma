@@ -3396,6 +3396,7 @@ enum TaxFormKind {
   // at the original W-2 it corrects. The DB CHECK enforces the link.
   W2C
   F1099_NEC
+  F1099_MISC
 }
 
 enum TaxFormStatus {

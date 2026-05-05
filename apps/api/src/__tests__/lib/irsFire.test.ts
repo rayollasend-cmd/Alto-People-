@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildIrsFireFile, type IrsFireFile } from '../../lib/irsFire.js';
 import type { Form1099NecBoxes } from '../../lib/f1099NecAggregator.js';
+import type { Form1099MiscBoxes } from '../../lib/f1099MiscAggregator.js';
 
 const RECORD_LEN = 750;
 
@@ -289,5 +290,165 @@ describe('buildIrsFireFile — Gap 11', () => {
     // at sequence 4 (B=1, C=2, K=3, F=4).
     const fLine = lines[lines.length - 1];
     expect(fLine.slice(499, 507)).toBe('00000004');
+  });
+
+  // ---- 1099-MISC (Phase 8) ----------------------------------------------
+
+  function miscBoxes(over: Partial<Form1099MiscBoxes> = {}): Form1099MiscBoxes {
+    return {
+      box1Rents: 0,
+      box2Royalties: 0,
+      box3OtherIncome: 0,
+      box4FitWithheld: 0,
+      box5FishingBoatProceeds: 0,
+      box6MedicalHealthcarePayments: 0,
+      box7DirectSales: false,
+      box8SubstitutePayments: 0,
+      box9CropInsuranceProceeds: 0,
+      box10GrossProceedsAttorney: 0,
+      box11FishForResale: 0,
+      box12Section409ADeferrals: 0,
+      box13ExcessGoldenParachute: 0,
+      box14NonqualifiedDeferred: 0,
+      stateLines: [],
+      sourceItemCount: 1,
+      ...over,
+    };
+  }
+
+  it('1099-MISC: A record carries Type of Return "MI" + Amount Codes for populated slots', () => {
+    const file: IrsFireFile = {
+      formType: 'MI',
+      transmitter: submitter,
+      payer,
+      payees: [
+        {
+          ...payee(),
+          boxes: miscBoxes({ box1Rents: 1000, box6MedicalHealthcarePayments: 500 }),
+        },
+      ],
+    };
+    const out = buildIrsFireFile(file);
+    const aLine = out.split('\r\n').find((l) => l.startsWith('A'))!;
+    // Type of Return at positions 67-68
+    expect(aLine.slice(66, 68)).toBe('MI');
+    // Amount Codes at positions 69-84 — populated slots are 1 (Rents)
+    // and 6 (Medical), so codes are "16" left-justified blank-padded
+    expect(aLine.slice(68, 84).trimEnd()).toBe('16');
+  });
+
+  it('1099-MISC: B record routes Box 1 → Slot 1, Box 6 → Slot 6, Box 14 → Slot E', () => {
+    const file: IrsFireFile = {
+      formType: 'MI',
+      transmitter: submitter,
+      payer,
+      payees: [
+        {
+          ...payee(),
+          boxes: miscBoxes({
+            box1Rents: 1234.56,
+            box6MedicalHealthcarePayments: 700.0,
+            box14NonqualifiedDeferred: 250.0,
+          }),
+        },
+      ],
+    };
+    const out = buildIrsFireFile(file);
+    const bLine = out.split('\r\n').find((l) => l.startsWith('B'))!;
+    // Slot 1 at 55-66, Slot 6 at 115-126, Slot E (14) at 211-222
+    expect(bLine.slice(54, 66)).toBe('000000123456');
+    expect(bLine.slice(114, 126)).toBe('000000070000');
+    expect(bLine.slice(210, 222)).toBe('000000025000');
+    // Box 7 is a checkbox at pos 556 — false → '2'
+    expect(bLine[555]).toBe('2');
+  });
+
+  it('1099-MISC: Box 7 checkbox flips to "1" when box7DirectSales is true', () => {
+    const file: IrsFireFile = {
+      formType: 'MI',
+      transmitter: submitter,
+      payer,
+      payees: [
+        {
+          ...payee(),
+          boxes: miscBoxes({ box1Rents: 1000, box7DirectSales: true }),
+        },
+      ],
+    };
+    const out = buildIrsFireFile(file);
+    const bLine = out.split('\r\n').find((l) => l.startsWith('B'))!;
+    expect(bLine[555]).toBe('1');
+  });
+
+  it('1099-MISC: C record sums every populated slot across payees', () => {
+    const file: IrsFireFile = {
+      formType: 'MI',
+      transmitter: submitter,
+      payer,
+      payees: [
+        {
+          ...payee({ tin: '111223333' }),
+          boxes: miscBoxes({ box1Rents: 1000, box4FitWithheld: 100 }),
+        },
+        {
+          ...payee({ tin: '444556666' }),
+          boxes: miscBoxes({ box1Rents: 2500, box4FitWithheld: 250 }),
+        },
+      ],
+    };
+    const out = buildIrsFireFile(file);
+    const cLine = out.split('\r\n').find((l) => l.startsWith('C'))!;
+    // Slot 1 (Rents) at 16-33, Slot 4 (FIT) at 70-87
+    expect(Number(cLine.slice(15, 33))).toBe((1000 + 2500) * 100);
+    expect(Number(cLine.slice(69, 87))).toBe((100 + 250) * 100);
+    // Slot 2 (Royalties), Slot 3 (Other) should be 0
+    expect(Number(cLine.slice(33, 51))).toBe(0);
+    expect(Number(cLine.slice(51, 69))).toBe(0);
+  });
+
+  it('1099-MISC: defaults to NE when formType is omitted (back-compat)', () => {
+    // Existing 1099-NEC callers don't pass formType. Verify that path
+    // still produces an "NE" type-of-return even though we widened
+    // payee.boxes to a union.
+    const file: IrsFireFile = {
+      transmitter: submitter,
+      payer,
+      payees: [payee()],
+    };
+    const out = buildIrsFireFile(file);
+    const aLine = out.split('\r\n').find((l) => l.startsWith('A'))!;
+    expect(aLine.slice(66, 68)).toBe('NE');
+  });
+
+  it('1099-MISC: K record sums per-state totals across populated MISC slots', () => {
+    const stateLine = (s: string, tax: number, income: number) => ({
+      state: s,
+      stateTaxWithheld: tax,
+      stateIncome: income,
+    });
+    const file: IrsFireFile = {
+      formType: 'MI',
+      transmitter: submitter,
+      payer,
+      payees: [
+        {
+          ...payee(),
+          state: 'FL',
+          boxes: miscBoxes({
+            box1Rents: 5000,
+            box4FitWithheld: 1200,
+            stateLines: [stateLine('FL', 250, 5000)],
+          }),
+        },
+      ],
+      cfsf: [{ state: 'FL', cfsfCode: '12' }],
+    };
+    const out = buildIrsFireFile(file);
+    const kLine = out.split('\r\n').find((l) => l.startsWith('K'))!;
+    // K Slot 1 (Rents) at 16-33, Slot 4 (FIT) at 70-87
+    expect(Number(kLine.slice(15, 33))).toBe(5000 * 100);
+    expect(Number(kLine.slice(69, 87))).toBe(1200 * 100);
+    // State withholding total at 707-724
+    expect(Number(kLine.slice(706, 724))).toBe(250 * 100);
   });
 });

@@ -23,6 +23,9 @@ import {
   w2Efw2cUrl,
   f1099NecBulkZipUrl,
   f1099NecFireUrl,
+  generate1099Miscs,
+  f1099MiscBulkZipUrl,
+  f1099MiscFireUrl,
   type Garnishment,
   type GarnishmentKind,
   type GarnishmentStatus,
@@ -417,6 +420,7 @@ const FORM_KIND_LABEL: Record<TaxFormKind, string> = {
   W2: 'W-2 (Annual employee)',
   W2C: 'W-2c (Correction)',
   F1099_NEC: '1099-NEC (Annual contractor)',
+  F1099_MISC: '1099-MISC (Annual miscellaneous)',
 };
 
 const FORM_STATUS_BADGE: Record<TaxForm['status'], 'pending' | 'success' | 'default' | 'destructive'> = {
@@ -434,6 +438,7 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
   const [show941Builder, setShow941Builder] = useState(false);
   const [showW2Generate, setShowW2Generate] = useState(false);
   const [showF1099NecGenerate, setShowF1099NecGenerate] = useState(false);
+  const [showF1099MiscGenerate, setShowF1099MiscGenerate] = useState(false);
   const [showSubmitter, setShowSubmitter] = useState(false);
 
   const refresh = () => {
@@ -505,6 +510,9 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
           </Button>
           <Button variant="ghost" onClick={() => setShowF1099NecGenerate(true)}>
             Generate 1099-NECs
+          </Button>
+          <Button variant="ghost" onClick={() => setShowF1099MiscGenerate(true)}>
+            Generate 1099-MISCs
           </Button>
           <Button onClick={() => setShowNew(true)}>
             <Plus className="mr-2 h-4 w-4" /> New form
@@ -613,6 +621,15 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
           onClose={() => setShowF1099NecGenerate(false)}
           onDone={() => {
             setShowF1099NecGenerate(false);
+            refresh();
+          }}
+        />
+      )}
+      {showF1099MiscGenerate && (
+        <F1099MiscGenerateDrawer
+          onClose={() => setShowF1099MiscGenerate(false)}
+          onDone={() => {
+            setShowF1099MiscGenerate(false);
             refresh();
           }}
         />
@@ -992,6 +1009,146 @@ function F1099NecGenerateDrawer({
   );
 }
 
+function F1099MiscGenerateDrawer({
+  onClose,
+  onDone,
+}: {
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [taxYear, setTaxYear] = useState(String(new Date().getFullYear() - 1));
+  const [clientId, setClientId] = useState('');
+  const [cfsfStates, setCfsfStates] = useState('');
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<Awaited<ReturnType<typeof generate1099Miscs>> | null>(
+    null,
+  );
+
+  const cfsfList = cfsfStates
+    .split(',')
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
+
+  const onGenerate = async () => {
+    setRunning(true);
+    try {
+      const r = await generate1099Miscs({
+        taxYear: Number(taxYear),
+        clientId: clientId.trim() || null,
+      });
+      setResult(r);
+      toast.success(
+        `Created ${r.createdCount} 1099-MISC(s); skipped ${r.skippedCount} (already on file).`,
+      );
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <Drawer open onOpenChange={(open) => !open && onClose()}>
+      <DrawerHeader>
+        <DrawerTitle>Generate 1099-MISCs</DrawerTitle>
+      </DrawerHeader>
+      <DrawerBody className="space-y-4">
+        <p className="text-xs text-silver">
+          One 1099-MISC per contractor that meets the per-box reporting bar
+          (Royalties $10, Box 4 backup withholding any amount, others
+          $600). Until per-payment box-mapping lands, gross pay routes to
+          Box 3 (Other income). Re-runs are idempotent — only newly-
+          eligible contractors get a new draft.
+        </p>
+        <div>
+          <Label>Tax year</Label>
+          <Input
+            type="number"
+            className="mt-1"
+            value={taxYear}
+            onChange={(e) => setTaxYear(e.target.value)}
+          />
+        </div>
+        <div>
+          <Label>Client ID (optional — leave blank for all clients)</Label>
+          <Input
+            className="mt-1 font-mono text-xs"
+            value={clientId}
+            onChange={(e) => setClientId(e.target.value)}
+            placeholder="UUID"
+          />
+        </div>
+        <div>
+          <Label>
+            CF/SF states (optional — CSV of USPS codes for Combined
+            Federal/State Filing)
+          </Label>
+          <Input
+            className="mt-1 font-mono text-xs uppercase"
+            value={cfsfStates}
+            onChange={(e) => setCfsfStates(e.target.value)}
+            placeholder="FL, CA, NY"
+          />
+          <p className="mt-1 text-xs text-silver">
+            Pass only states that participate in CF/SF in the filing year.
+          </p>
+        </div>
+        <Button onClick={onGenerate} disabled={running}>
+          {running ? 'Generating…' : 'Generate'}
+        </Button>
+        {result && (
+          <div className="space-y-2 rounded-md border border-navy-secondary bg-navy-secondary/40 p-3 text-sm text-white">
+            <div>Eligible contractors: {result.eligibleAssociateCount}</div>
+            <div>Created: {result.createdCount}</div>
+            <div>Skipped (already on file): {result.skippedCount}</div>
+            {result.createdCount > 0 && (
+              <div className="flex flex-wrap gap-2 mt-1">
+                <Button asChild variant="ghost" size="sm">
+                  <a
+                    href={f1099MiscBulkZipUrl(Number(taxYear), clientId.trim() || null)}
+                    download
+                  >
+                    <Download className="mr-1 h-3 w-3" /> Download all as ZIP
+                  </a>
+                </Button>
+                {clientId.trim() && (
+                  <Button asChild variant="ghost" size="sm">
+                    <a
+                      href={f1099MiscFireUrl(
+                        Number(taxYear),
+                        clientId.trim(),
+                        cfsfList.length > 0 ? cfsfList : undefined,
+                      )}
+                      download
+                    >
+                      <Download className="mr-1 h-3 w-3" />
+                      {cfsfList.length > 0
+                        ? `IRS FIRE e-file (CF/SF: ${cfsfList.join(', ')})`
+                        : 'IRS FIRE e-file'}
+                    </a>
+                  </Button>
+                )}
+              </div>
+            )}
+            {result.createdCount > 0 && !clientId.trim() && (
+              <div className="text-xs text-silver">
+                IRS FIRE e-file requires a per-client scope. Re-open this
+                drawer with a single Client ID to generate that download.
+              </div>
+            )}
+          </div>
+        )}
+      </DrawerBody>
+      <DrawerFooter>
+        <Button variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button onClick={onDone}>Done</Button>
+      </DrawerFooter>
+    </Drawer>
+  );
+}
+
 function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [kind, setKind] = useState<TaxFormKind>('F941');
   const [taxYear, setTaxYear] = useState(String(new Date().getFullYear() - 1));
@@ -1002,7 +1159,7 @@ function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
   const [saving, setSaving] = useState(false);
 
   const needsQuarter = kind === 'F941';
-  const needsAssociate = kind === 'W2' || kind === 'F1099_NEC';
+  const needsAssociate = kind === 'W2' || kind === 'F1099_NEC' || kind === 'F1099_MISC';
 
   const onSubmit = async () => {
     let amounts: Record<string, unknown>;

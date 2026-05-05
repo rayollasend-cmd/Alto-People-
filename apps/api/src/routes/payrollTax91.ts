@@ -21,10 +21,20 @@ import {
   type Form1099NecBoxes,
 } from '../lib/f1099NecAggregator.js';
 import {
+  aggregateF1099MiscPayments,
+  listF1099MiscEligibleAssociates,
+  type Form1099MiscBoxes,
+} from '../lib/f1099MiscAggregator.js';
+import {
   hashForm1099NecPdf,
   renderForm1099NecPdf,
   type Form1099NecPdfData,
 } from '../lib/f1099NecPdf.js';
+import {
+  hashForm1099MiscPdf,
+  renderForm1099MiscPdf,
+  type Form1099MiscPdfData,
+} from '../lib/f1099MiscPdf.js';
 import {
   buildIrsFireFile,
   IRS_CFSF_STATE_CODES,
@@ -543,6 +553,77 @@ payrollTax91Router.post('/tax-forms/1099-nec/generate', MANAGE, async (req, res)
   });
 });
 
+// ----- 1099-MISC generation (Gap 11 — Phase 8) --------------------------
+
+const GenerateF1099MiscBodySchema = z.object({
+  taxYear: z.number().int().min(2020).max(2100),
+  /** Null / omitted = generate for every client. UUID = scope to one. */
+  clientId: z.string().uuid().nullable().optional(),
+});
+
+/**
+ * POST /tax-forms/1099-misc/generate { taxYear, clientId? } — for every
+ * contractor associate that meets the IRS reporting thresholds (per-box;
+ * Royalties at $10, Box 4 backup withholding always triggers, others at
+ * $600), run the aggregator and persist a TaxForm (kind=F1099_MISC,
+ * status=DRAFT) row.
+ *
+ * Idempotent at the per-associate level: if a non-VOIDED 1099-MISC
+ * already exists for {associate, year}, it's skipped.
+ *
+ * MVP note: until PayrollItem grows a payment-category column, every
+ * payment lands in Box 3 (Other income). See f1099MiscAggregator.
+ */
+payrollTax91Router.post('/tax-forms/1099-misc/generate', MANAGE, async (req, res) => {
+  const input = GenerateF1099MiscBodySchema.parse(req.body ?? {});
+  const associateIds = await listF1099MiscEligibleAssociates(
+    prisma,
+    input.taxYear,
+    input.clientId ?? null,
+  );
+
+  let createdCount = 0;
+  let skippedCount = 0;
+  const created: { id: string; associateId: string }[] = [];
+
+  for (const associateId of associateIds) {
+    const existing = await prisma.taxForm.findFirst({
+      where: {
+        kind: 'F1099_MISC',
+        taxYear: input.taxYear,
+        associateId,
+        status: { not: 'VOIDED' },
+      },
+      select: { id: true },
+    });
+    if (existing) {
+      skippedCount += 1;
+      continue;
+    }
+
+    const boxes = await aggregateF1099MiscPayments(prisma, associateId, input.taxYear);
+
+    const row = await prisma.taxForm.create({
+      data: {
+        kind: 'F1099_MISC',
+        taxYear: input.taxYear,
+        associateId,
+        amounts: boxes as unknown as Prisma.InputJsonValue,
+        status: 'DRAFT',
+      },
+    });
+    created.push({ id: row.id, associateId });
+    createdCount += 1;
+  }
+
+  res.json({
+    eligibleAssociateCount: associateIds.length,
+    createdCount,
+    skippedCount,
+    created,
+  });
+});
+
 // ----- W-2c (corrections) ------------------------------------------------
 
 const W2cBodySchema = z
@@ -935,10 +1016,106 @@ async function renderF1099NecForForm(formId: string): Promise<{
 }
 
 /**
+ * Renders Form 1099-MISC for one TaxForm row. Mirrors renderF1099NecForForm
+ * — same payer / recipient resolution, same TIN-on-file gating, same
+ * client-from-sample-item trick. Only the box layout + PDF helper differ.
+ */
+async function renderF1099MiscForForm(formId: string): Promise<{
+  pdf: Buffer;
+  hash: string;
+  form: NonNullable<Awaited<ReturnType<typeof loadW2Form>>>;
+  filename: string;
+}> {
+  const form = await loadW2Form(formId);
+  if (!form) throw new HttpError(404, 'not_found', 'Form not found.');
+  if (form.kind !== 'F1099_MISC') {
+    throw new HttpError(
+      500,
+      'wrong_helper',
+      `renderF1099MiscForForm called on a ${form.kind} form.`,
+    );
+  }
+  if (!form.associateId || !form.associate) {
+    throw new HttpError(500, 'malformed_form', '1099-MISC has no associate row.');
+  }
+  if (!form.associate.tinEncrypted) {
+    throw new HttpError(
+      400,
+      'missing_tin',
+      'Cannot render 1099-MISC: contractor has no TIN on file. HR must capture the W-9 before generating tax forms.',
+    );
+  }
+
+  const yearStart = new Date(Date.UTC(form.taxYear, 0, 1));
+  const yearEndExclusive = new Date(Date.UTC(form.taxYear + 1, 0, 1));
+  const sampleItem = await prisma.payrollItem.findFirst({
+    where: {
+      associateId: form.associateId,
+      payrollRun: {
+        status: { not: 'CANCELLED' },
+        disbursedAt: { gte: yearStart, lt: yearEndExclusive },
+      },
+    },
+    include: { payrollRun: { include: { client: true } } },
+    orderBy: { createdAt: 'asc' },
+  });
+  const client = sampleItem?.payrollRun.client ?? null;
+  if (!client?.legalName || !client.ein) {
+    throw new HttpError(
+      400,
+      'missing_payer_info',
+      'Cannot render 1099-MISC: client is missing legalName or EIN. HR must fill these in on the client record before generating tax forms.',
+    );
+  }
+
+  const tin = decryptString(form.associate.tinEncrypted);
+  const tinFormatted =
+    tin.length === 9
+      ? form.associate.employmentType === 'CONTRACTOR_1099_BUSINESS'
+        ? `${tin.slice(0, 2)}-${tin.slice(2)}`
+        : `${tin.slice(0, 3)}-${tin.slice(3, 5)}-${tin.slice(5)}`
+      : tin;
+
+  const pdfData: Form1099MiscPdfData = {
+    taxYear: form.taxYear,
+    payer: {
+      ein: client.ein,
+      name: client.legalName,
+      addressLine1: client.addressLine1,
+      addressLine2: client.addressLine2,
+      city: client.city,
+      state: client.state,
+      zip: client.zip,
+    },
+    recipient: {
+      tin: tinFormatted,
+      name: `${form.associate.firstName} ${form.associate.lastName}`.trim(),
+      addressLine1: form.associate.addressLine1,
+      addressLine2: form.associate.addressLine2,
+      city: form.associate.city,
+      state: form.associate.state,
+      zip: form.associate.zip,
+    },
+    accountNumber: form.id.slice(0, 12).toUpperCase(),
+    boxes: form.amounts as unknown as Form1099MiscBoxes,
+    meta: { formId: form.id, generatedAt: new Date().toISOString() },
+  };
+
+  const pdf = await renderForm1099MiscPdf(pdfData);
+  const hash = hashForm1099MiscPdf(pdf);
+  const filename =
+    `1099MISC-${form.taxYear}-${form.associate.lastName}-${form.associate.firstName}.pdf`
+      .toLowerCase()
+      .replace(/[^\x20-\x7e]/g, '');
+  return { pdf, hash, form, filename };
+}
+
+/**
  * GET /tax-forms/:id/pdf — renders the PDF for a TaxForm. Dispatches on
  * form.kind:
  *   - W2 / W2C       → renderW2ForForm
  *   - F1099_NEC      → renderF1099NecForForm
+ *   - F1099_MISC     → renderF1099MiscForForm
  *   - else           → 400 unsupported_kind
  * Stamps `pdfHash` on first download (matching the paystub immutability
  * contract). Same hash semantics across kinds; the per-helper hash
@@ -967,7 +1144,9 @@ payrollTax91Router.get('/tax-forms/:id/pdf', async (req, res, next) => {
     const { pdf, hash, filename } =
       form.kind === 'F1099_NEC'
         ? await renderF1099NecForForm(req.params.id)
-        : await renderW2ForForm(req.params.id);
+        : form.kind === 'F1099_MISC'
+          ? await renderF1099MiscForForm(req.params.id)
+          : await renderW2ForForm(req.params.id);
 
     if (!form.pdfHash) {
       await prisma.taxForm.update({
@@ -1173,6 +1352,96 @@ payrollTax91Router.get('/tax-forms/1099-nec/bulk.zip', MANAGE, async (req, res, 
     if (skipped.length > 0) {
       const manifest =
         `Skipped ${skipped.length} of ${forms.length} 1099-NEC forms.\n\n` +
+        skipped.map((s) => `${s.formId}\t${s.reason}`).join('\n') +
+        '\n';
+      zip.append(manifest, { name: 'manifest.txt' });
+    }
+
+    await zip.finalize();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /tax-forms/1099-misc/bulk.zip?taxYear=YYYY&clientId=UUID — sibling
+ * of the 1099-NEC bulk endpoint for 1099-MISC forms.
+ */
+payrollTax91Router.get('/tax-forms/1099-misc/bulk.zip', MANAGE, async (req, res, next) => {
+  try {
+    const taxYear = z
+      .preprocess((v) => Number(v), z.number().int().min(2000).max(2100))
+      .parse(req.query.taxYear);
+    const clientId = z.string().uuid().optional().parse(req.query.clientId);
+
+    const where: Prisma.TaxFormWhereInput = {
+      kind: 'F1099_MISC',
+      taxYear,
+      status: { not: 'VOIDED' },
+    };
+    if (clientId) {
+      const yearStart = new Date(Date.UTC(taxYear, 0, 1));
+      const yearEndExclusive = new Date(Date.UTC(taxYear + 1, 0, 1));
+      const eligible = await prisma.payrollItem.findMany({
+        where: {
+          payrollRun: {
+            clientId,
+            status: { not: 'CANCELLED' },
+            disbursedAt: { gte: yearStart, lt: yearEndExclusive },
+          },
+        },
+        select: { associateId: true },
+        distinct: ['associateId'],
+      });
+      where.associateId = { in: eligible.map((e) => e.associateId) };
+    }
+
+    const forms = await prisma.taxForm.findMany({
+      where,
+      select: { id: true },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    if (forms.length === 0) {
+      throw new HttpError(
+        404,
+        'no_forms',
+        `No 1099-MISC forms found for year ${taxYear}${clientId ? ` and client ${clientId}` : ''}. Generate them first.`,
+      );
+    }
+
+    const { default: archiver } = await import('archiver');
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="1099misc-${taxYear}${clientId ? `-${clientId.slice(0, 8)}` : ''}.zip"`,
+    );
+
+    const zip = archiver('zip', { zlib: { level: 6 } });
+    zip.on('error', (err) => res.destroy(err));
+    zip.pipe(res);
+
+    const skipped: { formId: string; reason: string }[] = [];
+    for (const { id } of forms) {
+      try {
+        const { pdf, filename, hash, form } = await renderF1099MiscForForm(id);
+        if (!form.pdfHash) {
+          await prisma.taxForm.update({
+            where: { id: form.id },
+            data: { pdfHash: hash },
+          });
+        }
+        zip.append(pdf, { name: filename });
+      } catch (err) {
+        const reason = err instanceof HttpError ? err.code : 'unknown';
+        skipped.push({ formId: id, reason });
+      }
+    }
+
+    if (skipped.length > 0) {
+      const manifest =
+        `Skipped ${skipped.length} of ${forms.length} 1099-MISC forms.\n\n` +
         skipped.map((s) => `${s.formId}\t${s.reason}`).join('\n') +
         '\n';
       zip.append(manifest, { name: 'manifest.txt' });
@@ -1865,6 +2134,226 @@ payrollTax91Router.get(
       res.setHeader(
         'Content-Disposition',
         `attachment; filename="IRS_FIRE_1099NEC_${input.taxYear}_${payerEin}.txt"`,
+      );
+      if (skipped.length > 0) {
+        res.setHeader(
+          'X-IrsFire-Skipped',
+          JSON.stringify(skipped).slice(0, 4096),
+        );
+      }
+      res.send(fileBody);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ----- IRS FIRE 1099-MISC generator (Gap 11 — Phase 8) -------------------
+
+/**
+ * GET /tax-forms/1099-misc/fire.txt?taxYear=YYYY&clientId=UUID&cfsf=FL,CA
+ * — sibling of /tax-forms/1099-nec/fire.txt that produces the IRS FIRE
+ * file with formType "MI" instead of "NE". Same submitter / TIN /
+ * payer-info validation; same CF/SF semantics. The duplicated body is
+ * deliberate — extracting a shared helper would obscure the per-route
+ * eligibility filtering that's likely to diverge as MISC grows
+ * box-mapping complexity.
+ */
+payrollTax91Router.get(
+  '/tax-forms/1099-misc/fire.txt',
+  MANAGE,
+  async (req, res, next) => {
+    try {
+      const input = {
+        taxYear: z
+          .preprocess((v) => Number(v), z.number().int().min(2000).max(2100))
+          .parse(req.query.taxYear),
+        clientId: z.string().uuid().parse(req.query.clientId),
+        cfsfStates: z
+          .string()
+          .optional()
+          .transform((s) =>
+            (s ?? '')
+              .split(',')
+              .map((p) => p.trim().toUpperCase())
+              .filter(Boolean),
+          )
+          .parse(req.query.cfsf),
+      };
+
+      const submitter = await prisma.submitterProfile.findUnique({
+        where: { id: 'singleton' },
+      });
+      if (!submitter) {
+        throw new HttpError(
+          400,
+          'submitter_profile_missing',
+          'No SubmitterProfile on file. POST /tax-forms/submitter first.',
+        );
+      }
+      if (!submitter.irsTcc) {
+        throw new HttpError(
+          400,
+          'submitter_tcc_missing',
+          'SubmitterProfile.irsTcc is null. Register for IRS FIRE and save the 5-char Transmitter Control Code on the submitter profile before generating 1099 e-files.',
+        );
+      }
+
+      const client = await prisma.client.findUnique({
+        where: { id: input.clientId },
+      });
+      if (!client) throw new HttpError(404, 'client_not_found', 'Client not found.');
+      if (!client.legalName || !client.ein) {
+        throw new HttpError(400, 'missing_payer_info', 'Client missing legalName or EIN.');
+      }
+      if (!client.addressLine1 || !client.city || !client.state || !client.zip) {
+        throw new HttpError(
+          400,
+          'missing_payer_address',
+          'IRS FIRE requires a full payer address (line1, city, state, ZIP).',
+        );
+      }
+
+      const forms = await prisma.taxForm.findMany({
+        where: {
+          kind: 'F1099_MISC',
+          taxYear: input.taxYear,
+          status: { not: 'VOIDED' },
+        },
+        include: { associate: true },
+      });
+      const yearStart = new Date(Date.UTC(input.taxYear, 0, 1));
+      const yearEndExclusive = new Date(Date.UTC(input.taxYear + 1, 0, 1));
+      const eligibleAssociateIds = new Set<string>(
+        (
+          await prisma.payrollItem.findMany({
+            where: {
+              payrollRun: {
+                clientId: input.clientId,
+                status: { not: 'CANCELLED' },
+                disbursedAt: { gte: yearStart, lt: yearEndExclusive },
+              },
+            },
+            select: { associateId: true },
+            distinct: ['associateId'],
+          })
+        ).map((e) => e.associateId),
+      );
+      const scopedForms = forms.filter(
+        (f) => f.associateId && eligibleAssociateIds.has(f.associateId),
+      );
+      if (scopedForms.length === 0) {
+        throw new HttpError(
+          404,
+          'no_forms',
+          `No 1099-MISC forms found for year ${input.taxYear} and client ${input.clientId}. Generate them first.`,
+        );
+      }
+
+      const payees: IrsFirePayee[] = [];
+      const skipped: { associateId: string; reason: string }[] = [];
+      for (const f of scopedForms) {
+        if (!f.associate) {
+          skipped.push({ associateId: f.associateId ?? 'unknown', reason: 'no_associate' });
+          continue;
+        }
+        if (!f.associate.tinEncrypted) {
+          skipped.push({ associateId: f.associate.id, reason: 'missing_tin' });
+          continue;
+        }
+        if (
+          !f.associate.addressLine1 ||
+          !f.associate.city ||
+          !f.associate.state ||
+          !f.associate.zip
+        ) {
+          skipped.push({ associateId: f.associate.id, reason: 'missing_address' });
+          continue;
+        }
+        const tin = decryptString(f.associate.tinEncrypted).replace(/[^0-9]/g, '');
+        if (tin.length !== 9) {
+          skipped.push({ associateId: f.associate.id, reason: 'invalid_tin' });
+          continue;
+        }
+        const zipMatch = f.associate.zip.match(/^(\d{5})(?:[- ]?(\d{4}))?$/);
+        if (!zipMatch) {
+          skipped.push({ associateId: f.associate.id, reason: 'invalid_zip' });
+          continue;
+        }
+        payees.push({
+          tin,
+          tinTypeCode:
+            f.associate.employmentType === 'CONTRACTOR_1099_BUSINESS' ? '2' : '1',
+          name: `${f.associate.firstName} ${f.associate.lastName}`.trim(),
+          addressLine1: f.associate.addressLine1,
+          city: f.associate.city,
+          state: f.associate.state,
+          zip5: zipMatch[1],
+          zip4: zipMatch[2] ?? undefined,
+          accountNumber: f.id.slice(0, 12).toUpperCase(),
+          boxes: f.amounts as unknown as Form1099MiscBoxes,
+        });
+      }
+
+      if (payees.length === 0) {
+        throw new HttpError(
+          400,
+          'no_eligible_payees',
+          `Every 1099-MISC was skipped due to missing data: ${skipped.map((s) => s.reason).join(', ')}.`,
+        );
+      }
+
+      const payerZip = client.zip!.match(/^(\d{5})(?:[- ]?(\d{4}))?$/);
+      if (!payerZip) {
+        throw new HttpError(400, 'invalid_payer_zip', 'Client ZIP must be 5 or 9 digits.');
+      }
+      const payerEin = client.ein!.replace(/[^0-9]/g, '');
+      if (payerEin.length !== 9) {
+        throw new HttpError(400, 'invalid_payer_ein', 'Client EIN must be 9 digits.');
+      }
+
+      const cfsf = input.cfsfStates.map((s) => {
+        const code = IRS_CFSF_STATE_CODES[s];
+        if (!code) {
+          throw new HttpError(
+            400,
+            'invalid_cfsf_state',
+            `Unknown CF/SF state "${s}". Pass USPS 2-letter codes for participating states only.`,
+          );
+        }
+        return { state: s, cfsfCode: code };
+      });
+
+      const fireInput: IrsFireFile = {
+        formType: 'MI',
+        transmitter: {
+          tcc: submitter.irsTcc,
+          ein: submitter.ein,
+          name: submitter.name,
+          contactName: submitter.contactName,
+          contactPhone: submitter.contactPhone,
+          contactEmail: submitter.contactEmail,
+          taxYear: input.taxYear,
+        },
+        payer: {
+          ein: payerEin,
+          name: client.legalName!,
+          addressLine1: client.addressLine1!,
+          city: client.city!,
+          state: client.state ?? '',
+          zip5: payerZip[1],
+          zip4: payerZip[2] ?? undefined,
+        },
+        payees,
+        cfsf: cfsf.length > 0 ? cfsf : undefined,
+      };
+
+      const fileBody = buildIrsFireFile(fireInput);
+
+      res.setHeader('Content-Type', 'text/plain; charset=us-ascii');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="IRS_FIRE_1099MISC_${input.taxYear}_${payerEin}.txt"`,
       );
       if (skipped.length > 0) {
         res.setHeader(
