@@ -15,6 +15,16 @@ import { hashW2cPdf, renderW2cPdf, type W2cPdfData } from '../lib/w2cPdf.js';
 import { hasW2cDelta, type W2cAmounts } from '../lib/w2cAggregator.js';
 import { buildEfw2File, type Efw2Employee, type Efw2File } from '../lib/efw2.js';
 import { buildEfw2cFile, type Efw2cEmployee, type Efw2cFile } from '../lib/efw2c.js';
+import {
+  aggregateF1099NecPayments,
+  listF1099NecEligibleAssociates,
+  type Form1099NecBoxes,
+} from '../lib/f1099NecAggregator.js';
+import {
+  hashForm1099NecPdf,
+  renderForm1099NecPdf,
+  type Form1099NecPdfData,
+} from '../lib/f1099NecPdf.js';
 
 /**
  * Phase 91 — Garnishments + tax forms (941, 940, W-2, 1099-NEC).
@@ -456,6 +466,77 @@ payrollTax91Router.post('/tax-forms/w2/generate', MANAGE, async (req, res) => {
   });
 });
 
+// ----- 1099-NEC generation (Gap 11) --------------------------------------
+
+const GenerateF1099NecBodySchema = z.object({
+  taxYear: z.number().int().min(2020).max(2100),
+  // Null / omitted = generate 1099-NECs for every client. Specific UUID =
+  // scope to one client.
+  clientId: z.string().uuid().nullable().optional(),
+});
+
+/**
+ * POST /tax-forms/1099-nec/generate { taxYear, clientId? } — for every
+ * contractor associate that meets the IRS reporting threshold (Box 1
+ * >= $600 OR Box 4 > 0), run the aggregator and persist a TaxForm
+ * (kind=F1099_NEC, status=DRAFT) row. Mirrors the W-2 generate route
+ * exactly except the eligibility filter — see f1099NecAggregator.
+ *
+ * Idempotent at the per-associate level: if a non-VOIDED 1099-NEC
+ * already exists for {associate, year}, it's skipped (re-runs are
+ * safe). The caller can void an existing form first to force
+ * regeneration.
+ */
+payrollTax91Router.post('/tax-forms/1099-nec/generate', MANAGE, async (req, res) => {
+  const input = GenerateF1099NecBodySchema.parse(req.body ?? {});
+  const associateIds = await listF1099NecEligibleAssociates(
+    prisma,
+    input.taxYear,
+    input.clientId ?? null,
+  );
+
+  let createdCount = 0;
+  let skippedCount = 0;
+  const created: { id: string; associateId: string }[] = [];
+
+  for (const associateId of associateIds) {
+    const existing = await prisma.taxForm.findFirst({
+      where: {
+        kind: 'F1099_NEC',
+        taxYear: input.taxYear,
+        associateId,
+        status: { not: 'VOIDED' },
+      },
+      select: { id: true },
+    });
+    if (existing) {
+      skippedCount += 1;
+      continue;
+    }
+
+    const boxes = await aggregateF1099NecPayments(prisma, associateId, input.taxYear);
+
+    const row = await prisma.taxForm.create({
+      data: {
+        kind: 'F1099_NEC',
+        taxYear: input.taxYear,
+        associateId,
+        amounts: boxes as unknown as Prisma.InputJsonValue,
+        status: 'DRAFT',
+      },
+    });
+    created.push({ id: row.id, associateId });
+    createdCount += 1;
+  }
+
+  res.json({
+    eligibleAssociateCount: associateIds.length,
+    createdCount,
+    skippedCount,
+    created,
+  });
+});
+
 // ----- W-2c (corrections) ------------------------------------------------
 
 const W2cBodySchema = z
@@ -732,6 +813,9 @@ async function renderW2ForForm(formId: string): Promise<{
 }
 
 async function loadW2Form(formId: string) {
+  // Loads the form + the bits needed for either W-2 or 1099-NEC rendering:
+  // W-4 SSN (W-2 path) and the Associate.tinEncrypted column (1099 path).
+  // Routes pick the right field per form.kind.
   return prisma.taxForm.findUnique({
     where: { id: formId },
     include: {
@@ -743,9 +827,116 @@ async function loadW2Form(formId: string) {
 }
 
 /**
- * GET /tax-forms/:id/pdf — renders the PDF for a TaxForm. W-2 only at this
- * phase; other kinds 400 until their renderers land. Stamps `pdfHash` on
- * first download (matching the paystub immutability contract).
+ * Renders Form 1099-NEC for one TaxForm row. Mirrors renderW2ForForm but
+ * pulls the recipient TIN from Associate.tinEncrypted (W-2 SSN lives on
+ * W4Submission and isn't appropriate for contractors). Surfaces missing
+ * inputs as 400s the same way as the W-2 path so the client gets a clean
+ * actionable error.
+ */
+async function renderF1099NecForForm(formId: string): Promise<{
+  pdf: Buffer;
+  hash: string;
+  form: NonNullable<Awaited<ReturnType<typeof loadW2Form>>>;
+  filename: string;
+}> {
+  const form = await loadW2Form(formId);
+  if (!form) throw new HttpError(404, 'not_found', 'Form not found.');
+  if (form.kind !== 'F1099_NEC') {
+    throw new HttpError(
+      500,
+      'wrong_helper',
+      `renderF1099NecForForm called on a ${form.kind} form.`,
+    );
+  }
+  if (!form.associateId || !form.associate) {
+    throw new HttpError(500, 'malformed_form', '1099-NEC has no associate row.');
+  }
+  if (!form.associate.tinEncrypted) {
+    throw new HttpError(
+      400,
+      'missing_tin',
+      'Cannot render 1099-NEC: contractor has no TIN on file. HR must capture the W-9 before generating tax forms.',
+    );
+  }
+
+  // Pull payer (client) info from a sample disbursed item, same trick as
+  // the W-2 path. Contractors might invoice multiple clients; we pick the
+  // one tied to the chronologically-first disbursed item in the year.
+  const yearStart = new Date(Date.UTC(form.taxYear, 0, 1));
+  const yearEndExclusive = new Date(Date.UTC(form.taxYear + 1, 0, 1));
+  const sampleItem = await prisma.payrollItem.findFirst({
+    where: {
+      associateId: form.associateId,
+      payrollRun: {
+        status: { not: 'CANCELLED' },
+        disbursedAt: { gte: yearStart, lt: yearEndExclusive },
+      },
+    },
+    include: { payrollRun: { include: { client: true } } },
+    orderBy: { createdAt: 'asc' },
+  });
+  const client = sampleItem?.payrollRun.client ?? null;
+  if (!client?.legalName || !client.ein) {
+    throw new HttpError(
+      400,
+      'missing_payer_info',
+      'Cannot render 1099-NEC: client is missing legalName or EIN. HR must fill these in on the client record before generating tax forms.',
+    );
+  }
+
+  const tin = decryptString(form.associate.tinEncrypted);
+  // Format: SSN as XXX-XX-XXXX for individuals; EIN as XX-XXXXXXX for
+  // businesses. Both are 9 digits, so we use employmentType to decide.
+  const tinFormatted =
+    tin.length === 9
+      ? form.associate.employmentType === 'CONTRACTOR_1099_BUSINESS'
+        ? `${tin.slice(0, 2)}-${tin.slice(2)}`
+        : `${tin.slice(0, 3)}-${tin.slice(3, 5)}-${tin.slice(5)}`
+      : tin;
+
+  const pdfData: Form1099NecPdfData = {
+    taxYear: form.taxYear,
+    payer: {
+      ein: client.ein,
+      name: client.legalName,
+      addressLine1: client.addressLine1,
+      addressLine2: client.addressLine2,
+      city: client.city,
+      state: client.state,
+      zip: client.zip,
+    },
+    recipient: {
+      tin: tinFormatted,
+      name: `${form.associate.firstName} ${form.associate.lastName}`.trim(),
+      addressLine1: form.associate.addressLine1,
+      addressLine2: form.associate.addressLine2,
+      city: form.associate.city,
+      state: form.associate.state,
+      zip: form.associate.zip,
+    },
+    accountNumber: form.id.slice(0, 12).toUpperCase(),
+    boxes: form.amounts as unknown as Form1099NecBoxes,
+    meta: { formId: form.id, generatedAt: new Date().toISOString() },
+  };
+
+  const pdf = await renderForm1099NecPdf(pdfData);
+  const hash = hashForm1099NecPdf(pdf);
+  const filename =
+    `1099NEC-${form.taxYear}-${form.associate.lastName}-${form.associate.firstName}.pdf`
+      .toLowerCase()
+      .replace(/[^\x20-\x7e]/g, '');
+  return { pdf, hash, form, filename };
+}
+
+/**
+ * GET /tax-forms/:id/pdf — renders the PDF for a TaxForm. Dispatches on
+ * form.kind:
+ *   - W2 / W2C       → renderW2ForForm
+ *   - F1099_NEC      → renderF1099NecForForm
+ *   - else           → 400 unsupported_kind
+ * Stamps `pdfHash` on first download (matching the paystub immutability
+ * contract). Same hash semantics across kinds; the per-helper hash
+ * function returns sha256 of the rendered bytes.
  *
  * Scope: associates may download their own form; HR/Finance/Manager can
  * download any. Mirrors /payroll/items/:itemId/paystub.pdf scoping.
@@ -767,7 +958,10 @@ payrollTax91Router.get('/tax-forms/:id/pdf', async (req, res, next) => {
       throw new HttpError(404, 'not_found', 'Form not found.');
     }
 
-    const { pdf, hash, filename } = await renderW2ForForm(req.params.id);
+    const { pdf, hash, filename } =
+      form.kind === 'F1099_NEC'
+        ? await renderF1099NecForForm(req.params.id)
+        : await renderW2ForForm(req.params.id);
 
     if (!form.pdfHash) {
       await prisma.taxForm.update({
@@ -881,6 +1075,98 @@ payrollTax91Router.get('/tax-forms/w2/bulk.zip', MANAGE, async (req, res, next) 
     if (skipped.length > 0) {
       const manifest =
         `Skipped ${skipped.length} of ${forms.length} W-2 forms.\n\n` +
+        skipped.map((s) => `${s.formId}\t${s.reason}`).join('\n') +
+        '\n';
+      zip.append(manifest, { name: 'manifest.txt' });
+    }
+
+    await zip.finalize();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /tax-forms/1099-nec/bulk.zip?taxYear=YYYY&clientId=UUID — sibling of
+ * the W-2 bulk endpoint. Streams every non-VOIDED 1099-NEC PDF for the
+ * year (and optional client scope), skips forms that fail to render, and
+ * appends a manifest.txt listing the skips.
+ */
+payrollTax91Router.get('/tax-forms/1099-nec/bulk.zip', MANAGE, async (req, res, next) => {
+  try {
+    const taxYear = z
+      .preprocess((v) => Number(v), z.number().int().min(2000).max(2100))
+      .parse(req.query.taxYear);
+    const clientId = z.string().uuid().optional().parse(req.query.clientId);
+
+    const where: Prisma.TaxFormWhereInput = {
+      kind: 'F1099_NEC',
+      taxYear,
+      status: { not: 'VOIDED' },
+    };
+    if (clientId) {
+      const yearStart = new Date(Date.UTC(taxYear, 0, 1));
+      const yearEndExclusive = new Date(Date.UTC(taxYear + 1, 0, 1));
+      const eligible = await prisma.payrollItem.findMany({
+        where: {
+          payrollRun: {
+            clientId,
+            status: { not: 'CANCELLED' },
+            disbursedAt: { gte: yearStart, lt: yearEndExclusive },
+          },
+        },
+        select: { associateId: true },
+        distinct: ['associateId'],
+      });
+      where.associateId = { in: eligible.map((e) => e.associateId) };
+    }
+
+    const forms = await prisma.taxForm.findMany({
+      where,
+      select: { id: true },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    if (forms.length === 0) {
+      throw new HttpError(
+        404,
+        'no_forms',
+        `No 1099-NEC forms found for year ${taxYear}${clientId ? ` and client ${clientId}` : ''}. Generate them first.`,
+      );
+    }
+
+    const { default: archiver } = await import('archiver');
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="1099nec-${taxYear}${clientId ? `-${clientId.slice(0, 8)}` : ''}.zip"`,
+    );
+
+    const zip = archiver('zip', { zlib: { level: 6 } });
+    zip.on('error', (err) => res.destroy(err));
+    zip.pipe(res);
+
+    const skipped: { formId: string; reason: string }[] = [];
+    for (const { id } of forms) {
+      try {
+        const { pdf, filename, hash, form } = await renderF1099NecForForm(id);
+        if (!form.pdfHash) {
+          await prisma.taxForm.update({
+            where: { id: form.id },
+            data: { pdfHash: hash },
+          });
+        }
+        zip.append(pdf, { name: filename });
+      } catch (err) {
+        const reason = err instanceof HttpError ? err.code : 'unknown';
+        skipped.push({ formId: id, reason });
+      }
+    }
+
+    if (skipped.length > 0) {
+      const manifest =
+        `Skipped ${skipped.length} of ${forms.length} 1099-NEC forms.\n\n` +
         skipped.map((s) => `${s.formId}\t${s.reason}`).join('\n') +
         '\n';
       zip.append(manifest, { name: 'manifest.txt' });

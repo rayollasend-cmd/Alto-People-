@@ -575,6 +575,13 @@ model Associate {
   // Phase 41 — W-2 vs 1099. Default W2 keeps every existing record's
   // payroll math identical; 1099 records skip W-4 / FICA / Medicare.
   employmentType    EmploymentType @default(W2_EMPLOYEE)
+  // Gap 11 — Recipient TIN for Form 1099-NEC. SSN for
+  // CONTRACTOR_1099_INDIVIDUAL, EIN for CONTRACTOR_1099_BUSINESS.
+  // Encrypted at rest with the same PAYOUT_ENCRYPTION_KEY scheme as
+  // W4Submission.ssnEncrypted. Null for W-2 employees (their SSN
+  // lives on W4Submission). Surfaces as `missing_tin` 400 in the
+  // 1099-NEC PDF + IRS-FIRE routes when null.
+  tinEncrypted      Bytes?
   // Phase 76 — org hierarchy. All four are nullable: existing rows
   // continue to work with NULLs and HR fills them in over time. The
   // managerId self-reference enables direct-reports queries.
