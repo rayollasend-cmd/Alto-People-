@@ -1,33 +1,54 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
+import { hasCapability } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { recordReimbursementEvent } from '../lib/audit.js';
 
 /**
- * Phase 97 — Spend management: reimbursements + expense lines.
+ * Gap 10 — Reimbursement two-step approval + payroll-fold integration.
  *
- * Lifecycle: associate creates DRAFT → adds lines → submits → manager
- * approves or rejects → finance attaches to next payroll run when paid.
- * Total is recomputed on every line add/remove/update so we never
- * trust a client-supplied total.
+ * Lifecycle:
+ *   ASSOCIATE creates DRAFT → adds expense lines → submits
+ *     ↓
+ *   MANAGER reviews   → manager-approve (→ MANAGER_APPROVED)
+ *                     → reject          (→ REJECTED)
+ *     ↓
+ *   HR / FINANCE      → settle           (→ SETTLED, queued for next run)
+ *                     → reject           (→ REJECTED)
+ *     ↓
+ *   payrollRun.create() drains SETTLED rows → status PAID, payrollItemId
+ *   stamped, amount added to PayrollItem.reimbursementsTotal (non-taxable
+ *   net pay addition; never affects grossPay or any wage base).
+ *
+ * The Phase 97 single-step /decide and /mark-paid endpoints are removed —
+ * the new flow uses /manager-approve, /settle, and /reject. Payment is
+ * auto-stamped by payrollAggregator when the next REGULAR run is created.
  */
 
 export const reimbursements97Router = Router();
 
+// View list / detail. Associates always scoped to their own.
 const VIEW = requireCapability('view:payroll');
-const MANAGE = requireCapability('process:payroll');
+// Submit / draft / add lines. Associates implicit via their associateId.
+const SUBMIT = requireCapability('submit:reimbursement');
+// Manager-approval step. Granted to MANAGER, OPERATIONS_MANAGER, HR_ADMINISTRATOR.
+const APPROVE = requireCapability('approve:reimbursement');
+// HR/Finance settle step. Granted to HR_ADMINISTRATOR, FINANCE_ACCOUNTANT.
+const SETTLE = requireCapability('settle:reimbursement');
 
 const ReimbursementInputSchema = z.object({
-  title: z.string().min(1).max(200),
+  title: z.string().trim().min(1).max(200),
   description: z.string().max(4000).optional().nullable(),
   currency: z.string().length(3).optional(),
 });
 
 const LineInputSchema = z.object({
   kind: z.enum(['RECEIPT', 'MILEAGE', 'PER_DIEM', 'OTHER']),
-  description: z.string().min(1).max(500),
-  incurredOn: z.string(),
+  description: z.string().trim().min(1).max(500),
+  incurredOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'incurredOn must be YYYY-MM-DD'),
   amount: z.number().nonnegative(),
   miles: z.number().nonnegative().optional().nullable(),
   ratePerMile: z.number().nonnegative().optional().nullable(),
@@ -36,30 +57,35 @@ const LineInputSchema = z.object({
   category: z.string().max(80).optional().nullable(),
 });
 
-async function recomputeTotal(reimbursementId: string): Promise<void> {
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+async function recomputeTotal(reimbursementId: string): Promise<number> {
   const lines = await prisma.expenseLine.findMany({
     take: 100,
     where: { reimbursementId },
     select: { amount: true },
   });
-  const total = lines.reduce((sum, l) => sum + Number(l.amount), 0);
+  const total = round2(lines.reduce((sum, l) => sum + Number(l.amount), 0));
   await prisma.reimbursement.update({
     where: { id: reimbursementId },
-    data: { totalAmount: total },
+    data: { totalAmount: new Prisma.Decimal(total) },
   });
+  return total;
 }
 
+/**
+ * GET /reimbursements — list. Associate scope is enforced server-side
+ * (associates can never see another's row regardless of query params).
+ */
 reimbursements97Router.get('/reimbursements', VIEW, async (req, res) => {
   const associateId = z.string().uuid().optional().parse(req.query.associateId);
   const status = z
-    .enum(['DRAFT', 'SUBMITTED', 'APPROVED', 'REJECTED', 'PAID'])
+    .enum(['DRAFT', 'SUBMITTED', 'MANAGER_APPROVED', 'SETTLED', 'REJECTED', 'PAID'])
     .optional()
     .parse(req.query.status);
-  // ASSOCIATEs only see their own — others can pass associateId to filter,
-  // or omit it for the full list.
   const isAssociate = req.user!.role === 'ASSOCIATE';
   const myAssociateId = req.user!.associateId;
-  const where = {
+  const where: Prisma.ReimbursementWhereInput = {
     ...(isAssociate
       ? { associateId: myAssociateId ?? '__none__' }
       : associateId
@@ -88,6 +114,8 @@ reimbursements97Router.get('/reimbursements', VIEW, async (req, res) => {
       status: r.status,
       lineCount: r._count.lines,
       submittedAt: r.submittedAt?.toISOString() ?? null,
+      managerApprovedAt: r.managerApprovedAt?.toISOString() ?? null,
+      settledAt: r.settledAt?.toISOString() ?? null,
       decidedAt: r.decidedAt?.toISOString() ?? null,
       paidAt: r.paidAt?.toISOString() ?? null,
       rejectionReason: r.rejectionReason,
@@ -96,7 +124,10 @@ reimbursements97Router.get('/reimbursements', VIEW, async (req, res) => {
   });
 });
 
-reimbursements97Router.post('/reimbursements', async (req, res) => {
+/**
+ * POST /reimbursements — associate creates a new DRAFT.
+ */
+reimbursements97Router.post('/reimbursements', SUBMIT, async (req, res) => {
   const input = ReimbursementInputSchema.parse(req.body);
   const associateId = req.user!.associateId;
   if (!associateId) {
@@ -114,9 +145,20 @@ reimbursements97Router.post('/reimbursements', async (req, res) => {
       currency: input.currency ?? 'USD',
     },
   });
+  await recordReimbursementEvent({
+    actorUserId: req.user!.id,
+    action: 'reimbursement.draft_created',
+    reimbursementId: created.id,
+    associateId,
+    metadata: { title: input.title },
+    req,
+  });
   res.status(201).json({ id: created.id });
 });
 
+/**
+ * GET /reimbursements/:id — full detail incl. lines.
+ */
 reimbursements97Router.get('/reimbursements/:id', VIEW, async (req, res) => {
   const r = await prisma.reimbursement.findUnique({
     where: { id: req.params.id },
@@ -126,7 +168,6 @@ reimbursements97Router.get('/reimbursements/:id', VIEW, async (req, res) => {
     },
   });
   if (!r) throw new HttpError(404, 'not_found', 'Reimbursement not found.');
-  // Associate can only see their own.
   if (req.user!.role === 'ASSOCIATE' && r.associateId !== req.user!.associateId) {
     throw new HttpError(404, 'not_found', 'Reimbursement not found.');
   }
@@ -140,9 +181,17 @@ reimbursements97Router.get('/reimbursements/:id', VIEW, async (req, res) => {
     currency: r.currency,
     status: r.status,
     submittedAt: r.submittedAt?.toISOString() ?? null,
+    managerApprovedById: r.managerApprovedById,
+    managerApprovedAt: r.managerApprovedAt?.toISOString() ?? null,
+    managerNote: r.managerNote,
+    settledById: r.settledById,
+    settledAt: r.settledAt?.toISOString() ?? null,
+    settleNote: r.settleNote,
     decidedAt: r.decidedAt?.toISOString() ?? null,
-    paidAt: r.paidAt?.toISOString() ?? null,
+    decidedById: r.decidedById,
     rejectionReason: r.rejectionReason,
+    payrollItemId: r.payrollItemId,
+    paidAt: r.paidAt?.toISOString() ?? null,
     lines: r.lines.map((l) => ({
       id: l.id,
       kind: l.kind,
@@ -158,7 +207,12 @@ reimbursements97Router.get('/reimbursements/:id', VIEW, async (req, res) => {
   });
 });
 
-reimbursements97Router.post('/reimbursements/:id/lines', async (req, res) => {
+/**
+ * POST /reimbursements/:id/lines — add an expense line. DRAFT or REJECTED
+ * only. Mileage rows must declare miles + ratePerMile and amount is
+ * server-computed as round2(miles * rate).
+ */
+reimbursements97Router.post('/reimbursements/:id/lines', SUBMIT, async (req, res) => {
   const input = LineInputSchema.parse(req.body);
   const r = await prisma.reimbursement.findUnique({ where: { id: req.params.id } });
   if (!r) throw new HttpError(404, 'not_found', 'Reimbursement not found.');
@@ -173,7 +227,6 @@ reimbursements97Router.post('/reimbursements/:id/lines', async (req, res) => {
     );
   }
 
-  // Mileage: amount = miles * rate. Validate consistency.
   let amount = input.amount;
   if (input.kind === 'MILEAGE') {
     if (input.miles == null || input.ratePerMile == null) {
@@ -183,7 +236,7 @@ reimbursements97Router.post('/reimbursements/:id/lines', async (req, res) => {
         'Mileage requires miles and ratePerMile.',
       );
     }
-    amount = input.miles * input.ratePerMile;
+    amount = round2(input.miles * input.ratePerMile);
   }
 
   const created = await prisma.expenseLine.create({
@@ -192,19 +245,22 @@ reimbursements97Router.post('/reimbursements/:id/lines', async (req, res) => {
       kind: input.kind,
       description: input.description,
       incurredOn: new Date(input.incurredOn),
-      amount,
-      miles: input.miles ?? null,
-      ratePerMile: input.ratePerMile ?? null,
+      amount: new Prisma.Decimal(amount),
+      miles: input.miles != null ? new Prisma.Decimal(input.miles) : null,
+      ratePerMile: input.ratePerMile != null ? new Prisma.Decimal(input.ratePerMile) : null,
       receiptUrl: input.receiptUrl ?? null,
       merchant: input.merchant ?? null,
       category: input.category ?? null,
     },
   });
-  await recomputeTotal(r.id);
-  res.status(201).json({ id: created.id });
+  const newTotal = await recomputeTotal(r.id);
+  res.status(201).json({ id: created.id, totalAmount: newTotal.toFixed(2) });
 });
 
-reimbursements97Router.delete('/expense-lines/:id', async (req, res) => {
+/**
+ * DELETE /expense-lines/:id — remove a line from a DRAFT/REJECTED.
+ */
+reimbursements97Router.delete('/expense-lines/:id', SUBMIT, async (req, res) => {
   const line = await prisma.expenseLine.findUnique({
     where: { id: req.params.id },
     include: { reimbursement: true },
@@ -231,7 +287,12 @@ reimbursements97Router.delete('/expense-lines/:id', async (req, res) => {
   res.status(204).end();
 });
 
-reimbursements97Router.post('/reimbursements/:id/submit', async (req, res) => {
+/**
+ * POST /reimbursements/:id/submit — associate moves DRAFT/REJECTED into
+ * SUBMITTED, awaiting manager approval. Total is recomputed; at least one
+ * line is required.
+ */
+reimbursements97Router.post('/reimbursements/:id/submit', SUBMIT, async (req, res) => {
   const r = await prisma.reimbursement.findUnique({
     where: { id: req.params.id },
     include: { _count: { select: { lines: true } } },
@@ -246,71 +307,189 @@ reimbursements97Router.post('/reimbursements/:id/submit', async (req, res) => {
   if (r._count.lines === 0) {
     throw new HttpError(400, 'no_lines', 'Add at least one line before submitting.');
   }
-  await prisma.reimbursement.update({
+  await recomputeTotal(r.id);
+  const updated = await prisma.reimbursement.update({
     where: { id: r.id },
     data: {
       status: 'SUBMITTED',
       submittedAt: new Date(),
+      // Clear prior rejection so a resubmit isn't shown as still rejected.
       rejectionReason: null,
+      decidedAt: null,
+      decidedById: null,
     },
+  });
+  await recordReimbursementEvent({
+    actorUserId: req.user!.id,
+    action: 'reimbursement.submitted',
+    reimbursementId: r.id,
+    associateId: r.associateId,
+    metadata: { totalAmount: updated.totalAmount.toString() },
+    req,
   });
   res.json({ ok: true });
 });
 
+const ManagerApproveBodySchema = z.object({
+  note: z.string().max(2000).trim().optional(),
+});
+
+/**
+ * POST /reimbursements/:id/manager-approve — manager moves SUBMITTED into
+ * MANAGER_APPROVED. Capability: approve:reimbursement.
+ */
 reimbursements97Router.post(
-  '/reimbursements/:id/decide',
-  MANAGE,
+  '/reimbursements/:id/manager-approve',
+  APPROVE,
   async (req, res) => {
-    const decision = z.enum(['APPROVED', 'REJECTED']).parse(req.body?.decision);
-    const reason = z.string().max(2000).optional().parse(req.body?.reason);
+    const input = ManagerApproveBodySchema.parse(req.body ?? {});
     const r = await prisma.reimbursement.findUnique({
       where: { id: req.params.id },
     });
     if (!r) throw new HttpError(404, 'not_found', 'Reimbursement not found.');
     if (r.status !== 'SUBMITTED') {
-      throw new HttpError(409, 'invalid_state', `Cannot decide ${r.status}.`);
-    }
-    if (decision === 'REJECTED' && !reason) {
-      throw new HttpError(400, 'reason_required', 'Rejection reason is required.');
+      throw new HttpError(409, 'invalid_state', `Cannot manager-approve ${r.status}.`);
     }
     await prisma.reimbursement.update({
       where: { id: r.id },
       data: {
-        status: decision,
-        decidedAt: new Date(),
-        decidedById: req.user!.id,
-        rejectionReason: decision === 'REJECTED' ? (reason ?? null) : null,
+        status: 'MANAGER_APPROVED',
+        managerApprovedAt: new Date(),
+        managerApprovedById: req.user!.id,
+        managerNote: input.note?.length ? input.note : null,
       },
+    });
+    await recordReimbursementEvent({
+      actorUserId: req.user!.id,
+      action: 'reimbursement.manager_approved',
+      reimbursementId: r.id,
+      associateId: r.associateId,
+      metadata: { note: input.note ?? null },
+      req,
     });
     res.json({ ok: true });
   },
 );
 
+const SettleBodySchema = z.object({
+  note: z.string().max(2000).trim().optional(),
+  // HR can override the receipt-required guard on settle when a receipt
+  // was lost; the waiver note carries the justification.
+  waiveMissingReceipts: z.boolean().optional(),
+  waiverNote: z.string().max(2000).trim().optional(),
+});
+
+/**
+ * POST /reimbursements/:id/settle — HR/Finance moves MANAGER_APPROVED into
+ * SETTLED. The row sits in the payroll-fold queue waiting for the next
+ * REGULAR run. Capability: settle:reimbursement.
+ *
+ * Receipt-required guard: any RECEIPT line lacking receiptUrl blocks the
+ * settle unless `waiveMissingReceipts=true` plus a `waiverNote` are
+ * supplied (the note is stored on Reimbursement.receiptWaiverNote).
+ */
 reimbursements97Router.post(
-  '/reimbursements/:id/mark-paid',
-  MANAGE,
+  '/reimbursements/:id/settle',
+  SETTLE,
   async (req, res) => {
-    const payrollRunId = z
-      .string()
-      .uuid()
-      .optional()
-      .nullable()
-      .parse(req.body?.payrollRunId);
+    const input = SettleBodySchema.parse(req.body ?? {});
     const r = await prisma.reimbursement.findUnique({
       where: { id: req.params.id },
+      include: { lines: true },
     });
     if (!r) throw new HttpError(404, 'not_found', 'Reimbursement not found.');
-    if (r.status !== 'APPROVED') {
-      throw new HttpError(409, 'invalid_state', `Cannot pay ${r.status}.`);
+    if (r.status !== 'MANAGER_APPROVED') {
+      throw new HttpError(409, 'invalid_state', `Cannot settle ${r.status}.`);
+    }
+    const linesMissingReceipt = r.lines.filter(
+      (l) => l.kind === 'RECEIPT' && !l.receiptUrl,
+    );
+    if (linesMissingReceipt.length > 0 && !input.waiveMissingReceipts) {
+      throw new HttpError(
+        400,
+        'receipts_required',
+        `${linesMissingReceipt.length} receipt line(s) are missing a receipt. Pass waiveMissingReceipts=true with a waiverNote to override.`,
+      );
+    }
+    if (input.waiveMissingReceipts && !input.waiverNote) {
+      throw new HttpError(
+        400,
+        'waiver_note_required',
+        'A waiver note is required when overriding the receipt-required guard.',
+      );
     }
     await prisma.reimbursement.update({
       where: { id: r.id },
       data: {
-        status: 'PAID',
-        paidAt: new Date(),
-        paidPayrollRunId: payrollRunId ?? null,
+        status: 'SETTLED',
+        settledAt: new Date(),
+        settledById: req.user!.id,
+        settleNote: input.note?.length ? input.note : null,
+        receiptWaiverNote: input.waiveMissingReceipts ? (input.waiverNote ?? null) : null,
       },
+    });
+    await recordReimbursementEvent({
+      actorUserId: req.user!.id,
+      action: 'reimbursement.settled',
+      reimbursementId: r.id,
+      associateId: r.associateId,
+      metadata: {
+        totalAmount: r.totalAmount.toString(),
+        receiptsWaived: input.waiveMissingReceipts ? linesMissingReceipt.length : 0,
+      },
+      req,
     });
     res.json({ ok: true });
   },
 );
+
+const RejectBodySchema = z.object({
+  reason: z.string().trim().min(1, 'reason is required').max(2000),
+});
+
+/**
+ * POST /reimbursements/:id/reject — manager OR HR can reject. Manager
+ * uses approve:reimbursement; HR uses settle:reimbursement. The handler
+ * accepts either capability so a single endpoint serves both points in
+ * the flow. Reason required.
+ */
+reimbursements97Router.post('/reimbursements/:id/reject', async (req, res) => {
+  const user = req.user!;
+  const hasApprove = hasCapability(user.role, 'approve:reimbursement');
+  const hasSettle = hasCapability(user.role, 'settle:reimbursement');
+  if (!hasApprove && !hasSettle) {
+    throw new HttpError(403, 'forbidden', 'Insufficient capability to reject.');
+  }
+  const input = RejectBodySchema.parse(req.body ?? {});
+  const r = await prisma.reimbursement.findUnique({
+    where: { id: req.params.id },
+  });
+  if (!r) throw new HttpError(404, 'not_found', 'Reimbursement not found.');
+  // Manager rejects SUBMITTED; HR rejects MANAGER_APPROVED. SETTLED + PAID
+  // are terminal — no rejection from there (use void/amend at the payroll
+  // layer if the issue is found post-settle).
+  const allowed: ('SUBMITTED' | 'MANAGER_APPROVED')[] = [];
+  if (hasApprove) allowed.push('SUBMITTED');
+  if (hasSettle) allowed.push('MANAGER_APPROVED');
+  if (!(allowed as string[]).includes(r.status)) {
+    throw new HttpError(409, 'invalid_state', `Cannot reject ${r.status}.`);
+  }
+  await prisma.reimbursement.update({
+    where: { id: r.id },
+    data: {
+      status: 'REJECTED',
+      decidedAt: new Date(),
+      decidedById: user.id,
+      rejectionReason: input.reason,
+    },
+  });
+  await recordReimbursementEvent({
+    actorUserId: user.id,
+    action: 'reimbursement.rejected',
+    reimbursementId: r.id,
+    associateId: r.associateId,
+    metadata: { reason: input.reason, fromStatus: r.status },
+    req,
+  });
+  res.json({ ok: true });
+});

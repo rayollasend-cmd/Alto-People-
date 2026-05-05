@@ -77,6 +77,15 @@ export interface ProjectedItem {
   disposableEarnings: number;
   garnishments: ProjectedGarnishment[];
   postTaxDeductions: number;
+  /**
+   * Gap 10 — sum of SETTLED reimbursements queued for this associate. Added
+   * to netPay AFTER taxes / deductions; never affects grossPay or any
+   * wage base (accountable-plan rule). Persistence stamps these rows
+   * with payrollItemId at run-creation time.
+   */
+  reimbursementsTotal: number;
+  /** IDs of Reimbursement rows consumed for this item — empty in preview. */
+  reimbursementIds: string[];
   netPay: number;
   /** Employer-side accruals (informational; not deducted from net). */
   employerFica: number;
@@ -262,7 +271,28 @@ export async function aggregatePayrollProjection(
     });
 
     const postTaxDeductions = garnResult.total;
-    const finalNetPay = round2(breakdown.netPay - postTaxDeductions);
+
+    // Gap 10 — fold settled-but-unpaid reimbursements into this item.
+    // Read-only here (preview safe); persistence is run-creation's job.
+    // Accountable-plan rule: amount is added AFTER taxes and never
+    // touches grossPay / taxableGross / any wage base.
+    const settledReimbursements = await tx.reimbursement.findMany({
+      where: {
+        associateId,
+        status: 'SETTLED',
+        payrollItemId: null,
+      },
+      select: { id: true, totalAmount: true },
+      orderBy: { settledAt: 'asc' },
+    });
+    const reimbursementsTotal = round2(
+      settledReimbursements.reduce((sum, r) => sum + Number(r.totalAmount), 0)
+    );
+    const reimbursementIds = settledReimbursements.map((r) => r.id);
+
+    const finalNetPay = round2(
+      breakdown.netPay - postTaxDeductions + reimbursementsTotal
+    );
 
     const earnings: ProjectedEarning[] = [];
     if (otSplit.regularHours > 0) {
@@ -306,6 +336,8 @@ export async function aggregatePayrollProjection(
       disposableEarnings,
       garnishments: garnResult.deductions,
       postTaxDeductions,
+      reimbursementsTotal,
+      reimbursementIds,
       netPay: finalNetPay,
       employerFica: breakdown.employer.fica,
       employerMedicare: breakdown.employer.medicare,

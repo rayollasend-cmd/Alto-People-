@@ -411,8 +411,11 @@ model User {
   worktagAssignmentsAuthored        WorktagAssignment[]          @relation("WorktagAssigner")
   // Phase 96 — saved reports authored.
   reportsCreated                    Report[]                     @relation("ReportCreator")
-  // Phase 97 — reimbursement decisions.
+  // Phase 97 — reimbursement decisions (rejection audit; manager OR HR).
   reimbursementsDecided             Reimbursement[]              @relation("ReimbursementDecider")
+  // Gap 10 — manager-step approvals + HR settle-step approvals on reimbursements.
+  reimbursementsManagerApproved     Reimbursement[]              @relation("ReimbursementManagerApprover")
+  reimbursementsSettled             Reimbursement[]              @relation("ReimbursementSettler")
   // Phase 99 — kiosk authorship (devices registered, PINs assigned).
   kioskDevicesCreated               KioskDevice[]                @relation("KioskDeviceCreator")
   kioskPinsCreated                  KioskPin[]                   @relation("KioskPinCreator")
@@ -1464,6 +1467,11 @@ model PayrollItem {
   // NOT affect FIT/FICA/Medicare/SIT bases. Per-deduction breakdown for
   // garnishments lives in GarnishmentDeduction rows tied to the run.
   postTaxDeductions  Decimal           @default(0) @db.Decimal(12, 2)
+  // Gap 10 — sum of folded reimbursement amounts on this item. Added to
+  // netPay after taxes / deductions; never affects grossPay or any wage
+  // base (accountable-plan rule). Per-row breakdown lives on PayrollItem-
+  // Earning rows with kind=REIMBURSEMENT, isTaxable=false.
+  reimbursementsTotal Decimal          @default(0) @db.Decimal(10, 2)
   netPay             Decimal           @db.Decimal(12, 2)
   // The state used for SIT lookup (snapshot of associate.state at compute
   // time). Lets the paystub label the SIT line and the auditor see why a
@@ -1513,6 +1521,11 @@ model PayrollItem {
   // item (when it's a regular run absorbing a clawback).
   pendingDeductionsCreated PendingPayrollDeduction[] @relation("PendingDeductionSource")
   pendingDeductionsApplied PendingPayrollDeduction[] @relation("PendingDeductionAppliedItem")
+
+  // Gap 10 — reimbursement rows folded into this item via the next-payroll-
+  // run drain. Stamped on Reimbursement.payrollItemId at run-creation time
+  // so the row can't be double-folded.
+  reimbursementsPaid       Reimbursement[]           @relation("ReimbursementPaidItem")
 
   // One paystub per (run, associate) — re-aggregating updates in place
   // rather than duplicating.
@@ -3817,10 +3830,19 @@ model ReportSchedule {
 
 // Phase 97 — Spend management: reimbursements + expense lines.
 
+// Gap 10 — Two-step approval flow:
+//   DRAFT → SUBMITTED → MANAGER_APPROVED → SETTLED → PAID
+//                            │
+//                            └─ rejected from any non-terminal state
+//
+// Phase 97's old 'APPROVED' is renamed to SETTLED; the migration renames
+// in place (Postgres ALTER TYPE RENAME VALUE). MANAGER_APPROVED is the
+// new intermediate state between manager approval and HR/Finance settle.
 enum ReimbursementStatus {
   DRAFT
   SUBMITTED
-  APPROVED
+  MANAGER_APPROVED
+  SETTLED
   REJECTED
   PAID
 }
@@ -3841,18 +3863,45 @@ model Reimbursement {
   currency         String              @default("USD") @db.VarChar(3)
   status           ReimbursementStatus @default(DRAFT)
   submittedAt      DateTime?           @db.Timestamptz(6)
-  decidedAt        DateTime?           @db.Timestamptz(6)
-  decidedById      String?             @db.Uuid
-  rejectionReason  String?
-  paidPayrollRunId String?             @db.Uuid
-  paidAt           DateTime?           @db.Timestamptz(6)
-  createdAt        DateTime            @default(now()) @db.Timestamptz(6)
-  updatedAt        DateTime            @updatedAt @db.Timestamptz(6)
 
-  associate      Associate     @relation(fields: [associateId], references: [id], onDelete: Cascade)
-  decidedBy      User?         @relation("ReimbursementDecider", fields: [decidedById], references: [id], onDelete: SetNull)
-  paidPayrollRun PayrollRun?   @relation(fields: [paidPayrollRunId], references: [id], onDelete: SetNull)
-  lines          ExpenseLine[]
+  // Gap 10 — manager approval audit (the new intermediate step). Stamped
+  // by POST /reimbursements/:id/manager-approve.
+  managerApprovedById String?   @db.Uuid
+  managerApprovedAt   DateTime? @db.Timestamptz(6)
+  managerNote         String?
+
+  // Gap 10 — HR/Finance settlement audit. Stamped by POST
+  // /reimbursements/:id/settle. Once SETTLED the row sits in the
+  // payroll-fold queue waiting for the next REGULAR run.
+  settledById String?   @db.Uuid
+  settledAt   DateTime? @db.Timestamptz(6)
+  settleNote  String?
+  // HR can override the receipt-required guard at settle time when a
+  // receipt is genuinely lost; the waiver note carries the justification.
+  receiptWaiverNote String?
+
+  // Phase 97 single-decision audit, repurposed as the rejection audit
+  // (rejections come from manager OR HR; both share these columns).
+  decidedAt       DateTime? @db.Timestamptz(6)
+  decidedById     String?   @db.Uuid
+  rejectionReason String?
+
+  // Gap 10 — payroll fold-in link. Stamped at REGULAR run-creation when
+  // a SETTLED row drains. paidPayrollRunId stays for back-compat (Phase
+  // 97 stored a run-level link); new code reads payrollItemId.
+  payrollItemId    String?   @db.Uuid
+  paidPayrollRunId String?   @db.Uuid
+  paidAt           DateTime? @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(6)
+
+  associate         Associate     @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  decidedBy         User?         @relation("ReimbursementDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  managerApprovedBy User?         @relation("ReimbursementManagerApprover", fields: [managerApprovedById], references: [id], onDelete: SetNull)
+  settledBy         User?         @relation("ReimbursementSettler", fields: [settledById], references: [id], onDelete: SetNull)
+  paidPayrollRun    PayrollRun?   @relation(fields: [paidPayrollRunId], references: [id], onDelete: SetNull)
+  payrollItem       PayrollItem?  @relation("ReimbursementPaidItem", fields: [payrollItemId], references: [id], onDelete: SetNull)
+  lines             ExpenseLine[]
 
   @@index([associateId, status])
   @@index([status])
@@ -5077,6 +5126,11 @@ model OrgSetting {
   logoBytes       Bytes?
   logoContentType String?   @db.VarChar(64)
   logoUpdatedAt   DateTime? @db.Timestamptz(6)
+  // Gap 10 — IRS standard mileage rate, snapshot-copied onto every new
+  // mileage ExpenseLine at submit time so a rate change can't silently
+  // re-price already-approved rows. IRS announces the next-year rate in
+  // December; HR updates this column at year start.
+  mileageRatePerMile Decimal @default(0.6700) @db.Decimal(8, 4)
   updatedAt       DateTime  @updatedAt @db.Timestamptz(6)
 }
 

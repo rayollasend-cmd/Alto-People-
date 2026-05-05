@@ -1,9 +1,13 @@
 import { apiFetch } from './api';
 
+// Gap 10 — two-step approval (manager → HR/Finance) + payroll fold-in.
+// SETTLED is what Phase 97 used to call APPROVED; MANAGER_APPROVED is the
+// new intermediate state.
 export type ReimbursementStatus =
   | 'DRAFT'
   | 'SUBMITTED'
-  | 'APPROVED'
+  | 'MANAGER_APPROVED'
+  | 'SETTLED'
   | 'REJECTED'
   | 'PAID';
 
@@ -20,6 +24,8 @@ export interface ReimbursementSummary {
   status: ReimbursementStatus;
   lineCount: number;
   submittedAt: string | null;
+  managerApprovedAt: string | null;
+  settledAt: string | null;
   decidedAt: string | null;
   paidAt: string | null;
   rejectionReason: string | null;
@@ -40,6 +46,12 @@ export interface ExpenseLine {
 }
 
 export interface ReimbursementFull extends Omit<ReimbursementSummary, 'lineCount'> {
+  managerApprovedById: string | null;
+  managerNote: string | null;
+  settledById: string | null;
+  settleNote: string | null;
+  decidedById: string | null;
+  payrollItemId: string | null;
   lines: ExpenseLine[];
 }
 
@@ -79,7 +91,7 @@ export const addExpenseLine = (
     category?: string | null;
   },
 ) =>
-  apiFetch<{ id: string }>(`/reimbursements/${id}/lines`, {
+  apiFetch<{ id: string; totalAmount: string }>(`/reimbursements/${id}/lines`, {
     method: 'POST',
     body: input,
   });
@@ -93,18 +105,49 @@ export const submitReimbursement = (id: string) =>
     body: {},
   });
 
-export const decideReimbursement = (
-  id: string,
-  decision: 'APPROVED' | 'REJECTED',
-  reason?: string,
-) =>
-  apiFetch<{ ok: true }>(`/reimbursements/${id}/decide`, {
+// Gap 10 — Manager step: SUBMITTED → MANAGER_APPROVED. Capability:
+// approve:reimbursement (held by MANAGER, OPERATIONS_MANAGER, HR_ADMIN).
+export const managerApproveReimbursement = (id: string, note?: string) =>
+  apiFetch<{ ok: true }>(`/reimbursements/${id}/manager-approve`, {
     method: 'POST',
-    body: { decision, reason },
+    body: { note: note ?? null },
   });
 
-export const markPaidReimbursement = (id: string, payrollRunId?: string) =>
-  apiFetch<{ ok: true }>(`/reimbursements/${id}/mark-paid`, {
+// Gap 10 — HR/Finance step: MANAGER_APPROVED → SETTLED. Capability:
+// settle:reimbursement (held by HR_ADMIN, FINANCE_ACCOUNTANT). Pass
+// waiveMissingReceipts+waiverNote to override the receipt-required guard.
+export const settleReimbursement = (
+  id: string,
+  opts?: {
+    note?: string;
+    waiveMissingReceipts?: boolean;
+    waiverNote?: string;
+  },
+) =>
+  apiFetch<{ ok: true }>(`/reimbursements/${id}/settle`, {
     method: 'POST',
-    body: { payrollRunId: payrollRunId ?? null },
+    body: opts ?? {},
   });
+
+// Gap 10 — Manager OR HR can reject (depending on status). Reason required.
+export const rejectReimbursement = (id: string, reason: string) =>
+  apiFetch<{ ok: true }>(`/reimbursements/${id}/reject`, {
+    method: 'POST',
+    body: { reason },
+  });
+
+/**
+ * Recommended categories for the UI dropdown. ExpenseLine.category is a
+ * free-form string server-side; this is just a UI helper. HR can type
+ * a custom category if none of these fit.
+ */
+export const RECOMMENDED_CATEGORIES = [
+  'Meals',
+  'Travel',
+  'Lodging',
+  'Supplies',
+  'Equipment',
+  'Training',
+  'Mileage',
+  'Other',
+] as const;

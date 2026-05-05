@@ -645,6 +645,7 @@ payrollRouter.post('/runs', PROCESS, async (req, res, next) => {
             employerMedicare: p.employerMedicare,
             employerFuta: p.employerFuta,
             employerSuta: p.employerSuta,
+            reimbursementsTotal: p.reimbursementsTotal,
             netPay: p.netPay,
             status: 'PENDING',
           },
@@ -665,6 +666,7 @@ payrollRouter.post('/runs', PROCESS, async (req, res, next) => {
             employerMedicare: p.employerMedicare,
             employerFuta: p.employerFuta,
             employerSuta: p.employerSuta,
+            reimbursementsTotal: p.reimbursementsTotal,
             netPay: p.netPay,
           },
         });
@@ -733,6 +735,46 @@ payrollRouter.post('/runs', PROCESS, async (req, res, next) => {
                 amountWithheld: new Prisma.Decimal(newWithheld),
                 ...(d.reachedCap ? { status: 'COMPLETED' as const } : {}),
               },
+            });
+          }
+        }
+
+        // Gap 10 — fold SETTLED reimbursements into this item. Stamp the
+        // Reimbursement rows with payrollItemId so a later run can't
+        // double-fold them, and mirror as PayrollItemEarning rows
+        // (kind=REIMBURSEMENT, isTaxable=false) so the paystub PDF can
+        // show a per-row breakdown. Re-aggregation safety: the WHERE
+        // filter requires status=SETTLED + payrollItemId IS NULL so a
+        // re-run (which sees the rows already PAID) is a no-op.
+        if (p.reimbursementIds.length > 0) {
+          const updated = await tx.reimbursement.updateMany({
+            where: {
+              id: { in: p.reimbursementIds },
+              status: 'SETTLED',
+              payrollItemId: null,
+            },
+            data: {
+              status: 'PAID',
+              payrollItemId: upserted.id,
+              paidPayrollRunId: run.id,
+              paidAt: new Date(),
+            },
+          });
+          if (updated.count > 0) {
+            const folded = await tx.reimbursement.findMany({
+              where: { payrollItemId: upserted.id },
+              select: { id: true, title: true, totalAmount: true },
+            });
+            await tx.payrollItemEarning.createMany({
+              data: folded.map((r) => ({
+                payrollItemId: upserted.id,
+                kind: 'REIMBURSEMENT' as const,
+                hours: null,
+                rate: null,
+                amount: r.totalAmount,
+                isTaxable: false,
+                notes: r.title,
+              })),
             });
           }
         }
@@ -1637,6 +1679,10 @@ payrollRouter.get('/runs/:runId/paystubs.zip', async (req, res, next) => {
           suta: Number(item.employerSuta),
         },
         meta: { runId: run.id, itemId: item.id, issuedAt },
+        // Gap 10 — non-taxable reimbursements rolled into this paycheck.
+        ...(Number(item.reimbursementsTotal) > 0
+          ? { reimbursements: { total: Number(item.reimbursementsTotal) } }
+          : {}),
         // Gap 3 — amendment banner + voided watermark for the audit trail.
         ...(run.kind === 'AMENDMENT' && run.amendsRunId
           ? {
@@ -1767,6 +1813,10 @@ payrollRouter.get('/items/:itemId/paystub.pdf', async (req, res, next) => {
         itemId: item.id,
         issuedAt: new Date().toISOString(),
       },
+      // Gap 10 — non-taxable reimbursements rolled into this paycheck.
+      ...(Number(item.reimbursementsTotal) > 0
+        ? { reimbursements: { total: Number(item.reimbursementsTotal) } }
+        : {}),
       // Gap 3 — amendment banner + voided watermark for the audit trail.
       ...(item.payrollRun.kind === 'AMENDMENT' && item.payrollRun.amendsRunId
         ? {
