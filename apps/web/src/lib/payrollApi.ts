@@ -176,3 +176,33 @@ export function assignPayrollSchedule(
     { method: 'POST', body: { associateIds } }
   );
 }
+
+/* ===== Payroll readiness dashboard ====================================== */
+
+export type ReadinessFlagKey =
+  | 'w4OnFile'
+  | 'taxStateSet'
+  | 'payoutMethodOnFile'
+  | 'payScheduleAssigned'
+  | 'userLinked';
+
+export interface PayrollReadinessRow {
+  associateId: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  employmentType: 'W2_EMPLOYEE' | 'CONTRACTOR_1099_INDIVIDUAL' | 'CONTRACTOR_1099_BUSINESS';
+  flags: Record<ReadinessFlagKey, boolean>;
+  ready: boolean;
+}
+
+export interface PayrollReadinessResponse {
+  total: number;
+  readyCount: number;
+  missingCount: number;
+  rows: PayrollReadinessRow[];
+}
+
+export function getPayrollReadiness(): Promise<PayrollReadinessResponse> {
+  return apiFetch<PayrollReadinessResponse>('/payroll/readiness');
+}

@@ -158,4 +158,26 @@ if (!parsed.success) {
   process.exit(1);
 }
 
+// Cross-field guards. We exit fail-loud rather than fall back silently —
+// a misconfigured production environment that quietly routes to STUB
+// would not move money, and the failure mode is invisible until payday.
+if (parsed.data.PAYROLL_DISBURSEMENT_PROVIDER === 'BRANCH') {
+  if (!parsed.data.BRANCH_API_KEY || parsed.data.BRANCH_API_KEY.trim() === '') {
+    console.error(
+      'FATAL: PAYROLL_DISBURSEMENT_PROVIDER is set to BRANCH but BRANCH_API_KEY is not configured. ' +
+        'The system will not start to prevent silent payment failures. ' +
+        'Set BRANCH_API_KEY in your environment variables.',
+    );
+    process.exit(1);
+  }
+  if (!parsed.data.BRANCH_WEBHOOK_SECRET || parsed.data.BRANCH_WEBHOOK_SECRET.trim() === '') {
+    console.error(
+      'FATAL: PAYROLL_DISBURSEMENT_PROVIDER is set to BRANCH but BRANCH_WEBHOOK_SECRET is not configured. ' +
+        'The system will not start to prevent silent payment failures. ' +
+        'Set BRANCH_WEBHOOK_SECRET in your environment variables.',
+    );
+    process.exit(1);
+  }
+}
+
 export const env: Env = parsed.data;

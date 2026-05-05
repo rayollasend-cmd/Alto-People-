@@ -376,10 +376,18 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
         }
         primaryAction={
           canProcess ? (
-            <Button onClick={() => setShowCreate(true)}>
-              <Plus className="h-4 w-4" />
-              New run
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button asChild variant="ghost" size="sm">
+                <a href="/payroll/readiness">
+                  <Users className="mr-1 h-4 w-4" />
+                  Readiness
+                </a>
+              </Button>
+              <Button onClick={() => setShowCreate(true)}>
+                <Plus className="h-4 w-4" />
+                New run
+              </Button>
+            </div>
           ) : undefined
         }
       />

@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   keepPreviousData,
   useQuery,
@@ -144,6 +144,12 @@ export function PeopleDirectory() {
   const [filters, setFilters] = useState<DirectoryFilters>({});
   const [search, setSearch] = useState('');
   const [target, setTarget] = useState<DirectoryEntry | null>(null);
+  // Deep-link support: /people?associateId=<uuid> auto-opens the drawer
+  // for that associate. Used by the payroll readiness dashboard so a
+  // red-X click lands on the right profile. We consume the param once
+  // (drop it on first match) so back-navigating doesn't re-open.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const deepLinkAssociateId = searchParams.get('associateId');
 
   // Debounce the search input. We search server-side to keep the row math
   // (status derivation, comp lookup) honest with paging in the future.
@@ -175,6 +181,21 @@ export function PeopleDirectory() {
     queryFn: async () => (await listDirectory(filters)).associates,
     placeholderData: keepPreviousData,
   });
+
+  // Resolve the deep-link associateId once rows load. setTarget is the
+  // canonical drawer-open path so we get all the existing render logic
+  // for free. Strip the query param so the URL stays clean and a back-
+  // forward dance doesn't re-open the drawer after the user closed it.
+  useEffect(() => {
+    if (!deepLinkAssociateId || !rows) return;
+    const match = rows.find((r) => r.id === deepLinkAssociateId);
+    if (match) {
+      setTarget(match);
+      const next = new URLSearchParams(searchParams);
+      next.delete('associateId');
+      setSearchParams(next, { replace: true });
+    }
+  }, [deepLinkAssociateId, rows, searchParams, setSearchParams]);
   const error = rowsError
     ? rowsError instanceof ApiError
       ? rowsError.message

@@ -67,6 +67,10 @@ const PayrollConfigView = lazyNamed(
   () => import('@/pages/payroll/PayrollConfigView'),
   'PayrollConfigView',
 );
+const PayrollReadiness = lazyNamed(
+  () => import('@/pages/payroll/PayrollReadiness'),
+  'PayrollReadiness',
+);
 const PayrollTaxHome = lazyNamed(() => import('@/pages/payrollTax/PayrollTaxHome'), 'PayrollTaxHome');
 const PayRulesHome = lazyNamed(() => import('@/pages/payrules/PayRulesHome'), 'PayRulesHome');
 const ReimbursementsHome = lazyNamed(() => import('@/pages/reimbursements/ReimbursementsHome'), 'ReimbursementsHome');
@@ -382,6 +386,7 @@ export const router = createBrowserRouter([
       { path: 'recruiting/extras', element: <RequireCapability cap="view:recruiting"><RecruitingExtras /></RequireCapability> },
       { path: 'payroll/tax', element: <RequireCapability cap="view:payroll"><PayrollTaxHome /></RequireCapability> },
       { path: 'payroll/config', element: <RequireCapability cap="process:payroll"><PayrollConfigView /></RequireCapability> },
+      { path: 'payroll/readiness', element: <RequireCapability cap="process:payroll"><PayrollReadiness /></RequireCapability> },
       { path: 'benefits/lifecycle', element: <RequireCapability cap="view:hr-admin"><BenefitsLifecycle /></RequireCapability> },
       { path: 'integrations', element: <RequireCapability cap="view:integrations"><IntegrationsHome /></RequireCapability> },
       { path: 'learning', element: <RequireCapability cap="view:dashboard"><LearningHome /></RequireCapability> },
