@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Download, FileText, Plus, Receipt, Scale } from 'lucide-react';
+import { ChevronDown, Download, FileText, Plus, Receipt, Scale } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
   build941,
@@ -18,6 +18,7 @@ import {
   w2BulkZipUrl,
   w2Efw2Url,
   w2Efw2cUrl,
+  w2PdfUrl,
   type Garnishment,
   type GarnishmentKind,
   type GarnishmentStatus,
@@ -39,6 +40,12 @@ import {
   DrawerFooter,
   DrawerHeader,
   DrawerTitle,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
   EmptyState,
   Input,
   PageHeader,
@@ -543,11 +550,57 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
                     </TableCell>
                     <TableCell className="text-right space-x-2">
                       {(f.kind === 'W2' || f.kind === 'W2C') && f.status !== 'VOIDED' && (
-                        <Button size="sm" variant="ghost" asChild>
-                          <a href={taxFormPdfUrl(f.id)} download>
-                            <Download className="mr-1 h-3 w-3" /> PDF
-                          </a>
-                        </Button>
+                        <span className="inline-flex">
+                          <Button size="sm" variant="ghost" asChild className="rounded-r-none">
+                            <a href={taxFormPdfUrl(f.id)} download>
+                              <Download className="mr-1 h-3 w-3" /> PDF
+                            </a>
+                          </Button>
+                          {f.kind === 'W2' && (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="rounded-l-none border-l border-navy-secondary px-2"
+                                  aria-label="More PDF formats"
+                                >
+                                  <ChevronDown className="h-3 w-3" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuLabel>Single copy</DropdownMenuLabel>
+                                <DropdownMenuItem asChild>
+                                  <a href={w2PdfUrl(f.id, { copy: 'C' })} download>
+                                    Copy C — Employee record
+                                  </a>
+                                </DropdownMenuItem>
+                                <DropdownMenuItem asChild>
+                                  <a href={w2PdfUrl(f.id, { copy: 'D' })} download>
+                                    Copy D — Employer record
+                                  </a>
+                                </DropdownMenuItem>
+                                <DropdownMenuItem asChild>
+                                  <a href={w2PdfUrl(f.id, { copy: '2' })} download>
+                                    Copy 2 — State / local
+                                  </a>
+                                </DropdownMenuItem>
+                                <DropdownMenuItem asChild>
+                                  <a href={w2PdfUrl(f.id, { copy: 'A' })} download>
+                                    Copy A — SSA (paper)
+                                  </a>
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuLabel>Multi-copy paper</DropdownMenuLabel>
+                                <DropdownMenuItem asChild>
+                                  <a href={w2PdfUrl(f.id, { layout: '4up' })} download>
+                                    4-up sheet (B / C / 2 / 2)
+                                  </a>
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          )}
+                        </span>
                       )}
                       {canManage &&
                         f.kind === 'W2' &&

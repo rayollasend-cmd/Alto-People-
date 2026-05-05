@@ -144,6 +144,25 @@ export const generateW2s = (input: { taxYear: number; clientId?: string | null }
 /** Direct URL — used as href for an <a download> tag. */
 export const taxFormPdfUrl = (id: string): string => `/api/tax-forms/${id}/pdf`;
 
+/**
+ * Same route, opt-in W-2 copy variant. `copy` selects which IRS copy
+ * label to render (B = federal employee return, C = employee record,
+ * D = employer's record, "2" = state, A = SSA submission). `layout`
+ * defaults to single full-page; '4up' packs B/C/2/2 onto one sheet —
+ * matches the standard payroll-house preprinted paper format. W-2c
+ * forms ignore both options and always render single-page.
+ */
+export const w2PdfUrl = (
+  id: string,
+  options: { copy?: 'A' | 'B' | 'C' | 'D' | '2'; layout?: 'single' | '4up' } = {},
+): string => {
+  const q = new URLSearchParams();
+  if (options.layout && options.layout !== 'single') q.set('layout', options.layout);
+  if (options.copy && options.copy !== 'B') q.set('copy', options.copy);
+  const qs = q.toString();
+  return qs ? `/api/tax-forms/${id}/pdf?${qs}` : `/api/tax-forms/${id}/pdf`;
+};
+
 /** Direct URL for the bulk-download zip (year + optional client scope). */
 export const w2BulkZipUrl = (taxYear: number, clientId?: string | null): string => {
   const q = new URLSearchParams({ taxYear: String(taxYear) });
