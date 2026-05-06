@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
   ArrowDownUp,
@@ -43,6 +43,7 @@ import { BranchEnrollmentDialog } from './BranchEnrollmentDialog';
 import { RunPayrollWizard } from './RunPayrollWizard';
 import { PaySchedulesView } from './PaySchedulesView';
 import { GarnishmentsView } from './GarnishmentsView';
+import { WebhookHealthTile } from './WebhookHealthTile';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { ApiError } from '@/lib/api';
 import { Avatar } from '@/components/ui/Avatar';
@@ -383,6 +384,18 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                   Readiness
                 </a>
               </Button>
+              <Button asChild variant="ghost" size="sm">
+                <a href="/payroll/ytd">
+                  <FileText className="mr-1 h-4 w-4" />
+                  YTD report
+                </a>
+              </Button>
+              <Button asChild variant="ghost" size="sm">
+                <a href="/payroll/year-end-close">
+                  <CheckCircle2 className="mr-1 h-4 w-4" />
+                  Year-end close
+                </a>
+              </Button>
               <Button onClick={() => setShowCreate(true)}>
                 <Plus className="h-4 w-4" />
                 New run
@@ -420,6 +433,12 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
         onOpenLastRun={(id) => openRun(id)}
       />
 
+      {canProcess && (
+        <div className="mb-4">
+          <WebhookHealthTile />
+        </div>
+      )}
+
       <Tabs value={tab} onValueChange={(v) => setTab(v as 'runs' | 'schedules' | 'garnishments')} className="mb-5">
         <TabsList>
           <TabsTrigger value="runs">Runs</TabsTrigger>
@@ -434,14 +453,14 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
         </TabsContent>
         <TabsContent value="runs" className="mt-5">
 
-      <div className="flex flex-wrap gap-2 mb-5">
+      <div className="-mx-2 mb-5 flex gap-2 overflow-x-auto px-2 pb-1 sm:mx-0 sm:flex-wrap sm:px-0 sm:pb-0">
         {STATUS_FILTERS.map((f) => (
           <button
             key={f.value}
             type="button"
             onClick={() => setFilter(f.value)}
             className={cn(
-              'px-3 py-1.5 rounded-md text-sm border transition-colors',
+              'shrink-0 rounded-md border px-2.5 py-1.5 text-xs transition-colors sm:px-3 sm:text-sm',
               'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
               filter === f.value
                 ? 'border-gold text-gold bg-gold/10'
@@ -478,15 +497,22 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
               }
               description={
                 filter === 'ALL'
-                  ? 'Run payroll to create your first paystub batch.'
+                  ? 'Run payroll to create your first paystub batch. New here? Check readiness first to see who still needs a W-4, taxState, or pay schedule.'
                   : 'Switch to a different status, or create a new run.'
               }
               action={
                 canProcess ? (
-                  <Button onClick={() => setShowCreate(true)}>
-                    <Plus className="h-4 w-4" />
-                    Run payroll
-                  </Button>
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    <Button onClick={() => setShowCreate(true)}>
+                      <Plus className="h-4 w-4" />
+                      Run payroll
+                    </Button>
+                    {filter === 'ALL' && (
+                      <Button variant="outline" asChild>
+                        <Link to="/payroll/readiness">Check readiness</Link>
+                      </Button>
+                    )}
+                  </div>
                 ) : undefined
               }
             />

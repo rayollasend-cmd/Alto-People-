@@ -16,6 +16,7 @@
 // pure UI projections so the user can back out without polluting the DB.
 
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   AlertCircle,
   AlertTriangle,
@@ -25,6 +26,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  ExternalLink,
   FileText,
   HelpCircle,
   Info,
@@ -577,6 +579,13 @@ function ExceptionStrip({
                 >
                   {EXCEPTION_COPY[ex.kind].label}
                 </Badge>
+                <Link
+                  to={`/people?associateId=${ex.associateId}`}
+                  className="ml-auto inline-flex items-center gap-1 text-[10px] text-gold hover:underline"
+                  title="Open associate profile to fix"
+                >
+                  Fix <ExternalLink className="h-2.5 w-2.5" />
+                </Link>
               </div>
               <div className="text-silver/60 mt-0.5 ml-4">{ex.message}</div>
             </li>
@@ -1088,6 +1097,22 @@ function Step4({
   setOverrideBlocking: (v: boolean) => void;
 }) {
   const blocking = exceptions?.counts.blocking ?? 0;
+
+  const taxBreakdown = preview
+    ? preview.items.reduce(
+        (acc, it) => {
+          acc.fit += it.federalIncomeTax;
+          acc.fica += it.fica;
+          acc.medicare += it.medicare;
+          acc.sit += it.stateIncomeTax;
+          acc.preTax += it.preTaxDeductions;
+          acc.postTax += it.postTaxDeductions;
+          return acc;
+        },
+        { fit: 0, fica: 0, medicare: 0, sit: 0, preTax: 0, postTax: 0 },
+      )
+    : null;
+
   return (
     <div className="space-y-4 text-sm">
       <div className="rounded border border-gold/30 bg-gold/5 p-3 text-xs">
@@ -1110,6 +1135,50 @@ function Step4({
           <li>• A QuickBooks journal entry will be queued on disbursement.</li>
         </ul>
       </div>
+
+      {preview && taxBreakdown && (
+        <div className="rounded border border-silver/20 bg-black/20 p-3 text-xs">
+          <div className="font-medium uppercase tracking-wide text-silver/80 mb-2">
+            Withholding breakdown (employee side)
+          </div>
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-4">
+            <div>
+              <dt className="text-silver/60">Federal income tax</dt>
+              <dd className="text-silver">{fmtMoney(taxBreakdown.fit)}</dd>
+            </div>
+            <div>
+              <dt className="text-silver/60">FICA (6.2%)</dt>
+              <dd className="text-silver">{fmtMoney(taxBreakdown.fica)}</dd>
+            </div>
+            <div>
+              <dt className="text-silver/60">Medicare (1.45%)</dt>
+              <dd className="text-silver">{fmtMoney(taxBreakdown.medicare)}</dd>
+            </div>
+            <div>
+              <dt className="text-silver/60">State income tax</dt>
+              <dd className="text-silver">{fmtMoney(taxBreakdown.sit)}</dd>
+            </div>
+            <div>
+              <dt className="text-silver/60">Pre-tax deductions</dt>
+              <dd className="text-silver">{fmtMoney(taxBreakdown.preTax)}</dd>
+            </div>
+            <div>
+              <dt className="text-silver/60">Post-tax deductions</dt>
+              <dd className="text-silver">{fmtMoney(taxBreakdown.postTax)}</dd>
+            </div>
+            <div>
+              <dt className="text-silver/60">Garnishments</dt>
+              <dd className="text-silver">{fmtMoney(preview.totals.totalGarnishments)}</dd>
+            </div>
+            <div>
+              <dt className="text-silver/60">Total employee tax</dt>
+              <dd className="text-silver font-semibold">
+                {fmtMoney(preview.totals.totalEmployeeTax)}
+              </dd>
+            </div>
+          </dl>
+        </div>
+      )}
 
       {blocking > 0 && (
         <div className="rounded border border-alert/40 bg-alert/5 p-3 text-xs space-y-2">

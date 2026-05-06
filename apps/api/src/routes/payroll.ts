@@ -49,6 +49,10 @@ import {
   postReversingJournalEntry,
 } from '../lib/quickbooks.js';
 import { notifyAssociatesOfRunVoid } from '../lib/payrollVoidNotify.js';
+import { env } from '../config/env.js';
+import { listW2EligibleAssociates } from '../lib/w2Aggregator.js';
+import { listF1099NecEligibleAssociates } from '../lib/f1099NecAggregator.js';
+import { listF1099MiscEligibleAssociates } from '../lib/f1099MiscAggregator.js';
 import archiver from 'archiver';
 
 export const payrollRouter = Router();
@@ -57,6 +61,10 @@ const PROCESS = requireCapability('process:payroll');
 const VOID = requireCapability('void:payroll');
 
 const TX_OPTS = { timeout: 60_000, maxWait: 10_000 };
+
+// Pagination ceiling for `GET /payroll/runs`. Pulled into a named
+// constant so the cap is visible in PR diffs.
+const RUN_LIST_PAGE_SIZE = 100;
 
 type RawRun = Prisma.PayrollRunGetPayload<{
   include: {
@@ -178,7 +186,7 @@ payrollRouter.get('/runs', async (req, res, next) => {
     const rows = await prisma.payrollRun.findMany({
       where,
       orderBy: { periodStart: 'desc' },
-      take: 100,
+      take: RUN_LIST_PAGE_SIZE,
       include: RUN_INCLUDE,
     });
     const payload: PayrollRunListResponse = PayrollRunListResponseSchema.parse({
@@ -2249,6 +2257,389 @@ payrollRouter.get('/readiness', PROCESS, async (_req, res, next) => {
       readyCount,
       missingCount: rows.length - readyCount,
       rows,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Year-end close readiness — single endpoint that answers "is the tax
+ * year ready to be closed?" Used by the dashboard checklist UI. Each
+ * check returns done/total + a deeplink the operator can follow.
+ *
+ * The check set covers what closes a tax year operationally:
+ *   1. All payroll runs in the year are DISBURSED (no DRAFT/FINALIZED).
+ *   2. All eligible W-2s exist as TaxForm rows (DRAFT or FILED).
+ *   3. All eligible 1099-NECs exist.
+ *   4. All eligible 1099-MISCs exist.
+ *   5. All TaxForm rows for the year are FILED (not DRAFT).
+ *
+ * Distribution (sending recipient copies) isn't tracked in the data
+ * model today, so we surface it as a manual-confirm checkbox in the UI
+ * rather than a derived check here.
+ */
+payrollRouter.get('/year-end-close', PROCESS, async (req, res, next) => {
+  try {
+    const yearParam = req.query.year ? Number(req.query.year) : new Date().getUTCFullYear() - 1;
+    if (!Number.isInteger(yearParam) || yearParam < 2000 || yearParam > 2100) {
+      throw new HttpError(400, 'invalid_year', 'year must be a 4-digit integer');
+    }
+    const yearStart = new Date(Date.UTC(yearParam, 0, 1));
+    const yearEndExclusive = new Date(Date.UTC(yearParam + 1, 0, 1));
+
+    const [openRuns, allW2EligibleIds, allNecEligibleIds, allMiscEligibleIds, formsForYear] =
+      await Promise.all([
+        prisma.payrollRun.count({
+          where: {
+            status: { in: ['DRAFT', 'FINALIZED'] },
+            OR: [
+              { disbursedAt: { gte: yearStart, lt: yearEndExclusive } },
+              {
+                AND: [
+                  { disbursedAt: null },
+                  { periodEnd: { gte: yearStart, lt: yearEndExclusive } },
+                ],
+              },
+            ],
+          },
+        }),
+        listW2EligibleAssociates(prisma, yearParam, null),
+        listF1099NecEligibleAssociates(prisma, yearParam, null),
+        listF1099MiscEligibleAssociates(prisma, yearParam, null),
+        prisma.taxForm.findMany({
+          where: {
+            taxYear: yearParam,
+            status: { not: 'VOIDED' },
+            kind: { in: ['W2', 'F1099_NEC', 'F1099_MISC'] },
+          },
+          select: { kind: true, status: true, associateId: true },
+        }),
+      ]);
+
+    const w2Generated = new Set(
+      formsForYear.filter((f) => f.kind === 'W2' && f.associateId).map((f) => f.associateId!),
+    );
+    const necGenerated = new Set(
+      formsForYear
+        .filter((f) => f.kind === 'F1099_NEC' && f.associateId)
+        .map((f) => f.associateId!),
+    );
+    const miscGenerated = new Set(
+      formsForYear
+        .filter((f) => f.kind === 'F1099_MISC' && f.associateId)
+        .map((f) => f.associateId!),
+    );
+
+    const w2Missing = allW2EligibleIds.filter((id) => !w2Generated.has(id)).length;
+    const necMissing = allNecEligibleIds.filter((id) => !necGenerated.has(id)).length;
+    const miscMissing = allMiscEligibleIds.filter((id) => !miscGenerated.has(id)).length;
+
+    const formsDraft = formsForYear.filter((f) => f.status === 'DRAFT').length;
+    const formsTotal = formsForYear.length;
+
+    const checks = [
+      {
+        key: 'runs_disbursed',
+        label: 'All payroll runs disbursed',
+        done: openRuns === 0,
+        detail:
+          openRuns === 0
+            ? 'No DRAFT or FINALIZED runs touching this tax year.'
+            : `${openRuns} run(s) still open. Finalize and disburse before closing.`,
+        href: '/payroll',
+      },
+      {
+        key: 'w2_generated',
+        label: 'W-2s generated for all eligible employees',
+        done: w2Missing === 0,
+        detail:
+          w2Missing === 0
+            ? `${allW2EligibleIds.length} eligible · ${w2Generated.size} on file.`
+            : `${w2Missing} eligible employee(s) missing a W-2.`,
+        href: '/payroll/tax',
+      },
+      {
+        key: 'nec_generated',
+        label: '1099-NECs generated for all eligible contractors',
+        done: necMissing === 0,
+        detail:
+          necMissing === 0
+            ? `${allNecEligibleIds.length} eligible · ${necGenerated.size} on file.`
+            : `${necMissing} eligible contractor(s) missing a 1099-NEC.`,
+        href: '/payroll/tax',
+      },
+      {
+        key: 'misc_generated',
+        label: '1099-MISCs generated for all eligible recipients',
+        done: miscMissing === 0,
+        detail:
+          miscMissing === 0
+            ? `${allMiscEligibleIds.length} eligible · ${miscGenerated.size} on file.`
+            : `${miscMissing} eligible recipient(s) missing a 1099-MISC.`,
+        href: '/payroll/tax',
+      },
+      {
+        key: 'forms_filed',
+        label: 'All generated forms filed',
+        done: formsTotal > 0 && formsDraft === 0,
+        detail:
+          formsTotal === 0
+            ? 'No forms generated yet for this tax year.'
+            : formsDraft === 0
+              ? `All ${formsTotal} form(s) marked FILED.`
+              : `${formsDraft} of ${formsTotal} form(s) still in DRAFT.`,
+        href: '/payroll/tax',
+      },
+    ];
+
+    const readyToClose = checks.every((c) => c.done);
+
+    res.json({
+      taxYear: yearParam,
+      readyToClose,
+      checks,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Per-associate YTD rollup for the requested tax year. Used by the YTD
+ * report view so HR can answer "what has X earned and what's been
+ * withheld this year" without paging through individual run drawers.
+ *
+ * Excludes VOIDED items and CANCELLED runs. AMENDMENT signed deltas
+ * flow through naturally because the underlying items live in the
+ * disbursed AMENDMENT run.
+ */
+payrollRouter.get('/ytd', PROCESS, async (req, res, next) => {
+  try {
+    const yearParam = req.query.year ? Number(req.query.year) : new Date().getUTCFullYear();
+    if (!Number.isInteger(yearParam) || yearParam < 2000 || yearParam > 2100) {
+      throw new HttpError(400, 'invalid_year', 'year must be a 4-digit integer');
+    }
+    const yearStart = new Date(Date.UTC(yearParam, 0, 1));
+    const yearEndExclusive = new Date(Date.UTC(yearParam + 1, 0, 1));
+
+    const items = await prisma.payrollItem.findMany({
+      where: {
+        status: { not: 'VOIDED' },
+        payrollRun: {
+          status: { not: 'CANCELLED' },
+          disbursedAt: { gte: yearStart, lt: yearEndExclusive },
+        },
+      },
+      select: {
+        associateId: true,
+        grossPay: true,
+        federalWithholding: true,
+        fica: true,
+        medicare: true,
+        stateWithholding: true,
+        netPay: true,
+        preTaxDeductions: true,
+        postTaxDeductions: true,
+        associate: {
+          select: {
+            firstName: true,
+            lastName: true,
+            email: true,
+            employmentType: true,
+          },
+        },
+      },
+    });
+
+    type Bucket = {
+      associateId: string;
+      firstName: string;
+      lastName: string;
+      email: string;
+      employmentType: string;
+      gross: number;
+      fit: number;
+      fica: number;
+      medicare: number;
+      sit: number;
+      preTax: number;
+      postTax: number;
+      net: number;
+      paystubCount: number;
+    };
+    const buckets = new Map<string, Bucket>();
+    for (const it of items) {
+      let b = buckets.get(it.associateId);
+      if (!b) {
+        b = {
+          associateId: it.associateId,
+          firstName: it.associate.firstName,
+          lastName: it.associate.lastName,
+          email: it.associate.email,
+          employmentType: it.associate.employmentType,
+          gross: 0,
+          fit: 0,
+          fica: 0,
+          medicare: 0,
+          sit: 0,
+          preTax: 0,
+          postTax: 0,
+          net: 0,
+          paystubCount: 0,
+        };
+        buckets.set(it.associateId, b);
+      }
+      b.gross += Number(it.grossPay);
+      b.fit += Number(it.federalWithholding);
+      b.fica += Number(it.fica);
+      b.medicare += Number(it.medicare);
+      b.sit += Number(it.stateWithholding);
+      b.preTax += Number(it.preTaxDeductions);
+      b.postTax += Number(it.postTaxDeductions);
+      b.net += Number(it.netPay);
+      b.paystubCount += 1;
+    }
+
+    const rows = [...buckets.values()]
+      .map((b) => ({
+        ...b,
+        gross: round2(b.gross),
+        fit: round2(b.fit),
+        fica: round2(b.fica),
+        medicare: round2(b.medicare),
+        sit: round2(b.sit),
+        preTax: round2(b.preTax),
+        postTax: round2(b.postTax),
+        net: round2(b.net),
+      }))
+      .sort((a, b) =>
+        a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName),
+      );
+
+    const totals = rows.reduce(
+      (acc, r) => {
+        acc.gross += r.gross;
+        acc.fit += r.fit;
+        acc.fica += r.fica;
+        acc.medicare += r.medicare;
+        acc.sit += r.sit;
+        acc.preTax += r.preTax;
+        acc.postTax += r.postTax;
+        acc.net += r.net;
+        return acc;
+      },
+      { gross: 0, fit: 0, fica: 0, medicare: 0, sit: 0, preTax: 0, postTax: 0, net: 0 },
+    );
+
+    res.json({
+      taxYear: yearParam,
+      totals: {
+        gross: round2(totals.gross),
+        fit: round2(totals.fit),
+        fica: round2(totals.fica),
+        medicare: round2(totals.medicare),
+        sit: round2(totals.sit),
+        preTax: round2(totals.preTax),
+        postTax: round2(totals.postTax),
+        net: round2(totals.net),
+        associateCount: rows.length,
+        paystubCount: rows.reduce((s, r) => s + r.paystubCount, 0),
+      },
+      rows,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Branch webhook health summary. Reads from BranchWebhookEvent and the
+ * configured PAYROLL_DISBURSEMENT_PROVIDER to give the operator a single
+ * answer to "is the disbursement webhook still wired up?" The dashboard
+ * tile polls this endpoint and turns red if the webhook has gone silent
+ * while we still have FINALIZED-but-not-DISBURSED items waiting.
+ */
+payrollRouter.get('/disbursement/webhook-status', PROCESS, async (_req, res, next) => {
+  try {
+    const provider = env.PAYROLL_DISBURSEMENT_PROVIDER;
+
+    const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+    const [latest, last24h, errors24h, latestError, pendingFinalizedCount] =
+      await Promise.all([
+        prisma.branchWebhookEvent.findFirst({
+          orderBy: { receivedAt: 'desc' },
+          select: { receivedAt: true, status: true, eventType: true },
+        }),
+        prisma.branchWebhookEvent.count({
+          where: { receivedAt: { gte: dayAgo } },
+        }),
+        prisma.branchWebhookEvent.count({
+          where: { status: 'ERROR', receivedAt: { gte: weekAgo } },
+        }),
+        prisma.branchWebhookEvent.findFirst({
+          where: { status: 'ERROR' },
+          orderBy: { receivedAt: 'desc' },
+          select: { receivedAt: true, notes: true, eventType: true },
+        }),
+        prisma.payrollItem.count({
+          where: {
+            status: 'PENDING',
+            payrollRun: { status: 'FINALIZED' },
+          },
+        }),
+      ]);
+
+    const lastEventAt = latest?.receivedAt ?? null;
+    const minutesSinceLastEvent = lastEventAt
+      ? Math.floor((Date.now() - lastEventAt.getTime()) / 60_000)
+      : null;
+
+    let health: 'healthy' | 'idle' | 'stale' | 'erroring' | 'unconfigured' | 'stub';
+    let detail: string;
+    if (provider === 'STUB') {
+      health = 'stub';
+      detail =
+        'Disbursement provider is STUB. Runs marked "disbursed" are NOT actually paid out. Set PAYROLL_DISBURSEMENT_PROVIDER=BRANCH (or WISE) before processing real payroll.';
+    } else if (provider !== 'BRANCH') {
+      health = 'unconfigured';
+      detail = `Disbursement provider is ${provider}, not BRANCH. Webhook health is N/A.`;
+    } else if (errors24h > 0) {
+      health = 'erroring';
+      detail = `${errors24h} error event(s) in the last 7 days. Latest: ${latestError?.notes ?? 'unknown'}`;
+    } else if (lastEventAt === null) {
+      health = pendingFinalizedCount > 0 ? 'stale' : 'idle';
+      detail = pendingFinalizedCount > 0
+        ? 'No webhook events ever received, and there are pending disbursements. Branch may not be configured to call us.'
+        : 'No webhook events received yet. Will populate after first disbursement.';
+    } else if (minutesSinceLastEvent !== null && minutesSinceLastEvent > 60 * 24 && pendingFinalizedCount > 0) {
+      health = 'stale';
+      detail = `Last webhook ${minutesSinceLastEvent} minutes ago and ${pendingFinalizedCount} item(s) still awaiting disbursement.`;
+    } else {
+      health = 'healthy';
+      detail = lastEventAt
+        ? `Last event ${minutesSinceLastEvent} minute(s) ago.`
+        : 'No events yet.';
+    }
+
+    res.json({
+      provider,
+      health,
+      detail,
+      lastEventAt: lastEventAt ? lastEventAt.toISOString() : null,
+      minutesSinceLastEvent,
+      eventsLast24h: last24h,
+      errorsLast7d: errors24h,
+      pendingFinalizedItems: pendingFinalizedCount,
+      latestError: latestError
+        ? {
+            at: latestError.receivedAt.toISOString(),
+            eventType: latestError.eventType,
+            notes: latestError.notes,
+          }
+        : null,
     });
   } catch (err) {
     next(err);

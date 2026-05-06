@@ -81,7 +81,7 @@ export function voidPayrollRun(
 ): Promise<PayrollRunDetail> {
   return apiFetch<PayrollRunDetail>(`/payroll/runs/${id}/void`, {
     method: 'POST',
-    body: JSON.stringify({ reason }),
+    body: { reason },
   });
 }
 
@@ -109,7 +109,7 @@ export function amendPayrollRun(
 ): Promise<PayrollRunDetail> {
   return apiFetch<PayrollRunDetail>(`/payroll/runs/${id}/amend`, {
     method: 'POST',
-    body: JSON.stringify(body),
+    body,
   });
 }
 
@@ -205,4 +205,92 @@ export interface PayrollReadinessResponse {
 
 export function getPayrollReadiness(): Promise<PayrollReadinessResponse> {
   return apiFetch<PayrollReadinessResponse>('/payroll/readiness');
+}
+
+/* ===== Branch webhook health =========================================== */
+
+export type WebhookHealth =
+  | 'healthy'
+  | 'idle'
+  | 'stale'
+  | 'erroring'
+  | 'unconfigured'
+  | 'stub';
+
+export interface DisbursementWebhookStatus {
+  provider: 'STUB' | 'WISE' | 'BRANCH';
+  health: WebhookHealth;
+  detail: string;
+  lastEventAt: string | null;
+  minutesSinceLastEvent: number | null;
+  eventsLast24h: number;
+  errorsLast7d: number;
+  pendingFinalizedItems: number;
+  latestError: { at: string; eventType: string; notes: string | null } | null;
+}
+
+export function getDisbursementWebhookStatus(): Promise<DisbursementWebhookStatus> {
+  return apiFetch<DisbursementWebhookStatus>('/payroll/disbursement/webhook-status');
+}
+
+/* ===== YTD per-associate report ======================================= */
+
+export interface PayrollYtdRow {
+  associateId: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  employmentType: string;
+  gross: number;
+  fit: number;
+  fica: number;
+  medicare: number;
+  sit: number;
+  preTax: number;
+  postTax: number;
+  net: number;
+  paystubCount: number;
+}
+
+export interface PayrollYtdResponse {
+  taxYear: number;
+  totals: {
+    gross: number;
+    fit: number;
+    fica: number;
+    medicare: number;
+    sit: number;
+    preTax: number;
+    postTax: number;
+    net: number;
+    associateCount: number;
+    paystubCount: number;
+  };
+  rows: PayrollYtdRow[];
+}
+
+export function getPayrollYtd(year?: number): Promise<PayrollYtdResponse> {
+  const qs = year ? `?year=${year}` : '';
+  return apiFetch<PayrollYtdResponse>(`/payroll/ytd${qs}`);
+}
+
+/* ===== Year-end close checklist ======================================== */
+
+export interface YearEndCheck {
+  key: string;
+  label: string;
+  done: boolean;
+  detail: string;
+  href: string;
+}
+
+export interface YearEndCloseResponse {
+  taxYear: number;
+  readyToClose: boolean;
+  checks: YearEndCheck[];
+}
+
+export function getYearEndClose(year?: number): Promise<YearEndCloseResponse> {
+  const qs = year ? `?year=${year}` : '';
+  return apiFetch<YearEndCloseResponse>(`/payroll/year-end-close${qs}`);
 }
