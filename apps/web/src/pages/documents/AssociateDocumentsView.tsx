@@ -191,13 +191,18 @@ export function AssociateDocumentsView() {
                     {d.rejectionReason && (
                       <span className="text-alert ml-2">{d.rejectionReason}</span>
                     )}
+                    {!d.fileAvailable && (
+                      <span className="text-alert ml-2">
+                        · file missing — please re-upload
+                      </span>
+                    )}
                   </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => setPreviewDoc(d)}
                   className="text-xs text-silver hover:text-gold inline-flex items-center gap-1"
-                  title="View document"
+                  title={d.fileAvailable ? 'View document' : 'File missing on server — open for details'}
                 >
                   <Eye className="h-3.5 w-3.5" />
                   View

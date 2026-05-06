@@ -513,11 +513,20 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                       type="button"
                       onClick={() => setPreviewDoc(d)}
                       className="text-gold hover:text-gold-bright underline-offset-4 hover:underline font-medium inline-flex items-center gap-1.5 max-w-xs truncate"
-                      title={`Preview ${d.filename}`}
+                      title={
+                        d.fileAvailable
+                          ? `Preview ${d.filename}`
+                          : 'File missing on server — open for details'
+                      }
                     >
                       <FileText className="h-3.5 w-3.5 shrink-0" />
                       <span className="truncate">{d.filename}</span>
                     </button>
+                    {!d.fileAvailable && (
+                      <div className="text-[11px] text-alert truncate mt-0.5">
+                        File missing on server — please re-upload
+                      </div>
+                    )}
                     {/* Phone-only secondary line — associate name takes the
                         place of its hidden column. Tap-target area still
                         opens the preview via the file button above. */}

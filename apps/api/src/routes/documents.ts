@@ -62,6 +62,14 @@ type RawDoc = Prisma.DocumentRecordGetPayload<{
 }>;
 
 function toRecord(d: RawDoc): DocumentRecord {
+  // True when the file blob still exists. We hit the filesystem here
+  // because the underlying storage on Railway is ephemeral — a redeploy
+  // can wipe `apps/api/uploads/` while the DocumentRecord row persists
+  // in Neon, leaving zombie rows whose download endpoint returns 410.
+  // The UI uses this flag to disable preview/download and prompt the
+  // associate to re-upload before they hit the broken endpoint.
+  const fileAvailable =
+    d.s3Key !== null && existsSync(resolveStoragePath(d.s3Key));
   return {
     id: d.id,
     associateId: d.associateId,
@@ -78,6 +86,7 @@ function toRecord(d: RawDoc): DocumentRecord {
     verifierEmail: d.verifiedBy?.email ?? null,
     verifiedAt: d.verifiedAt ? d.verifiedAt.toISOString() : null,
     createdAt: d.createdAt.toISOString(),
+    fileAvailable,
   };
 }
 
