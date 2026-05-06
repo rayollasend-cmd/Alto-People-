@@ -54,6 +54,11 @@ export interface I9DocumentListItem {
   status: 'PENDING' | 'UPLOADED' | 'VERIFIED' | 'REJECTED' | 'EXPIRED';
   side: 'FRONT' | 'BACK' | null;
   createdAt: string;
+  /** False when the underlying blob is missing on the server (e.g. the
+   * upload was lost during a Railway redeploy that wasn't volume-backed).
+   * UI should render a "file missing — re-upload required" tile instead
+   * of pointing an <img> or <a> at a 410 endpoint. */
+  fileAvailable: boolean;
 }
 
 export function listI9Documents(

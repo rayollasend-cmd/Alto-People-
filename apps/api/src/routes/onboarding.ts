@@ -43,6 +43,7 @@ import { send } from '../lib/notifications.js';
 import { hashSignedPdf, renderSignedAgreement } from '../lib/esign.js';
 import { resolveStoragePath, UPLOAD_ROOT } from '../lib/storage.js';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   assertCanModifyApplication,
@@ -2500,6 +2501,7 @@ onboardingRouter.get('/applications/:id/i9/documents', async (req, res, next) =>
         size: true,
         status: true,
         createdAt: true,
+        s3Key: true,
       },
     });
     res.json({
@@ -2512,6 +2514,12 @@ onboardingRouter.get('/applications/:id/i9/documents', async (req, res, next) =>
           : lower.includes('-back')
             ? 'BACK'
             : null;
+        // Same fileAvailable signal as the documents vault — Railway's
+        // ephemeral filesystem can leave zombie rows whose blobs are gone.
+        // The verifier UI uses this to render a "file missing" tile
+        // instead of a broken <img>.
+        const fileAvailable =
+          d.s3Key !== null && existsSync(resolveStoragePath(d.s3Key));
         return {
           id: d.id,
           kind: d.kind,
@@ -2521,6 +2529,7 @@ onboardingRouter.get('/applications/:id/i9/documents', async (req, res, next) =>
           status: d.status,
           side,
           createdAt: d.createdAt.toISOString(),
+          fileAvailable,
         };
       }),
     });

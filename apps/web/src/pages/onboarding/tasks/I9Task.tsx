@@ -465,6 +465,9 @@ function DocumentsCard({
                   {d.side ? ` · ${d.side === 'FRONT' ? 'Front' : 'Back'}` : ''}
                   {' · '}
                   {fmtSize(d.size)}
+                  {!d.fileAvailable && (
+                    <span className="text-alert"> · file missing — please re-upload</span>
+                  )}
                 </div>
               </div>
               <span

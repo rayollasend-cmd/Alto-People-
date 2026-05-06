@@ -357,25 +357,33 @@ function Section2Verifier({
             {docs.map((doc) => {
               const isImage = doc.mimeType.startsWith('image/');
               const checked = picked.has(doc.id);
+              const missing = !doc.fileAvailable;
               return (
                 <li key={doc.id}>
                   <label
                     className={cn(
-                      'block p-2 rounded border cursor-pointer transition',
-                      checked
-                        ? 'border-gold bg-gold/10'
-                        : 'border-navy-secondary hover:border-silver/40',
+                      'block p-2 rounded border transition',
+                      missing
+                        ? 'border-alert/40 bg-alert/5 cursor-not-allowed'
+                        : checked
+                          ? 'border-gold bg-gold/10 cursor-pointer'
+                          : 'border-navy-secondary hover:border-silver/40 cursor-pointer',
                     )}
                   >
                     <input
                       type="checkbox"
                       className="sr-only"
-                      checked={checked}
-                      onChange={() => togglePick(doc.id)}
+                      checked={checked && !missing}
+                      onChange={() => !missing && togglePick(doc.id)}
+                      disabled={missing}
                       aria-label={`${doc.kind} ${doc.side ?? ''}`.trim()}
                     />
                     <div className="aspect-[3/2] bg-navy-secondary rounded mb-2 overflow-hidden flex items-center justify-center">
-                      {isImage ? (
+                      {missing ? (
+                        <span className="text-[10px] text-alert text-center px-2 leading-tight">
+                          File missing on server
+                        </span>
+                      ) : isImage ? (
                         <img
                           src={`/api/documents/${doc.id}/download`}
                           alt={`${doc.kind}${doc.side ? ` ${doc.side}` : ''}`}
@@ -387,17 +395,25 @@ function Section2Verifier({
                     </div>
                     <div className="text-xs text-white truncate">{doc.kind}</div>
                     <div className="text-[10px] text-silver">
-                      {doc.side ?? 'document'} ·{' '}
-                      <a
-                        href={`/api/documents/${doc.id}/download`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-gold hover:underline"
-                        onClick={(e) => e.stopPropagation()}
-                        data-no-row-click
-                      >
-                        Open
-                      </a>
+                      {doc.side ?? 'document'}
+                      {missing ? (
+                        <> · <span className="text-alert">re-upload required</span></>
+                      ) : (
+                        <>
+                          {' '}
+                          ·{' '}
+                          <a
+                            href={`/api/documents/${doc.id}/download`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-gold hover:underline"
+                            onClick={(e) => e.stopPropagation()}
+                            data-no-row-click
+                          >
+                            Open
+                          </a>
+                        </>
+                      )}
                     </div>
                   </label>
                 </li>
