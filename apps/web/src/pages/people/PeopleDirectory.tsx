@@ -10,6 +10,7 @@ import {
   Building2,
   Check,
   Download,
+  Eye,
   ExternalLink,
   FileText,
   Mail,
@@ -47,6 +48,7 @@ import {
   uploadAdminDocument,
   verifyDocument,
 } from '@/lib/documentsApi';
+import { DocumentPreview } from '@/components/DocumentPreview';
 import { nudgeApplicant } from '@/lib/onboardingApi';
 import { patchAssociateProfile } from '@/lib/orgApi';
 import {
@@ -1297,6 +1299,7 @@ function DocumentsTab({ associateId }: { associateId: string }) {
   const queryClient = useQueryClient();
   const [actingId, setActingId] = useState<string | null>(null);
   const [rejectTarget, setRejectTarget] = useState<DocumentRecord | null>(null);
+  const [previewDoc, setPreviewDoc] = useState<DocumentRecord | null>(null);
   const [showUpload, setShowUpload] = useState(false);
 
   const { data: docs, error: docsError } = useQuery({
@@ -1418,6 +1421,11 @@ function DocumentsTab({ associateId }: { associateId: string }) {
                 <div className="text-[10px] text-silver truncate max-w-[220px]">
                   {d.filename}
                 </div>
+                {!d.fileAvailable && (
+                  <div className="text-[10px] text-alert mt-0.5">
+                    File missing on server — please re-upload
+                  </div>
+                )}
                 {d.status === 'REJECTED' && d.rejectionReason && (
                   <div className="text-[10px] text-alert mt-0.5 truncate max-w-[220px]">
                     {d.rejectionReason}
@@ -1434,14 +1442,27 @@ function DocumentsTab({ associateId }: { associateId: string }) {
               </TableCell>
               <TableCell>
                 <div className="flex justify-end items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setPreviewDoc(d)}
+                    aria-label={`View ${d.filename}`}
+                    title={d.fileAvailable ? 'View' : 'File missing — open for details'}
+                    className="grid place-items-center h-8 w-8 rounded text-silver hover:text-white hover:bg-navy-secondary/60"
+                  >
+                    <Eye className="h-4 w-4" />
+                  </button>
                   {d.status === 'UPLOADED' && (
                     <>
                       <button
                         type="button"
                         onClick={() => void handleVerify(d)}
-                        disabled={actingId === d.id}
+                        disabled={actingId === d.id || !d.fileAvailable}
                         aria-label={`Verify ${d.filename}`}
-                        title="Verify"
+                        title={
+                          d.fileAvailable
+                            ? 'Verify'
+                            : "Can't verify — file missing on server"
+                        }
                         className="grid place-items-center h-8 w-8 rounded text-success hover:bg-navy-secondary/60 disabled:opacity-40"
                       >
                         <Check className="h-4 w-4" />
@@ -1458,15 +1479,25 @@ function DocumentsTab({ associateId }: { associateId: string }) {
                       </button>
                     </>
                   )}
-                  <a
-                    href={downloadDocumentUrl(d.id)}
-                    download
-                    className="grid place-items-center h-8 w-8 rounded text-silver hover:text-white hover:bg-navy-secondary/60"
-                    aria-label={`Download ${d.filename}`}
-                    title="Download"
-                  >
-                    <Download className="h-4 w-4" />
-                  </a>
+                  {d.fileAvailable ? (
+                    <a
+                      href={downloadDocumentUrl(d.id)}
+                      download
+                      className="grid place-items-center h-8 w-8 rounded text-silver hover:text-white hover:bg-navy-secondary/60"
+                      aria-label={`Download ${d.filename}`}
+                      title="Download"
+                    >
+                      <Download className="h-4 w-4" />
+                    </a>
+                  ) : (
+                    <span
+                      className="grid place-items-center h-8 w-8 rounded text-silver/30 cursor-not-allowed"
+                      aria-label="Download disabled — file missing"
+                      title="File missing on server — re-upload required"
+                    >
+                      <Download className="h-4 w-4" />
+                    </span>
+                  )}
                 </div>
               </TableCell>
             </TableRow>
@@ -1490,6 +1521,11 @@ function DocumentsTab({ associateId }: { associateId: string }) {
         destructive
         busy={actingId === rejectTarget?.id}
         onConfirm={handleReject}
+      />
+
+      <DocumentPreview
+        doc={previewDoc}
+        onOpenChange={(o) => !o && setPreviewDoc(null)}
       />
 
       <UploadResultDialog
