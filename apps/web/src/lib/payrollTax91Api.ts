@@ -71,6 +71,28 @@ export const setGarnishmentStatus = (id: string, status: GarnishmentStatus) =>
     body: { status },
   });
 
+export interface GarnishmentDeduction {
+  id: string;
+  payrollRunId: string | null;
+  amount: string;
+  deductedOn: string;
+}
+
+export const deductGarnishment = (
+  id: string,
+  amount: number,
+  payrollRunId?: string | null,
+) =>
+  apiFetch<{ id: string; completed: boolean }>(`/garnishments/${id}/deduct`, {
+    method: 'POST',
+    body: { amount, payrollRunId: payrollRunId ?? null },
+  });
+
+export const listGarnishmentDeductions = (id: string) =>
+  apiFetch<{ deductions: GarnishmentDeduction[] }>(`/garnishments/${id}/deductions`);
+
+export const garnishmentLetterUrl = (id: string) => `/api/garnishments/${id}/letter.pdf`;
+
 // ----- Tax forms ---------------------------------------------------------
 
 export type TaxFormKind = 'F941' | 'F940' | 'W2' | 'W2C' | 'F1099_NEC' | 'F1099_MISC';

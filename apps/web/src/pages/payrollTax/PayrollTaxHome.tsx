@@ -6,12 +6,16 @@ import {
   createGarnishment,
   createTaxForm,
   createW2c,
+  deductGarnishment,
   fileTaxForm,
+  garnishmentLetterUrl,
   generateW2s,
   generate1099Necs,
+  clearAssociateTin,
   getAssociateTin,
   saveAssociateTin,
   getSubmitterProfile,
+  listGarnishmentDeductions,
   listGarnishments,
   listTaxForms,
   saveSubmitterProfile,
@@ -28,6 +32,7 @@ import {
   f1099MiscBulkZipUrl,
   f1099MiscFireUrl,
   type Garnishment,
+  type GarnishmentDeduction,
   type GarnishmentKind,
   type GarnishmentStatus,
   type SubmitterProfile,
@@ -126,12 +131,17 @@ const GARN_KIND_LABEL: Record<GarnishmentKind, string> = {
 function GarnishmentsTab({ canManage }: { canManage: boolean }) {
   const [rows, setRows] = useState<Garnishment[] | null>(null);
   const [showNew, setShowNew] = useState(false);
+  const [historyTarget, setHistoryTarget] = useState<Garnishment | null>(null);
+  const [deductTarget, setDeductTarget] = useState<Garnishment | null>(null);
 
   const refresh = () => {
     setRows(null);
     listGarnishments()
       .then((r) => setRows(r.garnishments))
-      .catch(() => setRows([]));
+      .catch((err) => {
+        setRows([]);
+        toast.error(err instanceof ApiError ? err.message : "Couldn't load garnishments.");
+      });
   };
   useEffect(() => {
     refresh();
@@ -142,7 +152,7 @@ function GarnishmentsTab({ canManage }: { canManage: boolean }) {
       await setGarnishmentStatus(id, status);
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : "Couldn't update garnishment status. Try again.");
     }
   };
 
@@ -200,17 +210,46 @@ function GarnishmentsTab({ canManage }: { canManage: boolean }) {
                       <Badge variant={GARN_BADGE[g.status]}>{g.status}</Badge>
                     </TableCell>
                     <TableCell className="text-right">
-                      {canManage && (g.status === 'ACTIVE' || g.status === 'SUSPENDED') && (
-                        <select
-                          className="bg-navy-secondary/40 border border-navy-secondary text-xs rounded px-2 py-1 text-white"
-                          value={g.status}
-                          onChange={(e) => onStatus(g.id, e.target.value as GarnishmentStatus)}
+                      <div className="flex items-center justify-end gap-2">
+                        <Button
+                          asChild
+                          size="sm"
+                          variant="ghost"
+                          title="Download employer acknowledgment letter PDF"
                         >
-                          <option value="ACTIVE">ACTIVE</option>
-                          <option value="SUSPENDED">SUSPENDED</option>
-                          <option value="TERMINATED">TERMINATED</option>
-                        </select>
-                      )}
+                          <a href={garnishmentLetterUrl(g.id)} target="_blank" rel="noreferrer">
+                            <Download className="mr-1 h-3 w-3" />
+                            Letter
+                          </a>
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setHistoryTarget(g)}
+                        >
+                          History
+                        </Button>
+                        {canManage && g.status === 'ACTIVE' && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setDeductTarget(g)}
+                          >
+                            Manual deduct
+                          </Button>
+                        )}
+                        {canManage && (g.status === 'ACTIVE' || g.status === 'SUSPENDED') && (
+                          <select
+                            className="bg-navy-secondary/40 border border-navy-secondary text-xs rounded px-2 py-1 text-white"
+                            value={g.status}
+                            onChange={(e) => onStatus(g.id, e.target.value as GarnishmentStatus)}
+                          >
+                            <option value="ACTIVE">ACTIVE</option>
+                            <option value="SUSPENDED">SUSPENDED</option>
+                            <option value="TERMINATED">TERMINATED</option>
+                          </select>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -224,6 +263,22 @@ function GarnishmentsTab({ canManage }: { canManage: boolean }) {
           onClose={() => setShowNew(false)}
           onSaved={() => {
             setShowNew(false);
+            refresh();
+          }}
+        />
+      )}
+      {historyTarget && (
+        <GarnishmentHistoryDrawer
+          garnishment={historyTarget}
+          onClose={() => setHistoryTarget(null)}
+        />
+      )}
+      {deductTarget && (
+        <GarnishmentManualDeductDrawer
+          garnishment={deductTarget}
+          onClose={() => setDeductTarget(null)}
+          onSaved={() => {
+            setDeductTarget(null);
             refresh();
           }}
         />
@@ -280,7 +335,7 @@ function NewGarnishmentDrawer({
       toast.success('Garnishment created.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : "Couldn't save garnishment. Try again.");
     } finally {
       setSaving(false);
     }
@@ -419,6 +474,153 @@ function NewGarnishmentDrawer({
   );
 }
 
+function GarnishmentHistoryDrawer({
+  garnishment,
+  onClose,
+}: {
+  garnishment: Garnishment;
+  onClose: () => void;
+}) {
+  const [rows, setRows] = useState<GarnishmentDeduction[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    listGarnishmentDeductions(garnishment.id)
+      .then((r) => !cancelled && setRows(r.deductions))
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof ApiError ? err.message : "Couldn't load history.");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [garnishment.id]);
+
+  return (
+    <Drawer open onOpenChange={(v) => !v && onClose()}>
+      <DrawerHeader>
+        <DrawerTitle>Deduction history — {garnishment.associateName}</DrawerTitle>
+      </DrawerHeader>
+      <DrawerBody>
+        <div className="space-y-3 text-sm">
+          <div className="text-xs text-silver/60">
+            {GARN_KIND_LABEL[garnishment.kind]} · case {garnishment.caseNumber ?? '—'} ·
+            withheld ${garnishment.amountWithheld}
+            {garnishment.totalCap && <> of ${garnishment.totalCap}</>}
+          </div>
+          {error && <div className="text-red-400">{error}</div>}
+          {rows === null && !error && <SkeletonRows count={4} />}
+          {rows && rows.length === 0 && (
+            <EmptyState
+              icon={Receipt}
+              title="No deductions yet"
+              description="Garnishment deductions appear here as payroll runs are processed or you record them manually."
+            />
+          )}
+          {rows && rows.length > 0 && (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Run</TableHead>
+                  <TableHead className="text-right">Amount</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.map((d) => (
+                  <TableRow key={d.id}>
+                    <TableCell>{new Date(d.deductedOn).toLocaleString()}</TableCell>
+                    <TableCell className="text-xs text-silver/60">
+                      {d.payrollRunId ? d.payrollRunId.slice(0, 8) : 'Manual'}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">${d.amount}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </div>
+      </DrawerBody>
+      <DrawerFooter>
+        <Button variant="ghost" onClick={onClose}>
+          Close
+        </Button>
+      </DrawerFooter>
+    </Drawer>
+  );
+}
+
+function GarnishmentManualDeductDrawer({
+  garnishment,
+  onClose,
+  onSaved,
+}: {
+  garnishment: Garnishment;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [amount, setAmount] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    const n = Number(amount);
+    if (!Number.isFinite(n) || n <= 0) {
+      toast.error('Amount must be a positive number.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const r = await deductGarnishment(garnishment.id, n, null);
+      toast.success(
+        r.completed
+          ? 'Deduction recorded. Garnishment cap reached → status COMPLETED.'
+          : 'Deduction recorded.',
+      );
+      onSaved();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Couldn't record deduction.");
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Drawer open onOpenChange={(v) => !v && onClose()}>
+      <DrawerHeader>
+        <DrawerTitle>Manual deduction — {garnishment.associateName}</DrawerTitle>
+      </DrawerHeader>
+      <DrawerBody>
+        <div className="space-y-3 text-sm">
+          <p className="text-xs text-silver/60">
+            Use this when a deduction needs to be recorded outside a payroll run (e.g.
+            retroactive correction). The garnishment's amountWithheld is incremented and the
+            status flips to COMPLETED if the cap is reached.
+          </p>
+          <Label htmlFor="manual-deduct-amount">Amount</Label>
+          <Input
+            id="manual-deduct-amount"
+            type="number"
+            min="0.01"
+            step="0.01"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder="e.g. 150.00"
+          />
+        </div>
+      </DrawerBody>
+      <DrawerFooter>
+        <Button variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button onClick={submit} disabled={saving}>
+          {saving ? 'Saving…' : 'Record deduction'}
+        </Button>
+      </DrawerFooter>
+    </Drawer>
+  );
+}
+
 // ----- Tax forms --------------------------------------------------------
 
 const FORM_KIND_LABEL: Record<TaxFormKind, string> = {
@@ -437,6 +639,67 @@ const FORM_STATUS_BADGE: Record<TaxForm['status'], 'pending' | 'success' | 'defa
   VOIDED: 'destructive',
 };
 
+/**
+ * Five-step pipeline header. Each step is "done" once any row in the
+ * current list reaches that stage. Helps cold-start operators understand
+ * the order: review eligibility → generate → sign → file → distribute.
+ */
+function TaxFormsWorkflowSteps({ rows }: { rows: TaxForm[] | null }) {
+  const steps = [
+    {
+      key: 'review',
+      label: '1. Review eligibility',
+      done: rows !== null,
+      hint: 'Confirm who needs a form. The generators skip anyone already on file.',
+    },
+    {
+      key: 'generate',
+      label: '2. Generate',
+      done: !!rows && rows.some((r) => r.status === 'DRAFT' || r.status === 'FILED'),
+      hint: 'Bulk-create W-2 / 1099-NEC / 1099-MISC drafts.',
+    },
+    {
+      key: 'sign',
+      label: '3. Review drafts',
+      done: !!rows && rows.some((r) => r.status === 'FILED' || r.status === 'AMENDED'),
+      hint: 'Open each draft, verify totals, and download the PDF for the signatory.',
+    },
+    {
+      key: 'file',
+      label: '4. File',
+      done: !!rows && rows.some((r) => r.status === 'FILED'),
+      hint: 'Mark forms FILED. Filed forms are immutable; corrections require a W-2c or 1099-MISC amendment.',
+    },
+    {
+      key: 'distribute',
+      label: '5. Distribute',
+      done: !!rows && rows.some((r) => r.status === 'FILED'),
+      hint: 'Send recipient copies (Copy B/2 for 1099, Copy B/C/2 for W-2). Bulk ZIP available per form type.',
+    },
+  ];
+  return (
+    <ol className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:grid-cols-5">
+      {steps.map((s) => (
+        <li
+          key={s.key}
+          className={`rounded-md border bg-white p-2 text-xs ${
+            s.done ? 'border-emerald-300 ring-1 ring-emerald-100' : 'border-slate-200'
+          }`}
+          title={s.hint}
+        >
+          <div
+            className={`font-semibold ${s.done ? 'text-emerald-700' : 'text-slate-700'}`}
+          >
+            {s.done ? '✓ ' : ''}
+            {s.label}
+          </div>
+          <div className="mt-0.5 text-slate-500 leading-snug">{s.hint}</div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 function TaxFormsTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
   const prompt = usePrompt();
@@ -452,7 +715,10 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
     setRows(null);
     listTaxForms()
       .then((r) => setRows(r.forms))
-      .catch(() => setRows([]));
+      .catch((err) => {
+        setRows([]);
+        toast.error(err instanceof ApiError ? err.message : "Couldn't load tax forms.");
+      });
   };
   useEffect(() => {
     refresh();
@@ -465,7 +731,7 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
       toast.success('Form filed.');
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : "Couldn't file the form. Try again.");
     }
   };
 
@@ -476,7 +742,7 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
       toast.success('Form voided.');
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : "Couldn't void the form. Try again.");
     }
   };
 
@@ -498,12 +764,13 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
       );
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : "Couldn't create W-2c. Try again.");
     }
   };
 
   return (
     <div className="space-y-4">
+      <TaxFormsWorkflowSteps rows={rows} />
       {canManage && (
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={() => setShowSubmitter(true)}>
@@ -718,7 +985,7 @@ function W2GenerateDrawer({
         `Created ${r.createdCount} W-2(s); skipped ${r.skippedCount} (already on file).`,
       );
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : "Couldn't generate W-2s. Try again.");
     } finally {
       setRunning(false);
     }
@@ -864,6 +1131,30 @@ function TinCaptureBlock() {
       setWorking(false);
     }
   };
+  const onClear = async () => {
+    if (!associateId.trim()) return;
+    if (
+      !window.confirm(
+        'Remove the encrypted TIN from this associate? This is destructive — the next 1099-NEC generation will fail until a new TIN is captured. Continue?',
+      )
+    ) {
+      return;
+    }
+    setWorking(true);
+    try {
+      await clearAssociateTin(associateId.trim());
+      setSummary({
+        employmentType: summary?.employmentType ?? '',
+        hasTin: false,
+        tinLast4: null,
+      });
+      toast.success('TIN cleared.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Couldn't clear TIN.");
+    } finally {
+      setWorking(false);
+    }
+  };
 
   return (
     <details className="rounded-md border border-navy-secondary bg-navy-secondary/40 p-3 text-sm">
@@ -916,6 +1207,23 @@ function TinCaptureBlock() {
             </Button>
           </div>
         </div>
+        {summary?.hasTin && (
+          <div className="border-t border-navy-secondary/60 pt-2">
+            <p className="text-xs text-silver/70">
+              Admin recovery — clears the encrypted TIN entirely. Use only if a TIN was
+              entered for the wrong associate or is no longer valid.
+            </p>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={onClear}
+              disabled={working}
+              className="mt-1"
+            >
+              Clear TIN
+            </Button>
+          </div>
+        )}
       </div>
     </details>
   );
@@ -951,7 +1259,7 @@ function F1099NecGenerateDrawer({
         `Created ${r.createdCount} 1099-NEC(s); skipped ${r.skippedCount} (already on file).`,
       );
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : "Couldn't generate 1099-NEC forms. Try again.");
     } finally {
       setRunning(false);
     }
@@ -1094,7 +1402,7 @@ function F1099MiscGenerateDrawer({
         `Created ${r.createdCount} 1099-MISC(s); skipped ${r.skippedCount} (already on file).`,
       );
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : "Couldn't generate 1099-MISC forms. Try again.");
     } finally {
       setRunning(false);
     }
@@ -1239,7 +1547,7 @@ function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
       toast.success('Form drafted.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : "Couldn't draft the form. Try again.");
     } finally {
       setSaving(false);
     }
@@ -1345,7 +1653,7 @@ function Form941BuilderDrawer({ onClose }: { onClose: () => void }) {
       const r = await build941(Number(taxYear), Number(quarter));
       setResult(r);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : "Couldn't build the 941. Try again.");
     } finally {
       setLoading(false);
     }
@@ -1460,7 +1768,7 @@ function SubmitterProfileDrawer({ onClose }: { onClose: () => void }) {
       setProfile(r.profile);
       toast.success('Submitter profile saved.');
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : "Couldn't save submitter profile. Try again.");
     } finally {
       setSaving(false);
     }

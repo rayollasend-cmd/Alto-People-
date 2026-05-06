@@ -1772,6 +1772,11 @@ export const DocumentRecordSchema = z.object({
   verifierEmail: z.string().email().nullable(),
   verifiedAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
+  /** True when the underlying file is still on disk. False when the
+   * DocumentRecord exists but the upload was lost (e.g. ephemeral
+   * filesystem reset on redeploy). UI should disable preview/download
+   * and prompt re-upload when false. */
+  fileAvailable: z.boolean(),
 });
 export type DocumentRecord = z.infer<typeof DocumentRecordSchema>;
 

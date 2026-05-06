@@ -47,6 +47,7 @@ import {
   type IrsFireFile,
   type IrsFirePayee,
 } from '../lib/irsFire.js';
+import { renderGarnishmentLetterPdf } from '../lib/garnishmentLetter.js';
 
 /**
  * Phase 91 — Garnishments + tax forms (941, 940, W-2, 1099-NEC).
@@ -227,6 +228,70 @@ payrollTax91Router.get('/garnishments/:id/deductions', VIEW, async (req, res) =>
     })),
   });
 });
+
+/**
+ * Render an employer acknowledgment letter PDF for the given garnishment.
+ * Returns a printable plain-paper PDF the operator can mail to the
+ * issuing authority confirming withholding has begun.
+ */
+payrollTax91Router.get(
+  '/garnishments/:id/letter.pdf',
+  VIEW,
+  async (req, res, next) => {
+    try {
+      const id = z.string().uuid().parse(req.params.id);
+      const g = await prisma.garnishment.findFirst({
+        where: { id, deletedAt: null },
+        include: {
+          associate: {
+            select: { firstName: true, lastName: true, email: true },
+          },
+        },
+      });
+      if (!g) throw new HttpError(404, 'not_found', 'Garnishment not found.');
+
+      const deductions = await prisma.garnishmentDeduction.findMany({
+        where: { garnishmentId: g.id },
+        orderBy: { deductedOn: 'desc' },
+        take: 500,
+      });
+
+      const [orgSetting, submitter] = await Promise.all([
+        prisma.orgSetting.findUnique({ where: { id: 'singleton' } }),
+        prisma.submitterProfile.findUnique({ where: { id: 'singleton' } }),
+      ]);
+      const employer = {
+        name: submitter?.name ?? orgSetting?.orgName ?? 'Employer',
+        addressLine1: submitter?.addressLine1 ?? null,
+        addressLine2: submitter?.addressLine2 ?? null,
+        city: submitter?.city ?? null,
+        state: submitter?.state ?? null,
+        zip: submitter
+          ? submitter.zip4
+            ? `${submitter.zip5}-${submitter.zip4}`
+            : submitter.zip5
+          : null,
+        phone: submitter?.contactPhone ?? null,
+        ein: submitter?.ein ?? null,
+      };
+
+      const pdf = await renderGarnishmentLetterPdf({
+        garnishment: g,
+        associate: g.associate,
+        deductions,
+        employer,
+      });
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="garnishment-${g.id.slice(0, 8)}.pdf"`,
+      );
+      res.send(pdf);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 // ----- Tax forms ---------------------------------------------------------
 

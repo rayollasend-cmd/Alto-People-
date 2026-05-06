@@ -146,6 +146,13 @@ const EnvSchema = z.object({
   // table and shows "Coming soon" for everything else.
   ASN_NEXUS_BASE_URL: z.string().url().optional(),
   ASN_NEXUS_API_KEY: z.string().optional(),
+  // Phase 9 storage root — overrides `apps/api/uploads/` so a Railway
+  // Volume (or any mounted disk) can hold the document blobs across
+  // redeploys. When unset, falls back to the colocated default which
+  // is fine for local dev but ephemeral on Railway. On Railway, attach
+  // a Volume to this service and set UPLOAD_DIR to its mount path
+  // (e.g. /data/uploads). See apps/api/STORAGE.md.
+  UPLOAD_DIR: z.string().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

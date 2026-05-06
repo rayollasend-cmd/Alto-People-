@@ -5,7 +5,8 @@
 // so finance can see at a glance which payroll is up next.
 
 import { useCallback, useEffect, useState } from 'react';
-import { Calendar, Pencil, Plus, Trash2, Users } from 'lucide-react';
+import { Calendar, Pencil, Plus, Trash2, UserPlus, Users } from 'lucide-react';
+import { BulkAssignScheduleDialog } from './BulkAssignScheduleDialog';
 import type {
   PayrollFrequency,
   PayrollSchedule,
@@ -59,6 +60,7 @@ export function PaySchedulesView({ canProcess }: Props) {
   const [editing, setEditing] = useState<PayrollSchedule | null>(null);
   const [creating, setCreating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<PayrollSchedule | null>(null);
+  const [bulkAssignTarget, setBulkAssignTarget] = useState<PayrollSchedule | null>(null);
   const [includeInactive, setIncludeInactive] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -148,6 +150,14 @@ export function PaySchedulesView({ canProcess }: Props) {
                 </div>
                 {canProcess && (
                   <div className="flex items-center gap-1 shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setBulkAssignTarget(s)}
+                      title="Bulk assign associates"
+                    >
+                      <UserPlus className="h-3.5 w-3.5" />
+                    </Button>
                     <Button variant="ghost" size="icon" onClick={() => setEditing(s)} title="Edit">
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
@@ -220,6 +230,16 @@ export function PaySchedulesView({ canProcess }: Props) {
         confirmLabel="Delete"
         destructive
         onConfirm={onDelete}
+      />
+
+      <BulkAssignScheduleDialog
+        open={!!bulkAssignTarget}
+        schedule={bulkAssignTarget}
+        onOpenChange={(v) => !v && setBulkAssignTarget(null)}
+        onSaved={() => {
+          setBulkAssignTarget(null);
+          refresh();
+        }}
       />
     </div>
   );

@@ -92,7 +92,11 @@ export function DocumentPreview({ doc, onOpenChange, actions }: DocumentPreviewP
 
             <footer className="px-5 py-3 border-t border-navy-secondary flex items-center justify-between gap-3">
               <div className="text-xs text-silver">
-                {doc.rejectionReason ? (
+                {!doc.fileAvailable ? (
+                  <span className="text-alert">
+                    File no longer available — please re-upload.
+                  </span>
+                ) : doc.rejectionReason ? (
                   <span className="text-alert">
                     Rejection reason: {doc.rejectionReason}
                   </span>
@@ -106,22 +110,30 @@ export function DocumentPreview({ doc, onOpenChange, actions }: DocumentPreviewP
                 )}
               </div>
               <div className="flex items-center gap-2">
-                <a
-                  href={previewDocumentUrl(doc.id)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 text-xs text-silver hover:text-white px-2 py-1 rounded border border-navy-secondary hover:border-silver/50 transition"
-                >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                  Open in new tab
-                </a>
-                <a
-                  href={downloadDocumentUrl(doc.id)}
-                  className="inline-flex items-center gap-1.5 text-xs text-navy bg-gold hover:bg-gold-bright px-2.5 py-1 rounded font-medium transition"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                  Download
-                </a>
+                {doc.fileAvailable ? (
+                  <>
+                    <a
+                      href={previewDocumentUrl(doc.id)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 text-xs text-silver hover:text-white px-2 py-1 rounded border border-navy-secondary hover:border-silver/50 transition"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      Open in new tab
+                    </a>
+                    <a
+                      href={downloadDocumentUrl(doc.id)}
+                      className="inline-flex items-center gap-1.5 text-xs text-navy bg-gold hover:bg-gold-bright px-2.5 py-1 rounded font-medium transition"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      Download
+                    </a>
+                  </>
+                ) : (
+                  <span className="text-xs text-silver/50">
+                    Preview / download disabled — file missing on server
+                  </span>
+                )}
               </div>
             </footer>
           </>
@@ -133,6 +145,20 @@ export function DocumentPreview({ doc, onOpenChange, actions }: DocumentPreviewP
 
 function PreviewBody({ doc }: { doc: DocumentRecord }) {
   const url = previewDocumentUrl(doc.id);
+  if (!doc.fileAvailable) {
+    return (
+      <div className="text-center px-8 max-w-md">
+        <FileWarning className="h-10 w-10 text-alert mx-auto mb-3" />
+        <p className="text-white font-medium">File no longer available</p>
+        <p className="text-sm text-silver mt-1">
+          The underlying upload was lost from server storage (this can happen
+          when the server is redeployed before files are migrated to durable
+          storage). The record metadata is intact — please ask the associate
+          to re-upload, or remove this entry.
+        </p>
+      </div>
+    );
+  }
   if (doc.mimeType === 'application/pdf') {
     return (
       <iframe
