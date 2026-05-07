@@ -57,11 +57,15 @@ export interface ButtonProps
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, asChild, loading, disabled, children, ...props }, ref) => {
     const Comp = asChild ? Slot : 'button';
-    // Slot enforces React.Children.only on its child, so the spinner sibling
-    // we'd normally render alongside `children` would crash when asChild is
-    // true. Suppress the inline spinner in that case — `disabled` still
-    // conveys the busy state on the underlying element. Callers that need a
-    // visible spinner with a Link should use `useNavigate` + onClick instead.
+    // Slot enforces React.Children.only on its child. Even when the inline
+    // spinner is suppressed (showSpinner=false), JSX still compiles
+    // `{showSpinner && <Loader2/>}{children}` into a 2-element array
+    // [false, children] which trips React.Children.only with
+    // "expected to receive a single React element child". So when asChild
+    // is true we render `{children}` alone — a single JSX expression —
+    // and skip the spinner entirely. `disabled` + `aria-busy` still
+    // convey busy state to the underlying element. Callers that need a
+    // visible spinner with a Link should use `useNavigate` + onClick.
     const showSpinner = loading && !asChild;
     return (
       <Comp
@@ -71,8 +75,14 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         aria-busy={loading || undefined}
         {...props}
       >
-        {showSpinner && <Loader2 className="h-4 w-4 animate-spin" />}
-        {children}
+        {asChild ? (
+          children
+        ) : (
+          <>
+            {showSpinner && <Loader2 className="h-4 w-4 animate-spin" />}
+            {children}
+          </>
+        )}
       </Comp>
     );
   }
