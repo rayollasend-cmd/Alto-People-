@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Download, Filter, RefreshCw, Search } from 'lucide-react';
+import { ChevronRight, Download, Filter, RefreshCw, Search } from 'lucide-react';
 import type { AuditSearchEntry } from '@alto-people/shared';
 import {
   auditCsvUrl,
@@ -33,6 +33,50 @@ const PAGE_SIZE = 100;
 
 function fmtTs(iso: string): string {
   return new Date(iso).toLocaleString();
+}
+
+function fmtTimeOnly(iso: string): string {
+  return new Date(iso).toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+function dayKey(iso: string): string {
+  return new Date(iso).toISOString().slice(0, 10);
+}
+
+function dayHeading(key: string): string {
+  const today = new Date();
+  const todayKey = today.toISOString().slice(0, 10);
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayKey = yesterday.toISOString().slice(0, 10);
+  if (key === todayKey) return 'Today';
+  if (key === yesterdayKey) return 'Yesterday';
+  return new Date(`${key}T00:00:00Z`).toLocaleDateString(undefined, {
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric',
+    year:
+      key.slice(0, 4) === String(today.getFullYear()) ? undefined : 'numeric',
+  });
+}
+
+function groupByDay<T extends { createdAt: string }>(
+  rows: T[],
+): { key: string; entries: T[] }[] {
+  const map = new Map<string, T[]>();
+  for (const r of rows) {
+    const k = dayKey(r.createdAt);
+    const list = map.get(k);
+    if (list) list.push(r);
+    else map.set(k, [r]);
+  }
+  // Map preserves insertion order; entries are already DESC by createdAt
+  // from the API, so the first key is the most recent day.
+  return [...map.entries()].map(([key, entries]) => ({ key, entries }));
 }
 
 function metaPreview(m: Record<string, unknown> | null): string {
@@ -254,45 +298,76 @@ export function AuditHome() {
             </p>
           )}
           {entries && entries.length > 0 && (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="whitespace-nowrap">When</TableHead>
-                  <TableHead>Action</TableHead>
-                  <TableHead>Actor</TableHead>
-                  <TableHead>Entity</TableHead>
-                  <TableHead>Metadata</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {entries.map((e) => (
-                  <TableRow key={e.id}>
-                    <TableCell className="text-silver text-xs whitespace-nowrap tabular-nums">
-                      {fmtTs(e.createdAt)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="font-mono text-[11px]">
-                        {e.action}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-silver text-xs truncate max-w-[16ch]">
-                      {e.actorEmail ?? (
-                        <span className="text-silver/50">system</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-silver text-xs">
-                      <div className="text-white">{e.entityType}</div>
-                      <div className="font-mono text-[10px] text-silver/60 truncate max-w-[20ch]">
-                        {e.entityId}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-silver text-xs font-mono truncate max-w-[44ch]">
-                      {metaPreview(e.metadata)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <div className="divide-y divide-navy-secondary">
+              {groupByDay(entries).map((group, idx) => (
+                <details
+                  key={group.key}
+                  open={idx === 0}
+                  className="[&[open]>summary>svg.chev]:rotate-90"
+                >
+                  <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-sm hover:bg-navy-secondary/40">
+                    <ChevronRight className="chev h-4 w-4 text-silver transition-transform" />
+                    <span className="font-medium text-white">
+                      {dayHeading(group.key)}
+                    </span>
+                    <span className="text-xs text-silver/60">
+                      · {group.key}
+                    </span>
+                    <span className="ml-auto text-xs text-silver">
+                      {group.entries.length} event
+                      {group.entries.length === 1 ? '' : 's'}
+                    </span>
+                  </summary>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="whitespace-nowrap w-24">
+                          Time
+                        </TableHead>
+                        <TableHead>Action</TableHead>
+                        <TableHead>Actor</TableHead>
+                        <TableHead>Entity</TableHead>
+                        <TableHead>Metadata</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {group.entries.map((e) => (
+                        <TableRow key={e.id}>
+                          <TableCell
+                            className="text-silver text-xs whitespace-nowrap tabular-nums"
+                            title={fmtTs(e.createdAt)}
+                          >
+                            {fmtTimeOnly(e.createdAt)}
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant="outline"
+                              className="font-mono text-[11px]"
+                            >
+                              {e.action}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-silver text-xs truncate max-w-[16ch]">
+                            {e.actorEmail ?? (
+                              <span className="text-silver/50">system</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-silver text-xs">
+                            <div className="text-white">{e.entityType}</div>
+                            <div className="font-mono text-[10px] text-silver/60 truncate max-w-[20ch]">
+                              {e.entityId}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-silver text-xs font-mono truncate max-w-[44ch]">
+                            {metaPreview(e.metadata)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </details>
+              ))}
+            </div>
           )}
         </CardContent>
       </Card>
