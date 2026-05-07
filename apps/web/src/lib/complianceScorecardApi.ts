@@ -1,4 +1,7 @@
 import type {
+  ManualAttestationCreateInput,
+  ManualAttestationListResponse,
+  ManualAttestationSignal,
   ScorecardActionsResponse,
   ScorecardBillingResponse,
   ScorecardExpirationsResponse,
@@ -32,4 +35,17 @@ export function getScorecardTraining(): Promise<ScorecardTrainingResponse> {
 
 export function getScorecardActions(): Promise<ScorecardActionsResponse> {
   return apiFetch<ScorecardActionsResponse>(`${ROOT}/actions`);
+}
+
+export function listAttestationSignals(): Promise<ManualAttestationListResponse> {
+  return apiFetch<ManualAttestationListResponse>(`${ROOT}/attestations`);
+}
+
+export function upsertAttestation(
+  body: ManualAttestationCreateInput,
+): Promise<{ signal: ManualAttestationSignal }> {
+  return apiFetch<{ signal: ManualAttestationSignal }>(`${ROOT}/attestations`, {
+    method: 'POST',
+    body,
+  });
 }

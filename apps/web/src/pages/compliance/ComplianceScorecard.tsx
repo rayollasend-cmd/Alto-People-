@@ -48,7 +48,15 @@ import {
   getScorecardOnboarding,
   getScorecardShifts,
   getScorecardTraining,
+  upsertAttestation,
 } from '@/lib/complianceScorecardApi';
+import type {
+  ManualAttestationOutcome,
+  ManualAttestationSignal,
+} from '@alto-people/shared';
+import { Input, Textarea, Label } from '@/components/ui';
+import { useAuth } from '@/lib/auth';
+import { hasCapability } from '@/lib/roles';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 
@@ -506,11 +514,22 @@ function ShiftsTile({ refreshEpoch }: { refreshEpoch: number }) {
 
 function BillingTile({ refreshEpoch }: { refreshEpoch: number }) {
   const { data, error, stale } = useTileData(getScorecardBilling, refreshEpoch);
+  const { user } = useAuth();
+  const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
+  const [drawerSignal, setDrawerSignal] =
+    useState<ManualAttestationSignal | null>(null);
+  const [localSignals, setLocalSignals] = useState<
+    ManualAttestationSignal[] | null
+  >(null);
 
   const mismatches = useMemo(
     () => data?.rateChecks.filter((r) => r.expectedRate !== null && !r.match) ?? [],
     [data],
   );
+
+  // Local copy lets the drawer optimistically replace a signal after the
+  // upsert returns, without waiting for the next 15-min tile refresh.
+  const signals = localSignals ?? data?.attestations ?? [];
 
   return (
     <TileShell
@@ -548,19 +567,281 @@ function BillingTile({ refreshEpoch }: { refreshEpoch: number }) {
               )}
             </ul>
           )}
-          {data.unsupported.length > 0 && (
+          {signals.length > 0 && (
             <div className="mt-3 pt-3 border-t border-navy-secondary">
-              <div className="text-[10px] uppercase tracking-widest text-silver/80 mb-1">
-                Coming soon
+              <div className="text-[10px] uppercase tracking-widest text-silver/80 mb-1.5">
+                Manual attestations
               </div>
-              {data.unsupported.map((u) => (
-                <ComingSoonRow key={u.key} label={u.label} reason={u.reason} />
-              ))}
+              <ul className="space-y-1.5">
+                {signals.map((s) => (
+                  <AttestationRow
+                    key={s.key}
+                    signal={s}
+                    canManage={canManage}
+                    onClick={() => setDrawerSignal(s)}
+                  />
+                ))}
+              </ul>
             </div>
           )}
+          <AttestationDrawer
+            signal={drawerSignal}
+            canManage={canManage}
+            onClose={() => setDrawerSignal(null)}
+            onSaved={(updated) => {
+              setLocalSignals((prev) => {
+                const base = prev ?? data.attestations;
+                return base.map((s) => (s.key === updated.key ? updated : s));
+              });
+              setDrawerSignal(null);
+            }}
+          />
         </>
       )}
     </TileShell>
+  );
+}
+
+function AttestationRow({
+  signal,
+  canManage,
+  onClick,
+}: {
+  signal: ManualAttestationSignal;
+  canManage: boolean;
+  onClick: () => void;
+}) {
+  const status = signal.status;
+  const Icon =
+    status === 'attested'
+      ? CheckCircle2
+      : status === 'overdue'
+        ? AlertTriangle
+        : Clock;
+  const colorClass =
+    status === 'attested'
+      ? 'text-success'
+      : status === 'overdue'
+        ? 'text-alert'
+        : status === 'due_soon'
+          ? 'text-warning'
+          : 'text-silver/70';
+
+  const statusText = (() => {
+    if (status === 'attested' && signal.current) {
+      const at = signal.current.actionTakenAt
+        ? new Date(signal.current.actionTakenAt).toLocaleDateString()
+        : 'date not recorded';
+      return `Done ${at} by ${signal.current.attestedByEmail}`;
+    }
+    if (status === 'overdue') {
+      const due = new Date(signal.dueDate);
+      const now = new Date();
+      const days = Math.max(
+        1,
+        Math.floor((now.getTime() - due.getTime()) / (1000 * 60 * 60 * 24)),
+      );
+      return `Overdue by ${days} day${days === 1 ? '' : 's'} (was due ${signal.dueDate})`;
+    }
+    if (status === 'due_soon') return `Due ${signal.dueDate}`;
+    return `Due ${signal.dueDate}`;
+  })();
+
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={!canManage}
+        className={cn(
+          'w-full text-left flex items-start gap-2 px-2 py-1.5 rounded text-xs',
+          canManage && 'hover:bg-navy-secondary/40 cursor-pointer',
+          !canManage && 'cursor-default',
+        )}
+        title={canManage ? 'Click to attest' : 'View only — manage:compliance required'}
+      >
+        <Icon className={cn('h-3.5 w-3.5 shrink-0 mt-0.5', colorClass)} />
+        <div className="min-w-0 flex-1">
+          <div className="text-white truncate">{signal.label}</div>
+          <div className={cn('truncate', colorClass)}>{statusText}</div>
+        </div>
+      </button>
+    </li>
+  );
+}
+
+function AttestationDrawer({
+  signal,
+  canManage,
+  onClose,
+  onSaved,
+}: {
+  signal: ManualAttestationSignal | null;
+  canManage: boolean;
+  onClose: () => void;
+  onSaved: (updated: ManualAttestationSignal) => void;
+}) {
+  const [outcome, setOutcome] = useState<ManualAttestationOutcome>('YES');
+  const [actionTakenAt, setActionTakenAt] = useState('');
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Reset form when a new signal is targeted; pre-fill from existing
+  // attestation so re-attesting feels like editing, not starting over.
+  useEffect(() => {
+    if (!signal) return;
+    if (signal.current) {
+      setOutcome(signal.current.outcome);
+      setActionTakenAt(
+        signal.current.actionTakenAt
+          ? signal.current.actionTakenAt.slice(0, 10)
+          : '',
+      );
+      setNotes(signal.current.notes ?? '');
+    } else {
+      setOutcome('YES');
+      // Pre-fill action date with today (most common case).
+      setActionTakenAt(new Date().toISOString().slice(0, 10));
+      setNotes('');
+    }
+    setError(null);
+  }, [signal]);
+
+  if (!signal) return null;
+
+  const submit = async () => {
+    if (!canManage) return;
+    if (outcome !== 'NOT_APPLICABLE' && !actionTakenAt) {
+      setError('Action date is required when outcome is Yes or No.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const r = await upsertAttestation({
+        key: signal.key,
+        periodStart: signal.periodStart,
+        outcome,
+        actionTakenAt:
+          outcome === 'NOT_APPLICABLE' || !actionTakenAt
+            ? null
+            : new Date(`${actionTakenAt}T12:00:00Z`).toISOString(),
+        notes: notes.trim() || null,
+        evidenceDocumentId: null,
+      });
+      onSaved(r.signal);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Save failed.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Drawer open onOpenChange={(o) => !o && onClose()}>
+      <DrawerHeader>
+        <DrawerTitle>{signal.label}</DrawerTitle>
+        <DrawerDescription>{signal.description}</DrawerDescription>
+      </DrawerHeader>
+      <DrawerBody>
+        <div className="text-xs text-silver/80 mb-3">
+          Period:{' '}
+          <span className="text-white">
+            {signal.periodStart} → {signal.periodEnd}
+          </span>{' '}
+          · due {signal.dueDate}
+        </div>
+
+        {signal.previous && (
+          <div className="rounded border border-navy-secondary bg-navy-secondary/30 p-2.5 text-xs mb-4">
+            <div className="text-silver/70">
+              Previous period ({signal.previous.periodStart} →{' '}
+              {signal.previous.periodEnd})
+            </div>
+            <div className="text-white mt-0.5">
+              {signal.previous.outcome}
+              {signal.previous.actionTakenAt && (
+                <>
+                  {' '}
+                  · action taken{' '}
+                  {new Date(signal.previous.actionTakenAt).toLocaleDateString()}
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="space-y-3">
+          <div>
+            <Label>Outcome</Label>
+            <div className="flex flex-wrap gap-2 mt-1">
+              {(['YES', 'NO', 'NOT_APPLICABLE'] as const).map((o) => (
+                <button
+                  key={o}
+                  type="button"
+                  onClick={() => canManage && setOutcome(o)}
+                  disabled={!canManage}
+                  className={cn(
+                    'px-3 py-1.5 rounded text-xs border',
+                    outcome === o
+                      ? o === 'YES'
+                        ? 'border-success text-success bg-success/10'
+                        : o === 'NO'
+                          ? 'border-alert text-alert bg-alert/10'
+                          : 'border-silver text-silver bg-silver/10'
+                      : 'border-navy-secondary text-silver/70 hover:text-white',
+                  )}
+                >
+                  {o === 'NOT_APPLICABLE' ? 'N/A' : o}
+                </button>
+              ))}
+            </div>
+          </div>
+          {outcome !== 'NOT_APPLICABLE' && (
+            <div>
+              <Label htmlFor="actionTakenAt">Date the action was taken</Label>
+              <Input
+                id="actionTakenAt"
+                type="date"
+                value={actionTakenAt}
+                onChange={(e) => setActionTakenAt(e.target.value)}
+                disabled={!canManage}
+                className="mt-1"
+              />
+            </div>
+          )}
+          <div>
+            <Label htmlFor="attestationNotes">Notes (optional)</Label>
+            <Textarea
+              id="attestationNotes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              disabled={!canManage}
+              rows={3}
+              placeholder="e.g. submitted with adjusted hours for J. Smith"
+              className="mt-1"
+            />
+          </div>
+        </div>
+
+        {error && (
+          <p role="alert" className="text-xs text-alert mt-3">
+            {error}
+          </p>
+        )}
+      </DrawerBody>
+      <div className="border-t border-navy-secondary p-4 flex justify-end gap-2">
+        <Button variant="ghost" onClick={onClose}>
+          Close
+        </Button>
+        {canManage && (
+          <Button onClick={submit} loading={saving}>
+            {signal.current ? 'Update attestation' : 'Save attestation'}
+          </Button>
+        )}
+      </div>
+    </Drawer>
   );
 }
 

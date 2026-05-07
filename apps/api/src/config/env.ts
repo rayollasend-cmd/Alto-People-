@@ -100,6 +100,12 @@ const EnvSchema = z.object({
   // (every 30 min) in production. The threshold for "stale" is hard-coded
   // at 48h in lib/inviteReminder.ts; this only controls scan cadence.
   INVITE_REMINDER_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(0),
+  // Manual compliance attestation reminder cron. 0 (default) disables;
+  // production should set 3600 (hourly) so HR gets pinged the day a
+  // weekly/monthly compliance attestation comes due. Per-signal de-dup
+  // inside the sweep ensures a 1h cadence doesn't spam HR — each
+  // (key, periodStart) reminder fires at most once per 24h.
+  ATTESTATION_REMINDER_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(0),
   // Phase 22 — payroll disbursement adapter. STUB (default) returns
   // synthetic refs; WISE / BRANCH attempt the real provider when the
   // matching API key is also set. Falls back to STUB if the chosen

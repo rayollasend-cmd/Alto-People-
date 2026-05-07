@@ -450,6 +450,7 @@ model User {
   anonymousReportUpdates            AnonymousReportUpdate[]      @relation("AnonReportAuthor")
   equityGrantsIssued                EquityGrant[]                @relation("EquityGrantedBy")
   volunteerEntriesReviewed          VolunteerEntry[]             @relation("VolunteerReviewer")
+  manualAttestationsAttested        ManualComplianceAttestation[] @relation("AttestationAttester")
 
   @@index([role])
   @@index([clientId])
@@ -900,6 +901,7 @@ model DocumentRecord {
   verifiedBy      User?            @relation("DocumentVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
   signatures      Signature[]
   tasks           OnboardingTask[]
+  attestationEvidence ManualComplianceAttestation[] @relation("AttestationEvidence")
   createdAt       DateTime         @default(now()) @db.Timestamptz(6)
   updatedAt       DateTime         @updatedAt @db.Timestamptz(6)
   deletedAt       DateTime?        @db.Timestamptz(6)
@@ -5263,4 +5265,48 @@ model BranchWebhookEvent {
 
   @@index([eventType, receivedAt])
   @@index([status, receivedAt])
+}
+
+// Manual compliance attestation — used for billing/invoicing scorecard
+// signals where the actual action happens outside Alto (Fieldglass,
+// Walmart vendor portal, QBO) and the only thing we track is "did HR
+// confirm they did it for this period?". One attestation row per
+// (key, periodStart) — re-attesting the same period overwrites via
+// upsert at the route layer. Attestation is read-mostly: HR clicks
+// the row, confirms outcome + when the action was taken, and the
+// scorecard tile flips green.
+enum ManualAttestationOutcome {
+  YES            // action was taken
+  NO             // action was missed / skipped
+  NOT_APPLICABLE // not applicable for this period (e.g. holiday week)
+}
+
+model ManualComplianceAttestation {
+  id                 String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // Stable identifier from the in-code config map (e.g. MONTHLY_REPORT,
+  // INVOICE_FORFEITURE, FIELDGLASS_TIMESHEET). Not a Prisma enum so new
+  // signals can ship without a migration.
+  key                String                   @db.VarChar(64)
+  // Period the attestation covers. periodStart is the canonical key —
+  // periodEnd is denormalized for query convenience. Both stored as
+  // UTC dates; cadence (weekly/monthly) lives in code.
+  periodStart        DateTime                 @db.Date
+  periodEnd          DateTime                 @db.Date
+  outcome            ManualAttestationOutcome
+  // When HR actually performed the action (in Fieldglass / portal).
+  // Nullable for NOT_APPLICABLE attestations.
+  actionTakenAt      DateTime?                @db.Timestamptz(6)
+  attestedById       String                   @db.Uuid
+  attestedAt         DateTime                 @default(now()) @db.Timestamptz(6)
+  notes              String?
+  // Optional pointer to a screenshot/PDF the operator uploaded as
+  // evidence. References DocumentRecord so it lives in the same
+  // /documents vault and benefits from the same fileAvailable check.
+  evidenceDocumentId String?                  @db.Uuid
+
+  attestedBy       User            @relation("AttestationAttester", fields: [attestedById], references: [id], onDelete: Restrict)
+  evidenceDocument DocumentRecord? @relation("AttestationEvidence", fields: [evidenceDocumentId], references: [id], onDelete: SetNull)
+
+  @@unique([key, periodStart])
+  @@index([key, periodEnd])
 }

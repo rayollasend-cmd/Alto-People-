@@ -1,6 +1,9 @@
 import { Router } from 'express';
 import { Prisma } from '@prisma/client';
+import { z } from 'zod';
 import {
+  ManualAttestationCreateInputSchema,
+  ManualAttestationListResponseSchema,
   ScorecardActionsResponseSchema,
   ScorecardBillingResponseSchema,
   ScorecardExpirationsResponseSchema,
@@ -8,6 +11,7 @@ import {
   ScorecardShiftsResponseSchema,
   ScorecardTrainingResponseSchema,
   type ComplianceTag,
+  type ManualAttestationSignal,
   type ScorecardAction,
   type ScorecardActionsResponse,
   type ScorecardBillingResponse,
@@ -20,8 +24,18 @@ import {
   type ScorecardTrainingResponse,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { getShiftMetrics, isConfigured as asnNexusConfigured, type AsnNexusMetric } from '../lib/asnNexus.js';
+import {
+  ATTESTATION_CONFIGS,
+  classifyStatus,
+  dueDateFor,
+  getAttestationConfig,
+  periodForNow,
+  type AttestationConfig,
+} from '../lib/manualAttestation.js';
+import { enqueueAudit } from '../lib/audit.js';
 
 export const complianceScorecardRouter = Router();
 
@@ -711,30 +725,209 @@ async function buildBillingTile(): Promise<ScorecardBillingResponse> {
   const mismatches = rateChecks.filter(
     (r) => r.expectedRate !== null && !r.match,
   ).length;
-  const severity: ScorecardSeverity = mismatches === 0 ? 'ok' : 'warn';
+
+  const attestations = await loadAttestationSignals();
+
+  // Tile severity now considers both bill-rate mismatches AND attestation
+  // state. Any overdue attestation = critical; any mismatch or due_soon =
+  // warn; otherwise ok.
+  const overdueCount = attestations.filter((a) => a.status === 'overdue').length;
+  const dueSoonCount = attestations.filter((a) => a.status === 'due_soon').length;
+  const severity: ScorecardSeverity =
+    overdueCount > 0
+      ? 'critical'
+      : mismatches > 0 || dueSoonCount > 0
+        ? 'warn'
+        : 'ok';
 
   return ScorecardBillingResponseSchema.parse({
     rateChecks,
-    unsupported: [
-      {
-        key: 'INVOICE_FORFEITURE',
-        label: 'Invoices nearing 90-day forfeiture',
-        reason: 'No Invoice model in schema; track in QuickBooks until the AR module ships.',
-      },
-      {
-        key: 'MONTHLY_REPORT',
-        label: 'Monthly compliance report submitted',
-        reason: 'No model tracking client-report submission state.',
-      },
-      {
-        key: 'FIELDGLASS_LAST_SUBMIT',
-        label: 'Last Fieldglass submission',
-        reason: 'No Fieldglass integration in schema yet.',
-      },
-    ],
+    attestations,
     severity,
     generatedAt: new Date().toISOString(),
   });
+}
+
+/* ----- Manual compliance attestation endpoints --------------------------- */
+
+const MANAGE_COMPLIANCE = requireCapability('manage:compliance');
+
+complianceScorecardRouter.get('/attestations', VIEW, async (_req, res, next) => {
+  try {
+    const signals = await loadAttestationSignals();
+    res.json(ManualAttestationListResponseSchema.parse({ signals }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+complianceScorecardRouter.post(
+  '/attestations',
+  MANAGE_COMPLIANCE,
+  async (req, res, next) => {
+    try {
+      const input = ManualAttestationCreateInputSchema.parse(req.body);
+      const config = getAttestationConfig(input.key);
+      if (!config) {
+        throw new HttpError(
+          400,
+          'unknown_attestation_key',
+          `Unknown attestation key: ${input.key}`,
+        );
+      }
+      const periodStart = parseDateOnly(input.periodStart);
+      // Verify the supplied period matches a real period for this signal —
+      // reject random dates so the unique (key, periodStart) index can't
+      // be polluted with off-grid rows.
+      const expected = periodForNow(config.cadence, periodStart);
+      if (
+        toDateKey(periodStart) !== toDateKey(expected.periodStart)
+      ) {
+        throw new HttpError(
+          400,
+          'invalid_period',
+          'periodStart must align with the cadence (Monday for WEEKLY, 1st of month for MONTHLY).',
+        );
+      }
+
+      const row = await prisma.manualComplianceAttestation.upsert({
+        where: { key_periodStart: { key: input.key, periodStart } },
+        create: {
+          key: input.key,
+          periodStart,
+          periodEnd: expected.periodEnd,
+          outcome: input.outcome,
+          actionTakenAt: input.actionTakenAt
+            ? new Date(input.actionTakenAt)
+            : null,
+          attestedById: req.user!.id,
+          notes: input.notes,
+          evidenceDocumentId: input.evidenceDocumentId,
+        },
+        update: {
+          outcome: input.outcome,
+          actionTakenAt: input.actionTakenAt
+            ? new Date(input.actionTakenAt)
+            : null,
+          attestedById: req.user!.id,
+          attestedAt: new Date(),
+          notes: input.notes,
+          evidenceDocumentId: input.evidenceDocumentId,
+        },
+      });
+
+      enqueueAudit(
+        {
+          actorUserId: req.user!.id,
+          action: 'compliance.attestation.upsert',
+          entityType: 'ManualComplianceAttestation',
+          entityId: row.id,
+          metadata: {
+            key: input.key,
+            periodStart: toDateKey(periodStart),
+            outcome: input.outcome,
+          },
+        },
+        'attestation upsert',
+      );
+
+      const signals = await loadAttestationSignals();
+      const signal = signals.find((s) => s.key === input.key);
+      res.status(201).json({ signal });
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        next(new HttpError(400, 'invalid_body', 'Invalid attestation', err.flatten()));
+        return;
+      }
+      next(err);
+    }
+  },
+);
+
+async function loadAttestationSignals(): Promise<ManualAttestationSignal[]> {
+  const now = new Date();
+  const signals: ManualAttestationSignal[] = [];
+
+  for (const config of ATTESTATION_CONFIGS) {
+    const { periodStart, periodEnd } = periodForNow(config.cadence, now);
+    const previousPeriod = previousPeriodFor(config, periodStart);
+
+    const rows = await prisma.manualComplianceAttestation.findMany({
+      where: {
+        key: config.key,
+        periodStart: {
+          in: [periodStart, previousPeriod.periodStart],
+        },
+      },
+      include: { attestedBy: { select: { email: true } } },
+    });
+    const current = rows.find(
+      (r) => toDateKey(r.periodStart) === toDateKey(periodStart),
+    );
+    const previous = rows.find(
+      (r) => toDateKey(r.periodStart) === toDateKey(previousPeriod.periodStart),
+    );
+
+    signals.push({
+      key: config.key,
+      label: config.label,
+      description: config.description,
+      cadence: config.cadence,
+      periodStart: toDateKey(periodStart),
+      periodEnd: toDateKey(periodEnd),
+      dueDate: toDateKey(dueDateFor(config, periodStart)),
+      status: classifyStatus(config, periodStart, !!current, now),
+      current: current
+        ? {
+            id: current.id,
+            outcome: current.outcome,
+            actionTakenAt: current.actionTakenAt
+              ? current.actionTakenAt.toISOString()
+              : null,
+            attestedById: current.attestedById,
+            attestedByEmail: current.attestedBy.email,
+            attestedAt: current.attestedAt.toISOString(),
+            notes: current.notes,
+            evidenceDocumentId: current.evidenceDocumentId,
+          }
+        : null,
+      previous: previous
+        ? {
+            periodStart: toDateKey(previous.periodStart),
+            periodEnd: toDateKey(previous.periodEnd),
+            outcome: previous.outcome,
+            actionTakenAt: previous.actionTakenAt
+              ? previous.actionTakenAt.toISOString()
+              : null,
+          }
+        : null,
+    });
+  }
+
+  return signals;
+}
+
+function previousPeriodFor(
+  config: AttestationConfig,
+  currentStart: Date,
+): { periodStart: Date; periodEnd: Date } {
+  if (config.cadence === 'WEEKLY') {
+    const start = new Date(currentStart);
+    start.setUTCDate(start.getUTCDate() - 7);
+    return periodForNow('WEEKLY', start);
+  }
+  const start = new Date(currentStart);
+  start.setUTCMonth(start.getUTCMonth() - 1);
+  return periodForNow('MONTHLY', start);
+}
+
+function toDateKey(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function parseDateOnly(s: string): Date {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d));
 }
 
 /* ============================================================ TILE 5 ===== *

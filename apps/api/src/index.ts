@@ -3,6 +3,7 @@ import { createApp } from './app.js';
 import { prisma } from './db.js';
 import { startKeepAlive } from './lib/keepalive.js';
 import { startInviteReminderCron } from './lib/inviteReminder.js';
+import { startAttestationReminderCron } from './lib/attestationReminder.js';
 import { ensureBrandingLoaded } from './lib/branding.js';
 import { preloadPayrollTaxConfig } from './lib/payrollTax.js';
 
@@ -35,6 +36,7 @@ app.listen(env.PORT, '0.0.0.0', async () => {
   }
 
   startInviteReminderCron();
+  startAttestationReminderCron();
 
   // Best-effort prime of the branding cache so the first email rendered
   // after boot uses the org's saved logo + colors instead of the

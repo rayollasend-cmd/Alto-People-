@@ -3161,13 +3161,90 @@ export const ScorecardBillingRateRowSchema = z.object({
 });
 export type ScorecardBillingRateRow = z.infer<typeof ScorecardBillingRateRowSchema>;
 
+/* ----- Manual compliance attestation (replaces Coming-soon rows) -------- */
+
+export const ManualAttestationCadenceSchema = z.enum(['WEEKLY', 'MONTHLY']);
+export type ManualAttestationCadence = z.infer<typeof ManualAttestationCadenceSchema>;
+
+export const ManualAttestationOutcomeSchema = z.enum(['YES', 'NO', 'NOT_APPLICABLE']);
+export type ManualAttestationOutcome = z.infer<typeof ManualAttestationOutcomeSchema>;
+
+export const ManualAttestationStatusSchema = z.enum([
+  'attested',
+  'due_soon',
+  'overdue',
+  'upcoming',
+]);
+export type ManualAttestationStatus = z.infer<typeof ManualAttestationStatusSchema>;
+
+export const ManualAttestationSignalSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  description: z.string(),
+  cadence: ManualAttestationCadenceSchema,
+  /** Inclusive ISO date (YYYY-MM-DD) covering the start of the current period. */
+  periodStart: z.string(),
+  /** Inclusive ISO date covering the end of the current period. */
+  periodEnd: z.string(),
+  /** ISO date the attestation must be filed by. */
+  dueDate: z.string(),
+  status: ManualAttestationStatusSchema,
+  /** Latest attestation for the current period, if any. */
+  current: z
+    .object({
+      id: UuidSchema,
+      outcome: ManualAttestationOutcomeSchema,
+      actionTakenAt: z.string().datetime().nullable(),
+      attestedById: UuidSchema,
+      attestedByEmail: z.string().email(),
+      attestedAt: z.string().datetime(),
+      notes: z.string().nullable(),
+      evidenceDocumentId: UuidSchema.nullable(),
+    })
+    .nullable(),
+  /** Snapshot of the prior period's attestation for context. */
+  previous: z
+    .object({
+      periodStart: z.string(),
+      periodEnd: z.string(),
+      outcome: ManualAttestationOutcomeSchema,
+      actionTakenAt: z.string().datetime().nullable(),
+    })
+    .nullable(),
+});
+export type ManualAttestationSignal = z.infer<typeof ManualAttestationSignalSchema>;
+
+export const ManualAttestationListResponseSchema = z.object({
+  signals: z.array(ManualAttestationSignalSchema),
+});
+export type ManualAttestationListResponse = z.infer<typeof ManualAttestationListResponseSchema>;
+
+export const ManualAttestationCreateInputSchema = z
+  .object({
+    key: z.string().min(1).max(64),
+    /** Period the attestation covers — the API validates it matches a known config period. */
+    periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    outcome: ManualAttestationOutcomeSchema,
+    /** When the actual action happened (null when outcome=NOT_APPLICABLE). */
+    actionTakenAt: z.string().datetime().nullable(),
+    notes: z.string().max(1000).nullable(),
+    evidenceDocumentId: UuidSchema.nullable(),
+  })
+  .refine(
+    (v) => v.outcome === 'NOT_APPLICABLE' || v.actionTakenAt !== null,
+    {
+      message: 'actionTakenAt is required when outcome is YES or NO',
+      path: ['actionTakenAt'],
+    },
+  );
+export type ManualAttestationCreateInput = z.infer<
+  typeof ManualAttestationCreateInputSchema
+>;
+
 export const ScorecardBillingResponseSchema = z.object({
   rateChecks: z.array(ScorecardBillingRateRowSchema),
-  unsupported: z.array(z.object({
-    key: z.enum(['INVOICE_FORFEITURE', 'MONTHLY_REPORT', 'FIELDGLASS_LAST_SUBMIT']),
-    label: z.string(),
-    reason: z.string(),
-  })),
+  /** Manual-attestation signals that used to be "Coming soon" placeholders. */
+  attestations: z.array(ManualAttestationSignalSchema),
   severity: ScorecardSeveritySchema,
   generatedAt: z.string().datetime(),
 });
