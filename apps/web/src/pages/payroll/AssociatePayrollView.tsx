@@ -9,6 +9,7 @@ import type { PayrollItem, PayrollItemEarning } from '@alto-people/shared';
 import { listMyPayrollItems } from '@/lib/payrollApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { dayHeading, groupByDayBy } from '@/lib/dayGroup';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -91,20 +92,82 @@ export function AssociatePayrollView() {
         />
       )}
 
-      {items && items.length > 0 && (
-        <ul className="space-y-3">
-          {items.map((it) => (
-            <PaystubCard
-              key={it.id}
-              item={it}
-              allItems={items}
-              expanded={expanded.has(it.id)}
-              onToggle={() => toggle(it.id)}
-            />
-          ))}
-        </ul>
-      )}
+      {items && items.length > 0 && (() => {
+        // Pending paystubs (not yet disbursed) bubble to the top in a
+        // dedicated bucket so they don't get hidden under a collapsed
+        // older-day section.
+        const pending = items.filter((i) => !i.disbursedAt);
+        const disbursed = items.filter((i) => !!i.disbursedAt);
+        const groups = groupByDayBy(disbursed, (i) => i.disbursedAt!);
+        return (
+          <div className="space-y-3">
+            {pending.length > 0 && (
+              <PaystubGroup
+                heading={`Pending (${pending.length})`}
+                items={pending}
+                allItems={items}
+                expanded={expanded}
+                onToggle={toggle}
+                defaultOpen
+              />
+            )}
+            {groups.map((g, idx) => (
+              <PaystubGroup
+                key={g.key}
+                heading={`${dayHeading(g.key)} · ${g.key}`}
+                items={g.entries}
+                allItems={items}
+                expanded={expanded}
+                onToggle={toggle}
+                defaultOpen={pending.length === 0 && idx === 0}
+              />
+            ))}
+          </div>
+        );
+      })()}
     </div>
+  );
+}
+
+function PaystubGroup({
+  heading,
+  items,
+  allItems,
+  expanded,
+  onToggle,
+  defaultOpen,
+}: {
+  heading: string;
+  items: PayrollItem[];
+  allItems: PayrollItem[];
+  expanded: Set<string>;
+  onToggle: (id: string) => void;
+  defaultOpen?: boolean;
+}) {
+  return (
+    <details
+      open={defaultOpen}
+      className="rounded-lg border border-navy-secondary bg-navy/40 [&[open]>summary>svg.chev]:rotate-90"
+    >
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs hover:bg-navy-secondary/40">
+        <ChevronRight className="chev h-4 w-4 text-silver/60 transition-transform" />
+        <span className="font-medium text-white">{heading}</span>
+        <span className="ml-auto text-silver/60">
+          {items.length} paystub{items.length === 1 ? '' : 's'}
+        </span>
+      </summary>
+      <ul className="space-y-3 p-3 pt-0">
+        {items.map((it) => (
+          <PaystubCard
+            key={it.id}
+            item={it}
+            allItems={allItems}
+            expanded={expanded.has(it.id)}
+            onToggle={() => onToggle(it.id)}
+          />
+        ))}
+      </ul>
+    </details>
   );
 }
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Inbox, Megaphone, Send } from 'lucide-react';
+import { ChevronRight, Inbox, Megaphone, Send } from 'lucide-react';
+import { dayHeading, fmtTimeOnly, groupByDay } from '@/lib/dayGroup';
 import { toast } from 'sonner';
 import type {
   Notification,
@@ -141,79 +142,113 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
             />
           )}
           {items && items.length > 0 && (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="hidden md:table-cell">When</TableHead>
-                  <TableHead className="hidden sm:table-cell">Channel</TableHead>
-                  <TableHead>Recipient</TableHead>
-                  <TableHead className="hidden lg:table-cell">Subject / preview</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {items.map((n) => (
-                  <TableRow
-                    key={n.id}
-                    className="group cursor-pointer"
-                    onClick={(e) => {
-                      const target = e.target as HTMLElement;
-                      if (target.closest('button, a, input, [data-no-row-click]')) return;
-                      if (window.getSelection()?.toString()) return;
-                      setDrawerTarget(n);
-                    }}
-                  >
-                    <TableCell className="hidden md:table-cell text-silver tabular-nums whitespace-nowrap">
-                      {new Date(n.createdAt).toLocaleString()}
-                    </TableCell>
-                    <TableCell className="hidden sm:table-cell">
-                      <Badge variant="outline">{n.channel}</Badge>
-                    </TableCell>
-                    <TableCell className="text-silver">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <Avatar
-                          name={
-                            n.recipientEmail ??
-                            n.recipientPhone ??
-                            n.recipientUserId ??
-                            '—'
-                          }
-                          email={n.recipientEmail ?? undefined}
-                          size="xs"
-                        />
-                        <span className="truncate">
-                          {n.recipientEmail ?? n.recipientPhone ?? n.recipientUserId ?? '—'}
-                        </span>
-                      </div>
-                      {/* On phones we tuck the subject + when under the
-                          recipient since the dedicated columns are hidden. */}
-                      <div className="lg:hidden mt-1 text-xs text-silver truncate max-w-[60vw]">
-                        {n.subject ?? '(no subject)'}
-                      </div>
-                      <div className="md:hidden text-[10px] text-silver/60 tabular-nums">
-                        {new Date(n.createdAt).toLocaleString()}
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell">
-                      <div className="text-white truncate max-w-md font-medium">
-                        {n.subject ?? '(no subject)'}
-                      </div>
-                      <div className="text-xs text-silver truncate max-w-md">
-                        {n.body}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={statusVariant(n.status)}>{n.status}</Badge>
-                      {n.failureReason && (
-                        <div className="text-[10px] mt-1 text-alert">
-                          {n.failureReason}
-                        </div>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <div className="divide-y divide-navy-secondary -mx-6">
+              {groupByDay(items).map((group, idx) => (
+                <details
+                  key={group.key}
+                  open={idx === 0}
+                  className="[&[open]>summary>svg.chev]:rotate-90"
+                >
+                  <summary className="flex cursor-pointer list-none items-center gap-2 px-6 py-2.5 text-sm hover:bg-navy-secondary/40">
+                    <ChevronRight className="chev h-4 w-4 text-silver transition-transform" />
+                    <span className="font-medium text-white">
+                      {dayHeading(group.key)}
+                    </span>
+                    <span className="text-xs text-silver/60">· {group.key}</span>
+                    <span className="ml-auto text-xs text-silver">
+                      {group.entries.length}{' '}
+                      {group.entries.length === 1 ? 'message' : 'messages'}
+                    </span>
+                  </summary>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="hidden md:table-cell w-24">
+                          Time
+                        </TableHead>
+                        <TableHead className="hidden sm:table-cell">Channel</TableHead>
+                        <TableHead>Recipient</TableHead>
+                        <TableHead className="hidden lg:table-cell">
+                          Subject / preview
+                        </TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {group.entries.map((n) => (
+                        <TableRow
+                          key={n.id}
+                          className="group cursor-pointer"
+                          onClick={(e) => {
+                            const target = e.target as HTMLElement;
+                            if (
+                              target.closest(
+                                'button, a, input, [data-no-row-click]',
+                              )
+                            )
+                              return;
+                            if (window.getSelection()?.toString()) return;
+                            setDrawerTarget(n);
+                          }}
+                        >
+                          <TableCell
+                            className="hidden md:table-cell text-silver tabular-nums whitespace-nowrap"
+                            title={new Date(n.createdAt).toLocaleString()}
+                          >
+                            {fmtTimeOnly(n.createdAt)}
+                          </TableCell>
+                          <TableCell className="hidden sm:table-cell">
+                            <Badge variant="outline">{n.channel}</Badge>
+                          </TableCell>
+                          <TableCell className="text-silver">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <Avatar
+                                name={
+                                  n.recipientEmail ??
+                                  n.recipientPhone ??
+                                  n.recipientUserId ??
+                                  '—'
+                                }
+                                email={n.recipientEmail ?? undefined}
+                                size="xs"
+                              />
+                              <span className="truncate">
+                                {n.recipientEmail ??
+                                  n.recipientPhone ??
+                                  n.recipientUserId ??
+                                  '—'}
+                              </span>
+                            </div>
+                            <div className="lg:hidden mt-1 text-xs text-silver truncate max-w-[60vw]">
+                              {n.subject ?? '(no subject)'}
+                            </div>
+                            <div className="md:hidden text-[10px] text-silver/60 tabular-nums">
+                              {fmtTimeOnly(n.createdAt)}
+                            </div>
+                          </TableCell>
+                          <TableCell className="hidden lg:table-cell">
+                            <div className="text-white truncate max-w-md font-medium">
+                              {n.subject ?? '(no subject)'}
+                            </div>
+                            <div className="text-xs text-silver truncate max-w-md">
+                              {n.body}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={statusVariant(n.status)}>{n.status}</Badge>
+                            {n.failureReason && (
+                              <div className="text-[10px] mt-1 text-alert">
+                                {n.failureReason}
+                              </div>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </details>
+              ))}
+            </div>
           )}
         </CardContent>
       </Card>

@@ -29,54 +29,12 @@ import {
   TableRow,
 } from '@/components/ui/Table';
 
+import { dayHeading, fmtTimeOnly, groupByDay } from '@/lib/dayGroup';
+
 const PAGE_SIZE = 100;
 
 function fmtTs(iso: string): string {
   return new Date(iso).toLocaleString();
-}
-
-function fmtTimeOnly(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
-}
-
-function dayKey(iso: string): string {
-  return new Date(iso).toISOString().slice(0, 10);
-}
-
-function dayHeading(key: string): string {
-  const today = new Date();
-  const todayKey = today.toISOString().slice(0, 10);
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayKey = yesterday.toISOString().slice(0, 10);
-  if (key === todayKey) return 'Today';
-  if (key === yesterdayKey) return 'Yesterday';
-  return new Date(`${key}T00:00:00Z`).toLocaleDateString(undefined, {
-    weekday: 'long',
-    month: 'short',
-    day: 'numeric',
-    year:
-      key.slice(0, 4) === String(today.getFullYear()) ? undefined : 'numeric',
-  });
-}
-
-function groupByDay<T extends { createdAt: string }>(
-  rows: T[],
-): { key: string; entries: T[] }[] {
-  const map = new Map<string, T[]>();
-  for (const r of rows) {
-    const k = dayKey(r.createdAt);
-    const list = map.get(k);
-    if (list) list.push(r);
-    else map.set(k, [r]);
-  }
-  // Map preserves insertion order; entries are already DESC by createdAt
-  // from the API, so the first key is the most recent day.
-  return [...map.entries()].map(([key, entries]) => ({ key, entries }));
 }
 
 function metaPreview(m: Record<string, unknown> | null): string {
