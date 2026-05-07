@@ -60,13 +60,18 @@ const MANAGE = requireCapability('manage:scheduling');
 
 // Reported 2026-05-02: scheduling pickers were listing every Associate
 // regardless of role or status, including managers (who use a separate
-// system) and terminated/uninvited people. Schedulable pool = associates
-// whose linked User row is ACTIVE and has the ASSOCIATE role specifically
-// — excludes MANAGER, OPERATIONS_MANAGER, HR_*, CLIENT_PORTAL, etc., and
-// also excludes anyone INVITED-but-not-yet-accepted or DISABLED.
+// system) and terminated/uninvited people. Schedulable pool requires:
+//   1. User account ACTIVE with ASSOCIATE role (excludes MANAGER, OPS,
+//      HR_*, CLIENT_PORTAL, plus INVITED-but-not-yet-accepted, DISABLED).
+//   2. At least one APPROVED Application — i.e. the associate has been
+//      onboarded and accepted by HR. Reported 2026-05-07: pickers were
+//      still showing test/junk rows whose User was ACTIVE but whose
+//      onboarding was either DRAFT or never completed; mirrors the
+//      `DirectoryStatus = 'ACTIVE'` derivation in /people/directory.
 const ACTIVE_ASSOCIATE_FILTER: Prisma.AssociateWhereInput = {
   deletedAt: null,
   user: { is: { status: 'ACTIVE', role: 'ASSOCIATE' } },
+  applications: { some: { status: 'APPROVED' } },
 };
 
 type RawShift = Prisma.ShiftGetPayload<{
