@@ -39,6 +39,7 @@ import { aggregatePayrollProjection } from '../lib/payrollAggregator.js';
 import { consumePendingDeductions } from '../lib/payrollYtd.js';
 import { computePayrollExceptions } from '../lib/payrollExceptions.js';
 import { hashPdf, renderPaystubPdf, type PaystubData } from '../lib/paystub.js';
+import { sendPaystubEmail } from '../lib/sendPaystubEmail.js';
 import { pickAdapter, type DisbursementInput } from '../lib/disbursement.js';
 import { decryptString } from '../lib/crypto.js';
 import type { PayoutMethod } from '@prisma/client';
@@ -987,6 +988,11 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
             failureReason: null,
           },
         });
+        // Fire-and-forget paystub email. The helper renders the PDF and
+        // attaches it; idempotent via paystubEmailedAt so a webhook
+        // re-delivery for the same item is a no-op. Never await — a Resend
+        // hiccup must not roll back a successful disbursement.
+        void sendPaystubEmail(prisma, { payrollItemId: item.id });
       } else if (result.status === 'PENDING') {
         // Provider accepted the request but hasn't settled. Leave PayrollItem
         // PENDING; webhook handler (future) will flip to DISBURSED.
@@ -1882,6 +1888,57 @@ payrollRouter.get('/items/:itemId/paystub.pdf', async (req, res, next) => {
     next(err);
   }
 });
+
+// Resend the paystub email for a single PayrollItem. Bypasses the
+// paystubEmailedAt idempotency guard via force=true so HR can deliberately
+// re-email when an associate says they didn't receive it. Returns a small
+// JSON status the UI can render ("Sent", "Skipped: no email on file", etc.).
+payrollRouter.post(
+  '/items/:itemId/email-paystub',
+  PROCESS,
+  async (req, res, next) => {
+    try {
+      const item = await prisma.payrollItem.findUnique({
+        where: { id: req.params.itemId },
+        select: { id: true, payrollRunId: true, payrollRun: { select: { clientId: true } } },
+      });
+      if (!item) {
+        throw new HttpError(404, 'item_not_found', 'Paystub not found');
+      }
+      // Run-scope check — same shape as the surrounding routes use.
+      const inScope = await prisma.payrollRun.findFirst({
+        where: { id: item.payrollRunId, ...scopePayrollRuns(req.user!) },
+        select: { id: true },
+      });
+      if (!inScope) {
+        throw new HttpError(404, 'item_not_found', 'Paystub not found');
+      }
+
+      const result = await sendPaystubEmail(prisma, {
+        payrollItemId: item.id,
+        force: true,
+      });
+
+      await recordPayrollEvent({
+        actorUserId: req.user!.id,
+        action: 'payroll.paystub_email_resent',
+        payrollRunId: item.payrollRunId,
+        clientId: item.payrollRun.clientId,
+        metadata: {
+          itemId: item.id,
+          sent: result.sent,
+          skipped: result.skipped,
+          externalRef: result.externalRef,
+        },
+        req,
+      });
+
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 /* ===== Associate-facing /me ============================================ */
 

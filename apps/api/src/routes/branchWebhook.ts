@@ -7,6 +7,7 @@ import type { BranchWebhookPayload } from '../lib/branch.js';
 import { recordPayrollEvent } from '../lib/audit.js';
 import { describeBranchFailure } from '../lib/achReturnCodes.js';
 import { notifyHrOfPaymentFailure } from '../lib/payrollFailureNotify.js';
+import { sendPaystubEmail } from '../lib/sendPaystubEmail.js';
 
 export const branchWebhookRouter = Router();
 
@@ -246,6 +247,11 @@ branchWebhookRouter.post(
             err instanceof Error ? err.message : err,
           );
         }
+      } else if (result.mapped === 'SUCCESS') {
+        // Fire-and-forget paystub email. Branch can re-deliver the same
+        // SUCCESS event; sendPaystubEmail's paystubEmailedAt guard ensures
+        // we mail the associate exactly once per item.
+        void sendPaystubEmail(prisma, { payrollItemId: result.item.id });
       }
 
       await recordPayrollEvent({

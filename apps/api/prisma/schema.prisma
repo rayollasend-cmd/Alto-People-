@@ -1510,6 +1510,13 @@ model PayrollItem {
   // Stub for now; in production this is the Wise transfer ID or Branch txn ID.
   disbursementRef    String?
   disbursedAt        DateTime?         @db.Timestamptz(6)
+  // Wave 8 — when the paystub PDF was emailed to the associate. Set the
+  // first time email-on-disburse fires successfully; lets the disburse
+  // hook stay idempotent if a webhook ever delivers the SUCCESS event
+  // twice, and lets HR see "did the associate get their stub?" at a
+  // glance. Null means never emailed (e.g. associate has no email on
+  // file, or the item is from before this column existed).
+  paystubEmailedAt   DateTime?         @db.Timestamptz(6)
   failureReason      String?
   // Gap 3 — set when the parent run is voided; mirrors the run's
   // cancelledAt at void time. Lets the paystub PDF render a "VOID"
