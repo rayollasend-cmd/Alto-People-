@@ -14,7 +14,14 @@
 // this file plus a UI row — no migration needed (key is a string column
 // on ManualComplianceAttestation, not a Prisma enum).
 
-export type AttestationCadence = 'WEEKLY' | 'MONTHLY';
+export type AttestationCadence = 'WEEKLY' | 'MONTHLY' | 'ANNUAL';
+
+/**
+ * Which scorecard tile this signal renders on. Both tiles use the same
+ * model + endpoints; this just routes display. Reminder cron iterates all
+ * tiles uniformly.
+ */
+export type AttestationTile = 'BILLING' | 'EXPIRATIONS';
 
 export interface AttestationConfig {
   /** Stable identifier; mirrored 1:1 with ManualComplianceAttestation.key. */
@@ -24,12 +31,14 @@ export interface AttestationConfig {
   /** Short helper text shown under the label and in the attestation drawer. */
   description: string;
   cadence: AttestationCadence;
+  tile: AttestationTile;
   /**
    * Days from period start until the attestation is "due". For WEEKLY
    * the period runs Monday → Sunday (UTC); a dueOffsetDays of 0 means
    * "due same day as period start" (i.e. by Monday). For MONTHLY the
    * period runs day 1 → last day of month; dueOffsetDays of 4 means
-   * "due by the 5th of the month".
+   * "due by the 5th of the month". For ANNUAL the period runs Jan 1 →
+   * Dec 31; dueOffsetDays of 30 means "due by Jan 31".
    */
   dueOffsetDays: number;
   /**
@@ -46,6 +55,7 @@ export const ATTESTATION_CONFIGS: ReadonlyArray<AttestationConfig> = [
     description:
       'Walmart SOW requires a monthly compliance report. Submit through the vendor portal and confirm here once filed.',
     cadence: 'MONTHLY',
+    tile: 'BILLING',
     dueOffsetDays: 4, // by the 5th
     reminderLeadDays: 3,
   },
@@ -55,6 +65,7 @@ export const ATTESTATION_CONFIGS: ReadonlyArray<AttestationConfig> = [
     description:
       'Walmart MSA — invoices not submitted within 90 days are forfeit. Review the AR aging in QBO weekly and confirm any approaching 90 days have been escalated.',
     cadence: 'WEEKLY',
+    tile: 'BILLING',
     dueOffsetDays: 4, // by Friday (Mon → Sun period)
     reminderLeadDays: 1,
   },
@@ -64,8 +75,29 @@ export const ATTESTATION_CONFIGS: ReadonlyArray<AttestationConfig> = [
     description:
       "Walmart SOW — Fieldglass timesheet must be submitted by Monday 2pm PST every week. Confirm here once it's filed.",
     cadence: 'WEEKLY',
+    tile: 'BILLING',
     dueOffsetDays: 0, // due Monday
     reminderLeadDays: 0, // remind on the day
+  },
+  {
+    key: 'WORKERS_COMP',
+    label: 'Workers Comp insurance current',
+    description:
+      'Walmart MSA Section 7 — Workers Comp insurance must be in force at all times. Each year, confirm the policy is current and the certificate of insurance has been provided to Walmart. Attach the COI as evidence if available.',
+    cadence: 'ANNUAL',
+    tile: 'EXPIRATIONS',
+    dueOffsetDays: 30, // by Jan 31
+    reminderLeadDays: 30, // start nudging Jan 1
+  },
+  {
+    key: 'GENERAL_LIABILITY',
+    label: 'General Liability insurance current',
+    description:
+      'Walmart MSA Section 7 — General Liability insurance must be in force at all times. Each year, confirm the policy is current and the certificate of insurance has been provided to Walmart. Attach the COI as evidence if available.',
+    cadence: 'ANNUAL',
+    tile: 'EXPIRATIONS',
+    dueOffsetDays: 30, // by Jan 31
+    reminderLeadDays: 30, // start nudging Jan 1
   },
 ];
 
@@ -83,6 +115,7 @@ export function getAttestationConfig(key: string): AttestationConfig | null {
  *     end as Sunday (inclusive).
  *   - MONTHLY: 1st 00:00 UTC → 1st of next month 00:00 UTC. periodEnd
  *     surfaces as the last day of the month (inclusive).
+ *   - ANNUAL: Jan 1 → Dec 31 of the calendar year covering `now`.
  */
 export function periodForNow(
   cadence: AttestationCadence,
@@ -99,6 +132,11 @@ export function periodForNow(
     periodStart.setUTCDate(periodStart.getUTCDate() - offsetFromMonday);
     const periodEnd = new Date(periodStart);
     periodEnd.setUTCDate(periodEnd.getUTCDate() + 6); // Sunday inclusive
+    return { periodStart, periodEnd };
+  }
+  if (cadence === 'ANNUAL') {
+    const periodStart = new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
+    const periodEnd = new Date(Date.UTC(now.getUTCFullYear(), 11, 31));
     return { periodStart, periodEnd };
   }
   // MONTHLY

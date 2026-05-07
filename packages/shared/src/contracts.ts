@@ -3084,86 +3084,9 @@ export const ScorecardOnboardingResponseSchema = z.object({
 });
 export type ScorecardOnboardingResponse = z.infer<typeof ScorecardOnboardingResponseSchema>;
 
-// Tile 2 — expiring documents (30/60/90)
-export const ScorecardExpirationKindSchema = z.enum([
-  'WORKERS_COMP',
-  'GENERAL_LIABILITY',
-  'DRUG_TEST',
-  'I9_WORK_AUTH',
-  'J1_DS2019',
-  'TRAINING_CERT',
-]);
-export type ScorecardExpirationKind = z.infer<typeof ScorecardExpirationKindSchema>;
-
-export const ScorecardExpiringItemSchema = z.object({
-  kind: ScorecardExpirationKindSchema,
-  label: z.string(),
-  expiresAt: z.string(),
-  daysUntil: z.number().int(),
-  subject: ScorecardSubjectSchema,
-});
-export type ScorecardExpiringItem = z.infer<typeof ScorecardExpiringItemSchema>;
-
-export const ScorecardExpirationsResponseSchema = z.object({
-  buckets: z.object({
-    red: z.array(ScorecardExpiringItemSchema),    // 0–30 days
-    amber: z.array(ScorecardExpiringItemSchema),  // 31–60 days
-    green: z.array(ScorecardExpiringItemSchema),  // 61–90 days
-  }),
-  unsupported: z.array(z.object({
-    kind: ScorecardExpirationKindSchema,
-    label: z.string(),
-    reason: z.string(),
-  })),
-  severity: ScorecardSeveritySchema,
-  generatedAt: z.string().datetime(),
-});
-export type ScorecardExpirationsResponse = z.infer<typeof ScorecardExpirationsResponseSchema>;
-
-// Tile 3 — shift compliance
-export const ScorecardShiftSignalSchema = z.object({
-  key: z.enum([
-    'FILL_RATE',
-    'NO_SHOW_RATE',
-    'SHIFT_LEAD_PRESENT',
-    'TEMPERATURE_LOGS',
-    'MOD_SIGNOFF',
-    'FIELDGLASS_TIMESHEETS',
-  ]),
-  label: z.string(),
-  contractClause: z.string(),
-  status: z.enum(['live', 'unsupported']),
-  // Live signals carry a percent + target. Unsupported signals carry only
-  // the label + a reason the UI can show as "Coming soon".
-  value: z.number().nullable(),
-  target: z.number().nullable(),
-  reason: z.string().nullable(),
-});
-export type ScorecardShiftSignal = z.infer<typeof ScorecardShiftSignalSchema>;
-
-export const ScorecardShiftsResponseSchema = z.object({
-  windowDays: z.number().int().positive(),
-  signals: z.array(ScorecardShiftSignalSchema),
-  severity: ScorecardSeveritySchema,
-  generatedAt: z.string().datetime(),
-});
-export type ScorecardShiftsResponse = z.infer<typeof ScorecardShiftsResponseSchema>;
-
-// Tile 4 — billing & invoicing
-export const ScorecardBillingRateRowSchema = z.object({
-  clientId: UuidSchema,
-  clientName: z.string(),
-  jobId: UuidSchema,
-  jobName: z.string(),
-  billRate: z.number(),
-  expectedRate: z.number().nullable(),
-  match: z.boolean(),
-});
-export type ScorecardBillingRateRow = z.infer<typeof ScorecardBillingRateRowSchema>;
-
 /* ----- Manual compliance attestation (replaces Coming-soon rows) -------- */
 
-export const ManualAttestationCadenceSchema = z.enum(['WEEKLY', 'MONTHLY']);
+export const ManualAttestationCadenceSchema = z.enum(['WEEKLY', 'MONTHLY', 'ANNUAL']);
 export type ManualAttestationCadence = z.infer<typeof ManualAttestationCadenceSchema>;
 
 export const ManualAttestationOutcomeSchema = z.enum(['YES', 'NO', 'NOT_APPLICABLE']);
@@ -3240,6 +3163,84 @@ export const ManualAttestationCreateInputSchema = z
 export type ManualAttestationCreateInput = z.infer<
   typeof ManualAttestationCreateInputSchema
 >;
+
+// Tile 2 — expiring documents (30/60/90)
+export const ScorecardExpirationKindSchema = z.enum([
+  'WORKERS_COMP',
+  'GENERAL_LIABILITY',
+  'DRUG_TEST',
+  'I9_WORK_AUTH',
+  'J1_DS2019',
+  'TRAINING_CERT',
+]);
+export type ScorecardExpirationKind = z.infer<typeof ScorecardExpirationKindSchema>;
+
+export const ScorecardExpiringItemSchema = z.object({
+  kind: ScorecardExpirationKindSchema,
+  label: z.string(),
+  expiresAt: z.string(),
+  daysUntil: z.number().int(),
+  subject: ScorecardSubjectSchema,
+});
+export type ScorecardExpiringItem = z.infer<typeof ScorecardExpiringItemSchema>;
+
+export const ScorecardExpirationsResponseSchema = z.object({
+  buckets: z.object({
+    red: z.array(ScorecardExpiringItemSchema),    // 0–30 days
+    amber: z.array(ScorecardExpiringItemSchema),  // 31–60 days
+    green: z.array(ScorecardExpiringItemSchema),  // 61–90 days
+  }),
+  /**
+   * Insurance-policy attestations that don't have an expiry-date model
+   * yet (Workers Comp, General Liability). Same manual-attestation pattern
+   * as the Billing tile — HR confirms each year that coverage is current.
+   */
+  attestations: z.array(ManualAttestationSignalSchema),
+  severity: ScorecardSeveritySchema,
+  generatedAt: z.string().datetime(),
+});
+export type ScorecardExpirationsResponse = z.infer<typeof ScorecardExpirationsResponseSchema>;
+
+// Tile 3 — shift compliance
+export const ScorecardShiftSignalSchema = z.object({
+  key: z.enum([
+    'FILL_RATE',
+    'NO_SHOW_RATE',
+    'SHIFT_LEAD_PRESENT',
+    'TEMPERATURE_LOGS',
+    'MOD_SIGNOFF',
+    'FIELDGLASS_TIMESHEETS',
+  ]),
+  label: z.string(),
+  contractClause: z.string(),
+  status: z.enum(['live', 'unsupported']),
+  // Live signals carry a percent + target. Unsupported signals carry only
+  // the label + a reason the UI can show as "Coming soon".
+  value: z.number().nullable(),
+  target: z.number().nullable(),
+  reason: z.string().nullable(),
+});
+export type ScorecardShiftSignal = z.infer<typeof ScorecardShiftSignalSchema>;
+
+export const ScorecardShiftsResponseSchema = z.object({
+  windowDays: z.number().int().positive(),
+  signals: z.array(ScorecardShiftSignalSchema),
+  severity: ScorecardSeveritySchema,
+  generatedAt: z.string().datetime(),
+});
+export type ScorecardShiftsResponse = z.infer<typeof ScorecardShiftsResponseSchema>;
+
+// Tile 4 — billing & invoicing
+export const ScorecardBillingRateRowSchema = z.object({
+  clientId: UuidSchema,
+  clientName: z.string(),
+  jobId: UuidSchema,
+  jobName: z.string(),
+  billRate: z.number(),
+  expectedRate: z.number().nullable(),
+  match: z.boolean(),
+});
+export type ScorecardBillingRateRow = z.infer<typeof ScorecardBillingRateRowSchema>;
 
 export const ScorecardBillingResponseSchema = z.object({
   rateChecks: z.array(ScorecardBillingRateRowSchema),

@@ -14,6 +14,7 @@ const monthly: AttestationConfig = {
   label: 'Monthly test',
   description: '',
   cadence: 'MONTHLY',
+  tile: 'BILLING',
   dueOffsetDays: 4, // by 5th
   reminderLeadDays: 3,
 };
@@ -23,8 +24,19 @@ const weekly: AttestationConfig = {
   label: 'Weekly test',
   description: '',
   cadence: 'WEEKLY',
+  tile: 'BILLING',
   dueOffsetDays: 0, // Monday
   reminderLeadDays: 0,
+};
+
+const annual: AttestationConfig = {
+  key: 'TEST_ANNUAL',
+  label: 'Annual test',
+  description: '',
+  cadence: 'ANNUAL',
+  tile: 'EXPIRATIONS',
+  dueOffsetDays: 30, // by Jan 31
+  reminderLeadDays: 30, // start nudging Jan 1
 };
 
 describe('periodForNow', () => {
@@ -53,6 +65,20 @@ describe('periodForNow', () => {
     const now = new Date(Date.UTC(2026, 4, 4, 1, 0, 0)); // 2026-05-04 Mon
     const { periodStart } = periodForNow('WEEKLY', now);
     expect(periodStart.toISOString().slice(0, 10)).toBe('2026-05-04');
+  });
+
+  it('snaps any date in the year to Jan 1 → Dec 31 (ANNUAL)', () => {
+    const mid = new Date(Date.UTC(2026, 6, 15, 12, 0, 0));
+    const { periodStart, periodEnd } = periodForNow('ANNUAL', mid);
+    expect(periodStart.toISOString().slice(0, 10)).toBe('2026-01-01');
+    expect(periodEnd.toISOString().slice(0, 10)).toBe('2026-12-31');
+  });
+
+  it('ANNUAL period is stable on Jan 1 itself', () => {
+    const newYear = new Date(Date.UTC(2027, 0, 1, 0, 0, 1));
+    const { periodStart, periodEnd } = periodForNow('ANNUAL', newYear);
+    expect(periodStart.toISOString().slice(0, 10)).toBe('2027-01-01');
+    expect(periodEnd.toISOString().slice(0, 10)).toBe('2027-12-31');
   });
 });
 
@@ -96,6 +122,28 @@ describe('classifyStatus', () => {
   it('weekly: same Monday is due_soon (lead=0, due=Mon)', () => {
     const start = new Date(Date.UTC(2026, 4, 4));
     const r = classifyStatus(weekly, start, false, new Date(Date.UTC(2026, 4, 4, 10)));
+    expect(r).toBe('due_soon');
+  });
+
+  it('annual: late Dec (no attestation) is overdue (due Jan 31)', () => {
+    const start = new Date(Date.UTC(2026, 0, 1)); // Jan 1 2026
+    const r = classifyStatus(
+      annual,
+      start,
+      false,
+      new Date(Date.UTC(2026, 11, 15)), // Dec 15 2026
+    );
+    expect(r).toBe('overdue');
+  });
+
+  it('annual: mid-Jan (no attestation) is due_soon during the 30-day lead', () => {
+    const start = new Date(Date.UTC(2026, 0, 1));
+    const r = classifyStatus(
+      annual,
+      start,
+      false,
+      new Date(Date.UTC(2026, 0, 10)), // Jan 10
+    );
     expect(r).toBe('due_soon');
   });
 });

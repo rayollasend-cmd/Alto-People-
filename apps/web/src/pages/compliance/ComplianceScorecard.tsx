@@ -405,6 +405,17 @@ function OnboardingTile({ refreshEpoch }: { refreshEpoch: number }) {
 
 function ExpirationsTile({ refreshEpoch }: { refreshEpoch: number }) {
   const { data, error, stale } = useTileData(getScorecardExpirations, refreshEpoch);
+  const { user } = useAuth();
+  const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
+  const [drawerSignal, setDrawerSignal] =
+    useState<ManualAttestationSignal | null>(null);
+  const [localSignals, setLocalSignals] = useState<
+    ManualAttestationSignal[] | null
+  >(null);
+
+  // Local copy lets the drawer optimistically replace a signal after the
+  // upsert returns, without waiting for the next 15-min tile refresh.
+  const signals = localSignals ?? data?.attestations ?? [];
 
   return (
     <TileShell
@@ -446,16 +457,35 @@ function ExpirationsTile({ refreshEpoch }: { refreshEpoch: number }) {
               </div>
             );
           })}
-          {data.unsupported.length > 0 && (
+          {signals.length > 0 && (
             <div className="mt-3 pt-3 border-t border-navy-secondary">
-              <div className="text-[10px] uppercase tracking-widest text-silver/80 mb-1">
-                Coming soon
+              <div className="text-[10px] uppercase tracking-widest text-silver/80 mb-1.5">
+                Insurance attestations
               </div>
-              {data.unsupported.map((u) => (
-                <ComingSoonRow key={u.kind} label={u.label} reason={u.reason} />
-              ))}
+              <ul className="space-y-1.5">
+                {signals.map((s) => (
+                  <AttestationRow
+                    key={s.key}
+                    signal={s}
+                    canManage={canManage}
+                    onClick={() => setDrawerSignal(s)}
+                  />
+                ))}
+              </ul>
             </div>
           )}
+          <AttestationDrawer
+            signal={drawerSignal}
+            canManage={canManage}
+            onClose={() => setDrawerSignal(null)}
+            onSaved={(updated) => {
+              setLocalSignals((prev) => {
+                const base = prev ?? data.attestations;
+                return base.map((s) => (s.key === updated.key ? updated : s));
+              });
+              setDrawerSignal(null);
+            }}
+          />
         </>
       )}
     </TileShell>
@@ -1165,25 +1195,6 @@ function BucketTile({ label, count, severity }: { label: string; count: number; 
     <div className={cn('rounded border px-2 py-2 text-center', tone)}>
       <div className="text-lg font-bold tabular-nums">{count}</div>
       <div className="text-[10px] uppercase tracking-wider opacity-80">{label}</div>
-    </div>
-  );
-}
-
-function ComingSoonRow({ label, reason }: { label: string; reason: string }) {
-  return (
-    <div className="flex items-center justify-between text-xs py-1">
-      <span className="text-silver">{label}</span>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className="inline-flex items-center gap-1 text-[10px] text-silver/80">
-            <Info className="h-3 w-3" />
-            Coming soon
-          </span>
-        </TooltipTrigger>
-        <TooltipContent side="left" className="max-w-xs">
-          {reason}
-        </TooltipContent>
-      </Tooltip>
     </div>
   );
 }

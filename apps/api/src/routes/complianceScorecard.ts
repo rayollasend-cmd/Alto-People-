@@ -455,23 +455,22 @@ async function buildExpirationsTile(): Promise<ScorecardExpirationsResponse> {
     arr.sort((a, b) => a.daysUntil - b.daysUntil);
   }
 
+  const attestations = await loadAttestationSignals('EXPIRATIONS');
+  const overdueAttestations = attestations.filter((a) => a.status === 'overdue').length;
+  const dueSoonAttestations = attestations.filter((a) => a.status === 'due_soon').length;
+
+  // Severity rolls together expiry-bucket rollup AND insurance attestations:
+  // any red doc OR overdue insurance = critical; amber/due_soon = warn.
   const severity: ScorecardSeverity =
-    red.length > 0 ? 'critical' : amber.length > 0 ? 'warn' : 'ok';
+    red.length > 0 || overdueAttestations > 0
+      ? 'critical'
+      : amber.length > 0 || dueSoonAttestations > 0
+        ? 'warn'
+        : 'ok';
 
   return ScorecardExpirationsResponseSchema.parse({
     buckets: { red, amber, green },
-    unsupported: [
-      {
-        kind: 'WORKERS_COMP',
-        label: 'Workers Comp insurance',
-        reason: 'No insurance-policy model yet; track manually until the vendor-management module ships.',
-      },
-      {
-        kind: 'GENERAL_LIABILITY',
-        label: 'General Liability insurance',
-        reason: 'No insurance-policy model yet; track manually until the vendor-management module ships.',
-      },
-    ],
+    attestations,
     severity,
     generatedAt: new Date().toISOString(),
   });
@@ -726,7 +725,7 @@ async function buildBillingTile(): Promise<ScorecardBillingResponse> {
     (r) => r.expectedRate !== null && !r.match,
   ).length;
 
-  const attestations = await loadAttestationSignals();
+  const attestations = await loadAttestationSignals('BILLING');
 
   // Tile severity now considers both bill-rate mismatches AND attestation
   // state. Any overdue attestation = critical; any mismatch or due_soon =
@@ -786,7 +785,7 @@ complianceScorecardRouter.post(
         throw new HttpError(
           400,
           'invalid_period',
-          'periodStart must align with the cadence (Monday for WEEKLY, 1st of month for MONTHLY).',
+          'periodStart must align with the cadence (Monday for WEEKLY, 1st of month for MONTHLY, Jan 1 for ANNUAL).',
         );
       }
 
@@ -844,11 +843,17 @@ complianceScorecardRouter.post(
   },
 );
 
-async function loadAttestationSignals(): Promise<ManualAttestationSignal[]> {
+async function loadAttestationSignals(
+  tile?: 'BILLING' | 'EXPIRATIONS',
+): Promise<ManualAttestationSignal[]> {
   const now = new Date();
   const signals: ManualAttestationSignal[] = [];
 
-  for (const config of ATTESTATION_CONFIGS) {
+  const configs = tile
+    ? ATTESTATION_CONFIGS.filter((c) => c.tile === tile)
+    : ATTESTATION_CONFIGS;
+
+  for (const config of configs) {
     const { periodStart, periodEnd } = periodForNow(config.cadence, now);
     const previousPeriod = previousPeriodFor(config, periodStart);
 
@@ -915,6 +920,11 @@ function previousPeriodFor(
     const start = new Date(currentStart);
     start.setUTCDate(start.getUTCDate() - 7);
     return periodForNow('WEEKLY', start);
+  }
+  if (config.cadence === 'ANNUAL') {
+    const start = new Date(currentStart);
+    start.setUTCFullYear(start.getUTCFullYear() - 1);
+    return periodForNow('ANNUAL', start);
   }
   const start = new Date(currentStart);
   start.setUTCMonth(start.getUTCMonth() - 1);
