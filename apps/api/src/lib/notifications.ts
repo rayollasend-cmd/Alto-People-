@@ -2,6 +2,72 @@ import type { NotificationChannel } from '@alto-people/shared';
 import { env } from '../config/env.js';
 import { getBrandingSync } from './branding.js';
 
+/* ---------------------------------------------------------------------------
+ * Resend rate-limit throttle.
+ *
+ * Resend's free tier caps at 5 requests/second per account. notifyAllAdmins
+ * fan-outs and broadcast sends can fire 10+ emails in the same tick, so we
+ * were getting batched 429s in production. The fix: serialize the Resend
+ * fetch through a min-interval gate, so back-to-back calls naturally space
+ * themselves out without callers needing to know about throttling.
+ *
+ * 250ms gap = 4 req/s effective. Slightly under the 5/s cap so a single
+ * concurrent caller doesn't accidentally trip it on clock skew.
+ *
+ * Process-local throttle is sufficient — Railway runs a single container
+ * for the api service. If we ever scale to multiple replicas, this needs
+ * to move to a shared limiter (Redis token bucket).
+ *
+ * Retry on 429: when Resend still returns 429 (e.g. another tenant or a
+ * burst we didn't see locally), we honour the Retry-After header (or
+ * default to 1s) and retry once. Beyond that we give up so a stuck
+ * Resend can't block the entire queue.
+ * ------------------------------------------------------------------------ */
+
+const RESEND_MIN_INTERVAL_MS = 250;
+const RESEND_MAX_RETRIES = 1;
+
+let resendQueue: Promise<unknown> = Promise.resolve();
+let lastResendCallAt = 0;
+
+async function throttledResendFetch(payload: unknown): Promise<Response> {
+  // Chain onto the queue so concurrent callers serialize through the same
+  // min-interval gate. The .then ignores the prior result; .catch swallows
+  // it so one failed send doesn't poison the queue.
+  const slot = resendQueue.then(async () => {
+    const elapsed = Date.now() - lastResendCallAt;
+    if (elapsed < RESEND_MIN_INTERVAL_MS) {
+      await new Promise((r) =>
+        setTimeout(r, RESEND_MIN_INTERVAL_MS - elapsed),
+      );
+    }
+    lastResendCallAt = Date.now();
+    return doResendFetch(payload, 0);
+  });
+  resendQueue = slot.catch(() => undefined);
+  return slot;
+}
+
+async function doResendFetch(
+  payload: unknown,
+  attempt: number,
+): Promise<Response> {
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (res.status !== 429 || attempt >= RESEND_MAX_RETRIES) return res;
+  // Honour Retry-After if Resend gave us one (seconds), else default 1s.
+  const ra = res.headers.get('retry-after');
+  const waitMs = ra ? Math.max(500, Number(ra) * 1000) : 1000;
+  await new Promise((r) => setTimeout(r, waitMs));
+  return doResendFetch(payload, attempt + 1);
+}
+
 /**
  * Resolves the From: header for a Resend send. If the org has set a
  * `senderName` in /admin/branding, we overlay that as the display name
@@ -116,14 +182,7 @@ async function sendEmail(input: SendInput): Promise<{ externalRef: string | null
         content_type: a.contentType,
       }));
     }
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${env.RESEND_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
+    const res = await throttledResendFetch(payload);
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       // Log the from/reply-to we actually sent so a misconfigured RESEND_FROM
