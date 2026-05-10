@@ -451,6 +451,9 @@ model User {
   equityGrantsIssued                EquityGrant[]                @relation("EquityGrantedBy")
   volunteerEntriesReviewed          VolunteerEntry[]             @relation("VolunteerReviewer")
   manualAttestationsAttested        ManualComplianceAttestation[] @relation("AttestationAttester")
+  // Phase 131 — assignment-row authorship (audit of who moved an
+  // associate to which location, and why).
+  associateAssignmentsNoted         AssociateAssignment[]        @relation("AssociateAssignmentNoter")
 
   @@index([role])
   @@index([clientId])
@@ -554,9 +557,68 @@ model Client {
   pulseSurveys           PulseSurvey[]
   // Phase 114 — learning paths scoped to this client.
   learningPaths          LearningPath[]
+  // Phase 131 — physical sites under this client (one Client can have
+  // many Locations, e.g. Walmart → Destin / Front Beach / PCB).
+  locations              Location[]
 
   @@index([status])
   @@index([deletedAt])
+}
+
+// Phase 131 — Location: physical site under a Client. State and
+// geofence move here from Client because they're properties of the
+// work site, not the customer. Client.state stays as the legal/tax
+// employer address; Location.state is the actual work-site code that
+// drives OT / meal-break / predictive-scheduling rules.
+model Location {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId             String    @db.Uuid
+  name                 String
+  addressLine1         String?   @db.VarChar(255)
+  addressLine2         String?   @db.VarChar(255)
+  city                 String?   @db.VarChar(120)
+  state                String?   @db.VarChar(2)
+  zip                  String?   @db.VarChar(10)
+  latitude             Decimal?  @db.Decimal(10, 7)
+  longitude            Decimal?  @db.Decimal(10, 7)
+  geofenceRadiusMeters Int?
+  isActive             Boolean   @default(true)
+  createdAt            DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt            DateTime? @db.Timestamptz(6)
+
+  client       Client                @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  assignments  AssociateAssignment[]
+  applications Application[]
+  shifts       Shift[]
+  kioskDevices KioskDevice[]
+  timeEntries  TimeEntry[]
+
+  @@index([clientId, isActive])
+  @@index([deletedAt])
+}
+
+// Phase 131 — effective-dated record of which Location an associate is
+// currently working at. Transfer = stamp endedAt on the open row,
+// insert a new open row. The migration enforces "at most one open row
+// per associate" with a partial unique index where endedAt IS NULL.
+model AssociateAssignment {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId String    @db.Uuid
+  locationId  String    @db.Uuid
+  startedAt   DateTime  @db.Date
+  endedAt     DateTime? @db.Date
+  reason      String?
+  notedById   String?   @db.Uuid
+  notes       String?
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Restrict)
+  location  Location  @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  notedBy   User?     @relation("AssociateAssignmentNoter", fields: [notedById], references: [id], onDelete: SetNull)
+
+  @@index([associateId, endedAt])
+  @@index([locationId, startedAt])
 }
 
 model Associate {
@@ -730,6 +792,9 @@ model Associate {
   equityGrants            EquityGrant[]
   // Phase 130 — volunteer time off entries.
   volunteerEntries        VolunteerEntry[]
+  // Phase 131 — location-assignment history. The open row (endedAt IS
+  // NULL) is the associate's current work site.
+  assignments             AssociateAssignment[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -757,6 +822,11 @@ model Application {
   id              String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId     String               @db.Uuid
   clientId        String               @db.Uuid
+  // Phase 131 — initial work-site for the hire. Nullable: legacy apps
+  // and apps where HR hasn't picked a site yet have NULL. When set on
+  // approval, the AssociateAssignment row created at hire references
+  // this location.
+  locationId      String?              @db.Uuid
   onboardingTrack OnboardingTrack
   status          ApplicationStatus    @default(DRAFT)
   position        String?
@@ -773,6 +843,7 @@ model Application {
   rejectionReason String?
   associate       Associate            @relation(fields: [associateId], references: [id], onDelete: Restrict)
   client          Client               @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  location        Location?            @relation(fields: [locationId], references: [id], onDelete: SetNull)
   checklist       OnboardingChecklist?
   esignAgreements EsignAgreement[]
   createdAt       DateTime             @default(now()) @db.Timestamptz(6)
@@ -781,6 +852,7 @@ model Application {
 
   @@index([associateId])
   @@index([clientId, status])
+  @@index([locationId])
   @@index([status])
   @@index([invitedAt])
   @@index([deletedAt])
@@ -1073,6 +1145,12 @@ model TimeEntry {
   // Denormalized clientId so HR can scope/filter by client without joining.
   // Captured from the Associate's currently-assigned client at clock-in.
   clientId        String?         @db.Uuid
+  // Phase 131 — denormalized locationId, same snapshotting pattern as
+  // clientId. Captured from the Shift's location (when entry is shift-
+  // tied), or the kiosk device's location (when entry is kiosk-tied),
+  // or the associate's current AssociateAssignment.locationId. NULL on
+  // historical entries that pre-date this column.
+  locationId      String?         @db.Uuid
   // Optional Job for cost-coding. Null means generic / undifferentiated time.
   jobId           String?         @db.Uuid
   clockInAt       DateTime        @db.Timestamptz(6)
@@ -1102,6 +1180,7 @@ model TimeEntry {
   approvedBy           User?                @relation("TimeApprover", fields: [approvedById], references: [id], onDelete: SetNull)
   job                  Job?                 @relation(fields: [jobId], references: [id], onDelete: SetNull)
   project              Project?             @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  location             Location?            @relation(fields: [locationId], references: [id], onDelete: SetNull)
   breaks               BreakEntry[]
   timeOffLedgerEntries TimeOffLedgerEntry[]
   // Phase 99 — kiosk punches that opened/closed this entry.
@@ -1113,6 +1192,7 @@ model TimeEntry {
   // as a partial unique via the where clause below.
   @@index([associateId, clockInAt])
   @@index([clientId, status])
+  @@index([locationId, status])
   @@index([status])
   @@index([jobId])
   @@index([projectId])
@@ -1121,6 +1201,10 @@ model TimeEntry {
 model Shift {
   id                  String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId            String                          @db.Uuid
+  // Phase 131 — physical work site for this shift. Nullable while we
+  // backfill; PR 3 makes it NOT NULL and drops the legacy free-text
+  // `location` field below.
+  locationId          String?                         @db.Uuid
   position            String
   startsAt            DateTime                        @db.Timestamptz(6)
   endsAt              DateTime                        @db.Timestamptz(6)
@@ -1145,6 +1229,7 @@ model Shift {
   // emergency call-out cover, etc.). Required by the API for those cases.
   lateNoticeReason    String?
   client              Client                          @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  locationRel         Location?                       @relation(fields: [locationId], references: [id], onDelete: Restrict)
   assignedAssociate   Associate?                      @relation(fields: [assignedAssociateId], references: [id], onDelete: SetNull)
   createdBy           User?                           @relation("ShiftCreator", fields: [createdById], references: [id], onDelete: SetNull)
   swapRequests        ShiftSwapRequest[]
@@ -1155,6 +1240,7 @@ model Shift {
   updatedAt           DateTime                        @updatedAt @db.Timestamptz(6)
 
   @@index([clientId, startsAt])
+  @@index([locationId, startsAt])
   @@index([assignedAssociateId, startsAt])
   @@index([status, startsAt])
 }
@@ -4002,6 +4088,10 @@ enum KioskAnomalyKind {
 model KioskDevice {
   id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId     String    @db.Uuid
+  // Phase 131 — the physical Location this device lives at. Nullable
+  // during the backfill window; PR 3 makes it NOT NULL and moves
+  // geofence enforcement to the Location row.
+  locationId   String?   @db.Uuid
   name         String
   tokenHash    String
   lastSeenAt   DateTime? @db.Timestamptz(6)
@@ -4017,10 +4107,12 @@ model KioskDevice {
   updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
 
   client    Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  location  Location?    @relation(fields: [locationId], references: [id], onDelete: Restrict)
   createdBy User?        @relation("KioskDeviceCreator", fields: [createdById], references: [id], onDelete: SetNull)
   punches   KioskPunch[]
 
   @@index([clientId, isActive])
+  @@index([locationId, isActive])
 }
 
 model KioskPin {
