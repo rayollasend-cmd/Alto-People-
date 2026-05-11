@@ -15,7 +15,25 @@ export interface TeamDashboard {
   directReports: number;
   pendingTimesheets: number;
   pendingTimeOff: number;
+  pendingReimbursements: number;
+  atRiskGoals: number;
   onboardingInProgress: number;
+}
+
+export interface InboxItem {
+  id: string;
+  kind: 'TIMESHEET' | 'TIME_OFF' | 'REIMBURSEMENT' | 'GOAL_AT_RISK';
+  associateId: string;
+  associateName: string;
+  summary: string;
+  link: string;
+  pendingSince: string;
+  ageDays: number;
+}
+
+export interface TeamInboxResponse {
+  items: InboxItem[];
+  categories: TeamDashboard;
 }
 
 export interface TeamTimeEntry {
@@ -53,6 +71,10 @@ export function listReports(): Promise<{ reports: DirectReport[] }> {
 
 export function getTeamDashboard(): Promise<TeamDashboard> {
   return apiFetch('/team/dashboard');
+}
+
+export function getTeamInbox(): Promise<TeamInboxResponse> {
+  return apiFetch('/team/inbox');
 }
 
 export function listTeamTimesheets(

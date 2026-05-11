@@ -98,15 +98,19 @@ teamRouter.get('/reports', VIEW, async (req: Request, res: Response) => {
 
 // ----- Dashboard summary --------------------------------------------------
 
+const EMPTY_DASHBOARD = {
+  directReports: 0,
+  pendingTimesheets: 0,
+  pendingTimeOff: 0,
+  pendingReimbursements: 0,
+  atRiskGoals: 0,
+  onboardingInProgress: 0,
+};
+
 teamRouter.get('/dashboard', VIEW, async (req: Request, res: Response) => {
   const user = req.user!;
   if (!user.associateId) {
-    res.json({
-      directReports: 0,
-      pendingTimesheets: 0,
-      pendingTimeOff: 0,
-      onboardingInProgress: 0,
-    });
+    res.json(EMPTY_DASHBOARD);
     return;
   }
   const reportIdsRows = await prisma.associate.findMany({
@@ -116,35 +120,230 @@ teamRouter.get('/dashboard', VIEW, async (req: Request, res: Response) => {
   });
   const reportIds = reportIdsRows.map((r) => r.id);
   if (reportIds.length === 0) {
-    res.json({
-      directReports: 0,
-      pendingTimesheets: 0,
-      pendingTimeOff: 0,
-      onboardingInProgress: 0,
-    });
+    res.json(EMPTY_DASHBOARD);
     return;
   }
-  const [pendingTimesheets, pendingTimeOff, onboardingInProgress] =
-    await Promise.all([
-      prisma.timeEntry.count({
-        where: { associateId: { in: reportIds }, status: 'COMPLETED' },
-      }),
-      prisma.timeOffRequest.count({
-        where: { associateId: { in: reportIds }, status: 'PENDING' },
-      }),
-      prisma.application.count({
-        where: {
-          associateId: { in: reportIds },
-          status: { in: ['SUBMITTED', 'IN_REVIEW'] },
-          deletedAt: null,
-        },
-      }),
-    ]);
+  const [
+    pendingTimesheets,
+    pendingTimeOff,
+    pendingReimbursements,
+    atRiskGoals,
+    onboardingInProgress,
+  ] = await Promise.all([
+    prisma.timeEntry.count({
+      where: { associateId: { in: reportIds }, status: 'COMPLETED' },
+    }),
+    prisma.timeOffRequest.count({
+      where: { associateId: { in: reportIds }, status: 'PENDING' },
+    }),
+    prisma.reimbursement.count({
+      where: { associateId: { in: reportIds }, status: 'SUBMITTED' },
+    }),
+    prisma.goal.count({
+      where: {
+        associateId: { in: reportIds },
+        status: 'AT_RISK',
+        deletedAt: null,
+      },
+    }),
+    prisma.application.count({
+      where: {
+        associateId: { in: reportIds },
+        status: { in: ['SUBMITTED', 'IN_REVIEW'] },
+        deletedAt: null,
+      },
+    }),
+  ]);
   res.json({
     directReports: reportIds.length,
     pendingTimesheets,
     pendingTimeOff,
+    pendingReimbursements,
+    atRiskGoals,
     onboardingInProgress,
+  });
+});
+
+// ----- Unified inbox ------------------------------------------------------
+//
+// One endpoint that returns every pending manager action across four
+// modules in a single sorted list. The previous flow forced managers to
+// check at least five different tabs (Timesheets, Time off,
+// Reimbursements, Performance, Org); now the "today" view is one query
+// + one render, oldest item surfacing first so stale stuff doesn't get
+// buried.
+
+interface InboxItem {
+  id: string;
+  kind: 'TIMESHEET' | 'TIME_OFF' | 'REIMBURSEMENT' | 'GOAL_AT_RISK';
+  associateId: string;
+  associateName: string;
+  summary: string;
+  /** Path the UI should navigate to when the manager clicks "Open". */
+  link: string;
+  /** ISO timestamp of when the item first needed action — for sorting. */
+  pendingSince: string;
+  ageDays: number;
+}
+
+const PER_CATEGORY_CAP = 50;
+
+teamRouter.get('/inbox', VIEW, async (req: Request, res: Response) => {
+  const user = req.user!;
+  if (!user.associateId) {
+    res.json({ items: [], categories: EMPTY_DASHBOARD });
+    return;
+  }
+  const reportIdsRows = await prisma.associate.findMany({
+    take: 1000,
+    where: managerScope(user),
+    select: { id: true },
+  });
+  const reportIds = reportIdsRows.map((r) => r.id);
+  if (reportIds.length === 0) {
+    res.json({ items: [], categories: EMPTY_DASHBOARD });
+    return;
+  }
+
+  const [timesheets, timeOff, reimbursements, atRiskGoals] = await Promise.all(
+    [
+      prisma.timeEntry.findMany({
+        where: { associateId: { in: reportIds }, status: 'COMPLETED' },
+        orderBy: { clockOutAt: 'asc' },
+        take: PER_CATEGORY_CAP,
+        select: {
+          id: true,
+          associateId: true,
+          clockInAt: true,
+          clockOutAt: true,
+          anomalies: true,
+          associate: { select: { firstName: true, lastName: true } },
+        },
+      }),
+      prisma.timeOffRequest.findMany({
+        where: { associateId: { in: reportIds }, status: 'PENDING' },
+        orderBy: { createdAt: 'asc' },
+        take: PER_CATEGORY_CAP,
+        select: {
+          id: true,
+          associateId: true,
+          category: true,
+          startDate: true,
+          endDate: true,
+          createdAt: true,
+          associate: { select: { firstName: true, lastName: true } },
+        },
+      }),
+      prisma.reimbursement.findMany({
+        where: { associateId: { in: reportIds }, status: 'SUBMITTED' },
+        orderBy: { submittedAt: 'asc' },
+        take: PER_CATEGORY_CAP,
+        select: {
+          id: true,
+          associateId: true,
+          title: true,
+          totalAmount: true,
+          currency: true,
+          submittedAt: true,
+          createdAt: true,
+          associate: { select: { firstName: true, lastName: true } },
+        },
+      }),
+      prisma.goal.findMany({
+        where: {
+          associateId: { in: reportIds },
+          status: 'AT_RISK',
+          deletedAt: null,
+        },
+        orderBy: { updatedAt: 'asc' },
+        take: PER_CATEGORY_CAP,
+        select: {
+          id: true,
+          associateId: true,
+          title: true,
+          periodEnd: true,
+          updatedAt: true,
+          progressPct: true,
+          associate: { select: { firstName: true, lastName: true } },
+        },
+      }),
+    ],
+  );
+
+  const now = Date.now();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const items: InboxItem[] = [];
+
+  for (const t of timesheets) {
+    const pending = t.clockOutAt ?? t.clockInAt;
+    const anomalyTags = Array.isArray(t.anomalies)
+      ? (t.anomalies as string[])
+      : [];
+    const anomalyNote = anomalyTags.length
+      ? ` · flagged: ${anomalyTags.join(', ').toLowerCase()}`
+      : '';
+    items.push({
+      id: t.id,
+      kind: 'TIMESHEET',
+      associateId: t.associateId,
+      associateName: `${t.associate.firstName} ${t.associate.lastName}`,
+      summary: `Shift on ${t.clockInAt.toISOString().slice(0, 10)}${anomalyNote}`,
+      link: '/team?tab=timesheets',
+      pendingSince: pending.toISOString(),
+      ageDays: Math.floor((now - pending.getTime()) / dayMs),
+    });
+  }
+  for (const r of timeOff) {
+    items.push({
+      id: r.id,
+      kind: 'TIME_OFF',
+      associateId: r.associateId,
+      associateName: `${r.associate.firstName} ${r.associate.lastName}`,
+      summary: `${r.category} ${r.startDate.toISOString().slice(0, 10)} → ${r.endDate.toISOString().slice(0, 10)}`,
+      link: '/team?tab=timeoff',
+      pendingSince: r.createdAt.toISOString(),
+      ageDays: Math.floor((now - r.createdAt.getTime()) / dayMs),
+    });
+  }
+  for (const r of reimbursements) {
+    const since = r.submittedAt ?? r.createdAt;
+    items.push({
+      id: r.id,
+      kind: 'REIMBURSEMENT',
+      associateId: r.associateId,
+      associateName: `${r.associate.firstName} ${r.associate.lastName}`,
+      summary: `${r.title} · ${r.currency} ${r.totalAmount.toString()}`,
+      link: `/reimbursements?id=${r.id}`,
+      pendingSince: since.toISOString(),
+      ageDays: Math.floor((now - since.getTime()) / dayMs),
+    });
+  }
+  for (const g of atRiskGoals) {
+    items.push({
+      id: g.id,
+      kind: 'GOAL_AT_RISK',
+      associateId: g.associateId,
+      associateName: `${g.associate.firstName} ${g.associate.lastName}`,
+      summary: `${g.title} (${g.progressPct}% · due ${g.periodEnd.toISOString().slice(0, 10)})`,
+      link: `/performance?goalId=${g.id}`,
+      pendingSince: g.updatedAt.toISOString(),
+      ageDays: Math.floor((now - g.updatedAt.getTime()) / dayMs),
+    });
+  }
+
+  // Oldest first so stale items can't hide under fresh noise.
+  items.sort((a, b) => a.pendingSince.localeCompare(b.pendingSince));
+
+  res.json({
+    items,
+    categories: {
+      directReports: reportIds.length,
+      pendingTimesheets: timesheets.length,
+      pendingTimeOff: timeOff.length,
+      pendingReimbursements: reimbursements.length,
+      atRiskGoals: atRiskGoals.length,
+      onboardingInProgress: 0, // surfaced in /dashboard, not the inbox itself
+    },
   });
 });
 

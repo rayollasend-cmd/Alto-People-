@@ -1,17 +1,21 @@
 import { useEffect, useState } from 'react';
-import { CalendarOff, Clock, Users } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { AlertTriangle, CalendarOff, Clock, Inbox, Receipt, Target, Users } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
   approveTeamTimeOff,
   approveTeamTimesheet,
   denyTeamTimeOff,
   getTeamDashboard,
+  getTeamInbox,
   listReports,
   listTeamTimeOff,
   listTeamTimesheets,
   rejectTeamTimesheet,
   type DirectReport,
+  type InboxItem,
   type TeamDashboard,
+  type TeamInboxResponse,
   type TeamTimeEntry,
   type TeamTimeOffRequest,
 } from '@/lib/teamApi';
@@ -39,7 +43,7 @@ import { toast } from 'sonner';
 import { usePrompt } from '@/lib/confirm';
 
 export function TeamHome() {
-  const [tab, setTab] = useState<'overview' | 'timesheets' | 'timeoff'>('overview');
+  const [tab, setTab] = useState<'inbox' | 'overview' | 'timesheets' | 'timeoff'>('inbox');
   const [dashboard, setDashboard] = useState<TeamDashboard | null>(null);
   const [reports, setReports] = useState<DirectReport[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -68,23 +72,35 @@ export function TeamHome() {
       />
 
       {dashboard && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
           <KpiTile
             label="Direct reports"
             value={dashboard.directReports.toString()}
             icon={Users}
           />
           <KpiTile
-            label="Timesheets to review"
+            label="Timesheets"
             value={dashboard.pendingTimesheets.toString()}
             icon={Clock}
             highlight={dashboard.pendingTimesheets > 0}
           />
           <KpiTile
-            label="Time-off pending"
+            label="Time-off"
             value={dashboard.pendingTimeOff.toString()}
             icon={CalendarOff}
             highlight={dashboard.pendingTimeOff > 0}
+          />
+          <KpiTile
+            label="Reimbursements"
+            value={dashboard.pendingReimbursements.toString()}
+            icon={Receipt}
+            highlight={dashboard.pendingReimbursements > 0}
+          />
+          <KpiTile
+            label="At-risk goals"
+            value={dashboard.atRiskGoals.toString()}
+            icon={Target}
+            highlight={dashboard.atRiskGoals > 0}
           />
           <KpiTile
             label="Onboarding"
@@ -98,6 +114,23 @@ export function TeamHome() {
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
         <TabsList>
+          <TabsTrigger value="inbox">
+            <Inbox className="h-3.5 w-3.5" />
+            Inbox
+            {dashboard &&
+              dashboard.pendingTimesheets +
+                dashboard.pendingTimeOff +
+                dashboard.pendingReimbursements +
+                dashboard.atRiskGoals >
+                0 && (
+                <Badge variant="destructive" className="ml-1">
+                  {dashboard.pendingTimesheets +
+                    dashboard.pendingTimeOff +
+                    dashboard.pendingReimbursements +
+                    dashboard.atRiskGoals}
+                </Badge>
+              )}
+          </TabsTrigger>
           <TabsTrigger value="overview">
             <Users className="h-3.5 w-3.5" />
             Reports
@@ -121,6 +154,9 @@ export function TeamHome() {
             )}
           </TabsTrigger>
         </TabsList>
+        <TabsContent value="inbox">
+          <InboxTab />
+        </TabsContent>
         <TabsContent value="overview">
           <ReportsList reports={reports} />
         </TabsContent>
@@ -162,6 +198,94 @@ function KpiTile({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+const KIND_META: Record<
+  InboxItem['kind'],
+  { label: string; icon: typeof Users; tone: string }
+> = {
+  TIMESHEET: { label: 'Timesheet', icon: Clock, tone: 'text-blue-300' },
+  TIME_OFF: { label: 'Time off', icon: CalendarOff, tone: 'text-amber-300' },
+  REIMBURSEMENT: { label: 'Reimbursement', icon: Receipt, tone: 'text-emerald-300' },
+  GOAL_AT_RISK: { label: 'Goal', icon: AlertTriangle, tone: 'text-rose-300' },
+};
+
+function InboxTab() {
+  const [data, setData] = useState<TeamInboxResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    getTeamInbox()
+      .then((res) => {
+        if (alive) setData(res);
+      })
+      .catch((err) => {
+        if (alive)
+          setError(err instanceof ApiError ? err.message : 'Failed to load.');
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  if (error) return <p role="alert" className="text-sm text-alert">{error}</p>;
+  if (!data) return <SkeletonRows count={4} rowHeight="h-14" />;
+  if (data.items.length === 0) {
+    return (
+      <EmptyState
+        icon={Inbox}
+        title="Inbox zero"
+        description="Nothing waiting on you. New approvals, time-off requests, reimbursements, and at-risk goals will land here."
+      />
+    );
+  }
+
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Type</TableHead>
+          <TableHead>Associate</TableHead>
+          <TableHead>Details</TableHead>
+          <TableHead className="tabular-nums">Age</TableHead>
+          <TableHead className="text-right">Action</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {data.items.map((item) => {
+          const meta = KIND_META[item.kind];
+          const Icon = meta.icon;
+          const stale = item.ageDays >= 3;
+          return (
+            <TableRow key={`${item.kind}-${item.id}`}>
+              <TableCell>
+                <div className="flex items-center gap-1.5 text-xs">
+                  <Icon className={`h-3.5 w-3.5 ${meta.tone}`} />
+                  <span className="text-silver">{meta.label}</span>
+                </div>
+              </TableCell>
+              <TableCell className="font-medium">
+                <div className="flex items-center gap-2.5">
+                  <Avatar name={item.associateName} size="sm" />
+                  <span>{item.associateName}</span>
+                </div>
+              </TableCell>
+              <TableCell className="text-silver">{item.summary}</TableCell>
+              <TableCell className={`tabular-nums ${stale ? 'text-alert' : 'text-silver'}`}>
+                {item.ageDays === 0 ? 'today' : `${item.ageDays}d`}
+              </TableCell>
+              <TableCell className="text-right">
+                <Button size="sm" variant="outline" asChild>
+                  <Link to={item.link}>Open</Link>
+                </Button>
+              </TableCell>
+            </TableRow>
+          );
+        })}
+      </TableBody>
+    </Table>
   );
 }
 
