@@ -30,6 +30,16 @@ const RESEND_MAX_RETRIES = 1;
 let resendQueue: Promise<unknown> = Promise.resolve();
 let lastResendCallAt = 0;
 
+// Multi-replica safety sentinel — pairs with the user-cache and kiosk-
+// rate-limit guards in index.ts. The throttle above is per-process, so
+// with N replicas the effective rate is up to N × 4 req/s, which will
+// trip Resend's 5/s tenant cap on the third replica. Call this from a
+// Redis-token-bucket adapter at boot to swap in a shared limiter.
+export function installSharedResendThrottle(backendName: string) {
+  (globalThis as { __RESEND_THROTTLE_BACKEND__?: string }).__RESEND_THROTTLE_BACKEND__ =
+    backendName;
+}
+
 async function throttledResendFetch(payload: unknown): Promise<Response> {
   // Chain onto the queue so concurrent callers serialize through the same
   // min-interval gate. The .then ignores the prior result; .catch swallows

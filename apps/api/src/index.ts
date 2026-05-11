@@ -40,37 +40,57 @@ app.listen(env.PORT, '0.0.0.0', async () => {
   startAttestationReminderCron();
   startKioskMaintenanceCron();
 
-  // Multi-replica safety check for the kiosk rate limiter. The default
-  // backend is per-process; without a shared store, a multi-replica
-  // deployment lets an attacker bypass the PIN lockout by spraying
-  // replicas. We refuse to boot rather than silently regress.
+  // Multi-replica safety check. Three independent per-process subsystems
+  // assume a single container today: the kiosk PIN rate limiter (brute-
+  // force lockout), the SessionUser cache (auth invalidation), and the
+  // Resend throttle (4 req/s gate, would N× scale and trip 429s). With
+  // MULTI_REPLICA=1 each needs a shared backend installed before boot
+  // finishes; otherwise we refuse to start rather than silently regress.
   if (env.MULTI_REPLICA === 1) {
-    // The placeholder check inspects the swap point. When a shared
-    // backend is installed it replaces the in-memory default; we keep
-    // a sentinel reference on globalThis from the adapter setup so
-    // this guard can confirm. Adapters are installed by importing
-    // their setup module before this line runs.
-    const installed = (globalThis as { __KIOSK_RATE_LIMIT_BACKEND__?: string })
-      .__KIOSK_RATE_LIMIT_BACKEND__;
-    if (!installed) {
-      console.error(
-        'FATAL: MULTI_REPLICA=1 but no shared kiosk rate-limit backend ' +
-          'was installed. The default per-process store cannot enforce ' +
-          'lockouts across replicas — an attacker can defeat the brute-' +
-          'force protection by round-robin\'ing through replicas. Either ' +
-          'install a shared backend via setKioskRateLimitStore() at boot ' +
-          'or pin the deployment to a single replica (MULTI_REPLICA=0).',
-      );
+    const globals = globalThis as {
+      __KIOSK_RATE_LIMIT_BACKEND__?: string;
+      __USER_CACHE_BACKEND__?: string;
+      __RESEND_THROTTLE_BACKEND__?: string;
+    };
+    const checks: Array<{ name: string; sentinel: string | undefined; hint: string }> = [
+      {
+        name: 'kiosk rate limit',
+        sentinel: globals.__KIOSK_RATE_LIMIT_BACKEND__,
+        hint: 'setKioskRateLimitStore() in lib/kioskRateLimit.ts',
+      },
+      {
+        name: 'session user cache',
+        sentinel: globals.__USER_CACHE_BACKEND__,
+        hint: 'installSharedUserCache() in middleware/auth.ts',
+      },
+      {
+        name: 'Resend throttle',
+        sentinel: globals.__RESEND_THROTTLE_BACKEND__,
+        hint: 'installSharedResendThrottle() in lib/notifications.ts',
+      },
+    ];
+    const missing = checks.filter((c) => !c.sentinel);
+    if (missing.length > 0) {
+      for (const m of missing) {
+        console.error(
+          `FATAL: MULTI_REPLICA=1 but no shared backend installed for "${m.name}". ` +
+            `Wire ${m.hint} at boot, or pin to a single replica (MULTI_REPLICA=0).`,
+        );
+      }
       process.exit(1);
     }
-    console.log(`[alto-people/api] kiosk rate limit using ${installed} backend`);
+    for (const c of checks) {
+      console.log(`[alto-people/api] ${c.name} using ${c.sentinel} backend`);
+    }
   } else {
     // Single-replica path. Make the assumption explicit in the log
-    // so ops doesn't accidentally scale out and lose lockout state.
+    // so ops doesn't accidentally scale out and lose lockout state,
+    // cache coherence, or rate-limit accuracy.
     console.log(
-      '[alto-people/api] kiosk rate limit using in-memory store ' +
-        '(single-replica only; set MULTI_REPLICA=1 + install a shared ' +
-        'backend before scaling out)',
+      '[alto-people/api] running with in-process stores for kiosk rate ' +
+        'limit, session user cache, and Resend throttle (single-replica ' +
+        'only; set MULTI_REPLICA=1 + install shared backends before ' +
+        'scaling out)',
     );
   }
 

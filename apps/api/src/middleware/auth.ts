@@ -63,6 +63,25 @@ export function invalidateUserCache(userId: string) {
   userCache.delete(userId);
 }
 
+// Multi-replica safety sentinel.
+//
+// Same posture as `setKioskRateLimitStore` in lib/kioskRateLimit.ts: the
+// boot-time guard in index.ts refuses to start with MULTI_REPLICA=1 unless
+// every per-process cache has been explicitly upgraded to a shared
+// backend. Today this cache lives in `userCache` (above) and is per-
+// process — replica A can hold a SessionUser as ACTIVE while replica B
+// has already noticed the user was disabled, so `invalidateUserCache`
+// fans out to a single replica only. That's fine on Railway's single
+// container, dangerous the day someone scales out.
+//
+// Call this from an adapter (e.g. a Redis-backed shared store) before
+// boot finishes. The sentinel is read by index.ts and reported back so
+// ops can confirm which backend won.
+export function installSharedUserCache(backendName: string) {
+  (globalThis as { __USER_CACHE_BACKEND__?: string }).__USER_CACHE_BACKEND__ =
+    backendName;
+}
+
 // Periodic prune so the map can't grow unbounded under user churn (rare on a
 // 500-user app, but cheap insurance). `.unref()` so the timer doesn't keep
 // the Node process alive in tests / shutdown.
