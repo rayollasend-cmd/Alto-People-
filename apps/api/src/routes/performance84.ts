@@ -294,6 +294,10 @@ const PipCreateSchema = z.object({
   reason: z.string().min(1).max(4000),
   expectations: z.string().min(1).max(8000),
   supportPlan: z.string().max(8000).optional().nullable(),
+  // Optional pointer back to the goal that prompted this PIP. Set when
+  // the PIP is created via the "Start PIP from goal" flow so the
+  // performance timeline can render the chain.
+  sourceGoalId: z.string().uuid().optional(),
 });
 
 const PipUpdateSchema = z.object({
@@ -315,6 +319,7 @@ performance84Router.get('/pips', VIEW, async (req, res) => {
       id: p.id,
       associateId: p.associateId,
       managerUserId: p.managerUserId,
+      sourceGoalId: p.sourceGoalId,
       startDate: p.startDate.toISOString().slice(0, 10),
       endDate: p.endDate.toISOString().slice(0, 10),
       reason: p.reason,
@@ -332,6 +337,23 @@ performance84Router.post('/pips', MANAGE, async (req, res) => {
   if (input.endDate < input.startDate) {
     throw new HttpError(400, 'invalid_period', 'endDate must be after startDate');
   }
+  // If a sourceGoalId was supplied, confirm it belongs to this associate
+  // before persisting. Defence-in-depth: even though only managers can call
+  // this endpoint, a typo or copy-paste could otherwise stitch a PIP to an
+  // unrelated person's goal and pollute their timeline.
+  if (input.sourceGoalId) {
+    const goal = await prisma.goal.findFirst({
+      where: { id: input.sourceGoalId, associateId: input.associateId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!goal) {
+      throw new HttpError(
+        400,
+        'goal_mismatch',
+        'sourceGoalId does not belong to this associate.',
+      );
+    }
+  }
   const created = await prisma.pip.create({
     data: {
       associateId: input.associateId,
@@ -341,9 +363,36 @@ performance84Router.post('/pips', MANAGE, async (req, res) => {
       reason: input.reason,
       expectations: input.expectations,
       supportPlan: input.supportPlan ?? null,
+      sourceGoalId: input.sourceGoalId ?? null,
     },
   });
   res.status(201).json({ id: created.id });
+});
+
+// "Start PIP from goal" prefill helper. Returns a suggested PIP payload
+// based on the goal — the caller then displays a form pre-filled with
+// this data and POSTs to /pips with sourceGoalId set. The endpoint
+// deliberately does NOT create the PIP; we want the manager to review and
+// commit explicitly.
+performance84Router.get('/pips/prefill-from-goal/:goalId', MANAGE, async (req, res) => {
+  const goalId = z.string().uuid().parse(req.params.goalId);
+  const goal = await prisma.goal.findFirst({
+    where: { id: goalId, deletedAt: null },
+  });
+  if (!goal) throw new HttpError(404, 'not_found', 'Goal not found.');
+  const start = new Date();
+  start.setUTCHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setUTCDate(end.getUTCDate() + 60); // standard 60-day PIP window
+  res.json({
+    associateId: goal.associateId,
+    sourceGoalId: goal.id,
+    startDate: start.toISOString().slice(0, 10),
+    endDate: end.toISOString().slice(0, 10),
+    reason: `At-risk goal: "${goal.title}". ${goal.description ?? ''}`.trim().slice(0, 4000),
+    expectations: `Restore "${goal.title}" to on-track status. Current progress: ${goal.progressPct}%. Target: 100% by ${goal.periodEnd.toISOString().slice(0, 10)}.`.slice(0, 8000),
+    supportPlan: null,
+  });
 });
 
 performance84Router.put('/pips/:id', MANAGE, async (req, res) => {
@@ -477,4 +526,115 @@ performance84Router.put('/reviews360/:id/close', MANAGE, async (req, res) => {
     data: { status: 'COMPLETED' },
   });
   res.json({ ok: true });
+});
+
+// ----- Performance timeline ----------------------------------------------
+//
+// Single endpoint that returns one associate's goals, PIPs, and annual
+// reviews together in chronological order. The Goal → PIP → Review chain
+// is exposed via the `parentId` field so the UI can render the
+// relationship as a tree or breadcrumb.
+//
+// Mounted under VIEW (view:hr-admin) for HR-side rendering; the
+// manager-scoped /team/:associateId/timeline variant lives elsewhere
+// when we wire it.
+
+interface TimelineEntry {
+  kind: 'GOAL' | 'PIP' | 'REVIEW';
+  id: string;
+  title: string;
+  status: string;
+  date: string;
+  parentId: string | null;
+  parentKind: 'GOAL' | 'PIP' | null;
+  link: string;
+  meta?: Record<string, unknown>;
+}
+
+performance84Router.get('/timeline', VIEW, async (req, res) => {
+  const associateId = z.string().uuid().parse(req.query.associateId);
+  const [goals, pips, reviews] = await Promise.all([
+    prisma.goal.findMany({
+      where: { associateId, deletedAt: null },
+      orderBy: { periodStart: 'asc' },
+    }),
+    prisma.pip.findMany({
+      where: { associateId },
+      orderBy: { startDate: 'asc' },
+    }),
+    prisma.performanceReview.findMany({
+      where: { associateId },
+      orderBy: { periodStart: 'asc' },
+    }),
+  ]);
+  const entries: TimelineEntry[] = [];
+  for (const g of goals) {
+    entries.push({
+      kind: 'GOAL',
+      id: g.id,
+      title: g.title,
+      status: g.status,
+      date: g.periodStart.toISOString().slice(0, 10),
+      parentId: g.parentGoalId,
+      parentKind: g.parentGoalId ? 'GOAL' : null,
+      link: `/performance?goalId=${g.id}`,
+      meta: { progressPct: g.progressPct, periodEnd: g.periodEnd.toISOString().slice(0, 10) },
+    });
+  }
+  for (const p of pips) {
+    entries.push({
+      kind: 'PIP',
+      id: p.id,
+      title: p.reason.slice(0, 80),
+      status: p.status,
+      date: p.startDate.toISOString().slice(0, 10),
+      parentId: p.sourceGoalId,
+      parentKind: p.sourceGoalId ? 'GOAL' : null,
+      link: `/performance?pipId=${p.id}`,
+      meta: { endDate: p.endDate.toISOString().slice(0, 10), outcomeNote: p.outcomeNote },
+    });
+  }
+  for (const r of reviews) {
+    entries.push({
+      kind: 'REVIEW',
+      id: r.id,
+      title: r.summary.slice(0, 80),
+      status: r.status,
+      date: r.periodStart.toISOString().slice(0, 10),
+      parentId: r.sourcePipId,
+      parentKind: r.sourcePipId ? 'PIP' : null,
+      link: `/performance?reviewId=${r.id}`,
+      meta: { rating: r.overallRating, periodEnd: r.periodEnd.toISOString().slice(0, 10) },
+    });
+  }
+  entries.sort((a, b) => a.date.localeCompare(b.date));
+  res.json({ entries });
+});
+
+// "Start review from PIP" prefill helper. Same shape as the goal→PIP
+// counterpart: returns a suggested PerformanceReview payload built from a
+// PIP's outcome. Caller posts the result (with sourcePipId) to
+// /performance/reviews.
+performance84Router.get('/reviews/prefill-from-pip/:pipId', MANAGE, async (req, res) => {
+  const pipId = z.string().uuid().parse(req.params.pipId);
+  const pip = await prisma.pip.findUnique({ where: { id: pipId } });
+  if (!pip) throw new HttpError(404, 'not_found', 'PIP not found.');
+  if (pip.status !== 'PASSED' && pip.status !== 'FAILED') {
+    throw new HttpError(
+      400,
+      'pip_open',
+      'Can only build a review from a closed (PASSED/FAILED) PIP.',
+    );
+  }
+  res.json({
+    associateId: pip.associateId,
+    sourcePipId: pip.id,
+    periodStart: pip.startDate.toISOString().slice(0, 10),
+    periodEnd: pip.endDate.toISOString().slice(0, 10),
+    overallRating: pip.status === 'PASSED' ? 3 : 2,
+    summary: `Performance review following ${pip.status === 'PASSED' ? 'successful' : 'unsuccessful'} PIP completion.`,
+    strengths: null,
+    improvements: pip.expectations,
+    goals: pip.outcomeNote ?? null,
+  });
 });

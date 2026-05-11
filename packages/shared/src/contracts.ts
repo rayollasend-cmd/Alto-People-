@@ -2038,6 +2038,7 @@ export const PerformanceReviewSchema = z.object({
   associateName: z.string(),
   reviewerUserId: UuidSchema.nullable(),
   reviewerEmail: z.string().email().nullable(),
+  sourcePipId: UuidSchema.nullable(),
   periodStart: z.string(),
   periodEnd: z.string(),
   overallRating: z.number().int().min(1).max(5),
@@ -2067,6 +2068,9 @@ export const PerformanceReviewCreateInputSchema = z
     strengths: z.string().max(2000).optional(),
     improvements: z.string().max(2000).optional(),
     goals: z.string().max(2000).optional(),
+    // Closed PIP that this review summarises, if any. The API validates
+    // the PIP belongs to the same associate before persisting.
+    sourcePipId: UuidSchema.optional(),
   })
   .refine((v) => v.periodEnd >= v.periodStart, {
     message: 'periodEnd must be on or after periodStart',

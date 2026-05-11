@@ -54,6 +54,7 @@ export interface Pip {
   id: string;
   associateId: string;
   managerUserId: string | null;
+  sourceGoalId: string | null;
   startDate: string;
   endDate: string;
   reason: string;
@@ -62,6 +63,40 @@ export interface Pip {
   status: PipStatus;
   outcomeNote: string | null;
   decidedAt: string | null;
+}
+
+export interface PerfTimelineEntry {
+  kind: 'GOAL' | 'PIP' | 'REVIEW';
+  id: string;
+  title: string;
+  status: string;
+  date: string;
+  parentId: string | null;
+  parentKind: 'GOAL' | 'PIP' | null;
+  link: string;
+  meta?: Record<string, unknown>;
+}
+
+export interface PipPrefill {
+  associateId: string;
+  sourceGoalId: string;
+  startDate: string;
+  endDate: string;
+  reason: string;
+  expectations: string;
+  supportPlan: string | null;
+}
+
+export interface ReviewPrefill {
+  associateId: string;
+  sourcePipId: string;
+  periodStart: string;
+  periodEnd: string;
+  overallRating: number;
+  summary: string;
+  strengths: string | null;
+  improvements: string | null;
+  goals: string | null;
 }
 
 export type Review360Status = 'COLLECTING' | 'COMPLETED' | 'CANCELLED';
@@ -173,7 +208,19 @@ export const createPip = (input: {
   reason: string;
   expectations: string;
   supportPlan?: string | null;
+  sourceGoalId?: string;
 }) => apiFetch<{ id: string }>('/performance/pips', { method: 'POST', body: input });
+
+export const prefillPipFromGoal = (goalId: string) =>
+  apiFetch<PipPrefill>(`/performance/pips/prefill-from-goal/${goalId}`);
+
+export const prefillReviewFromPip = (pipId: string) =>
+  apiFetch<ReviewPrefill>(`/performance/reviews/prefill-from-pip/${pipId}`);
+
+export const getPerfTimeline = (associateId: string) =>
+  apiFetch<{ entries: PerfTimelineEntry[] }>(
+    `/performance/timeline?associateId=${associateId}`,
+  );
 export const updatePip = (
   id: string,
   input: {

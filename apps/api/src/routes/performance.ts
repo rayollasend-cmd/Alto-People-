@@ -33,6 +33,7 @@ function toReview(row: RawReview): PerformanceReview {
     associateName: `${row.associate.firstName} ${row.associate.lastName}`,
     reviewerUserId: row.reviewerUserId,
     reviewerEmail: row.reviewer?.email ?? null,
+    sourcePipId: row.sourcePipId,
     periodStart: ymd(row.periodStart),
     periodEnd: ymd(row.periodEnd),
     overallRating: row.overallRating,
@@ -88,6 +89,23 @@ performanceRouter.post('/reviews', MANAGE, async (req, res, next) => {
     });
     if (!associate) throw new HttpError(404, 'associate_not_found', 'Associate not found');
 
+    // If a sourcePipId is supplied, verify it belongs to this associate
+    // before persisting — same defence-in-depth posture as the
+    // PIP/sourceGoalId path in performance84.ts.
+    if (i.sourcePipId) {
+      const pip = await prisma.pip.findFirst({
+        where: { id: i.sourcePipId, associateId: i.associateId },
+        select: { id: true },
+      });
+      if (!pip) {
+        throw new HttpError(
+          400,
+          'pip_mismatch',
+          'sourcePipId does not belong to this associate.',
+        );
+      }
+    }
+
     const created = await prisma.performanceReview.create({
       data: {
         associateId: i.associateId,
@@ -99,6 +117,7 @@ performanceRouter.post('/reviews', MANAGE, async (req, res, next) => {
         strengths: i.strengths ?? null,
         improvements: i.improvements ?? null,
         goals: i.goals ?? null,
+        sourcePipId: i.sourcePipId ?? null,
         status: 'DRAFT',
       },
       include: REVIEW_INCLUDE,

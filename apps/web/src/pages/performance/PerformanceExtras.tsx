@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Heart, Plus, Target } from 'lucide-react';
+import { AlertTriangle, Heart, Plus, Target } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
   closeReview360,
@@ -8,17 +8,20 @@ import {
   createPip,
   createReview360,
   deleteGoal,
+  getPerfTimeline,
   listGoals,
   listKudos,
   listOneOnOnes,
   listPips,
   listReviews360,
+  prefillPipFromGoal,
   updateGoal,
   updatePip,
   type Goal,
   type GoalStatus,
   type Kudo,
   type OneOnOne,
+  type PerfTimelineEntry,
   type Pip,
   type Review360,
 } from '@/lib/perf84Api';
@@ -54,7 +57,7 @@ import {
 import { Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
 
-type Tab = 'goals' | 'kudos' | 'one-on-ones' | 'pips' | 'reviews360';
+type Tab = 'goals' | 'kudos' | 'one-on-ones' | 'pips' | 'reviews360' | 'timeline';
 
 export function PerformanceExtras() {
   const { user } = useAuth();
@@ -76,12 +79,14 @@ export function PerformanceExtras() {
           <TabsTrigger value="one-on-ones">1:1s</TabsTrigger>
           <TabsTrigger value="pips">PIPs</TabsTrigger>
           <TabsTrigger value="reviews360">360s</TabsTrigger>
+          <TabsTrigger value="timeline">Timeline</TabsTrigger>
         </TabsList>
         <TabsContent value="goals"><GoalsTab /></TabsContent>
         <TabsContent value="kudos"><KudosTab /></TabsContent>
         <TabsContent value="one-on-ones"><OneOnOnesTab /></TabsContent>
         <TabsContent value="pips"><PipsTab canManage={canManage} /></TabsContent>
         <TabsContent value="reviews360"><Reviews360Tab canManage={canManage} /></TabsContent>
+        <TabsContent value="timeline"><TimelineTab /></TabsContent>
       </Tabs>
     </div>
   );
@@ -99,9 +104,12 @@ type GoalDraft = {
 };
 
 function GoalsTab() {
+  const { user } = useAuth();
+  const canManage = user ? hasCapability(user.role, 'manage:performance') : false;
   const confirm = useConfirm();
   const [rows, setRows] = useState<Goal[] | null>(null);
   const [draft, setDraft] = useState<GoalDraft | null>(null);
+  const [pipDraft, setPipDraft] = useState<PipDraft | null>(null);
 
   const refresh = async () => {
     setRows(null);
@@ -219,9 +227,38 @@ function GoalsTab() {
                       %
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button size="sm" variant="ghost" onClick={() => onDelete(g.id)}>
-                        Delete
-                      </Button>
+                      <div className="flex justify-end gap-1">
+                        {g.status === 'AT_RISK' && canManage && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={async () => {
+                              try {
+                                const pre = await prefillPipFromGoal(g.id);
+                                setPipDraft({
+                                  associateId: pre.associateId,
+                                  sourceGoalId: pre.sourceGoalId,
+                                  startDate: pre.startDate,
+                                  endDate: pre.endDate,
+                                  reason: pre.reason,
+                                  expectations: pre.expectations,
+                                  supportPlan: pre.supportPlan ?? '',
+                                });
+                              } catch (err) {
+                                toast.error(
+                                  err instanceof ApiError ? err.message : 'Failed.',
+                                );
+                              }
+                            }}
+                          >
+                            <AlertTriangle className="mr-1.5 h-3.5 w-3.5" />
+                            Start PIP
+                          </Button>
+                        )}
+                        <Button size="sm" variant="ghost" onClick={() => onDelete(g.id)}>
+                          Delete
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -230,6 +267,23 @@ function GoalsTab() {
           )}
         </CardContent>
       </Card>
+      <Drawer
+        open={pipDraft !== null}
+        onOpenChange={(o) => !o && setPipDraft(null)}
+      >
+        {pipDraft && (
+          <PipFromGoalDrawer
+            draft={pipDraft}
+            setDraft={setPipDraft}
+            onClose={() => setPipDraft(null)}
+            onSaved={() => {
+              setPipDraft(null);
+              toast.success('PIP created from goal.');
+              refresh();
+            }}
+          />
+        )}
+      </Drawer>
       <Drawer open={draft !== null} onOpenChange={(o) => !o && setDraft(null)}>
         {draft && (
           <GoalDrawer
@@ -359,6 +413,121 @@ function GoalDrawer({
         </Button>
         <Button onClick={onSubmit} disabled={saving}>
           {saving ? 'Saving…' : 'Create'}
+        </Button>
+      </DrawerFooter>
+    </>
+  );
+}
+
+// ============ PIP drawer (shared) ============
+
+type PipDraft = {
+  associateId: string;
+  sourceGoalId?: string;
+  startDate: string;
+  endDate: string;
+  reason: string;
+  expectations: string;
+  supportPlan: string;
+};
+
+function PipFromGoalDrawer({
+  draft,
+  setDraft,
+  onClose,
+  onSaved,
+}: {
+  draft: PipDraft;
+  setDraft: (d: PipDraft) => void;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const onSubmit = async () => {
+    if (!draft.reason.trim() || !draft.expectations.trim()) {
+      toast.error('Reason and expectations required.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await createPip({
+        associateId: draft.associateId,
+        startDate: draft.startDate,
+        endDate: draft.endDate,
+        reason: draft.reason.trim(),
+        expectations: draft.expectations.trim(),
+        supportPlan: draft.supportPlan.trim() || null,
+        sourceGoalId: draft.sourceGoalId,
+      });
+      onSaved();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <>
+      <DrawerHeader>
+        <DrawerTitle>
+          {draft.sourceGoalId ? 'Start PIP from goal' : 'New PIP'}
+        </DrawerTitle>
+      </DrawerHeader>
+      <DrawerBody className="space-y-4">
+        {draft.sourceGoalId && (
+          <p className="text-xs text-silver">
+            This PIP will be linked to the goal so it appears on the
+            performance timeline.
+          </p>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label>Start date</Label>
+            <Input
+              className="mt-1"
+              value={draft.startDate}
+              onChange={(e) => setDraft({ ...draft, startDate: e.target.value })}
+            />
+          </div>
+          <div>
+            <Label>End date</Label>
+            <Input
+              className="mt-1"
+              value={draft.endDate}
+              onChange={(e) => setDraft({ ...draft, endDate: e.target.value })}
+            />
+          </div>
+        </div>
+        <div>
+          <Label>Reason</Label>
+          <Textarea
+            className="mt-1"
+            value={draft.reason}
+            onChange={(e) => setDraft({ ...draft, reason: e.target.value })}
+          />
+        </div>
+        <div>
+          <Label>Expectations</Label>
+          <Textarea
+            className="mt-1"
+            rows={5}
+            value={draft.expectations}
+            onChange={(e) => setDraft({ ...draft, expectations: e.target.value })}
+          />
+        </div>
+        <div>
+          <Label>Support plan (optional)</Label>
+          <Textarea
+            className="mt-1"
+            value={draft.supportPlan}
+            onChange={(e) => setDraft({ ...draft, supportPlan: e.target.value })}
+          />
+        </div>
+      </DrawerBody>
+      <DrawerFooter>
+        <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button onClick={onSubmit} disabled={saving}>
+          {saving ? 'Saving…' : 'Create PIP'}
         </Button>
       </DrawerFooter>
     </>
@@ -901,5 +1070,101 @@ function NewReview360Drawer({ onClose, onSaved }: { onClose: () => void; onSaved
         </Button>
       </DrawerFooter>
     </Drawer>
+  );
+}
+
+// ============ Timeline ============
+
+const TIMELINE_KIND_META: Record<
+  PerfTimelineEntry['kind'],
+  { label: string; tone: string }
+> = {
+  GOAL: { label: 'Goal', tone: 'bg-blue-500/15 text-blue-300 border-blue-500/30' },
+  PIP: { label: 'PIP', tone: 'bg-amber-500/15 text-amber-300 border-amber-500/30' },
+  REVIEW: { label: 'Review', tone: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' },
+};
+
+function TimelineTab() {
+  const [associateId, setAssociateId] = useState('');
+  const [entries, setEntries] = useState<PerfTimelineEntry[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = async () => {
+    if (!associateId.trim()) {
+      setError('Paste an associate ID.');
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await getPerfTimeline(associateId.trim());
+      setEntries(res.entries);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to load.');
+      setEntries(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardContent className="p-4 flex items-end gap-3">
+          <div className="flex-1">
+            <Label>Associate ID</Label>
+            <Input
+              className="mt-1"
+              value={associateId}
+              onChange={(e) => setAssociateId(e.target.value)}
+              placeholder="UUID"
+            />
+          </div>
+          <Button onClick={load} disabled={loading}>
+            {loading ? 'Loading…' : 'Load timeline'}
+          </Button>
+        </CardContent>
+      </Card>
+      {error && <p role="alert" className="text-sm text-alert">{error}</p>}
+      {entries && entries.length === 0 && (
+        <EmptyState
+          icon={Target}
+          title="No performance history"
+          description="This associate has no goals, PIPs, or reviews yet."
+        />
+      )}
+      {entries && entries.length > 0 && (
+        <div className="space-y-2">
+          {entries.map((e) => {
+            const meta = TIMELINE_KIND_META[e.kind];
+            return (
+              <div
+                key={`${e.kind}-${e.id}`}
+                className="flex items-center gap-3 rounded-lg border border-navy-secondary bg-navy-secondary/30 px-4 py-3"
+              >
+                <div className="w-24 shrink-0 text-xs tabular-nums text-silver">
+                  {e.date}
+                </div>
+                <Badge className={`shrink-0 ${meta.tone}`} variant="outline">
+                  {meta.label}
+                </Badge>
+                <div className="flex-1 min-w-0">
+                  <div className="truncate text-sm text-white">{e.title}</div>
+                  <div className="text-xs text-silver">
+                    {e.status}
+                    {e.parentId && (
+                      <span className="ml-2 text-silver/60">
+                        ↳ linked to {e.parentKind?.toLowerCase()}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }

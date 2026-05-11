@@ -1914,6 +1914,10 @@ model PerformanceReview {
   id             String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId    String                  @db.Uuid
   reviewerUserId String?                 @db.Uuid
+  // Closed PIP that this review is summarising, if any. Surfaces the
+  // PIP → Review chain on the performance timeline and prefills the
+  // review's strengths/improvements from the PIP outcome.
+  sourcePipId    String?                 @db.Uuid
   periodStart    DateTime                @db.Date
   periodEnd      DateTime                @db.Date
   overallRating  Int
@@ -1926,11 +1930,13 @@ model PerformanceReview {
   acknowledgedAt DateTime?               @db.Timestamptz(6)
   associate      Associate               @relation(fields: [associateId], references: [id], onDelete: Cascade)
   reviewer       User?                   @relation("PerformanceReviewer", fields: [reviewerUserId], references: [id], onDelete: SetNull)
+  sourcePip      Pip?                    @relation("ReviewFromPip", fields: [sourcePipId], references: [id], onDelete: SetNull)
   createdAt      DateTime                @default(now()) @db.Timestamptz(6)
   updatedAt      DateTime                @updatedAt @db.Timestamptz(6)
 
   @@index([associateId, periodEnd])
   @@index([status])
+  @@index([sourcePipId])
 }
 
 model Notification {
@@ -2724,11 +2730,12 @@ model Goal {
   updatedAt    DateTime   @updatedAt @db.Timestamptz(6)
   deletedAt    DateTime?  @db.Timestamptz(6)
 
-  associate  Associate   @relation(fields: [associateId], references: [id], onDelete: Cascade)
-  parent     Goal?       @relation("GoalParent", fields: [parentGoalId], references: [id], onDelete: SetNull)
-  children   Goal[]      @relation("GoalParent")
-  createdBy  User?       @relation("GoalCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  keyResults KeyResult[]
+  associate    Associate   @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  parent       Goal?       @relation("GoalParent", fields: [parentGoalId], references: [id], onDelete: SetNull)
+  children     Goal[]      @relation("GoalParent")
+  createdBy    User?       @relation("GoalCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  keyResults   KeyResult[]
+  triggeredPips Pip[]      @relation("PipFromGoal")
 
   @@index([associateId, status])
   @@index([parentGoalId])
@@ -2790,6 +2797,10 @@ model Pip {
   id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId   String    @db.Uuid
   managerUserId String?   @db.Uuid
+  // The at-risk goal that motivated this PIP, if any. Lets the timeline
+  // surface the Goal → PIP chain and pre-fill the PIP form from the goal
+  // when a manager clicks "Start PIP" on an at-risk goal.
+  sourceGoalId  String?   @db.Uuid
   startDate     DateTime  @db.Date
   endDate       DateTime  @db.Date
   reason        String
@@ -2801,10 +2812,13 @@ model Pip {
   createdAt     DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime  @updatedAt @db.Timestamptz(6)
 
-  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
-  manager   User?     @relation("PipManager", fields: [managerUserId], references: [id], onDelete: SetNull)
+  associate     Associate           @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  manager       User?               @relation("PipManager", fields: [managerUserId], references: [id], onDelete: SetNull)
+  sourceGoal    Goal?               @relation("PipFromGoal", fields: [sourceGoalId], references: [id], onDelete: SetNull)
+  triggeredReviews PerformanceReview[] @relation("ReviewFromPip")
 
   @@index([associateId, status])
+  @@index([sourceGoalId])
 }
 
 model Review360 {
