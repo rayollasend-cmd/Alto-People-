@@ -36,6 +36,43 @@ export function transferAssociate(
   );
 }
 
+export interface PayoutMethodSummary {
+  hasPayoutMethod: boolean;
+  type?: 'BANK_ACCOUNT' | 'BRANCH_CARD';
+  accountType?: string | null;
+  routingMasked?: string | null;
+  accountLast4?: string | null;
+  branchCardId?: string | null;
+  verifiedAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface PayoutMethodReveal {
+  type: 'BANK_ACCOUNT' | 'BRANCH_CARD';
+  accountType: string | null;
+  routingNumber: string | null;
+  accountNumber: string | null;
+  branchCardId: string | null;
+  verifiedAt: string | null;
+  updatedAt: string | null;
+}
+
+export function getAssociatePayoutMethod(
+  associateId: string,
+): Promise<PayoutMethodSummary> {
+  return apiFetch(`/org/associates/${associateId}/payout-method`);
+}
+
+export function revealAssociatePayoutMethod(
+  associateId: string,
+  reason: string,
+): Promise<PayoutMethodReveal> {
+  return apiFetch(`/org/associates/${associateId}/payout-method/reveal`, {
+    method: 'POST',
+    body: { reason },
+  });
+}
+
 export function listDepartments(clientId?: string): Promise<DepartmentListResponse> {
   const q = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
   return apiFetch<DepartmentListResponse>(`/org/departments${q}`);

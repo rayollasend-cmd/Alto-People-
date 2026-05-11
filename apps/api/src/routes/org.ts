@@ -22,11 +22,20 @@ import { requireCapability } from '../middleware/auth.js';
 import { asOf, recordChange } from '../lib/associateHistory.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
+import { decryptString } from '../lib/crypto.js';
+import { z } from 'zod';
+import { hasCapability } from '@alto-people/shared';
 
 export const orgRouter = Router();
 
 const VIEW = requireCapability('view:org');
 const MANAGE = requireCapability('manage:org');
+// Anyone who can run payroll can read masked direct-deposit info; the
+// full-number reveal is gated below. HR_ADMINISTRATOR + FINANCE_ACCOUNTANT
+// + the FULL_ADMIN role family all carry process:payroll, which matches
+// the "Owner + Payroll admin + HR admin" audience the product owner
+// chose for this surface.
+const PAYROLL_OR_HR = requireCapability('process:payroll');
 
 function audit(
   req: Request,
@@ -658,6 +667,144 @@ orgRouter.patch(
       phoneChanged: input.phone !== undefined,
     });
     res.json(updated);
+  },
+);
+
+// ----- Direct-deposit reveal --------------------------------------------
+//
+// Two endpoints for payment-issue auditing:
+//
+//   GET  /associates/:id/payout-method          → masked summary
+//   POST /associates/:id/payout-method/reveal   → full routing + account
+//
+// The full-reveal endpoint requires a written reason, is audit-logged
+// with the reason + IP + UA, and returns the plaintext numbers exactly
+// once per call (no caching). The masked GET is fine for the general
+// payroll/HR audience; reveal is also gated on process:payroll but
+// the audit trail + required reason are the actual safeguards.
+
+const RevealReasonSchema = z.object({
+  reason: z
+    .string()
+    .trim()
+    .min(8, 'Reason must be at least 8 characters.')
+    .max(500),
+});
+
+async function loadPrimaryPayoutMethod(associateId: string) {
+  const associate = await prisma.associate.findUnique({
+    where: { id: associateId },
+    select: { id: true, deletedAt: true, firstName: true, lastName: true },
+  });
+  if (!associate || associate.deletedAt) {
+    throw new HttpError(404, 'not_found', 'Associate not found.');
+  }
+  const payout = await prisma.payoutMethod.findFirst({
+    where: { associateId, isPrimary: true },
+  });
+  return { associate, payout };
+}
+
+orgRouter.get(
+  '/associates/:id/payout-method',
+  PAYROLL_OR_HR,
+  async (req: Request, res: Response) => {
+    const { payout } = await loadPrimaryPayoutMethod(req.params.id);
+    if (!payout) {
+      res.json({ hasPayoutMethod: false });
+      return;
+    }
+    let routingMasked: string | null = null;
+    let accountLast4: string | null = null;
+    try {
+      if (payout.routingNumberEnc) {
+        // Routing is stored as plain UTF-8 (per the comment in the
+        // onboarding POST handler) — decode, mask all but last 4.
+        const r = payout.routingNumberEnc.toString('utf8');
+        routingMasked = `•••••${r.slice(-4)}`;
+      }
+      if (payout.accountNumberEnc) {
+        const a = decryptString(payout.accountNumberEnc);
+        accountLast4 = a.slice(-4);
+      }
+    } catch {
+      routingMasked = null;
+      accountLast4 = null;
+    }
+    res.json({
+      hasPayoutMethod: true,
+      type: payout.type,
+      accountType: payout.accountType,
+      routingMasked,
+      accountLast4,
+      branchCardId: payout.branchCardId,
+      verifiedAt: payout.verifiedAt?.toISOString() ?? null,
+      updatedAt: payout.updatedAt?.toISOString() ?? null,
+    });
+  },
+);
+
+orgRouter.post(
+  '/associates/:id/payout-method/reveal',
+  PAYROLL_OR_HR,
+  async (req: Request, res: Response) => {
+    // Belt-and-braces: also require process:payroll explicitly here so
+    // the middleware change can't accidentally widen exposure. The
+    // capability constant could be inlined; the redundant check is
+    // cheap insurance for a sensitive endpoint.
+    if (!hasCapability(req.user!.role, 'process:payroll')) {
+      throw new HttpError(403, 'forbidden', 'Missing capability: process:payroll');
+    }
+
+    const { reason } = RevealReasonSchema.parse(req.body);
+    const { associate, payout } = await loadPrimaryPayoutMethod(req.params.id);
+
+    if (!payout) {
+      throw new HttpError(
+        404,
+        'no_payout_method',
+        'This associate has no direct-deposit method on file.',
+      );
+    }
+
+    let routingNumber: string | null = null;
+    let accountNumber: string | null = null;
+    try {
+      if (payout.routingNumberEnc) {
+        routingNumber = payout.routingNumberEnc.toString('utf8');
+      }
+      if (payout.accountNumberEnc) {
+        accountNumber = decryptString(payout.accountNumberEnc);
+      }
+    } catch (err) {
+      // Decryption failure usually means PAYOUT_ENCRYPTION_KEY rotated
+      // after the row was stored. Surface a 500 with a specific code so
+      // ops knows to roll the key forward instead of seeing "null".
+      throw new HttpError(
+        500,
+        'decrypt_failed',
+        'Could not decrypt the stored account number — the encryption key may have rotated since this method was saved. Have the associate re-enter their direct deposit.',
+        { cause: err instanceof Error ? err.message : String(err) },
+      );
+    }
+
+    // AuditLog: who, when, why, from where. Every reveal lands a row
+    // visible at /audit so the trail is the actual control on this
+    // power, not just the capability gate.
+    audit(req, 'associate.payout_method_revealed', 'PayoutMethod', payout.id, {
+      associateId: associate.id,
+      reason,
+    });
+
+    res.json({
+      type: payout.type,
+      accountType: payout.accountType,
+      routingNumber,
+      accountNumber,
+      branchCardId: payout.branchCardId,
+      verifiedAt: payout.verifiedAt?.toISOString() ?? null,
+      updatedAt: payout.updatedAt?.toISOString() ?? null,
+    });
   },
 );
 

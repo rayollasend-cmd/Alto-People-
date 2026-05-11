@@ -12,8 +12,10 @@ import {
   Check,
   Download,
   Eye,
+  EyeOff,
   ExternalLink,
   FileText,
+  Landmark,
   Mail,
   MapPin,
   Pencil,
@@ -21,6 +23,7 @@ import {
   Plus,
   Search,
   Send,
+  ShieldAlert,
   Upload,
   Users,
   X,
@@ -51,8 +54,16 @@ import {
   verifyDocument,
 } from '@/lib/documentsApi';
 import { DocumentPreview } from '@/components/DocumentPreview';
+import { useAuth } from '@/lib/auth';
+import { hasCapability } from '@/lib/roles';
 import { nudgeApplicant } from '@/lib/onboardingApi';
-import { patchAssociateProfile, transferAssociate } from '@/lib/orgApi';
+import {
+  getAssociatePayoutMethod,
+  patchAssociateProfile,
+  revealAssociatePayoutMethod,
+  transferAssociate,
+  type PayoutMethodReveal,
+} from '@/lib/orgApi';
 import { listClientLocations } from '@/lib/clientsApi';
 import type { LocationSummary } from '@alto-people/shared';
 import {
@@ -772,6 +783,8 @@ function ProfileTab({
         <InfoRow label="Job profile" value={a.jobProfileTitle ?? '—'} />
       </Section>
 
+      <PayoutMethodSection associateId={a.id} />
+
       <Section title="On record">
         <InfoRow
           label="In Alto HR since"
@@ -1248,6 +1261,280 @@ function TransferDialog({
             </Button>
           </DialogFooter>
         </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Pay-setup section + audited reveal dialog. The masked summary is
+// visible to anyone with process:payroll. The reveal flow asks for a
+// reason, writes an AuditLog row, returns the full account/routing
+// once, and auto-masks again after REVEAL_AUTO_HIDE_SECONDS so the
+// numbers don't sit on a left-open browser tab.
+const REVEAL_AUTO_HIDE_SECONDS = 30;
+
+function PayoutMethodSection({ associateId }: { associateId: string }) {
+  const { user } = useAuth();
+  // process:payroll is the gate the backend enforces; HR_ADMINISTRATOR
+  // + FINANCE_ACCOUNTANT + FULL_ADMIN roles all carry it. Hide the
+  // section entirely for roles without it (e.g. plain ASSOCIATE,
+  // EXECUTIVE_CHAIRMAN) so the side panel doesn't render an empty
+  // "Pay setup" header to people who can't see anything in it.
+  const canSee = user ? hasCapability(user.role, 'process:payroll') : false;
+
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ['associate-payout-method', associateId],
+    queryFn: () => getAssociatePayoutMethod(associateId),
+    enabled: canSee,
+    staleTime: 30_000,
+  });
+
+  const [revealOpen, setRevealOpen] = useState(false);
+
+  if (!canSee) return null;
+
+  return (
+    <>
+      <Section title="Pay setup">
+        {isLoading ? (
+          <div className="text-xs text-silver">Loading…</div>
+        ) : !data || !data.hasPayoutMethod ? (
+          <InfoRow
+            icon={<Landmark className="h-3.5 w-3.5" />}
+            label="Direct deposit"
+            value={<span className="text-silver">Not on file</span>}
+          />
+        ) : data.type === 'BRANCH_CARD' ? (
+          <>
+            <InfoRow
+              icon={<Landmark className="h-3.5 w-3.5" />}
+              label="Method"
+              value="Branch card"
+            />
+            <InfoRow
+              label="Card ID"
+              value={
+                <span className="font-mono text-xs">
+                  {data.branchCardId ?? '—'}
+                </span>
+              }
+            />
+          </>
+        ) : (
+          <>
+            <InfoRow
+              icon={<Landmark className="h-3.5 w-3.5" />}
+              label="Method"
+              value={`Direct deposit${
+                data.accountType ? ` (${data.accountType.toLowerCase()})` : ''
+              }`}
+            />
+            <InfoRow
+              label="Routing"
+              value={
+                <span className="font-mono text-xs">
+                  {data.routingMasked ?? '—'}
+                </span>
+              }
+            />
+            <InfoRow
+              label="Account"
+              value={
+                <span className="font-mono text-xs">
+                  {data.accountLast4 ? `••••${data.accountLast4}` : '—'}
+                </span>
+              }
+            />
+            {data.verifiedAt && (
+              <InfoRow
+                label="Verified"
+                value={new Date(data.verifiedAt).toLocaleDateString()}
+              />
+            )}
+            <div className="pt-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setRevealOpen(true)}
+              >
+                <Eye className="mr-2 h-3.5 w-3.5" />
+                Reveal full bank info
+              </Button>
+            </div>
+          </>
+        )}
+      </Section>
+
+      {revealOpen && (
+        <RevealPayoutDialog
+          associateId={associateId}
+          onClose={() => {
+            setRevealOpen(false);
+            // Re-fetch the masked summary in case the verifiedAt/updatedAt
+            // moved (it didn't on a reveal, but cheap insurance).
+            void refetch();
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function RevealPayoutDialog({
+  associateId,
+  onClose,
+}: {
+  associateId: string;
+  onClose: () => void;
+}) {
+  const [reason, setReason] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [revealed, setRevealed] = useState<PayoutMethodReveal | null>(null);
+  const [secondsLeft, setSecondsLeft] = useState(REVEAL_AUTO_HIDE_SECONDS);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Countdown to auto-mask. Once the timer expires the numbers vanish
+  // and the admin is shown a "view expired" state; another reveal
+  // requires a fresh reason.
+  useEffect(() => {
+    if (!revealed) return;
+    setSecondsLeft(REVEAL_AUTO_HIDE_SECONDS);
+    const start = Date.now();
+    const tick = window.setInterval(() => {
+      const elapsed = Math.floor((Date.now() - start) / 1000);
+      const remaining = REVEAL_AUTO_HIDE_SECONDS - elapsed;
+      if (remaining <= 0) {
+        setRevealed(null);
+        window.clearInterval(tick);
+      } else {
+        setSecondsLeft(remaining);
+      }
+    }, 1000);
+    return () => window.clearInterval(tick);
+  }, [revealed]);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (reason.trim().length < 8) {
+      setErr('Reason must be at least 8 characters.');
+      return;
+    }
+    setErr(null);
+    setSubmitting(true);
+    try {
+      const r = await revealAssociatePayoutMethod(associateId, reason.trim());
+      setRevealed(r);
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : 'Reveal failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open={true} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Reveal full bank info</DialogTitle>
+          <DialogDescription>
+            This view is logged. Every reveal lands in the audit log with
+            your name, the reason you provide, and your IP — so we have
+            a paper trail when investigating payment issues.
+          </DialogDescription>
+        </DialogHeader>
+
+        {!revealed ? (
+          <form onSubmit={submit} className="space-y-4">
+            <div className="flex gap-2 items-start rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-amber-200 text-xs">
+              <ShieldAlert className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
+              <div>
+                Full routing and account numbers are sensitive. Reveal them
+                only for a legitimate audit need (e.g. an ACH return).
+              </div>
+            </div>
+            <div>
+              <Label>Reason</Label>
+              <textarea
+                value={reason}
+                onChange={(e) => {
+                  setReason(e.target.value);
+                  if (err) setErr(null);
+                }}
+                rows={3}
+                maxLength={500}
+                className="mt-1 w-full px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
+                placeholder="e.g. ACH return R03 on payroll run 2026-05-10 — verify routing matches associate's bank record"
+                autoFocus
+              />
+              <div className="text-xs text-silver mt-1">
+                {reason.length}/500 — minimum 8 characters.
+              </div>
+            </div>
+            {err && <div className="text-sm text-alert">{err}</div>}
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={submitting || reason.trim().length < 8}
+              >
+                {submitting ? 'Revealing…' : 'Reveal'}
+              </Button>
+            </DialogFooter>
+          </form>
+        ) : (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between text-xs uppercase tracking-widest text-silver">
+              <span className="flex items-center gap-1.5">
+                <Eye className="h-3.5 w-3.5" /> Revealed
+              </span>
+              <span>Auto-hides in {secondsLeft}s</span>
+            </div>
+            <div className="rounded-md border border-navy-secondary bg-navy-secondary/40 p-4 space-y-3">
+              {revealed.type === 'BRANCH_CARD' ? (
+                <div>
+                  <div className="text-xs text-silver uppercase tracking-widest mb-1">
+                    Branch card ID
+                  </div>
+                  <div className="font-mono text-xl text-white tracking-wider">
+                    {revealed.branchCardId ?? '—'}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <div className="text-xs text-silver uppercase tracking-widest mb-1">
+                      Routing number
+                    </div>
+                    <div className="font-mono text-xl text-white tracking-wider">
+                      {revealed.routingNumber ?? '—'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-silver uppercase tracking-widest mb-1">
+                      Account number
+                      {revealed.accountType && (
+                        <span className="ml-2 text-silver normal-case tracking-normal">
+                          ({revealed.accountType.toLowerCase()})
+                        </span>
+                      )}
+                    </div>
+                    <div className="font-mono text-xl text-white tracking-wider break-all">
+                      {revealed.accountNumber ?? '—'}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setRevealed(null)}>
+                <EyeOff className="mr-2 h-3.5 w-3.5" /> Hide now
+              </Button>
+              <Button onClick={onClose}>Done</Button>
+            </DialogFooter>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
