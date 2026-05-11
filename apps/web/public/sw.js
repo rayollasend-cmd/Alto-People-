@@ -1,20 +1,24 @@
 // Phase 98 — PWA service worker.
 // Strategy:
-//   - App shell (HTML / icons / manifest): cache-first, falling back to
-//     network. This gives users an immediate "you're offline" UX even on
-//     the first navigation after losing connectivity.
-//   - JS / CSS bundles (hashed filenames): cache-first; old hashes evict
-//     when SW activates.
+//   - Navigation requests (HTML documents): NETWORK-FIRST, cache only
+//     as offline fallback. The HTML references content-hashed JS/CSS
+//     bundles, and serving a stale HTML after a deploy points the
+//     browser at chunk filenames that no longer exist on the server —
+//     which manifests as "Something went wrong" because the lazy
+//     import returns the SPA-fallback HTML instead of JS.
+//   - Other static assets (hashed JS/CSS, icons, fonts): cache-first
+//     with background revalidate. Safe because the filename embeds a
+//     content hash; old entries naturally evict when the activate
+//     handler wipes the prior cache.
 //   - API requests (/api, /clients, /onboarding, etc): network-only —
 //     never cache business data, since it'd diverge from the source of
 //     truth and potentially leak across user sessions.
 
-// Bumped when the SHELL list or any cached page chrome changes so the
-// activate handler evicts the previous shell cache instead of leaving
-// stale entries (e.g. the old Login page with the picture logo above
-// "Alto People", or the now-broken 125x91 logo.png) lying around
-// indefinitely.
-const CACHE_NAME = 'alto-shell-v7';
+// Bumped when the SHELL list or caching strategy changes so the
+// activate handler evicts the previous cache instead of leaving stale
+// entries (e.g. an old index.html with chunk hashes from a prior
+// deploy that no longer exist on the server) lying around.
+const CACHE_NAME = 'alto-shell-v8';
 const SHELL = [
   '/',
   '/index.html',
@@ -83,10 +87,31 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
   if (isApiPath(url)) return; // Network-only — let the page handle it.
 
+  // Navigation requests (HTML documents) use network-first. A successful
+  // network response always replaces the cached copy so post-deploy
+  // refreshes pick up the new chunk hashes. Cached HTML only kicks in
+  // when the network is unreachable, giving the SPA an offline shell.
+  if (req.mode === 'navigate' || req.destination === 'document') {
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          if (res && res.ok) {
+            const clone = res.clone();
+            caches.open(CACHE_NAME).then((c) => c.put(req, clone));
+          }
+          return res;
+        })
+        .catch(() =>
+          caches.match(req).then((cached) => cached || caches.match('/') || Response.error()),
+        ),
+    );
+    return;
+  }
+
   event.respondWith(
     caches.match(req).then((cached) => {
       if (cached) {
-        // Background revalidate so a stale shell gets fresh on next load.
+        // Background revalidate so a stale entry refreshes on next load.
         fetch(req)
           .then((res) => {
             if (res && res.ok) {
@@ -98,20 +123,13 @@ self.addEventListener('fetch', (event) => {
       }
       return fetch(req)
         .then((res) => {
-          if (res && res.ok && (req.destination === 'script' || req.destination === 'style' || req.destination === 'document' || req.destination === 'image')) {
+          if (res && res.ok && (req.destination === 'script' || req.destination === 'style' || req.destination === 'image' || req.destination === 'font')) {
             const clone = res.clone();
             caches.open(CACHE_NAME).then((c) => c.put(req, clone));
           }
           return res;
         })
-        .catch(() => {
-          // Offline + nothing cached: fall back to the cached shell so
-          // the SPA can render an offline state.
-          if (req.destination === 'document') {
-            return caches.match('/');
-          }
-          return Response.error();
-        });
+        .catch(() => Response.error());
     }),
   );
 });
