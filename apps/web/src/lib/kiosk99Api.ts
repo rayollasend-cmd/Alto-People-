@@ -12,6 +12,10 @@ export interface KioskDevice {
   id: string;
   clientId: string;
   clientName: string;
+  /** Phase 131 — physical site under the client. Null on devices
+   *  registered before the Location model existed. */
+  locationId: string | null;
+  locationName: string | null;
   name: string;
   isActive: boolean;
   lastSeenAt: string | null;
@@ -76,7 +80,8 @@ export const listKioskDevices = (clientId?: string) =>
   );
 
 export const createKioskDevice = (input: {
-  clientId: string;
+  clientId?: string;
+  locationId?: string;
   name: string;
   geofence?: KioskGeofence | null;
 }) =>

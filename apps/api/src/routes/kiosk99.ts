@@ -54,11 +54,19 @@ const GeofenceSchema = z
   })
   .nullable();
 
-const DeviceInputSchema = z.object({
-  clientId: z.string().uuid(),
-  name: z.string().min(1).max(120),
-  geofence: GeofenceSchema.optional(),
-});
+// Phase 131 — clientId becomes optional when locationId is supplied
+// (we derive the client from the Location). At least one must be set.
+const DeviceInputSchema = z
+  .object({
+    clientId: z.string().uuid().optional(),
+    locationId: z.string().uuid().optional(),
+    name: z.string().min(1).max(120),
+    geofence: GeofenceSchema.optional(),
+  })
+  .refine((v) => v.clientId || v.locationId, {
+    message: 'clientId or locationId is required',
+    path: ['locationId'],
+  });
 
 kiosk99Router.get('/kiosk-devices', MANAGE, async (req, res) => {
   const clientId = z.string().uuid().optional().parse(req.query.clientId);
@@ -67,6 +75,7 @@ kiosk99Router.get('/kiosk-devices', MANAGE, async (req, res) => {
     where: { ...(clientId ? { clientId } : {}) },
     include: {
       client: { select: { name: true } },
+      location: { select: { name: true } },
       _count: { select: { punches: true } },
     },
     orderBy: { createdAt: 'desc' },
@@ -76,6 +85,8 @@ kiosk99Router.get('/kiosk-devices', MANAGE, async (req, res) => {
       id: d.id,
       clientId: d.clientId,
       clientName: d.client.name,
+      locationId: d.locationId,
+      locationName: d.location?.name ?? null,
       name: d.name,
       isActive: d.isActive,
       lastSeenAt: d.lastSeenAt?.toISOString() ?? null,
@@ -95,11 +106,41 @@ kiosk99Router.get('/kiosk-devices', MANAGE, async (req, res) => {
 
 kiosk99Router.post('/kiosk-devices', MANAGE, async (req, res) => {
   const input = DeviceInputSchema.parse(req.body);
+
+  // Phase 131 — resolve the Location (preferred) and infer clientId.
+  // If the caller passed clientId only, leave locationId NULL — the UI
+  // should pass locationId going forward, but tests / scripts may
+  // still pass clientId alone.
+  let resolvedClientId = input.clientId ?? null;
+  let resolvedLocationId: string | null = null;
+  if (input.locationId) {
+    const location = await prisma.location.findFirst({
+      where: { id: input.locationId, deletedAt: null, isActive: true },
+      select: { id: true, clientId: true },
+    });
+    if (!location) {
+      throw new HttpError(404, 'location_not_found', 'Location not found or inactive.');
+    }
+    if (input.clientId && input.clientId !== location.clientId) {
+      throw new HttpError(
+        400,
+        'client_location_mismatch',
+        'Location does not belong to the provided client.',
+      );
+    }
+    resolvedClientId = location.clientId;
+    resolvedLocationId = location.id;
+  }
+  if (!resolvedClientId) {
+    throw new HttpError(400, 'invalid_body', 'clientId or locationId is required.');
+  }
+
   const { plaintext } = generateDeviceToken();
   const tokenHash = await hashPassword(plaintext);
   const created = await prisma.kioskDevice.create({
     data: {
-      clientId: input.clientId,
+      clientId: resolvedClientId,
+      locationId: resolvedLocationId,
       name: input.name,
       tokenHash,
       latitude: input.geofence?.latitude ?? null,

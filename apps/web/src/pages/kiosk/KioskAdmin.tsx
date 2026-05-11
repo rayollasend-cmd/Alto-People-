@@ -21,7 +21,8 @@ import {
   type KioskPunchSummary,
 } from '@/lib/kiosk99Api';
 import { listDirectory } from '@/lib/directoryApi';
-import { listClients } from '@/lib/clientsApi';
+import { listClients, listClientLocations } from '@/lib/clientsApi';
+import type { LocationSummary } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
@@ -136,6 +137,7 @@ function DevicesTab({ canManage }: { canManage: boolean }) {
                 <TableRow>
                   <TableHead>Name</TableHead>
                   <TableHead>Client</TableHead>
+                  <TableHead>Location</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Geofence</TableHead>
                   <TableHead>Last seen</TableHead>
@@ -148,6 +150,9 @@ function DevicesTab({ canManage }: { canManage: boolean }) {
                   <TableRow key={d.id} className="group">
                     <TableCell className="font-medium text-white">{d.name}</TableCell>
                     <TableCell>{d.clientName}</TableCell>
+                    <TableCell className="text-silver">
+                      {d.locationName ?? '—'}
+                    </TableCell>
                     <TableCell>
                       {d.isActive ? (
                         <Badge variant="success">Active</Badge>
@@ -252,6 +257,8 @@ function NewDeviceDrawer({
     Array<{ id: string; name: string }> | null
   >(null);
   const [clientId, setClientId] = useState('');
+  const [locations, setLocations] = useState<LocationSummary[] | null>(null);
+  const [locationId, setLocationId] = useState('');
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -272,14 +279,43 @@ function NewDeviceDrawer({
     };
   }, []);
 
+  // Phase 131 — load Locations when the client changes. Auto-pick the
+  // first one so HR can hit Register without an extra click in the
+  // common single-site case. Resets when client switches.
+  useEffect(() => {
+    setLocationId('');
+    if (!clientId) {
+      setLocations(null);
+      return;
+    }
+    let cancelled = false;
+    setLocations(null);
+    listClientLocations(clientId)
+      .then((r) => {
+        if (cancelled) return;
+        setLocations(r.locations);
+        if (r.locations.length > 0) setLocationId(r.locations[0]!.id);
+      })
+      .catch(() => {
+        if (!cancelled) setLocations([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId]);
+
   const onSubmit = async () => {
     if (!clientId || !name.trim()) {
       toast.error('Client and name required.');
       return;
     }
+    if (!locationId) {
+      toast.error('Pick a location — that drives the kiosk geofence.');
+      return;
+    }
     setSaving(true);
     try {
-      const r = await createKioskDevice({ clientId, name: name.trim() });
+      const r = await createKioskDevice({ locationId, name: name.trim() });
       onSaved(r.deviceToken);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -316,6 +352,30 @@ function NewDeviceDrawer({
           )}
         </div>
         <div>
+          <Label>Location</Label>
+          {locations === null ? (
+            <Skeleton className="mt-1 h-10 w-full" />
+          ) : locations.length === 0 ? (
+            <div className="mt-1 text-xs text-silver">
+              No locations under this client — add one from the client
+              detail page first.
+            </div>
+          ) : (
+            <select
+              className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+              value={locationId}
+              onChange={(e) => setLocationId(e.target.value)}
+            >
+              {locations.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                  {l.state ? ` · ${l.state}` : ''}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+        <div>
           <Label>Kiosk name</Label>
           <Input
             className="mt-1"
@@ -329,7 +389,7 @@ function NewDeviceDrawer({
         <Button variant="ghost" onClick={onClose}>
           Cancel
         </Button>
-        <Button onClick={onSubmit} disabled={saving || !clientId}>
+        <Button onClick={onSubmit} disabled={saving || !clientId || !locationId}>
           {saving ? 'Generating…' : 'Register'}
         </Button>
       </DrawerFooter>
