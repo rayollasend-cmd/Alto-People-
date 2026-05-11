@@ -36,7 +36,7 @@ import {
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
-import { requireCapability } from '../middleware/auth.js';
+import { invalidateUserCache, requireCapability } from '../middleware/auth.js';
 import { generateInviteToken } from '../lib/inviteToken.js';
 import { sendReminderForUser } from '../lib/inviteReminder.js';
 import { send } from '../lib/notifications.js';
@@ -279,9 +279,15 @@ async function inviteOneApplicant(
       }
       if (user.role !== hireRole) {
         updates.role = hireRole;
+        // Any role change kills existing sessions. The user is INVITED so
+        // there's no live session today, but defence-in-depth: if a session
+        // somehow exists (e.g. invite-accept race), the next request fails
+        // the JWT.ver check and they re-auth at the new role.
+        updates.tokenVersion = { increment: 1 };
       }
       if (Object.keys(updates).length > 0) {
         user = await tx.user.update({ where: { id: user.id }, data: updates });
+        invalidateUserCache(user.id);
       }
     } else {
       user = await tx.user.create({
@@ -3036,12 +3042,20 @@ onboardingRouter.post(
         );
       }
       // Coerce them back to INVITED if they were DISABLED — the rotation
-      // wipes any stale state.
+      // wipes any stale state. Bump tokenVersion + invalidate the session
+      // cache so any cookie issued before the rotation can't keep working
+      // off the cached SessionUser (which would still show status=ACTIVE
+      // for up to 30s otherwise).
       if (user.status !== 'INVITED') {
         await prisma.user.update({
           where: { id: user.id },
-          data: { status: 'INVITED', passwordHash: null },
+          data: {
+            status: 'INVITED',
+            passwordHash: null,
+            tokenVersion: { increment: 1 },
+          },
         });
+        invalidateUserCache(user.id);
       }
 
       const result = await sendReminderForUser(prisma, user.id, { reason: 'manual' });
@@ -3175,8 +3189,13 @@ onboardingRouter.post(
           if (user.status !== 'INVITED') {
             await prisma.user.update({
               where: { id: user.id },
-              data: { status: 'INVITED', passwordHash: null },
+              data: {
+                status: 'INVITED',
+                passwordHash: null,
+                tokenVersion: { increment: 1 },
+              },
             });
+            invalidateUserCache(user.id);
           }
           const result = await sendReminderForUser(prisma, user.id, { reason: 'manual' });
           await recordOnboardingEvent({
