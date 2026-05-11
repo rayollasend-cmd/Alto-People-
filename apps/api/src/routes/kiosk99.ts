@@ -11,6 +11,11 @@ import {
   generatePin,
   hmacPin,
 } from '../lib/kioskAuth.js';
+import {
+  enforcePunchRateLimit,
+  recordFailedPinAttempt,
+  recordSuccessfulPinAttempt,
+} from '../lib/kioskRateLimit.js';
 import { encryptString, decryptString } from '../lib/crypto.js';
 
 /**
@@ -644,6 +649,12 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     throw new HttpError(401, 'invalid_device', 'Device not registered.');
   }
 
+  // 1b. Rate limit + brute-force lockout. Throws 429 if the device has
+  // punched in the last second, or is in a 5-minute lockout from 3 failed
+  // PIN attempts. Runs AFTER device verification (so an attacker can't
+  // burn cycles with garbage tokens) but before any DB writes.
+  enforcePunchRateLimit(device.id);
+
   // 2. Geofence check. If device has a geofence, location is required
   // and must be within radius. Distance is recorded on every punch
   // (even accepted ones) so HR can see drift.
@@ -731,6 +742,10 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
   });
 
   if (!pinRow || pinRow.clientId !== device.clientId) {
+    // Brute-force counter — 3 wrong PINs in a row puts the device on a
+    // 5-min lockout. Recorded BEFORE the REJECTED punch row so even if
+    // the DB write fails, the lockout state still tightens.
+    recordFailedPinAttempt(device.id);
     // Record a REJECTED punch so we can detect brute-force in the audit log.
     await prisma.kioskPunch.create({
       data: {
@@ -751,6 +766,7 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     });
     throw new HttpError(401, 'invalid_pin', 'PIN not recognized.');
   }
+  recordSuccessfulPinAttempt(device.id);
 
   // 5. Phase 101 — face match (flag-only, never reject). If we have a
   // descriptor and a reference, compute Euclidean distance. If we have a
