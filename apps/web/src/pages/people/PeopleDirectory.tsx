@@ -6,6 +6,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import {
+  ArrowLeftRight,
   Briefcase,
   Building2,
   Check,
@@ -14,6 +15,7 @@ import {
   ExternalLink,
   FileText,
   Mail,
+  MapPin,
   Pencil,
   Phone,
   Plus,
@@ -50,7 +52,9 @@ import {
 } from '@/lib/documentsApi';
 import { DocumentPreview } from '@/components/DocumentPreview';
 import { nudgeApplicant } from '@/lib/onboardingApi';
-import { patchAssociateProfile } from '@/lib/orgApi';
+import { patchAssociateProfile, transferAssociate } from '@/lib/orgApi';
+import { listClientLocations } from '@/lib/clientsApi';
+import type { LocationSummary } from '@alto-people/shared';
 import {
   Avatar,
   Badge,
@@ -657,6 +661,8 @@ function ProfileTab({
   associate: DirectoryEntry;
   onAssociateChange: (patch: Partial<DirectoryEntry>) => void;
 }) {
+  const [transferOpen, setTransferOpen] = useState(false);
+  const canTransfer = Boolean(a.workplaceClientId);
   return (
     <div className="space-y-4">
       <Section title="Contact">
@@ -696,6 +702,11 @@ function ProfileTab({
           }
         />
         <InfoRow
+          icon={<MapPin className="h-3.5 w-3.5" />}
+          label="Location"
+          value={a.currentLocationName ?? '—'}
+        />
+        <InfoRow
           icon={<Briefcase className="h-3.5 w-3.5" />}
           label="Position"
           value={a.position ?? '—'}
@@ -719,7 +730,34 @@ function ProfileTab({
             }
           />
         )}
+        {canTransfer && (
+          <div className="pt-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setTransferOpen(true)}
+            >
+              <ArrowLeftRight className="mr-2 h-3.5 w-3.5" />
+              {a.currentLocationId ? 'Transfer' : 'Assign to location'}
+            </Button>
+          </div>
+        )}
       </Section>
+
+      {canTransfer && (
+        <TransferDialog
+          open={transferOpen}
+          onOpenChange={setTransferOpen}
+          associate={a}
+          onSaved={(locationId, locationName) => {
+            onAssociateChange({
+              currentLocationId: locationId,
+              currentLocationName: locationName,
+            });
+            setTransferOpen(false);
+          }}
+        />
+      )}
 
       {a.status === 'PENDING' && a.applicationId && (
         <PendingActions
@@ -1055,6 +1093,163 @@ function CompensationTab({ associate: a }: { associate: DirectoryEntry }) {
         }}
       />
     </div>
+  );
+}
+
+function TransferDialog({
+  open,
+  onOpenChange,
+  associate: a,
+  onSaved,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  associate: DirectoryEntry;
+  onSaved: (locationId: string, locationName: string) => void;
+}) {
+  const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const [locationId, setLocationId] = useState<string>(a.currentLocationId ?? '');
+  const [startedAt, setStartedAt] = useState(today);
+  const [reason, setReason] = useState('');
+  const [notes, setNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const clientId = a.workplaceClientId;
+
+  const { data: locationsData, isLoading: locationsLoading } = useQuery({
+    queryKey: ['client-locations', clientId],
+    queryFn: () => listClientLocations(clientId!),
+    enabled: open && Boolean(clientId),
+  });
+  const locations: LocationSummary[] = locationsData?.locations ?? [];
+
+  // Reset when the dialog opens for a different associate.
+  useEffect(() => {
+    if (!open) return;
+    setLocationId(a.currentLocationId ?? '');
+    setStartedAt(today);
+    setReason('');
+    setNotes('');
+    setSubmitting(false);
+  }, [open, a.id, a.currentLocationId, today]);
+
+  const targetLocation = locations.find((l) => l.id === locationId) ?? null;
+  const valid =
+    locationId.length > 0 &&
+    startedAt.length === 10 &&
+    locationId !== a.currentLocationId;
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!valid || submitting || !targetLocation) return;
+    setSubmitting(true);
+    try {
+      await transferAssociate(a.id, {
+        locationId,
+        startedAt,
+        reason: reason.trim() || null,
+        notes: notes.trim() || null,
+      });
+      toast.success(`Transferred to ${targetLocation.name}`);
+      onSaved(targetLocation.id, targetLocation.name);
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : 'Could not transfer.';
+      toast.error(msg);
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            {a.currentLocationId ? 'Transfer to location' : 'Assign to location'}
+          </DialogTitle>
+          <DialogDescription>
+            {a.firstName} {a.lastName}
+            {a.workplaceClientName ? ` • ${a.workplaceClientName}` : ''}
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="grid gap-4">
+          <Field label="New location">
+            {(p) => (
+              <Select
+                value={locationId}
+                onChange={(e) => setLocationId(e.target.value)}
+                disabled={locationsLoading || locations.length === 0}
+                {...p}
+              >
+                <option value="">
+                  {locationsLoading
+                    ? 'Loading…'
+                    : locations.length === 0
+                      ? 'No locations available'
+                      : 'Select a location'}
+                </option>
+                {locations.map((l) => (
+                  <option key={l.id} value={l.id} disabled={l.id === a.currentLocationId}>
+                    {l.name}
+                    {l.id === a.currentLocationId ? ' (current)' : ''}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+
+          <Field label="Effective date">
+            {(p) => (
+              <Input
+                type="date"
+                value={startedAt}
+                onChange={(e) => setStartedAt(e.target.value)}
+                {...p}
+              />
+            )}
+          </Field>
+
+          <Field label="Reason (optional)">
+            {(p) => (
+              <Input
+                type="text"
+                value={reason}
+                maxLength={200}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="Coverage need, employee request, etc."
+                {...p}
+              />
+            )}
+          </Field>
+
+          <Field label="Notes (optional)">
+            {(p) => (
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={3}
+                maxLength={2000}
+                className="w-full px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
+                placeholder="Context for the change (visible in history)"
+                {...p}
+              />
+            )}
+          </Field>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => onOpenChange(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!valid || submitting}>
+              {submitting ? 'Saving…' : 'Confirm transfer'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

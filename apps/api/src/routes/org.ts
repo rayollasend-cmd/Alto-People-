@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import {
   AssociateOrgAssignmentInputSchema,
   AssociateProfilePatchInputSchema,
+  AssociateTransferInputSchema,
   CostCenterInputSchema,
   CostCenterListResponseSchema,
   DepartmentInputSchema,
@@ -10,6 +11,7 @@ import {
   JobProfileInputSchema,
   JobProfileListResponseSchema,
   type AssociateOrgListResponse,
+  type AssociateTransferResponse,
   type CostCenter,
   type Department,
   type JobProfile,
@@ -656,5 +658,92 @@ orgRouter.patch(
       phoneChanged: input.phone !== undefined,
     });
     res.json(updated);
+  },
+);
+
+// ----- Phase 131 — transfer to a new Location ----------------------------
+//
+// Closes the associate's open AssociateAssignment (sets endedAt = the
+// requested startedAt) and opens a new one at the target Location.
+// First-time placement (no open row yet) just opens a row.
+//
+// v1 enforces intra-client transfers only: the target Location must
+// belong to the associate's current client. Current client = the
+// client of the open assignment's Location, falling back to the
+// client of the most-recent APPROVED Application. Cross-client moves
+// require a new Application (different feature).
+orgRouter.post(
+  '/associates/:id/transfer',
+  MANAGE,
+  async (req: Request, res: Response) => {
+    const id = req.params.id;
+    const input = AssociateTransferInputSchema.parse(req.body);
+    const associate = await prisma.associate.findUnique({ where: { id } });
+    if (!associate || associate.deletedAt) {
+      throw new HttpError(404, 'not_found', 'Associate not found.');
+    }
+    const target = await prisma.location.findUnique({
+      where: { id: input.locationId },
+      select: { id: true, clientId: true, name: true, deletedAt: true, isActive: true },
+    });
+    if (!target || target.deletedAt || !target.isActive) {
+      throw new HttpError(404, 'location_not_found', 'Target location not found.');
+    }
+    const open = await prisma.associateAssignment.findFirst({
+      where: { associateId: id, endedAt: null },
+      select: { id: true, location: { select: { clientId: true } } },
+    });
+    let expectedClientId = open?.location.clientId ?? null;
+    if (expectedClientId === null) {
+      const latestApproved = await prisma.application.findFirst({
+        where: { associateId: id, status: 'APPROVED', deletedAt: null },
+        orderBy: { invitedAt: 'desc' },
+        select: { clientId: true },
+      });
+      expectedClientId = latestApproved?.clientId ?? null;
+    }
+    if (expectedClientId !== null && expectedClientId !== target.clientId) {
+      throw new HttpError(
+        400,
+        'cross_client_transfer',
+        'Target location belongs to a different client. Cross-client transfers require a new application.',
+      );
+    }
+    const startedAt = new Date(input.startedAt + 'T00:00:00Z');
+    if (Number.isNaN(startedAt.getTime())) {
+      throw new HttpError(400, 'invalid_started_at', 'Invalid startedAt date.');
+    }
+    const created = await prisma.$transaction(async (tx) => {
+      if (open) {
+        await tx.associateAssignment.update({
+          where: { id: open.id },
+          data: { endedAt: startedAt },
+        });
+      }
+      return tx.associateAssignment.create({
+        data: {
+          associateId: id,
+          locationId: target.id,
+          startedAt,
+          reason: input.reason ?? null,
+          notes: input.notes ?? null,
+          notedById: req.user!.id,
+        },
+        select: { id: true, associateId: true, locationId: true, startedAt: true },
+      });
+    });
+    audit(req, 'associate.transfer', 'Associate', id, {
+      fromAssignmentId: open?.id ?? null,
+      toLocationId: target.id,
+      startedAt: input.startedAt,
+    });
+    const response: AssociateTransferResponse = {
+      id: created.id,
+      associateId: created.associateId,
+      locationId: created.locationId,
+      locationName: target.name,
+      startedAt: created.startedAt.toISOString().slice(0, 10),
+    };
+    res.status(201).json(response);
   },
 );

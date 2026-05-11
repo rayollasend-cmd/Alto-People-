@@ -101,6 +101,16 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
           },
           orderBy: { invitedAt: 'desc' },
         },
+        // Phase 131 — current open assignment, if any. There's at most
+        // one per associate (partial unique index in the schema).
+        assignments: {
+          where: { endedAt: null },
+          select: {
+            locationId: true,
+            location: { select: { name: true } },
+          },
+          take: 1,
+        },
       },
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
     });
@@ -196,6 +206,8 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
           photoS3Key: a.photoS3Key,
           photoUpdatedAt: a.photoUpdatedAt,
         }),
+        currentLocationId: a.assignments[0]?.locationId ?? null,
+        currentLocationName: a.assignments[0]?.location?.name ?? null,
       };
     });
 

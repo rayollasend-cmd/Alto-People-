@@ -2,6 +2,8 @@ import type {
   AssociateOrgAssignmentInput,
   AssociateOrgListResponse,
   AssociateProfilePatchInput,
+  AssociateTransferInput,
+  AssociateTransferResponse,
   CostCenter,
   CostCenterInput,
   CostCenterListResponse,
@@ -22,6 +24,16 @@ export function patchAssociateProfile(
     method: 'PATCH',
     body: input,
   });
+}
+
+export function transferAssociate(
+  associateId: string,
+  input: AssociateTransferInput,
+): Promise<AssociateTransferResponse> {
+  return apiFetch<AssociateTransferResponse>(
+    `/org/associates/${associateId}/transfer`,
+    { method: 'POST', body: input },
+  );
 }
 
 export function listDepartments(clientId?: string): Promise<DepartmentListResponse> {

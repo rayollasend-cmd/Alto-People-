@@ -2930,6 +2930,10 @@ export const DirectoryEntrySchema = z.object({
   // Cache-busted URL to the associate's profile photo, or null. Avatar
   // falls back to initials when null.
   photoUrl: z.string().nullable(),
+  // Phase 131 — open AssociateAssignment, if any. Null when the
+  // associate has never been placed at a Location.
+  currentLocationId: UuidSchema.nullable(),
+  currentLocationName: z.string().nullable(),
 });
 export type DirectoryEntry = z.infer<typeof DirectoryEntrySchema>;
 
@@ -3421,4 +3425,41 @@ export const MfaRegenerateResponseSchema = z.object({
 });
 export type MfaRegenerateResponse = z.infer<typeof MfaRegenerateResponseSchema>;
 
+// ===== Phase 131 — Locations + transfers =================================
+
+export const LocationSummarySchema = z.object({
+  id: UuidSchema,
+  clientId: UuidSchema,
+  name: z.string(),
+  state: z.string().nullable(),
+  city: z.string().nullable(),
+  isActive: z.boolean(),
+});
+export type LocationSummary = z.infer<typeof LocationSummarySchema>;
+
+export const LocationListResponseSchema = z.object({
+  locations: z.array(LocationSummarySchema),
+});
+export type LocationListResponse = z.infer<typeof LocationListResponseSchema>;
+
+/** Body for POST /org/associates/:id/transfer. The new locationId must
+ *  belong to the associate's current client (intra-client transfer only
+ *  in v1). startedAt is ISO YYYY-MM-DD; the API closes the open
+ *  assignment with endedAt = startedAt and opens a new one. */
+export const AssociateTransferInputSchema = z.object({
+  locationId: UuidSchema,
+  startedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD'),
+  reason: z.string().max(200).nullable().optional(),
+  notes: z.string().max(2000).nullable().optional(),
+});
+export type AssociateTransferInput = z.infer<typeof AssociateTransferInputSchema>;
+
+export const AssociateTransferResponseSchema = z.object({
+  id: UuidSchema,
+  associateId: UuidSchema,
+  locationId: UuidSchema,
+  locationName: z.string(),
+  startedAt: z.string(),
+});
+export type AssociateTransferResponse = z.infer<typeof AssociateTransferResponseSchema>;
 

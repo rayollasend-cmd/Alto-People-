@@ -6,6 +6,7 @@ import type {
   ClientStatus,
   ClientSummary,
   ClientUpdateInput,
+  LocationListResponse,
 } from '@alto-people/shared';
 import { apiFetch } from './api';
 
@@ -63,4 +64,8 @@ export function updateClient(
 
 export function archiveClient(id: string): Promise<void> {
   return apiFetch<void>(`/clients/${id}`, { method: 'DELETE' });
+}
+
+export function listClientLocations(id: string): Promise<LocationListResponse> {
+  return apiFetch<LocationListResponse>(`/clients/${id}/locations`);
 }

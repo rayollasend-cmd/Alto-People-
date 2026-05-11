@@ -243,6 +243,32 @@ clientsRouter.get('/:id', async (req, res, next) => {
   }
 });
 
+// Phase 131 — active Locations under this client (for the transfer
+// picker, kiosk device registration, scheduling site filter, etc.).
+// Inactive / soft-deleted Locations are hidden by default.
+clientsRouter.get('/:id/locations', async (req, res, next) => {
+  try {
+    const client = await prisma.client.findFirst({
+      where: { ...scopeClients(req.user!), id: req.params.id },
+      select: { id: true },
+    });
+    if (!client) {
+      throw new HttpError(404, 'client_not_found', 'Client not found');
+    }
+    const rows = await prisma.location.findMany({
+      where: { clientId: client.id, deletedAt: null, isActive: true },
+      orderBy: { name: 'asc' },
+      select: {
+        id: true, clientId: true, name: true,
+        state: true, city: true, isActive: true,
+      },
+    });
+    res.json({ locations: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
 function toSummary(row: {
   id: string;
   name: string;
