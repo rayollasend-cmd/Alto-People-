@@ -26,6 +26,7 @@ import { requireCapability } from '../middleware/auth.js';
 import { scopeTimeEntries } from '../lib/scope.js';
 import { recordTimeEvent } from '../lib/audit.js';
 import { checkGeofence } from '../lib/geo.js';
+import { resolveAssociateGeofence } from '../lib/geofenceForAssociate.js';
 import {
   detectAnomalies,
   endOfWeekUTC,
@@ -202,24 +203,18 @@ timeRouter.post('/me/clock-in', async (req, res, next) => {
       payRate = job.payRate ? Number(job.payRate) : null;
     }
 
-    let geofenceOk: boolean | null = null;
-    if (clientId) {
-      const c = await prisma.client.findUnique({
-        where: { id: clientId },
-        select: { latitude: true, longitude: true, geofenceRadiusMeters: true },
-      });
-      if (c) {
-        const result = checkGeofence(
-          {
-            latitude: c.latitude ? Number(c.latitude) : null,
-            longitude: c.longitude ? Number(c.longitude) : null,
-            radiusMeters: c.geofenceRadiusMeters,
-          },
-          geo ?? null
-        );
-        geofenceOk = result.inside;
-      }
-    }
+    // Phase 131 — resolve geofence from the associate's open
+    // AssociateAssignment's Location first, falling back to the
+    // legacy Client geofence. Same helper stamps locationId onto
+    // the new TimeEntry so historical reports stay correct.
+    const resolved = await resolveAssociateGeofence(
+      prisma,
+      user.associateId,
+      clientId,
+    );
+    if (resolved.clientId && !clientId) clientId = resolved.clientId;
+    const geofenceResult = checkGeofence(resolved.geofence, geo ?? null);
+    const geofenceOk: boolean | null = geofenceResult.inside;
 
     let entry;
     try {
@@ -227,6 +222,7 @@ timeRouter.post('/me/clock-in', async (req, res, next) => {
         data: {
           associateId: user.associateId,
           clientId,
+          locationId: resolved.locationId,
           jobId: jobId ?? null,
           clockInAt: new Date(),
           clockInLat: geo?.lat ?? null,
@@ -289,25 +285,17 @@ timeRouter.post('/me/clock-out', async (req, res, next) => {
       });
     }
 
-    // Geofence check on clock-out coords.
-    let geofenceOutOk: boolean | null = null;
-    if (active.clientId) {
-      const c = await prisma.client.findUnique({
-        where: { id: active.clientId },
-        select: { latitude: true, longitude: true, geofenceRadiusMeters: true },
-      });
-      if (c) {
-        const result = checkGeofence(
-          {
-            latitude: c.latitude ? Number(c.latitude) : null,
-            longitude: c.longitude ? Number(c.longitude) : null,
-            radiusMeters: c.geofenceRadiusMeters,
-          },
-          geo ?? null
-        );
-        geofenceOutOk = result.inside;
-      }
-    }
+    // Geofence check on clock-out coords. Same Phase 131 resolution
+    // as clock-in: open Location first, Client fallback.
+    const resolvedOut = await resolveAssociateGeofence(
+      prisma,
+      active.associateId,
+      active.clientId,
+    );
+    const geofenceOutOk: boolean | null = checkGeofence(
+      resolvedOut.geofence,
+      geo ?? null,
+    ).inside;
 
     // Sum weekly worked minutes (ACTIVE+COMPLETED+APPROVED) for OT detection,
     // excluding the current entry (we'll add it back with the about-to-be net).
@@ -511,23 +499,39 @@ timeRouter.get('/admin/active', MANAGE, async (req, res, next) => {
       },
     });
     const clientIds = Array.from(new Set(rows.map((r) => r.clientId).filter(Boolean) as string[]));
-    const clients = await prisma.client.findMany({
-      take: 1000,
-      where: { id: { in: clientIds } },
-      select: { id: true, name: true, latitude: true, longitude: true, geofenceRadiusMeters: true },
-    });
+    const locationIds = Array.from(
+      new Set(rows.map((r) => r.locationId).filter(Boolean) as string[]),
+    );
+    const [clients, locations] = await Promise.all([
+      prisma.client.findMany({
+        take: 1000,
+        where: { id: { in: clientIds } },
+        select: { id: true, name: true, latitude: true, longitude: true, geofenceRadiusMeters: true },
+      }),
+      // Phase 131 — Location geofence takes precedence when stamped on
+      // the entry. Older entries with a NULL locationId fall back to
+      // the per-row Client geofence below.
+      prisma.location.findMany({
+        take: 1000,
+        where: { id: { in: locationIds } },
+        select: { id: true, latitude: true, longitude: true, geofenceRadiusMeters: true },
+      }),
+    ]);
     const clientById = new Map(clients.map((c) => [c.id, c]));
+    const locationById = new Map(locations.map((l) => [l.id, l]));
 
     const now = Date.now();
     const entries: ActiveDashboardEntry[] = rows.map((r) => {
       const c = r.clientId ? clientById.get(r.clientId) : undefined;
+      const l = r.locationId ? locationById.get(r.locationId) : undefined;
       let geofenceOk: boolean | null = null;
-      if (c) {
+      const geoSource = l ?? c ?? null;
+      if (geoSource) {
         const result = checkGeofence(
           {
-            latitude: c.latitude ? Number(c.latitude) : null,
-            longitude: c.longitude ? Number(c.longitude) : null,
-            radiusMeters: c.geofenceRadiusMeters,
+            latitude: geoSource.latitude ? Number(geoSource.latitude) : null,
+            longitude: geoSource.longitude ? Number(geoSource.longitude) : null,
+            radiusMeters: geoSource.geofenceRadiusMeters,
           },
           r.clockInLat && r.clockInLng
             ? { lat: Number(r.clockInLat), lng: Number(r.clockInLng) }

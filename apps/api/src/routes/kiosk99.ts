@@ -601,10 +601,22 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     select: {
       id: true,
       clientId: true,
+      locationId: true,
       tokenHash: true,
       latitude: true,
       longitude: true,
       radiusMeters: true,
+      // Phase 131 — Location's geofence takes precedence over the
+      // per-device override when both are set. The per-device fields
+      // remain a fallback for devices registered before Locations
+      // existed.
+      location: {
+        select: {
+          latitude: true,
+          longitude: true,
+          geofenceRadiusMeters: true,
+        },
+      },
     },
   });
   let device: typeof devices[number] | null = null;
@@ -622,10 +634,28 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
   // 2. Geofence check. If device has a geofence, location is required
   // and must be within radius. Distance is recorded on every punch
   // (even accepted ones) so HR can see drift.
+  //
+  // Phase 131 — Location-level geofence wins over per-device when both
+  // exist. Devices registered before Locations get their per-device
+  // override; new devices typically have no per-device geofence and
+  // inherit from their Location.
+  const fenceLat = device.location?.latitude
+    ? Number(device.location.latitude)
+    : device.latitude
+      ? Number(device.latitude)
+      : null;
+  const fenceLng = device.location?.longitude
+    ? Number(device.location.longitude)
+    : device.longitude
+      ? Number(device.longitude)
+      : null;
+  const fenceRadius =
+    device.location?.geofenceRadiusMeters ?? device.radiusMeters ?? null;
+
   let punchLat: number | null = null;
   let punchLng: number | null = null;
   let dist: number | null = null;
-  if (device.latitude && device.longitude && device.radiusMeters) {
+  if (fenceLat != null && fenceLng != null && fenceRadius != null) {
     if (input.latitude == null || input.longitude == null) {
       await prisma.kioskPunch.create({
         data: {
@@ -645,19 +675,14 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     punchLat = input.latitude;
     punchLng = input.longitude;
     dist = Math.round(
-      distanceMeters(
-        Number(device.latitude),
-        Number(device.longitude),
-        punchLat,
-        punchLng,
-      ),
+      distanceMeters(fenceLat, fenceLng, punchLat, punchLng),
     );
-    if (dist > device.radiusMeters) {
+    if (dist > fenceRadius) {
       await prisma.kioskPunch.create({
         data: {
           kioskDeviceId: device.id,
           action: 'REJECTED',
-          rejectReason: `geofence_violation (${dist}m vs ${device.radiusMeters}m)`,
+          rejectReason: `geofence_violation (${dist}m vs ${fenceRadius}m)`,
           punchLat,
           punchLng,
           distanceMeters: dist,
@@ -880,6 +905,10 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
         data: {
           associateId: pinRow.associateId,
           clientId: device.clientId,
+          // Phase 131 — snapshot the device's locationId onto the
+          // entry so history queries can group by site without
+          // chasing the device row.
+          locationId: device.locationId,
           clockInAt: at,
           status: 'ACTIVE',
           ...(punchLat != null && punchLng != null
