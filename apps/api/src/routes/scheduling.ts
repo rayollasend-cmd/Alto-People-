@@ -41,6 +41,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopeShifts } from '../lib/scope.js';
+import { firstLocationForClient } from '../lib/firstLocationForClient.js';
 import { enqueueAudit, recordShiftEvent } from '../lib/audit.js';
 import { formatShiftLine, notifyShift } from '../lib/notifyShift.js';
 import { notifyManager } from '../lib/notify.js';
@@ -292,6 +293,12 @@ schedulingRouter.post('/shifts', MANAGE, async (req, res, next) => {
     });
     if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
 
+    // Phase 131 — every Shift gets a Location. Auto-derived from the
+    // client's first active Location until the create UI surfaces a
+    // picker; the free-text `location` field below stays for optional
+    // sub-zone labels ("Bar", "Patio", "Floor 2 — Beauty").
+    const location = await firstLocationForClient(prisma, client.id);
+
     const status = input.status ?? 'OPEN';
     const isPublishing = isPublishingTransition(undefined, status);
     const now = new Date();
@@ -317,6 +324,7 @@ schedulingRouter.post('/shifts', MANAGE, async (req, res, next) => {
     const created = await prisma.shift.create({
       data: {
         clientId: input.clientId,
+        locationId: location.id,
         position: input.position,
         startsAt: new Date(input.startsAt),
         endsAt: new Date(input.endsAt),
@@ -1471,6 +1479,8 @@ schedulingRouter.post('/templates/:id/apply', MANAGE, async (req, res, next) => 
         'Global templates require a clientId at apply time'
       );
     }
+    // Phase 131 — derive locationId from the resolved client.
+    const location = await firstLocationForClient(prisma, clientId);
 
     // Snap the supplied weekStart to local Sunday at 00:00, then advance
     // by `dayOfWeek` days. Local time keeps templates intuitive — "9am
@@ -1491,6 +1501,7 @@ schedulingRouter.post('/templates/:id/apply', MANAGE, async (req, res, next) => 
     const created = await prisma.shift.create({
       data: {
         clientId,
+        locationId: location.id,
         position: tpl.position,
         startsAt,
         endsAt,
@@ -1559,8 +1570,12 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
     }
 
     const offsetMs = target.getTime() - source.getTime();
+    // Phase 131 — preserve the source shift's locationId so copy-week
+    // doesn't drop the FK. Source rows always have one (set by the PR
+    // 1 backfill and by every writer since).
     const data = sourceShifts.map((s) => ({
       clientId: s.clientId,
+      locationId: s.locationId,
       position: s.position,
       startsAt: new Date(s.startsAt.getTime() + offsetMs),
       endsAt: new Date(s.endsAt.getTime() + offsetMs),
