@@ -9,13 +9,18 @@
  *
  * The library itself (~250KB minified) is also lazy-loaded via dynamic
  * import — the kiosk shell paints instantly, and face-api downloads
- * the first time someone reaches the selfie step. Default models URL is
- * jsDelivr; deployments with no internet access can host the weights
- * themselves and set VITE_FACE_MODELS_URL to that path.
+ * the first time someone reaches the selfie step.
+ *
+ * Phase 131 hardening — weights are self-hosted under
+ * `/face-models/` (apps/web/public/face-models/). The build-time
+ * script `npm run build:face-models` (also runs as `prebuild`) pulls
+ * the weight files from jsDelivr once per fresh install and bakes
+ * them into the Vite output. Setting VITE_FACE_MODELS_URL overrides
+ * the path — handy for air-gapped deployments that want to point at a
+ * private mirror.
  */
 
-const DEFAULT_MODELS_URL =
-  'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights';
+const DEFAULT_MODELS_URL = '/face-models';
 
 type FaceApi = typeof import('face-api.js');
 

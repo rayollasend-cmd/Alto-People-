@@ -44,5 +44,10 @@ apps/api/uploads/
 # Generated sample EFW2/EFW2C files for AccuWage validation (script output)
 apps/api/scripts/output/
 
+# Face-api.js model weights — downloaded at build time by
+# apps/web/scripts/fetch-face-models.mjs; ~6.5MB of binary data
+# we don't need to track.
+apps/web/public/face-models/
+
 # Local Claude Code agent state
 .claude/
