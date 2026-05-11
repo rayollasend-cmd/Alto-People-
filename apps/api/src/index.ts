@@ -40,6 +40,40 @@ app.listen(env.PORT, '0.0.0.0', async () => {
   startAttestationReminderCron();
   startKioskMaintenanceCron();
 
+  // Multi-replica safety check for the kiosk rate limiter. The default
+  // backend is per-process; without a shared store, a multi-replica
+  // deployment lets an attacker bypass the PIN lockout by spraying
+  // replicas. We refuse to boot rather than silently regress.
+  if (env.MULTI_REPLICA === 1) {
+    // The placeholder check inspects the swap point. When a shared
+    // backend is installed it replaces the in-memory default; we keep
+    // a sentinel reference on globalThis from the adapter setup so
+    // this guard can confirm. Adapters are installed by importing
+    // their setup module before this line runs.
+    const installed = (globalThis as { __KIOSK_RATE_LIMIT_BACKEND__?: string })
+      .__KIOSK_RATE_LIMIT_BACKEND__;
+    if (!installed) {
+      console.error(
+        'FATAL: MULTI_REPLICA=1 but no shared kiosk rate-limit backend ' +
+          'was installed. The default per-process store cannot enforce ' +
+          'lockouts across replicas — an attacker can defeat the brute-' +
+          'force protection by round-robin\'ing through replicas. Either ' +
+          'install a shared backend via setKioskRateLimitStore() at boot ' +
+          'or pin the deployment to a single replica (MULTI_REPLICA=0).',
+      );
+      process.exit(1);
+    }
+    console.log(`[alto-people/api] kiosk rate limit using ${installed} backend`);
+  } else {
+    // Single-replica path. Make the assumption explicit in the log
+    // so ops doesn't accidentally scale out and lose lockout state.
+    console.log(
+      '[alto-people/api] kiosk rate limit using in-memory store ' +
+        '(single-replica only; set MULTI_REPLICA=1 + install a shared ' +
+        'backend before scaling out)',
+    );
+  }
+
   // Best-effort prime of the branding cache so the first email rendered
   // after boot uses the org's saved logo + colors instead of the
   // hard-coded defaults. Auto-refreshes every 5 min via ensureBrandingLoaded

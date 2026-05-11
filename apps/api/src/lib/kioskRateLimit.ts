@@ -14,30 +14,70 @@ import { HttpError } from '../middleware/error.js';
  *     brute-force attack on the 10k PIN space from "seconds" to ~12 days.
  *     A successful PIN clears the counter.
  *
- * State is in-memory only — survives within a single process but resets
- * on restart. Single-replica deployments (typical for this app) are
- * unaffected; multi-replica setups should swap in a Redis backend.
+ * **Multi-replica caveat:** the default store keeps state per-process.
+ * On Railway / Render / Fly with a single replica that's exactly what
+ * we want — survives requests, resets on redeploy. If you scale to
+ * multiple replicas behind a load balancer, an attacker can defeat the
+ * lockout by spraying attempts across replicas. Either pin the
+ * deployment to one replica (status quo) or install a shared backend
+ * via setKioskRateLimitStore() at boot before any request hits the
+ * router (e.g., a Redis-backed adapter). The interface below is
+ * intentionally narrow so swapping is a tiny lift.
  */
 
 const THROTTLE_MS = 1000;
 const MAX_FAILED_PIN_ATTEMPTS = 3;
 const LOCKOUT_DURATION_MS = 5 * 60 * 1000;
 
-interface DeviceState {
+export interface DeviceRateLimitState {
   lastPunchAt: number;
   failedPinAttempts: number;
   lockedUntil: number | null;
 }
 
-const state = new Map<string, DeviceState>();
+/**
+ * Swappable backend. The in-memory default works for single-replica
+ * deployments; a Redis adapter implementing the same three methods
+ * gives multi-replica safety. All three calls are best-effort fast
+ * (no IO in the hot path on the in-memory backend; <5ms expected
+ * round-trip on Redis).
+ */
+export interface KioskRateLimitStore {
+  read(deviceId: string): DeviceRateLimitState;
+  write(deviceId: string, state: DeviceRateLimitState): void;
+  clear(): void;
+}
 
-function get(deviceId: string): DeviceState {
-  let s = state.get(deviceId);
-  if (!s) {
-    s = { lastPunchAt: 0, failedPinAttempts: 0, lockedUntil: null };
-    state.set(deviceId, s);
+class InMemoryStore implements KioskRateLimitStore {
+  private map = new Map<string, DeviceRateLimitState>();
+
+  read(deviceId: string): DeviceRateLimitState {
+    let s = this.map.get(deviceId);
+    if (!s) {
+      s = { lastPunchAt: 0, failedPinAttempts: 0, lockedUntil: null };
+      this.map.set(deviceId, s);
+    }
+    return s;
   }
-  return s;
+
+  write(deviceId: string, state: DeviceRateLimitState): void {
+    this.map.set(deviceId, state);
+  }
+
+  clear(): void {
+    this.map.clear();
+  }
+}
+
+let store: KioskRateLimitStore = new InMemoryStore();
+
+/**
+ * Replace the active store. Call at boot, before any request hits the
+ * router. Subsequent calls overwrite — the runtime supports one
+ * backend at a time.
+ */
+export function setKioskRateLimitStore(next: KioskRateLimitStore): void {
+  store = next;
 }
 
 /**
@@ -49,7 +89,7 @@ function get(deviceId: string): DeviceState {
  */
 export function enforcePunchRateLimit(deviceId: string): void {
   const now = Date.now();
-  const s = get(deviceId);
+  const s = store.read(deviceId);
 
   if (s.lockedUntil && s.lockedUntil > now) {
     const retryAfter = Math.ceil((s.lockedUntil - now) / 1000);
@@ -75,6 +115,7 @@ export function enforcePunchRateLimit(deviceId: string): void {
     );
   }
   s.lastPunchAt = now;
+  store.write(deviceId, s);
 }
 
 /**
@@ -83,11 +124,12 @@ export function enforcePunchRateLimit(deviceId: string): void {
  * past the threshold just keeps the device locked.
  */
 export function recordFailedPinAttempt(deviceId: string): void {
-  const s = get(deviceId);
+  const s = store.read(deviceId);
   s.failedPinAttempts += 1;
   if (s.failedPinAttempts >= MAX_FAILED_PIN_ATTEMPTS) {
     s.lockedUntil = Date.now() + LOCKOUT_DURATION_MS;
   }
+  store.write(deviceId, s);
 }
 
 /**
@@ -96,12 +138,13 @@ export function recordFailedPinAttempt(deviceId: string): void {
  * attempts on this device were probably just typos, not an attack).
  */
 export function recordSuccessfulPinAttempt(deviceId: string): void {
-  const s = get(deviceId);
+  const s = store.read(deviceId);
   s.failedPinAttempts = 0;
   s.lockedUntil = null;
+  store.write(deviceId, s);
 }
 
 /** Test/admin helper — wipe everything. Not exposed via HTTP. */
 export function _resetKioskRateLimit(): void {
-  state.clear();
+  store.clear();
 }

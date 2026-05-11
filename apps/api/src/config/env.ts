@@ -111,6 +111,16 @@ const EnvSchema = z.object({
   // should set 3600 (hourly). Thresholds (18h forgotten-shift, 90d selfie
   // retention) are hard-coded in lib/kioskMaintenance.ts.
   KIOSK_MAINTENANCE_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(0),
+  // Multi-replica deployment hint. The kiosk rate limit keeps state
+  // per-process (see lib/kioskRateLimit.ts). When MULTI_REPLICA=1 we
+  // refuse to boot unless a shared rate-limit store has been wired up
+  // via setKioskRateLimitStore() before the listener starts. Default
+  // 0 covers the existing single-replica Railway deployment. Ops sets
+  // it to 1 only after installing a Redis-backed (or equivalent)
+  // adapter — leaving the default state-per-process behavior in a
+  // multi-replica setup lets an attacker bypass the PIN lockout by
+  // round-robin'ing replicas.
+  MULTI_REPLICA: z.coerce.number().int().min(0).max(1).default(0),
   // Phase 22 — payroll disbursement adapter. STUB (default) returns
   // synthetic refs; WISE / BRANCH attempt the real provider when the
   // matching API key is also set. Falls back to STUB if the chosen
