@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Copy, Key, Plus, ScanFace, Tablet } from 'lucide-react';
+import { AlertTriangle, Copy, Key, Plus, ScanFace, Stethoscope, Tablet } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
   assignKioskPin,
   createKioskDevice,
   deleteKioskDevice,
   deleteKioskPin,
+  diagnoseKioskPin,
   listKioskDevices,
   listKioskFaceReferences,
   listKioskPins,
@@ -18,6 +19,7 @@ import {
   type KioskDevice,
   type KioskFaceReferenceSummary,
   type KioskPin,
+  type KioskPinDiagnosis,
   type KioskPunchSummary,
 } from '@/lib/kiosk99Api';
 import { listDirectory } from '@/lib/directoryApi';
@@ -504,6 +506,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
   const [clientId, setClientId] = useState('');
   const [rows, setRows] = useState<KioskPin[] | null>(null);
   const [showNew, setShowNew] = useState(false);
+  const [showDiagnose, setShowDiagnose] = useState(false);
   const [showPin, setShowPin] = useState<{
     associateName: string;
     employeeNumber: string;
@@ -569,6 +572,11 @@ function PinsTab({ canManage }: { canManage: boolean }) {
             </select>
           )}
         </div>
+        {canManage && (
+          <Button variant="ghost" onClick={() => setShowDiagnose(true)}>
+            <Stethoscope className="mr-2 h-4 w-4" /> Diagnose PIN
+          </Button>
+        )}
         {canManage && clientId && (
           <Button onClick={() => setShowNew(true)}>
             <Plus className="mr-2 h-4 w-4" /> Issue employee number
@@ -674,7 +682,131 @@ function PinsTab({ canManage }: { canManage: boolean }) {
           </DrawerFooter>
         </Drawer>
       )}
+      {showDiagnose && (
+        <DiagnoseDrawer onClose={() => setShowDiagnose(false)} />
+      )}
     </div>
+  );
+}
+
+function DiagnoseDrawer({ onClose }: { onClose: () => void }) {
+  const [number, setNumber] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<KioskPinDiagnosis | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const onSubmit = async () => {
+    if (!/^\d{4}$/.test(number)) {
+      setErr('Enter a 4-digit employee number.');
+      return;
+    }
+    setErr(null);
+    setResult(null);
+    setLoading(true);
+    try {
+      const r = await diagnoseKioskPin(number);
+      setResult(r);
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : 'Diagnosis failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+      <DrawerHeader>
+        <DrawerTitle>Diagnose a kiosk PIN</DrawerTitle>
+      </DrawerHeader>
+      <DrawerBody className="space-y-4">
+        <p className="text-sm text-silver">
+          When an associate reports "Wrong PIN" at the kiosk, enter their
+          4-digit number here. We'll show which client the PIN sits under,
+          their current assignment, and any open shift — and tell you what
+          to fix.
+        </p>
+        <div>
+          <Label>Employee number</Label>
+          <Input
+            className="mt-1 font-mono text-2xl tracking-widest text-center"
+            value={number}
+            onChange={(e) => {
+              setNumber(e.target.value.replace(/\D/g, '').slice(0, 4));
+              setErr(null);
+            }}
+            placeholder="1234"
+            inputMode="numeric"
+            maxLength={4}
+          />
+        </div>
+        {err && <div className="text-sm text-alert">{err}</div>}
+        {result && (
+          <div className="space-y-3 text-sm">
+            <div
+              className={`rounded-md border p-3 ${
+                result.matchedPin === null
+                  ? 'border-alert/40 bg-alert/10 text-alert'
+                  : result.clientsMatch
+                    ? 'border-success/40 bg-success/10 text-white'
+                    : 'border-amber-500/40 bg-amber-500/10 text-amber-200'
+              }`}
+            >
+              <div className="font-medium mb-1">Diagnosis</div>
+              <div>{result.diagnosis}</div>
+            </div>
+            {result.matchedPin && (
+              <div className="bg-navy-secondary/40 border border-navy-secondary rounded-md p-3 space-y-1">
+                <div>
+                  <span className="text-silver">PIN holder:</span>{' '}
+                  <span className="text-white font-medium">
+                    {result.matchedPin.associateName}
+                  </span>{' '}
+                  <span className="text-silver">
+                    ({result.matchedPin.associateEmail})
+                  </span>
+                </div>
+                <div>
+                  <span className="text-silver">PIN issued under:</span>{' '}
+                  <span className="text-white">
+                    {result.matchedPin.pinClientName ?? result.matchedPin.pinClientId}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-silver">Currently assigned to:</span>{' '}
+                  <span className="text-white">
+                    {result.currentAssignment
+                      ? `${result.currentAssignment.clientName} · ${result.currentAssignment.locationName ?? '—'}`
+                      : 'No open assignment'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-silver">Open shift:</span>{' '}
+                  <span className="text-white">
+                    {result.openTimeEntry
+                      ? `clocked in ${new Date(result.openTimeEntry.clockInAt).toLocaleString()}`
+                      : 'None'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-silver">Active kiosks at PIN's client:</span>{' '}
+                  <span className="text-white">
+                    {result.devicesAtPinClient?.length ?? 0}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </DrawerBody>
+      <DrawerFooter>
+        <Button variant="ghost" onClick={onClose}>
+          Close
+        </Button>
+        <Button onClick={onSubmit} disabled={loading || number.length !== 4}>
+          {loading ? 'Checking…' : 'Diagnose'}
+        </Button>
+      </DrawerFooter>
+    </Drawer>
   );
 }
 

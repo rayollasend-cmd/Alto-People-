@@ -132,6 +132,43 @@ export const assignKioskPin = (input: {
 export const deleteKioskPin = (id: string) =>
   apiFetch<void>(`/kiosk-pins/${id}`, { method: 'DELETE' });
 
+export interface KioskPinDiagnosis {
+  employeeNumber: string;
+  matchedPin: {
+    id: string;
+    pinClientId: string;
+    pinClientName: string | null;
+    associateId: string;
+    associateName: string | null;
+    associateEmail: string | null;
+  } | null;
+  currentAssignment: {
+    clientId: string;
+    clientName: string;
+    locationId: string;
+    locationName: string | null;
+  } | null;
+  openTimeEntry: {
+    id: string;
+    clockInAt: string;
+    clientId: string | null;
+    locationId: string | null;
+  } | null;
+  clientsMatch?: boolean;
+  devicesAtPinClient?: {
+    id: string;
+    name: string;
+    locationId: string | null;
+    lastSeenAt: string | null;
+  }[];
+  diagnosis: string;
+}
+
+export const diagnoseKioskPin = (employeeNumber: string) =>
+  apiFetch<KioskPinDiagnosis>(
+    `/kiosk-pins/diagnose?employeeNumber=${encodeURIComponent(employeeNumber)}`,
+  );
+
 export const listKioskPunches = (params?: {
   associateId?: string;
   deviceId?: string;
