@@ -28,10 +28,17 @@ import { env } from '../config/env.js';
 export const FORGOTTEN_CLOCKOUT_AFTER_HOURS = 18;
 export const DEFAULT_SHIFT_HOURS = 8;
 export const SELFIE_RETENTION_DAYS = 90;
+// Face descriptors aren't time-series like selfies — they're a single
+// template per associate that gets matched against on every punch. A
+// year of zero punches strongly suggests the associate is gone (still
+// on payroll, on leave, or quietly separated without the offboarding
+// flow firing). Drop the biometric template; the next punch re-enrolls.
+export const FACE_REFERENCE_DORMANT_DAYS = 365;
 
 export interface MaintenanceResult {
   forgottenClockOutsClosed: number;
   selfiesPurged: number;
+  dormantFaceReferencesPurged: number;
   errors: { kind: string; entityId: string; error: string }[];
 }
 
@@ -108,6 +115,33 @@ export async function purgeOldSelfies(
 }
 
 /**
+ * Delete KioskFaceReference rows that haven't been used in
+ * FACE_REFERENCE_DORMANT_DAYS. lastUsedAt is stamped on every face
+ * match; pre-column rows fall back to enrolledAt so the sweep still
+ * catches them. The associate's next punch re-enrolls automatically.
+ */
+export async function purgeDormantFaceReferences(
+  prisma: PrismaClient = defaultPrisma,
+  now: Date = new Date(),
+): Promise<{ purged: number }> {
+  const cutoff = new Date(
+    now.getTime() - FACE_REFERENCE_DORMANT_DAYS * 24 * 60 * 60 * 1000,
+  );
+  // Two-pass to handle both "never matched" (lastUsedAt IS NULL) and
+  // "matched but long ago" cases. Postgres OR-on-different-columns
+  // optimizes fine because the column is sparse.
+  const result = await prisma.kioskFaceReference.deleteMany({
+    where: {
+      OR: [
+        { lastUsedAt: { lt: cutoff } },
+        { lastUsedAt: null, enrolledAt: { lt: cutoff } },
+      ],
+    },
+  });
+  return { purged: result.count };
+}
+
+/**
  * Drop every selfie and the face reference for a single associate.
  * Called when their separation completes — the punch rows stay (HR
  * still needs to audit historical hours / anomalies for payroll
@@ -143,9 +177,11 @@ export async function runKioskMaintenance(
 ): Promise<MaintenanceResult> {
   const closeResult = await closeForgottenClockOuts(prisma, now);
   const purgeResult = await purgeOldSelfies(prisma, now);
+  const dormantResult = await purgeDormantFaceReferences(prisma, now);
   return {
     forgottenClockOutsClosed: closeResult.closed,
     selfiesPurged: purgeResult.purged,
+    dormantFaceReferencesPurged: dormantResult.purged,
     errors: closeResult.errors.map((e) => ({
       kind: 'forgotten_clockout',
       entityId: e.entityId,
@@ -172,7 +208,8 @@ export function startKioskMaintenanceCron(): void {
   console.log(
     `[alto-people/api] kiosk maintenance cron armed (every ${seconds}s; ` +
       `forgotten-shift threshold ${FORGOTTEN_CLOCKOUT_AFTER_HOURS}h, ` +
-      `selfie retention ${SELFIE_RETENTION_DAYS}d)`,
+      `selfie retention ${SELFIE_RETENTION_DAYS}d, ` +
+      `face-template dormant cutoff ${FACE_REFERENCE_DORMANT_DAYS}d)`,
   );
 }
 
