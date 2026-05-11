@@ -481,6 +481,11 @@ export const ApplicationCreateInputSchema = z.object({
   associateFirstName: z.string().min(1).max(80),
   associateLastName: z.string().min(1).max(80),
   clientId: UuidSchema,
+  // Phase 131 — physical site under the chosen client. Optional; when
+  // set, becomes the starting Location of the AssociateAssignment row
+  // opened at approval time. When omitted, HR will need to use the
+  // Transfer button on the associate's profile after approval.
+  locationId: UuidSchema.optional(),
   templateId: UuidSchema,
   position: z.string().min(1).max(120).optional(),
   startDate: z.string().datetime().optional(),

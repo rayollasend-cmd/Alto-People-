@@ -5,6 +5,7 @@ import type {
   ClientSummary,
   EmploymentType,
   HireableRole,
+  LocationSummary,
   OnboardingTemplate,
 } from '@alto-people/shared';
 import { HIREABLE_ROLES } from '@alto-people/shared';
@@ -14,6 +15,7 @@ import {
   listClients,
   listTemplates,
 } from '@/lib/onboardingApi';
+import { listClientLocations } from '@/lib/clientsApi';
 import { Button } from '@/components/ui/Button';
 import {
   Dialog,
@@ -84,6 +86,8 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
   const [position, setPosition] = useState('');
   const [startDate, setStartDate] = useState('');
   const [clientId, setClientId] = useState('');
+  const [locationId, setLocationId] = useState('');
+  const [locations, setLocations] = useState<LocationSummary[] | null>(null);
   const [templateId, setTemplateId] = useState('');
   const [employmentType, setEmploymentType] = useState<EmploymentType>('W2_EMPLOYEE');
   const [hireRole, setHireRole] = useState<HireableRole>('ASSOCIATE');
@@ -98,6 +102,8 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
     setPosition('');
     setStartDate('');
     setClientId('');
+    setLocationId('');
+    setLocations(null);
     setTemplateId('');
     setEmploymentType('W2_EMPLOYEE');
     setHireRole('ASSOCIATE');
@@ -123,6 +129,25 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
       cancelled = true;
     };
   }, [open, clients, templates]);
+
+  // Phase 131 — fetch Locations whenever the client changes. Reset
+  // locationId so a stale selection from a prior client doesn't bleed
+  // through.
+  useEffect(() => {
+    setLocationId('');
+    if (!clientId) {
+      setLocations(null);
+      return;
+    }
+    let cancelled = false;
+    setLocations(null);
+    listClientLocations(clientId)
+      .then((r) => !cancelled && setLocations(r.locations))
+      .catch(() => !cancelled && setLocations([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId]);
 
   // Filter templates to global + client-specific for the chosen client.
   const visibleTemplates = useMemo(() => {
@@ -166,6 +191,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
         // so older bulk-invite test fixtures and the bulk endpoint stay
         // backwards compatible.
         ...(hireRole !== 'ASSOCIATE' ? { hireRole } : {}),
+        ...(locationId ? { locationId } : {}),
       });
       onCreated();
       if (res.inviteUrl) {
@@ -314,6 +340,36 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
                     <option key={c.id} value={c.id}>
                       {c.name}
                       {c.state ? ` · ${c.state}` : ''}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+
+            <Field
+              label="Location"
+              hint="Optional. Sets the associate's starting work site. Can be changed later via the Transfer button on the profile."
+            >
+              {(p) => (
+                <Select
+                  value={locationId}
+                  onChange={(e) => setLocationId(e.target.value)}
+                  disabled={!clientId || locations === null || locations.length === 0}
+                  {...p}
+                >
+                  <option value="">
+                    {!clientId
+                      ? 'Pick a client first'
+                      : locations === null
+                        ? 'Loading…'
+                        : locations.length === 0
+                          ? 'No locations under this client'
+                          : 'No specific location'}
+                  </option>
+                  {locations?.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}
+                      {l.state ? ` · ${l.state}` : ''}
                     </option>
                   ))}
                 </Select>

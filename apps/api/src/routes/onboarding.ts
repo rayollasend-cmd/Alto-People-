@@ -174,6 +174,8 @@ interface InviteApplicantInput {
   associateLastName: string;
   associateEmail: string;
   clientId: string;
+  // Phase 131 — optional starting Location. Must belong to clientId.
+  locationId?: string;
   templateId: string;
   employmentType?: 'W2_EMPLOYEE' | 'CONTRACTOR_1099_INDIVIDUAL' | 'CONTRACTOR_1099_BUSINESS';
   position?: string;
@@ -242,6 +244,22 @@ async function inviteOneApplicant(
     if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
     if (!template) throw new HttpError(404, 'template_not_found', 'Template not found');
 
+    // Phase 131 — validate the optional starting Location lives under
+    // the chosen client. Defensive check; the picker UI prefilters.
+    if (input.locationId) {
+      const location = await tx.location.findFirst({
+        where: { id: input.locationId, clientId: client.id, deletedAt: null },
+        select: { id: true },
+      });
+      if (!location) {
+        throw new HttpError(
+          400,
+          'location_mismatch',
+          'Location does not belong to the chosen client.',
+        );
+      }
+    }
+
     const hireRole = input.hireRole ?? 'ASSOCIATE';
     let user = await tx.user.findUnique({ where: { email } });
     if (user) {
@@ -289,6 +307,7 @@ async function inviteOneApplicant(
       data: {
         associateId: associate.id,
         clientId: client.id,
+        locationId: input.locationId ?? null,
         onboardingTrack: template.track,
         status: 'DRAFT',
         position: input.position ?? null,
@@ -720,6 +739,25 @@ onboardingRouter.post(
           where: { associateId: app.associateId },
           data: { status: 'ACTIVE', tokenVersion: { increment: 1 } },
         });
+        // Phase 131 — open the first AssociateAssignment if the
+        // Application has a Location. We close any pre-existing open
+        // row first (re-hire / re-onboarding edge case) so the partial
+        // unique index never trips.
+        if (app.locationId) {
+          await tx.associateAssignment.updateMany({
+            where: { associateId: app.associateId, endedAt: null },
+            data: { endedAt: hireDateValue },
+          });
+          await tx.associateAssignment.create({
+            data: {
+              associateId: app.associateId,
+              locationId: app.locationId,
+              startedAt: hireDateValue,
+              reason: 'Onboarding approved',
+              notedById: req.user!.id,
+            },
+          });
+        }
       }, TX_OPTS);
 
       await recordOnboardingEvent({
