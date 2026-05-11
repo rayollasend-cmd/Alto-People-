@@ -326,6 +326,129 @@ kiosk99Router.delete('/kiosk-pins/:id', MANAGE, async (req, res) => {
   res.status(204).end();
 });
 
+// HR diagnostic for "wrong PIN" complaints. Given a 4-digit employee
+// number, return the full picture: which client the PIN is under,
+// which associate it belongs to, that associate's current open shift
+// (if any), and the active kiosk devices at the PIN's client + the
+// associate's currently-assigned client. The two clients should match;
+// when they don't, the PIN was issued before a transfer and needs to
+// be re-issued under the associate's current client.
+kiosk99Router.get('/kiosk-pins/diagnose', MANAGE, async (req, res) => {
+  const employeeNumber = z
+    .string()
+    .regex(/^\d{4}$/, 'Employee number must be 4 digits.')
+    .parse(req.query.employeeNumber);
+
+  const pinHmac = hmacPin(employeeNumber);
+  const pin = await prisma.kioskPin.findUnique({
+    where: { pinHmac },
+  });
+
+  if (!pin) {
+    res.json({
+      employeeNumber,
+      matchedPin: null,
+      diagnosis:
+        'No PIN row matches this employee number. Either it was never issued, or it was rotated to a different number, or the KIOSK_PIN_SECRET on the server changed since issue (in which case all PINs would be similarly broken).',
+    });
+    return;
+  }
+
+  const [pinClient, associate, openAssignment, openTimeEntry, devicesAtPinClient] =
+    await Promise.all([
+      prisma.client.findUnique({
+        where: { id: pin.clientId },
+        select: { id: true, name: true },
+      }),
+      prisma.associate.findUnique({
+        where: { id: pin.associateId },
+        select: { id: true, firstName: true, lastName: true, email: true },
+      }),
+      prisma.associateAssignment.findFirst({
+        where: { associateId: pin.associateId, endedAt: null },
+        orderBy: { startedAt: 'desc' },
+        include: {
+          location: {
+            select: {
+              id: true,
+              name: true,
+              clientId: true,
+              client: { select: { id: true, name: true } },
+            },
+          },
+        },
+      }),
+      prisma.timeEntry.findFirst({
+        where: { associateId: pin.associateId, status: 'ACTIVE' },
+        orderBy: { clockInAt: 'desc' },
+        select: {
+          id: true,
+          clockInAt: true,
+          clientId: true,
+          locationId: true,
+        },
+      }),
+      prisma.kioskDevice.findMany({
+        where: { clientId: pin.clientId, isActive: true },
+        select: { id: true, name: true, locationId: true, lastSeenAt: true },
+        orderBy: { lastSeenAt: 'desc' },
+      }),
+    ]);
+
+  const assignmentClientId = openAssignment?.location?.clientId ?? null;
+  const clientsMatch =
+    assignmentClientId !== null && assignmentClientId === pin.clientId;
+
+  let diagnosis: string;
+  if (!openAssignment) {
+    diagnosis =
+      'PIN exists but the associate has no open AssociateAssignment. Onboarding may be incomplete, or they were offboarded.';
+  } else if (!clientsMatch) {
+    diagnosis = `MISMATCH: PIN is under client "${pinClient?.name ?? pin.clientId}" but the associate is currently assigned to client "${openAssignment.location.client.name}" (${assignmentClientId}). /kiosk/punch rejects PINs whose clientId differs from the device's clientId, so any tablet registered to the current-assignment client refuses this PIN. Fix: rotate the PIN from the admin (Employee numbers tab → switch to the new client → issue), which creates a new KioskPin row under the right client.`;
+  } else {
+    diagnosis =
+      'PIN and current assignment match. If clock-in is still failing, check that the kiosk device is registered to the same client (Devices tab) and that the device token has not expired.';
+  }
+
+  res.json({
+    employeeNumber,
+    matchedPin: {
+      id: pin.id,
+      pinClientId: pin.clientId,
+      pinClientName: pinClient?.name ?? null,
+      associateId: pin.associateId,
+      associateName: associate
+        ? `${associate.firstName} ${associate.lastName}`
+        : null,
+      associateEmail: associate?.email ?? null,
+    },
+    currentAssignment: openAssignment
+      ? {
+          clientId: openAssignment.location.clientId,
+          clientName: openAssignment.location.client.name,
+          locationId: openAssignment.location.id,
+          locationName: openAssignment.location.name,
+        }
+      : null,
+    openTimeEntry: openTimeEntry
+      ? {
+          id: openTimeEntry.id,
+          clockInAt: openTimeEntry.clockInAt.toISOString(),
+          clientId: openTimeEntry.clientId,
+          locationId: openTimeEntry.locationId,
+        }
+      : null,
+    clientsMatch,
+    devicesAtPinClient: devicesAtPinClient.map((d) => ({
+      id: d.id,
+      name: d.name,
+      locationId: d.locationId,
+      lastSeenAt: d.lastSeenAt?.toISOString() ?? null,
+    })),
+    diagnosis,
+  });
+});
+
 // ----- Forensics --------------------------------------------------------
 
 kiosk99Router.get('/kiosk-punches', MANAGE, async (req, res) => {
