@@ -334,22 +334,100 @@ kiosk99Router.delete('/kiosk-pins/:id', MANAGE, async (req, res) => {
 // when they don't, the PIN was issued before a transfer and needs to
 // be re-issued under the associate's current client.
 kiosk99Router.get('/kiosk-pins/diagnose', MANAGE, async (req, res) => {
+  // Two lookup modes: by 4-digit employee number (HMAC lookup) or by
+  // associate name/email substring (case-insensitive). The associate
+  // mode is the fallback for "PIN not found" — we resolve the
+  // associate by name, then find whatever PIN row points at them.
   const employeeNumber = z
     .string()
-    .regex(/^\d{4}$/, 'Employee number must be 4 digits.')
+    .regex(/^\d{4}$/)
+    .optional()
     .parse(req.query.employeeNumber);
+  const associateQuery = z
+    .string()
+    .min(2)
+    .max(120)
+    .optional()
+    .parse(req.query.associate);
 
-  const pinHmac = hmacPin(employeeNumber);
-  const pin = await prisma.kioskPin.findUnique({
-    where: { pinHmac },
-  });
+  if (!employeeNumber && !associateQuery) {
+    throw new HttpError(
+      400,
+      'invalid_query',
+      'Provide either employeeNumber=NNNN or associate=name-or-email.',
+    );
+  }
+
+  let pin: { id: string; clientId: string; associateId: string } | null = null;
+
+  if (employeeNumber) {
+    const pinHmac = hmacPin(employeeNumber);
+    pin = await prisma.kioskPin.findUnique({
+      where: { pinHmac },
+      select: { id: true, clientId: true, associateId: true },
+    });
+  } else if (associateQuery) {
+    const associates = await prisma.associate.findMany({
+      where: {
+        OR: [
+          { firstName: { contains: associateQuery, mode: 'insensitive' } },
+          { lastName: { contains: associateQuery, mode: 'insensitive' } },
+          { email: { contains: associateQuery, mode: 'insensitive' } },
+        ],
+      },
+      select: { id: true, firstName: true, lastName: true, email: true },
+      take: 25,
+    });
+    if (associates.length === 0) {
+      res.json({
+        employeeNumber: '',
+        matchedPin: null,
+        diagnosis: `No associate matches "${associateQuery}". Check the spelling — try first name only, last name only, or email substring.`,
+        candidates: [],
+      });
+      return;
+    }
+    if (associates.length > 1) {
+      res.json({
+        employeeNumber: '',
+        matchedPin: null,
+        diagnosis: `Multiple associates match "${associateQuery}". Pick a more specific query (last name + email substring works best).`,
+        candidates: associates.map((a) => ({
+          associateId: a.id,
+          associateName: `${a.firstName} ${a.lastName}`,
+          associateEmail: a.email,
+        })),
+      });
+      return;
+    }
+    const associate = associates[0]!;
+    pin = await prisma.kioskPin.findFirst({
+      where: { associateId: associate.id },
+      select: { id: true, clientId: true, associateId: true },
+    });
+    if (!pin) {
+      res.json({
+        employeeNumber: '',
+        matchedPin: null,
+        diagnosis: `Associate "${associate.firstName} ${associate.lastName}" (${associate.email}) exists, but has no kiosk PIN issued. Use the Employee numbers tab to issue one under their currently-assigned client.`,
+        candidates: [
+          {
+            associateId: associate.id,
+            associateName: `${associate.firstName} ${associate.lastName}`,
+            associateEmail: associate.email,
+          },
+        ],
+      });
+      return;
+    }
+  }
 
   if (!pin) {
     res.json({
-      employeeNumber,
+      employeeNumber: employeeNumber ?? '',
       matchedPin: null,
       diagnosis:
-        'No PIN row matches this employee number. Either it was never issued, or it was rotated to a different number, or the KIOSK_PIN_SECRET on the server changed since issue (in which case all PINs would be similarly broken).',
+        'No PIN row matches this employee number. Either it was never issued, or it was rotated to a different number, or the KIOSK_PIN_SECRET on the server changed since issue (in which case all PINs would be similarly broken — try one other known-good PIN on the kiosk to find out).',
     });
     return;
   }

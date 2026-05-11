@@ -690,21 +690,35 @@ function PinsTab({ canManage }: { canManage: boolean }) {
 }
 
 function DiagnoseDrawer({ onClose }: { onClose: () => void }) {
+  const [mode, setMode] = useState<'number' | 'name'>('number');
   const [number, setNumber] = useState('');
+  const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<KioskPinDiagnosis | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
+  const submitDisabled =
+    loading ||
+    (mode === 'number' ? number.length !== 4 : name.trim().length < 2);
+
   const onSubmit = async () => {
-    if (!/^\d{4}$/.test(number)) {
+    if (mode === 'number' && !/^\d{4}$/.test(number)) {
       setErr('Enter a 4-digit employee number.');
+      return;
+    }
+    if (mode === 'name' && name.trim().length < 2) {
+      setErr('Enter at least 2 characters of the name or email.');
       return;
     }
     setErr(null);
     setResult(null);
     setLoading(true);
     try {
-      const r = await diagnoseKioskPin(number);
+      const r = await diagnoseKioskPin(
+        mode === 'number'
+          ? { employeeNumber: number }
+          : { associate: name.trim() },
+      );
       setResult(r);
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : 'Diagnosis failed.');
@@ -720,25 +734,74 @@ function DiagnoseDrawer({ onClose }: { onClose: () => void }) {
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <p className="text-sm text-silver">
-          When an associate reports "Wrong PIN" at the kiosk, enter their
-          4-digit number here. We'll show which client the PIN sits under,
-          their current assignment, and any open shift — and tell you what
-          to fix.
+          When an associate reports "Wrong PIN" at the kiosk, look them
+          up here. Search by their 4-digit number, or by name / email
+          if the number isn't known.
         </p>
-        <div>
-          <Label>Employee number</Label>
-          <Input
-            className="mt-1 font-mono text-2xl tracking-widest text-center"
-            value={number}
-            onChange={(e) => {
-              setNumber(e.target.value.replace(/\D/g, '').slice(0, 4));
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setMode('number');
               setErr(null);
+              setResult(null);
             }}
-            placeholder="1234"
-            inputMode="numeric"
-            maxLength={4}
-          />
+            className={`flex-1 px-3 py-1.5 rounded-md text-sm border transition ${
+              mode === 'number'
+                ? 'bg-cyan-500/20 border-cyan-500/60 text-white'
+                : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
+            }`}
+          >
+            By employee number
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMode('name');
+              setErr(null);
+              setResult(null);
+            }}
+            className={`flex-1 px-3 py-1.5 rounded-md text-sm border transition ${
+              mode === 'name'
+                ? 'bg-cyan-500/20 border-cyan-500/60 text-white'
+                : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
+            }`}
+          >
+            By associate name
+          </button>
         </div>
+        {mode === 'number' ? (
+          <div>
+            <Label>Employee number</Label>
+            <Input
+              className="mt-1 font-mono text-2xl tracking-widest text-center"
+              value={number}
+              onChange={(e) => {
+                setNumber(e.target.value.replace(/\D/g, '').slice(0, 4));
+                setErr(null);
+              }}
+              placeholder="1234"
+              inputMode="numeric"
+              maxLength={4}
+            />
+          </div>
+        ) : (
+          <div>
+            <Label>Name or email</Label>
+            <Input
+              className="mt-1"
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                setErr(null);
+              }}
+              placeholder="Kaal  /  kaal@example.com"
+            />
+            <div className="text-xs text-silver mt-1">
+              Case-insensitive substring match on first / last / email.
+            </div>
+          </div>
+        )}
         {err && <div className="text-sm text-alert">{err}</div>}
         {result && (
           <div className="space-y-3 text-sm">
@@ -754,6 +817,19 @@ function DiagnoseDrawer({ onClose }: { onClose: () => void }) {
               <div className="font-medium mb-1">Diagnosis</div>
               <div>{result.diagnosis}</div>
             </div>
+            {result.candidates && result.candidates.length > 0 && !result.matchedPin && (
+              <div className="bg-navy-secondary/40 border border-navy-secondary rounded-md p-3 space-y-1">
+                <div className="text-silver text-xs uppercase tracking-widest mb-1">
+                  Possible matches
+                </div>
+                {result.candidates.map((c) => (
+                  <div key={c.associateId} className="text-white">
+                    {c.associateName}{' '}
+                    <span className="text-silver">— {c.associateEmail}</span>
+                  </div>
+                ))}
+              </div>
+            )}
             {result.matchedPin && (
               <div className="bg-navy-secondary/40 border border-navy-secondary rounded-md p-3 space-y-1">
                 <div>
@@ -802,7 +878,7 @@ function DiagnoseDrawer({ onClose }: { onClose: () => void }) {
         <Button variant="ghost" onClick={onClose}>
           Close
         </Button>
-        <Button onClick={onSubmit} disabled={loading || number.length !== 4}>
+        <Button onClick={onSubmit} disabled={submitDisabled}>
           {loading ? 'Checking…' : 'Diagnose'}
         </Button>
       </DrawerFooter>

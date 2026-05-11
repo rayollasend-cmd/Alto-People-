@@ -161,13 +161,25 @@ export interface KioskPinDiagnosis {
     locationId: string | null;
     lastSeenAt: string | null;
   }[];
+  candidates?: {
+    associateId: string;
+    associateName: string;
+    associateEmail: string;
+  }[];
   diagnosis: string;
 }
 
-export const diagnoseKioskPin = (employeeNumber: string) =>
-  apiFetch<KioskPinDiagnosis>(
-    `/kiosk-pins/diagnose?employeeNumber=${encodeURIComponent(employeeNumber)}`,
+export const diagnoseKioskPin = (params: {
+  employeeNumber?: string;
+  associate?: string;
+}) => {
+  const q = new URLSearchParams();
+  if (params.employeeNumber) q.set('employeeNumber', params.employeeNumber);
+  if (params.associate) q.set('associate', params.associate);
+  return apiFetch<KioskPinDiagnosis>(
+    `/kiosk-pins/diagnose?${q.toString()}`,
   );
+};
 
 export const listKioskPunches = (params?: {
   associateId?: string;
