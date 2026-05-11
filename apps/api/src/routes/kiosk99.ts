@@ -597,6 +597,138 @@ function decodeSelfie(s: string | null | undefined): Buffer | null {
   return buf;
 }
 
+// Phase 131 follow-up — preflight PIN check. The kiosk calls this
+// the moment the 4th digit is entered, BEFORE the camera opens. It
+// runs the same auth + rate-limit + PIN-match logic as /kiosk/punch
+// but doesn't take a selfie, doesn't open a TimeEntry, and doesn't
+// record a punch row except on the FAILURE path (which still goes to
+// the audit log for brute-force forensics).
+//
+// Why a separate endpoint instead of just hitting /kiosk/punch with
+// no selfie: opening the front camera for an unknown PIN is bad UX
+// and a mild info leak (an attacker probing PINs gets to see
+// themselves on camera regardless of success). With this preflight,
+// the camera only opens for a valid PIN.
+const VerifyPinInputSchema = z.object({
+  deviceToken: z.string().min(10),
+  pin: z.string().regex(/^\d{4}$/, 'PIN must be 4 digits.'),
+  latitude: z.number().min(-90).max(90).optional().nullable(),
+  longitude: z.number().min(-180).max(180).optional().nullable(),
+});
+
+kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
+  const input = VerifyPinInputSchema.parse(req.body);
+
+  // Mirror /kiosk/punch's device + expiry + rate-limit chain so the
+  // preflight enforces the same auth posture as the real punch.
+  const devices = await prisma.kioskDevice.findMany({
+    take: 500,
+    where: { isActive: true },
+    select: {
+      id: true,
+      clientId: true,
+      tokenHash: true,
+      tokenExpiresAt: true,
+      latitude: true,
+      longitude: true,
+      radiusMeters: true,
+      location: {
+        select: {
+          latitude: true,
+          longitude: true,
+          geofenceRadiusMeters: true,
+        },
+      },
+    },
+  });
+  let device: typeof devices[number] | null = null;
+  for (const d of devices) {
+    if (await verifyPassword(d.tokenHash, input.deviceToken)) {
+      device = d;
+      break;
+    }
+  }
+  if (!device) {
+    throw new HttpError(401, 'invalid_device', 'Device not registered.');
+  }
+  if (device.tokenExpiresAt && device.tokenExpiresAt.getTime() < Date.now()) {
+    throw new HttpError(
+      401,
+      'device_token_expired',
+      'This kiosk\'s device token expired. Re-pair from the admin page.',
+    );
+  }
+  enforcePunchRateLimit(device.id);
+
+  // Geofence check — same all-or-none Location-first / device-override
+  // precedence as /kiosk/punch.
+  const fenceLat = device.location?.latitude
+    ? Number(device.location.latitude)
+    : device.latitude
+      ? Number(device.latitude)
+      : null;
+  const fenceLng = device.location?.longitude
+    ? Number(device.location.longitude)
+    : device.longitude
+      ? Number(device.longitude)
+      : null;
+  const fenceRadius =
+    device.location?.geofenceRadiusMeters ?? device.radiusMeters ?? null;
+  if (fenceLat != null && fenceLng != null && fenceRadius != null) {
+    if (input.latitude == null || input.longitude == null) {
+      throw new HttpError(
+        400,
+        'location_required',
+        'This kiosk requires location. Allow location access and try again.',
+      );
+    }
+    const dist = Math.round(
+      distanceMeters(fenceLat, fenceLng, input.latitude, input.longitude),
+    );
+    if (dist > fenceRadius) {
+      throw new HttpError(
+        403,
+        'geofence_violation',
+        'This kiosk is outside its allowed location.',
+      );
+    }
+  }
+
+  // PIN match — same global HMAC lookup + cross-client safety check.
+  const pinHmac = hmacPin(input.pin);
+  const pinRow = await prisma.kioskPin.findUnique({
+    where: { pinHmac },
+    include: {
+      associate: { select: { id: true, firstName: true, lastName: true } },
+    },
+  });
+  if (!pinRow || pinRow.clientId !== device.clientId) {
+    recordFailedPinAttempt(device.id);
+    // Audit a REJECTED row so the brute-force timeline matches
+    // /kiosk/punch. clientPunchedAt + idempotency are absent on
+    // preflight by design — those are punch-specific.
+    await prisma.kioskPunch.create({
+      data: {
+        kioskDeviceId: device.id,
+        action: 'REJECTED',
+        rejectReason: 'pin_not_found_preflight',
+        clientPunchedAt: new Date(),
+      },
+    });
+    await prisma.kioskDevice.update({
+      where: { id: device.id },
+      data: { lastSeenAt: new Date() },
+    });
+    throw new HttpError(401, 'invalid_pin', 'PIN not recognized.');
+  }
+  recordSuccessfulPinAttempt(device.id);
+
+  res.json({
+    ok: true,
+    associateFirstName: pinRow.associate.firstName,
+  });
+});
+
 kiosk99Router.post('/kiosk/punch', async (req, res) => {
   const input = PunchInputSchema.parse(req.body);
 

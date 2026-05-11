@@ -102,6 +102,23 @@ export const rotateKioskDevice = (id: string) =>
     { method: 'POST', body: {} },
   );
 
+/** Preflight PIN check. The tablet calls this right after the 4th
+ *  digit is entered, BEFORE opening the camera. Throws on invalid
+ *  device / token expiry / wrong PIN / outside-geofence so the kiosk
+ *  doesn't waste the user's time (and doesn't show them themselves
+ *  on camera) for a made-up code. Returns the associate's first name
+ *  on success so the camera screen can greet them. */
+export const kioskVerifyPin = (payload: {
+  deviceToken: string;
+  pin: string;
+  latitude: number | null;
+  longitude: number | null;
+}) =>
+  apiFetch<{ ok: true; associateFirstName: string }>(
+    '/kiosk/verify-pin',
+    { method: 'POST', body: payload },
+  );
+
 export const updateKioskGeofence = (
   id: string,
   geofence: KioskGeofence | null,

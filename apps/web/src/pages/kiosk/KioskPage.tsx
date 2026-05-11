@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
-import { kioskPunch } from '@/lib/kiosk99Api';
+import { kioskPunch, kioskVerifyPin } from '@/lib/kiosk99Api';
 import { extractDescriptor, loadFaceModels } from '@/lib/faceMatch';
 import { Logo } from '@/components/Logo';
 import {
@@ -46,6 +46,11 @@ export function KioskPage() {
   const [queued, setQueued] = useState<number>(() => queueSize());
 
   // Boot: read token from localStorage, otherwise show setup.
+  // Also kick off face-api model preload here so by the time someone
+  // actually punches, the ~6.5MB of model weights are already cached.
+  // Used to fire on the first tap into PIN entry, which only gave the
+  // models ~5 seconds before the camera opened — too tight on slow
+  // tablets / poor Wi-Fi.
   useEffect(() => {
     try {
       const stored = window.localStorage.getItem(TOKEN_STORAGE_KEY);
@@ -58,6 +63,9 @@ export function KioskPage() {
     } catch {
       setStage('setup');
     }
+    void loadFaceModels().catch(() => {
+      /* ignore — face match becomes optional if the CDN is down */
+    });
   }, []);
 
   // Live clock for the idle screen.
@@ -209,12 +217,7 @@ export function KioskPage() {
         <IdleScreen
           now={now}
           onTap={() => {
-            // Warm up face-api models in the background while the user
-            // taps in their PIN — usually fully loaded by the time the
-            // selfie stage opens.
-            void loadFaceModels().catch(() => {
-              /* ignore — face match becomes optional */
-            });
+            // Models were pre-warmed on mount — just open the pad.
             setStage('pin');
           }}
         />
@@ -225,7 +228,40 @@ export function KioskPage() {
           onChange={setPin}
           intent={intent}
           onIntent={setIntent}
-          onSubmit={() => setStage('selfie')}
+          onSubmit={async () => {
+            // Preflight the PIN before opening the camera. A made-up
+            // code stops here instead of showing the user themselves
+            // on a 5-second selfie countdown. Network failure falls
+            // through so the regular offline-queue flow still works.
+            if (!token) return;
+            try {
+              const loc = await tryGetLocation();
+              await kioskVerifyPin({
+                deviceToken: token,
+                pin,
+                latitude: loc?.lat ?? null,
+                longitude: loc?.lng ?? null,
+              });
+              setStage('selfie');
+            } catch (err) {
+              if (err instanceof ApiError && err.status >= 400 && err.status < 500) {
+                if (err.code === 'device_token_expired' || err.code === 'invalid_device') {
+                  window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+                  setToken(null);
+                  setError(err.message);
+                  setStage('setup');
+                  return;
+                }
+                setError(err.message);
+                setStage('error');
+                window.setTimeout(reset, 3000);
+                return;
+              }
+              // Network failure → assume offline; let the user proceed
+              // to selfie and the punch will land in the offline queue.
+              setStage('selfie');
+            }
+          }}
           onCancel={reset}
         />
       )}
