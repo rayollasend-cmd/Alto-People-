@@ -5,7 +5,7 @@ import { prisma } from '../db.js';
 import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
 import { invalidateUserCache, requireCapability } from '../middleware/auth.js';
-import { enqueueAudit } from '../lib/audit.js';
+import { recordCriticalAudit } from '../lib/audit.js';
 import {
   generatePasswordResetToken,
   PASSWORD_RESET_TTL_SECONDS,
@@ -158,7 +158,11 @@ usersRouter.patch(
     await prisma.user.update({ where: { id }, data });
     invalidateUserCache(id);
 
-    enqueueAudit(
+    // Critical: privilege escalation and account disablement MUST land in
+    // AuditLog before the request returns. Without that, an admin who
+    // grants themselves a higher role and immediately uses it could
+    // theoretically leave no record if the audit insert blipped.
+    await recordCriticalAudit(
       {
         actorUserId: req.user!.id,
         clientId: target.clientId ?? null,
@@ -266,7 +270,10 @@ usersRouter.post(
       console.error('[admin.force_password_reset] email send failed:', err);
     }
 
-    enqueueAudit(
+    // Critical: a forced password reset kills every active session for
+    // the target. The audit row is the only durable record of who pushed
+    // the button and against whom.
+    await recordCriticalAudit(
       {
         actorUserId: req.user!.id,
         clientId: target.clientId ?? null,

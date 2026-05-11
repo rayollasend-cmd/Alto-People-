@@ -1027,6 +1027,8 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
         allSucceeded,
       },
       req,
+      // Irreversible money movement — record-then-respond.
+      critical: true,
     });
 
     // Best-effort QBO journal-entry sync. Only attempt when the run fully
@@ -1352,6 +1354,7 @@ payrollRouter.post('/runs/:id/void', VOID, async (req, res, next) => {
         ageDays: Math.round(ageMs / (24 * 60 * 60 * 1000)),
       },
       req,
+      critical: true,
     });
 
     // Fan out — only associates with an actual user account get a
@@ -1524,6 +1527,7 @@ payrollRouter.post('/runs/:id/amend', VOID, async (req, res, next) => {
         netDeltaTotal: round2(totals.totalNet),
       },
       req,
+      critical: true,
     });
 
     res.status(201).json(toDetail(amendment));

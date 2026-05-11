@@ -14,7 +14,7 @@ import {
 } from '../lib/kioskAuth.js';
 import { enforcePunchRateLimit } from '../lib/kioskRateLimit.js';
 import { encryptString, decryptString } from '../lib/crypto.js';
-import { enqueueAudit } from '../lib/audit.js';
+import { recordCriticalAudit } from '../lib/audit.js';
 
 /**
  * Phase 99 — Kiosk-mode clock in/out: 4-digit PIN + selfie.
@@ -766,7 +766,9 @@ kiosk99Router.get('/kiosk-punches/:id/selfie', MANAGE, async (req, res) => {
   if (!p || !p.selfie) {
     throw new HttpError(404, 'not_found', 'Selfie not found.');
   }
-  enqueueAudit(
+  // Critical: biometric data access. Audit MUST land before we hand the
+  // image bytes back, same posture as payout-method reveal.
+  await recordCriticalAudit(
     {
       actorUserId: req.user!.id,
       action: 'kiosk.selfie_viewed',

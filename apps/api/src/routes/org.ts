@@ -20,7 +20,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { asOf, recordChange } from '../lib/associateHistory.js';
-import { enqueueAudit } from '../lib/audit.js';
+import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { decryptString } from '../lib/crypto.js';
 import { z } from 'zod';
@@ -790,11 +790,26 @@ orgRouter.post(
 
     // AuditLog: who, when, why, from where. Every reveal lands a row
     // visible at /audit so the trail is the actual control on this
-    // power, not just the capability gate.
-    audit(req, 'associate.payout_method_revealed', 'PayoutMethod', payout.id, {
-      associateId: associate.id,
-      reason,
-    });
+    // power, not just the capability gate. Critical: we MUST persist the
+    // audit row before responding with the decrypted account number — a
+    // missing reveal is the difference between "audited disclosure" and
+    // "data exfiltration without a paper trail". If Postgres fails here,
+    // the caller gets a 500 and never sees the cleartext.
+    await recordCriticalAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'associate.payout_method_revealed',
+        entityType: 'PayoutMethod',
+        entityId: payout.id,
+        metadata: {
+          ip: req.ip ?? null,
+          userAgent: req.headers['user-agent'] ?? null,
+          associateId: associate.id,
+          reason,
+        },
+      },
+      'org.associate.payout_method_revealed',
+    );
 
     res.json({
       type: payout.type,
