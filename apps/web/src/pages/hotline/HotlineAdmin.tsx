@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ShieldQuestion } from 'lucide-react';
+import { AlertTriangle, Clock, ShieldQuestion } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {
@@ -13,6 +13,7 @@ import {
   type QueueReport,
   type ReportCategory,
   type ReportStatus,
+  type SlaInfo,
 } from '@/lib/anonReport128Api';
 import {
   Badge,
@@ -87,7 +88,13 @@ export function HotlineAdmin() {
       />
 
       {summary && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          <SummaryCard
+            label="Overdue"
+            value={summary.overdueCount}
+            tone="destructive"
+            icon={AlertTriangle}
+          />
           <SummaryCard label="New" value={summary.newCount} tone="destructive" />
           <SummaryCard
             label="Triaging"
@@ -144,6 +151,7 @@ export function HotlineAdmin() {
                   <TableHead>Category</TableHead>
                   <TableHead>Subject</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>SLA</TableHead>
                   <TableHead>Filed</TableHead>
                   <TableHead>Replies</TableHead>
                 </TableRow>
@@ -152,7 +160,7 @@ export function HotlineAdmin() {
                 {rows.map((r) => (
                   <TableRow
                     key={r.id}
-                    className="cursor-pointer"
+                    className={`cursor-pointer ${r.sla.isOverdue ? 'bg-red-950/20' : ''}`}
                     onClick={() => setOpenId(r.id)}
                   >
                     <TableCell className="font-mono text-xs">
@@ -168,6 +176,9 @@ export function HotlineAdmin() {
                       <Badge variant={STATUS_VARIANT[r.status]}>
                         {r.status}
                       </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <SlaChip sla={r.sla} />
                     </TableCell>
                     <TableCell className="text-xs text-silver">
                       {new Date(r.createdAt).toLocaleDateString()}
@@ -198,10 +209,12 @@ function SummaryCard({
   label,
   value,
   tone,
+  icon: Icon,
 }: {
   label: string;
   value: number;
   tone: 'destructive' | 'pending' | 'accent' | 'success';
+  icon?: typeof AlertTriangle;
 }) {
   const color = {
     destructive: 'text-red-300',
@@ -212,12 +225,47 @@ function SummaryCard({
   return (
     <Card>
       <CardContent className="p-3">
-        <div className="text-xs uppercase tracking-wider text-silver">
-          {label}
+        <div className="flex items-center justify-between">
+          <div className="text-xs uppercase tracking-wider text-silver">
+            {label}
+          </div>
+          {Icon && <Icon className={`h-3.5 w-3.5 ${color}`} />}
         </div>
         <div className={`text-xl font-semibold mt-1 ${color}`}>{value}</div>
       </CardContent>
     </Card>
+  );
+}
+
+function SlaChip({ sla }: { sla: SlaInfo }) {
+  if (sla.isOverdue) {
+    return (
+      <Badge variant="destructive" className="gap-1">
+        <AlertTriangle className="h-3 w-3" />
+        Overdue · {sla.reason === 'unacked' ? 'no ack' : 'awaiting reply'}
+      </Badge>
+    );
+  }
+  const hoursLeft =
+    sla.ackHoursLeft !== null
+      ? sla.ackHoursLeft
+      : sla.responseHoursLeft;
+  if (hoursLeft === null) return null;
+  const tone =
+    hoursLeft < 24
+      ? 'pending'
+      : 'outline';
+  const label =
+    hoursLeft <= 0
+      ? 'due now'
+      : hoursLeft < 24
+      ? `${hoursLeft}h left`
+      : `${Math.round(hoursLeft / 24)}d left`;
+  return (
+    <Badge variant={tone} className="gap-1">
+      <Clock className="h-3 w-3" />
+      {label}
+    </Badge>
   );
 }
 
@@ -290,15 +338,34 @@ function ReportDrawer({
           <SkeletonRows count={3} />
         ) : (
           <>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <Badge variant={STATUS_VARIANT[report.status]}>
                 {report.status}
               </Badge>
+              <SlaChip sla={report.sla} />
               <span className="text-xs text-silver">
                 {CATEGORY_LABELS[report.category]} · Filed{' '}
                 {new Date(report.createdAt).toLocaleString()}
               </span>
             </div>
+            {report.sla.isOverdue && (
+              <div className="rounded border border-red-700/40 bg-red-950/30 p-3 text-sm text-red-100">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                  <div>
+                    <div className="font-medium">
+                      {report.sla.reason === 'unacked'
+                        ? 'No HR acknowledgement within 3 days.'
+                        : 'Reporter is waiting for a response.'}
+                    </div>
+                    <div className="text-xs mt-0.5 text-red-200/80">
+                      {report.sla.lastReporterAt &&
+                        `Last reporter message: ${new Date(report.sla.lastReporterAt).toLocaleString()}`}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="text-xs text-silver">
               Tracking code:{' '}
               <span className="font-mono text-white">

@@ -151,6 +151,99 @@ anonReport128Router.post(
   },
 );
 
+// ----- SLA constants -------------------------------------------------------
+//
+// Two-tier service-level commitments shown on the HR dashboard:
+//
+//   - ACK SLA  (3 business days, simplified to 3 calendar days): once a
+//     report is RECEIVED, HR must post the first reply.
+//   - RESPONSE SLA (5 days): once the reporter posts a follow-up, HR
+//     must respond within 5 days OR the case is breach-flagged.
+//
+// Reports past either window with no fresh HR reply are flagged stale.
+// The thresholds are deliberately conservative; whistleblower regulations
+// (Sarbanes-Oxley §806, EU Whistleblower Directive) require demonstrable
+// follow-up, and "case dropped into a void" is the most common complaint.
+
+const ACK_SLA_DAYS = 3;
+const RESPONSE_SLA_DAYS = 5;
+const dayMs = 24 * 60 * 60 * 1000;
+
+type ReportUpdateForSla = {
+  isFromReporter: boolean;
+  internalOnly: boolean;
+  createdAt: Date;
+};
+
+interface SlaInfo {
+  ackedAt: string | null;
+  ackHoursLeft: number | null;
+  lastReporterAt: string | null;
+  lastHrReplyAt: string | null;
+  responseHoursLeft: number | null;
+  isOverdue: boolean;
+  reason: 'unacked' | 'unanswered' | null;
+}
+
+function computeSla(
+  status: string,
+  createdAt: Date,
+  updates: ReportUpdateForSla[],
+): SlaInfo {
+  // Resolved/closed cases don't accrue SLA pressure.
+  if (status === 'RESOLVED' || status === 'CLOSED') {
+    return {
+      ackedAt: null,
+      ackHoursLeft: null,
+      lastReporterAt: null,
+      lastHrReplyAt: null,
+      responseHoursLeft: null,
+      isOverdue: false,
+      reason: null,
+    };
+  }
+  const visible = updates.filter((u) => !u.internalOnly);
+  const firstHrReply = visible.find((u) => !u.isFromReporter);
+  const lastHrReply = [...visible].reverse().find((u) => !u.isFromReporter);
+  const lastReporter = [...visible].reverse().find((u) => u.isFromReporter);
+  const now = Date.now();
+
+  let ackHoursLeft: number | null = null;
+  if (!firstHrReply) {
+    const deadline = createdAt.getTime() + ACK_SLA_DAYS * dayMs;
+    ackHoursLeft = Math.round((deadline - now) / (60 * 60 * 1000));
+  }
+
+  let responseHoursLeft: number | null = null;
+  if (
+    lastReporter &&
+    (!lastHrReply || lastHrReply.createdAt < lastReporter.createdAt)
+  ) {
+    const deadline = lastReporter.createdAt.getTime() + RESPONSE_SLA_DAYS * dayMs;
+    responseHoursLeft = Math.round((deadline - now) / (60 * 60 * 1000));
+  }
+
+  let reason: SlaInfo['reason'] = null;
+  let isOverdue = false;
+  if (ackHoursLeft !== null && ackHoursLeft <= 0) {
+    isOverdue = true;
+    reason = 'unacked';
+  } else if (responseHoursLeft !== null && responseHoursLeft <= 0) {
+    isOverdue = true;
+    reason = 'unanswered';
+  }
+
+  return {
+    ackedAt: firstHrReply?.createdAt.toISOString() ?? null,
+    ackHoursLeft,
+    lastReporterAt: lastReporter?.createdAt.toISOString() ?? null,
+    lastHrReplyAt: lastHrReply?.createdAt.toISOString() ?? null,
+    responseHoursLeft,
+    isOverdue,
+    reason,
+  };
+}
+
 // ----- HR queue -------------------------------------------------------------
 
 anonReport128Router.get('/anonymous-reports', MANAGE_PERF, async (req, res) => {
@@ -163,7 +256,9 @@ anonReport128Router.get('/anonymous-reports', MANAGE_PERF, async (req, res) => {
     where: status ? { status } : {},
     include: {
       assignedTo: { select: { email: true } },
-      _count: { select: { updates: true } },
+      updates: {
+        select: { isFromReporter: true, internalOnly: true, createdAt: true },
+      },
     },
     orderBy: { createdAt: 'desc' },
   });
@@ -176,9 +271,10 @@ anonReport128Router.get('/anonymous-reports', MANAGE_PERF, async (req, res) => {
       status: r.status,
       contactEmail: r.contactEmail,
       assignedToEmail: r.assignedTo?.email ?? null,
-      updateCount: r._count.updates,
+      updateCount: r.updates.length,
       createdAt: r.createdAt.toISOString(),
       resolvedAt: r.resolvedAt?.toISOString() ?? null,
+      sla: computeSla(r.status, r.createdAt, r.updates),
     })),
   });
 });
@@ -221,6 +317,7 @@ anonReport128Router.get(
         resolvedAt: report.resolvedAt?.toISOString() ?? null,
         createdAt: report.createdAt.toISOString(),
         updatedAt: report.updatedAt.toISOString(),
+        sla: computeSla(report.status, report.createdAt, report.updates),
         updates: report.updates.map((u) => ({
           id: u.id,
           body: u.body,
@@ -311,17 +408,38 @@ anonReport128Router.get(
   '/anonymous-reports-summary',
   MANAGE_PERF,
   async (_req, res) => {
-    const [received, triaging, investigating, resolved] = await Promise.all([
-      prisma.anonymousReport.count({ where: { status: 'RECEIVED' } }),
-      prisma.anonymousReport.count({ where: { status: 'TRIAGING' } }),
-      prisma.anonymousReport.count({ where: { status: 'INVESTIGATING' } }),
-      prisma.anonymousReport.count({ where: { status: 'RESOLVED' } }),
-    ]);
+    const [received, triaging, investigating, resolved, openReports] =
+      await Promise.all([
+        prisma.anonymousReport.count({ where: { status: 'RECEIVED' } }),
+        prisma.anonymousReport.count({ where: { status: 'TRIAGING' } }),
+        prisma.anonymousReport.count({ where: { status: 'INVESTIGATING' } }),
+        prisma.anonymousReport.count({ where: { status: 'RESOLVED' } }),
+        prisma.anonymousReport.findMany({
+          where: { status: { in: ['RECEIVED', 'TRIAGING', 'INVESTIGATING'] } },
+          select: {
+            status: true,
+            createdAt: true,
+            updates: {
+              select: {
+                isFromReporter: true,
+                internalOnly: true,
+                createdAt: true,
+              },
+            },
+          },
+        }),
+      ]);
+    let overdueCount = 0;
+    for (const r of openReports) {
+      const sla = computeSla(r.status, r.createdAt, r.updates);
+      if (sla.isOverdue) overdueCount++;
+    }
     res.json({
       newCount: received,
       triagingCount: triaging,
       investigatingCount: investigating,
       resolvedCount: resolved,
+      overdueCount,
     });
   },
 );

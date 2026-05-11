@@ -36,6 +36,16 @@ export interface PublicReport {
   updates: PublicReportUpdate[];
 }
 
+export interface SlaInfo {
+  ackedAt: string | null;
+  ackHoursLeft: number | null;
+  lastReporterAt: string | null;
+  lastHrReplyAt: string | null;
+  responseHoursLeft: number | null;
+  isOverdue: boolean;
+  reason: 'unacked' | 'unanswered' | null;
+}
+
 export interface QueueReport {
   id: string;
   trackingCode: string;
@@ -47,6 +57,7 @@ export interface QueueReport {
   updateCount: number;
   createdAt: string;
   resolvedAt: string | null;
+  sla: SlaInfo;
 }
 
 export interface HrReportUpdate {
@@ -71,6 +82,7 @@ export interface HrReportDetail {
   resolvedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  sla: SlaInfo;
   updates: HrReportUpdate[];
 }
 
@@ -79,6 +91,7 @@ export interface HotlineSummary {
   triagingCount: number;
   investigatingCount: number;
   resolvedCount: number;
+  overdueCount: number;
 }
 
 export const fileAnonymousReport = (input: {
