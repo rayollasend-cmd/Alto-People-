@@ -9,18 +9,21 @@
  *
  * The library itself (~250KB minified) is also lazy-loaded via dynamic
  * import — the kiosk shell paints instantly, and face-api downloads
- * the first time someone reaches the selfie step.
+ * the first time someone reaches the selfie step. Default models URL
+ * is jsDelivr; set VITE_FACE_MODELS_URL to override (e.g. `/face-models`
+ * after running `npm run build:face-models` for self-hosting).
  *
- * Phase 131 hardening — weights are self-hosted under
- * `/face-models/` (apps/web/public/face-models/). The build-time
- * script `npm run build:face-models` (also runs as `prebuild`) pulls
- * the weight files from jsDelivr once per fresh install and bakes
- * them into the Vite output. Setting VITE_FACE_MODELS_URL overrides
- * the path — handy for air-gapped deployments that want to point at a
- * private mirror.
+ * Self-hosting plan (deferred): the build:face-models script pulls
+ * the weight files into apps/web/public/face-models/. Switching the
+ * default URL to `/face-models` should wait until Railway's build
+ * reliably runs it — an earlier attempt to wire it in as `prebuild`
+ * broke the web build because Railway couldn't always reach jsDelivr
+ * at build time. Keep the runtime fallback on jsDelivr so a kiosk
+ * tablet doesn't break the day Railway's outbound hiccups.
  */
 
-const DEFAULT_MODELS_URL = '/face-models';
+const DEFAULT_MODELS_URL =
+  'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights';
 
 type FaceApi = typeof import('face-api.js');
 
