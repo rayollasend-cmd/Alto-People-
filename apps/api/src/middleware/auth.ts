@@ -175,15 +175,45 @@ export async function attachUser(
  * `next` is intentionally a path-only string (leading slash, no host) — the
  * Login route validates it before navigating to prevent open-redirect.
  */
+
+/**
+ * Accept only same-origin relative paths for the `?next=` redirect.
+ *
+ *   /people                 ✅
+ *   /people?associateId=42  ✅
+ *   //attacker.com          ❌ (protocol-relative URL)
+ *   https://attacker.com    ❌ (absolute URL)
+ *   javascript:alert(1)     ❌ (alternate scheme)
+ *   \\attacker.com          ❌ (browsers treat as authority)
+ *
+ * Encoding `req.originalUrl` straight into the login query string was a
+ * latent open-redirect — if Login.tsx ever called `navigate(next)`
+ * without its own check, a crafted link could send the user from the
+ * legitimate login page to a phishing clone after the redirect bounce.
+ */
+function isSafeNextPath(path: string): boolean {
+  if (path.length === 0 || path.length > 1000) return false;
+  if (path[0] !== '/') return false;
+  // Reject `//host`, `/\host`, and any other authority-looking prefix.
+  if (path[1] === '/' || path[1] === '\\') return false;
+  // Reject control chars and whitespace anywhere in the path — they can
+  // smuggle a CR/LF into the Location header or trick parsers.
+  if (/[\x00-\x1f\s]/.test(path)) return false;
+  return true;
+}
+
 function replyUnauthenticated(req: Request, res: Response): void {
   const accept = req.get('accept') ?? '';
   const wantsHtml = req.method === 'GET' && accept.includes('text/html');
   if (wantsHtml) {
     // req.originalUrl preserves the pre-stripApiPrefix path so the user
-    // returns to where they were trying to go.
-    const next = req.originalUrl && req.originalUrl !== '/login'
-      ? `?next=${encodeURIComponent(req.originalUrl)}`
-      : '';
+    // returns to where they were trying to go. Only forwarded when it's
+    // a safe same-origin path; anything else is dropped silently.
+    const original = req.originalUrl ?? '';
+    const next =
+      original && original !== '/login' && isSafeNextPath(original)
+        ? `?next=${encodeURIComponent(original)}`
+        : '';
     res.redirect(302, `/login${next}`);
     return;
   }

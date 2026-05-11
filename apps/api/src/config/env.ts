@@ -25,7 +25,7 @@ const EnvSchema = z.object({
   DIRECT_URL: z.string().min(1).optional(),
   JWT_SECRET: z
     .string()
-    .min(32, 'JWT_SECRET must be at least 32 chars (use openssl rand -base64 48)'),
+    .min(44, 'JWT_SECRET must be at least 44 chars — generate with `openssl rand -base64 48`. 32-char passphrases decode to ~24 bytes of entropy, below NIST guidance for HS256.'),
   JWT_TTL_SECONDS: z.coerce.number().int().positive().default(86400),
   PAYOUT_ENCRYPTION_KEY: z
     .string()
@@ -189,6 +189,38 @@ if (!parsed.success) {
 // Cross-field guards. We exit fail-loud rather than fall back silently —
 // a misconfigured production environment that quietly routes to STUB
 // would not move money, and the failure mode is invisible until payday.
+// Production must explicitly configure independent keys for MFA secrets
+// and kiosk PIN HMACs. Both are documented as defaulting to
+// PAYOUT_ENCRYPTION_KEY for dev convenience, but a prod environment that
+// silently shares one secret across three sensitive data domains turns
+// a single key compromise into a triple breach (MFA bypass + every kiosk
+// PIN recoverable + all direct-deposit bank info decryptable). Mirrors
+// the BRANCH fail-loud pattern below.
+if (parsed.data.NODE_ENV === 'production') {
+  if (
+    !parsed.data.MFA_SECRET_ENCRYPTION_KEY ||
+    parsed.data.MFA_SECRET_ENCRYPTION_KEY.trim() === ''
+  ) {
+    console.error(
+      'FATAL: NODE_ENV=production but MFA_SECRET_ENCRYPTION_KEY is not configured. ' +
+        'It cannot silently fall back to PAYOUT_ENCRYPTION_KEY in prod — one leaked secret ' +
+        'would unlock MFA seeds AND direct-deposit bank info. Generate with `openssl rand -base64 32`.',
+    );
+    process.exit(1);
+  }
+  if (
+    !parsed.data.KIOSK_PIN_SECRET ||
+    parsed.data.KIOSK_PIN_SECRET.trim() === ''
+  ) {
+    console.error(
+      'FATAL: NODE_ENV=production but KIOSK_PIN_SECRET is not configured. ' +
+        'It cannot silently fall back to PAYOUT_ENCRYPTION_KEY in prod — one leaked secret ' +
+        'would let an attacker forge every existing kiosk PIN HMAC. Generate with `openssl rand -base64 48`.',
+    );
+    process.exit(1);
+  }
+}
+
 if (parsed.data.PAYROLL_DISBURSEMENT_PROVIDER === 'BRANCH') {
   if (!parsed.data.BRANCH_API_KEY || parsed.data.BRANCH_API_KEY.trim() === '') {
     console.error(
