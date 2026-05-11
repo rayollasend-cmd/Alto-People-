@@ -108,6 +108,32 @@ export async function purgeOldSelfies(
 }
 
 /**
+ * Drop every selfie and the face reference for a single associate.
+ * Called when their separation completes — the punch rows stay (HR
+ * still needs to audit historical hours / anomalies for payroll
+ * disputes), but their biometric data leaves the DB immediately
+ * rather than waiting for the 90-day retention sweep.
+ */
+export async function purgeAssociateBiometrics(
+  prisma: PrismaClient,
+  associateId: string,
+): Promise<{ selfiesPurged: number; faceReferenceCleared: boolean }> {
+  const [selfieResult, faceResult] = await Promise.all([
+    prisma.kioskPunch.updateMany({
+      where: { associateId, selfie: { not: null } },
+      data: { selfie: null },
+    }),
+    prisma.kioskFaceReference.deleteMany({
+      where: { associateId },
+    }),
+  ]);
+  return {
+    selfiesPurged: selfieResult.count,
+    faceReferenceCleared: faceResult.count > 0,
+  };
+}
+
+/**
  * One-shot: run all maintenance jobs and aggregate the result. Safe to
  * call from a cron, a request handler, or tests.
  */

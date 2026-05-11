@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
 
 /**
  * Phase 119 — Separations + exit interviews.
@@ -217,6 +218,21 @@ separation119Router.post(
           : {}),
       },
     });
+    // Phase 131 follow-up — when the offboarding completes, drop the
+    // associate's selfies and face reference immediately rather than
+    // waiting for the 90-day retention sweep. Punch rows stay for HR
+    // audit; only the biometric bytes are removed. Best-effort: a
+    // failure here is logged but doesn't block the status advance.
+    if (next === 'COMPLETE') {
+      try {
+        await purgeAssociateBiometrics(prisma, existing.associateId);
+      } catch (err) {
+        console.warn(
+          '[separation119] purgeAssociateBiometrics failed',
+          { separationId: id, associateId: existing.associateId, err: err instanceof Error ? err.message : err },
+        );
+      }
+    }
     res.json({ ok: true, status: next });
   },
 );
