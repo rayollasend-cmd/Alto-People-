@@ -491,6 +491,17 @@ function SelfieCapture({
   const [streamErr, setStreamErr] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
 
+  // Latch the callback in a ref so the countdown effect below doesn't
+  // depend on it. The parent re-renders every second (its idle clock
+  // ticks even while the selfie screen is up), which produces a new
+  // onCaptured arrow on every render. Listing it as a dep made the
+  // 1-second setTimeout get cleared + restarted before it could fire,
+  // so the countdown sat at 2 forever and the capture never happened.
+  const onCapturedRef = useRef(onCaptured);
+  useEffect(() => {
+    onCapturedRef.current = onCaptured;
+  }, [onCaptured]);
+
   useEffect(() => {
     let stream: MediaStream | null = null;
     (async () => {
@@ -541,13 +552,13 @@ function SelfieCapture({
         } catch {
           /* swallow — face match is optional */
         }
-        onCaptured(data, descriptor);
+        onCapturedRef.current(data, descriptor);
       })();
       return;
     }
     const t = window.setTimeout(() => setCountdown(countdown - 1), 1000);
     return () => clearTimeout(t);
-  }, [countdown, onCaptured]);
+  }, [countdown]);
 
   if (streamErr) {
     return (
