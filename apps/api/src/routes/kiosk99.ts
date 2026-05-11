@@ -10,6 +10,7 @@ import {
   generateDeviceToken,
   generatePin,
   hmacPin,
+  tokenLookupPrefix,
 } from '../lib/kioskAuth.js';
 import {
   enforcePunchRateLimit,
@@ -17,6 +18,7 @@ import {
   recordSuccessfulPinAttempt,
 } from '../lib/kioskRateLimit.js';
 import { encryptString, decryptString } from '../lib/crypto.js';
+import { enqueueAudit } from '../lib/audit.js';
 
 /**
  * Phase 99 — Kiosk-mode clock in/out: 4-digit PIN + selfie.
@@ -51,22 +53,15 @@ const MANAGE = requireCapability('manage:time');
 
 // ----- Admin: KioskDevice ------------------------------------------------
 
-const GeofenceSchema = z
-  .object({
-    latitude: z.number().min(-90).max(90),
-    longitude: z.number().min(-180).max(180),
-    radiusMeters: z.number().int().positive().max(50_000),
-  })
-  .nullable();
-
 // Phase 131 — clientId becomes optional when locationId is supplied
 // (we derive the client from the Location). At least one must be set.
+// The geofence comes from the Location, not the device; per-device
+// override was retired in 20260512040000_drop_kiosk_device_geofence.
 const DeviceInputSchema = z
   .object({
     clientId: z.string().uuid().optional(),
     locationId: z.string().uuid().optional(),
     name: z.string().min(1).max(120),
-    geofence: GeofenceSchema.optional(),
   })
   .refine((v) => v.clientId || v.locationId, {
     message: 'clientId or locationId is required',
@@ -106,14 +101,6 @@ kiosk99Router.get('/kiosk-devices', MANAGE, async (req, res) => {
       lastSeenAt: d.lastSeenAt?.toISOString() ?? null,
       tokenExpiresAt: d.tokenExpiresAt?.toISOString() ?? null,
       punchCount: d._count.punches,
-      geofence:
-        d.latitude && d.longitude && d.radiusMeters
-          ? {
-              latitude: Number(d.latitude),
-              longitude: Number(d.longitude),
-              radiusMeters: d.radiusMeters,
-            }
-          : null,
       createdAt: d.createdAt.toISOString(),
     })),
   });
@@ -163,7 +150,7 @@ kiosk99Router.post('/kiosk-devices', MANAGE, async (req, res) => {
     throw new HttpError(400, 'invalid_body', 'clientId or locationId is required.');
   }
 
-  const { plaintext } = generateDeviceToken();
+  const { plaintext, prefix } = generateDeviceToken();
   const tokenHash = await hashPassword(plaintext);
   const created = await prisma.kioskDevice.create({
     data: {
@@ -171,10 +158,8 @@ kiosk99Router.post('/kiosk-devices', MANAGE, async (req, res) => {
       locationId: resolvedLocationId,
       name: input.name,
       tokenHash,
+      tokenPrefix: prefix,
       tokenExpiresAt: nextTokenExpiry(),
-      latitude: input.geofence?.latitude ?? null,
-      longitude: input.geofence?.longitude ?? null,
-      radiusMeters: input.geofence?.radiusMeters ?? null,
       createdById: req.user!.id,
     },
   });
@@ -201,11 +186,15 @@ kiosk99Router.post('/kiosk-devices/:id/rotate', MANAGE, async (req, res) => {
   if (!existing) {
     throw new HttpError(404, 'device_not_found', 'Device not found.');
   }
-  const { plaintext } = generateDeviceToken();
+  const { plaintext, prefix } = generateDeviceToken();
   const tokenHash = await hashPassword(plaintext);
   const updated = await prisma.kioskDevice.update({
     where: { id: existing.id },
-    data: { tokenHash, tokenExpiresAt: nextTokenExpiry() },
+    data: {
+      tokenHash,
+      tokenPrefix: prefix,
+      tokenExpiresAt: nextTokenExpiry(),
+    },
     select: { id: true, tokenExpiresAt: true },
   });
   res.json({
@@ -213,21 +202,6 @@ kiosk99Router.post('/kiosk-devices/:id/rotate', MANAGE, async (req, res) => {
     deviceToken: plaintext,
     tokenExpiresAt: updated.tokenExpiresAt?.toISOString() ?? null,
   });
-});
-
-// Update geofence (or clear it). Other device fields aren't editable
-// for v1 — the device token is identity, and HR can revoke + re-pair.
-kiosk99Router.put('/kiosk-devices/:id/geofence', MANAGE, async (req, res) => {
-  const geofence = GeofenceSchema.parse(req.body?.geofence);
-  await prisma.kioskDevice.update({
-    where: { id: req.params.id },
-    data: {
-      latitude: geofence?.latitude ?? null,
-      longitude: geofence?.longitude ?? null,
-      radiusMeters: geofence?.radiusMeters ?? null,
-    },
-  });
-  res.json({ ok: true });
 });
 
 kiosk99Router.post('/kiosk-devices/:id/revoke', MANAGE, async (req, res) => {
@@ -365,6 +339,13 @@ kiosk99Router.get('/kiosk-punches', MANAGE, async (req, res) => {
     .enum(['PENDING', 'APPROVED', 'REJECTED'])
     .optional()
     .parse(req.query.reviewStatus);
+  // 'oldest' surfaces the most stale review-queue items first; HR
+  // working the queue wants the back of the line, not the front.
+  // Defaults to newest-first to match the existing punch log.
+  const sort = z
+    .enum(['newest', 'oldest'])
+    .optional()
+    .parse(req.query.sort);
   const rows = await prisma.kioskPunch.findMany({
     where: {
       ...(associateId ? { associateId } : {}),
@@ -376,7 +357,7 @@ kiosk99Router.get('/kiosk-punches', MANAGE, async (req, res) => {
       associate: { select: { firstName: true, lastName: true } },
       reviewedBy: { select: { email: true } },
     },
-    orderBy: { createdAt: 'desc' },
+    orderBy: { createdAt: sort === 'oldest' ? 'asc' : 'desc' },
     take: 500,
   });
   res.json({
@@ -412,6 +393,71 @@ kiosk99Router.get('/kiosk-punches', MANAGE, async (req, res) => {
 const ReviewDecisionSchema = z.object({
   decision: z.enum(['APPROVED', 'REJECTED']),
   notes: z.string().max(2000).optional(),
+});
+
+// Bulk review — accept up to 50 punch IDs at once so HR can clear a
+// backlog of flagged punches without 50 round-trips. Same semantics as
+// the single-id endpoint: APPROVED leaves the TimeEntry intact,
+// REJECTED voids it. Non-PENDING IDs are skipped (not errored) so a
+// stale checkbox doesn't fail the whole batch. Returns per-id outcome
+// for the UI to surface.
+const BulkReviewSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1).max(50),
+  decision: z.enum(['APPROVED', 'REJECTED']),
+  notes: z.string().max(2000).optional(),
+});
+
+kiosk99Router.post('/kiosk-punches/review', MANAGE, async (req, res) => {
+  const { ids, decision, notes } = BulkReviewSchema.parse(req.body);
+  const punches = await prisma.kioskPunch.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, timeEntryId: true, reviewStatus: true },
+  });
+  const byId = new Map(punches.map((p) => [p.id, p]));
+  const reviewedAt = new Date();
+  const reviewedById = req.user!.id;
+  const reviewNotes = notes ?? null;
+
+  let reviewed = 0;
+  const skipped: { id: string; reason: 'not_found' | 'not_pending' }[] = [];
+  for (const id of ids) {
+    const punch = byId.get(id);
+    if (!punch) {
+      skipped.push({ id, reason: 'not_found' });
+      continue;
+    }
+    if (punch.reviewStatus !== 'PENDING') {
+      skipped.push({ id, reason: 'not_pending' });
+      continue;
+    }
+    // Loop one txn per punch — keeps the failure radius small and lets
+    // the bulk request succeed-partial. 50 punches × ~30ms ≈ 1.5s, fine
+    // for an HR batch action.
+    await prisma.$transaction(async (tx) => {
+      await tx.kioskPunch.update({
+        where: { id: punch.id },
+        data: {
+          reviewStatus: decision,
+          reviewedById,
+          reviewedAt,
+          reviewNotes,
+        },
+      });
+      if (decision === 'REJECTED' && punch.timeEntryId) {
+        await tx.timeEntry.update({
+          where: { id: punch.timeEntryId },
+          data: {
+            status: 'REJECTED',
+            notes: notes
+              ? `[Voided by review: ${notes}]`
+              : '[Voided by kiosk review]',
+          },
+        });
+      }
+    });
+    reviewed++;
+  }
+  res.json({ reviewed, skipped });
 });
 
 kiosk99Router.post('/kiosk-punches/:id/review', MANAGE, async (req, res) => {
@@ -495,15 +541,33 @@ kiosk99Router.delete(
   },
 );
 
-// Serve the selfie image. Inline so HR can audit visually.
+// Serve the selfie image. Inline so HR can audit visually. Every view
+// is stamped on AuditLog because selfies are biometric data — anyone
+// with manage:time can pull them and we want a paper trail of who
+// looked at what, when, and from where.
 kiosk99Router.get('/kiosk-punches/:id/selfie', MANAGE, async (req, res) => {
   const p = await prisma.kioskPunch.findUnique({
     where: { id: req.params.id },
-    select: { selfie: true },
+    select: { selfie: true, associateId: true, kioskDeviceId: true },
   });
   if (!p || !p.selfie) {
     throw new HttpError(404, 'not_found', 'Selfie not found.');
   }
+  enqueueAudit(
+    {
+      actorUserId: req.user!.id,
+      action: 'kiosk.selfie_viewed',
+      entityType: 'KioskPunch',
+      entityId: req.params.id,
+      metadata: {
+        associateId: p.associateId,
+        kioskDeviceId: p.kioskDeviceId,
+        ip: req.ip ?? null,
+        userAgent: req.headers['user-agent'] ?? null,
+      },
+    },
+    'kiosk.selfie_viewed',
+  );
   res.setHeader('Content-Type', 'image/jpeg');
   res.setHeader('Cache-Control', 'private, max-age=300');
   res.send(p.selfie);
@@ -616,38 +680,63 @@ const VerifyPinInputSchema = z.object({
   longitude: z.number().min(-180).max(180).optional().nullable(),
 });
 
+// Two-stage device lookup, shared by /kiosk/verify-pin and
+// /kiosk/punch. Phase 131 hardening — bcrypt-verify is ~5ms per row,
+// so scanning every active device per punch costs O(active devices) ×
+// 5ms. tokenPrefix is the first 16 chars of the plaintext (stored
+// non-secret); the (tokenPrefix, isActive) composite index narrows
+// the candidate set to ~1 row. Legacy devices created before the
+// prefix migration have NULL tokenPrefix and fall through to a
+// bounded scan; after the 90-day token TTL forces global rotation,
+// the scan path becomes dead code.
+const DEVICE_SCAN_FIELDS = {
+  id: true,
+  clientId: true,
+  locationId: true,
+  tokenHash: true,
+  tokenExpiresAt: true,
+  location: {
+    select: {
+      latitude: true,
+      longitude: true,
+      geofenceRadiusMeters: true,
+    },
+  },
+} as const;
+
+type DeviceLookupRow = NonNullable<
+  Awaited<ReturnType<typeof findDeviceByPlaintextToken>>
+>;
+
+async function findDeviceByPlaintextToken(plaintext: string) {
+  const prefix = tokenLookupPrefix(plaintext);
+  const fast = await prisma.kioskDevice.findMany({
+    where: { isActive: true, tokenPrefix: prefix },
+    select: DEVICE_SCAN_FIELDS,
+    take: 20,
+  });
+  for (const d of fast) {
+    if (await verifyPassword(d.tokenHash, plaintext)) return d;
+  }
+  const legacy = await prisma.kioskDevice.findMany({
+    where: { isActive: true, tokenPrefix: null },
+    select: DEVICE_SCAN_FIELDS,
+    take: 500,
+  });
+  for (const d of legacy) {
+    if (await verifyPassword(d.tokenHash, plaintext)) return d;
+  }
+  return null;
+}
+
 kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
   const input = VerifyPinInputSchema.parse(req.body);
 
   // Mirror /kiosk/punch's device + expiry + rate-limit chain so the
   // preflight enforces the same auth posture as the real punch.
-  const devices = await prisma.kioskDevice.findMany({
-    take: 500,
-    where: { isActive: true },
-    select: {
-      id: true,
-      clientId: true,
-      tokenHash: true,
-      tokenExpiresAt: true,
-      latitude: true,
-      longitude: true,
-      radiusMeters: true,
-      location: {
-        select: {
-          latitude: true,
-          longitude: true,
-          geofenceRadiusMeters: true,
-        },
-      },
-    },
-  });
-  let device: typeof devices[number] | null = null;
-  for (const d of devices) {
-    if (await verifyPassword(d.tokenHash, input.deviceToken)) {
-      device = d;
-      break;
-    }
-  }
+  const device: DeviceLookupRow | null = await findDeviceByPlaintextToken(
+    input.deviceToken,
+  );
   if (!device) {
     throw new HttpError(401, 'invalid_device', 'Device not registered.');
   }
@@ -660,20 +749,16 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
   }
   enforcePunchRateLimit(device.id);
 
-  // Geofence check — same all-or-none Location-first / device-override
-  // precedence as /kiosk/punch.
+  // Geofence check — Location-only after Phase 131; per-device
+  // override columns were dropped in
+  // 20260512040000_drop_kiosk_device_geofence.
   const fenceLat = device.location?.latitude
     ? Number(device.location.latitude)
-    : device.latitude
-      ? Number(device.latitude)
-      : null;
+    : null;
   const fenceLng = device.location?.longitude
     ? Number(device.location.longitude)
-    : device.longitude
-      ? Number(device.longitude)
-      : null;
-  const fenceRadius =
-    device.location?.geofenceRadiusMeters ?? device.radiusMeters ?? null;
+    : null;
+  const fenceRadius = device.location?.geofenceRadiusMeters ?? null;
   if (fenceLat != null && fenceLng != null && fenceRadius != null) {
     if (input.latitude == null || input.longitude == null) {
       throw new HttpError(
@@ -785,42 +870,14 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     clientPunchedAt = d;
   }
 
-  // 1. Resolve device token. We don't index by token (would defeat bcrypt),
-  // so we look up active devices for any client and verify against each.
-  // For typical deployments that's a few dozen rows — cheap. If this ever
-  // becomes hot, add a token-prefix index column.
-  const devices = await prisma.kioskDevice.findMany({
-    take: 500,
-    where: { isActive: true },
-    select: {
-      id: true,
-      clientId: true,
-      locationId: true,
-      tokenHash: true,
-      tokenExpiresAt: true,
-      latitude: true,
-      longitude: true,
-      radiusMeters: true,
-      // Phase 131 — Location's geofence takes precedence over the
-      // per-device override when both are set. The per-device fields
-      // remain a fallback for devices registered before Locations
-      // existed.
-      location: {
-        select: {
-          latitude: true,
-          longitude: true,
-          geofenceRadiusMeters: true,
-        },
-      },
-    },
-  });
-  let device: typeof devices[number] | null = null;
-  for (const d of devices) {
-    if (await verifyPassword(d.tokenHash, input.deviceToken)) {
-      device = d;
-      break;
-    }
-  }
+  // 1. Resolve device token. Two-stage lookup via the tokenPrefix
+  // index — see findDeviceByPlaintextToken above for the rationale.
+  // Phase 131 — Location's geofence takes precedence over the
+  // per-device override when both are set; the per-device fields stay
+  // as a fallback for devices registered before Locations existed.
+  const device: DeviceLookupRow | null = await findDeviceByPlaintextToken(
+    input.deviceToken,
+  );
   if (!device) {
     // Don't leak whether the token format was even right.
     throw new HttpError(401, 'invalid_device', 'Device not registered.');
@@ -845,26 +902,19 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
   // burn cycles with garbage tokens) but before any DB writes.
   enforcePunchRateLimit(device.id);
 
-  // 2. Geofence check. If device has a geofence, location is required
-  // and must be within radius. Distance is recorded on every punch
-  // (even accepted ones) so HR can see drift.
-  //
-  // Phase 131 — Location-level geofence wins over per-device when both
-  // exist. Devices registered before Locations get their per-device
-  // override; new devices typically have no per-device geofence and
-  // inherit from their Location.
+  // 2. Geofence check. If the device's Location has a geofence,
+  // coordinates are required and must be within radius. Distance is
+  // recorded on every punch (even accepted ones) so HR can see drift.
+  // Phase 131 finalized — Location is the single source; per-device
+  // override columns were dropped in
+  // 20260512040000_drop_kiosk_device_geofence.
   const fenceLat = device.location?.latitude
     ? Number(device.location.latitude)
-    : device.latitude
-      ? Number(device.latitude)
-      : null;
+    : null;
   const fenceLng = device.location?.longitude
     ? Number(device.location.longitude)
-    : device.longitude
-      ? Number(device.longitude)
-      : null;
-  const fenceRadius =
-    device.location?.geofenceRadiusMeters ?? device.radiusMeters ?? null;
+    : null;
+  const fenceRadius = device.location?.geofenceRadiusMeters ?? null;
 
   let punchLat: number | null = null;
   let punchLng: number | null = null;
@@ -965,6 +1015,7 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
   let faceDistance: number | null = null;
   let faceMismatch: boolean | null = null;
   let shouldEnrollFace = false;
+  let faceReferenceUsed = false;
   if (input.faceDescriptor) {
     const ref = await prisma.kioskFaceReference.findUnique({
       where: { associateId: pinRow.associateId },
@@ -974,6 +1025,7 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
       const refVec = bytesToDescriptor(ref.descriptor);
       faceDistance = euclideanDistance(refVec, input.faceDescriptor);
       faceMismatch = faceDistance > FACE_MATCH_THRESHOLD;
+      faceReferenceUsed = true;
     } else {
       shouldEnrollFace = true;
     }
@@ -1001,31 +1053,36 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     orderBy: { createdAt: 'desc' },
     include: {
       device: {
-        select: { latitude: true, longitude: true },
+        select: {
+          location: {
+            select: { latitude: true, longitude: true },
+          },
+        },
       },
     },
   });
-  // Pick a coordinate for "where this punch happened": prefer the kiosk's
-  // geofence center (fixed, accurate), fall back to the punch's reported
-  // lat/lng (if the device has no geofence configured).
+  // Pick a coordinate for "where this punch happened": prefer the
+  // kiosk Location's geofence center (fixed, accurate), fall back to
+  // the punch's reported lat/lng for sites without a configured
+  // geofence.
   const thisLat =
-    device.latitude != null
-      ? Number(device.latitude)
+    device.location?.latitude != null
+      ? Number(device.location.latitude)
       : punchLat ?? null;
   const thisLng =
-    device.longitude != null
-      ? Number(device.longitude)
+    device.location?.longitude != null
+      ? Number(device.location.longitude)
       : punchLng ?? null;
   if (prevPunch && thisLat != null && thisLng != null) {
     const prevLat =
-      prevPunch.device.latitude != null
-        ? Number(prevPunch.device.latitude)
+      prevPunch.device.location?.latitude != null
+        ? Number(prevPunch.device.location.latitude)
         : prevPunch.punchLat != null
           ? Number(prevPunch.punchLat)
           : null;
     const prevLng =
-      prevPunch.device.longitude != null
-        ? Number(prevPunch.device.longitude)
+      prevPunch.device.location?.longitude != null
+        ? Number(prevPunch.device.location.longitude)
         : prevPunch.punchLng != null
           ? Number(prevPunch.punchLng)
           : null;
@@ -1047,20 +1104,31 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
   // 6. Decide CLOCK_IN vs CLOCK_OUT (or BREAK_START/BREAK_END when
   // intent='BREAK') by looking for an open entry. Break path requires
   // an ACTIVE entry — you can't break before clocking in.
-  const open = await prisma.timeEntry.findFirst({
-    where: { associateId: pinRow.associateId, status: 'ACTIVE' },
-    orderBy: { clockInAt: 'desc' },
-  });
-
-  if (input.intent === 'BREAK' && !open) {
-    throw new HttpError(
-      409,
-      'not_clocked_in',
-      'You need to clock in before starting a break.',
-    );
-  }
-
+  //
+  // Phase 131 hardening — the open-entry lookup runs INSIDE the
+  // transaction with a per-associate advisory lock. Without
+  // serialization, two punches arriving within milliseconds (HR PIN
+  // shared accidentally, double-tap on the keypad, replay attack) both
+  // see "no open entry" and create dual CLOCK_INs, or both see the
+  // entry and double-update it. pg_advisory_xact_lock is held until
+  // commit/rollback and is keyed on the associateId so unrelated
+  // associates' punches still parallelize.
   const result = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`kiosk_punch:${pinRow.associateId}`}, 0))`;
+
+    const open = await tx.timeEntry.findFirst({
+      where: { associateId: pinRow.associateId, status: 'ACTIVE' },
+      orderBy: { clockInAt: 'desc' },
+    });
+
+    if (input.intent === 'BREAK' && !open) {
+      throw new HttpError(
+        409,
+        'not_clocked_in',
+        'You need to clock in before starting a break.',
+      );
+    }
+
     // Phase 102 — when the kiosk supplies a wall-clock timestamp (queued
     // punch replayed later), use it for the TimeEntry. Otherwise server now().
     const at = clientPunchedAt ?? new Date();
@@ -1182,7 +1250,16 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
           associateId: pinRow.associateId,
           descriptor: descriptorToBytes(input.faceDescriptor),
           enrolledByPunchId: punch.id,
+          lastUsedAt: new Date(),
         },
+      });
+    } else if (faceReferenceUsed) {
+      // Stamp lastUsedAt so the dormant-purge cron knows this template
+      // is live. Updating by associateId (unique) so the rare race of
+      // "row was deleted by HR mid-punch" no-ops cleanly.
+      await tx.kioskFaceReference.updateMany({
+        where: { associateId: pinRow.associateId },
+        data: { lastUsedAt: new Date() },
       });
     }
     await tx.kioskDevice.update({

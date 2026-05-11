@@ -340,120 +340,120 @@ model User {
   updatedAt          DateTime   @updatedAt @db.Timestamptz(6)
   deletedAt          DateTime?  @db.Timestamptz(6)
 
-  signaturesGiven                   Signature[]                  @relation("UserSignatures")
-  i9VerificationsAsRep              I9Verification[]             @relation("I9Verifier")
-  auditLogActions                   AuditLog[]                   @relation("AuditActor")
-  timeApprovals                     TimeEntry[]                  @relation("TimeApprover")
-  createdShifts                     Shift[]                      @relation("ShiftCreator")
-  createdPayrollRuns                PayrollRun[]                 @relation("PayrollRunCreator")
-  cancelledPayrollRuns              PayrollRun[]                 @relation("PayrollRunCanceller")
-  verifiedDocuments                 DocumentRecord[]             @relation("DocumentVerifier")
-  sentNotifications                 Notification[]               @relation("NotificationSender")
-  receivedNotifications             Notification[]               @relation("NotificationRecipient")
-  authoredReviews                   PerformanceReview[]          @relation("PerformanceReviewer")
+  signaturesGiven                   Signature[]                   @relation("UserSignatures")
+  i9VerificationsAsRep              I9Verification[]              @relation("I9Verifier")
+  auditLogActions                   AuditLog[]                    @relation("AuditActor")
+  timeApprovals                     TimeEntry[]                   @relation("TimeApprover")
+  createdShifts                     Shift[]                       @relation("ShiftCreator")
+  createdPayrollRuns                PayrollRun[]                  @relation("PayrollRunCreator")
+  cancelledPayrollRuns              PayrollRun[]                  @relation("PayrollRunCanceller")
+  verifiedDocuments                 DocumentRecord[]              @relation("DocumentVerifier")
+  sentNotifications                 Notification[]                @relation("NotificationSender")
+  receivedNotifications             Notification[]                @relation("NotificationRecipient")
+  authoredReviews                   PerformanceReview[]           @relation("PerformanceReviewer")
   inviteTokens                      InviteToken[]
   passwordResetTokens               PasswordResetToken[]
   mfaRecoveryCodes                  MfaRecoveryCode[]
   notificationPreferences           NotificationPreference[]
   emailChangeRequests               EmailChangeRequest[]
-  createdEsignAgreements            EsignAgreement[]             @relation("EsignAgreementCreator")
-  payrollDisbursementAttempts       PayrollDisbursementAttempt[] @relation("PayrollDisbursementAttemptActor")
+  createdEsignAgreements            EsignAgreement[]              @relation("EsignAgreementCreator")
+  payrollDisbursementAttempts       PayrollDisbursementAttempt[]  @relation("PayrollDisbursementAttemptActor")
   timeOffLedgerEntriesAuthored      TimeOffLedgerEntry[]
-  timeOffReviews                    TimeOffRequest[]             @relation("TimeOffReviewer")
-  associateHistoryEntries           AssociateHistory[]           @relation("AssociateHistoryActor")
-  workflowDefinitions               WorkflowDefinition[]         @relation("WorkflowDefinitionCreator")
-  reviewedLifeEvents                LifeEvent[]                  @relation("LifeEventReviewer")
+  timeOffReviews                    TimeOffRequest[]              @relation("TimeOffReviewer")
+  associateHistoryEntries           AssociateHistory[]            @relation("AssociateHistoryActor")
+  workflowDefinitions               WorkflowDefinition[]          @relation("WorkflowDefinitionCreator")
+  reviewedLifeEvents                LifeEvent[]                   @relation("LifeEventReviewer")
   // Phase 83 — compensation back-relations.
-  compRecordsActed                  CompensationRecord[]         @relation("CompRecordActor")
-  meritProposalsProposed            MeritProposal[]              @relation("MeritProposalProposer")
-  meritProposalsDecided             MeritProposal[]              @relation("MeritProposalDecider")
+  compRecordsActed                  CompensationRecord[]          @relation("CompRecordActor")
+  meritProposalsProposed            MeritProposal[]               @relation("MeritProposalProposer")
+  meritProposalsDecided             MeritProposal[]               @relation("MeritProposalDecider")
   // Phase 84 — performance back-relations.
-  goalsCreated                      Goal[]                       @relation("GoalCreator")
-  oneOnOnesAsManager                OneOnOne[]                   @relation("OneOnOneManager")
-  kudosSent                         Kudo[]                       @relation("KudoSender")
-  pipsAsManager                     Pip[]                        @relation("PipManager")
-  reviews360Requested               Review360[]                  @relation("Review360Requester")
-  reviews360FeedbackGiven           Review360Feedback[]          @relation("Review360FeedbackFrom")
+  goalsCreated                      Goal[]                        @relation("GoalCreator")
+  oneOnOnesAsManager                OneOnOne[]                    @relation("OneOnOneManager")
+  kudosSent                         Kudo[]                        @relation("KudoSender")
+  pipsAsManager                     Pip[]                         @relation("PipManager")
+  reviews360Requested               Review360[]                   @relation("Review360Requester")
+  reviews360FeedbackGiven           Review360Feedback[]           @relation("Review360FeedbackFrom")
   // Phase 85 — claim decisions.
-  shiftClaimsDecided                OpenShiftClaim[]             @relation("OpenShiftClaimDecider")
+  shiftClaimsDecided                OpenShiftClaim[]              @relation("OpenShiftClaimDecider")
   // Phase 86 — tip pool authorship.
-  tipPoolsCreated                   TipPool[]                    @relation("TipPoolCreator")
+  tipPoolsCreated                   TipPool[]                     @relation("TipPoolCreator")
   // Phase 87 — broadcast / survey authorship + receipts + responses.
-  broadcastsCreated                 Broadcast[]                  @relation("BroadcastCreator")
-  broadcastReceipts                 BroadcastReceipt[]           @relation("BroadcastReceiptUser")
-  surveysCreated                    Survey[]                     @relation("SurveyCreator")
-  surveyResponses                   SurveyResponse[]             @relation("SurveyRespondent")
+  broadcastsCreated                 Broadcast[]                   @relation("BroadcastCreator")
+  broadcastReceipts                 BroadcastReceipt[]            @relation("BroadcastReceiptUser")
+  surveysCreated                    Survey[]                      @relation("SurveyCreator")
+  surveyResponses                   SurveyResponse[]              @relation("SurveyRespondent")
   // Phase 88 — OSHA incident reporters.
-  oshaIncidentsReported             OshaIncident[]               @relation("OshaIncidentReporter")
+  oshaIncidentsReported             OshaIncident[]                @relation("OshaIncidentReporter")
   // Phase 89 — document template authorship + renders.
-  documentTemplatesCreated          DocumentTemplate[]           @relation("DocTemplateCreator")
-  documentTemplateVersionsPublished DocumentTemplateVersion[]    @relation("DocTemplateVersionPublisher")
-  documentsRendered                 DocumentRender[]             @relation("DocRenderer")
+  documentTemplatesCreated          DocumentTemplate[]            @relation("DocTemplateCreator")
+  documentTemplateVersionsPublished DocumentTemplateVersion[]     @relation("DocTemplateVersionPublisher")
+  documentsRendered                 DocumentRender[]              @relation("DocRenderer")
   // Phase 90 — recruiting authorship.
-  interviewKitsCreated              InterviewKit[]               @relation("InterviewKitCreator")
-  interviewsAsInterviewer           Interview[]                  @relation("Interviewer")
-  offersCreated                     Offer[]                      @relation("OfferCreator")
-  referralsMade                     Referral[]                   @relation("Referrer")
-  jobPostingsCreated                JobPosting[]                 @relation("JobPostingCreator")
+  interviewKitsCreated              InterviewKit[]                @relation("InterviewKitCreator")
+  interviewsAsInterviewer           Interview[]                   @relation("Interviewer")
+  offersCreated                     Offer[]                       @relation("OfferCreator")
+  referralsMade                     Referral[]                    @relation("Referrer")
+  jobPostingsCreated                JobPosting[]                  @relation("JobPostingCreator")
   // Phase 91 — garnishments + tax forms authorship.
-  garnishmentsCreated               Garnishment[]                @relation("GarnishmentCreator")
-  taxFormsFiled                     TaxForm[]                    @relation("TaxFormFiler")
+  garnishmentsCreated               Garnishment[]                 @relation("GarnishmentCreator")
+  taxFormsFiled                     TaxForm[]                     @relation("TaxFormFiler")
   // Phase 92 — open enrollment + QLE authorship.
-  openEnrollmentsCreated            OpenEnrollmentWindow[]       @relation("OpenEnrollmentCreator")
-  qleDecisions                      QualifyingLifeEvent[]        @relation("QleDecider")
+  openEnrollmentsCreated            OpenEnrollmentWindow[]        @relation("OpenEnrollmentCreator")
+  qleDecisions                      QualifyingLifeEvent[]         @relation("QleDecider")
   // Phase 93 — API keys + webhooks authorship.
-  apiKeysCreated                    ApiKey[]                     @relation("ApiKeyCreator")
-  webhooksCreated                   Webhook[]                    @relation("WebhookCreator")
+  apiKeysCreated                    ApiKey[]                      @relation("ApiKeyCreator")
+  webhooksCreated                   Webhook[]                     @relation("WebhookCreator")
   // Phase 94 — LMS course authorship + enrollment assignment.
-  coursesCreated                    Course[]                     @relation("CourseCreator")
-  enrollmentsAssigned               CourseEnrollment[]           @relation("EnrollmentAssigner")
+  coursesCreated                    Course[]                      @relation("CourseCreator")
+  enrollmentsAssigned               CourseEnrollment[]            @relation("EnrollmentAssigner")
   // Phase 95 — worktag assignments authored.
-  worktagAssignmentsAuthored        WorktagAssignment[]          @relation("WorktagAssigner")
+  worktagAssignmentsAuthored        WorktagAssignment[]           @relation("WorktagAssigner")
   // Phase 96 — saved reports authored.
-  reportsCreated                    Report[]                     @relation("ReportCreator")
+  reportsCreated                    Report[]                      @relation("ReportCreator")
   // Phase 97 — reimbursement decisions (rejection audit; manager OR HR).
-  reimbursementsDecided             Reimbursement[]              @relation("ReimbursementDecider")
+  reimbursementsDecided             Reimbursement[]               @relation("ReimbursementDecider")
   // Gap 10 — manager-step approvals + HR settle-step approvals on reimbursements.
-  reimbursementsManagerApproved     Reimbursement[]              @relation("ReimbursementManagerApprover")
-  reimbursementsSettled             Reimbursement[]              @relation("ReimbursementSettler")
+  reimbursementsManagerApproved     Reimbursement[]               @relation("ReimbursementManagerApprover")
+  reimbursementsSettled             Reimbursement[]               @relation("ReimbursementSettler")
   // Phase 99 — kiosk authorship (devices registered, PINs assigned).
-  kioskDevicesCreated               KioskDevice[]                @relation("KioskDeviceCreator")
-  kioskPinsCreated                  KioskPin[]                   @relation("KioskPinCreator")
-  kioskPunchesReviewed              KioskPunch[]                 @relation("KioskPunchReviewer")
-  assetAssignmentsAssigned          AssetAssignment[]            @relation("AssetAssigner")
-  assetAssignmentsReturned          AssetAssignment[]            @relation("AssetReturner")
-  pulseSurveysCreated               PulseSurvey[]                @relation("PulseSurveyCreator")
-  associateSkillsVerified           AssociateSkill[]             @relation("AssociateSkillVerifier")
-  mentorshipsProposed               Mentorship[]                 @relation("MentorshipProposer")
-  learningPathsCreated              LearningPath[]               @relation("LearningPathCreator")
+  kioskDevicesCreated               KioskDevice[]                 @relation("KioskDeviceCreator")
+  kioskPinsCreated                  KioskPin[]                    @relation("KioskPinCreator")
+  kioskPunchesReviewed              KioskPunch[]                  @relation("KioskPunchReviewer")
+  assetAssignmentsAssigned          AssetAssignment[]             @relation("AssetAssigner")
+  assetAssignmentsReturned          AssetAssignment[]             @relation("AssetReturner")
+  pulseSurveysCreated               PulseSurvey[]                 @relation("PulseSurveyCreator")
+  associateSkillsVerified           AssociateSkill[]              @relation("AssociateSkillVerifier")
+  mentorshipsProposed               Mentorship[]                  @relation("MentorshipProposer")
+  learningPathsCreated              LearningPath[]                @relation("LearningPathCreator")
   successionCandidatesCreated       SuccessionCandidate[]
-  probationsCreated                 ProbationPeriod[]            @relation("ProbationCreator")
-  probationsDecided                 ProbationPeriod[]            @relation("ProbationDecider")
+  probationsCreated                 ProbationPeriod[]             @relation("ProbationCreator")
+  probationsDecided                 ProbationPeriod[]             @relation("ProbationDecider")
   holidaysCreated                   Holiday[]
-  disciplinaryActionsIssued         DisciplinaryAction[]         @relation("DisciplineIssuer")
-  disciplinaryActionsRescinded      DisciplinaryAction[]         @relation("DisciplineRescinder")
-  separationsInitiated              Separation[]                 @relation("SeparationInitiator")
-  separationsCompleted              Separation[]                 @relation("SeparationCompleter")
-  exitInterviewsConducted           Separation[]                 @relation("SeparationExitInterviewer")
-  internalApplicationsReviewed      InternalJobApplication[]     @relation("InternalApplicationReviewer")
+  disciplinaryActionsIssued         DisciplinaryAction[]          @relation("DisciplineIssuer")
+  disciplinaryActionsRescinded      DisciplinaryAction[]          @relation("DisciplineRescinder")
+  separationsInitiated              Separation[]                  @relation("SeparationInitiator")
+  separationsCompleted              Separation[]                  @relation("SeparationCompleter")
+  exitInterviewsConducted           Separation[]                  @relation("SeparationExitInterviewer")
+  internalApplicationsReviewed      InternalJobApplication[]      @relation("InternalApplicationReviewer")
   vaccinationRecordsCreated         VaccinationRecord[]
   agreementsIssued                  Agreement[]
   hrCasesAssigned                   HrCase[]
-  hrCaseCommentsAuthored            HrCaseComment[]              @relation("HrCaseCommentUserAuthor")
+  hrCaseCommentsAuthored            HrCaseComment[]               @relation("HrCaseCommentUserAuthor")
   kbArticlesAuthored                KbArticle[]
-  rampPlansCreated                  RampPlan[]                   @relation("RampPlanCreator")
-  rampPlansManaged                  RampPlan[]                   @relation("RampPlanManager")
+  rampPlansCreated                  RampPlan[]                    @relation("RampPlanCreator")
+  rampPlansManaged                  RampPlan[]                    @relation("RampPlanManager")
   careerLaddersCreated              CareerLadder[]
-  tuitionRequestsReviewed           TuitionRequest[]             @relation("TuitionReviewer")
-  tuitionRequestsPaid               TuitionRequest[]             @relation("TuitionPayer")
-  anonymousReportsAssigned          AnonymousReport[]            @relation("AnonReportAssignee")
-  anonymousReportUpdates            AnonymousReportUpdate[]      @relation("AnonReportAuthor")
-  equityGrantsIssued                EquityGrant[]                @relation("EquityGrantedBy")
-  volunteerEntriesReviewed          VolunteerEntry[]             @relation("VolunteerReviewer")
+  tuitionRequestsReviewed           TuitionRequest[]              @relation("TuitionReviewer")
+  tuitionRequestsPaid               TuitionRequest[]              @relation("TuitionPayer")
+  anonymousReportsAssigned          AnonymousReport[]             @relation("AnonReportAssignee")
+  anonymousReportUpdates            AnonymousReportUpdate[]       @relation("AnonReportAuthor")
+  equityGrantsIssued                EquityGrant[]                 @relation("EquityGrantedBy")
+  volunteerEntriesReviewed          VolunteerEntry[]              @relation("VolunteerReviewer")
   manualAttestationsAttested        ManualComplianceAttestation[] @relation("AttestationAttester")
   // Phase 131 — assignment-row authorship (audit of who moved an
   // associate to which location, and why).
-  associateAssignmentsNoted         AssociateAssignment[]        @relation("AssociateAssignmentNoter")
+  associateAssignmentsNoted         AssociateAssignment[]         @relation("AssociateAssignmentNoter")
 
   @@index([role])
   @@index([clientId])
@@ -461,35 +461,35 @@ model User {
 }
 
 model Client {
-  id                   String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name                 String
-  industry             String?
-  status               ClientStatus @default(ACTIVE)
-  contactEmail         String?
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String
+  industry     String?
+  status       ClientStatus @default(ACTIVE)
+  contactEmail String?
   // Gap 1 — Employer identity used on tax forms (W-2, 941, 1099-NEC).
   // legalName is the IRS-registered name shown on the W-2 employer block;
   // it can differ from `name` (the brand / display name). ein is the EIN
   // formatted as "XX-XXXXXXX". HR fills these in before generating W-2s.
-  legalName            String?      @db.VarChar(255)
-  ein                  String?      @db.VarChar(20)
+  legalName    String?      @db.VarChar(255)
+  ein          String?      @db.VarChar(20)
   // Gap 1 — Employer address used on tax forms. `state` already lives
   // below as the work-site code; reused for the W-2 employer block too.
-  addressLine1         String?      @db.VarChar(255)
-  addressLine2         String?      @db.VarChar(255)
-  city                 String?      @db.VarChar(120)
-  zip                  String?      @db.VarChar(10)
+  addressLine1 String?      @db.VarChar(255)
+  addressLine2 String?      @db.VarChar(255)
+  city         String?      @db.VarChar(120)
+  zip          String?      @db.VarChar(10)
   // Two-letter USPS code of the work site. Drives Phase 23 OT/meal-break
   // policy AND Phase 25 predictive-scheduling enforcement (NY, IL, WA, PA,
   // OR demand 14-day notice). Null = federal default = no state-specific
   // rules enforced.
-  state                String?      @db.VarChar(2)
+  state        String?      @db.VarChar(2)
   // Phase 131 — geofence moved to Location. Each physical site has its
   // own coordinates and radius; lookups read Location.geofence with a
   // "first active Location under this client" fallback for associates
   // who haven't been placed at a Location yet.
-  createdAt            DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt            DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt            DateTime?    @db.Timestamptz(6)
+  createdAt    DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime     @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime?    @db.Timestamptz(6)
 
   applications           Application[]
   users                  User[]
@@ -678,121 +678,121 @@ model Associate {
   updatedAt         DateTime       @updatedAt @db.Timestamptz(6)
   deletedAt         DateTime?      @db.Timestamptz(6)
 
-  user                    User?
-  j1Profile               J1Profile?
-  applications            Application[]
-  documents               DocumentRecord[]
-  signatures              Signature[]              @relation("AssociateSignatures")
-  backgroundChecks        BackgroundCheck[]
-  policyAcks              PolicyAcknowledgment[]
-  i9Verification          I9Verification?
-  w4Submission            W4Submission?
-  payoutMethods           PayoutMethod[]
-  timeEntries             TimeEntry[]
-  assignedShifts          Shift[]
-  payrollItems            PayrollItem[]
+  user                     User?
+  j1Profile                J1Profile?
+  applications             Application[]
+  documents                DocumentRecord[]
+  signatures               Signature[]               @relation("AssociateSignatures")
+  backgroundChecks         BackgroundCheck[]
+  policyAcks               PolicyAcknowledgment[]
+  i9Verification           I9Verification?
+  w4Submission             W4Submission?
+  payoutMethods            PayoutMethod[]
+  timeEntries              TimeEntry[]
+  assignedShifts           Shift[]
+  payrollItems             PayrollItem[]
   pendingPayrollDeductions PendingPayrollDeduction[]
-  performanceReviews      PerformanceReview[]
-  availability            AssociateAvailability[]
-  swapsRequested          ShiftSwapRequest[]       @relation("SwapRequester")
-  swapsReceived           ShiftSwapRequest[]       @relation("SwapCounterparty")
-  timeOffBalances         TimeOffBalance[]
-  timeOffLedger           TimeOffLedgerEntry[]
-  timeOffRequests         TimeOffRequest[]
-  benefitsEnrollments     BenefitsEnrollment[]
-  timeOffEntitlements     TimeOffEntitlement[]
+  performanceReviews       PerformanceReview[]
+  availability             AssociateAvailability[]
+  swapsRequested           ShiftSwapRequest[]        @relation("SwapRequester")
+  swapsReceived            ShiftSwapRequest[]        @relation("SwapCounterparty")
+  timeOffBalances          TimeOffBalance[]
+  timeOffLedger            TimeOffLedgerEntry[]
+  timeOffRequests          TimeOffRequest[]
+  benefitsEnrollments      BenefitsEnrollment[]
+  timeOffEntitlements      TimeOffEntitlement[]
   // Phase 76 — manager chain.
-  manager                 Associate?               @relation("AssociateManager", fields: [managerId], references: [id], onDelete: SetNull)
-  directReports           Associate[]              @relation("AssociateManager")
-  department              Department?              @relation(fields: [departmentId], references: [id], onDelete: SetNull)
-  costCenter              CostCenter?              @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
-  jobProfile              JobProfile?              @relation(fields: [jobProfileId], references: [id], onDelete: SetNull)
-  payrollSchedule         PayrollSchedule?         @relation(fields: [payrollScheduleId], references: [id], onDelete: SetNull)
+  manager                  Associate?                @relation("AssociateManager", fields: [managerId], references: [id], onDelete: SetNull)
+  directReports            Associate[]               @relation("AssociateManager")
+  department               Department?               @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  costCenter               CostCenter?               @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
+  jobProfile               JobProfile?               @relation(fields: [jobProfileId], references: [id], onDelete: SetNull)
+  payrollSchedule          PayrollSchedule?          @relation(fields: [payrollScheduleId], references: [id], onDelete: SetNull)
   // Phase 77 — effective-dated history of tracked fields.
-  history                 AssociateHistory[]
+  history                  AssociateHistory[]
   // Phase 78 — positions filled and managed.
-  filledPositions         Position[]               @relation("PositionFilledBy")
-  managedPositions        Position[]               @relation("PositionManager")
+  filledPositions          Position[]                @relation("PositionFilledBy")
+  managedPositions         Position[]                @relation("PositionManager")
   // Phase 82 — self-service personal data.
-  emergencyContacts       EmergencyContact[]
-  dependents              Dependent[]
-  beneficiaries           Beneficiary[]
-  lifeEvents              LifeEvent[]
-  taxDocuments            TaxDocument[]
+  emergencyContacts        EmergencyContact[]
+  dependents               Dependent[]
+  beneficiaries            Beneficiary[]
+  lifeEvents               LifeEvent[]
+  taxDocuments             TaxDocument[]
   // Phase 83 — compensation history + merit-cycle proposals.
-  compRecords             CompensationRecord[]
-  meritProposals          MeritProposal[]
+  compRecords              CompensationRecord[]
+  meritProposals           MeritProposal[]
   // Phase 84 — performance: goals, 1:1s, kudos received, PIPs, 360s.
-  goals                   Goal[]
-  oneOnOnes               OneOnOne[]
-  kudosReceived           Kudo[]                   @relation("KudoRecipient")
-  pips                    Pip[]
-  reviews360Subject       Review360[]              @relation("Review360Subject")
+  goals                    Goal[]
+  oneOnOnes                OneOnOne[]
+  kudosReceived            Kudo[]                    @relation("KudoRecipient")
+  pips                     Pip[]
+  reviews360Subject        Review360[]               @relation("Review360Subject")
   // Phase 85 — qualifications + claimed open shifts.
-  qualifications          AssociateQualification[]
-  shiftClaims             OpenShiftClaim[]
+  qualifications           AssociateQualification[]
+  shiftClaims              OpenShiftClaim[]
   // Phase 86 — tip pool allocations.
-  tipPoolAllocations      TipPoolAllocation[]
+  tipPoolAllocations       TipPoolAllocation[]
   // Phase 88 — OSHA incidents (subject) + EEO record (1:1).
-  oshaIncidents           OshaIncident[]
-  eeo                     AssociateEeo?
+  oshaIncidents            OshaIncident[]
+  eeo                      AssociateEeo?
   // Phase 89 — document renders targeting this associate.
-  documentRenders         DocumentRender[]
+  documentRenders          DocumentRender[]
   // Phase 91 — garnishments + tax forms (W-2, 1099-NEC).
-  garnishments            Garnishment[]
-  taxForms                TaxForm[]
+  garnishments             Garnishment[]
+  taxForms                 TaxForm[]
   // Phase 92 — qualifying life events, COBRA offers, ACA monthly snapshots.
-  qles                    QualifyingLifeEvent[]
-  cobraOffers             CobraOffer[]
-  acaMonths               AcaMonth[]
+  qles                     QualifyingLifeEvent[]
+  cobraOffers              CobraOffer[]
+  acaMonths                AcaMonth[]
   // Phase 94 — LMS course enrollments.
-  courseEnrollments       CourseEnrollment[]
+  courseEnrollments        CourseEnrollment[]
   // Phase 97 — reimbursement requests.
-  reimbursements          Reimbursement[]
+  reimbursements           Reimbursement[]
   // Phase 99 — kiosk PINs (one per client) + punch history.
-  kioskPins               KioskPin[]
-  kioskPunches            KioskPunch[]
+  kioskPins                KioskPin[]
+  kioskPunches             KioskPunch[]
   // Phase 101 — face descriptor for kiosk match-on-punch.
-  kioskFaceReference      KioskFaceReference?
+  kioskFaceReference       KioskFaceReference?
   // Phase 108 — physical asset assignments (laptops, badges, keys…).
-  assetAssignments        AssetAssignment[]
+  assetAssignments         AssetAssignment[]
   // Phase 111 — skills + competencies.
-  skills                  AssociateSkill[]
+  skills                   AssociateSkill[]
   // Phase 112 — mentorship pairings.
-  mentorshipsAsMentor     Mentorship[]             @relation("MentorshipMentor")
-  mentorshipsAsMentee     Mentorship[]             @relation("MentorshipMentee")
+  mentorshipsAsMentor      Mentorship[]              @relation("MentorshipMentor")
+  mentorshipsAsMentee      Mentorship[]              @relation("MentorshipMentee")
   // Phase 114 — learning path enrollments.
-  learningPathEnrollments LearningPathEnrollment[]
+  learningPathEnrollments  LearningPathEnrollment[]
   // Phase 115 — positions for which this associate is on the bench.
-  successionCandidacies   SuccessionCandidate[]
+  successionCandidacies    SuccessionCandidate[]
   // Phase 116 — probation history (one ACTIVE at a time).
-  probationPeriods        ProbationPeriod[]
+  probationPeriods         ProbationPeriod[]
   // Phase 118 — formal disciplinary actions.
-  disciplinaryActions     DisciplinaryAction[]
+  disciplinaryActions      DisciplinaryAction[]
   // Phase 119 — separations + exit interviews.
-  separations             Separation[]
+  separations              Separation[]
   // Phase 120 — internal mobility applications.
-  internalApplications    InternalJobApplication[]
+  internalApplications     InternalJobApplication[]
   // Phase 121 — vaccination + medical records.
-  vaccinationRecords      VaccinationRecord[]
+  vaccinationRecords       VaccinationRecord[]
   // Phase 122 — per-associate legal agreements (NDA, non-compete, etc.).
-  agreements              Agreement[]
+  agreements               Agreement[]
   // Phase 123 — HR cases filed by this associate + comments authored.
-  hrCasesFiled            HrCase[]
-  hrCaseCommentsAuthored  HrCaseComment[]          @relation("HrCaseCommentAssociateAuthor")
+  hrCasesFiled             HrCase[]
+  hrCaseCommentsAuthored   HrCaseComment[]           @relation("HrCaseCommentAssociateAuthor")
   // Phase 124 — KB feedback votes.
-  kbFeedback              KbFeedback[]
+  kbFeedback               KbFeedback[]
   // Phase 125 — new-hire ramp plans.
-  rampPlans               RampPlan[]
+  rampPlans                RampPlan[]
   // Phase 127 — tuition reimbursement requests.
-  tuitionRequests         TuitionRequest[]
+  tuitionRequests          TuitionRequest[]
   // Phase 129 — equity grants (RSU/NSO/ISO/etc.).
-  equityGrants            EquityGrant[]
+  equityGrants             EquityGrant[]
   // Phase 130 — volunteer time off entries.
-  volunteerEntries        VolunteerEntry[]
+  volunteerEntries         VolunteerEntry[]
   // Phase 131 — location-assignment history. The open row (endedAt IS
   // NULL) is the associate's current work site.
-  assignments             AssociateAssignment[]
+  assignments              AssociateAssignment[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -954,27 +954,27 @@ model PolicyAcknowledgment {
 }
 
 model DocumentRecord {
-  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId     String           @db.Uuid
-  clientId        String?          @db.Uuid
-  kind            DocumentKind
-  s3Key           String?
-  filename        String
-  mimeType        String
-  size            Int
-  status          DocumentStatus   @default(UPLOADED)
-  expiresAt       DateTime?        @db.Timestamptz(6)
-  rejectionReason String?
-  verifiedById    String?          @db.Uuid
-  verifiedAt      DateTime?        @db.Timestamptz(6)
-  associate       Associate        @relation(fields: [associateId], references: [id], onDelete: Restrict)
-  verifiedBy      User?            @relation("DocumentVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
-  signatures      Signature[]
-  tasks           OnboardingTask[]
+  id                  String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId         String                        @db.Uuid
+  clientId            String?                       @db.Uuid
+  kind                DocumentKind
+  s3Key               String?
+  filename            String
+  mimeType            String
+  size                Int
+  status              DocumentStatus                @default(UPLOADED)
+  expiresAt           DateTime?                     @db.Timestamptz(6)
+  rejectionReason     String?
+  verifiedById        String?                       @db.Uuid
+  verifiedAt          DateTime?                     @db.Timestamptz(6)
+  associate           Associate                     @relation(fields: [associateId], references: [id], onDelete: Restrict)
+  verifiedBy          User?                         @relation("DocumentVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
+  signatures          Signature[]
+  tasks               OnboardingTask[]
   attestationEvidence ManualComplianceAttestation[] @relation("AttestationEvidence")
-  createdAt       DateTime         @default(now()) @db.Timestamptz(6)
-  updatedAt       DateTime         @updatedAt @db.Timestamptz(6)
-  deletedAt       DateTime?        @db.Timestamptz(6)
+  createdAt           DateTime                      @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime                      @updatedAt @db.Timestamptz(6)
+  deletedAt           DateTime?                     @db.Timestamptz(6)
 
   @@index([associateId, kind])
   @@index([status])
@@ -1475,60 +1475,60 @@ model ShiftSwapRequest {
 }
 
 model PayrollRun {
-  id                    String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id                       String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   // clientId is nullable so a run can span all clients (Alto-internal payroll).
-  clientId              String?                @db.Uuid
-  periodStart           DateTime               @db.Date
-  periodEnd             DateTime               @db.Date
-  status                PayrollRunStatus       @default(DRAFT)
+  clientId                 String?                   @db.Uuid
+  periodStart              DateTime                  @db.Date
+  periodEnd                DateTime                  @db.Date
+  status                   PayrollRunStatus          @default(DRAFT)
   // Gap 3 — REGULAR (default), OFF_CYCLE (bonuses, terminal pay), or
   // AMENDMENT (correction of a prior disbursed run; pairs with amendsRunId
   // and amendmentReason, both required when kind=AMENDMENT, enforced by
   // CHECK constraints in the migration).
-  kind                  PayrollRunKind         @default(REGULAR)
-  totalGross            Decimal                @default(0) @db.Decimal(12, 2)
-  totalTax              Decimal                @default(0) @db.Decimal(12, 2)
-  totalNet              Decimal                @default(0) @db.Decimal(12, 2)
+  kind                     PayrollRunKind            @default(REGULAR)
+  totalGross               Decimal                   @default(0) @db.Decimal(12, 2)
+  totalTax                 Decimal                   @default(0) @db.Decimal(12, 2)
+  totalNet                 Decimal                   @default(0) @db.Decimal(12, 2)
   // Phase 18 — employer-side total (FICA match + Medicare match + FUTA + SUTA)
   // is the company's true cost on top of totalGross. Used in finance reports.
-  totalEmployerTax      Decimal                @default(0) @db.Decimal(12, 2)
-  notes                 String?
-  createdById           String?                @db.Uuid
-  finalizedAt           DateTime?              @db.Timestamptz(6)
-  disbursedAt           DateTime?              @db.Timestamptz(6)
-  cancelledAt           DateTime?              @db.Timestamptz(6)
+  totalEmployerTax         Decimal                   @default(0) @db.Decimal(12, 2)
+  notes                    String?
+  createdById              String?                   @db.Uuid
+  finalizedAt              DateTime?                 @db.Timestamptz(6)
+  disbursedAt              DateTime?                 @db.Timestamptz(6)
+  cancelledAt              DateTime?                 @db.Timestamptz(6)
   // Gap 3 — void metadata. cancelledById = HR Admin who voided. cancelReason
   // is the mandatory free-text justification (CHECK enforces non-empty when
   // status=CANCELLED). voidJournalEntryId is the QBO reversing JE id.
-  cancelledById         String?                @db.Uuid
-  cancelReason          String?
-  voidJournalEntryId    String?                @db.VarChar(64)
+  cancelledById            String?                   @db.Uuid
+  cancelReason             String?
+  voidJournalEntryId       String?                   @db.VarChar(64)
   // Gap 3 — amendment metadata. amendsRunId points to the run this run
   // corrects (required + non-self when kind=AMENDMENT). amendmentReason is
   // the mandatory free-text justification (CHECK enforces non-empty when
   // kind=AMENDMENT) — rendered on the amendment paystub PDF.
-  amendsRunId           String?                @db.Uuid
-  amendmentReason       String?
+  amendsRunId              String?                   @db.Uuid
+  amendmentReason          String?
   // Phase 44 — QuickBooks Online journal-entry sync. Set to the QBO
   // JournalEntry.Id on first successful sync; qboSyncError carries the
   // last failure reason so HR can retry from the UI.
-  qboJournalEntryId     String?                @db.VarChar(64)
-  qboSyncedAt           DateTime?              @db.Timestamptz(6)
-  qboSyncError          String?
-  client                Client?                @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  createdBy             User?                  @relation("PayrollRunCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  cancelledBy           User?                  @relation("PayrollRunCanceller", fields: [cancelledById], references: [id], onDelete: SetNull)
-  amendsRun             PayrollRun?            @relation("PayrollRunAmendments", fields: [amendsRunId], references: [id], onDelete: Restrict)
-  amendments            PayrollRun[]           @relation("PayrollRunAmendments")
-  items                 PayrollItem[]
+  qboJournalEntryId        String?                   @db.VarChar(64)
+  qboSyncedAt              DateTime?                 @db.Timestamptz(6)
+  qboSyncError             String?
+  client                   Client?                   @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  createdBy                User?                     @relation("PayrollRunCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  cancelledBy              User?                     @relation("PayrollRunCanceller", fields: [cancelledById], references: [id], onDelete: SetNull)
+  amendsRun                PayrollRun?               @relation("PayrollRunAmendments", fields: [amendsRunId], references: [id], onDelete: Restrict)
+  amendments               PayrollRun[]              @relation("PayrollRunAmendments")
+  items                    PayrollItem[]
   // Phase 91 — garnishment deductions sourced from this run.
-  garnishmentDeductions GarnishmentDeduction[]
+  garnishmentDeductions    GarnishmentDeduction[]
   // Phase 97 — reimbursements paid in this run.
-  reimbursementsPaid    Reimbursement[]
+  reimbursementsPaid       Reimbursement[]
   // Gap 3 — pending deductions consumed by this run (overpayment clawbacks).
   pendingDeductionsApplied PendingPayrollDeduction[] @relation("PendingDeductionAppliedRun")
-  createdAt             DateTime               @default(now()) @db.Timestamptz(6)
-  updatedAt             DateTime               @updatedAt @db.Timestamptz(6)
+  createdAt                DateTime                  @default(now()) @db.Timestamptz(6)
+  updatedAt                DateTime                  @updatedAt @db.Timestamptz(6)
 
   @@index([clientId, periodStart])
   @@index([status])
@@ -1537,87 +1537,87 @@ model PayrollRun {
 }
 
 model PayrollItem {
-  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  payrollRunId       String            @db.Uuid
-  associateId        String            @db.Uuid
+  id                  String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  payrollRunId        String            @db.Uuid
+  associateId         String            @db.Uuid
   // Snapshot of inputs at the time of aggregation. Source TimeEntries /
   // Shifts can change later (e.g. a bug-fix amendment), but the paystub
   // record is immutable.
-  hoursWorked        Decimal           @db.Decimal(8, 2)
-  hourlyRate         Decimal           @db.Decimal(8, 2)
-  grossPay           Decimal           @db.Decimal(12, 2)
+  hoursWorked         Decimal           @db.Decimal(8, 2)
+  hourlyRate          Decimal           @db.Decimal(8, 2)
+  grossPay            Decimal           @db.Decimal(12, 2)
   // Phase 18 employee-side tax breakdown. federalWithholding is now FIT
   // alone — it used to absorb the placeholder flat tax. fica =
   // 6.2% Social Security (capped at SS wage base), medicare = 1.45% +
   // 0.9% surcharge over $200k YTD, stateWithholding = per-state SIT.
-  federalWithholding Decimal           @db.Decimal(12, 2)
-  fica               Decimal           @default(0) @db.Decimal(12, 2)
-  medicare           Decimal           @default(0) @db.Decimal(12, 2)
-  stateWithholding   Decimal           @default(0) @db.Decimal(12, 2)
+  federalWithholding  Decimal           @db.Decimal(12, 2)
+  fica                Decimal           @default(0) @db.Decimal(12, 2)
+  medicare            Decimal           @default(0) @db.Decimal(12, 2)
+  stateWithholding    Decimal           @default(0) @db.Decimal(12, 2)
   // Phase 18 employer-side. The company owes these on top of gross.
-  employerFica       Decimal           @default(0) @db.Decimal(12, 2)
-  employerMedicare   Decimal           @default(0) @db.Decimal(12, 2)
-  employerFuta       Decimal           @default(0) @db.Decimal(12, 2)
-  employerSuta       Decimal           @default(0) @db.Decimal(12, 2)
+  employerFica        Decimal           @default(0) @db.Decimal(12, 2)
+  employerMedicare    Decimal           @default(0) @db.Decimal(12, 2)
+  employerFuta        Decimal           @default(0) @db.Decimal(12, 2)
+  employerSuta        Decimal           @default(0) @db.Decimal(12, 2)
   // YTD snapshots at the moment this paystub was computed. Required for
   // SS-cap and Medicare-surcharge math; preserved for paystub display.
-  ytdWages           Decimal           @default(0) @db.Decimal(12, 2)
-  ytdMedicareWages   Decimal           @default(0) @db.Decimal(12, 2)
+  ytdWages            Decimal           @default(0) @db.Decimal(12, 2)
+  ytdMedicareWages    Decimal           @default(0) @db.Decimal(12, 2)
   // Phase 42 — pre-tax benefit deductions taken this period. Reduced
   // from gross before federal/FICA/Medicare/state are computed; also
   // subtracted again from net to land on take-home. Stored as a sum
   // here; per-plan breakdown lives in BenefitsEnrollment + the period.
-  preTaxDeductions   Decimal           @default(0) @db.Decimal(12, 2)
+  preTaxDeductions    Decimal           @default(0) @db.Decimal(12, 2)
   // Wave 4.2 — post-tax deductions taken this period (garnishments,
   // Roth 401k, etc.). Subtracted AFTER taxes to land on take-home; does
   // NOT affect FIT/FICA/Medicare/SIT bases. Per-deduction breakdown for
   // garnishments lives in GarnishmentDeduction rows tied to the run.
-  postTaxDeductions  Decimal           @default(0) @db.Decimal(12, 2)
+  postTaxDeductions   Decimal           @default(0) @db.Decimal(12, 2)
   // Gap 1 — sub-bucket of preTaxDeductions that reduces FIT base only,
   // NOT FICA / Medicare base (traditional 401(k) / 403(b)). Section-125
   // pre-tax = preTaxDeductions - preTaxRetirement. CHECK enforces
   // preTaxRetirement <= preTaxDeductions at the DB layer.
-  preTaxRetirement   Decimal           @default(0) @db.Decimal(12, 2)
+  preTaxRetirement    Decimal           @default(0) @db.Decimal(12, 2)
   // Gap 10 — sum of folded reimbursement amounts on this item. Added to
   // netPay after taxes / deductions; never affects grossPay or any wage
   // base (accountable-plan rule). Per-row breakdown lives on PayrollItem-
   // Earning rows with kind=REIMBURSEMENT, isTaxable=false.
-  reimbursementsTotal Decimal          @default(0) @db.Decimal(10, 2)
-  netPay             Decimal           @db.Decimal(12, 2)
+  reimbursementsTotal Decimal           @default(0) @db.Decimal(10, 2)
+  netPay              Decimal           @db.Decimal(12, 2)
   // The state used for SIT lookup (snapshot of associate.state at compute
   // time). Lets the paystub label the SIT line and the auditor see why a
   // CA-rate was applied to someone who later moved to TX.
-  taxState           String?
-  status             PayrollItemStatus @default(PENDING)
+  taxState            String?
+  status              PayrollItemStatus @default(PENDING)
   // sha256 of the rendered paystub PDF the FIRST time it was downloaded.
   // Subsequent downloads must produce the same hash; verifies immutability.
-  paystubHash        String?
+  paystubHash         String?
   // Stub for now; in production this is the Wise transfer ID or Branch txn ID.
-  disbursementRef    String?
-  disbursedAt        DateTime?         @db.Timestamptz(6)
+  disbursementRef     String?
+  disbursedAt         DateTime?         @db.Timestamptz(6)
   // Wave 8 — when the paystub PDF was emailed to the associate. Set the
   // first time email-on-disburse fires successfully; lets the disburse
   // hook stay idempotent if a webhook ever delivers the SUCCESS event
   // twice, and lets HR see "did the associate get their stub?" at a
   // glance. Null means never emailed (e.g. associate has no email on
   // file, or the item is from before this column existed).
-  paystubEmailedAt   DateTime?         @db.Timestamptz(6)
-  failureReason      String?
+  paystubEmailedAt    DateTime?         @db.Timestamptz(6)
+  failureReason       String?
   // Gap 3 — set when the parent run is voided; mirrors the run's
   // cancelledAt at void time. Lets the paystub PDF render a "VOID"
   // watermark dated to this timestamp.
-  voidedAt           DateTime?         @db.Timestamptz(6)
+  voidedAt            DateTime?         @db.Timestamptz(6)
   // Gap 3 — points to the original PayrollItem this row corrects.
   // Required when the parent run is kind=AMENDMENT (route handler
   // enforces; cross-row CHECK is awkward in Postgres). The live YTD
   // recalc joins on this column to sum original + amendment items.
-  amendsItemId       String?           @db.Uuid
-  payrollRun         PayrollRun        @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
-  associate          Associate         @relation(fields: [associateId], references: [id], onDelete: Restrict)
-  amendsItem         PayrollItem?      @relation("PayrollItemAmendments", fields: [amendsItemId], references: [id], onDelete: Restrict)
-  amendments         PayrollItem[]     @relation("PayrollItemAmendments")
-  createdAt          DateTime          @default(now()) @db.Timestamptz(6)
-  updatedAt          DateTime          @updatedAt @db.Timestamptz(6)
+  amendsItemId        String?           @db.Uuid
+  payrollRun          PayrollRun        @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  associate           Associate         @relation(fields: [associateId], references: [id], onDelete: Restrict)
+  amendsItem          PayrollItem?      @relation("PayrollItemAmendments", fields: [amendsItemId], references: [id], onDelete: Restrict)
+  amendments          PayrollItem[]     @relation("PayrollItemAmendments")
+  createdAt           DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime          @updatedAt @db.Timestamptz(6)
 
   // Phase 22 — every disbursement call (success or fail) appends a row
   // here, even retries. PayrollItem.disbursementRef stores the latest
@@ -1643,7 +1643,7 @@ model PayrollItem {
   // Gap 10 — reimbursement rows folded into this item via the next-payroll-
   // run drain. Stamped on Reimbursement.payrollItemId at run-creation time
   // so the row can't be double-folded.
-  reimbursementsPaid       Reimbursement[]           @relation("ReimbursementPaidItem")
+  reimbursementsPaid Reimbursement[] @relation("ReimbursementPaidItem")
 
   // One paystub per (run, associate) — re-aggregating updates in place
   // rather than duplicating.
@@ -3545,32 +3545,32 @@ model GarnishmentDeduction {
 }
 
 model TaxForm {
-  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  kind        TaxFormKind
-  quarter     Int?
-  taxYear     Int
-  associateId String?       @db.Uuid
-  amounts     Json
-  status      TaxFormStatus @default(DRAFT)
-  filedAt     DateTime?     @db.Timestamptz(6)
-  filedById   String?       @db.Uuid
-  ein         String?       @db.VarChar(20)
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kind            TaxFormKind
+  quarter         Int?
+  taxYear         Int
+  associateId     String?       @db.Uuid
+  amounts         Json
+  status          TaxFormStatus @default(DRAFT)
+  filedAt         DateTime?     @db.Timestamptz(6)
+  filedById       String?       @db.Uuid
+  ein             String?       @db.VarChar(20)
   // Gap 1 — sha256 of the rendered W-2 PDF, stamped on first download.
   // Subsequent renders must produce the same hash (same as Phase 18's
   // PayrollItem.paystubHash pattern). Null until the form is rendered.
-  pdfHash     String?       @db.VarChar(64)
+  pdfHash         String?       @db.VarChar(64)
   // Gap 1 — when kind=W2C, points at the original W-2 row this form
   // corrects. Required for W2C, forbidden for any other kind (CHECK
   // enforced at the migration). The original is flipped to AMENDED at
   // W-2c create time so the UI hides it from the active list.
-  amendsTaxFormId String?   @db.Uuid
-  createdAt   DateTime      @default(now()) @db.Timestamptz(6)
-  updatedAt   DateTime      @updatedAt @db.Timestamptz(6)
+  amendsTaxFormId String?       @db.Uuid
+  createdAt       DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime      @updatedAt @db.Timestamptz(6)
 
-  associate    Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)
-  filedBy      User?      @relation("TaxFormFiler", fields: [filedById], references: [id], onDelete: SetNull)
-  amendsTaxForm TaxForm?  @relation("TaxFormAmendments", fields: [amendsTaxFormId], references: [id], onDelete: SetNull)
-  amendments   TaxForm[]  @relation("TaxFormAmendments")
+  associate     Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)
+  filedBy       User?      @relation("TaxFormFiler", fields: [filedById], references: [id], onDelete: SetNull)
+  amendsTaxForm TaxForm?   @relation("TaxFormAmendments", fields: [amendsTaxFormId], references: [id], onDelete: SetNull)
+  amendments    TaxForm[]  @relation("TaxFormAmendments")
 
   @@index([kind, taxYear])
   @@index([associateId])
@@ -3989,14 +3989,14 @@ enum ExpenseLineKind {
 }
 
 model Reimbursement {
-  id               String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId      String              @db.Uuid
-  title            String
-  description      String?
-  totalAmount      Decimal             @default(0) @db.Decimal(12, 2)
-  currency         String              @default("USD") @db.VarChar(3)
-  status           ReimbursementStatus @default(DRAFT)
-  submittedAt      DateTime?           @db.Timestamptz(6)
+  id          String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId String              @db.Uuid
+  title       String
+  description String?
+  totalAmount Decimal             @default(0) @db.Decimal(12, 2)
+  currency    String              @default("USD") @db.VarChar(3)
+  status      ReimbursementStatus @default(DRAFT)
+  submittedAt DateTime?           @db.Timestamptz(6)
 
   // Gap 10 — manager approval audit (the new intermediate step). Stamped
   // by POST /reimbursements/:id/manager-approve.
@@ -4007,9 +4007,9 @@ model Reimbursement {
   // Gap 10 — HR/Finance settlement audit. Stamped by POST
   // /reimbursements/:id/settle. Once SETTLED the row sits in the
   // payroll-fold queue waiting for the next REGULAR run.
-  settledById String?   @db.Uuid
-  settledAt   DateTime? @db.Timestamptz(6)
-  settleNote  String?
+  settledById       String?   @db.Uuid
+  settledAt         DateTime? @db.Timestamptz(6)
+  settleNote        String?
   // HR can override the receipt-required guard at settle time when a
   // receipt is genuinely lost; the waiver note carries the justification.
   receiptWaiverNote String?
@@ -4081,19 +4081,24 @@ enum KioskPunchReviewStatus {
 enum KioskAnomalyKind {
   FACE_MISMATCH
   IMPOSSIBLE_TRAVEL
-  GEOFENCE_NEAR_MISS
 }
 
 model KioskDevice {
-  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId     String    @db.Uuid
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId       String    @db.Uuid
   // Phase 131 — the physical Location this device lives at. NOT NULL
   // after PR 3. Per-device geofence columns below stay as an optional
   // override for the rare case where one tablet needs a tighter
   // radius than the rest of the Location.
-  locationId   String    @db.Uuid
-  name         String
-  tokenHash    String
+  locationId     String    @db.Uuid
+  name           String
+  tokenHash      String
+  // Phase 131 hardening — first 16 chars of the plaintext token, used
+  // as a non-secret index so /kiosk/punch finds the right device row
+  // in O(1) instead of bcrypt-verifying every active device row. NULL
+  // on legacy rows created before this column; those devices fall
+  // through to the slow scan path until HR rotates their token.
+  tokenPrefix    String?
   // Phase 131 follow-up — device tokens expire 90 days after issue
   // (or the last rotate). Punches against an expired token return
   // 401 device_token_expired and the tablet auto-clears its local
@@ -4102,17 +4107,11 @@ model KioskDevice {
   // backfill migration; kept nullable to allow opt-out for
   // air-gapped sites if that ever becomes a thing).
   tokenExpiresAt DateTime? @db.Timestamptz(6)
-  lastSeenAt   DateTime? @db.Timestamptz(6)
-  isActive     Boolean   @default(true)
-  // Phase 100 — optional geofence. All three set together or all NULL
-  // (CHECK constraint). When set, punches must report coords within
-  // radiusMeters or get rejected.
-  latitude     Decimal?  @db.Decimal(10, 7)
-  longitude    Decimal?  @db.Decimal(10, 7)
-  radiusMeters Int?
-  createdById  String?   @db.Uuid
-  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
-  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
+  lastSeenAt     DateTime? @db.Timestamptz(6)
+  isActive       Boolean   @default(true)
+  createdById    String?   @db.Uuid
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
 
   client    Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
   location  Location     @relation(fields: [locationId], references: [id], onDelete: Restrict)
@@ -4121,6 +4120,7 @@ model KioskDevice {
 
   @@index([clientId, isActive])
   @@index([locationId, isActive])
+  @@index([tokenPrefix, isActive])
 }
 
 model KioskPin {
@@ -4198,17 +4198,28 @@ model KioskPunch {
   @@index([kioskDeviceId])
   @@index([associateId])
   @@index([createdAt])
+  // Phase 131 hardening — the HR review queue lists PENDING punches
+  // ordered by recency. Without this composite, Postgres scans every
+  // KioskPunch row to find the handful that are PENDING. Partial index
+  // on reviewStatus IS NOT NULL keeps the index tiny (only flagged
+  // punches show up) while still serving the queue query.
+  @@index([reviewStatus, createdAt(sort: Desc)])
 }
 
 // Phase 101 — One face descriptor per associate, captured on first
 // successful kiosk punch (or HR-reset). 128-dim Float32 → 512 bytes.
 model KioskFaceReference {
-  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId       String   @unique @db.Uuid
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId       String    @unique @db.Uuid
   descriptor        Bytes
-  enrolledByPunchId String?  @db.Uuid
-  enrolledAt        DateTime @default(now()) @db.Timestamptz(6)
-  updatedAt         DateTime @updatedAt @db.Timestamptz(6)
+  enrolledByPunchId String?   @db.Uuid
+  enrolledAt        DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @db.Timestamptz(6)
+  // Phase 131 hardening — stamped on every successful face match so
+  // the dormant-purge sweep can drop biometric data for associates
+  // who haven't punched in a long time. NULL = never matched (or
+  // pre-column legacy row); treated as "dormant" once the row is old.
+  lastUsedAt        DateTime? @db.Timestamptz(6)
 
   associate       Associate   @relation(fields: [associateId], references: [id], onDelete: Cascade)
   enrolledByPunch KioskPunch? @relation("KioskFaceEnrolledByPunch", fields: [enrolledByPunchId], references: [id], onDelete: SetNull)
@@ -5258,29 +5269,29 @@ model VtoPolicy {
 // to the hard-coded brand defaults baked into emailTemplates.ts so the
 // system still ships emails even if HR never visits this page.
 model OrgSetting {
-  id              String    @id @default("singleton") @db.VarChar(16)
-  orgName         String    @default("Alto HR") @db.VarChar(120)
+  id                 String    @id @default("singleton") @db.VarChar(16)
+  orgName            String    @default("Alto HR") @db.VarChar(120)
   // The display name in the From: header — combined at send time as
   // "{senderName} <{RESEND_FROM bare email}>". When null, the env's
   // RESEND_FROM is used verbatim.
-  senderName      String?   @db.VarChar(120)
+  senderName         String?   @db.VarChar(120)
   // Replaces the hard-coded info@altohr.com support address shown in the
   // email footer. RESEND_REPLY_TO env still controls the actual Reply-To
   // header — this is for the displayed address only.
-  supportEmail    String?   @db.VarChar(254)
+  supportEmail       String?   @db.VarChar(254)
   // Hex like "#0F2A44". Validated at the API + UI layer.
-  primaryColor    String?   @db.VarChar(7)
+  primaryColor       String?   @db.VarChar(7)
   // PNG/JPEG/WebP/SVG, ≤1MB. Embedded as data: URI in HTML emails so we
   // don't depend on a CDN being reachable.
-  logoBytes       Bytes?
-  logoContentType String?   @db.VarChar(64)
-  logoUpdatedAt   DateTime? @db.Timestamptz(6)
+  logoBytes          Bytes?
+  logoContentType    String?   @db.VarChar(64)
+  logoUpdatedAt      DateTime? @db.Timestamptz(6)
   // Gap 10 — IRS standard mileage rate, snapshot-copied onto every new
   // mileage ExpenseLine at submit time so a rate change can't silently
   // re-price already-approved rows. IRS announces the next-year rate in
   // December; HR updates this column at year start.
-  mileageRatePerMile Decimal @default(0.6700) @db.Decimal(8, 4)
-  updatedAt       DateTime  @updatedAt @db.Timestamptz(6)
+  mileageRatePerMile Decimal   @default(0.6700) @db.Decimal(8, 4)
+  updatedAt          DateTime  @updatedAt @db.Timestamptz(6)
 }
 
 // IRS payroll-tax constants that change yearly. One row per calendar year.
@@ -5317,27 +5328,27 @@ model PayrollConfig {
 // enrollment; subsequent filings read from here so finance never has to
 // re-enter the User ID. Same fixed-id-of-'singleton' pattern as OrgSetting.
 model SubmitterProfile {
-  id            String    @id @default("singleton") @db.VarChar(16)
+  id           String   @id @default("singleton") @db.VarChar(16)
   // 9-digit EIN, no dashes (validated by CHECK in the migration).
-  ein           String    @db.VarChar(9)
+  ein          String   @db.VarChar(9)
   // BSO User ID — assigned by SSA when the company registers for the
   // Business Services Online portal. Required to file electronically.
-  userId        String    @db.VarChar(17)
-  name          String    @db.VarChar(57)
-  addressLine1  String    @db.VarChar(22)
-  addressLine2  String?   @db.VarChar(22)
-  city          String    @db.VarChar(22)
-  state         String    @db.VarChar(2)
-  zip5          String    @db.VarChar(5)
-  zip4          String?   @db.VarChar(4)
-  contactName   String    @db.VarChar(57)
-  contactPhone  String    @db.VarChar(20)
-  contactEmail  String    @db.VarChar(40)
+  userId       String   @db.VarChar(17)
+  name         String   @db.VarChar(57)
+  addressLine1 String   @db.VarChar(22)
+  addressLine2 String?  @db.VarChar(22)
+  city         String   @db.VarChar(22)
+  state        String   @db.VarChar(2)
+  zip5         String   @db.VarChar(5)
+  zip4         String?  @db.VarChar(4)
+  contactName  String   @db.VarChar(57)
+  contactPhone String   @db.VarChar(20)
+  contactEmail String   @db.VarChar(40)
   // Gap 11 — IRS FIRE Transmitter Control Code (5 chars, IRS-assigned).
   // Required for 1099-NEC e-file via FIRE; null when the transmitter
   // only does W-2 SSA filings.
-  irsTcc        String?   @db.VarChar(5)
-  updatedAt     DateTime  @updatedAt @db.Timestamptz(6)
+  irsTcc       String?  @db.VarChar(5)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(6)
 }
 
 // Status of OUR processing of a Branch webhook delivery — distinct from
@@ -5383,8 +5394,8 @@ model BranchWebhookEvent {
 // the row, confirms outcome + when the action was taken, and the
 // scorecard tile flips green.
 enum ManualAttestationOutcome {
-  YES            // action was taken
-  NO             // action was missed / skipped
+  YES // action was taken
+  NO // action was missed / skipped
   NOT_APPLICABLE // not applicable for this period (e.g. holiday week)
 }
 

@@ -16,6 +16,19 @@ import { env } from '../config/env.js';
 
 const KIOSK_TOKEN_PREFIX = 'altokiosk_';
 
+// First N chars of the plaintext token, stored alongside the bcrypt
+// hash so /kiosk/punch can find the right device row in O(1) rather
+// than bcrypt-verifying every active device. 16 chars = `altokiosk_`
+// + 6 hex = 24 bits of entropy beyond the static prefix. Collision
+// rate at 100 devices: < 0.001%. Even if two devices collide on
+// prefix, bcrypt-verify still distinguishes them — the prefix is a
+// non-secret address, not the credential.
+const TOKEN_PREFIX_LENGTH = 16;
+
+export function tokenLookupPrefix(plaintext: string): string {
+  return plaintext.slice(0, TOKEN_PREFIX_LENGTH);
+}
+
 function pinSecret(): string {
   return env.KIOSK_PIN_SECRET ?? env.PAYOUT_ENCRYPTION_KEY;
 }
@@ -35,9 +48,9 @@ export function generatePin(): string {
   return n.toString().padStart(4, '0');
 }
 
-export function generateDeviceToken(): { plaintext: string } {
+export function generateDeviceToken(): { plaintext: string; prefix: string } {
   const plaintext = `${KIOSK_TOKEN_PREFIX}${randomBytes(32).toString('hex')}`;
-  return { plaintext };
+  return { plaintext, prefix: tokenLookupPrefix(plaintext) };
 }
 
 /**
