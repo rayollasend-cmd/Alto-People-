@@ -19,6 +19,10 @@ export interface KioskDevice {
   name: string;
   isActive: boolean;
   lastSeenAt: string | null;
+  /** ISO timestamp the device token expires. Null = no expiry (legacy
+   *  / opt-out devices). After this date punches return 401
+   *  device_token_expired and the tablet auto-clears its token. */
+  tokenExpiresAt: string | null;
   punchCount: number;
   geofence: KioskGeofence | null;
   createdAt: string;
@@ -85,10 +89,18 @@ export const createKioskDevice = (input: {
   name: string;
   geofence?: KioskGeofence | null;
 }) =>
-  apiFetch<{ id: string; deviceToken: string }>('/kiosk-devices', {
-    method: 'POST',
-    body: input,
-  });
+  apiFetch<{ id: string; deviceToken: string; tokenExpiresAt: string | null }>(
+    '/kiosk-devices',
+    { method: 'POST', body: input },
+  );
+
+/** Rotate the device token. Returns the new plaintext (shown once)
+ *  and the new expiry — the previous token stops working immediately. */
+export const rotateKioskDevice = (id: string) =>
+  apiFetch<{ id: string; deviceToken: string; tokenExpiresAt: string | null }>(
+    `/kiosk-devices/${id}/rotate`,
+    { method: 'POST', body: {} },
+  );
 
 export const updateKioskGeofence = (
   id: string,

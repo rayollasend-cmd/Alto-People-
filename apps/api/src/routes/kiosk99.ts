@@ -73,6 +73,15 @@ const DeviceInputSchema = z
     path: ['locationId'],
   });
 
+// Token TTL for KioskDevice issuance + rotation. 90 days mirrors how
+// often a typical tablet deployment gets touched anyway (battery
+// swaps, OS updates, site rotations), so HR's natural cadence catches
+// the expiry warning before it fires.
+const DEVICE_TOKEN_TTL_DAYS = 90;
+function nextTokenExpiry(now: Date = new Date()): Date {
+  return new Date(now.getTime() + DEVICE_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
+}
+
 kiosk99Router.get('/kiosk-devices', MANAGE, async (req, res) => {
   const clientId = z.string().uuid().optional().parse(req.query.clientId);
   const rows = await prisma.kioskDevice.findMany({
@@ -95,6 +104,7 @@ kiosk99Router.get('/kiosk-devices', MANAGE, async (req, res) => {
       name: d.name,
       isActive: d.isActive,
       lastSeenAt: d.lastSeenAt?.toISOString() ?? null,
+      tokenExpiresAt: d.tokenExpiresAt?.toISOString() ?? null,
       punchCount: d._count.punches,
       geofence:
         d.latitude && d.longitude && d.radiusMeters
@@ -161,6 +171,7 @@ kiosk99Router.post('/kiosk-devices', MANAGE, async (req, res) => {
       locationId: resolvedLocationId,
       name: input.name,
       tokenHash,
+      tokenExpiresAt: nextTokenExpiry(),
       latitude: input.geofence?.latitude ?? null,
       longitude: input.geofence?.longitude ?? null,
       radiusMeters: input.geofence?.radiusMeters ?? null,
@@ -168,7 +179,40 @@ kiosk99Router.post('/kiosk-devices', MANAGE, async (req, res) => {
     },
   });
   // Plaintext is shown ONCE — paste it into the kiosk's setup screen.
-  res.status(201).json({ id: created.id, deviceToken: plaintext });
+  res.status(201).json({
+    id: created.id,
+    deviceToken: plaintext,
+    tokenExpiresAt: created.tokenExpiresAt?.toISOString() ?? null,
+  });
+});
+
+// Rotate the device token. Issues a new plaintext (shown once) and
+// pushes the expiry forward by another 90 days. Use cases:
+//   - HR's quarterly rotation hygiene.
+//   - A device is suspected of being compromised.
+//   - The "expires in X days" badge in the admin UI is about to flip
+//     red and HR wants to keep the kiosk working.
+// The old token stops working the moment this returns.
+kiosk99Router.post('/kiosk-devices/:id/rotate', MANAGE, async (req, res) => {
+  const existing = await prisma.kioskDevice.findUnique({
+    where: { id: req.params.id },
+    select: { id: true, isActive: true },
+  });
+  if (!existing) {
+    throw new HttpError(404, 'device_not_found', 'Device not found.');
+  }
+  const { plaintext } = generateDeviceToken();
+  const tokenHash = await hashPassword(plaintext);
+  const updated = await prisma.kioskDevice.update({
+    where: { id: existing.id },
+    data: { tokenHash, tokenExpiresAt: nextTokenExpiry() },
+    select: { id: true, tokenExpiresAt: true },
+  });
+  res.json({
+    id: updated.id,
+    deviceToken: plaintext,
+    tokenExpiresAt: updated.tokenExpiresAt?.toISOString() ?? null,
+  });
 });
 
 // Update geofence (or clear it). Other device fields aren't editable
@@ -621,6 +665,7 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
       clientId: true,
       locationId: true,
       tokenHash: true,
+      tokenExpiresAt: true,
       latitude: true,
       longitude: true,
       radiusMeters: true,
@@ -647,6 +692,19 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
   if (!device) {
     // Don't leak whether the token format was even right.
     throw new HttpError(401, 'invalid_device', 'Device not registered.');
+  }
+
+  // Token expiry — distinct error code so the tablet can self-clear
+  // and route back to the setup screen instead of just showing a
+  // generic auth error. Devices with NULL tokenExpiresAt (none after
+  // the backfill, but the column is nullable for future opt-out) skip
+  // the check.
+  if (device.tokenExpiresAt && device.tokenExpiresAt.getTime() < Date.now()) {
+    throw new HttpError(
+      401,
+      'device_token_expired',
+      'This kiosk\'s device token expired. Re-pair from the admin page.',
+    );
   }
 
   // 1b. Rate limit + brute-force lockout. Throws 429 if the device has

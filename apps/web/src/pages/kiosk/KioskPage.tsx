@@ -155,6 +155,20 @@ export function KioskPage() {
       // Server rejected (4xx) → real error, show it. Network failure →
       // queue and tell the user "saved offline".
       if (err instanceof ApiError && err.status >= 400 && err.status < 500) {
+        // Device-token expired or revoked: self-heal by clearing the
+        // local copy so the next render lands on the setup screen.
+        // HR pastes a freshly-rotated token from the admin page.
+        if (err.code === 'device_token_expired' || err.code === 'invalid_device') {
+          window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+          setToken(null);
+          setError(
+            err.code === 'device_token_expired'
+              ? 'This kiosk\'s token expired. Get a fresh one from the admin page.'
+              : err.message,
+          );
+          setStage('setup');
+          return;
+        }
         setError(err.message);
         setStage('error');
         window.setTimeout(reset, 3000);

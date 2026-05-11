@@ -4094,6 +4094,14 @@ model KioskDevice {
   locationId   String    @db.Uuid
   name         String
   tokenHash    String
+  // Phase 131 follow-up — device tokens expire 90 days after issue
+  // (or the last rotate). Punches against an expired token return
+  // 401 device_token_expired and the tablet auto-clears its local
+  // copy, falling back to the setup screen for HR to paste a fresh
+  // one. NULL = grandfathered legacy devices (none after the
+  // backfill migration; kept nullable to allow opt-out for
+  // air-gapped sites if that ever becomes a thing).
+  tokenExpiresAt DateTime? @db.Timestamptz(6)
   lastSeenAt   DateTime? @db.Timestamptz(6)
   isActive     Boolean   @default(true)
   // Phase 100 — optional geofence. All three set together or all NULL

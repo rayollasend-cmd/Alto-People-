@@ -13,6 +13,7 @@ import {
   resetKioskFaceReference,
   reviewKioskPunch,
   revokeKioskDevice,
+  rotateKioskDevice,
   updateKioskGeofence,
   type KioskDevice,
   type KioskFaceReferenceSummary,
@@ -95,6 +96,15 @@ export function KioskAdmin() {
   );
 }
 
+function renderTokenStatus(iso: string | null) {
+  if (!iso) return <span className="text-silver text-xs">—</span>;
+  const ms = new Date(iso).getTime() - Date.now();
+  const days = Math.round(ms / (1000 * 60 * 60 * 24));
+  if (ms <= 0) return <Badge variant="destructive">Expired</Badge>;
+  if (days <= 14) return <Badge variant="pending">in {days}d</Badge>;
+  return <Badge variant="success">in {days}d</Badge>;
+}
+
 function DevicesTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
   const [rows, setRows] = useState<KioskDevice[] | null>(null);
@@ -141,6 +151,7 @@ function DevicesTab({ canManage }: { canManage: boolean }) {
                   <TableHead>Status</TableHead>
                   <TableHead>Geofence</TableHead>
                   <TableHead>Last seen</TableHead>
+                  <TableHead>Token</TableHead>
                   <TableHead>Punches</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -172,6 +183,7 @@ function DevicesTab({ canManage }: { canManage: boolean }) {
                         ? new Date(d.lastSeenAt).toLocaleString()
                         : '—'}
                     </TableCell>
+                    <TableCell>{renderTokenStatus(d.tokenExpiresAt)}</TableCell>
                     <TableCell>{d.punchCount}</TableCell>
                     <TableCell className="text-right space-x-2">
                       {canManage && (
@@ -181,6 +193,28 @@ function DevicesTab({ canManage }: { canManage: boolean }) {
                           onClick={() => setEditGeofence(d)}
                         >
                           <MapPin className="mr-1 h-3 w-3" /> Geofence
+                        </Button>
+                      )}
+                      {canManage && d.isActive && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={async () => {
+                            if (!(await confirm({
+                              title: 'Rotate device token?',
+                              description: 'The tablet will stop accepting punches until you paste the new token into it. The new token is shown ONCE.',
+                              destructive: true,
+                            }))) return;
+                            try {
+                              const r = await rotateKioskDevice(d.id);
+                              setShowToken(r.deviceToken);
+                              refresh();
+                            } catch (err) {
+                              toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                            }
+                          }}
+                        >
+                          Rotate
                         </Button>
                       )}
                       {canManage && d.isActive && (
