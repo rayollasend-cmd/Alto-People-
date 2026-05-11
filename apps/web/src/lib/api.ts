@@ -3,7 +3,11 @@ export class ApiError extends Error {
     public readonly status: number,
     public readonly code: string,
     message: string,
-    public readonly details?: unknown
+    public readonly details?: unknown,
+    // Per-request trace ID, surfaced in the response body by the API's
+    // error handler. Useful to quote in support tickets so ops can grep
+    // server logs for the matching trace.
+    public readonly requestId?: string,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -64,12 +68,19 @@ export async function apiFetch<T = unknown>(
   }
 
   if (!res.ok) {
-    const err = (parsed as { error?: { code?: string; message?: string; details?: unknown } } | null)?.error;
+    const err = (parsed as {
+      error?: { code?: string; message?: string; details?: unknown; requestId?: string };
+    } | null)?.error;
+    // Prefer the body's requestId (always present on server-side errors)
+    // but fall back to the X-Request-Id response header — covers cases
+    // where helmet / CORS preflights respond without our error envelope.
+    const requestId = err?.requestId ?? res.headers.get('x-request-id') ?? undefined;
     throw new ApiError(
       res.status,
       err?.code ?? `http_${res.status}`,
       err?.message ?? `Request failed (${res.status})`,
-      err?.details
+      err?.details,
+      requestId,
     );
   }
 

@@ -84,6 +84,7 @@ import { orgSettingsRouter } from './routes/orgSettings.js';
 import { integrationsV1Router } from './routes/integrationsV1.js';
 import { attachUser, requireCapability } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
+import { requestId } from './middleware/requestId.js';
 
 // In production this Express server also serves the built React SPA, so the
 // browser sends `/api/*` to disambiguate from static assets and SPA routes.
@@ -136,6 +137,10 @@ export function createApp() {
   }
 
   app.use(stripApiPrefix);
+  // Mounted before helmet so every response — including helmet's 4xx /
+  // CSP-blocked ones — carries the trace ID. Stays before attachUser so
+  // auth-failure logs have an id.
+  app.use(requestId);
   app.use(helmet());
   app.use(cors({ origin: env.CORS_ORIGIN, credentials: true }));
   // Branch webhook MUST be mounted before express.json() so the raw body

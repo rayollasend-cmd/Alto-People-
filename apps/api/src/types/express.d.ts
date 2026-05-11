@@ -41,6 +41,13 @@ declare global {
        * from "stale cookie" (401, signal client to clear).
        */
       sessionStale?: boolean;
+      /**
+       * Per-request correlation ID, set by the `requestId` middleware.
+       * Echoed back as the `X-Request-Id` response header and surfaced
+       * in error bodies + AuditLog metadata so a single trace ties
+       * client report → middleware → handler → DB write together.
+       */
+      id: string;
     }
   }
 }
