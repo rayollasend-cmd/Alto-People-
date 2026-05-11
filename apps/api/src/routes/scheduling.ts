@@ -293,11 +293,28 @@ schedulingRouter.post('/shifts', MANAGE, async (req, res, next) => {
     });
     if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
 
-    // Phase 131 — every Shift gets a Location. Auto-derived from the
-    // client's first active Location until the create UI surfaces a
-    // picker; the free-text `location` field below stays for optional
-    // sub-zone labels ("Bar", "Patio", "Floor 2 — Beauty").
-    const location = await firstLocationForClient(prisma, client.id);
+    // Phase 131 — every Shift gets a Location. Use the explicit
+    // locationId from the picker when provided; otherwise fall back
+    // to the client's first active Location. The free-text `location`
+    // field below stays for optional sub-zone labels ("Bar", "Patio",
+    // "Floor 2 — Beauty").
+    let location: { id: string };
+    if (input.locationId) {
+      const picked = await prisma.location.findFirst({
+        where: { id: input.locationId, clientId: client.id, deletedAt: null, isActive: true },
+        select: { id: true },
+      });
+      if (!picked) {
+        throw new HttpError(
+          400,
+          'location_mismatch',
+          'Location does not belong to the chosen client.',
+        );
+      }
+      location = picked;
+    } else {
+      location = await firstLocationForClient(prisma, client.id);
+    }
 
     const status = input.status ?? 'OPEN';
     const isPublishing = isPublishingTransition(undefined, status);

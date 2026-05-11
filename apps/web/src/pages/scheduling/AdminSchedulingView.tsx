@@ -26,11 +26,13 @@ import type {
   AssociateLite,
   AutoFillCandidate,
   ClientSummary,
+  LocationSummary,
   Shift,
   ShiftStatus,
   ShiftSwapRequest,
   ShiftTemplate,
 } from '@alto-people/shared';
+import { listClientLocations } from '@/lib/clientsApi';
 import {
   applyShiftTemplate,
   assignShift,
@@ -2275,6 +2277,8 @@ function CreateShiftDialog({
   onCreated: () => void;
 }) {
   const [clientId, setClientId] = useState(clients[0]?.id ?? '');
+  const [locationId, setLocationId] = useState('');
+  const [locations, setLocations] = useState<LocationSummary[] | null>(null);
   const [position, setPosition] = useState('');
   // When opened from a calendar cell we know the day → switch to time-only
   // inputs (`HH:MM`) and show the date as a header label. When opened from
@@ -2297,6 +2301,31 @@ function CreateShiftDialog({
   // The manager can override per-shift via the "Publish immediately" toggle.
   const [publishImmediately, setPublishImmediately] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  // Phase 131 — load Locations under the selected client. Auto-picks
+  // the first option so HR can hit Save in the single-site case
+  // without an extra click. Resets when the client switches.
+  useEffect(() => {
+    setLocationId('');
+    if (!clientId) {
+      setLocations(null);
+      return;
+    }
+    let cancelled = false;
+    setLocations(null);
+    listClientLocations(clientId)
+      .then((r) => {
+        if (cancelled) return;
+        setLocations(r.locations);
+        if (r.locations.length > 0) setLocationId(r.locations[0]!.id);
+      })
+      .catch(() => {
+        if (!cancelled) setLocations([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId]);
 
   useEffect(() => {
     if (open) {
@@ -2368,6 +2397,7 @@ function CreateShiftDialog({
     try {
       const created = await createShift({
         clientId,
+        ...(locationId ? { locationId } : {}),
         position,
         startsAt: startISO,
         endsAt: endISO,
@@ -2434,6 +2464,36 @@ function CreateShiftDialog({
                   />
                 )
               }
+            </Field>
+            <Field
+              label="Location"
+              required
+              hint="Physical site. Used by the kiosk geofence and reports."
+            >
+              {(p) => (
+                <Select
+                  value={locationId}
+                  onChange={(e) => setLocationId(e.target.value)}
+                  disabled={!clientId || locations === null || locations.length === 0}
+                  {...p}
+                >
+                  <option value="">
+                    {!clientId
+                      ? 'Pick a client first'
+                      : locations === null
+                        ? 'Loading…'
+                        : locations.length === 0
+                          ? 'No locations under this client'
+                          : 'Select a location'}
+                  </option>
+                  {locations?.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}
+                      {l.state ? ` · ${l.state}` : ''}
+                    </option>
+                  ))}
+                </Select>
+              )}
             </Field>
             <Field label="Position" required>
               {(p) => (
@@ -2529,7 +2589,10 @@ function CreateShiftDialog({
                 </Field>
               </>
             )}
-            <Field label="Location">
+            <Field
+              label="Sub-zone (optional)"
+              hint='Free-text label within the Location (e.g. "Bar", "Patio", "Floor 2").'
+            >
               {(p) => (
                 <Input
                   value={location}

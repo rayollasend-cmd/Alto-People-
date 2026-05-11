@@ -1086,9 +1086,15 @@ export type ShiftListResponse = z.infer<typeof ShiftListResponseSchema>;
 export const ShiftCreateInputSchema = z
   .object({
     clientId: UuidSchema,
+    // Phase 131 — physical work site for the shift. Optional in the
+    // wire schema; the server falls back to the client's first
+    // active Location when omitted (firstLocationForClient).
+    locationId: UuidSchema.optional(),
     position: z.string().min(1).max(120),
     startsAt: z.string().datetime(),
     endsAt: z.string().datetime(),
+    /** Optional free-text sub-zone label ("Bar", "Patio", "Floor 2").
+     *  Separate from the Location FK above, which is the site. */
     location: z.string().max(200).optional(),
     hourlyRate: z.number().nonnegative().optional(),
     /** Cost-side rate (associate pay). Drives projected labor cost. */
