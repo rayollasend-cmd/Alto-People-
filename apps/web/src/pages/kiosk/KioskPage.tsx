@@ -42,6 +42,11 @@ export function KioskPage() {
   const [intent, setIntent] = useState<Intent>(null);
   const [result, setResult] = useState<PunchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Inline wrong-PIN feedback. Shown beneath the dots on the PIN screen
+  // and triggers a shake. Distinct from `error` (which is for hard
+  // failures like an expired device token that bounce to a full-page
+  // error). Cleared the moment the user touches the keypad again.
+  const [pinError, setPinError] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [queued, setQueued] = useState<number>(() => queueSize());
 
@@ -106,6 +111,7 @@ export function KioskPage() {
     setIntent(null);
     setResult(null);
     setError(null);
+    setPinError(null);
     setStage('idle');
   };
 
@@ -177,6 +183,16 @@ export function KioskPage() {
           setStage('setup');
           return;
         }
+        // Wrong-PIN at the punch step (race: PIN rotated between
+        // preflight and submit). Drop the user back at the keypad with
+        // an inline message instead of a full-page red error so they
+        // can retype immediately. Same UX as the preflight rejection.
+        if (err.code === 'invalid_pin') {
+          setPin('');
+          setPinError('Wrong PIN. Try again.');
+          setStage('pin');
+          return;
+        }
         setError(err.message);
         setStage('error');
         window.setTimeout(reset, 3000);
@@ -212,7 +228,20 @@ export function KioskPage() {
   }
 
   return (
-    <div className="fixed inset-0 bg-midnight text-white flex flex-col items-center justify-center select-none">
+    <div
+      className="fixed inset-0 bg-midnight text-white flex flex-col items-center justify-center select-none"
+      style={{
+        // Tablet hardening: no pinch-to-zoom, no double-tap-zoom (the
+        // PIN pad would otherwise zoom on a rapid double-tap), no
+        // pull-to-refresh on iOS/Android Chrome which would dismiss
+        // mid-punch. Selection is already blocked via select-none.
+        touchAction: 'manipulation',
+        overscrollBehavior: 'contain',
+        WebkitUserSelect: 'none',
+        WebkitTouchCallout: 'none',
+      }}
+      onContextMenu={(e) => e.preventDefault()}
+    >
       {stage === 'idle' && (
         <IdleScreen
           now={now}
@@ -225,9 +254,15 @@ export function KioskPage() {
       {stage === 'pin' && (
         <PinPad
           pin={pin}
-          onChange={setPin}
+          onChange={(p) => {
+            setPin(p);
+            // Any keypad activity dismisses the inline error so the
+            // next attempt starts clean.
+            if (pinError) setPinError(null);
+          }}
           intent={intent}
           onIntent={setIntent}
+          error={pinError}
           onSubmit={async () => {
             // Preflight the PIN before opening the camera. A made-up
             // code stops here instead of showing the user themselves
@@ -250,6 +285,14 @@ export function KioskPage() {
                   setToken(null);
                   setError(err.message);
                   setStage('setup');
+                  return;
+                }
+                // Wrong PIN: stay on the keypad with an inline message
+                // + shake. The associate retypes without losing place
+                // or having to wait out a full-page error timeout.
+                if (err.code === 'invalid_pin') {
+                  setPin('');
+                  setPinError('Wrong PIN. Try again.');
                   return;
                 }
                 setError(err.message);
@@ -389,6 +432,7 @@ function PinPad({
   onIntent,
   onSubmit,
   onCancel,
+  error,
 }: {
   pin: string;
   onChange: (p: string) => void;
@@ -396,6 +440,7 @@ function PinPad({
   onIntent: (i: Intent) => void;
   onSubmit: () => void;
   onCancel: () => void;
+  error?: string | null;
 }) {
   // Auto-advance once 4 digits are entered.
   useEffect(() => {
@@ -405,6 +450,13 @@ function PinPad({
     }
   }, [pin, onSubmit]);
 
+  // Shake the dots row whenever a new error arrives. Keyed on the
+  // error string so two consecutive wrong PINs both re-trigger.
+  const [shakeKey, setShakeKey] = useState(0);
+  useEffect(() => {
+    if (error) setShakeKey((k) => k + 1);
+  }, [error]);
+
   const press = (d: string) => {
     if (pin.length < 4) onChange(pin + d);
   };
@@ -412,6 +464,11 @@ function PinPad({
 
   return (
     <div className="flex flex-col items-center w-full max-w-sm px-4">
+      <style>{`@keyframes kiosk-shake {
+        0%, 100% { transform: translateX(0); }
+        20%, 60% { transform: translateX(-10px); }
+        40%, 80% { transform: translateX(10px); }
+      }`}</style>
       <div className="text-2xl text-silver mb-3">
         {intent === 'BREAK'
           ? 'Break — enter your 4-digit PIN'
@@ -427,21 +484,38 @@ function PinPad({
       >
         {intent === 'BREAK' ? '☕ On break' : 'Going on break?'}
       </button>
-      <div className="flex gap-4 mb-10">
+      <div
+        key={shakeKey}
+        className="flex gap-4 mb-3"
+        style={
+          error
+            ? { animation: 'kiosk-shake 0.4s cubic-bezier(.36,.07,.19,.97) both' }
+            : undefined
+        }
+      >
         {[0, 1, 2, 3].map((i) => (
           <div
             key={i}
-            className={`w-16 h-20 rounded-xl border-2 flex items-center justify-center text-4xl ${
+            className={`w-16 h-20 rounded-xl border-2 flex items-center justify-center text-4xl transition-colors ${
               pin.length > i
                 ? intent === 'BREAK'
                   ? 'bg-amber-500 border-amber-400 text-navy-secondary'
                   : 'bg-cyan-500 border-cyan-400 text-navy-secondary'
-                : 'bg-navy-secondary/40 border-navy-secondary text-silver'
+                : error
+                  ? 'bg-navy-secondary/40 border-red-500/60 text-silver'
+                  : 'bg-navy-secondary/40 border-navy-secondary text-silver'
             }`}
           >
             {pin.length > i ? '•' : ''}
           </div>
         ))}
+      </div>
+      <div className="h-7 mb-4 flex items-center justify-center">
+        {error ? (
+          <span className="text-red-400 text-base font-medium" aria-live="polite">
+            {error}
+          </span>
+        ) : null}
       </div>
       <div className="grid grid-cols-3 gap-3 w-full">
         {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((d) => (
@@ -595,9 +669,14 @@ function SelfieCapture({
           muted
           playsInline
         />
+        {/* Soft vignette so the countdown number reads clearly against
+            the live feed; on bright daylight selfies the bare number
+            washed out. */}
         {countdown !== null && countdown > 0 && (
-          <div className="absolute inset-0 flex items-center justify-center text-9xl font-bold text-white drop-shadow-[0_4px_8px_rgba(0,0,0,0.8)]">
-            {countdown}
+          <div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-black/30">
+            <div className="w-40 h-40 rounded-full border-4 border-cyan-400/80 bg-black/40 flex items-center justify-center text-[8rem] leading-none font-bold text-white drop-shadow-[0_4px_8px_rgba(0,0,0,0.8)]">
+              {countdown}
+            </div>
           </div>
         )}
         {analyzing && (
@@ -636,7 +715,19 @@ function ResultScreen({ result }: { result: PunchResult }) {
       </div>
     );
   }
+  // First name only on the result greeting — "Welcome back, Kaal" reads
+  // warmer than full-legal-name on a wall-mounted tablet. Falls back to
+  // whatever the server sent if the split is empty (single-name records).
+  const firstName = result.associateName.split(' ')[0] || result.associateName;
   const verb =
+    result.action === 'CLOCK_IN'
+      ? `Welcome, ${firstName}`
+      : result.action === 'CLOCK_OUT'
+        ? `See you later, ${firstName}`
+        : result.action === 'BREAK_START'
+          ? `Enjoy your break, ${firstName}`
+          : `Welcome back, ${firstName}`;
+  const subhead =
     result.action === 'CLOCK_IN'
       ? 'Clocked in'
       : result.action === 'CLOCK_OUT'
@@ -651,11 +742,21 @@ function ResultScreen({ result }: { result: PunchResult }) {
         ? 'text-cyan-400'
         : 'text-amber-400';
   return (
-    <div className="text-center">
-      <div className={`text-9xl mb-6 ${color}`}>✓</div>
+    <div className="text-center px-6">
+      <style>{`@keyframes kiosk-check-in {
+        0% { transform: scale(0.6); opacity: 0; }
+        60% { transform: scale(1.1); opacity: 1; }
+        100% { transform: scale(1); opacity: 1; }
+      }`}</style>
+      <div
+        className={`text-9xl mb-6 ${color}`}
+        style={{ animation: 'kiosk-check-in 0.45s cubic-bezier(.34,1.56,.64,1) both' }}
+      >
+        ✓
+      </div>
       <div className="text-5xl font-serif mb-3">{verb}</div>
-      <div className="text-3xl text-silver">{result.associateName}</div>
-      <div className="text-xl text-silver mt-2">at {time}</div>
+      <div className={`text-2xl ${color} opacity-80`}>{subhead}</div>
+      <div className="text-xl text-silver mt-3">at {time}</div>
     </div>
   );
 }
