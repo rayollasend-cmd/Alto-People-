@@ -12,11 +12,7 @@ import {
   hmacPin,
   tokenLookupPrefix,
 } from '../lib/kioskAuth.js';
-import {
-  enforcePunchRateLimit,
-  recordFailedPinAttempt,
-  recordSuccessfulPinAttempt,
-} from '../lib/kioskRateLimit.js';
+import { enforcePunchRateLimit } from '../lib/kioskRateLimit.js';
 import { encryptString, decryptString } from '../lib/crypto.js';
 import { enqueueAudit } from '../lib/audit.js';
 
@@ -788,10 +784,9 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
     },
   });
   if (!pinRow || pinRow.clientId !== device.clientId) {
-    recordFailedPinAttempt(device.id);
-    // Audit a REJECTED row so the brute-force timeline matches
-    // /kiosk/punch. clientPunchedAt + idempotency are absent on
-    // preflight by design — those are punch-specific.
+    // Audit a REJECTED row so HR can still see brute-force patterns
+    // in the punch log even though we no longer hard-lock the device.
+    // clientPunchedAt + idempotency are absent on preflight by design.
     await prisma.kioskPunch.create({
       data: {
         kioskDeviceId: device.id,
@@ -804,9 +799,8 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
       where: { id: device.id },
       data: { lastSeenAt: new Date() },
     });
-    throw new HttpError(401, 'invalid_pin', 'PIN not recognized.');
+    throw new HttpError(401, 'invalid_pin', 'Wrong PIN.');
   }
-  recordSuccessfulPinAttempt(device.id);
 
   res.json({
     ok: true,
@@ -982,11 +976,10 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
   });
 
   if (!pinRow || pinRow.clientId !== device.clientId) {
-    // Brute-force counter — 3 wrong PINs in a row puts the device on a
-    // 5-min lockout. Recorded BEFORE the REJECTED punch row so even if
-    // the DB write fails, the lockout state still tightens.
-    recordFailedPinAttempt(device.id);
-    // Record a REJECTED punch so we can detect brute-force in the audit log.
+    // Record a REJECTED punch row so HR can still spot brute-force
+    // patterns in the punch log — we no longer hard-lock the device
+    // (kiosks are shared, and locking one out blocked an entire site
+    // whenever three associates mistyped in a row).
     await prisma.kioskPunch.create({
       data: {
         kioskDeviceId: device.id,
@@ -1004,9 +997,8 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
       where: { id: device.id },
       data: { lastSeenAt: new Date() },
     });
-    throw new HttpError(401, 'invalid_pin', 'PIN not recognized.');
+    throw new HttpError(401, 'invalid_pin', 'Wrong PIN.');
   }
-  recordSuccessfulPinAttempt(device.id);
 
   // 5. Phase 101 — face match (flag-only, never reject). If we have a
   // descriptor and a reference, compute Euclidean distance. If we have a
