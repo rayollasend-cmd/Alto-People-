@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Copy, Key, MapPin, Plus, ScanFace, Tablet } from 'lucide-react';
+import { AlertTriangle, Copy, Key, Plus, ScanFace, Tablet } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
   assignKioskPin,
@@ -12,12 +12,11 @@ import {
   listKioskPunches,
   resetKioskFaceReference,
   reviewKioskPunch,
+  reviewKioskPunchesBulk,
   revokeKioskDevice,
   rotateKioskDevice,
-  updateKioskGeofence,
   type KioskDevice,
   type KioskFaceReferenceSummary,
-  type KioskGeofence,
   type KioskPin,
   type KioskPunchSummary,
 } from '@/lib/kiosk99Api';
@@ -105,12 +104,24 @@ function renderTokenStatus(iso: string | null) {
   return <Badge variant="success">in {days}d</Badge>;
 }
 
+// A device that was last seen more than this many hours ago is treated
+// as "offline" — battery dead, unplugged, network down, or stolen. HR
+// should be poked when this happens; payroll for that site is silently
+// broken until someone fixes the kiosk.
+const OFFLINE_THRESHOLD_HOURS = 24;
+
+function isDeviceOffline(d: KioskDevice): boolean {
+  if (!d.isActive) return false;
+  if (!d.lastSeenAt) return true;
+  const ageMs = Date.now() - new Date(d.lastSeenAt).getTime();
+  return ageMs > OFFLINE_THRESHOLD_HOURS * 60 * 60 * 1000;
+}
+
 function DevicesTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
   const [rows, setRows] = useState<KioskDevice[] | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [showToken, setShowToken] = useState<string | null>(null);
-  const [editGeofence, setEditGeofence] = useState<KioskDevice | null>(null);
 
   const refresh = () => {
     setRows(null);
@@ -122,8 +133,44 @@ function DevicesTab({ canManage }: { canManage: boolean }) {
     refresh();
   }, []);
 
+  const offlineCount = rows ? rows.filter(isDeviceOffline).length : 0;
+
   return (
     <div className="space-y-4">
+      {rows && rows.length > 0 && (
+        <div className="flex gap-3">
+          <div className="flex-1 bg-navy-secondary/40 border border-navy-secondary rounded-lg px-4 py-3">
+            <div className="text-xs uppercase tracking-widest text-silver">Kiosks</div>
+            <div className="text-2xl font-medium text-white">
+              {rows.filter((d) => d.isActive).length}
+            </div>
+            <div className="text-xs text-silver">{rows.length} total</div>
+          </div>
+          <div
+            className={`flex-1 rounded-lg px-4 py-3 border ${
+              offlineCount > 0
+                ? 'bg-amber-500/10 border-amber-500/40'
+                : 'bg-navy-secondary/40 border-navy-secondary'
+            }`}
+          >
+            <div className="text-xs uppercase tracking-widest text-silver">
+              Offline &gt; {OFFLINE_THRESHOLD_HOURS}h
+            </div>
+            <div
+              className={`text-2xl font-medium ${
+                offlineCount > 0 ? 'text-amber-300' : 'text-white'
+              }`}
+            >
+              {offlineCount}
+            </div>
+            <div className="text-xs text-silver">
+              {offlineCount === 0
+                ? 'All active kiosks reported in.'
+                : 'Battery, network, or unpaired — investigate.'}
+            </div>
+          </div>
+        </div>
+      )}
       {canManage && (
         <div className="flex justify-end">
           <Button onClick={() => setShowNew(true)}>
@@ -149,7 +196,6 @@ function DevicesTab({ canManage }: { canManage: boolean }) {
                   <TableHead>Client</TableHead>
                   <TableHead>Location</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Geofence</TableHead>
                   <TableHead>Last seen</TableHead>
                   <TableHead>Token</TableHead>
                   <TableHead>Punches</TableHead>
@@ -172,29 +218,28 @@ function DevicesTab({ canManage }: { canManage: boolean }) {
                       )}
                     </TableCell>
                     <TableCell>
-                      {d.geofence ? (
-                        <Badge variant="success">{d.geofence.radiusMeters}m</Badge>
+                      {d.lastSeenAt ? (
+                        <span
+                          className={
+                            isDeviceOffline(d) ? 'text-amber-300' : undefined
+                          }
+                        >
+                          {new Date(d.lastSeenAt).toLocaleString()}
+                          {isDeviceOffline(d) && (
+                            <Badge variant="pending" className="ml-2">
+                              Offline
+                            </Badge>
+                          )}
+                        </span>
+                      ) : isDeviceOffline(d) ? (
+                        <Badge variant="pending">Never seen</Badge>
                       ) : (
-                        <span className="text-silver text-xs">Off</span>
+                        '—'
                       )}
-                    </TableCell>
-                    <TableCell>
-                      {d.lastSeenAt
-                        ? new Date(d.lastSeenAt).toLocaleString()
-                        : '—'}
                     </TableCell>
                     <TableCell>{renderTokenStatus(d.tokenExpiresAt)}</TableCell>
                     <TableCell>{d.punchCount}</TableCell>
                     <TableCell className="text-right space-x-2">
-                      {canManage && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setEditGeofence(d)}
-                        >
-                          <MapPin className="mr-1 h-3 w-3" /> Geofence
-                        </Button>
-                      )}
                       {canManage && d.isActive && (
                         <Button
                           size="sm"
@@ -266,16 +311,6 @@ function DevicesTab({ canManage }: { canManage: boolean }) {
         />
       )}
       {showToken && <TokenRevealDrawer token={showToken} onClose={() => setShowToken(null)} />}
-      {editGeofence && (
-        <GeofenceDrawer
-          device={editGeofence}
-          onClose={() => setEditGeofence(null)}
-          onSaved={() => {
-            setEditGeofence(null);
-            refresh();
-          }}
-        />
-      )}
     </div>
   );
 }
@@ -456,147 +491,6 @@ function TokenRevealDrawer({ token, onClose }: { token: string; onClose: () => v
       </DrawerBody>
       <DrawerFooter>
         <Button onClick={onClose}>I've paired it</Button>
-      </DrawerFooter>
-    </Drawer>
-  );
-}
-
-function GeofenceDrawer({
-  device,
-  onClose,
-  onSaved,
-}: {
-  device: KioskDevice;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [enabled, setEnabled] = useState<boolean>(device.geofence != null);
-  const [lat, setLat] = useState(
-    device.geofence?.latitude.toString() ?? '',
-  );
-  const [lng, setLng] = useState(
-    device.geofence?.longitude.toString() ?? '',
-  );
-  const [radius, setRadius] = useState(
-    device.geofence?.radiusMeters.toString() ?? '100',
-  );
-  const [saving, setSaving] = useState(false);
-
-  const useMyLocation = () => {
-    if (!('geolocation' in navigator)) {
-      toast.error('This browser doesn\'t support geolocation.');
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setLat(pos.coords.latitude.toFixed(7));
-        setLng(pos.coords.longitude.toFixed(7));
-      },
-      (err) => toast.error(err.message),
-      { enableHighAccuracy: true, timeout: 10_000 },
-    );
-  };
-
-  const onSubmit = async () => {
-    setSaving(true);
-    try {
-      let geofence: KioskGeofence | null = null;
-      if (enabled) {
-        const latN = Number(lat);
-        const lngN = Number(lng);
-        const radN = Math.round(Number(radius));
-        if (!Number.isFinite(latN) || latN < -90 || latN > 90) {
-          toast.error('Latitude must be -90 to 90.');
-          setSaving(false);
-          return;
-        }
-        if (!Number.isFinite(lngN) || lngN < -180 || lngN > 180) {
-          toast.error('Longitude must be -180 to 180.');
-          setSaving(false);
-          return;
-        }
-        if (!Number.isFinite(radN) || radN <= 0 || radN > 50_000) {
-          toast.error('Radius must be 1 to 50000 meters.');
-          setSaving(false);
-          return;
-        }
-        geofence = { latitude: latN, longitude: lngN, radiusMeters: radN };
-      }
-      await updateKioskGeofence(device.id, geofence);
-      toast.success(geofence ? 'Geofence updated.' : 'Geofence cleared.');
-      onSaved();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
-      <DrawerHeader>
-        <DrawerTitle>Geofence — {device.name}</DrawerTitle>
-      </DrawerHeader>
-      <DrawerBody className="space-y-4">
-        <div className="text-sm text-silver">
-          When enabled, punches must report coordinates within the radius.
-          Out-of-range punches are rejected and logged.
-        </div>
-        <div className="flex items-center gap-3">
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={(e) => setEnabled(e.target.checked)}
-          />
-          <Label>Require location for punches</Label>
-        </div>
-        {enabled && (
-          <>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label>Latitude</Label>
-                <Input
-                  className="mt-1 font-mono text-xs"
-                  value={lat}
-                  onChange={(e) => setLat(e.target.value)}
-                  placeholder="40.7128"
-                />
-              </div>
-              <div>
-                <Label>Longitude</Label>
-                <Input
-                  className="mt-1 font-mono text-xs"
-                  value={lng}
-                  onChange={(e) => setLng(e.target.value)}
-                  placeholder="-74.0060"
-                />
-              </div>
-            </div>
-            <Button variant="ghost" size="sm" onClick={useMyLocation}>
-              <MapPin className="mr-1 h-3 w-3" /> Use my current location
-            </Button>
-            <div>
-              <Label>Radius (meters)</Label>
-              <Input
-                type="number"
-                className="mt-1"
-                value={radius}
-                onChange={(e) => setRadius(e.target.value)}
-              />
-              <div className="text-xs text-silver mt-1">
-                Typical: 50-200m for a single building, 500m+ for a campus.
-              </div>
-            </div>
-          </>
-        )}
-      </DrawerBody>
-      <DrawerFooter>
-        <Button variant="ghost" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button onClick={onSubmit} disabled={saving}>
-          {saving ? 'Saving…' : 'Save'}
-        </Button>
       </DrawerFooter>
     </Drawer>
   );
@@ -1127,14 +1021,41 @@ function FacesTab({ canManage }: { canManage: boolean }) {
   );
 }
 
+// HR's SLA: punches that have sat in the review queue more than 3 days
+// are visually escalated. We don't auto-resolve — biometric/anomaly
+// review is an HR judgment call — but a "5 days pending" red badge
+// pushes them to the top of the day's todo list.
+const REVIEW_SLA_WARN_DAYS = 2;
+const REVIEW_SLA_BREACH_DAYS = 5;
+
+function renderPendingBadge(createdAt: string): JSX.Element {
+  const days = Math.floor(
+    (Date.now() - new Date(createdAt).getTime()) / (24 * 60 * 60 * 1000),
+  );
+  if (days >= REVIEW_SLA_BREACH_DAYS) {
+    return <Badge variant="destructive">{days}d pending</Badge>;
+  }
+  if (days >= REVIEW_SLA_WARN_DAYS) {
+    return <Badge variant="pending">{days}d pending</Badge>;
+  }
+  return (
+    <Badge variant="outline">{days === 0 ? 'Today' : `${days}d pending`}</Badge>
+  );
+}
+
 function ReviewTab({ canManage }: { canManage: boolean }) {
   const prompt = usePrompt();
   const [rows, setRows] = useState<KioskPunchSummary[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const refresh = () => {
     setRows(null);
-    listKioskPunches({ reviewStatus: 'PENDING' })
+    setSelected(new Set());
+    // Oldest first — HR works the back of the queue down, not the
+    // freshest punch first.
+    listKioskPunches({ reviewStatus: 'PENDING', sort: 'oldest' })
       .then((r) => setRows(r.punches))
       .catch(() => setRows([]));
   };
@@ -1170,6 +1091,56 @@ function ReviewTab({ canManage }: { canManage: boolean }) {
     }
   };
 
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const toggleAll = () => {
+    if (!rows) return;
+    if (selected.size === rows.length) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(rows.map((p) => p.id)));
+    }
+  };
+
+  const decideBulk = async (decision: 'APPROVED' | 'REJECTED') => {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    let notes: string | undefined;
+    if (decision === 'REJECTED') {
+      const v = await prompt({
+        title: `Reject ${ids.length} punches?`,
+        description: 'All selected punches will have their time entries voided.',
+        reasonLabel: 'Notes (applied to all)',
+        confirmLabel: 'Reject & void',
+        destructive: true,
+      });
+      if (v === null) return;
+      notes = v;
+    }
+    setBulkBusy(true);
+    try {
+      const r = await reviewKioskPunchesBulk(ids, decision, notes);
+      const msg =
+        r.skipped.length > 0
+          ? `${r.reviewed} reviewed, ${r.skipped.length} skipped`
+          : decision === 'APPROVED'
+            ? `${r.reviewed} approved`
+            : `${r.reviewed} rejected & voided`;
+      toast.success(msg);
+      refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
   return (
     <Card>
       <CardContent className="p-0">
@@ -1182,88 +1153,141 @@ function ReviewTab({ canManage }: { canManage: boolean }) {
             description="Flagged kiosk punches (face mismatches, anomalies) appear here."
           />
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>When</TableHead>
-                <TableHead>Associate</TableHead>
-                <TableHead>Device</TableHead>
-                <TableHead>Action</TableHead>
-                <TableHead>Reason</TableHead>
-                <TableHead>Selfie</TableHead>
-                <TableHead className="text-right">Decision</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((p) => (
-                <TableRow key={p.id}>
-                  <TableCell className="text-xs">
-                    {new Date(p.createdAt).toLocaleString()}
-                  </TableCell>
-                  <TableCell className="font-medium text-white">
-                    {p.associateName ?? '—'}
-                  </TableCell>
-                  <TableCell className="text-xs">{p.deviceName}</TableCell>
-                  <TableCell>
-                    <Badge variant={p.action === 'CLOCK_IN' ? 'success' : 'accent'}>
-                      {p.action}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-xs text-amber-400">
-                    <div className="font-medium">
-                      {p.anomalyKind === 'IMPOSSIBLE_TRAVEL'
-                        ? 'Impossible travel'
-                        : p.anomalyKind === 'FACE_MISMATCH'
-                          ? 'Face mismatch'
-                          : (p.rejectReason ?? 'Anomaly')}
-                    </div>
-                    {p.anomalyDetail && (
-                      <div className="text-silver">{p.anomalyDetail}</div>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {p.hasSelfie ? (
-                      <a
-                        href={`/api/kiosk-punches/${p.id}/selfie`}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        <img
-                          src={`/api/kiosk-punches/${p.id}/selfie`}
-                          alt="selfie"
-                          className="w-12 h-12 rounded object-cover border border-navy-secondary"
-                        />
-                      </a>
-                    ) : (
-                      '—'
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right space-x-2">
-                    {canManage && (
-                      <>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={busy === p.id}
-                          onClick={() => void decide(p.id, 'APPROVED')}
-                        >
-                          Approve
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          disabled={busy === p.id}
-                          onClick={() => void decide(p.id, 'REJECTED')}
-                        >
-                          Reject
-                        </Button>
-                      </>
-                    )}
-                  </TableCell>
+          <>
+            {canManage && (
+              <div className="flex items-center justify-between gap-3 p-3 border-b border-navy-secondary bg-navy-secondary/30">
+                <div className="text-sm text-silver">
+                  {selected.size === 0
+                    ? `${rows.length} flagged`
+                    : `${selected.size} selected`}
+                </div>
+                <div className="space-x-2">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={selected.size === 0 || bulkBusy}
+                    onClick={() => void decideBulk('APPROVED')}
+                  >
+                    Approve selected
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    disabled={selected.size === 0 || bulkBusy}
+                    onClick={() => void decideBulk('REJECTED')}
+                  >
+                    Reject selected
+                  </Button>
+                </div>
+              </div>
+            )}
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  {canManage && (
+                    <TableHead className="w-10">
+                      <input
+                        type="checkbox"
+                        aria-label="Select all flagged punches"
+                        checked={
+                          rows.length > 0 && selected.size === rows.length
+                        }
+                        onChange={toggleAll}
+                      />
+                    </TableHead>
+                  )}
+                  <TableHead>When</TableHead>
+                  <TableHead>Aging</TableHead>
+                  <TableHead>Associate</TableHead>
+                  <TableHead>Device</TableHead>
+                  <TableHead>Action</TableHead>
+                  <TableHead>Reason</TableHead>
+                  <TableHead>Selfie</TableHead>
+                  <TableHead className="text-right">Decision</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {rows.map((p) => (
+                  <TableRow key={p.id}>
+                    {canManage && (
+                      <TableCell>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select punch ${p.id}`}
+                          checked={selected.has(p.id)}
+                          onChange={() => toggle(p.id)}
+                        />
+                      </TableCell>
+                    )}
+                    <TableCell className="text-xs">
+                      {new Date(p.createdAt).toLocaleString()}
+                    </TableCell>
+                    <TableCell>{renderPendingBadge(p.createdAt)}</TableCell>
+                    <TableCell className="font-medium text-white">
+                      {p.associateName ?? '—'}
+                    </TableCell>
+                    <TableCell className="text-xs">{p.deviceName}</TableCell>
+                    <TableCell>
+                      <Badge variant={p.action === 'CLOCK_IN' ? 'success' : 'accent'}>
+                        {p.action}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-xs text-amber-400">
+                      <div className="font-medium">
+                        {p.anomalyKind === 'IMPOSSIBLE_TRAVEL'
+                          ? 'Impossible travel'
+                          : p.anomalyKind === 'FACE_MISMATCH'
+                            ? 'Face mismatch'
+                            : (p.rejectReason ?? 'Anomaly')}
+                      </div>
+                      {p.anomalyDetail && (
+                        <div className="text-silver">{p.anomalyDetail}</div>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {p.hasSelfie ? (
+                        <a
+                          href={`/api/kiosk-punches/${p.id}/selfie`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          <img
+                            src={`/api/kiosk-punches/${p.id}/selfie`}
+                            alt="selfie"
+                            className="w-12 h-12 rounded object-cover border border-navy-secondary"
+                          />
+                        </a>
+                      ) : (
+                        '—'
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right space-x-2">
+                      {canManage && (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={busy === p.id || bulkBusy}
+                            onClick={() => void decide(p.id, 'APPROVED')}
+                          >
+                            Approve
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            disabled={busy === p.id || bulkBusy}
+                            onClick={() => void decide(p.id, 'REJECTED')}
+                          >
+                            Reject
+                          </Button>
+                        </>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </>
         )}
       </CardContent>
     </Card>

@@ -2,12 +2,6 @@ import { apiFetch } from './api';
 
 // ----- Admin ------------------------------------------------------------
 
-export interface KioskGeofence {
-  latitude: number;
-  longitude: number;
-  radiusMeters: number;
-}
-
 export interface KioskDevice {
   id: string;
   clientId: string;
@@ -24,7 +18,6 @@ export interface KioskDevice {
    *  device_token_expired and the tablet auto-clears its token. */
   tokenExpiresAt: string | null;
   punchCount: number;
-  geofence: KioskGeofence | null;
   createdAt: string;
 }
 
@@ -41,10 +34,7 @@ export interface KioskPin {
 
 export type KioskPunchReviewStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
-export type KioskAnomalyKind =
-  | 'FACE_MISMATCH'
-  | 'IMPOSSIBLE_TRAVEL'
-  | 'GEOFENCE_NEAR_MISS';
+export type KioskAnomalyKind = 'FACE_MISMATCH' | 'IMPOSSIBLE_TRAVEL';
 
 export interface KioskPunchSummary {
   id: string;
@@ -87,7 +77,6 @@ export const createKioskDevice = (input: {
   clientId?: string;
   locationId?: string;
   name: string;
-  geofence?: KioskGeofence | null;
 }) =>
   apiFetch<{ id: string; deviceToken: string; tokenExpiresAt: string | null }>(
     '/kiosk-devices',
@@ -119,15 +108,6 @@ export const kioskVerifyPin = (payload: {
     { method: 'POST', body: payload },
   );
 
-export const updateKioskGeofence = (
-  id: string,
-  geofence: KioskGeofence | null,
-) =>
-  apiFetch<{ ok: true }>(`/kiosk-devices/${id}/geofence`, {
-    method: 'PUT',
-    body: { geofence },
-  });
-
 export const revokeKioskDevice = (id: string) =>
   apiFetch<{ ok: true }>(`/kiosk-devices/${id}/revoke`, {
     method: 'POST',
@@ -156,11 +136,13 @@ export const listKioskPunches = (params?: {
   associateId?: string;
   deviceId?: string;
   reviewStatus?: KioskPunchReviewStatus;
+  sort?: 'newest' | 'oldest';
 }) => {
   const q = new URLSearchParams();
   if (params?.associateId) q.set('associateId', params.associateId);
   if (params?.deviceId) q.set('deviceId', params.deviceId);
   if (params?.reviewStatus) q.set('reviewStatus', params.reviewStatus);
+  if (params?.sort) q.set('sort', params.sort);
   const suffix = q.toString() ? `?${q.toString()}` : '';
   return apiFetch<{ punches: KioskPunchSummary[] }>(`/kiosk-punches${suffix}`);
 };
@@ -173,6 +155,19 @@ export const reviewKioskPunch = (
   apiFetch<{ ok: true }>(`/kiosk-punches/${id}/review`, {
     method: 'POST',
     body: { decision, notes },
+  });
+
+export const reviewKioskPunchesBulk = (
+  ids: string[],
+  decision: 'APPROVED' | 'REJECTED',
+  notes?: string,
+) =>
+  apiFetch<{
+    reviewed: number;
+    skipped: { id: string; reason: 'not_found' | 'not_pending' }[];
+  }>('/kiosk-punches/review', {
+    method: 'POST',
+    body: { ids, decision, notes },
   });
 
 // ----- Face references (Phase 101) ---------------------------------------
