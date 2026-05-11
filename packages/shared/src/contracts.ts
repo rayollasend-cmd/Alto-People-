@@ -3436,8 +3436,14 @@ export const LocationSummarySchema = z.object({
   id: UuidSchema,
   clientId: UuidSchema,
   name: z.string(),
-  state: z.string().nullable(),
+  addressLine1: z.string().nullable(),
+  addressLine2: z.string().nullable(),
   city: z.string().nullable(),
+  state: z.string().nullable(),
+  zip: z.string().nullable(),
+  latitude: z.number().nullable(),
+  longitude: z.number().nullable(),
+  geofenceRadiusMeters: z.number().int().nullable(),
   isActive: z.boolean(),
 });
 export type LocationSummary = z.infer<typeof LocationSummarySchema>;
@@ -3446,6 +3452,34 @@ export const LocationListResponseSchema = z.object({
   locations: z.array(LocationSummarySchema),
 });
 export type LocationListResponse = z.infer<typeof LocationListResponseSchema>;
+
+/** Geofence inputs come as a trio: all three together (set) or all three
+ *  null (clear). Per-axis nulls are coerced to the all-null case on the
+ *  server. radius is meters. lat/lng have ~5cm precision. */
+const LocationBaseFields = {
+  name: z.string().trim().min(1).max(255),
+  addressLine1: z.string().max(255).nullable().optional(),
+  addressLine2: z.string().max(255).nullable().optional(),
+  city: z.string().max(120).nullable().optional(),
+  state: z
+    .string()
+    .regex(/^[A-Z]{2}$/, 'Two-letter USPS code')
+    .nullable()
+    .optional(),
+  zip: z.string().max(10).nullable().optional(),
+  latitude: z.number().min(-90).max(90).nullable().optional(),
+  longitude: z.number().min(-180).max(180).nullable().optional(),
+  geofenceRadiusMeters: z.number().int().min(1).max(50_000).nullable().optional(),
+};
+
+export const LocationCreateInputSchema = z.object(LocationBaseFields);
+export type LocationCreateInput = z.infer<typeof LocationCreateInputSchema>;
+
+export const LocationUpdateInputSchema = z.object({
+  ...LocationBaseFields,
+  isActive: z.boolean().optional(),
+});
+export type LocationUpdateInput = z.infer<typeof LocationUpdateInputSchema>;
 
 /** Body for POST /org/associates/:id/transfer. The new locationId must
  *  belong to the associate's current client (intra-client transfer only

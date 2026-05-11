@@ -29,6 +29,7 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { JobsSection } from './JobsSection';
+import { LocationsSection } from './LocationsSection';
 import { BenefitsPlansSection } from './BenefitsPlansSection';
 import { QuickbooksSection } from './QuickbooksSection';
 
@@ -151,6 +152,8 @@ export function ClientDetail() {
         canManage={canManage}
         onSaved={(updated) => setGeofence(updated)}
       />
+
+      <LocationsSection clientId={client.id} />
 
       <JobsSection clientId={client.id} />
 

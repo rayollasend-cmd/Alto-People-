@@ -6,7 +6,10 @@ import type {
   ClientStatus,
   ClientSummary,
   ClientUpdateInput,
+  LocationCreateInput,
   LocationListResponse,
+  LocationSummary,
+  LocationUpdateInput,
 } from '@alto-people/shared';
 import { apiFetch } from './api';
 
@@ -66,6 +69,37 @@ export function archiveClient(id: string): Promise<void> {
   return apiFetch<void>(`/clients/${id}`, { method: 'DELETE' });
 }
 
-export function listClientLocations(id: string): Promise<LocationListResponse> {
-  return apiFetch<LocationListResponse>(`/clients/${id}/locations`);
+export function listClientLocations(
+  id: string,
+  opts: { includeInactive?: boolean } = {},
+): Promise<LocationListResponse> {
+  const qs = opts.includeInactive ? '?includeInactive=true' : '';
+  return apiFetch<LocationListResponse>(`/clients/${id}/locations${qs}`);
+}
+
+export function createLocation(
+  clientId: string,
+  body: LocationCreateInput,
+): Promise<LocationSummary> {
+  return apiFetch<LocationSummary>(`/clients/${clientId}/locations`, {
+    method: 'POST',
+    body,
+  });
+}
+
+export function updateLocation(
+  clientId: string,
+  locationId: string,
+  body: LocationUpdateInput,
+): Promise<LocationSummary> {
+  return apiFetch<LocationSummary>(`/clients/${clientId}/locations/${locationId}`, {
+    method: 'PATCH',
+    body,
+  });
+}
+
+export function archiveLocation(clientId: string, locationId: string): Promise<void> {
+  return apiFetch<void>(`/clients/${clientId}/locations/${locationId}`, {
+    method: 'DELETE',
+  });
 }

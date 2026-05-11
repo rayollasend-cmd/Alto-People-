@@ -6,9 +6,12 @@ import {
   ClientStateInputSchema,
   ClientStatusSchema,
   ClientUpdateInputSchema,
+  LocationCreateInputSchema,
+  LocationUpdateInputSchema,
   type ClientListItem,
   type ClientListResponse,
   type ClientSummary,
+  type LocationSummary,
 } from '@alto-people/shared';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
@@ -243,9 +246,9 @@ clientsRouter.get('/:id', async (req, res, next) => {
   }
 });
 
-// Phase 131 — active Locations under this client (for the transfer
-// picker, kiosk device registration, scheduling site filter, etc.).
-// Inactive / soft-deleted Locations are hidden by default.
+// Phase 131 — Locations under this client. `?includeInactive=true`
+// surfaces archived rows for the admin UI; default hides them so the
+// transfer picker and kiosk device registration only see live sites.
 clientsRouter.get('/:id/locations', async (req, res, next) => {
   try {
     const client = await prisma.client.findFirst({
@@ -255,19 +258,180 @@ clientsRouter.get('/:id/locations', async (req, res, next) => {
     if (!client) {
       throw new HttpError(404, 'client_not_found', 'Client not found');
     }
+    const includeInactive =
+      typeof req.query.includeInactive === 'string' &&
+      req.query.includeInactive.toLowerCase() === 'true';
     const rows = await prisma.location.findMany({
-      where: { clientId: client.id, deletedAt: null, isActive: true },
-      orderBy: { name: 'asc' },
-      select: {
-        id: true, clientId: true, name: true,
-        state: true, city: true, isActive: true,
+      where: {
+        clientId: client.id,
+        deletedAt: null,
+        ...(includeInactive ? {} : { isActive: true }),
       },
+      orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
     });
-    res.json({ locations: rows });
+    const locations: LocationSummary[] = rows.map((r) => ({
+      id: r.id,
+      clientId: r.clientId,
+      name: r.name,
+      addressLine1: r.addressLine1,
+      addressLine2: r.addressLine2,
+      city: r.city,
+      state: r.state,
+      zip: r.zip,
+      latitude: r.latitude === null ? null : Number(r.latitude),
+      longitude: r.longitude === null ? null : Number(r.longitude),
+      geofenceRadiusMeters: r.geofenceRadiusMeters,
+      isActive: r.isActive,
+    }));
+    res.json({ locations });
   } catch (err) {
     next(err);
   }
 });
+
+clientsRouter.post('/:id/locations', MANAGE, async (req, res, next) => {
+  try {
+    const client = await prisma.client.findFirst({
+      where: { ...scopeClients(req.user!), id: req.params.id },
+      select: { id: true },
+    });
+    if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+    const input = LocationCreateInputSchema.parse(req.body);
+    const geo = normalizeGeofence(input);
+    const created = await prisma.location.create({
+      data: {
+        clientId: client.id,
+        name: input.name,
+        addressLine1: input.addressLine1 ?? null,
+        addressLine2: input.addressLine2 ?? null,
+        city: input.city ?? null,
+        state: input.state ?? null,
+        zip: input.zip ?? null,
+        latitude: geo.latitude,
+        longitude: geo.longitude,
+        geofenceRadiusMeters: geo.radius,
+      },
+    });
+    auditClient(req, 'location.create', client.id, { locationId: created.id });
+    res.status(201).json(shapeLocation(created));
+  } catch (err) {
+    next(err);
+  }
+});
+
+clientsRouter.patch('/:id/locations/:lid', MANAGE, async (req, res, next) => {
+  try {
+    const client = await prisma.client.findFirst({
+      where: { ...scopeClients(req.user!), id: req.params.id },
+      select: { id: true },
+    });
+    if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+    const existing = await prisma.location.findFirst({
+      where: { id: req.params.lid, clientId: client.id, deletedAt: null },
+    });
+    if (!existing) {
+      throw new HttpError(404, 'location_not_found', 'Location not found');
+    }
+    const input = LocationUpdateInputSchema.parse(req.body);
+    const geo = normalizeGeofence(input);
+    const updated = await prisma.location.update({
+      where: { id: existing.id },
+      data: {
+        name: input.name,
+        addressLine1: input.addressLine1 ?? null,
+        addressLine2: input.addressLine2 ?? null,
+        city: input.city ?? null,
+        state: input.state ?? null,
+        zip: input.zip ?? null,
+        latitude: geo.latitude,
+        longitude: geo.longitude,
+        geofenceRadiusMeters: geo.radius,
+        ...(input.isActive === undefined ? {} : { isActive: input.isActive }),
+      },
+    });
+    auditClient(req, 'location.update', client.id, { locationId: updated.id });
+    res.json(shapeLocation(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+clientsRouter.delete('/:id/locations/:lid', MANAGE, async (req, res, next) => {
+  try {
+    const client = await prisma.client.findFirst({
+      where: { ...scopeClients(req.user!), id: req.params.id },
+      select: { id: true },
+    });
+    if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+    const existing = await prisma.location.findFirst({
+      where: { id: req.params.lid, clientId: client.id, deletedAt: null },
+      select: { id: true },
+    });
+    if (!existing) {
+      throw new HttpError(404, 'location_not_found', 'Location not found');
+    }
+    await prisma.location.update({
+      where: { id: existing.id },
+      data: { deletedAt: new Date(), isActive: false },
+    });
+    auditClient(req, 'location.delete', client.id, { locationId: existing.id });
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+function normalizeGeofence(input: {
+  latitude?: number | null;
+  longitude?: number | null;
+  geofenceRadiusMeters?: number | null;
+}): { latitude: number | null; longitude: number | null; radius: number | null } {
+  const allSet =
+    input.latitude !== null &&
+    input.latitude !== undefined &&
+    input.longitude !== null &&
+    input.longitude !== undefined &&
+    input.geofenceRadiusMeters !== null &&
+    input.geofenceRadiusMeters !== undefined;
+  if (!allSet) {
+    return { latitude: null, longitude: null, radius: null };
+  }
+  return {
+    latitude: input.latitude as number,
+    longitude: input.longitude as number,
+    radius: input.geofenceRadiusMeters as number,
+  };
+}
+
+function shapeLocation(row: {
+  id: string;
+  clientId: string;
+  name: string;
+  addressLine1: string | null;
+  addressLine2: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  latitude: { toString(): string } | null;
+  longitude: { toString(): string } | null;
+  geofenceRadiusMeters: number | null;
+  isActive: boolean;
+}): LocationSummary {
+  return {
+    id: row.id,
+    clientId: row.clientId,
+    name: row.name,
+    addressLine1: row.addressLine1,
+    addressLine2: row.addressLine2,
+    city: row.city,
+    state: row.state,
+    zip: row.zip,
+    latitude: row.latitude === null ? null : Number(row.latitude.toString()),
+    longitude: row.longitude === null ? null : Number(row.longitude.toString()),
+    geofenceRadiusMeters: row.geofenceRadiusMeters,
+    isActive: row.isActive,
+  };
+}
 
 function toSummary(row: {
   id: string;
