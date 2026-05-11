@@ -38,9 +38,12 @@ const FAR_AWAY = { lat: 30.6954, lng: -88.0399 };  // Mobile, AL — ~390 km
 // flow, so we use MANAGER to exercise the /me/* code paths.
 async function seedSelfClockerAtTally(opts: { withGeofence?: boolean } = {}) {
   const client = await createClient();
+  // Phase 131 — geofence lives on Location now. createClient already
+  // created a default Location 1:1 with the Client; we just update
+  // its geofence when the test wants one enforced.
   if (opts.withGeofence) {
-    await prisma.client.update({
-      where: { id: client.id },
+    await prisma.location.updateMany({
+      where: { clientId: client.id },
       data: {
         latitude: TALLY.lat,
         longitude: TALLY.lng,
@@ -216,33 +219,10 @@ describe('Real-time active dashboard', () => {
   });
 });
 
-describe('Client geofence config', () => {
-  it('HR sets + reads the geofence', async () => {
-    const client = await createClient();
-    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
-    const a = await loginAs(hr.email);
-    const set = await a.put(`/clients/${client.id}/geofence`).send({
-      latitude: TALLY.lat,
-      longitude: TALLY.lng,
-      geofenceRadiusMeters: 150,
-    });
-    expect(set.status).toBe(200);
-    expect(set.body.geofenceRadiusMeters).toBe(150);
-
-    const read = await a.get(`/clients/${client.id}/geofence`);
-    expect(read.body.latitude).toBeCloseTo(TALLY.lat, 4);
-  });
-
-  it('rejects partial geofence (lat without lng)', async () => {
-    const client = await createClient();
-    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
-    const a = await loginAs(hr.email);
-    const res = await a.put(`/clients/${client.id}/geofence`).send({
-      latitude: TALLY.lat,
-    });
-    expect(res.status).toBe(400);
-  });
-});
+// Phase 131 — Client-level geofence and the /clients/:id/geofence
+// routes are gone; geofence lives on Location now. The Locations
+// admin endpoints (PATCH /clients/:id/locations/:lid) cover the
+// CRUD + validation that used to be tested here.
 
 describe('Jobs CRUD', () => {
   it('HR creates + lists + soft-deletes a job', async () => {

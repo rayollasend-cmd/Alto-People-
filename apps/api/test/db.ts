@@ -104,8 +104,17 @@ export async function createUser(opts: CreateUserOpts) {
 }
 
 export async function createClient(name = `Client ${Math.random().toString(36).slice(2, 8)}`) {
+  // Phase 131 — every Client gets a default Location (matching the
+  // 1:1 backfill the schema migration did for pre-existing data) so
+  // tests can rely on a single Location existing under each client
+  // without setting one up by hand.
   return prisma.client.create({
-    data: { name, industry: 'hospitality', status: 'ACTIVE' },
+    data: {
+      name,
+      industry: 'hospitality',
+      status: 'ACTIVE',
+      locations: { create: { name } },
+    },
   });
 }
 

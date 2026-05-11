@@ -2,7 +2,6 @@ import { Router } from 'express';
 import type { Request } from 'express';
 import {
   ClientCreateInputSchema,
-  ClientGeofenceInputSchema,
   ClientStateInputSchema,
   ClientStatusSchema,
   ClientUpdateInputSchema,
@@ -451,25 +450,6 @@ function toSummary(row: {
   };
 }
 
-/* ===== Geofence config (HR only) ======================================== */
-
-clientsRouter.get('/:id/geofence', async (req, res, next) => {
-  try {
-    const row = await prisma.client.findFirst({
-      where: { ...scopeClients(req.user!), id: req.params.id },
-      select: { latitude: true, longitude: true, geofenceRadiusMeters: true },
-    });
-    if (!row) throw new HttpError(404, 'client_not_found', 'Client not found');
-    res.json({
-      latitude: row.latitude !== null ? Number(row.latitude) : null,
-      longitude: row.longitude !== null ? Number(row.longitude) : null,
-      geofenceRadiusMeters: row.geofenceRadiusMeters,
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
 // Phase 25 — set the work-site state. Drives Phase 23 OT/break policy and
 // Phase 25 predictive-scheduling enforcement. Two-letter USPS code or null
 // to clear (which puts the client back on the federal default).
@@ -499,36 +479,6 @@ clientsRouter.put('/:id/state', MANAGE, async (req, res, next) => {
   }
 });
 
-clientsRouter.put('/:id/geofence', MANAGE, async (req, res, next) => {
-  try {
-    const parsed = ClientGeofenceInputSchema.safeParse(req.body);
-    if (!parsed.success) {
-      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
-    }
-    const existing = await prisma.client.findFirst({
-      where: { ...scopeClients(req.user!), id: req.params.id },
-    });
-    if (!existing) throw new HttpError(404, 'client_not_found', 'Client not found');
-
-    const updated = await prisma.client.update({
-      where: { id: existing.id },
-      data: {
-        latitude: parsed.data.latitude ?? null,
-        longitude: parsed.data.longitude ?? null,
-        geofenceRadiusMeters: parsed.data.geofenceRadiusMeters ?? null,
-      },
-      select: { latitude: true, longitude: true, geofenceRadiusMeters: true },
-    });
-    await auditClient(req, 'client.geofence_updated', existing.id, {
-      cleared: parsed.data.latitude === null && parsed.data.longitude === null,
-      radiusMeters: updated.geofenceRadiusMeters,
-    });
-    res.json({
-      latitude: updated.latitude !== null ? Number(updated.latitude) : null,
-      longitude: updated.longitude !== null ? Number(updated.longitude) : null,
-      geofenceRadiusMeters: updated.geofenceRadiusMeters,
-    });
-  } catch (err) {
-    next(err);
-  }
-});
+// Phase 131 — geofence used to live on Client; it moved to Location.
+// The /clients/:id/geofence GET/PUT routes are gone. Use the LocationsSection
+// UI (PATCH /clients/:id/locations/:lid) to set per-site geofences.

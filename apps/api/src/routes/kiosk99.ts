@@ -108,9 +108,8 @@ kiosk99Router.post('/kiosk-devices', MANAGE, async (req, res) => {
   const input = DeviceInputSchema.parse(req.body);
 
   // Phase 131 — resolve the Location (preferred) and infer clientId.
-  // If the caller passed clientId only, leave locationId NULL — the UI
-  // should pass locationId going forward, but tests / scripts may
-  // still pass clientId alone.
+  // KioskDevice.locationId is NOT NULL after PR 3, so a clientId-only
+  // request falls back to the client's first active Location.
   let resolvedClientId = input.clientId ?? null;
   let resolvedLocationId: string | null = null;
   if (input.locationId) {
@@ -130,8 +129,22 @@ kiosk99Router.post('/kiosk-devices', MANAGE, async (req, res) => {
     }
     resolvedClientId = location.clientId;
     resolvedLocationId = location.id;
+  } else if (resolvedClientId) {
+    const fallback = await prisma.location.findFirst({
+      where: { clientId: resolvedClientId, deletedAt: null, isActive: true },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    });
+    if (!fallback) {
+      throw new HttpError(
+        400,
+        'no_location_for_client',
+        'Client has no active Location. Add one before registering a kiosk.',
+      );
+    }
+    resolvedLocationId = fallback.id;
   }
-  if (!resolvedClientId) {
+  if (!resolvedClientId || !resolvedLocationId) {
     throw new HttpError(400, 'invalid_body', 'clientId or locationId is required.');
   }
 

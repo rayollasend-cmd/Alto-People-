@@ -2414,19 +2414,10 @@ export const AutoFillResponseSchema = z.object({
 });
 export type AutoFillResponse = z.infer<typeof AutoFillResponseSchema>;
 
-export const ClientGeofenceInputSchema = z
-  .object({
-    latitude: z.number().min(-90).max(90).nullable().optional(),
-    longitude: z.number().min(-180).max(180).nullable().optional(),
-    geofenceRadiusMeters: z.number().int().min(10).max(50_000).nullable().optional(),
-  })
-  .refine(
-    (v) =>
-      ((v.latitude == null) === (v.longitude == null)) &&
-      ((v.latitude == null) === (v.geofenceRadiusMeters == null)),
-    { message: 'latitude, longitude, and geofenceRadiusMeters must be set or cleared together' }
-  );
-export type ClientGeofenceInput = z.infer<typeof ClientGeofenceInputSchema>;
+// Phase 131 — ClientGeofenceInputSchema was removed; the Client
+// geofence columns are gone. Use LocationUpdateInputSchema's latitude /
+// longitude / geofenceRadiusMeters fields against
+// PATCH /clients/:id/locations/:lid instead.
 
 /* -------------------------------------------------------------------------- *
  *  Phase 16 — Invitation flow

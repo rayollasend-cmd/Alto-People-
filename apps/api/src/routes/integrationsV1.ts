@@ -92,8 +92,16 @@ integrationsV1Router.get('/stores', async (req, res) => {
       id: true,
       name: true,
       state: true,
-      latitude: true,
-      longitude: true,
+      // Phase 131 — Client lat/lng moved to Location. Return the
+      // first active Location's coordinates so external integrations
+      // keep getting a store-level pin without us breaking the
+      // response shape.
+      locations: {
+        where: { deletedAt: null, isActive: true },
+        select: { latitude: true, longitude: true },
+        orderBy: { createdAt: 'asc' },
+        take: 1,
+      },
     },
     orderBy: { name: 'asc' },
     take: 1000,
@@ -104,8 +112,8 @@ integrationsV1Router.get('/stores', async (req, res) => {
       name: s.name,
       state: s.state,
       // Decimal → number for JSON; null means no geofence configured.
-      latitude: s.latitude ? Number(s.latitude) : null,
-      longitude: s.longitude ? Number(s.longitude) : null,
+      latitude: s.locations[0]?.latitude ? Number(s.locations[0].latitude) : null,
+      longitude: s.locations[0]?.longitude ? Number(s.locations[0].longitude) : null,
     })),
   });
 });

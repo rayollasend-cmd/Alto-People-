@@ -483,12 +483,10 @@ model Client {
   // OR demand 14-day notice). Null = federal default = no state-specific
   // rules enforced.
   state                String?      @db.VarChar(2)
-  // Geofence anchor for clock-in validation. NULL latitude/longitude means
-  // no geofence enforced (associates can clock in from anywhere).
-  // Stored as Decimal for precision; ~5cm at 7 decimals.
-  latitude             Decimal?     @db.Decimal(10, 7)
-  longitude            Decimal?     @db.Decimal(10, 7)
-  geofenceRadiusMeters Int?
+  // Phase 131 — geofence moved to Location. Each physical site has its
+  // own coordinates and radius; lookups read Location.geofence with a
+  // "first active Location under this client" fallback for associates
+  // who haven't been placed at a Location yet.
   createdAt            DateTime     @default(now()) @db.Timestamptz(6)
   updatedAt            DateTime     @updatedAt @db.Timestamptz(6)
   deletedAt            DateTime?    @db.Timestamptz(6)
@@ -1201,9 +1199,10 @@ model TimeEntry {
 model Shift {
   id                  String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId            String                          @db.Uuid
-  // Phase 131 — physical work site for this shift. Nullable while we
-  // backfill; PR 3 makes it NOT NULL and drops the legacy free-text
-  // `location` field below.
+  // Phase 131 — physical work site for this shift. Still nullable
+  // until the legacy free-text `location` column below is migrated
+  // out; a follow-up PR will make this required after updating the
+  // 17 writers/readers in one pass.
   locationId          String?                         @db.Uuid
   position            String
   startsAt            DateTime                        @db.Timestamptz(6)
@@ -4088,10 +4087,11 @@ enum KioskAnomalyKind {
 model KioskDevice {
   id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId     String    @db.Uuid
-  // Phase 131 — the physical Location this device lives at. Nullable
-  // during the backfill window; PR 3 makes it NOT NULL and moves
-  // geofence enforcement to the Location row.
-  locationId   String?   @db.Uuid
+  // Phase 131 — the physical Location this device lives at. NOT NULL
+  // after PR 3. Per-device geofence columns below stay as an optional
+  // override for the rare case where one tablet needs a tighter
+  // radius than the rest of the Location.
+  locationId   String    @db.Uuid
   name         String
   tokenHash    String
   lastSeenAt   DateTime? @db.Timestamptz(6)
@@ -4107,7 +4107,7 @@ model KioskDevice {
   updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
 
   client    Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  location  Location?    @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  location  Location     @relation(fields: [locationId], references: [id], onDelete: Restrict)
   createdBy User?        @relation("KioskDeviceCreator", fields: [createdById], references: [id], onDelete: SetNull)
   punches   KioskPunch[]
 

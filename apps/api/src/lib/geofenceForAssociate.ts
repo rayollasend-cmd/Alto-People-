@@ -54,17 +54,24 @@ export async function resolveAssociateGeofence(
       locationId: null,
     };
   }
-  const client = await prisma.client.findUnique({
-    where: { id: clientIdFallback },
-    select: { latitude: true, longitude: true, geofenceRadiusMeters: true },
+  // Phase 131 — Client.geofence was dropped. Use the first active
+  // Location under the client as the fallback; this matches the
+  // pre-drop behavior because the schema migration backfilled each
+  // Client's old geofence into a default Location 1:1. If no Location
+  // exists (or none has a geofence set), enforcement falls back to
+  // "no fence" — same as the old all-NULL Client state.
+  const fallback = await prisma.location.findFirst({
+    where: { clientId: clientIdFallback, deletedAt: null, isActive: true },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true, latitude: true, longitude: true, geofenceRadiusMeters: true },
   });
   return {
     geofence: {
-      latitude: client?.latitude ? Number(client.latitude) : null,
-      longitude: client?.longitude ? Number(client.longitude) : null,
-      radiusMeters: client?.geofenceRadiusMeters ?? null,
+      latitude: fallback?.latitude ? Number(fallback.latitude) : null,
+      longitude: fallback?.longitude ? Number(fallback.longitude) : null,
+      radiusMeters: fallback?.geofenceRadiusMeters ?? null,
     },
     clientId: clientIdFallback,
-    locationId: null,
+    locationId: fallback?.id ?? null,
   };
 }

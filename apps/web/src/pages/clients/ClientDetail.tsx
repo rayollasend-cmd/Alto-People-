@@ -1,20 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Archive, Building2, Crosshair, MapPin, Save, Trash2 } from 'lucide-react';
+import { Archive, Building2, MapPin, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ClientStatus, ClientSummary } from '@alto-people/shared';
 import {
   archiveClient,
   getClient,
-  getClientGeofence,
-  setClientGeofence,
   setClientState,
   updateClient,
-  type ClientGeofence,
 } from '@/lib/clientsApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { tryGetGeolocation } from '@/lib/timeApi';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import {
@@ -50,7 +46,6 @@ export function ClientDetail() {
   const canManage = can('manage:clients');
 
   const [client, setClient] = useState<ClientSummary | null>(null);
-  const [geofence, setGeofence] = useState<ClientGeofence | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [archiving, setArchiving] = useState(false);
 
@@ -73,16 +68,8 @@ export function ClientDetail() {
   const refresh = useCallback(async () => {
     if (!id) return;
     try {
-      const [c, g] = await Promise.all([
-        getClient(id),
-        getClientGeofence(id).catch(() => ({
-          latitude: null,
-          longitude: null,
-          geofenceRadiusMeters: null,
-        })),
-      ]);
+      const c = await getClient(id);
       setClient(c);
-      setGeofence(g);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load.');
     }
@@ -99,7 +86,7 @@ export function ClientDetail() {
       </div>
     );
   }
-  if (!client || !geofence) {
+  if (!client) {
     return (
       <div className="max-w-3xl mx-auto space-y-3">
         <Skeleton className="h-8 w-1/3" />
@@ -144,13 +131,6 @@ export function ClientDetail() {
         client={client}
         canManage={canManage}
         onSaved={(updated) => setClient(updated)}
-      />
-
-      <GeofenceEditor
-        clientId={client.id}
-        initial={geofence}
-        canManage={canManage}
-        onSaved={(updated) => setGeofence(updated)}
       />
 
       <LocationsSection clientId={client.id} />
@@ -387,178 +367,6 @@ function StateEditor({
   );
 }
 
-/* ----------------------------- Geofence editor --------------------------- */
-
-interface GeofenceEditorProps {
-  clientId: string;
-  initial: ClientGeofence;
-  canManage: boolean;
-  onSaved: (g: ClientGeofence) => void;
-}
-
-function GeofenceEditor({ clientId, initial, canManage, onSaved }: GeofenceEditorProps) {
-  const [lat, setLat] = useState(initial.latitude !== null ? String(initial.latitude) : '');
-  const [lng, setLng] = useState(initial.longitude !== null ? String(initial.longitude) : '');
-  const [radius, setRadius] = useState(
-    initial.geofenceRadiusMeters !== null ? String(initial.geofenceRadiusMeters) : ''
-  );
-  const [saving, setSaving] = useState(false);
-  const [locating, setLocating] = useState(false);
-
-  // Reset the form if the parent reloads the geofence (e.g. after a save).
-  useEffect(() => {
-    setLat(initial.latitude !== null ? String(initial.latitude) : '');
-    setLng(initial.longitude !== null ? String(initial.longitude) : '');
-    setRadius(initial.geofenceRadiusMeters !== null ? String(initial.geofenceRadiusMeters) : '');
-  }, [initial.latitude, initial.longitude, initial.geofenceRadiusMeters]);
-
-  const enabled = lat || lng || radius;
-  const allFilled = lat && lng && radius;
-
-  const useMyLocation = async () => {
-    setLocating(true);
-    const pos = await tryGetGeolocation(8_000);
-    setLocating(false);
-    if (!pos) {
-      toast.error('Location unavailable', {
-        description: 'Browser denied or no GPS signal — type the coordinates manually.',
-      });
-      return;
-    }
-    setLat(pos.lat.toFixed(7));
-    setLng(pos.lng.toFixed(7));
-    if (!radius) setRadius('150'); // sensible default for a single building.
-  };
-
-  const submit = async (clear: boolean) => {
-    setSaving(true);
-    try {
-      if (clear) {
-        const updated = await setClientGeofence(clientId, {
-          latitude: null,
-          longitude: null,
-          geofenceRadiusMeters: null,
-        });
-        onSaved(updated);
-        toast.success('Geofence cleared — clock-in is no longer geo-restricted');
-        return;
-      }
-      const latN = Number(lat);
-      const lngN = Number(lng);
-      const radN = Math.round(Number(radius));
-      if (!Number.isFinite(latN) || !Number.isFinite(lngN) || !Number.isFinite(radN)) {
-        toast.error('Latitude, longitude, and radius must all be numeric');
-        return;
-      }
-      const updated = await setClientGeofence(clientId, {
-        latitude: latN,
-        longitude: lngN,
-        geofenceRadiusMeters: radN,
-      });
-      onSaved(updated);
-      toast.success('Geofence saved');
-    } catch (err) {
-      const msg = err instanceof ApiError
-        ? err.message
-        : err instanceof Error
-          ? err.message
-          : 'Could not save';
-      toast.error('Could not save', { description: msg });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Crosshair className="h-4 w-4 text-gold" />
-          Geofence
-        </CardTitle>
-        <CardDescription>
-          When set, the server rejects clock-ins outside the radius. Latitude,
-          longitude, and radius must be set or cleared together.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <Field label="Latitude">
-            {(p) => (
-              <Input
-                type="number"
-                step="any"
-                inputMode="decimal"
-                value={lat}
-                onChange={(e) => setLat(e.target.value)}
-                placeholder="40.7128"
-                disabled={!canManage}
-                {...p}
-              />
-            )}
-          </Field>
-          <Field label="Longitude">
-            {(p) => (
-              <Input
-                type="number"
-                step="any"
-                inputMode="decimal"
-                value={lng}
-                onChange={(e) => setLng(e.target.value)}
-                placeholder="-74.0060"
-                disabled={!canManage}
-                {...p}
-              />
-            )}
-          </Field>
-          <Field
-            label="Radius (meters)"
-            hint="10 – 50,000m. ~150m covers a single building."
-          >
-            {(p) => (
-              <Input
-                type="number"
-                min="10"
-                max="50000"
-                step="10"
-                inputMode="numeric"
-                value={radius}
-                onChange={(e) => setRadius(e.target.value)}
-                placeholder="150"
-                disabled={!canManage}
-                {...p}
-              />
-            )}
-          </Field>
-        </div>
-
-        {canManage && (
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Button
-              variant="secondary"
-              onClick={useMyLocation}
-              loading={locating}
-            >
-              <Crosshair className="h-4 w-4" />
-              Use my current location
-            </Button>
-            <Button onClick={() => submit(false)} loading={saving} disabled={!allFilled}>
-              <Save className="h-4 w-4" />
-              Save geofence
-            </Button>
-            {enabled && (
-              <Button
-                variant="ghost"
-                onClick={() => submit(true)}
-                loading={saving}
-              >
-                <Trash2 className="h-4 w-4" />
-                Clear
-              </Button>
-            )}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
+// Phase 131 — the per-Client GeofenceEditor was removed. Geofence
+// lives on Location now; edit it from the LocationsSection's
+// per-row dialog (PATCH /clients/:id/locations/:lid).

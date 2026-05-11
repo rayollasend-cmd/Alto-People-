@@ -503,14 +503,15 @@ timeRouter.get('/admin/active', MANAGE, async (req, res, next) => {
       new Set(rows.map((r) => r.locationId).filter(Boolean) as string[]),
     );
     const [clients, locations] = await Promise.all([
+      // Client name only — geofence moved to Location in Phase 131.
       prisma.client.findMany({
         take: 1000,
         where: { id: { in: clientIds } },
-        select: { id: true, name: true, latitude: true, longitude: true, geofenceRadiusMeters: true },
+        select: { id: true, name: true },
       }),
-      // Phase 131 — Location geofence takes precedence when stamped on
-      // the entry. Older entries with a NULL locationId fall back to
-      // the per-row Client geofence below.
+      // Phase 131 — Location geofence is the source. Rows without a
+      // stamped locationId (pre-Phase-131 history) get no geofence
+      // check on the dashboard; it'll show as "?" rather than green/red.
       prisma.location.findMany({
         take: 1000,
         where: { id: { in: locationIds } },
@@ -525,13 +526,12 @@ timeRouter.get('/admin/active', MANAGE, async (req, res, next) => {
       const c = r.clientId ? clientById.get(r.clientId) : undefined;
       const l = r.locationId ? locationById.get(r.locationId) : undefined;
       let geofenceOk: boolean | null = null;
-      const geoSource = l ?? c ?? null;
-      if (geoSource) {
+      if (l) {
         const result = checkGeofence(
           {
-            latitude: geoSource.latitude ? Number(geoSource.latitude) : null,
-            longitude: geoSource.longitude ? Number(geoSource.longitude) : null,
-            radiusMeters: geoSource.geofenceRadiusMeters,
+            latitude: l.latitude ? Number(l.latitude) : null,
+            longitude: l.longitude ? Number(l.longitude) : null,
+            radiusMeters: l.geofenceRadiusMeters,
           },
           r.clockInLat && r.clockInLng
             ? { lat: Number(r.clockInLat), lng: Number(r.clockInLng) }
