@@ -103,11 +103,19 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
         },
         // Phase 131 — current open assignment, if any. There's at most
         // one per associate (partial unique index in the schema).
+        // location.client is included so workplaceClient* can prefer
+        // the live assignment over the Application's clientId.
         assignments: {
           where: { endedAt: null },
           select: {
             locationId: true,
-            location: { select: { name: true } },
+            location: {
+              select: {
+                name: true,
+                clientId: true,
+                client: { select: { name: true } },
+              },
+            },
           },
           take: 1,
         },
@@ -161,6 +169,17 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
       // Workplace = approved client first, then most-recent application.
       const workplaceApp = approved ?? inFlight ?? apps[0] ?? null;
 
+      // Phase 131 — when an open AssociateAssignment exists, its Location's
+      // client is the live workplace. Falls back to the application chain
+      // for associates that haven't been placed at a Location yet.
+      const openAssignment = a.assignments[0] ?? null;
+      const workplaceClientId =
+        openAssignment?.location.clientId ?? workplaceApp?.clientId ?? null;
+      const workplaceClientName =
+        openAssignment?.location.client.name ??
+        workplaceApp?.client?.name ??
+        null;
+
       const comp = compByAssoc.get(a.id) ?? null;
 
       // Onboarding % only meaningful for PENDING (or freshly approved)
@@ -181,8 +200,8 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
         employmentType: a.employmentType,
         j1Status: a.j1Status,
         status,
-        workplaceClientId: workplaceApp?.clientId ?? null,
-        workplaceClientName: workplaceApp?.client?.name ?? null,
+        workplaceClientId,
+        workplaceClientName,
         position: workplaceApp?.position ?? null,
         startDate: workplaceApp?.startDate
           ? workplaceApp.startDate.toISOString().slice(0, 10)

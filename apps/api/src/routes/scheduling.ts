@@ -68,10 +68,18 @@ const MANAGE = requireCapability('manage:scheduling');
 //      still showing test/junk rows whose User was ACTIVE but whose
 //      onboarding was either DRAFT or never completed; mirrors the
 //      `DirectoryStatus = 'ACTIVE'` derivation in /people/directory.
+// Phase 131 — schedulable if there's EITHER an approved Application
+// (backward-compatible legacy gate) OR an open AssociateAssignment.
+// The latter catches any future case where placement diverges from
+// the original application (e.g. cross-client transfer that opens an
+// Assignment without re-onboarding).
 const ACTIVE_ASSOCIATE_FILTER: Prisma.AssociateWhereInput = {
   deletedAt: null,
   user: { is: { status: 'ACTIVE', role: 'ASSOCIATE' } },
-  applications: { some: { status: 'APPROVED' } },
+  OR: [
+    { applications: { some: { status: 'APPROVED' } } },
+    { assignments: { some: { endedAt: null } } },
+  ],
 };
 
 type RawShift = Prisma.ShiftGetPayload<{
