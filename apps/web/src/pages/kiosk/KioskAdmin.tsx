@@ -832,6 +832,16 @@ function DiagnoseDrawer({ onClose }: { onClose: () => void }) {
             )}
             {result.matchedPin && (
               <div className="bg-navy-secondary/40 border border-navy-secondary rounded-md p-3 space-y-1">
+                {result.matchedPin.currentEmployeeNumber && (
+                  <div className="mb-3 pb-3 border-b border-navy-secondary text-center">
+                    <div className="text-xs uppercase tracking-widest text-silver">
+                      Actual employee number on file
+                    </div>
+                    <div className="text-3xl font-mono tracking-[0.4em] text-white mt-1">
+                      {result.matchedPin.currentEmployeeNumber}
+                    </div>
+                  </div>
+                )}
                 <div>
                   <span className="text-silver">PIN holder:</span>{' '}
                   <span className="text-white font-medium">

@@ -358,13 +358,18 @@ kiosk99Router.get('/kiosk-pins/diagnose', MANAGE, async (req, res) => {
     );
   }
 
-  let pin: { id: string; clientId: string; associateId: string } | null = null;
+  let pin: {
+    id: string;
+    clientId: string;
+    associateId: string;
+    pinEncrypted: Buffer | null;
+  } | null = null;
 
   if (employeeNumber) {
     const pinHmac = hmacPin(employeeNumber);
     pin = await prisma.kioskPin.findUnique({
       where: { pinHmac },
-      select: { id: true, clientId: true, associateId: true },
+      select: { id: true, clientId: true, associateId: true, pinEncrypted: true },
     });
   } else if (associateQuery) {
     const associates = await prisma.associate.findMany({
@@ -403,7 +408,7 @@ kiosk99Router.get('/kiosk-pins/diagnose', MANAGE, async (req, res) => {
     const associate = associates[0]!;
     pin = await prisma.kioskPin.findFirst({
       where: { associateId: associate.id },
-      select: { id: true, clientId: true, associateId: true },
+      select: { id: true, clientId: true, associateId: true, pinEncrypted: true },
     });
     if (!pin) {
       res.json({
@@ -488,8 +493,18 @@ kiosk99Router.get('/kiosk-pins/diagnose', MANAGE, async (req, res) => {
       'PIN and current assignment match. If clock-in is still failing, check that the kiosk device is registered to the same client (Devices tab) and that the device token has not expired.';
   }
 
+  const decryptedNumber = pin.pinEncrypted
+    ? (() => {
+        try {
+          return decryptString(pin.pinEncrypted);
+        } catch {
+          return null;
+        }
+      })()
+    : null;
+
   res.json({
-    employeeNumber,
+    employeeNumber: employeeNumber ?? '',
     matchedPin: {
       id: pin.id,
       pinClientId: pin.clientId,
@@ -499,6 +514,7 @@ kiosk99Router.get('/kiosk-pins/diagnose', MANAGE, async (req, res) => {
         ? `${associate.firstName} ${associate.lastName}`
         : null,
       associateEmail: associate?.email ?? null,
+      currentEmployeeNumber: decryptedNumber,
     },
     currentAssignment: openAssignment
       ? {

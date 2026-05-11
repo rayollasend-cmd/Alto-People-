@@ -141,6 +141,7 @@ export interface KioskPinDiagnosis {
     associateId: string;
     associateName: string | null;
     associateEmail: string | null;
+    currentEmployeeNumber: string | null;
   } | null;
   currentAssignment: {
     clientId: string;
