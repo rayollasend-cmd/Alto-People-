@@ -67,7 +67,7 @@ export function Settings() {
   const { user } = useAuth();
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
+    <div className="max-w-6xl mx-auto space-y-6">
       <PageHeader
         title="Account settings"
         subtitle={
@@ -81,16 +81,29 @@ export function Settings() {
         ]}
       />
 
-      {user?.associateId && <ProfileCard />}
-      {user?.associateId && <ProfilePhotoCard />}
-      <EmailCard />
-      <TimezoneCard />
-      <NotificationsCard />
-      <PasswordCard />
-      <MfaCard />
-      <SessionsCard />
-      <LoginHistoryCard />
-      <DataExportCard />
+      {/* Two-column layout at xl+. The profile/identity column on the
+          left, account-security on the right. Sessions, login history,
+          and the data export flow across both columns below because
+          they're wider tables. The phone layout stacks everything. */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <div className="space-y-6">
+          {user?.associateId && <ProfileCard />}
+          {user?.associateId && <ProfilePhotoCard />}
+          <EmailCard />
+          <TimezoneCard />
+          <NotificationsCard />
+        </div>
+        <div className="space-y-6">
+          <PasswordCard />
+          <MfaCard />
+        </div>
+      </div>
+
+      <div className="space-y-6">
+        <SessionsCard />
+        <LoginHistoryCard />
+        <DataExportCard />
+      </div>
     </div>
   );
 }
@@ -404,13 +417,13 @@ function MfaCard() {
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-sm text-white">
-                <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                <CheckCircle2 className="h-4 w-4 text-success" />
                 Two-step sign-in is on.
               </div>
               {remaining !== null && (
                 <span
                   className={`text-xs ${
-                    remaining <= 2 ? 'text-amber-300' : 'text-silver'
+                    remaining <= 2 ? 'text-warning' : 'text-silver'
                   }`}
                 >
                   {remaining} of {MFA_RECOVERY_CODE_COUNT} recovery codes remaining
@@ -1276,7 +1289,7 @@ function LoginHistoryCard() {
         <CardDescription>
           Last 25 sign-ins, sign-outs, and password changes on your account.
           Spot something you don't recognise?{' '}
-          <span className="inline-flex items-center gap-1 text-amber-300">
+          <span className="inline-flex items-center gap-1 text-warning">
             <ShieldAlert className="h-3 w-3" />
             change your password and notify HR.
           </span>

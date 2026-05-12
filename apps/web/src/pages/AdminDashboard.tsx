@@ -173,14 +173,15 @@ export function AdminDashboard() {
     <div className="max-w-7xl mx-auto space-y-8">
       {/* Greeting strip — calm, generous typography, time + role context. */}
       <header>
-        <div className="text-[11px] uppercase tracking-[0.18em] text-silver/70 flex items-center gap-2">
-          <Calendar className="h-3 w-3" aria-hidden="true" />
-          {dateLabel}
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="text-[11px] uppercase tracking-[0.18em] text-silver flex items-center gap-2">
+            <Calendar className="h-3 w-3" aria-hidden="true" />
+            {dateLabel}
+          </div>
           {role && (
-            <>
-              <span className="text-silver/30">·</span>
-              <span className="text-silver">{ROLE_LABELS[role]}</span>
-            </>
+            <span className="inline-flex items-center gap-1 rounded-full border border-gold/30 bg-gold/10 px-2 py-0.5 text-[10px] uppercase tracking-widest text-gold">
+              {ROLE_LABELS[role]}
+            </span>
           )}
         </div>
         <h1 className="font-display text-3xl md:text-4xl text-white mt-2 leading-tight">
@@ -372,9 +373,9 @@ function ActionCard({ item }: { item: ActionItem }) {
         }
       : item.severity === 'attention'
         ? {
-            ring: 'border-amber-500/25 hover:border-amber-500/55',
-            dot: 'bg-amber-500/15 text-amber-400',
-            count: 'text-amber-300',
+            ring: 'border-warning/25 hover:border-warning/55',
+            dot: 'bg-warning/15 text-warning',
+            count: 'text-warning',
           }
         : {
             ring: 'border-navy-secondary hover:border-gold/40',
@@ -528,9 +529,9 @@ const PIPELINE_LABEL: Record<(typeof PIPELINE_ORDER)[number], string> = {
 };
 const PIPELINE_TONE: Record<(typeof PIPELINE_ORDER)[number], string> = {
   DRAFT: 'text-silver',
-  SUBMITTED: 'text-amber-300',
-  IN_REVIEW: 'text-amber-400',
-  APPROVED: 'text-emerald-400',
+  SUBMITTED: 'text-warning',
+  IN_REVIEW: 'text-warning',
+  APPROVED: 'text-success',
   REJECTED: 'text-alert',
 };
 
@@ -615,7 +616,7 @@ function OnboardingFunnel({ kpis }: { kpis: DashboardKPIs | null }) {
                       className={cn(
                         'h-full rounded-full',
                         status === 'APPROVED'
-                          ? 'bg-emerald-500/70'
+                          ? 'bg-success/70'
                           : status === 'REJECTED'
                             ? 'bg-alert/70'
                             : 'bg-gold/70',
@@ -684,7 +685,7 @@ function ActivityFeed({ entries }: { entries: AuditSearchEntry[] | null }) {
             </div>
           ) : (
             <>
-              <ul className="divide-y divide-navy-secondary/60">
+              <ul className="divide-y divide-navy-secondary">
                 {visible!.map((e) => (
                   <li
                     key={e.id}

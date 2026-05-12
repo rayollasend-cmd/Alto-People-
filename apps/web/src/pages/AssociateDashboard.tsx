@@ -5,6 +5,7 @@ import {
   CalendarOff,
   Clock,
   DollarSign,
+  FileText,
   MapPin,
   Play,
   Square,
@@ -455,7 +456,7 @@ function TimeOffCard({
 const QUICK_LINKS: { to: string; label: string; icon: typeof Clock }[] = [
   { to: '/time-attendance', label: 'My timesheet', icon: Clock },
   { to: '/scheduling', label: 'Schedule & swaps', icon: Timer },
-  { to: '/documents', label: 'Documents', icon: DollarSign },
+  { to: '/documents', label: 'Documents', icon: FileText },
   { to: '/time-off', label: 'Request time off', icon: CalendarOff },
 ];
 

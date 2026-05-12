@@ -164,11 +164,14 @@ export function ManagerDashboard() {
     <div className="max-w-7xl mx-auto space-y-8">
       {/* Greeting */}
       <header>
-        <div className="text-[11px] uppercase tracking-[0.18em] text-silver/70 flex items-center gap-2">
-          <Calendar className="h-3 w-3" aria-hidden="true" />
-          {dateLabel}
-          <span className="text-silver/30">·</span>
-          <span className="text-silver">Manager view</span>
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="text-[11px] uppercase tracking-[0.18em] text-silver flex items-center gap-2">
+            <Calendar className="h-3 w-3" aria-hidden="true" />
+            {dateLabel}
+          </div>
+          <span className="inline-flex items-center gap-1 rounded-full border border-steel/40 bg-steel/15 px-2 py-0.5 text-[10px] uppercase tracking-widest text-sky">
+            Manager view
+          </span>
         </div>
         <h1 className="font-display text-3xl md:text-4xl text-white mt-2 leading-tight">
           {greeting}, <span className="text-gold">{greetingName}</span>.
@@ -311,9 +314,9 @@ function ApprovalCard({
           count: 'text-alert',
         }
       : {
-          ring: 'border-amber-500/25 hover:border-amber-500/55',
-          dot: 'bg-amber-500/15 text-amber-400',
-          count: 'text-amber-300',
+          ring: 'border-warning/25 hover:border-warning/55',
+          dot: 'bg-warning/15 text-warning',
+          count: 'text-warning',
         };
   return (
     <Link
@@ -520,7 +523,7 @@ function TeamRoster({
             </div>
           ) : (
             <>
-              <ul className="divide-y divide-navy-secondary/60">
+              <ul className="divide-y divide-navy-secondary">
                 {(expanded
                   ? reports
                   : reports.slice(0, TEAM_ROSTER_PREVIEW)
@@ -594,15 +597,15 @@ function StatusPill({
 }) {
   if (active) {
     return (
-      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] bg-success/15 text-emerald-400 border border-success/30">
-        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] bg-success/15 text-success border border-success/30">
+        <span className="h-1.5 w-1.5 rounded-full bg-success" />
         On the clock · since {fmtRelative(active.clockInAt)}
       </span>
     );
   }
   if (pto) {
     return (
-      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] bg-amber-500/15 text-amber-300 border border-amber-500/30">
+      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] bg-warning/15 text-warning border border-warning/30">
         <CalendarOff className="h-3 w-3" />
         Pending PTO today
       </span>
