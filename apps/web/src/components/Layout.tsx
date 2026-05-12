@@ -1,5 +1,5 @@
-import { Suspense, useState } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import { Suspense, useEffect, useRef, useState } from 'react';
+import { Outlet, useLocation, useNavigationType } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { TooltipProvider } from '@/components/ui/Tooltip';
 import { CommandPalette, useCommandPalette } from '@/components/ui/CommandPalette';
@@ -11,6 +11,7 @@ import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 import { MobileNav } from './MobileNav';
 import { InstallPrompt } from './InstallPrompt';
+import { NavigationProgress } from './NavigationProgress';
 
 // Per-route Suspense fallback shown while a lazy-loaded page chunk streams in.
 // Sized to roughly fill the main content region so layout doesn't jump when
@@ -27,14 +28,47 @@ function RouteFallback() {
   );
 }
 
+// Scroll-positions-by-pathname store. We can't use react-router's built-in
+// <ScrollRestoration /> because it targets the window scroller, and the
+// scrolling element here is the inner <main>. PUSH navigations reset to
+// the top; POP (back/forward) navigations restore the previously-captured
+// position so a long /people scroll isn't lost when bouncing into a row
+// detail and back.
+const scrollPositions = new Map<string, number>();
+
 export function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { open: paletteOpen, setOpen: setPaletteOpen } = useCommandPalette();
   const { open: shortcutsOpen, setOpen: setShortcutsOpen } = useKeyboardShortcutsHook();
   const location = useLocation();
+  const navigationType = useNavigationType();
+  const mainRef = useRef<HTMLElement>(null);
+  const prevKey = useRef(location.key);
+
+  useEffect(() => {
+    const main = mainRef.current;
+    if (!main) return;
+    // Stash the outgoing scroll position keyed by *the previous* location
+    // before swapping. Capture happens before the next paint so the
+    // restore on POP sees fresh values.
+    scrollPositions.set(prevKey.current, main.scrollTop);
+    if (navigationType === 'POP') {
+      const saved = scrollPositions.get(location.key);
+      // Wait one frame: AnimatePresence is mid-swap, and a synchronous
+      // scrollTop = 0 would race the new page's first paint. requestAnimation
+      // schedules us after the layout commits.
+      requestAnimationFrame(() => {
+        main.scrollTop = saved ?? 0;
+      });
+    } else {
+      main.scrollTop = 0;
+    }
+    prevKey.current = location.key;
+  }, [location.key, navigationType]);
 
   return (
     <TooltipProvider delayDuration={250}>
+      <NavigationProgress />
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-gold focus:px-3 focus:py-2 focus:text-navy focus:font-medium focus:shadow-lg"
@@ -51,6 +85,7 @@ export function Layout() {
           />
           <main
             id="main-content"
+            ref={mainRef}
             tabIndex={-1}
             className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 focus:outline-none pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] md:pl-[max(1.5rem,env(safe-area-inset-left))] md:pr-[max(1.5rem,env(safe-area-inset-right))] lg:pl-[max(2rem,env(safe-area-inset-left))] lg:pr-[max(2rem,env(safe-area-inset-right))]"
           >
