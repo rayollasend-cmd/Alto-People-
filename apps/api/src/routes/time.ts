@@ -883,6 +883,15 @@ timeRouter.post('/admin/bulk-reject', MANAGE, async (req, res, next) => {
 
 /* ===== Phase 65 — exports (CSV + PDF) ==================================== */
 
+// Hard cap on time exports. Each row pulls a TimeEntry + associate +
+// client (via ENTRY_INCLUDE), ~500 bytes serialized; 5000 rows is
+// ~2.5 MB working set per request — fine for one concurrent caller,
+// stays under the ~10 MB envelope before Node's default heap pressure.
+// Past this, callers get the truncated rows + X-Truncated header so
+// the UI can show "showing first 5000 of N+" rather than silently
+// hiding entries.
+const TIME_EXPORT_MAX_ROWS = 5000;
+
 function csvEscape(v: string): string {
   if (v === '') return '';
   if (/[",\n\r]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
@@ -912,9 +921,9 @@ async function loadExportRows(
     where,
     orderBy: { clockInAt: 'asc' },
     include: ENTRY_INCLUDE,
-    take: 5000,
+    take: TIME_EXPORT_MAX_ROWS,
   });
-  return { from, to, rows };
+  return { from, to, rows, truncated: rows.length === TIME_EXPORT_MAX_ROWS };
 }
 
 timeRouter.post('/admin/export.csv', MANAGE, async (req, res, next) => {
@@ -923,7 +932,11 @@ timeRouter.post('/admin/export.csv', MANAGE, async (req, res, next) => {
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
-    const { from, to, rows } = await loadExportRows(req.user!, parsed.data);
+    const { from, to, rows, truncated } = await loadExportRows(req.user!, parsed.data);
+    if (truncated) {
+      res.setHeader('X-Truncated', 'true');
+      res.setHeader('X-Truncated-Limit', String(TIME_EXPORT_MAX_ROWS));
+    }
 
     const fname = `time-${from.toISOString().slice(0, 10)}-to-${new Date(to.getTime() - 1)
       .toISOString()
@@ -972,7 +985,11 @@ timeRouter.post('/admin/export.pdf', MANAGE, async (req, res, next) => {
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
-    const { from, to, rows } = await loadExportRows(req.user!, parsed.data);
+    const { from, to, rows, truncated } = await loadExportRows(req.user!, parsed.data);
+    if (truncated) {
+      res.setHeader('X-Truncated', 'true');
+      res.setHeader('X-Truncated-Limit', String(TIME_EXPORT_MAX_ROWS));
+    }
 
     let clientName: string | null = null;
     if (parsed.data.clientId) {

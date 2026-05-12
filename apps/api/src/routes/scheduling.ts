@@ -124,6 +124,14 @@ const SHIFT_INCLUDE = {
   assignedAssociate: { select: { firstName: true, lastName: true } },
 } as const;
 
+// Hard cap on the PDF export. Each row pulls a shift row + client name
+// + associate name, ~400 bytes serialized; at 5000 rows that's ~2 MB
+// of working set per request, well within Railway's 512 MB-ish per-
+// container budget but big enough that we don't want to remove the cap
+// without thinking. Callers that hit the cap get the truncated set
+// with an X-Truncated header so the UI can warn the user.
+const SCHEDULE_PDF_MAX_ROWS = 5000;
+
 /* ===== HR/Ops list + CRUD =============================================== */
 
 schedulingRouter.get('/shifts', MANAGE, async (req, res, next) => {
@@ -2054,9 +2062,16 @@ schedulingRouter.post('/export.pdf', MANAGE, async (req, res, next) => {
       where,
       orderBy: { startsAt: 'asc' },
       include: SHIFT_INCLUDE,
-      // PDF is page-broken — we don't need the list-view 200 cap here.
-      take: 5000,
+      take: SCHEDULE_PDF_MAX_ROWS,
     });
+    if (rows.length === SCHEDULE_PDF_MAX_ROWS) {
+      // Signal truncation so the UI can show "showing first 5000 of N+".
+      // We deliberately ship the partial PDF rather than 413 — a partial
+      // schedule export is more useful than an error, and the header
+      // gives ops a way to spot when the cap is being hit at scale.
+      res.setHeader('X-Truncated', 'true');
+      res.setHeader('X-Truncated-Limit', String(SCHEDULE_PDF_MAX_ROWS));
+    }
 
     let clientName: string | null = null;
     if (parsed.data.clientId) {
