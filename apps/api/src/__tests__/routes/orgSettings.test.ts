@@ -6,6 +6,7 @@ import {
   truncateAll,
 } from '../../../test/db.js';
 import { agent, loginAs } from '../../../test/http.js';
+import { flushPendingAudits } from '../../lib/audit.js';
 import { __resetBrandingCacheForTests, getBrandingSync } from '../../lib/branding.js';
 
 beforeEach(async () => {
@@ -75,6 +76,7 @@ describe('PATCH /admin/org/settings', () => {
     expect(cached.orgName).toBe('Acme HR');
     expect(cached.primaryColor).toBe('#112233');
 
+    await flushPendingAudits();
     const audits = await prisma.auditLog.findMany({
       where: { action: 'org.branding_updated' },
     });

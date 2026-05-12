@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
+import { flushPendingAudits } from '../../lib/audit.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createAssociate,
@@ -119,6 +120,7 @@ describe('POST /payroll/runs', () => {
     expect(res.body.totalTax).toBeCloseTo(totalTaxItem, 2);
     expect(res.body.totalNet).toBeCloseTo(100 - totalTaxItem, 2);
 
+    await flushPendingAudits();
     const audit = await prisma.auditLog.findFirst({
       where: { action: 'payroll.run_created', entityId: res.body.id },
     });

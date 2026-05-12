@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
+import { flushPendingAudits } from '../../lib/audit.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createAssociate,
@@ -140,6 +141,7 @@ describe('POST /payroll/runs/:id/void — Gap 3', () => {
     }
 
     // Audit row at the run scope.
+    await flushPendingAudits();
     const audit = await prisma.auditLog.findFirst({
       where: { entityType: 'PayrollRun', entityId: runId, action: 'payroll.run_voided' },
     });

@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
+import { flushPendingAudits } from '../../lib/audit.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createAssociate,
@@ -80,6 +81,7 @@ describe('POST /time/me/clock-in', () => {
     expect(row.associateId).toBe(associate.id);
     expect(row.clockOutAt).toBeNull();
 
+    await flushPendingAudits();
     const audit = await prisma.auditLog.findFirst({
       where: { action: 'time.clock_in', entityId: res.body.id },
     });
@@ -238,6 +240,7 @@ describe('POST /time/admin/entries/:id/approve', () => {
     expect(res.body.approvedById).toBe(hr.id);
     expect(res.body.approverEmail).toBe(hr.email);
 
+    await flushPendingAudits();
     const audit = await prisma.auditLog.findFirst({
       where: { action: 'time.approved', entityId: inRes.body.id },
     });
@@ -298,6 +301,7 @@ describe('POST /time/admin/entries/:id/reject', () => {
     expect(res.body.status).toBe('REJECTED');
     expect(res.body.rejectionReason).toBe('forgot to clock out, will resubmit');
 
+    await flushPendingAudits();
     const audit = await prisma.auditLog.findFirst({
       where: { action: 'time.rejected', entityId: inRes.body.id },
     });

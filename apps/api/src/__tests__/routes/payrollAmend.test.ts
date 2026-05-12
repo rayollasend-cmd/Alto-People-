@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
+import { flushPendingAudits } from '../../lib/audit.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createAssociate,
@@ -174,6 +175,7 @@ describe('POST /payroll/runs/:id/amend — Gap 3', () => {
     // with the seedDisbursedRun return shape).
     void itemNetPay;
 
+    await flushPendingAudits();
     const audit = await prisma.auditLog.findFirst({
       where: { entityType: 'PayrollRun', entityId: amendmentRun.id, action: 'payroll.run_amended' },
     });

@@ -74,6 +74,7 @@ describe('POST /documents/me/upload', () => {
     expect(row.s3Key).toBeTruthy();
     expect(existsSync(resolveStoragePath(row.s3Key!))).toBe(true);
 
+    await flushPendingAudits();
     const audit = await prisma.auditLog.findFirst({
       where: { action: 'document.uploaded', entityId: res.body.id },
     });

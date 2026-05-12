@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
+import { flushPendingAudits } from '../../lib/audit.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createUser,
@@ -73,6 +74,7 @@ describe('predictive scheduling — POST /scheduling/shifts', () => {
     expect(res.body.lateNoticeReason).toMatch(/mutual agreement/i);
     expect(res.body.publishedAt).toBeTruthy();
 
+    await flushPendingAudits();
     const audit = await prisma.auditLog.findFirst({
       where: { action: 'shift.created', entityId: res.body.id },
     });
