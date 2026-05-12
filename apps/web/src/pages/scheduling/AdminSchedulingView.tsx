@@ -97,6 +97,7 @@ import { TimeGridWeekView } from './TimeGridWeekView';
 import { SelectionToolbar } from './SelectionToolbar';
 import { TemplatesRail } from './TemplatesRail';
 import { MonthCalendarView } from './MonthCalendarView';
+import { MobileScheduleList } from './MobileScheduleList';
 import type { LucideIcon } from 'lucide-react';
 
 const STATUS_FILTERS: Array<{ value: ShiftStatus | 'ALL'; label: string }> = [
@@ -1283,8 +1284,43 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
 
       {/* Calendar shift-click router — shared by day/week views */}
       {/* eslint-disable react-hooks/rules-of-hooks */}
+
+      {/* Mobile-only schedule list. The desktop grids (week/day pivots)
+          are min-w-[700px]–[1200px] and force horizontal scroll on a
+          phone — a scheduler can only see one column at a time. On
+          <md we always show a vertical, time-sorted list anchored to
+          dayAnchor regardless of which desktop view is selected. The
+          assign / create drawers are shared with the desktop path. */}
+      {filteredShifts && (
+        <div className="md:hidden">
+          <MobileScheduleList
+            shifts={filteredShifts}
+            associates={associates}
+            dayAnchor={dayAnchor}
+            canManage={canManage}
+            onShiftClick={(s) => {
+              if (s.status === 'OPEN' || s.status === 'DRAFT' || s.status === 'ASSIGNED') {
+                setAssignTarget(s);
+              }
+            }}
+            onPrevDay={() =>
+              setDayAnchor(new Date(dayAnchor.getTime() - 24 * 60 * 60 * 1000))
+            }
+            onNextDay={() =>
+              setDayAnchor(new Date(dayAnchor.getTime() + 24 * 60 * 60 * 1000))
+            }
+            onCreate={(dayStart) => {
+              setCreateInitialDate(dayStart);
+              setCreateInitialAssociateId(null);
+              setShowCreate(true);
+            }}
+          />
+        </div>
+      )}
+
       {/* Week view */}
       {filteredShifts && view === 'week' && weekLayout === 'time-grid' && (
+        <div className="hidden md:block">
         <TimeGridWeekView
           shifts={filteredShifts}
           associates={associates}
@@ -1312,8 +1348,10 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           selectedIds={selectedIds}
           onTemplateDrop={onTemplateDrop}
         />
+        </div>
       )}
       {filteredShifts && view === 'week' && weekLayout === 'compact' && (
+        <div className="hidden md:block">
         <WeekCalendarView
           shifts={filteredShifts}
           associates={associates}
@@ -1340,10 +1378,12 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           selectedIds={selectedIds}
           onTemplateDrop={onTemplateDrop}
         />
+        </div>
       )}
 
       {/* Day view — same pivot, single column with hour grid + drag-to-resize */}
       {filteredShifts && view === 'day' && (
+        <div className="hidden md:block">
         <DayCalendarView
           shifts={filteredShifts}
           associates={associates}
@@ -1364,10 +1404,12 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           onShiftResize={onShiftResize}
           quickActions={quickActions}
         />
+        </div>
       )}
 
       {/* Month view — 6×7 mini calendar with shift counts per day */}
       {filteredShifts && view === 'month' && (
+        <div className="hidden md:block">
         <MonthCalendarView
           shifts={filteredShifts}
           monthAnchor={monthAnchor}
@@ -1387,6 +1429,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             setShowCreate(true);
           }}
         />
+        </div>
       )}
 
       {/* List view: empty state */}
