@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Clock, ShieldQuestion } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -8,9 +9,6 @@ import {
   listReportQueue,
   postHrMessage,
   triageReport,
-  type HotlineSummary,
-  type HrReportDetail,
-  type QueueReport,
   type ReportCategory,
   type ReportStatus,
   type SlaInfo,
@@ -58,26 +56,39 @@ const STATUS_VARIANT: Record<
   CLOSED: 'outline',
 };
 
+// Same namespace pattern as TeamHome: one wildcard for `['hotline']` so
+// every mutation can invalidate the queue + summary + open detail in
+// one go without enumerating sub-keys.
+export const hotlineKeys = {
+  all: ['hotline'] as const,
+  queue: (status: ReportStatus | 'ALL') =>
+    [...hotlineKeys.all, 'queue', status] as const,
+  summary: () => [...hotlineKeys.all, 'summary'] as const,
+  detail: (id: string) => [...hotlineKeys.all, 'detail', id] as const,
+};
+
 export function HotlineAdmin() {
   const [statusFilter, setStatusFilter] = useState<ReportStatus | 'ALL'>(
     'RECEIVED',
   );
-  const [rows, setRows] = useState<QueueReport[] | null>(null);
-  const [summary, setSummary] = useState<HotlineSummary | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
 
-  const refresh = () => {
-    setRows(null);
-    listReportQueue(statusFilter === 'ALL' ? undefined : statusFilter)
-      .then((r) => setRows(r.reports))
-      .catch(() => setRows([]));
-    getHotlineSummary()
-      .then(setSummary)
-      .catch(() => setSummary(null));
-  };
-  useEffect(() => {
-    refresh();
-  }, [statusFilter]);
+  const queueQ = useQuery({
+    queryKey: hotlineKeys.queue(statusFilter),
+    queryFn: async () => {
+      const res = await listReportQueue(
+        statusFilter === 'ALL' ? undefined : statusFilter,
+      );
+      return res.reports;
+    },
+  });
+  const summaryQ = useQuery({
+    queryKey: hotlineKeys.summary(),
+    queryFn: getHotlineSummary,
+  });
+
+  const rows = queueQ.data ?? null;
+  const summary = summaryQ.data ?? null;
 
   return (
     <div className="space-y-5">
@@ -196,9 +207,6 @@ export function HotlineAdmin() {
         <ReportDrawer
           id={openId}
           onClose={() => setOpenId(null)}
-          onSaved={() => {
-            refresh();
-          }}
         />
       )}
     </div>
@@ -272,60 +280,71 @@ function SlaChip({ sla }: { sla: SlaInfo }) {
 function ReportDrawer({
   id,
   onClose,
-  onSaved,
 }: {
   id: string;
   onClose: () => void;
-  onSaved: () => void;
 }) {
-  const [report, setReport] = useState<HrReportDetail | null>(null);
+  const qc = useQueryClient();
+  const detailQ = useQuery({
+    queryKey: hotlineKeys.detail(id),
+    queryFn: async () => (await getReportDetail(id)).report,
+  });
+  const report = detailQ.data ?? null;
+
   const [reply, setReply] = useState('');
   const [internalOnly, setInternalOnly] = useState(false);
-  const [resolution, setResolution] = useState('');
-  const [busy, setBusy] = useState(false);
-
+  // Local-only resolution draft. We seed it from the loaded report on
+  // first render but keep it as local state so the textarea isn't
+  // overwritten while the user is typing during a background refetch.
+  const [resolution, setResolution] = useState<string | null>(null);
   useEffect(() => {
-    getReportDetail(id)
-      .then((r) => {
-        setReport(r.report);
-        setResolution(r.report.resolution ?? '');
-      })
-      .catch(() => setReport(null));
-  }, [id]);
-
-  const setStatus = async (status: ReportStatus) => {
-    setBusy(true);
-    try {
-      await triageReport(id, {
-        status,
-        resolution: status === 'RESOLVED' ? resolution.trim() || null : undefined,
-      });
-      const r = await getReportDetail(id);
-      setReport(r.report);
-      onSaved();
-      toast.success(`Status: ${status}`);
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
-    } finally {
-      setBusy(false);
+    if (report && resolution === null) {
+      setResolution(report.resolution ?? '');
     }
+  }, [report, resolution]);
+
+  // Invalidate detail + queue + summary together: every mutation
+  // potentially shifts SLA, counts, and the row that's visible behind
+  // the drawer.
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: hotlineKeys.all });
   };
 
-  const send = async () => {
-    if (!reply.trim()) return;
-    setBusy(true);
-    try {
-      await postHrMessage(id, reply.trim(), internalOnly);
+  const triageM = useMutation({
+    mutationFn: ({ status, resolutionText }: { status: ReportStatus; resolutionText?: string | null }) =>
+      triageReport(id, {
+        status,
+        resolution: status === 'RESOLVED' ? resolutionText ?? null : undefined,
+      }),
+    onSuccess: (_data, vars) => {
+      toast.success(`Status: ${vars.status}`);
+      invalidate();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'Failed.'),
+  });
+
+  const messageM = useMutation({
+    mutationFn: ({ body, internalOnly: io }: { body: string; internalOnly: boolean }) =>
+      postHrMessage(id, body, io),
+    onSuccess: (_data, vars) => {
       setReply('');
-      const r = await getReportDetail(id);
-      setReport(r.report);
-      onSaved();
-      toast.success(internalOnly ? 'Internal note saved.' : 'Reply sent.');
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
-    } finally {
-      setBusy(false);
-    }
+      toast.success(vars.internalOnly ? 'Internal note saved.' : 'Reply sent.');
+      invalidate();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'Failed.'),
+  });
+
+  const busy = triageM.isPending || messageM.isPending;
+
+  const setStatus = (status: ReportStatus) => {
+    triageM.mutate({ status, resolutionText: (resolution ?? '').trim() || null });
+  };
+
+  const send = () => {
+    if (!reply.trim()) return;
+    messageM.mutate({ body: reply.trim(), internalOnly });
   };
 
   return (
@@ -414,7 +433,7 @@ function ReportDrawer({
               <Label>Resolution summary</Label>
               <textarea
                 className="w-full mt-1 h-20 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
-                value={resolution}
+                value={resolution ?? ''}
                 onChange={(e) => setResolution(e.target.value)}
                 placeholder="Saved when status moves to RESOLVED. Visible to the reporter."
               />
