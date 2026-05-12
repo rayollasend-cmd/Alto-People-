@@ -176,7 +176,7 @@ export function UsersAdmin() {
 
       <Card>
         <CardContent className="p-4 flex flex-wrap items-end gap-3">
-          <Field label="Search" className="flex-1 min-w-[200px]">
+          <Field label="Search" className="flex-1 w-full sm:min-w-[200px]">
             {(p) => (
               <div className="relative">
                 <Search
@@ -248,10 +248,26 @@ export function UsersAdmin() {
       <Card>
         <CardContent className="p-0">
           {rows === null ? (
+            // Skeleton matches the real row shape (name+email, role pill,
+            // status pill, client text, date, action stack) so when the
+            // data lands there's no layout shift. Six placeholders keep
+            // the table looking populated above the fold.
             <div className="p-4 space-y-2">
-              <Skeleton className="h-8 w-full" />
-              <Skeleton className="h-8 w-full" />
-              <Skeleton className="h-8 w-3/4" />
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="flex items-center gap-3 py-2 border-b border-navy-secondary/50 last:border-b-0"
+                >
+                  <div className="flex-1 space-y-1.5">
+                    <Skeleton className="h-3.5 w-2/5" />
+                    <Skeleton className="h-3 w-1/3" />
+                  </div>
+                  <Skeleton className="h-7 w-24 hidden sm:block" />
+                  <Skeleton className="h-7 w-16 hidden md:block" />
+                  <Skeleton className="h-3 w-24 hidden lg:block" />
+                  <Skeleton className="h-7 w-20" />
+                </div>
+              ))}
             </div>
           ) : rows.length === 0 ? (
             <div className="p-6 text-sm text-silver">No users match those filters.</div>

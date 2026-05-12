@@ -388,7 +388,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
             associates: 'Folder per associate — audit view',
           }}
         />
-        <div className="relative flex-1 min-w-[200px] max-w-xs">
+        <div className="relative flex-1 w-full sm:min-w-[200px] max-w-xs">
           <Input
             type="search"
             placeholder={

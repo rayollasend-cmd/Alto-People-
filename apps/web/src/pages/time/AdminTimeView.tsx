@@ -608,7 +608,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                 </div>
               </div>
 
-              <div className="relative flex-1 min-w-[200px]">
+              <div className="relative flex-1 w-full sm:min-w-[200px]">
                 <label className="block text-[10px] uppercase tracking-wider text-silver mb-1">
                   Search
                 </label>

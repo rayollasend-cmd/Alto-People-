@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   keepPreviousData,
@@ -161,6 +161,12 @@ export function PeopleDirectory() {
   const queryClient = useQueryClient();
   const [filters, setFilters] = useState<DirectoryFilters>({});
   const [search, setSearch] = useState('');
+  // useDeferredValue keeps the search input itself snappy even when the
+  // committed `search` change would cause an expensive React re-render
+  // downstream (virtualizer measure pass, filter chip recompute). React
+  // shows the previous list while the new one is being computed in the
+  // background. The debounce below still throttles the server fetch.
+  const deferredSearch = useDeferredValue(search);
   const [target, setTarget] = useState<DirectoryEntry | null>(null);
   // Deep-link support: /people?associateId=<uuid> auto-opens the drawer
   // for that associate. Used by the payroll readiness dashboard so a
@@ -169,18 +175,21 @@ export function PeopleDirectory() {
   const [searchParams, setSearchParams] = useSearchParams();
   const deepLinkAssociateId = searchParams.get('associateId');
 
-  // Debounce the search input. We search server-side to keep the row math
-  // (status derivation, comp lookup) honest with paging in the future.
+  // Debounce the deferred search input. We search server-side to keep
+  // the row math (status derivation, comp lookup) honest with paging in
+  // the future. Using `deferredSearch` here means React can prioritise
+  // typing-into-the-input over kicking the timer forward, which keeps
+  // the field snappy under load.
   useEffect(() => {
     const id = setTimeout(() => {
       setFilters((f) => {
-        const trimmed = search.trim();
+        const trimmed = deferredSearch.trim();
         if ((f.q ?? '') === trimmed) return f;
         return { ...f, q: trimmed || undefined };
       });
     }, 250);
     return () => clearTimeout(id);
-  }, [search]);
+  }, [deferredSearch]);
 
   // Clients change rarely; cache for a long time so the filter dropdown
   // is instant on revisit. Failures are silent — the dropdown just shows
@@ -258,7 +267,7 @@ export function PeopleDirectory() {
       {/* Filter row */}
       <Card>
         <CardContent className="flex flex-wrap items-end gap-3 py-3">
-          <div className="flex-1 min-w-[220px]">
+          <div className="flex-1 w-full sm:min-w-[220px]">
             <label className="text-[10px] uppercase tracking-wider text-silver">
               Search
             </label>
