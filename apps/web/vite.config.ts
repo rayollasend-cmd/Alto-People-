@@ -1,12 +1,52 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+/**
+ * Emit `dist/asset-manifest.json` listing the hashed JS/CSS asset URLs
+ * Vite produced this build. The service worker fetches this on activate
+ * and precaches every entry — so the first navigation into a lazy-
+ * loaded page section doesn't pay a network round-trip for its chunk.
+ *
+ * We deliberately keep the manifest small and stable: just `chunks` (JS
+ * + CSS only, no images/fonts) so the SW can iterate without parsing
+ * Vite's richer-but-noisier `.vite/manifest.json`. Bumping the contents
+ * naturally bumps the SHELL hash, which causes the SW's `activate` step
+ * to evict the prior cache and re-precache the new set.
+ */
+function emitAssetManifest(): Plugin {
+  return {
+    name: 'alto-asset-manifest',
+    apply: 'build',
+    writeBundle(options, bundle) {
+      const outDir = options.dir ?? path.resolve(__dirname, 'dist');
+      const chunks: string[] = [];
+      for (const fileName of Object.keys(bundle)) {
+        if (fileName.endsWith('.js') || fileName.endsWith('.css')) {
+          chunks.push('/' + fileName);
+        }
+      }
+      // Sort so successive builds with the same inputs produce a stable
+      // diff — easier to reason about whether the SW cache should bust.
+      chunks.sort();
+      const manifest = {
+        version: Date.now(),
+        chunks,
+      };
+      fs.writeFileSync(
+        path.join(outDir, 'asset-manifest.json'),
+        JSON.stringify(manifest, null, 2),
+      );
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), emitAssetManifest()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),

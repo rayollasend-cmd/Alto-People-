@@ -18,7 +18,7 @@
 // activate handler evicts the previous cache instead of leaving stale
 // entries (e.g. an old index.html with chunk hashes from a prior
 // deploy that no longer exist on the server) lying around.
-const CACHE_NAME = 'alto-shell-v8';
+const CACHE_NAME = 'alto-shell-v9';
 const SHELL = [
   '/',
   '/index.html',
@@ -30,19 +30,51 @@ const SHELL = [
   '/apple-touch-icon.png',
 ];
 
+// Fetch the build's asset manifest (emitted by the vite plugin in
+// vite.config.ts) and precache every JS/CSS chunk listed there. This
+// makes the FIRST navigation into any lazy-loaded page section instant
+// instead of paying a network round-trip for the chunk. Failures are
+// silent — if the manifest is missing (dev, or a build without the
+// plugin) the cache-on-first-fetch fallback below still works.
+async function precacheChunksFromManifest(cache) {
+  try {
+    const res = await fetch('/asset-manifest.json', {
+      credentials: 'same-origin',
+      cache: 'no-cache',
+    });
+    if (!res.ok) return;
+    const manifest = await res.json();
+    const chunks = Array.isArray(manifest?.chunks) ? manifest.chunks : [];
+    // Don't fail the whole install if one chunk is missing — that can
+    // happen mid-deploy on Railway when index.html lands before all
+    // assets are uploaded. Best-effort each entry.
+    await Promise.all(
+      chunks.map((url) =>
+        fetch(url, { credentials: 'same-origin' })
+          .then((r) => (r.ok ? cache.put(url, r) : null))
+          .catch(() => null),
+      ),
+    );
+  } catch {
+    // No manifest, no precache — fine, the cache-first fetch handler
+    // below will still cache chunks lazily as the user encounters them.
+  }
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
       .open(CACHE_NAME)
-      .then((cache) =>
-        Promise.all(
+      .then(async (cache) => {
+        await Promise.all(
           SHELL.map((url) =>
             fetch(url, { credentials: 'same-origin' })
               .then((res) => (res.ok ? cache.put(url, res) : null))
               .catch(() => null),
           ),
-        ),
-      )
+        );
+        await precacheChunksFromManifest(cache);
+      })
       .then(() => self.skipWaiting()),
   );
 });
