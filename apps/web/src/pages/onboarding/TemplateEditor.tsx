@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowDown,
@@ -26,6 +26,7 @@ import {
 } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useUnsavedChanges } from '@/lib/useUnsavedChanges';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
@@ -69,6 +70,27 @@ const blankTask = (): DraftTask => ({
   description: '',
 });
 
+// Stable stringification for dirty-tracking. Ignores `_key` (local
+// React id) and normalises empty descriptions so undo-to-original
+// doesn't appear dirty.
+function serialiseForm(
+  name: string,
+  track: OnboardingTrack,
+  clientId: string,
+  tasks: DraftTask[],
+): string {
+  return JSON.stringify({
+    name: name.trim(),
+    track,
+    clientId,
+    tasks: tasks.map((t) => ({
+      kind: t.kind,
+      title: t.title.trim(),
+      description: (t.description ?? '').trim(),
+    })),
+  });
+}
+
 export function TemplateEditor() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
@@ -87,6 +109,15 @@ export function TemplateEditor() {
   const [clientId, setClientId] = useState<string>(''); // '' = global
   const [tasks, setTasks] = useState<DraftTask[]>([blankTask()]);
   const [saving, setSaving] = useState(false);
+  // Snapshot captured the moment we finish loading (or on initial mount
+  // for new templates). The form is "dirty" if the current values differ.
+  // We compare a stable JSON serialisation rather than tracking a boolean
+  // because users frequently undo changes back to the original — in that
+  // case we should silently allow navigation.
+  const [pristine, setPristine] = useState<string>(() =>
+    serialiseForm('', 'STANDARD', '', [blankTask()]),
+  );
+  const justSavedRef = useRef(false);
 
   // Load clients (always) + template (when editing) on mount.
   useEffect(() => {
@@ -109,15 +140,15 @@ export function TemplateEditor() {
           setName(t.name);
           setTrack(t.track);
           setClientId(t.clientId ?? '');
-          setTasks(
-            t.tasks.map((tk) => ({
-              _key: tk.id,
-              kind: tk.kind,
-              title: tk.title,
-              description: tk.description ?? '',
-              order: tk.order,
-            }))
-          );
+          const loadedTasks: DraftTask[] = t.tasks.map((tk) => ({
+            _key: tk.id,
+            kind: tk.kind,
+            title: tk.title,
+            description: tk.description ?? '',
+            order: tk.order,
+          }));
+          setTasks(loadedTasks);
+          setPristine(serialiseForm(t.name, t.track, t.clientId ?? '', loadedTasks));
         })
         .catch((err) =>
           !cancelled &&
@@ -150,6 +181,14 @@ export function TemplateEditor() {
   const addTask = () => {
     setTasks((prev) => [...prev, blankTask()]);
   };
+
+  const dirty = useMemo(
+    () =>
+      !justSavedRef.current &&
+      serialiseForm(name, track, clientId, tasks) !== pristine,
+    [name, track, clientId, tasks, pristine],
+  );
+  useUnsavedChanges(dirty);
 
   const submit = async () => {
     if (!name.trim()) {
@@ -184,10 +223,12 @@ export function TemplateEditor() {
       if (isNew) {
         const created = await createTemplate(body);
         toast.success(`Created "${created.name}"`);
+        justSavedRef.current = true;
         navigate('/onboarding/templates');
       } else if (id) {
         await updateTemplate(id, body);
         toast.success(`Saved "${body.name}"`);
+        justSavedRef.current = true;
         navigate('/onboarding/templates');
       }
     } catch (err) {
