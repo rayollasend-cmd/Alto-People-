@@ -87,6 +87,7 @@ export function TemplatesRail({ clientId, onManage }: Props) {
         onClick={() => setCollapsed(false)}
         className="fixed right-0 top-1/3 z-30 px-1.5 py-3 rounded-l-md border-y border-l border-navy-secondary bg-navy hover:bg-navy-secondary/80 text-silver hover:text-gold no-print"
         title="Show templates"
+        aria-label="Show templates rail"
       >
         <div className="flex flex-col items-center gap-1.5">
           <ChevronLeft className="h-3.5 w-3.5" />
@@ -109,6 +110,7 @@ export function TemplatesRail({ clientId, onManage }: Props) {
           onClick={onManage}
           className="text-silver/70 hover:text-gold p-1"
           title="Manage templates"
+          aria-label="Manage templates"
         >
           <Settings2 className="h-3.5 w-3.5" />
         </button>
@@ -117,6 +119,7 @@ export function TemplatesRail({ clientId, onManage }: Props) {
           onClick={() => setCollapsed(true)}
           className="text-silver/70 hover:text-gold p-1"
           title="Collapse"
+          aria-label="Collapse templates rail"
         >
           <ChevronRight className="h-3.5 w-3.5" />
         </button>

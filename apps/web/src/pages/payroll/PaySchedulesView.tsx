@@ -155,10 +155,17 @@ export function PaySchedulesView({ canProcess }: Props) {
                       size="icon"
                       onClick={() => setBulkAssignTarget(s)}
                       title="Bulk assign associates"
+                      aria-label="Bulk assign associates"
                     >
                       <UserPlus className="h-3.5 w-3.5" />
                     </Button>
-                    <Button variant="ghost" size="icon" onClick={() => setEditing(s)} title="Edit">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setEditing(s)}
+                      title="Edit"
+                      aria-label="Edit pay schedule"
+                    >
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
                     <Button
@@ -166,6 +173,7 @@ export function PaySchedulesView({ canProcess }: Props) {
                       size="icon"
                       onClick={() => setConfirmDelete(s)}
                       title="Delete"
+                      aria-label="Delete pay schedule"
                       disabled={s.associateCount > 0}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
