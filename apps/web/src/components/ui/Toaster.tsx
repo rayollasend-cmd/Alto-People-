@@ -11,9 +11,11 @@ export function Toaster() {
       position="top-right"
       richColors
       closeButton
-      // 5s default reads naturally for short success messages while staying
-      // long enough to register an error before it dismisses itself.
-      duration={5000}
+      // 8s default. 5s is fine for "Saved" but screen-reader users and
+      // anyone reading a multi-line error message can't catch the detail
+      // before it self-dismisses; sonner pauses on hover and exposes the
+      // close button, so a longer dwell time doesn't hurt the happy path.
+      duration={8000}
       // Tighter visible stack — older toasts can be expanded on hover.
       visibleToasts={4}
       gap={10}

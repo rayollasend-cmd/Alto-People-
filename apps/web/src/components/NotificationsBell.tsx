@@ -145,7 +145,13 @@ export function NotificationsBell() {
         </TooltipContent>
       </Tooltip>
 
-      <DropdownMenuContent align="end" className="w-[22rem] p-0">
+      <DropdownMenuContent
+        align="end"
+        // w-[22rem] (352px) clips on small phones (iPhone SE = 375px minus
+        // gutter/safe-area). Cap to viewport minus 1rem of breathing room
+        // on phones, then resume 22rem at sm+.
+        className="w-[calc(100vw-1rem)] sm:w-[22rem] p-0"
+      >
         <DropdownMenuLabel className="flex items-center justify-between gap-2 px-3 py-2.5">
           <span className="text-xs uppercase tracking-widest text-silver">
             Inbox

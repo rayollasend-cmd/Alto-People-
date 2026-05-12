@@ -55,7 +55,10 @@ export function ViewToggle<V extends string = string>({
                 aria-pressed={active}
                 aria-label={opt.label}
                 className={cn(
-                  'inline-flex items-center justify-center h-9 w-9 rounded transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                  // 36px on desktop is fine, but tap targets below 44px get
+                  // missed on phones. Step up to h-11 on touch (no hover
+                  // capability) so it clears Apple HIG.
+                  'inline-flex items-center justify-center h-11 w-11 md:h-9 md:w-9 rounded transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
                   active
                     ? 'bg-navy text-white shadow-sm'
                     : 'text-silver hover:text-white'

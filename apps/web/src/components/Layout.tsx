@@ -13,17 +13,22 @@ import { MobileNav } from './MobileNav';
 import { InstallPrompt } from './InstallPrompt';
 import { NavigationProgress } from './NavigationProgress';
 
-// Per-route Suspense fallback shown while a lazy-loaded page chunk streams in.
-// Sized to roughly fill the main content region so layout doesn't jump when
-// the real page renders. The motion fade keeps the transition feeling
-// intentional rather than a flash of empty.
+// Per-route Suspense fallback shown while a lazy-loaded page chunk streams
+// in. A 40vh-centered spinner used to feel like "something is wrong" on
+// slow networks; switch to a thin page-shaped skeleton so the transition
+// reads as "page on the way" instead of "loading screen." The
+// NavigationProgress bar at the top of the viewport already signals work
+// is happening — this fills the page body so the chrome doesn't jump.
 function RouteFallback() {
   return (
-    <div className="flex items-center justify-center min-h-[40vh]">
-      <div
-        className="h-8 w-8 rounded-full border-2 border-gold/30 border-t-gold animate-spin"
-        aria-label="Loading"
-      />
+    <div className="space-y-4 p-4 md:p-6 animate-shimmer" aria-label="Loading">
+      <div className="h-8 w-1/3 rounded-md bg-navy-secondary/60" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="h-24 rounded-md bg-navy-secondary/60" />
+        <div className="h-24 rounded-md bg-navy-secondary/60" />
+        <div className="h-24 rounded-md bg-navy-secondary/60 hidden lg:block" />
+      </div>
+      <div className="h-64 rounded-md bg-navy-secondary/60" />
     </div>
   );
 }

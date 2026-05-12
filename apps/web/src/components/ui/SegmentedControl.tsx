@@ -44,7 +44,10 @@ export function SegmentedControl<T extends string | number>({
             aria-checked={selected}
             onClick={() => onChange(opt.value)}
             className={cn(
+              // min-h-11 on touch (no hover capability) keeps the pill
+              // tappable; desktop falls back to the original compact pad.
               'px-3 py-1 rounded-full border text-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-gold/40',
+              'min-h-11 md:min-h-0 inline-flex items-center',
               selected
                 ? 'bg-steel border-steel text-white'
                 : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white',
