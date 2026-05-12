@@ -346,8 +346,14 @@ function buildStatusBreakdown(
 }
 
 function SkeletonGrid({ count = 2 }: { count?: number }) {
+  // Tailwind JIT can't see template-string class names, so a literal
+  // `sm:grid-cols-${n}` is unsafe — depending on whether the matching
+  // class happened to be emitted elsewhere, the grid silently falls back
+  // to one column. Map the count to a known static class instead.
+  const cols =
+    count >= 3 ? 'sm:grid-cols-3' : count === 2 ? 'sm:grid-cols-2' : 'sm:grid-cols-1';
   return (
-    <div className={`grid grid-cols-1 sm:grid-cols-${Math.min(count, 3)} gap-3`}>
+    <div className={`grid grid-cols-1 ${cols} gap-3`}>
       {Array.from({ length: count }).map((_, i) => (
         <Card key={i}>
           <CardContent className="pt-5">

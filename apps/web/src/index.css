@@ -24,7 +24,9 @@
   --color-midnight:         8  15  32;  /* #080F20 */
   --color-gold:           217 185 103;  /* #D9B967 — AA-compliant on navy */
   --color-gold-bright:    240 216 120;  /* #F0D878 */
-  --color-silver:         168 184 200;  /* #A8B8C8 */
+  --color-silver:         192 208 224;  /* #C0D0E0 — bumped from #A8B8C8 so
+                                          fractional opacities (silver/60,
+                                          /70) clear WCAG AA on navy. */
   --color-steel:           24  95 165;  /* #185FA5 */
   --color-sky:            230 241 251;  /* #E6F1FB */
   --color-teal:            15 110  86;  /* #0F6E56 */
@@ -218,16 +220,24 @@ input[type='radio'] {
  * "comfortable" is the default, untouched. The selectors target the
  * exact Tailwind classes the primitives emit so we don't accidentally
  * shrink anything else.
+ *
+ * Compact density only applies at the md breakpoint (≥768px). On phones
+ * the row shrink collapses tap targets below 44px and pushes text to
+ * 13px — neither survives a thumb on a moving train. The user's
+ * preference still persists in localStorage; we just don't honour the
+ * smaller paddings until the viewport is wide enough to handle them.
  * ------------------------------------------------------------------------- */
-:root[data-density='compact'] .h-10 { height: 2rem; }                 /* TableHead */
-:root[data-density='compact'] [class*='px-3'] [class*='py-3'],
-:root[data-density='compact'] td.px-3.py-3 { padding-top: 0.375rem; padding-bottom: 0.375rem; }
-:root[data-density='compact'] th.h-10.px-3 { padding-top: 0.25rem; padding-bottom: 0.25rem; }
-:root[data-density='compact'] .p-5 { padding: 0.875rem; }              /* CardHeader / CardContent */
-:root[data-density='compact'] .p-5.pt-3 { padding-top: 0.5rem; padding-bottom: 0.875rem; }
-:root[data-density='compact'] .p-5.pb-3 { padding-bottom: 0.5rem; padding-top: 0.875rem; }
-:root[data-density='compact'] .p-4 { padding: 0.625rem; }              /* Card row body */
-:root[data-density='compact'] tbody tr { font-size: 0.8125rem; }       /* tighter rows read smaller */
+@media (min-width: 768px) {
+  :root[data-density='compact'] .h-10 { height: 2rem; }                 /* TableHead */
+  :root[data-density='compact'] [class*='px-3'] [class*='py-3'],
+  :root[data-density='compact'] td.px-3.py-3 { padding-top: 0.375rem; padding-bottom: 0.375rem; }
+  :root[data-density='compact'] th.h-10.px-3 { padding-top: 0.25rem; padding-bottom: 0.25rem; }
+  :root[data-density='compact'] .p-5 { padding: 0.875rem; }              /* CardHeader / CardContent */
+  :root[data-density='compact'] .p-5.pt-3 { padding-top: 0.5rem; padding-bottom: 0.875rem; }
+  :root[data-density='compact'] .p-5.pb-3 { padding-bottom: 0.5rem; padding-top: 0.875rem; }
+  :root[data-density='compact'] .p-4 { padding: 0.625rem; }              /* Card row body */
+  :root[data-density='compact'] tbody tr { font-size: 0.8125rem; }       /* tighter rows read smaller */
+}
 
 /* ===========================================================================
  * Phase 54 — print stylesheet for the scheduling page.
@@ -322,5 +332,46 @@ input[type='radio'] {
 }
 .scrollbar-none::-webkit-scrollbar { /* Chrome / Safari / new Edge */
   display: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * prefers-reduced-motion
+ *
+ * Two classes of motion the app emits today:
+ *   1) UI feedback (spin, shimmer, splash-sweep, accordion, fade/zoom on
+ *      Radix popovers): functional — without them users can't tell a button
+ *      is loading. We cap these to a single tick so the *state* still
+ *      reads (the spinner still has its half-fade frame, the dropdown
+ *      still appears) but nothing keeps moving.
+ *   2) Decorative transitions (color/transform/translate). We disable
+ *      completely.
+ *
+ * Framer-motion respects useReducedMotion at the library level when its
+ * inputs reach it; the surface where we use it is the route-change wrap
+ * in Layout, which sets transitions in <0.2s — short enough that the OS-
+ * level setting blunts the perceived motion as well.
+ * ------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Keep the loading spinner as a single static frame rather than a
+     mid-rotation glyph — Loader2 in the lucide set draws as a 3/4 arc, so
+     freezing it at 0deg reads as "loading icon" instead of "broken icon". */
+  .animate-spin {
+    animation: none !important;
+  }
+  /* Shimmer skeletons collapse to a flat token; the layout placeholder
+     still scaffolds the page, it just doesn't shimmer. */
+  .animate-shimmer,
+  .animate-\[shimmer_1\.6s_infinite\] {
+    animation: none !important;
+    background-image: none !important;
+    background: rgb(var(--color-navy-secondary)) !important;
+  }
 }
 
