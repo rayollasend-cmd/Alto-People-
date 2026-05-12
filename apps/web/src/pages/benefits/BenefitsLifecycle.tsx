@@ -366,9 +366,9 @@ function QleTab({ canManage }: { canManage: boolean }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Associate</TableHead>
-                  <TableHead>Kind</TableHead>
-                  <TableHead>Event</TableHead>
-                  <TableHead>Window ends</TableHead>
+                  <TableHead className="hidden sm:table-cell">Kind</TableHead>
+                  <TableHead className="hidden md:table-cell">Event</TableHead>
+                  <TableHead className="hidden md:table-cell">Window ends</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -377,11 +377,21 @@ function QleTab({ canManage }: { canManage: boolean }) {
                 {rows.map((q) => (
                   <TableRow key={q.id}>
                     <TableCell className="font-medium text-white">
-                      {q.associateName}
+                      <div className="truncate">{q.associateName}</div>
+                      {/* Phone-only stack collapsing the hidden cells.
+                          Kind first (the why), then a single date line
+                          (event → window-close). Mirrors the OE-windows
+                          table pattern above. */}
+                      <div className="sm:hidden text-[11px] text-silver/70 truncate">
+                        {QLE_KIND_LABEL[q.kind]}
+                      </div>
+                      <div className="md:hidden text-[10px] text-silver/80 tabular-nums">
+                        {q.eventDate} → {q.allowedUntil}
+                      </div>
                     </TableCell>
-                    <TableCell>{QLE_KIND_LABEL[q.kind]}</TableCell>
-                    <TableCell>{q.eventDate}</TableCell>
-                    <TableCell>{q.allowedUntil}</TableCell>
+                    <TableCell className="hidden sm:table-cell">{QLE_KIND_LABEL[q.kind]}</TableCell>
+                    <TableCell className="hidden md:table-cell tabular-nums">{q.eventDate}</TableCell>
+                    <TableCell className="hidden md:table-cell tabular-nums">{q.allowedUntil}</TableCell>
                     <TableCell>
                       <Badge variant={QLE_BADGE[q.status]}>{q.status}</Badge>
                     </TableCell>
@@ -565,10 +575,10 @@ function CobraTab({ canManage }: { canManage: boolean }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Associate</TableHead>
-                  <TableHead>QE</TableHead>
-                  <TableHead>QE date</TableHead>
-                  <TableHead>Election by</TableHead>
-                  <TableHead>Premium/mo</TableHead>
+                  <TableHead className="hidden sm:table-cell">QE</TableHead>
+                  <TableHead className="hidden md:table-cell">QE date</TableHead>
+                  <TableHead className="hidden lg:table-cell">Election by</TableHead>
+                  <TableHead className="hidden md:table-cell">Premium/mo</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -577,12 +587,25 @@ function CobraTab({ canManage }: { canManage: boolean }) {
                 {rows.map((c) => (
                   <TableRow key={c.id}>
                     <TableCell className="font-medium text-white">
-                      {c.associateName}
+                      <div className="truncate">{c.associateName}</div>
+                      {/* Phone-only stack: QE description first, then the
+                          two most-load-bearing numbers (premium + when
+                          they have to decide by). The QE-date itself
+                          drops off mobile — admins use this view to act,
+                          not audit. */}
+                      <div className="sm:hidden text-[11px] text-silver/70 truncate">
+                        {c.qualifyingEvent}
+                      </div>
+                      <div className="md:hidden text-[10px] text-silver/80 tabular-nums">
+                        {c.premiumPerMonth ? `$${c.premiumPerMonth}/mo` : '—'}
+                        {' · elect by '}
+                        {c.electionDeadline}
+                      </div>
                     </TableCell>
-                    <TableCell>{c.qualifyingEvent}</TableCell>
-                    <TableCell>{c.qeDate}</TableCell>
-                    <TableCell>{c.electionDeadline}</TableCell>
-                    <TableCell>{c.premiumPerMonth ? `$${c.premiumPerMonth}` : '—'}</TableCell>
+                    <TableCell className="hidden sm:table-cell">{c.qualifyingEvent}</TableCell>
+                    <TableCell className="hidden md:table-cell tabular-nums">{c.qeDate}</TableCell>
+                    <TableCell className="hidden lg:table-cell tabular-nums">{c.electionDeadline}</TableCell>
+                    <TableCell className="hidden md:table-cell tabular-nums">{c.premiumPerMonth ? `$${c.premiumPerMonth}` : '—'}</TableCell>
                     <TableCell>
                       <Badge variant={COBRA_BADGE[c.status]}>{c.status}</Badge>
                     </TableCell>
