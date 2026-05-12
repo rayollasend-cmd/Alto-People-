@@ -1,6 +1,7 @@
 import type { Request } from 'express';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
+import { logger } from './logger.js';
 
 // ---------------------------------------------------------------------------
 // Fire-and-forget audit writes
@@ -35,7 +36,7 @@ export function enqueueAudit(
   const p = prisma.auditLog
     .create({ data })
     .catch((err) => {
-      console.error(`[audit] ${where} failed:`, err);
+      logger.error({ err, where, audit: 'fire-and-forget' }, 'audit insert failed');
     })
     .finally(() => {
       inFlight.delete(p);
@@ -70,7 +71,7 @@ export async function recordCriticalAudit(
   try {
     await p;
   } catch (err) {
-    console.error(`[audit:critical] ${where} failed:`, err);
+    logger.error({ err, where, audit: 'critical' }, 'critical audit insert failed');
     throw err;
   }
 }

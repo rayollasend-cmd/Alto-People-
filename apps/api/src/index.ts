@@ -1,6 +1,13 @@
 import { env } from './config/env.js';
+// Sentry must initialise before any module that handles requests so
+// its auto-instrumentation can attach to Node's HTTP layer at import
+// time. No-op when SENTRY_DSN is unset.
+import { initSentry } from './lib/sentry.js';
+initSentry();
+
 import { createApp } from './app.js';
 import { prisma } from './db.js';
+import { logger } from './lib/logger.js';
 import { startKeepAlive } from './lib/keepalive.js';
 import { startInviteReminderCron } from './lib/inviteReminder.js';
 import { startAttestationReminderCron } from './lib/attestationReminder.js';
@@ -11,8 +18,10 @@ import { preloadPayrollTaxConfig } from './lib/payrollTax.js';
 const app = createApp();
 
 app.listen(env.PORT, '0.0.0.0', async () => {
-  console.log(`[alto-people/api] listening on http://localhost:${env.PORT}`);
-  console.log(`[alto-people/api] CORS origins: ${env.CORS_ORIGIN.join(', ')}`);
+  logger.info(
+    { port: env.PORT, corsOrigins: env.CORS_ORIGIN },
+    'api listening',
+  );
 
   // Wake the DB pool immediately so the first user request doesn't pay the
   // cold-start. Best-effort — if the DB is unreachable, we still serve
@@ -20,19 +29,16 @@ app.listen(env.PORT, '0.0.0.0', async () => {
   try {
     const t0 = Date.now();
     await prisma.$queryRaw`SELECT 1`;
-    console.log(`[alto-people/api] DB warm (${Date.now() - t0}ms)`);
+    logger.info({ warmMs: Date.now() - t0 }, 'db warm');
   } catch (err) {
-    console.warn(
-      '[alto-people/api] DB warm-up failed:',
-      err instanceof Error ? err.message : err
-    );
+    logger.warn({ err }, 'db warm-up failed');
   }
 
   if (env.KEEP_ALIVE_INTERVAL_SECONDS > 0) {
     startKeepAlive(env.KEEP_ALIVE_INTERVAL_SECONDS);
-    console.log(
-      `[alto-people/api] DB keep-alive every ${env.KEEP_ALIVE_INTERVAL_SECONDS}s ` +
-        '(uses Neon compute hours; set KEEP_ALIVE_INTERVAL_SECONDS=0 to disable)'
+    logger.info(
+      { intervalSeconds: env.KEEP_ALIVE_INTERVAL_SECONDS },
+      'db keep-alive enabled',
     );
   }
 
@@ -72,25 +78,25 @@ app.listen(env.PORT, '0.0.0.0', async () => {
     const missing = checks.filter((c) => !c.sentinel);
     if (missing.length > 0) {
       for (const m of missing) {
-        console.error(
-          `FATAL: MULTI_REPLICA=1 but no shared backend installed for "${m.name}". ` +
-            `Wire ${m.hint} at boot, or pin to a single replica (MULTI_REPLICA=0).`,
+        logger.fatal(
+          { subsystem: m.name, hint: m.hint },
+          'MULTI_REPLICA=1 but no shared backend installed — refusing to start',
         );
       }
       process.exit(1);
     }
     for (const c of checks) {
-      console.log(`[alto-people/api] ${c.name} using ${c.sentinel} backend`);
+      logger.info(
+        { subsystem: c.name, backend: c.sentinel },
+        'multi-replica backend',
+      );
     }
   } else {
     // Single-replica path. Make the assumption explicit in the log
     // so ops doesn't accidentally scale out and lose lockout state,
     // cache coherence, or rate-limit accuracy.
-    console.log(
-      '[alto-people/api] running with in-process stores for kiosk rate ' +
-        'limit, session user cache, and Resend throttle (single-replica ' +
-        'only; set MULTI_REPLICA=1 + install shared backends before ' +
-        'scaling out)',
+    logger.info(
+      'in-process stores in use for kiosk rate limit, session user cache, and Resend throttle (single-replica only)',
     );
   }
 
@@ -99,7 +105,7 @@ app.listen(env.PORT, '0.0.0.0', async () => {
   // hard-coded defaults. Auto-refreshes every 5 min via ensureBrandingLoaded
   // call sites.
   ensureBrandingLoaded(prisma).catch((err) => {
-    console.warn('[alto-people/api] branding preload failed:', err);
+    logger.warn({ err }, 'branding preload failed');
   });
 
   // Load the federal payroll-tax constants for the current calendar year
@@ -111,15 +117,11 @@ app.listen(env.PORT, '0.0.0.0', async () => {
   const currentYear = new Date().getFullYear();
   try {
     await preloadPayrollTaxConfig(prisma, currentYear);
-    console.log(`[alto-people/api] payroll tax config loaded for year ${currentYear}`);
+    logger.info({ year: currentYear }, 'payroll tax config loaded');
   } catch (err) {
-    console.warn(
-      `[alto-people/api] WARNING: payroll tax config NOT loaded for year ${currentYear} —`,
-      err instanceof Error ? err.message : err,
-    );
-    console.warn(
-      '[alto-people/api] Insert a payroll_config row for the current year ' +
-        '(see prisma/migrations/*_add_payroll_config) before running payroll.',
+    logger.warn(
+      { err, year: currentYear },
+      'payroll tax config NOT loaded — insert a payroll_config row for the current year before running payroll',
     );
   }
 });

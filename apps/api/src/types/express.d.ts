@@ -1,5 +1,6 @@
 import type { Role, UserStatus } from '@prisma/client';
 import type { Capability } from '@alto-people/shared';
+import type { RequestLogger } from '../lib/logger.js';
 
 export interface SessionUser {
   id: string;
@@ -48,6 +49,12 @@ declare global {
        * client report → middleware → handler → DB write together.
        */
       id: string;
+      /**
+       * Per-request structured logger, also set by `requestId`. Already
+       * bound with { requestId, method, path } so `req.log.info({...})`
+       * lines correlate to the trace automatically.
+       */
+      log: RequestLogger;
     }
   }
 }

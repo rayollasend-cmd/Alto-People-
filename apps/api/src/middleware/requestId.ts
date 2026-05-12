@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import type { Request, Response, NextFunction } from 'express';
+import { makeRequestLogger } from '../lib/logger.js';
 
 /**
  * Tag every request with a UUID so logs, error responses, and audit rows
@@ -29,6 +30,15 @@ export function requestId(req: Request, res: Response, next: NextFunction) {
   const candidate = Array.isArray(inbound) ? inbound[0] : inbound;
   const id = candidate && SAFE_ID.test(candidate) ? candidate : randomUUID();
   req.id = id;
+  // Attach a child logger so route handlers can call req.log.info({...},
+  // 'message') without redundantly threading the requestId through every
+  // log call. userId is filled in lazily — attachUser hasn't run yet
+  // when requestId fires, so we re-bind once req.user is available.
+  req.log = makeRequestLogger({
+    requestId: id,
+    method: req.method,
+    path: req.path,
+  });
   res.setHeader('X-Request-Id', id);
   next();
 }
