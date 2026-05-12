@@ -42,7 +42,11 @@ export function Drawer({ open, onOpenChange, width = 'max-w-md', children }: Dra
           className={cn(
             'fixed right-0 top-0 bottom-0 z-50 w-full',
             width,
-            'bg-navy border-l border-navy-secondary shadow-2xl',
+            // elev-3 carries the drawer-above-page elevation signal; a
+            // 1px gold/15 accent on the left edge picks up the brand
+            // accent so the drawer reads as a floating panel rather
+            // than a darker stripe of the page.
+            'bg-navy border-l border-gold/15 elev-3',
             'flex flex-col',
             'focus:outline-none',
             'data-[state=open]:animate-slide-in-from-right data-[state=closed]:animate-slide-out-to-right',

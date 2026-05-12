@@ -31,7 +31,10 @@ export const TableHeader = React.forwardRef<
       // column labels stay visible when the user pages through long
       // tables. The bg shim sits *behind* the row so we don't see
       // content bleeding through during scroll.
-      'sticky top-0 z-10 bg-navy [&_tr]:border-b [&_tr]:border-navy-secondary',
+      // Slightly darker than the surrounding card so the header band
+      // visually separates from the body without needing a dividing
+      // line that fights with the per-row borders.
+      'sticky top-0 z-10 bg-navy-secondary/50 [&_tr]:border-b [&_tr]:border-navy-secondary',
       className,
     )}
     {...props}

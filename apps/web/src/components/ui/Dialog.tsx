@@ -43,7 +43,7 @@ export const DialogContent = React.forwardRef<
         // home indicator. Internal scroll handles overflow — without
         // this, the submit button drops below the fold on phones.
         'max-h-[calc(100dvh-2rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] overflow-y-auto',
-        'bg-navy border border-navy-secondary rounded-lg shadow-2xl',
+        'bg-navy border border-navy-secondary rounded-lg elev-3',
         'p-6 grid gap-4',
         'data-[state=open]:animate-zoom-in data-[state=closed]:animate-zoom-out',
         'focus:outline-none',
@@ -53,7 +53,9 @@ export const DialogContent = React.forwardRef<
     >
       {children}
       <DialogPrimitive.Close
-        className="absolute right-2 top-2 grid place-items-center h-10 w-10 rounded-md text-silver hover:text-white hover:bg-navy-secondary/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+        // Same safe-area-aware positioning as Drawer's close button so
+        // iOS notches don't clip the X target on full-bleed dialogs.
+        className="absolute grid place-items-center h-10 w-10 rounded-md text-silver hover:text-white hover:bg-navy-secondary/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright top-[max(0.5rem,env(safe-area-inset-top))] right-[max(0.5rem,env(safe-area-inset-right))]"
         aria-label="Close"
       >
         <X className="h-4 w-4" />

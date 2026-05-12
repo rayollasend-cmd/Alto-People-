@@ -10,10 +10,13 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        // Primary CTA — gold on navy, used for the single most-important
-        // action on a page (Save, Submit, Approve).
+        // Primary CTA — gold on navy with a subtle gradient + outer
+        // glow (.btn-gold). The single most-important action on a
+        // page (Save, Submit, Approve). The class is a real CSS rule
+        // rather than Tailwind utilities so the gradient + multi-shadow
+        // can layer cleanly across hover/active/disabled states.
         primary:
-          'bg-gold text-navy hover:bg-gold-bright shadow-sm hover:shadow-md',
+          'btn-gold text-navy',
         // Secondary — subtle border, used for "Cancel", "Edit", row actions.
         secondary:
           'bg-navy-secondary/40 text-white border border-navy-secondary hover:border-silver/40 hover:bg-navy-secondary',
@@ -25,7 +28,7 @@ const buttonVariants = cva(
           'text-silver hover:text-white hover:bg-navy-secondary/60',
         // Destructive — irreversible actions (Delete, Cancel run, Reject).
         destructive:
-          'bg-alert text-white hover:bg-alert/90 shadow-sm',
+          'bg-alert text-white hover:bg-alert/90 shadow-[0_1px_0_rgba(255,255,255,0.15)_inset,0_4px_12px_rgba(233,98,85,0.25)]',
         // Link-styled (rare — use only for inline navigation in copy).
         link: 'text-gold underline-offset-4 hover:underline p-0 h-auto active:scale-100',
       },

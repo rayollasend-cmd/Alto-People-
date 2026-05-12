@@ -20,7 +20,9 @@
 
   /* Default = dark theme (current Alto navy + gold). */
   --color-navy:            11  24  50;  /* #0B1832 */
-  --color-navy-secondary:  14  34  68;  /* #0E2244 */
+  --color-navy-secondary:  20  43  82;  /* #142B52 — bumped from #0E2244 so
+                                          card borders + dividers register at
+                                          arm's length on dark surfaces. */
   --color-midnight:         8  15  32;  /* #080F20 */
   --color-gold:           217 185 103;  /* #D9B967 — AA-compliant on navy */
   --color-gold-bright:    240 216 120;  /* #F0D878 */
@@ -150,6 +152,103 @@
 }
 :root[data-theme='light'] .bg-backdrop {
   background-color: rgba(15, 23, 42, 0.5); /* slate-900 at 50% — softer for light UI */
+}
+
+/* ---------------------------------------------------------------------------
+ * Elevation ladder.
+ *
+ * Three rungs the rest of the system reads off:
+ *   .elev-1 — resting card on the page (low contrast, hugs the surface)
+ *   .elev-2 — interactive card on hover, popover, dropdown
+ *   .elev-3 — drawer / modal / floating panel (clearly above page)
+ *
+ * Dark mode leans on the inner top-edge highlight (a 1px white sliver)
+ * rather than a heavy bottom shadow, because pure-black drop shadows
+ * read as smudges on a navy field. Light mode uses standard shadows.
+ *
+ * Use these utilities instead of `shadow-sm/-md/-lg` so the ladder
+ * stays coherent across cards, drawers, modals, and dropdowns.
+ * ------------------------------------------------------------------------- */
+.elev-1 {
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 1px 2px rgba(0, 0, 0, 0.25);
+}
+.elev-2 {
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.06) inset,
+    0 4px 12px rgba(0, 0, 0, 0.35);
+}
+.elev-3 {
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.08) inset,
+    0 16px 40px rgba(0, 0, 0, 0.55);
+}
+:root[data-theme='light'] .elev-1 {
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+}
+:root[data-theme='light'] .elev-2 {
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.08);
+}
+:root[data-theme='light'] .elev-3 {
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18);
+}
+
+/* ---------------------------------------------------------------------------
+ * Primary CTA gold gradient + glow.
+ *
+ * The brand's solid gold (#D9B967) fill is correct but reads flat on a
+ * dark navy field. A faint top-down gradient gives the button a metallic
+ * sheen, and a soft outer ring makes it the unambiguous primary action
+ * without raising the saturation above tasteful. Hover deepens the
+ * glow rather than flipping the colour, which keeps the brand reading
+ * the same across states.
+ *
+ * Applied via the .btn-gold class hooked into Button.tsx's primary
+ * variant, so other gold surfaces (badges, accent dots) stay untouched.
+ * ------------------------------------------------------------------------- */
+.btn-gold {
+  background-image: linear-gradient(
+    to bottom,
+    rgb(var(--color-gold-bright)) 0%,
+    rgb(var(--color-gold)) 100%
+  );
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.25) inset,
+    0 0 0 1px rgba(217, 185, 103, 0.35),
+    0 6px 16px rgba(217, 185, 103, 0.18);
+}
+.btn-gold:hover:not(:disabled) {
+  background-image: linear-gradient(
+    to bottom,
+    rgb(var(--color-gold-bright)) 0%,
+    rgb(var(--color-gold-bright)) 100%
+  );
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.35) inset,
+    0 0 0 1px rgba(240, 216, 120, 0.55),
+    0 8px 22px rgba(240, 216, 120, 0.28);
+}
+.btn-gold:active:not(:disabled) {
+  background-image: linear-gradient(
+    to bottom,
+    rgb(var(--color-gold)) 0%,
+    rgb(var(--color-gold)) 100%
+  );
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.25) inset,
+    0 0 0 1px rgba(217, 185, 103, 0.5);
+}
+:root[data-theme='light'] .btn-gold {
+  background-image: linear-gradient(
+    to bottom,
+    rgb(var(--color-gold-bright)) 0%,
+    rgb(var(--color-gold)) 100%
+  );
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.5) inset,
+    0 0 0 1px rgba(184, 134, 11, 0.35),
+    0 6px 16px rgba(184, 134, 11, 0.18);
 }
 
 /* ---------------------------------------------------------------------------
