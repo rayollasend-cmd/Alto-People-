@@ -142,7 +142,13 @@ export function NotificationsBell() {
         </DropdownMenuLabel>
         <DropdownMenuSeparator className="m-0" />
 
-        <div className="max-h-[28rem] overflow-y-auto">
+        {/* 28rem (448px) on tall screens, but clamp to the dynamic
+            viewport on short phones — without this the dropdown can
+            run off the bottom of the screen below the Topbar +
+            DropdownMenuLabel + safe-area inset, leaving items
+            inaccessible. 100dvh, not 100vh, so the iOS address-bar
+            collapse doesn't briefly let the list grow off-screen. */}
+        <div className="overflow-y-auto" style={{ maxHeight: 'min(28rem, calc(100dvh - 9rem))' }}>
           {!items && !loadError && (
             <div className="p-2 space-y-2">
               <Skeleton className="h-12" />
