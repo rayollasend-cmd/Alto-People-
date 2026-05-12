@@ -16,12 +16,13 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip';
 import { cn } from '@/lib/cn';
 
-const POLL_MS = 60_000;
+const POLL_MS = 30_000;
 
 /**
- * Topbar notifications bell. Polls /communications/me/inbox once a minute,
- * shows an unread count badge, and reveals a panel listing the most recent
- * 50 in-app notifications. Clicking an unread item marks it read.
+ * Topbar notifications bell. Polls /communications/me/inbox every 30s
+ * (and on tab refocus), shows an unread count badge, and reveals a
+ * panel listing the most recent 50 in-app notifications. Clicking an
+ * unread item marks it read.
  *
  * Polling is dumb-on-purpose; web sockets / SSE land in a later phase if
  * the cadence proves too slow.
@@ -49,8 +50,28 @@ export function NotificationsBell() {
 
   useEffect(() => {
     refresh();
-    const t = window.setInterval(refresh, POLL_MS);
-    return () => window.clearInterval(t);
+    let t = window.setInterval(refresh, POLL_MS);
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        // Tab came back into focus — refetch immediately and reset the
+        // polling interval so we don't fire two close requests.
+        window.clearInterval(t);
+        refresh();
+        t = window.setInterval(refresh, POLL_MS);
+      } else {
+        // Hidden tabs throttle setInterval anyway; explicitly pause so
+        // we don't accumulate a backlog of fires that all dump at once
+        // when the user returns.
+        window.clearInterval(t);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('focus', refresh);
+    return () => {
+      window.clearInterval(t);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('focus', refresh);
+    };
   }, [refresh]);
 
   const unread = (items ?? []).filter((n) => !n.readAt);
