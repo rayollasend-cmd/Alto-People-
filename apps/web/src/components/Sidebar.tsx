@@ -28,6 +28,7 @@ import { useAuth } from '@/lib/auth';
 import { useTheme } from '@/lib/theme';
 import { useDensity } from '@/lib/density';
 import { ROLE_LABELS } from '@/lib/roles';
+import { prefetchRoute } from '@/lib/prefetch';
 import { cn } from '@/lib/cn';
 import { Avatar } from '@/components/ui/Avatar';
 import {
@@ -297,11 +298,19 @@ interface SidebarLinkProps {
 }
 
 function SidebarLink({ to, label, icon: Icon, end, railCollapsed }: SidebarLinkProps) {
+  // Hover + focus prefetch — by the time the user actually clicks, the
+  // page's lazy chunk is already warm. onTouchStart covers touch, which
+  // fires before the synthetic click.
+  const preload = () => prefetchRoute(to);
+
   const link = (
     <NavLink
       to={to}
       end={end}
       aria-label={railCollapsed ? label : undefined}
+      onMouseEnter={preload}
+      onFocus={preload}
+      onTouchStart={preload}
       className={({ isActive }) =>
         cn(
           'group relative my-0.5 flex items-center rounded-md text-sm transition-colors',

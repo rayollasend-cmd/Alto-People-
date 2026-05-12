@@ -13,6 +13,10 @@ import { ModulePlaceholder } from '@/pages/ModulePlaceholder';
 import { MODULES } from '@/lib/modules';
 import { RequireAuth } from '@/lib/auth';
 import { RequireCapability } from '@/lib/RequireCapability';
+import { registerPrefetch, registerDataPrefetch } from '@/lib/prefetch';
+import { queryClient } from '@/lib/queryClient';
+import { listDirectory } from '@/lib/directoryApi';
+import { listClients } from '@/lib/clientsApi';
 import { RouterErrorPage } from '@/pages/RouterErrorPage';
 
 // ---------------------------------------------------------------------------
@@ -152,6 +156,59 @@ const ReportsHome = lazyNamed(() => import('@/pages/reports/ReportsHome'), 'Repo
 const KioskPage = lazyNamed(() => import('@/pages/kiosk/KioskPage'), 'KioskPage');
 const KioskAdmin = lazyNamed(() => import('@/pages/kiosk/KioskAdmin'), 'KioskAdmin');
 const HotlinePage = lazyNamed(() => import('@/pages/hotline/HotlinePage'), 'HotlinePage');
+
+// Hover-prefetch registry. The Sidebar (and any other navigator) looks
+// up the user's hovered link here and fires the chunk loader before the
+// click lands, so the navigation only pays the data-fetch cost. Module
+// roots only — the registry resolves by longest-prefix match so child
+// routes (e.g. /payroll/runs/123) reuse the parent module's chunk
+// loader automatically.
+registerPrefetch('/onboarding', () => import('@/pages/onboarding/OnboardingHome'));
+registerPrefetch('/recruiting', () => import('@/pages/recruiting/RecruitingHome'));
+registerPrefetch('/people', () => import('@/pages/people/PeopleDirectory'));
+registerPrefetch('/clients', () => import('@/pages/clients/ClientsHome'));
+registerPrefetch('/time', () => import('@/pages/time/TimeHome'));
+registerPrefetch('/time-off', () => import('@/pages/timeoff/TimeOffHome'));
+registerPrefetch('/scheduling', () => import('@/pages/scheduling/SchedulingHome'));
+registerPrefetch('/payroll', () => import('@/pages/payroll/PayrollHome'));
+registerPrefetch('/documents', () => import('@/pages/documents/AdminDocumentsView'));
+registerPrefetch('/communications', () => import('@/pages/communications/CommunicationsHome'));
+registerPrefetch('/compliance', () => import('@/pages/compliance/ComplianceHome'));
+registerPrefetch('/performance', () => import('@/pages/performance/AdminReviewsView'));
+registerPrefetch('/benefits', () => import('@/pages/benefits/BenefitsHome'));
+registerPrefetch('/analytics', () => import('@/pages/analytics/AnalyticsHome'));
+registerPrefetch('/audit', () => import('@/pages/audit/AuditHome'));
+registerPrefetch('/me', () => import('@/pages/me/MeHome'));
+registerPrefetch('/settings', () => import('@/pages/Settings'));
+registerPrefetch('/admin/users', () => import('@/pages/admin/UsersAdmin'));
+registerPrefetch('/admin/branding', () => import('@/pages/admin/BrandingHome'));
+registerPrefetch('/admin/billing', () => import('@/pages/admin/BillingHome'));
+registerPrefetch('/reports', () => import('@/pages/reports/ReportsHome'));
+
+// Hover-prime the React Query cache for the heaviest pages. By the
+// time the user clicks, the chunk and the initial list have already
+// downloaded in parallel — the destination page mounts with data
+// already cached instead of waterfalling chunk → mount → fetch →
+// render. queryKey strings here MUST match the ones in the page
+// components or the cache write won't hit. Failures are swallowed.
+registerDataPrefetch('/people', () => {
+  void queryClient.prefetchQuery({
+    queryKey: ['directory', {}],
+    queryFn: async () => (await listDirectory({})).associates,
+  });
+  void queryClient.prefetchQuery({
+    queryKey: ['clients', 'list'],
+    queryFn: async () => (await listClients()).clients,
+    staleTime: 5 * 60_000,
+  });
+});
+registerDataPrefetch('/clients', () => {
+  void queryClient.prefetchQuery({
+    queryKey: ['clients', 'list'],
+    queryFn: async () => (await listClients()).clients,
+    staleTime: 5 * 60_000,
+  });
+});
 
 // Tiny in-page fallback for top-level (no-Layout) routes while their chunk
 // streams in. The Layout has its own Suspense around <Outlet />.

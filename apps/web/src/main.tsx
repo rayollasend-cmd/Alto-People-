@@ -1,7 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { RouterProvider } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { initSentry } from '@/lib/sentry';
 
 // Initialise error tracking before any render path can throw. No-op
@@ -22,16 +22,7 @@ import { GlobalErrorBoundary } from '@/components/GlobalErrorBoundary';
 // Neon Free tier: keep cached data for 5 min, mark fresh for 30 s,
 // don't refetch on window focus (too aggressive when the DB might be
 // suspended), and retry only once instead of three times.
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 30_000,
-      gcTime: 5 * 60_000,
-      refetchOnWindowFocus: false,
-      retry: 1,
-    },
-  },
-});
+import { queryClient } from '@/lib/queryClient';
 
 // Self-hosted variable fonts. Both ship as a single woff2 covering the
 // full weight range, served from our own bundle — no third-party CDN
