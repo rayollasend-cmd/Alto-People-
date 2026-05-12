@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, CalendarOff, Clock, Inbox, Receipt, Target, Users } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
@@ -14,10 +15,6 @@ import {
   rejectTeamTimesheet,
   type DirectReport,
   type InboxItem,
-  type TeamDashboard,
-  type TeamInboxResponse,
-  type TeamTimeEntry,
-  type TeamTimeOffRequest,
 } from '@/lib/teamApi';
 import {
   Avatar,
@@ -42,26 +39,33 @@ import {
 import { toast } from 'sonner';
 import { usePrompt } from '@/lib/confirm';
 
+// Query keys are tuples so invalidateQueries({ queryKey: ['team'] }) can
+// flush the whole namespace after a mutation. The dashboard and the
+// inbox both read from the same DB rows, so any approve/deny that bumps
+// a count needs to invalidate both — easier as one wildcard.
+const teamKeys = {
+  all: ['team'] as const,
+  dashboard: () => [...teamKeys.all, 'dashboard'] as const,
+  reports: () => [...teamKeys.all, 'reports'] as const,
+  inbox: () => [...teamKeys.all, 'inbox'] as const,
+  timesheets: (status: string) => [...teamKeys.all, 'timesheets', status] as const,
+  timeoff: (status: string) => [...teamKeys.all, 'timeoff', status] as const,
+};
+
 export function TeamHome() {
   const [tab, setTab] = useState<'inbox' | 'overview' | 'timesheets' | 'timeoff'>('inbox');
-  const [dashboard, setDashboard] = useState<TeamDashboard | null>(null);
-  const [reports, setReports] = useState<DirectReport[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  const refreshDashboard = async () => {
-    try {
-      setError(null);
-      const [d, r] = await Promise.all([getTeamDashboard(), listReports()]);
-      setDashboard(d);
-      setReports(r.reports);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load team.');
-    }
-  };
+  const dashboardQ = useQuery({
+    queryKey: teamKeys.dashboard(),
+    queryFn: getTeamDashboard,
+  });
+  const reportsQ = useQuery({
+    queryKey: teamKeys.reports(),
+    queryFn: async () => (await listReports()).reports,
+  });
 
-  useEffect(() => {
-    refreshDashboard();
-  }, []);
+  const dashboard = dashboardQ.data;
+  const error = dashboardQ.error ?? reportsQ.error;
 
   return (
     <div className="space-y-5">
@@ -110,7 +114,11 @@ export function TeamHome() {
         </div>
       )}
 
-      {error && <p role="alert" className="text-sm text-alert">{error}</p>}
+      {error && (
+        <p role="alert" className="text-sm text-alert">
+          {error instanceof ApiError ? error.message : 'Failed to load team.'}
+        </p>
+      )}
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
         <TabsList>
@@ -158,13 +166,13 @@ export function TeamHome() {
           <InboxTab />
         </TabsContent>
         <TabsContent value="overview">
-          <ReportsList reports={reports} />
+          <ReportsList reports={reportsQ.data ?? null} />
         </TabsContent>
         <TabsContent value="timesheets">
-          <TimesheetsTab onChange={refreshDashboard} />
+          <TimesheetsTab />
         </TabsContent>
         <TabsContent value="timeoff">
-          <TimeOffTab onChange={refreshDashboard} />
+          <TimeOffTab />
         </TabsContent>
       </Tabs>
     </div>
@@ -212,27 +220,20 @@ const KIND_META: Record<
 };
 
 function InboxTab() {
-  const [data, setData] = useState<TeamInboxResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const q = useQuery({
+    queryKey: teamKeys.inbox(),
+    queryFn: getTeamInbox,
+  });
 
-  useEffect(() => {
-    let alive = true;
-    getTeamInbox()
-      .then((res) => {
-        if (alive) setData(res);
-      })
-      .catch((err) => {
-        if (alive)
-          setError(err instanceof ApiError ? err.message : 'Failed to load.');
-      });
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  if (error) return <p role="alert" className="text-sm text-alert">{error}</p>;
-  if (!data) return <SkeletonRows count={4} rowHeight="h-14" />;
-  if (data.items.length === 0) {
+  if (q.error) {
+    return (
+      <p role="alert" className="text-sm text-alert">
+        {q.error instanceof ApiError ? q.error.message : 'Failed to load.'}
+      </p>
+    );
+  }
+  if (!q.data) return <SkeletonRows count={4} rowHeight="h-14" />;
+  if (q.data.items.length === 0) {
     return (
       <EmptyState
         icon={Inbox}
@@ -254,7 +255,7 @@ function InboxTab() {
         </TableRow>
       </TableHeader>
       <TableBody>
-        {data.items.map((item) => {
+        {q.data.items.map((item) => {
           const meta = KIND_META[item.kind];
           const Icon = meta.icon;
           const stale = item.ageDays >= 3;
@@ -333,64 +334,70 @@ function ReportsList({ reports }: { reports: DirectReport[] | null }) {
   );
 }
 
-function TimesheetsTab({ onChange }: { onChange: () => void }) {
+function TimesheetsTab() {
+  const qc = useQueryClient();
   const prompt = usePrompt();
-  const [entries, setEntries] = useState<TeamTimeEntry[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [pendingId, setPendingId] = useState<string | null>(null);
+  const q = useQuery({
+    queryKey: teamKeys.timesheets('COMPLETED'),
+    queryFn: async () => (await listTeamTimesheets('COMPLETED')).entries,
+  });
 
-  const refresh = async () => {
-    try {
-      setError(null);
-      const res = await listTeamTimesheets('COMPLETED');
-      setEntries(res.entries);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
-    }
-  };
+  // Invalidate the entire team namespace on any approve/reject so the
+  // dashboard counts, inbox tab, and timesheet list all re-fetch
+  // together. Tradeoff: a few redundant calls vs. one inconsistent
+  // counter on screen — keeping the UI honest is worth the extra GETs.
+  const invalidateTeam = () => qc.invalidateQueries({ queryKey: teamKeys.all });
 
-  useEffect(() => {
-    refresh();
-  }, []);
-
-  const approve = async (id: string) => {
-    setPendingId(id);
-    try {
-      await approveTeamTimesheet(id);
+  const approveM = useMutation({
+    mutationFn: approveTeamTimesheet,
+    onSuccess: () => {
       toast.success('Approved');
-      await refresh();
-      onChange();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Approve failed');
-    } finally {
-      setPendingId(null);
-    }
-  };
+      invalidateTeam();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'Approve failed'),
+  });
+
+  const rejectM = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      rejectTeamTimesheet(id, reason),
+    onSuccess: () => {
+      toast.success('Rejected');
+      invalidateTeam();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'Reject failed'),
+  });
 
   const reject = async (id: string) => {
-    const reason = (await prompt({
-      title: 'Reject timesheet',
-      reasonLabel: 'Reason for rejection',
-      confirmLabel: 'Reject',
-      destructive: true,
-    }))?.trim();
+    const reason = (
+      await prompt({
+        title: 'Reject timesheet',
+        reasonLabel: 'Reason for rejection',
+        confirmLabel: 'Reject',
+        destructive: true,
+      })
+    )?.trim();
     if (!reason) return;
-    setPendingId(id);
-    try {
-      await rejectTeamTimesheet(id, reason);
-      toast.success('Rejected');
-      await refresh();
-      onChange();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Reject failed');
-    } finally {
-      setPendingId(null);
-    }
+    rejectM.mutate({ id, reason });
   };
 
-  if (error) return <p role="alert" className="text-sm text-alert">{error}</p>;
-  if (!entries) return <SkeletonRows count={4} rowHeight="h-14" />;
-  if (entries.length === 0) {
+  const pendingId =
+    approveM.isPending && typeof approveM.variables === 'string'
+      ? approveM.variables
+      : rejectM.isPending
+      ? rejectM.variables?.id ?? null
+      : null;
+
+  if (q.error) {
+    return (
+      <p role="alert" className="text-sm text-alert">
+        {q.error instanceof ApiError ? q.error.message : 'Failed to load.'}
+      </p>
+    );
+  }
+  if (!q.data) return <SkeletonRows count={4} rowHeight="h-14" />;
+  if (q.data.length === 0) {
     return (
       <EmptyState
         icon={Clock}
@@ -412,7 +419,7 @@ function TimesheetsTab({ onChange }: { onChange: () => void }) {
         </TableRow>
       </TableHeader>
       <TableBody>
-        {entries.map((e) => (
+        {q.data.map((e) => (
           <TableRow key={e.id}>
             <TableCell className="font-medium">
               <div className="flex items-center gap-2.5">
@@ -439,7 +446,7 @@ function TimesheetsTab({ onChange }: { onChange: () => void }) {
                 </Button>
                 <Button
                   size="sm"
-                  onClick={() => approve(e.id)}
+                  onClick={() => approveM.mutate(e.id)}
                   loading={pendingId === e.id}
                 >
                   Approve
@@ -453,64 +460,66 @@ function TimesheetsTab({ onChange }: { onChange: () => void }) {
   );
 }
 
-function TimeOffTab({ onChange }: { onChange: () => void }) {
+function TimeOffTab() {
+  const qc = useQueryClient();
   const prompt = usePrompt();
-  const [requests, setRequests] = useState<TeamTimeOffRequest[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [pendingId, setPendingId] = useState<string | null>(null);
+  const q = useQuery({
+    queryKey: teamKeys.timeoff('PENDING'),
+    queryFn: async () => (await listTeamTimeOff('PENDING')).requests,
+  });
 
-  const refresh = async () => {
-    try {
-      setError(null);
-      const res = await listTeamTimeOff('PENDING');
-      setRequests(res.requests);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
-    }
-  };
+  const invalidateTeam = () => qc.invalidateQueries({ queryKey: teamKeys.all });
 
-  useEffect(() => {
-    refresh();
-  }, []);
-
-  const approve = async (id: string) => {
-    setPendingId(id);
-    try {
-      await approveTeamTimeOff(id);
+  const approveM = useMutation({
+    mutationFn: (id: string) => approveTeamTimeOff(id),
+    onSuccess: () => {
       toast.success('Approved');
-      await refresh();
-      onChange();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Approve failed');
-    } finally {
-      setPendingId(null);
-    }
-  };
+      invalidateTeam();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'Approve failed'),
+  });
+
+  const denyM = useMutation({
+    mutationFn: ({ id, note }: { id: string; note: string }) =>
+      denyTeamTimeOff(id, note),
+    onSuccess: () => {
+      toast.success('Denied');
+      invalidateTeam();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'Deny failed'),
+  });
 
   const deny = async (id: string) => {
-    const note = (await prompt({
-      title: 'Deny time-off request',
-      reasonLabel: 'Reason for denial',
-      confirmLabel: 'Deny',
-      destructive: true,
-    }))?.trim();
+    const note = (
+      await prompt({
+        title: 'Deny time-off request',
+        reasonLabel: 'Reason for denial',
+        confirmLabel: 'Deny',
+        destructive: true,
+      })
+    )?.trim();
     if (!note) return;
-    setPendingId(id);
-    try {
-      await denyTeamTimeOff(id, note);
-      toast.success('Denied');
-      await refresh();
-      onChange();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Deny failed');
-    } finally {
-      setPendingId(null);
-    }
+    denyM.mutate({ id, note });
   };
 
-  if (error) return <p role="alert" className="text-sm text-alert">{error}</p>;
-  if (!requests) return <SkeletonRows count={4} rowHeight="h-14" />;
-  if (requests.length === 0) {
+  const pendingId =
+    approveM.isPending && typeof approveM.variables === 'string'
+      ? approveM.variables
+      : denyM.isPending
+      ? denyM.variables?.id ?? null
+      : null;
+
+  if (q.error) {
+    return (
+      <p role="alert" className="text-sm text-alert">
+        {q.error instanceof ApiError ? q.error.message : 'Failed to load.'}
+      </p>
+    );
+  }
+  if (!q.data) return <SkeletonRows count={4} rowHeight="h-14" />;
+  if (q.data.length === 0) {
     return (
       <EmptyState
         icon={CalendarOff}
@@ -532,7 +541,7 @@ function TimeOffTab({ onChange }: { onChange: () => void }) {
         </TableRow>
       </TableHeader>
       <TableBody>
-        {requests.map((r) => (
+        {q.data.map((r) => (
           <TableRow key={r.id}>
             <TableCell className="font-medium">
               <div className="flex items-center gap-2.5">
@@ -559,7 +568,7 @@ function TimeOffTab({ onChange }: { onChange: () => void }) {
                 </Button>
                 <Button
                   size="sm"
-                  onClick={() => approve(r.id)}
+                  onClick={() => approveM.mutate(r.id)}
                   loading={pendingId === r.id}
                 >
                   Approve
