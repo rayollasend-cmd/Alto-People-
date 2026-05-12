@@ -301,7 +301,7 @@ export function VtoHome() {
                       <TableCell className="text-xs">
                         {e.matchRequested ? (
                           e.matchAmount ? (
-                            <span className="text-green-300">
+                            <span className="text-success">
                               {e.matchCurrency} {e.matchAmount}
                             </span>
                           ) : (
@@ -527,7 +527,7 @@ function MyDetailDrawer({
             href={entry.evidenceUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-sm text-blue-300 hover:underline"
+            className="text-sm text-steel hover:underline"
           >
             Evidence ↗
           </a>
@@ -536,7 +536,7 @@ function MyDetailDrawer({
           <div className="text-sm border-t border-navy-secondary pt-3">
             <span className="text-silver">Employer match: </span>
             {entry.matchAmount ? (
-              <span className="text-green-300 font-semibold">
+              <span className="text-success font-semibold">
                 {entry.matchCurrency} {entry.matchAmount}
               </span>
             ) : (
@@ -598,7 +598,7 @@ function QueueDetailDrawer({
             href={row.evidenceUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-sm text-blue-300 hover:underline"
+            className="text-sm text-steel hover:underline"
           >
             Evidence ↗
           </a>
@@ -607,11 +607,11 @@ function QueueDetailDrawer({
           <div className="text-sm">
             <span className="text-silver">Match: </span>
             {row.matchAmount ? (
-              <span className="text-green-300">
+              <span className="text-success">
                 {row.matchCurrency} {row.matchAmount} (paid)
               </span>
             ) : (
-              <span className="text-yellow-300">requested</span>
+              <span className="text-warning">requested</span>
             )}
           </div>
         )}

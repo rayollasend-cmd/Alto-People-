@@ -182,7 +182,7 @@ export function AvailabilityEditor() {
               {submitting ? 'Saving…' : 'Save'}
             </Button>
             {error && <span className="text-sm text-alert ml-2">{error}</span>}
-            {info && <span className="text-sm text-emerald-300 ml-2">{info}</span>}
+            {info && <span className="text-sm text-success ml-2">{info}</span>}
           </div>
         </>
       )}

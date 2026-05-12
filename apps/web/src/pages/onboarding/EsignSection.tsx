@@ -103,7 +103,7 @@ export function EsignSection({ applicationId, canManage, esignTasks }: Props) {
         )}
         {items && items.length > 0 && (
           <>
-            <ul className="divide-y divide-navy-secondary/60 -my-2">
+            <ul className="divide-y divide-navy-secondary -my-2">
               {(expanded ? items : items.slice(0, ESIGN_PREVIEW)).map((a) => (
                 <li key={a.id} className="py-2.5 flex items-center gap-3">
                   <div className="flex-1 min-w-0">

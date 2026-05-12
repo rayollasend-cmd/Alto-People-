@@ -437,7 +437,7 @@ function ReviewDrawer({
                     href={a.resumeUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-xs text-blue-300 hover:underline"
+                    className="text-xs text-steel hover:underline"
                   >
                     Resume ↗
                   </a>

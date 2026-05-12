@@ -1551,7 +1551,7 @@ function RevealPayoutDialog({
 
         {!revealed ? (
           <form onSubmit={submit} className="space-y-4">
-            <div className="flex gap-2 items-start rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-amber-200 text-xs">
+            <div className="flex gap-2 items-start rounded-md border border-warning/40 bg-warning/10 p-3 text-warning text-xs">
               <ShieldAlert className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
               <div>
                 Full routing and account numbers are sensitive. Reveal them

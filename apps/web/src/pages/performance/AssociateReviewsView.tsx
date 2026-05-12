@@ -84,7 +84,7 @@ export function AssociateReviewsView() {
                   className={cn(
                     'text-xs uppercase tracking-widest px-2 py-1 rounded border',
                     r.status === 'ACKNOWLEDGED'
-                      ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300'
+                      ? 'border-success/40 bg-success/15 text-success'
                       : 'border-gold/40 bg-gold/10 text-gold'
                   )}
                 >

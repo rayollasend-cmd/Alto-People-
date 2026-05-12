@@ -120,7 +120,7 @@ export function ExpirationsHome() {
           <Bucket
             title="Expired"
             icon={AlertCircle}
-            accent="text-rose-400"
+            accent="text-alert"
             count={data.counts.expired}
             items={data.expired}
             emptyHint="Nothing expired."
@@ -130,7 +130,7 @@ export function ExpirationsHome() {
           <Bucket
             title={`Due in next ${data.days} days`}
             icon={ShieldAlert}
-            accent="text-amber-400"
+            accent="text-warning"
             count={data.counts.dueSoon}
             items={data.dueSoon}
             emptyHint="Nothing due soon."
@@ -229,9 +229,9 @@ function Bucket({
                   <TableCell>{new Date(i.expiresAt).toLocaleDateString()}</TableCell>
                   <TableCell>
                     {i.daysUntilExpiry < 0 ? (
-                      <span className="text-rose-400">{-i.daysUntilExpiry}d ago</span>
+                      <span className="text-alert">{-i.daysUntilExpiry}d ago</span>
                     ) : i.daysUntilExpiry < 30 ? (
-                      <span className="text-amber-400">{i.daysUntilExpiry}d</span>
+                      <span className="text-warning">{i.daysUntilExpiry}d</span>
                     ) : (
                       <span className="text-silver">{i.daysUntilExpiry}d</span>
                     )}
@@ -323,7 +323,7 @@ function RenewDrawer({
           <div className="text-white">
             {new Date(item.expiresAt).toLocaleDateString()}
             {item.daysUntilExpiry < 0 ? (
-              <span className="text-rose-400 ml-2">
+              <span className="text-alert ml-2">
                 ({-item.daysUntilExpiry}d ago)
               </span>
             ) : (

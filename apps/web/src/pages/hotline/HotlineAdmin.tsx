@@ -171,7 +171,7 @@ export function HotlineAdmin() {
                 {rows.map((r) => (
                   <TableRow
                     key={r.id}
-                    className={`cursor-pointer ${r.sla.isOverdue ? 'bg-red-950/20' : ''}`}
+                    className={`cursor-pointer ${r.sla.isOverdue ? 'bg-alert/20' : ''}`}
                     onClick={() => setOpenId(r.id)}
                   >
                     <TableCell className="font-mono text-xs">
@@ -225,10 +225,10 @@ function SummaryCard({
   icon?: typeof AlertTriangle;
 }) {
   const color = {
-    destructive: 'text-red-300',
-    pending: 'text-yellow-300',
-    accent: 'text-blue-300',
-    success: 'text-green-300',
+    destructive: 'text-alert',
+    pending: 'text-warning',
+    accent: 'text-steel',
+    success: 'text-success',
   }[tone];
   return (
     <Card>
@@ -368,7 +368,7 @@ function ReportDrawer({
               </span>
             </div>
             {report.sla.isOverdue && (
-              <div className="rounded border border-red-700/40 bg-red-950/30 p-3 text-sm text-red-100">
+              <div className="rounded border border-alert/40 bg-alert/30 p-3 text-sm text-alert">
                 <div className="flex items-start gap-2">
                   <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                   <div>
@@ -377,7 +377,7 @@ function ReportDrawer({
                         ? 'No HR acknowledgement within 3 days.'
                         : 'Reporter is waiting for a response.'}
                     </div>
-                    <div className="text-xs mt-0.5 text-red-200/80">
+                    <div className="text-xs mt-0.5 text-alert/80">
                       {report.sla.lastReporterAt &&
                         `Last reporter message: ${new Date(report.sla.lastReporterAt).toLocaleString()}`}
                     </div>
@@ -452,9 +452,9 @@ function ReportDrawer({
                       key={u.id}
                       className={`rounded p-3 text-sm ${
                         u.internalOnly
-                          ? 'bg-yellow-900/20 border border-yellow-700/30'
+                          ? 'bg-warning/20 border border-warning/30'
                           : u.isFromReporter
-                          ? 'bg-blue-900/30 border border-blue-700/30'
+                          ? 'bg-steel/30 border border-steel/30'
                           : 'bg-navy-secondary'
                       }`}
                     >

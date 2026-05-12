@@ -36,7 +36,7 @@ function statusBadge(status: PayrollItem['status']): { label: string; cls: strin
     case 'PENDING':
       return { label: 'Pending', cls: 'bg-silver/10 text-silver border-silver/30' };
     case 'DISBURSED':
-      return { label: 'Paid', cls: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' };
+      return { label: 'Paid', cls: 'bg-success/15 text-success border-success/30' };
     case 'FAILED':
       return { label: 'Failed', cls: 'bg-alert/15 text-alert border-alert/30' };
     case 'HELD':

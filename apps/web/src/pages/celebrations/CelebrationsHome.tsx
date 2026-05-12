@@ -82,7 +82,7 @@ export function CelebrationsHome() {
                         <div className={`h-10 w-10 rounded-full grid place-items-center ${
                           c.kind === 'BIRTHDAY'
                             ? 'bg-pink-500/20 text-pink-300'
-                            : 'bg-amber-500/20 text-amber-300'
+                            : 'bg-warning/20 text-warning'
                         }`}>
                           {c.kind === 'BIRTHDAY' ? <Cake className="h-5 w-5" /> : <PartyPopper className="h-5 w-5" />}
                         </div>

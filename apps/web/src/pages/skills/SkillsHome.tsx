@@ -162,7 +162,7 @@ function SearchTab() {
                       <TableCell>{a.yearsExperience ?? '—'}</TableCell>
                       <TableCell>
                         {a.verified ? (
-                          <ShieldCheck className="h-4 w-4 text-emerald-400" />
+                          <ShieldCheck className="h-4 w-4 text-success" />
                         ) : (
                           <span className="text-silver text-xs">self-attested</span>
                         )}

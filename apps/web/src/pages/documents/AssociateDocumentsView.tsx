@@ -32,7 +32,7 @@ function statusBadge(status: DocumentRecord['status']) {
     case 'UPLOADED':
       return { label: 'Awaiting review', cls: 'bg-silver/10 text-silver border-silver/30' };
     case 'VERIFIED':
-      return { label: 'Verified', cls: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' };
+      return { label: 'Verified', cls: 'bg-success/15 text-success border-success/30' };
     case 'REJECTED':
       return { label: 'Rejected', cls: 'bg-alert/15 text-alert border-alert/30' };
     case 'EXPIRED':

@@ -184,7 +184,7 @@ export function HolidaysHome() {
                               <span>· {h.clientName}</span>
                             )}
                             {!h.paid && (
-                              <span className="text-amber-400">Unpaid</span>
+                              <span className="text-warning">Unpaid</span>
                             )}
                           </div>
                           {h.notes && (

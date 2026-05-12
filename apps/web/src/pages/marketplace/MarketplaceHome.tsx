@@ -134,7 +134,7 @@ function AvailableTab() {
                   <div className="text-sm text-silver mt-0.5">{s.location}</div>
                 )}
                 {s.payRate && (
-                  <div className="text-sm text-emerald-400 mt-0.5">
+                  <div className="text-sm text-success mt-0.5">
                     ${s.payRate}/hr
                   </div>
                 )}

@@ -725,7 +725,7 @@ function CycleDetailDrawer({
           )}
           <span>
             Approved Δ:{' '}
-            <span className={totalProposed >= 0 ? 'text-emerald-400' : 'text-alert'}>
+            <span className={totalProposed >= 0 ? 'text-success' : 'text-alert'}>
               ${totalProposed.toFixed(2)}
             </span>
           </span>

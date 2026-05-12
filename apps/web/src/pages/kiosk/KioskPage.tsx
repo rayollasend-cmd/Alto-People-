@@ -359,13 +359,13 @@ export function KioskPage() {
       {stage === 'error' && (
         <div className="text-center">
           <div className="text-6xl mb-6">⚠️</div>
-          <div className="text-3xl text-red-400">{error}</div>
+          <div className="text-3xl text-alert">{error}</div>
         </div>
       )}
       {/* Phase 102 — queued punch indicator. Only shown when there's a
           backlog so the normal idle screen stays clean. */}
       {queued > 0 && (
-        <div className="fixed top-4 left-4 px-3 py-1.5 bg-amber-500/20 border border-amber-500/40 rounded-full text-amber-300 text-xs">
+        <div className="fixed top-4 left-4 px-3 py-1.5 bg-warning/20 border border-warning/40 rounded-full text-warning text-xs">
           {queued} punch{queued === 1 ? '' : 'es'} waiting to sync
         </div>
       )}
@@ -539,7 +539,7 @@ function PinPad({
         onClick={() => onIntent(intent === 'BREAK' ? null : 'BREAK')}
         className={`mb-6 px-4 py-1.5 rounded-full text-sm border transition ${
           intent === 'BREAK'
-            ? 'bg-amber-500/20 border-amber-500/60 text-amber-300'
+            ? 'bg-warning/20 border-warning/60 text-warning'
             : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
         }`}
       >
@@ -560,10 +560,10 @@ function PinPad({
             className={`w-16 h-20 rounded-xl border-2 flex items-center justify-center text-4xl transition-colors ${
               pin.length > i
                 ? intent === 'BREAK'
-                  ? 'bg-amber-500 border-amber-400 text-navy-secondary'
+                  ? 'bg-warning border-warning text-navy-secondary'
                   : 'bg-cyan-500 border-cyan-400 text-navy-secondary'
                 : error
-                  ? 'bg-navy-secondary/40 border-red-500/60 text-silver'
+                  ? 'bg-navy-secondary/40 border-alert/60 text-silver'
                   : 'bg-navy-secondary/40 border-navy-secondary text-silver'
             }`}
           >
@@ -573,7 +573,7 @@ function PinPad({
       </div>
       <div className="h-7 mb-4 flex items-center justify-center">
         {error ? (
-          <span className="text-red-400 text-base font-medium" aria-live="polite">
+          <span className="text-alert text-base font-medium" aria-live="polite">
             {error}
           </span>
         ) : null}
@@ -767,7 +767,7 @@ function ResultScreen({ result }: { result: PunchResult }) {
     // resolves; show a neutral confirmation that the punch is saved.
     return (
       <div className="text-center">
-        <div className="text-9xl mb-6 text-amber-400">⏱</div>
+        <div className="text-9xl mb-6 text-warning">⏱</div>
         <div className="text-5xl font-serif mb-3">Saved offline</div>
         <div className="text-2xl text-silver">
           We'll sync your punch when the network comes back.
@@ -798,10 +798,10 @@ function ResultScreen({ result }: { result: PunchResult }) {
           : 'Back from break';
   const color =
     result.action === 'CLOCK_IN'
-      ? 'text-emerald-400'
+      ? 'text-success'
       : result.action === 'CLOCK_OUT'
         ? 'text-cyan-400'
-        : 'text-amber-400';
+        : 'text-warning';
   return (
     <div className="text-center px-6">
       <style>{`@keyframes kiosk-check-in {

@@ -128,7 +128,7 @@ export function RampHome() {
                     </div>
                     <div className="w-32 h-2 bg-navy-secondary rounded-full overflow-hidden">
                       <div
-                        className="h-full bg-green-500"
+                        className="h-full bg-success"
                         style={{ width: `${pct}%` }}
                       />
                     </div>
@@ -369,7 +369,7 @@ function PlanDetailDrawer({
                       )}
                     </div>
                     {m.achievedAt && (
-                      <div className="text-xs text-green-400 mt-1 flex items-center gap-1">
+                      <div className="text-xs text-success mt-1 flex items-center gap-1">
                         <CheckCircle2 className="h-3 w-3" /> Achieved{' '}
                         {new Date(m.achievedAt).toLocaleDateString()}
                       </div>

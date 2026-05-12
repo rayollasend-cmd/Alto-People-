@@ -25,7 +25,7 @@ function statusBadge(status: Shift['status']): { label: string; cls: string } {
     case 'OPEN':
       return { label: 'Open', cls: 'bg-silver/10 text-silver border-silver/30' };
     case 'COMPLETED':
-      return { label: 'Worked', cls: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' };
+      return { label: 'Worked', cls: 'bg-success/15 text-success border-success/30' };
     case 'DRAFT':
       return { label: 'Draft', cls: 'bg-silver/10 text-silver border-silver/30' };
     case 'CANCELLED':

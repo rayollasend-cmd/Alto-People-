@@ -113,7 +113,7 @@ export function BillingHome() {
                   </dt>
                   <dd className="text-white mt-1">
                     <span className="inline-flex items-center gap-1.5">
-                      <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                      <span className="h-2 w-2 rounded-full bg-success" />
                       Active
                     </span>
                   </dd>

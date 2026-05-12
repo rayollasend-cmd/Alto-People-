@@ -144,7 +144,7 @@ export function KbHome() {
                 onClick={() => setCategory('')}
                 className={`text-xs px-2 py-1 rounded border ${
                   category === ''
-                    ? 'bg-navy-tertiary border-blue-400 text-white'
+                    ? 'bg-navy-tertiary border-steel text-white'
                     : 'border-navy-secondary text-silver hover:text-white'
                 }`}
               >
@@ -156,7 +156,7 @@ export function KbHome() {
                   onClick={() => setCategory(c.category)}
                   className={`text-xs px-2 py-1 rounded border ${
                     category === c.category
-                      ? 'bg-navy-tertiary border-blue-400 text-white'
+                      ? 'bg-navy-tertiary border-steel text-white'
                       : 'border-navy-secondary text-silver hover:text-white'
                   }`}
                 >
@@ -201,7 +201,7 @@ export function KbHome() {
                           <Eye className="h-3 w-3" /> {a.views}
                         </span>
                         {a.helpful > 0 && (
-                          <span className="flex items-center gap-1 text-green-400">
+                          <span className="flex items-center gap-1 text-success">
                             <ThumbsUp className="h-3 w-3" /> {a.helpful}
                           </span>
                         )}
@@ -256,7 +256,7 @@ export function KbHome() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-sm">{a.views}</TableCell>
-                      <TableCell className="text-sm text-green-400">
+                      <TableCell className="text-sm text-success">
                         {a.helpful}{' '}
                         {a.notHelpful > 0 && (
                           <span className="text-destructive">/ {a.notHelpful}</span>

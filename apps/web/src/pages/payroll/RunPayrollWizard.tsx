@@ -521,7 +521,7 @@ function ExceptionStrip({
   }
   if (!exceptions || exceptions.exceptions.length === 0) {
     return (
-      <div className="flex items-center gap-2 rounded border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-[11px] text-emerald-300">
+      <div className="flex items-center gap-2 rounded border border-success/20 bg-success/5 px-3 py-2 text-[11px] text-success">
         <CheckCircle2 className="h-3.5 w-3.5" />
         No exceptions — every associate has a W-4, a payout method, and a supported state.
       </div>
@@ -531,7 +531,7 @@ function ExceptionStrip({
   const tone = blocking > 0
     ? 'border-alert/40 bg-alert/5 text-alert'
     : warning > 0
-    ? 'border-amber-500/30 bg-amber-500/5 text-amber-300'
+    ? 'border-warning/30 bg-warning/5 text-warning'
     : 'border-silver/20 bg-black/40 text-silver';
   const Icon = blocking > 0 ? ShieldAlert : warning > 0 ? AlertTriangle : Info;
 
@@ -601,7 +601,7 @@ function SeverityDot({ severity }: { severity: PayrollException['severity'] }) {
     severity === 'BLOCKING'
       ? 'bg-alert'
       : severity === 'WARNING'
-      ? 'bg-amber-400'
+      ? 'bg-warning'
       : 'bg-silver/50';
   return <span className={cn('h-2 w-2 rounded-full inline-block', cls)} />;
 }
@@ -647,7 +647,7 @@ function PaycheckCard({
         blockingCount > 0
           ? 'border-alert/40'
           : exceptions.length > 0
-          ? 'border-amber-500/30'
+          ? 'border-warning/30'
           : 'border-silver/15 hover:border-silver/30'
       )}
     >

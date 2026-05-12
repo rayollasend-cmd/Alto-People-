@@ -213,10 +213,10 @@ const KIND_META: Record<
   InboxItem['kind'],
   { label: string; icon: typeof Users; tone: string }
 > = {
-  TIMESHEET: { label: 'Timesheet', icon: Clock, tone: 'text-blue-300' },
-  TIME_OFF: { label: 'Time off', icon: CalendarOff, tone: 'text-amber-300' },
-  REIMBURSEMENT: { label: 'Reimbursement', icon: Receipt, tone: 'text-emerald-300' },
-  GOAL_AT_RISK: { label: 'Goal', icon: AlertTriangle, tone: 'text-rose-300' },
+  TIMESHEET: { label: 'Timesheet', icon: Clock, tone: 'text-steel' },
+  TIME_OFF: { label: 'Time off', icon: CalendarOff, tone: 'text-warning' },
+  REIMBURSEMENT: { label: 'Reimbursement', icon: Receipt, tone: 'text-success' },
+  GOAL_AT_RISK: { label: 'Goal', icon: AlertTriangle, tone: 'text-alert' },
 };
 
 function InboxTab() {

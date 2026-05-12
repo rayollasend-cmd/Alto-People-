@@ -520,7 +520,7 @@ function SecretRevealDrawer({
         <DrawerTitle>Save your API key</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
-        <div className="text-sm text-amber-400">
+        <div className="text-sm text-warning">
           This is the only time the full key will be shown. Copy and store it
           securely.
         </div>
@@ -682,7 +682,7 @@ function WebhooksTab({ canManage }: { canManage: boolean }) {
             <DrawerTitle>Save your webhook secret</DrawerTitle>
           </DrawerHeader>
           <DrawerBody className="space-y-4">
-            <div className="text-sm text-amber-400">
+            <div className="text-sm text-warning">
               Use this secret to verify the X-Alto-Signature header (HMAC-SHA256
               over the request body). Only shown once.
             </div>

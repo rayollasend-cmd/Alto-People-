@@ -744,8 +744,8 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
               {/* Gap 3 — AMENDMENT banner. Shows the link back to the source
                   run + the mandatory reason captured at amend time. */}
               {selected.kind === 'AMENDMENT' && (
-                <div className="mb-4 rounded border border-amber-500/30 bg-amber-500/5 p-3 text-xs">
-                  <div className="flex items-center gap-2 text-amber-300 font-medium mb-1">
+                <div className="mb-4 rounded border border-warning/30 bg-warning/5 p-3 text-xs">
+                  <div className="flex items-center gap-2 text-warning font-medium mb-1">
                     <Pencil className="h-4 w-4" />
                     Amendment run
                   </div>
@@ -1168,7 +1168,7 @@ function PayrollHero({
                     'mt-3 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px]',
                     nr.blockingExceptions > 0
                       ? 'border-alert/40 bg-alert/5 text-alert'
-                      : 'border-amber-500/30 bg-amber-500/5 text-amber-300'
+                      : 'border-warning/30 bg-warning/5 text-warning'
                   )}
                 >
                   <AlertTriangle className="h-3 w-3" />
@@ -1399,14 +1399,14 @@ function RunStatusStepper({
 function RunKindBadge({ kind }: { kind: 'OFF_CYCLE' | 'AMENDMENT' }) {
   if (kind === 'AMENDMENT') {
     return (
-      <Badge variant="default" className="border-amber-500/40 bg-amber-500/10 text-amber-300">
+      <Badge variant="default" className="border-warning/40 bg-warning/10 text-warning">
         <Pencil className="h-3 w-3" />
         Amendment
       </Badge>
     );
   }
   return (
-    <Badge variant="default" className="border-blue-500/40 bg-blue-500/10 text-blue-300">
+    <Badge variant="default" className="border-steel/40 bg-steel/10 text-steel">
       Off-cycle
     </Badge>
   );

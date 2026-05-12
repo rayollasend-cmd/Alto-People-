@@ -510,7 +510,7 @@ function GarnishmentHistoryDrawer({
             withheld ${garnishment.amountWithheld}
             {garnishment.totalCap && <> of ${garnishment.totalCap}</>}
           </div>
-          {error && <div className="text-red-400">{error}</div>}
+          {error && <div className="text-alert">{error}</div>}
           {rows === null && !error && <SkeletonRows count={4} />}
           {rows && rows.length === 0 && (
             <EmptyState
@@ -683,12 +683,12 @@ function TaxFormsWorkflowSteps({ rows }: { rows: TaxForm[] | null }) {
         <li
           key={s.key}
           className={`rounded-md border bg-white p-2 text-xs ${
-            s.done ? 'border-emerald-300 ring-1 ring-emerald-100' : 'border-slate-200'
+            s.done ? 'border-success ring-1 ring-success' : 'border-slate-200'
           }`}
           title={s.hint}
         >
           <div
-            className={`font-semibold ${s.done ? 'text-emerald-700' : 'text-slate-700'}`}
+            className={`font-semibold ${s.done ? 'text-success' : 'text-slate-700'}`}
           >
             {s.done ? '✓ ' : ''}
             {s.label}

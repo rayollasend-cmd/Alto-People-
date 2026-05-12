@@ -74,21 +74,21 @@ export function HeadcountHome() {
           sub={`Last ${days} days`}
           value={turn?.hires ?? null}
           icon={ArrowUp}
-          accent="text-emerald-400"
+          accent="text-success"
         />
         <KpiCard
           label="Separations"
           sub={`Last ${days} days`}
           value={turn?.terminations ?? null}
           icon={ArrowDown}
-          accent="text-rose-400"
+          accent="text-alert"
         />
         <KpiCard
           label="Annualized turnover"
           sub={`Last ${days} days`}
           value={turn ? `${turn.annualizedTurnoverRate}%` : null}
           icon={turn && turn.annualizedTurnoverRate >= 25 ? TrendingUp : TrendingDown}
-          accent={turn && turn.annualizedTurnoverRate >= 25 ? 'text-rose-400' : 'text-emerald-400'}
+          accent={turn && turn.annualizedTurnoverRate >= 25 ? 'text-alert' : 'text-success'}
         />
       </div>
 

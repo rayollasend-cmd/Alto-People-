@@ -151,7 +151,7 @@ function DevicesTab({ canManage }: { canManage: boolean }) {
           <div
             className={`flex-1 rounded-lg px-4 py-3 border ${
               offlineCount > 0
-                ? 'bg-amber-500/10 border-amber-500/40'
+                ? 'bg-warning/10 border-warning/40'
                 : 'bg-navy-secondary/40 border-navy-secondary'
             }`}
           >
@@ -160,7 +160,7 @@ function DevicesTab({ canManage }: { canManage: boolean }) {
             </div>
             <div
               className={`text-2xl font-medium ${
-                offlineCount > 0 ? 'text-amber-300' : 'text-white'
+                offlineCount > 0 ? 'text-warning' : 'text-white'
               }`}
             >
               {offlineCount}
@@ -223,7 +223,7 @@ function DevicesTab({ canManage }: { canManage: boolean }) {
                       {d.lastSeenAt ? (
                         <span
                           className={
-                            isDeviceOffline(d) ? 'text-amber-300' : undefined
+                            isDeviceOffline(d) ? 'text-warning' : undefined
                           }
                         >
                           {new Date(d.lastSeenAt).toLocaleString()}
@@ -475,7 +475,7 @@ function TokenRevealDrawer({ token, onClose }: { token: string; onClose: () => v
         <DrawerTitle>Pair the kiosk</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
-        <div className="text-sm text-amber-400">
+        <div className="text-sm text-warning">
           Open <code className="font-mono">/kiosk</code> on the tablet, then
           paste this device token into the setup screen. It is shown ONCE.
         </div>
@@ -811,7 +811,7 @@ function DiagnoseDrawer({ onClose }: { onClose: () => void }) {
                   ? 'border-alert/40 bg-alert/10 text-alert'
                   : result.clientsMatch
                     ? 'border-success/40 bg-success/10 text-white'
-                    : 'border-amber-500/40 bg-amber-500/10 text-amber-200'
+                    : 'border-warning/40 bg-warning/10 text-warning'
               }`}
             >
               <div className="font-medium mb-1">Diagnosis</div>
@@ -1016,7 +1016,7 @@ function NewPinDrawer({
                 })}
               </select>
               {eligibleCount === 0 && (
-                <div className="mt-1 text-xs text-amber-400">
+                <div className="mt-1 text-xs text-warning">
                   No associates here have an approved application yet —
                   approve one from the Onboarding page to issue a number.
                 </div>
@@ -1450,7 +1450,7 @@ function ReviewTab({ canManage }: { canManage: boolean }) {
                         {p.action}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-xs text-amber-400">
+                    <TableCell className="text-xs text-warning">
                       <div className="font-medium">
                         {p.anomalyKind === 'IMPOSSIBLE_TRAVEL'
                           ? 'Impossible travel'

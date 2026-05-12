@@ -80,19 +80,19 @@ export function PayrollYearEndClose() {
         <>
           <Card
             className={`mb-4 border-2 ${
-              allReady ? 'border-emerald-400' : 'border-amber-400'
+              allReady ? 'border-success' : 'border-warning'
             }`}
           >
             <CardContent className="py-4 text-sm">
               {allReady ? (
-                <div className="flex items-center gap-2 text-emerald-600">
+                <div className="flex items-center gap-2 text-success">
                   <CheckCircle2 className="h-5 w-5" />
                   <span className="font-medium">
                     Tax year {year} is ready to close.
                   </span>
                 </div>
               ) : (
-                <div className="flex items-center gap-2 text-amber-600">
+                <div className="flex items-center gap-2 text-warning">
                   <Circle className="h-5 w-5" />
                   <span className="font-medium">
                     {data.checks.filter((c) => !c.done).length +
@@ -110,13 +110,13 @@ export function PayrollYearEndClose() {
                 <Card>
                   <CardContent className="flex items-start gap-3 py-3 text-sm">
                     {c.done ? (
-                      <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500" />
+                      <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-success" />
                     ) : (
                       <Circle className="mt-0.5 h-5 w-5 shrink-0 text-silver/40" />
                     )}
                     <div className="flex-1">
                       <div
-                        className={`font-medium ${c.done ? 'text-emerald-600' : 'text-silver'}`}
+                        className={`font-medium ${c.done ? 'text-success' : 'text-silver'}`}
                       >
                         {c.label}
                       </div>
@@ -139,13 +139,13 @@ export function PayrollYearEndClose() {
               <Card>
                 <CardContent className="flex items-start gap-3 py-3 text-sm">
                   {distributedConfirmed ? (
-                    <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500" />
+                    <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-success" />
                   ) : (
                     <Circle className="mt-0.5 h-5 w-5 shrink-0 text-silver/40" />
                   )}
                   <div className="flex-1">
                     <div
-                      className={`font-medium ${distributedConfirmed ? 'text-emerald-600' : 'text-silver'}`}
+                      className={`font-medium ${distributedConfirmed ? 'text-success' : 'text-silver'}`}
                     >
                       Recipient copies sent
                     </div>

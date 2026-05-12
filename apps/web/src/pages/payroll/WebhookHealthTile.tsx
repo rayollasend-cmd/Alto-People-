@@ -15,8 +15,8 @@ const STYLE: Record<
 > = {
   healthy: {
     label: 'Healthy',
-    color: 'text-emerald-700 bg-emerald-50',
-    ring: 'ring-emerald-200',
+    color: 'text-success bg-success',
+    ring: 'ring-success',
     Icon: CheckCircle2,
   },
   idle: {
@@ -27,14 +27,14 @@ const STYLE: Record<
   },
   stale: {
     label: 'Stale',
-    color: 'text-amber-700 bg-amber-50',
-    ring: 'ring-amber-300',
+    color: 'text-warning bg-warning',
+    ring: 'ring-warning',
     Icon: AlertTriangle,
   },
   erroring: {
     label: 'Erroring',
-    color: 'text-red-700 bg-red-50',
-    ring: 'ring-red-300',
+    color: 'text-alert bg-alert',
+    ring: 'ring-alert',
     Icon: ServerCrash,
   },
   unconfigured: {
@@ -45,8 +45,8 @@ const STYLE: Record<
   },
   stub: {
     label: 'STUB MODE',
-    color: 'text-red-700 bg-red-50',
-    ring: 'ring-red-300',
+    color: 'text-alert bg-alert',
+    ring: 'ring-alert',
     Icon: ShieldAlert,
   },
 };
@@ -115,7 +115,7 @@ export function WebhookHealthTile() {
         </div>
         <p className="mt-0.5 text-slate-600">{data.detail}</p>
         {data.health === 'erroring' && data.latestError?.notes && (
-          <p className="mt-1 text-xs text-red-700 break-words">
+          <p className="mt-1 text-xs text-alert break-words">
             Latest error ({new Date(data.latestError.at).toLocaleString()}):{' '}
             {data.latestError.notes}
           </p>

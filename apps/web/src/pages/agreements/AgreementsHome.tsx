@@ -172,7 +172,7 @@ export function AgreementsHome() {
                         href={a.documentUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-xs text-blue-300 hover:underline"
+                        className="text-xs text-steel hover:underline"
                       >
                         Read ↗
                       </a>
@@ -273,7 +273,7 @@ export function AgreementsHome() {
                                   );
                                 }
                               }}
-                              className="text-xs text-silver hover:text-amber-400 opacity-60 group-hover:opacity-100"
+                              className="text-xs text-silver hover:text-warning opacity-60 group-hover:opacity-100"
                             >
                               Expire
                             </button>
@@ -526,7 +526,7 @@ function SignDrawer({
             href={row.documentUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-sm text-blue-300 hover:underline"
+            className="text-sm text-steel hover:underline"
           >
             Read the document →
           </a>

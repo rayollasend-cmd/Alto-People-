@@ -263,7 +263,7 @@ function KpiCard({
     tone === 'bad'
       ? 'text-destructive'
       : tone === 'warn'
-        ? 'text-amber-400'
+        ? 'text-warning'
         : 'text-white';
   return (
     <Card>

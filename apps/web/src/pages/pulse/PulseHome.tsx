@@ -176,7 +176,7 @@ function RespondCard({
               onClick={() => setScore(1)}
               className={`flex-1 py-3 rounded-md border transition ${
                 score === 1
-                  ? 'bg-emerald-600 border-emerald-500 text-white'
+                  ? 'bg-success border-success text-white'
                   : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
               }`}
             >
@@ -186,7 +186,7 @@ function RespondCard({
               onClick={() => setScore(0)}
               className={`flex-1 py-3 rounded-md border transition ${
                 score === 0
-                  ? 'bg-rose-600 border-rose-500 text-white'
+                  ? 'bg-alert border-alert text-white'
                   : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
               }`}
             >

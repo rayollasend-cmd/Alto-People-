@@ -17,9 +17,9 @@ type Tab = 'incoming' | 'outgoing';
 
 const STATUS_CLS: Record<ShiftSwapStatus, string> = {
   PENDING_PEER: 'text-gold',
-  PEER_ACCEPTED: 'text-emerald-300',
+  PEER_ACCEPTED: 'text-success',
   PEER_DECLINED: 'text-alert',
-  MANAGER_APPROVED: 'text-emerald-300',
+  MANAGER_APPROVED: 'text-success',
   MANAGER_REJECTED: 'text-alert',
   CANCELLED: 'text-silver/60',
 };
@@ -136,7 +136,7 @@ export function SwapMarketplace() {
                         type="button"
                         onClick={() => wrap(s.id, () => peerAcceptSwap(s.id))}
                         disabled={pendingId === s.id}
-                        className="text-xs px-2 py-1 rounded border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-50"
+                        className="text-xs px-2 py-1 rounded border border-success/40 text-success hover:bg-success/10 disabled:opacity-50"
                       >
                         Accept
                       </button>

@@ -216,7 +216,7 @@ export function AmendPayrollWizard({ open, onOpenChange, sourceRun, onAmended }:
       <DialogContent className="max-w-3xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Pencil className="h-5 w-5 text-amber-300" />
+            <Pencil className="h-5 w-5 text-warning" />
             Amend payroll run
           </DialogTitle>
           <DialogDescription>
@@ -264,7 +264,7 @@ export function AmendPayrollWizard({ open, onOpenChange, sourceRun, onAmended }:
                     key={it.id}
                     className={cn(
                       'rounded border bg-black/30',
-                      isEditing ? 'border-amber-500/40' : 'border-silver/15'
+                      isEditing ? 'border-warning/40' : 'border-silver/15'
                     )}
                   >
                     <div className="px-3 py-2 flex items-center justify-between gap-3">

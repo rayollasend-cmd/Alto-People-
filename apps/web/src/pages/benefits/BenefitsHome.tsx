@@ -158,7 +158,7 @@ export function BenefitsHome() {
                 description="When HR opens enrollment, plans you're eligible for will appear below to elect."
               />
             ) : (
-              <ul className="divide-y divide-navy-secondary/60">
+              <ul className="divide-y divide-navy-secondary">
                 {enrollments.map((e) => (
                   <EnrollmentRow
                     key={e.id}
@@ -182,7 +182,7 @@ export function BenefitsHome() {
             </CardDescription>
           </CardHeader>
           <CardContent className="p-0">
-            <ul className="divide-y divide-navy-secondary/60">
+            <ul className="divide-y divide-navy-secondary">
               {offerable.map((p) => (
                 <li key={p.id} className="p-4 flex items-center gap-4">
                   <div className="flex-1 min-w-0">

@@ -209,7 +209,7 @@ export function EquityHome() {
                       <TableCell className="text-sm">
                         {g.totalShares.toLocaleString()}
                       </TableCell>
-                      <TableCell className="text-sm text-green-300">
+                      <TableCell className="text-sm text-success">
                         {g.vestedShares.toLocaleString()}
                       </TableCell>
                       <TableCell className="text-sm text-silver">
@@ -539,13 +539,13 @@ function MyDetailDrawer({
           <CardContent className="p-4">
             <div className="flex justify-between items-baseline mb-2">
               <span className="text-sm text-silver">Vested</span>
-              <span className="text-2xl font-semibold text-green-300">
+              <span className="text-2xl font-semibold text-success">
                 {row.vestedShares.toLocaleString()}
               </span>
             </div>
             <div className="w-full bg-navy-secondary rounded-full h-2 overflow-hidden">
               <div
-                className="bg-green-500 h-full transition-all"
+                className="bg-success h-full transition-all"
                 style={{ width: `${pctVested}%` }}
               />
             </div>

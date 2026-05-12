@@ -503,7 +503,7 @@ function MyDetailDrawer({
             href={row.receiptUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-sm text-blue-300 hover:underline"
+            className="text-sm text-steel hover:underline"
           >
             Receipt ↗
           </a>
@@ -591,7 +591,7 @@ function QueueDetailDrawer({
             href={row.receiptUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-sm text-blue-300 hover:underline"
+            className="text-sm text-steel hover:underline"
           >
             Receipt ↗
           </a>

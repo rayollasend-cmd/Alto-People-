@@ -923,7 +923,7 @@ function BeneficiariesPanel({
           <span
             className={
               primaryTotal === 100
-                ? 'text-emerald-400'
+                ? 'text-success'
                 : primaryTotal > 0
                   ? 'text-alert'
                   : 'text-silver'

@@ -128,7 +128,7 @@ export function AssociateTimeOffView() {
             />
           )}
           {requests && requests.length > 0 && (
-            <ul className="divide-y divide-navy-secondary/60">
+            <ul className="divide-y divide-navy-secondary">
               {requests.map((r) => (
                 <li
                   key={r.id}

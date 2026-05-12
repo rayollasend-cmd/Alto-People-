@@ -477,18 +477,18 @@ function CaseDetailDrawer({
                       key={c.id}
                       className={`p-3 rounded border ${
                         c.internalNote
-                          ? 'border-amber-700 bg-amber-950/20'
+                          ? 'border-warning bg-warning/20'
                           : 'border-navy-secondary'
                       }`}
                     >
                       <div className="flex items-center gap-2 text-xs text-silver mb-1">
                         {c.internalNote && (
-                          <Lock className="h-3 w-3 text-amber-400" />
+                          <Lock className="h-3 w-3 text-warning" />
                         )}
                         <span>{c.authorEmail ?? c.authorName ?? 'Unknown'}</span>
                         <span>· {new Date(c.createdAt).toLocaleString()}</span>
                         {c.internalNote && (
-                          <span className="text-amber-400">internal</span>
+                          <span className="text-warning">internal</span>
                         )}
                       </div>
                       <div className="text-sm text-white whitespace-pre-wrap">
