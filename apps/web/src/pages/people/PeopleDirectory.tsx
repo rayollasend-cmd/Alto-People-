@@ -5,6 +5,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   ArrowLeftRight,
   Briefcase,
@@ -355,28 +356,12 @@ export function PeopleDirectory() {
         <>
           {/* md+ : columnar table. Columns reveal progressively as
               viewport widens (md: Position, lg: Type + Pay, xl: Manager
-              + Start). */}
-          <Card className="overflow-hidden hidden md:block">
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead>Associate</TableHead>
-                  <TableHead className="w-28">Status</TableHead>
-                  <TableHead>Workplace</TableHead>
-                  <TableHead className="hidden md:table-cell">Position</TableHead>
-                  <TableHead className="hidden lg:table-cell w-24">Type</TableHead>
-                  <TableHead className="hidden lg:table-cell">Pay rate</TableHead>
-                  <TableHead className="hidden xl:table-cell">Manager</TableHead>
-                  <TableHead className="hidden xl:table-cell w-24">Start</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((r) => (
-                  <DirectoryRow key={r.id} row={r} onSelect={setTarget} />
-                ))}
-              </TableBody>
-            </Table>
-          </Card>
+              + Start). For lists past VIRTUALIZE_THRESHOLD we swap in a
+              row virtualizer so DOM size stays bounded regardless of the
+              underlying list size. */}
+          <div className="hidden md:block">
+            <DirectoryTable rows={rows} onSelect={setTarget} />
+          </div>
 
           {/* Phone: card stack. Tap card → drawer (same as table click). */}
           <ul className="md:hidden space-y-2">
@@ -457,6 +442,118 @@ function FilterPicker({
         ))}
       </select>
     </div>
+  );
+}
+
+// Above this row count we swap from a plain DOM table to a virtualized
+// one. The threshold is empirical: with the current row design (avatar,
+// 4 cells, ~56px tall) Chrome handles up to ~200-300 rows smoothly, but
+// scroll-jank and search-input lag become visible past that as React
+// has to reconcile every row on each filter keystroke. With
+// keepPreviousData it's worse — both the old and new lists exist in
+// memory during a fetch. Virtualizing means the rendered DOM stays
+// bounded regardless of the result count.
+const VIRTUALIZE_THRESHOLD = 100;
+const ROW_HEIGHT_PX = 56;
+// Pad the visible window so a smooth scroll doesn't immediately reveal
+// blank rows at the edges while the next batch is measured.
+const VIRTUAL_OVERSCAN = 8;
+// Cap the inner scroll container at this much of the viewport so the
+// table doesn't push the rest of the page out of view. Headers stay
+// sticky inside this container, so the user gets a familiar "scroll
+// inside the data grid" affordance.
+const VIRTUAL_CONTAINER_MAX_VH = 'max-h-[calc(100vh-360px)]';
+
+function DirectoryTable({
+  rows,
+  onSelect,
+}: {
+  rows: DirectoryEntry[];
+  onSelect: (row: DirectoryEntry) => void;
+}) {
+  if (rows.length <= VIRTUALIZE_THRESHOLD) {
+    return (
+      <Card className="overflow-hidden">
+        <Table>
+          <TableHeader>
+            <DirectoryHeaderRow />
+          </TableHeader>
+          <TableBody>
+            {rows.map((r) => (
+              <DirectoryRow key={r.id} row={r} onSelect={onSelect} />
+            ))}
+          </TableBody>
+        </Table>
+      </Card>
+    );
+  }
+  return <VirtualDirectoryTable rows={rows} onSelect={onSelect} />;
+}
+
+function DirectoryHeaderRow() {
+  return (
+    <TableRow className="hover:bg-transparent">
+      <TableHead>Associate</TableHead>
+      <TableHead className="w-28">Status</TableHead>
+      <TableHead>Workplace</TableHead>
+      <TableHead className="hidden md:table-cell">Position</TableHead>
+      <TableHead className="hidden lg:table-cell w-24">Type</TableHead>
+      <TableHead className="hidden lg:table-cell">Pay rate</TableHead>
+      <TableHead className="hidden xl:table-cell">Manager</TableHead>
+      <TableHead className="hidden xl:table-cell w-24">Start</TableHead>
+    </TableRow>
+  );
+}
+
+function VirtualDirectoryTable({
+  rows,
+  onSelect,
+}: {
+  rows: DirectoryEntry[];
+  onSelect: (row: DirectoryEntry) => void;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // useVirtualizer reports start/end indices of items that should be
+  // mounted given the current scroll position. We pad before/after the
+  // window with two empty <tr> "spacer rows" of the correct total height
+  // so the <tbody> retains its full scrollable size — the browser thinks
+  // every row exists, the DOM only ever holds ~30.
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ROW_HEIGHT_PX,
+    overscan: VIRTUAL_OVERSCAN,
+  });
+
+  const items = virtualizer.getVirtualItems();
+  const totalSize = virtualizer.getTotalSize();
+  const paddingTop = items.length > 0 ? items[0].start : 0;
+  const paddingBottom =
+    items.length > 0 ? totalSize - items[items.length - 1].end : 0;
+
+  return (
+    <Card className="overflow-hidden">
+      <div ref={scrollRef} className={`overflow-y-auto ${VIRTUAL_CONTAINER_MAX_VH}`}>
+        <Table>
+          <TableHeader>
+            <DirectoryHeaderRow />
+          </TableHeader>
+          <TableBody>
+            {paddingTop > 0 && (
+              <tr aria-hidden style={{ height: `${paddingTop}px` }} />
+            )}
+            {items.map((virtualRow) => {
+              const r = rows[virtualRow.index];
+              return <DirectoryRow key={r.id} row={r} onSelect={onSelect} />;
+            })}
+            {paddingBottom > 0 && (
+              <tr aria-hidden style={{ height: `${paddingBottom}px` }} />
+            )}
+          </TableBody>
+        </Table>
+      </div>
+    </Card>
   );
 }
 
