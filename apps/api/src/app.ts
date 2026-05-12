@@ -141,7 +141,30 @@ export function createApp() {
   // CSP-blocked ones — carries the trace ID. Stays before attachUser so
   // auth-failure logs have an id.
   app.use(requestId);
-  app.use(helmet());
+  // Helmet defaults are mostly fine; we just need to widen connect-src
+  // so the browser SDK can POST event envelopes to Sentry's ingest
+  // host. The default CSP only declares default-src 'self', which the
+  // browser falls back to for connect-src and which blocks any cross-
+  // origin fetch — Sentry, but also any future analytics / 3rd-party
+  // service. Sentry's ingest is an org-scoped subdomain that varies by
+  // region (us / de / global), so we list each wildcard explicitly
+  // rather than open up *.sentry.io for everything. No-op for the SDK
+  // when VITE_SENTRY_DSN is unset (no POSTs are attempted).
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        useDefaults: true,
+        directives: {
+          'connect-src': [
+            "'self'",
+            'https://*.ingest.sentry.io',
+            'https://*.ingest.us.sentry.io',
+            'https://*.ingest.de.sentry.io',
+          ],
+        },
+      },
+    }),
+  );
   app.use(cors({ origin: env.CORS_ORIGIN, credentials: true }));
   // Branch webhook MUST be mounted before express.json() so the raw body
   // bytes survive for HMAC verification (the global parser would consume
