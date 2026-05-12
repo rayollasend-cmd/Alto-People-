@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Heart, Plus, Target } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
@@ -19,11 +20,8 @@ import {
   updatePip,
   type Goal,
   type GoalStatus,
-  type Kudo,
-  type OneOnOne,
   type PerfTimelineEntry,
   type Pip,
-  type Review360,
 } from '@/lib/perf84Api';
 import { useAuth } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
@@ -58,6 +56,20 @@ import { Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
 
 type Tab = 'goals' | 'kudos' | 'one-on-ones' | 'pips' | 'reviews360' | 'timeline';
+
+// Each tab's data sits behind a tuple key so a single mutation can
+// invalidate one tab without flushing the others — except timeline,
+// which is associate-scoped and refetched per lookup.
+const perfKeys = {
+  all: ['perf'] as const,
+  goals: () => [...perfKeys.all, 'goals'] as const,
+  kudos: (onlyPublic: boolean) => [...perfKeys.all, 'kudos', onlyPublic] as const,
+  oneOnOnes: () => [...perfKeys.all, 'one-on-ones'] as const,
+  pips: () => [...perfKeys.all, 'pips'] as const,
+  reviews360: () => [...perfKeys.all, 'reviews360'] as const,
+  timeline: (associateId: string) =>
+    [...perfKeys.all, 'timeline', associateId] as const,
+};
 
 export function PerformanceExtras() {
   const { user } = useAuth();
@@ -107,27 +119,23 @@ function GoalsTab() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:performance') : false;
   const confirm = useConfirm();
-  const [rows, setRows] = useState<Goal[] | null>(null);
+  const qc = useQueryClient();
   const [draft, setDraft] = useState<GoalDraft | null>(null);
   const [pipDraft, setPipDraft] = useState<PipDraft | null>(null);
 
-  const refresh = async () => {
-    setRows(null);
-    try {
-      const r = await listGoals();
-      setRows(r.goals);
-    } catch {
-      setRows([]);
-    }
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const q = useQuery({
+    queryKey: perfKeys.goals(),
+    queryFn: async () => (await listGoals()).goals,
+  });
+  const rows = q.data ?? null;
+
+  const invalidateGoals = () =>
+    qc.invalidateQueries({ queryKey: perfKeys.goals() });
 
   const onProgress = async (g: Goal, pct: number) => {
     try {
       await updateGoal(g.id, { progressPct: Math.max(0, Math.min(100, pct)) });
-      refresh();
+      invalidateGoals();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
     }
@@ -136,7 +144,7 @@ function GoalsTab() {
   const onStatus = async (g: Goal, status: GoalStatus) => {
     try {
       await updateGoal(g.id, { status });
-      refresh();
+      invalidateGoals();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
     }
@@ -146,7 +154,7 @@ function GoalsTab() {
     if (!(await confirm({ title: 'Delete this goal?', destructive: true }))) return;
     try {
       await deleteGoal(id);
-      refresh();
+      invalidateGoals();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
     }
@@ -279,7 +287,8 @@ function GoalsTab() {
             onSaved={() => {
               setPipDraft(null);
               toast.success('PIP created from goal.');
-              refresh();
+              invalidateGoals();
+              qc.invalidateQueries({ queryKey: perfKeys.pips() });
             }}
           />
         )}
@@ -292,7 +301,7 @@ function GoalsTab() {
             onClose={() => setDraft(null)}
             onSaved={() => {
               setDraft(null);
-              refresh();
+              invalidateGoals();
             }}
           />
         )}
@@ -537,49 +546,46 @@ function PipFromGoalDrawer({
 // ============ Kudos ============
 
 function KudosTab() {
-  const [rows, setRows] = useState<Kudo[] | null>(null);
+  const qc = useQueryClient();
   const [showCompose, setShowCompose] = useState(false);
   const [toAssociateId, setToAssociateId] = useState('');
   const [message, setMessage] = useState('');
   const [tags, setTags] = useState('');
 
-  const refresh = async () => {
-    setRows(null);
-    try {
-      const r = await listKudos({ onlyPublic: true });
-      setRows(r.kudos);
-    } catch {
-      setRows([]);
-    }
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const q = useQuery({
+    queryKey: perfKeys.kudos(true),
+    queryFn: async () => (await listKudos({ onlyPublic: true })).kudos,
+  });
+  const rows = q.data ?? null;
 
-  const onSend = async () => {
-    if (!toAssociateId.trim() || !message.trim()) {
-      toast.error('Recipient and message required.');
-      return;
-    }
-    try {
-      await createKudo({
-        toAssociateId: toAssociateId.trim(),
-        message: message.trim(),
-        tags: tags
-          .split(',')
-          .map((t) => t.trim())
-          .filter(Boolean),
-        isPublic: true,
-      });
+  const sendM = useMutation({
+    mutationFn: createKudo,
+    onSuccess: () => {
       toast.success('Kudo sent.');
       setShowCompose(false);
       setMessage('');
       setTags('');
       setToAssociateId('');
-      refresh();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      qc.invalidateQueries({ queryKey: perfKeys.kudos(true) });
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'Failed.'),
+  });
+
+  const onSend = () => {
+    if (!toAssociateId.trim() || !message.trim()) {
+      toast.error('Recipient and message required.');
+      return;
     }
+    sendM.mutate({
+      toAssociateId: toAssociateId.trim(),
+      message: message.trim(),
+      tags: tags
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean),
+      isPublic: true,
+    });
   };
 
   return (
@@ -670,12 +676,11 @@ function KudosTab() {
 // ============ 1:1s ============
 
 function OneOnOnesTab() {
-  const [rows, setRows] = useState<OneOnOne[] | null>(null);
-  useEffect(() => {
-    listOneOnOnes()
-      .then((r) => setRows(r.meetings))
-      .catch(() => setRows([]));
-  }, []);
+  const q = useQuery({
+    queryKey: perfKeys.oneOnOnes(),
+    queryFn: async () => (await listOneOnOnes()).meetings,
+  });
+  const rows = q.data ?? null;
 
   return (
     <Card>
@@ -727,19 +732,18 @@ function OneOnOnesTab() {
 // ============ PIPs ============
 
 function PipsTab({ canManage }: { canManage: boolean }) {
+  const qc = useQueryClient();
   const prompt = usePrompt();
-  const [rows, setRows] = useState<Pip[] | null>(null);
   const [showNew, setShowNew] = useState(false);
 
-  const refresh = () => {
-    setRows(null);
-    listPips()
-      .then((r) => setRows(r.pips))
-      .catch(() => setRows([]));
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const q = useQuery({
+    queryKey: perfKeys.pips(),
+    queryFn: async () => (await listPips()).pips,
+  });
+  const rows = q.data ?? null;
+
+  const invalidatePips = () =>
+    qc.invalidateQueries({ queryKey: perfKeys.pips() });
 
   const onDecide = async (p: Pip, status: 'PASSED' | 'FAILED') => {
     const note = await prompt({
@@ -752,7 +756,7 @@ function PipsTab({ canManage }: { canManage: boolean }) {
     if (note === null) return;
     try {
       await updatePip(p.id, { status, outcomeNote: note });
-      refresh();
+      invalidatePips();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
     }
@@ -823,7 +827,7 @@ function PipsTab({ canManage }: { canManage: boolean }) {
           )}
         </CardContent>
       </Card>
-      {showNew && <PipDrawer onClose={() => setShowNew(false)} onSaved={() => { setShowNew(false); refresh(); }} />}
+      {showNew && <PipDrawer onClose={() => setShowNew(false)} onSaved={() => { setShowNew(false); invalidatePips(); }} />}
     </div>
   );
 }
@@ -920,25 +924,24 @@ function PipDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
 // ============ 360 reviews ============
 
 function Reviews360Tab({ canManage }: { canManage: boolean }) {
+  const qc = useQueryClient();
   const confirm = useConfirm();
-  const [rows, setRows] = useState<Review360[] | null>(null);
   const [showNew, setShowNew] = useState(false);
 
-  const refresh = () => {
-    setRows(null);
-    listReviews360()
-      .then((r) => setRows(r.reviews))
-      .catch(() => setRows([]));
-  };
-  useEffect(() => {
-    refresh();
-  }, []);
+  const q = useQuery({
+    queryKey: perfKeys.reviews360(),
+    queryFn: async () => (await listReviews360()).reviews,
+  });
+  const rows = q.data ?? null;
+
+  const invalidate = () =>
+    qc.invalidateQueries({ queryKey: perfKeys.reviews360() });
 
   const onClose = async (id: string) => {
     if (!(await confirm({ title: 'Close this review?', description: 'No more feedback will be accepted.', destructive: true }))) return;
     try {
       await closeReview360(id);
-      refresh();
+      invalidate();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
     }
@@ -1006,7 +1009,7 @@ function Reviews360Tab({ canManage }: { canManage: boolean }) {
           )}
         </CardContent>
       </Card>
-      {showNew && <NewReview360Drawer onClose={() => setShowNew(false)} onSaved={() => { setShowNew(false); refresh(); }} />}
+      {showNew && <NewReview360Drawer onClose={() => setShowNew(false)} onSaved={() => { setShowNew(false); invalidate(); }} />}
     </div>
   );
 }
@@ -1086,26 +1089,31 @@ const TIMELINE_KIND_META: Record<
 
 function TimelineTab() {
   const [associateId, setAssociateId] = useState('');
-  const [entries, setEntries] = useState<PerfTimelineEntry[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  // Locked-in associate id we last loaded for. Lets the input keep
+  // changing without re-firing the query on every keystroke — the
+  // useQuery only enables when the user clicks "Load timeline".
+  const [loadedId, setLoadedId] = useState<string | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
 
-  const load = async () => {
-    if (!associateId.trim()) {
-      setError('Paste an associate ID.');
+  const q = useQuery({
+    queryKey: perfKeys.timeline(loadedId ?? ''),
+    queryFn: async () => (await getPerfTimeline(loadedId!)).entries,
+    enabled: loadedId !== null,
+  });
+  const entries = loadedId !== null ? q.data ?? null : null;
+  const error =
+    localError ??
+    (q.error instanceof ApiError ? q.error.message : q.error ? 'Failed to load.' : null);
+  const loading = q.isFetching && q.fetchStatus !== 'idle';
+
+  const load = () => {
+    const trimmed = associateId.trim();
+    if (!trimmed) {
+      setLocalError('Paste an associate ID.');
       return;
     }
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await getPerfTimeline(associateId.trim());
-      setEntries(res.entries);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
-      setEntries(null);
-    } finally {
-      setLoading(false);
-    }
+    setLocalError(null);
+    setLoadedId(trimmed);
   };
 
   return (
