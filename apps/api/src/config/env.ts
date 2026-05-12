@@ -174,6 +174,14 @@ const EnvSchema = z.object({
   // a Volume to this service and set UPLOAD_DIR to its mount path
   // (e.g. /data/uploads). See apps/api/STORAGE.md.
   UPLOAD_DIR: z.string().optional(),
+  // Sentry DSN. When set, unhandled errors from the request pipeline +
+  // any error reaching the global error handler get reported. Unset =>
+  // no reporting, no SDK init, zero network calls. Reasonable default
+  // for dev and CI; production should set it via Railway.
+  SENTRY_DSN: z.string().url().optional(),
+  // 0 -> off, 1 -> 100% sampling. Defaults to 0.1 (10%) which keeps
+  // free-tier quotas reasonable while still capturing the long tail.
+  SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0.1),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

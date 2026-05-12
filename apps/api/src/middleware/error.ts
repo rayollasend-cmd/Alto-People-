@@ -1,5 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
+import { captureException } from '../lib/sentry.js';
+import { logger } from '../lib/logger.js';
 
 export class HttpError extends Error {
   constructor(
@@ -54,7 +56,23 @@ export function errorHandler(
     return;
   }
 
-  console.error(`[alto-people/api] [${requestId}] unhandled error:`, err);
+  // Prefer the per-request logger so the line carries the same
+  // requestId / method / path tags as everything else. Fall back to
+  // the global logger if the requestId middleware didn't run.
+  (req.log ?? logger).error(
+    { err, userId: req.user?.id ?? null },
+    'unhandled error',
+  );
+  // Report unhandled errors (not HttpError, not ZodError) to Sentry —
+  // those two are expected control-flow signals, not bugs. Tag with the
+  // request id + path so a single trace ties the Sentry event to logs
+  // and the audit row that any in-flight handler may have written.
+  captureException(err, {
+    requestId,
+    method: req.method,
+    path: req.path,
+    userId: req.user?.id ?? null,
+  });
   res.status(500).json({
     error: { code: 'internal_error', message: 'Internal server error', requestId },
   });
