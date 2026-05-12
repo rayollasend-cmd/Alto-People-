@@ -5,6 +5,7 @@ import { prisma } from '../db.js';
 import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
 import { invalidateUserCache, requireCapability } from '../middleware/auth.js';
+import { adminForcePasswordResetLimiter } from '../middleware/rateLimit.js';
 import { recordCriticalAudit } from '../lib/audit.js';
 import {
   generatePasswordResetToken,
@@ -199,6 +200,10 @@ usersRouter.patch(
 usersRouter.post(
   '/admin/users/:id/force-password-reset',
   requireCapability('view:hr-admin'),
+  // Capability + rate limit. The cap controls *who* can call this; the
+  // limiter controls *how often* — without it a compromised admin
+  // session can fan out resets to every user in seconds.
+  adminForcePasswordResetLimiter,
   async (req, res) => {
     const id = z.string().uuid().parse(req.params.id);
 

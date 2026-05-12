@@ -263,6 +263,36 @@ export const careersApplyEmailLimiter = rateLimit({
   },
 });
 
+// Admin force-password-reset is gated on view:hr-admin (the same cap
+// that grants full HR access), but capability alone isn't a brake on
+// quantity. A compromised admin session — or a fat-fingered "reset
+// everyone" loop in the UI — could spray reset emails at every user,
+// generate fresh password-reset tokens for each, and bump
+// tokenVersion enough times to kill every active session in the org.
+// 10/hour/actor is loose enough that a legit admin re-issuing a few
+// invites won't notice, tight enough that bulk abuse hits a wall.
+const ADMIN_FORCE_RESET_LIMIT =
+  process.env.NODE_ENV === 'test' ? 100_000 : 10;
+
+/** 10 force-password-reset calls / hour / acting admin. */
+export const adminForcePasswordResetLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: ADMIN_FORCE_RESET_LIMIT,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => {
+    const userId = req.user?.id;
+    return userId ? `user:${userId}` : `ip:${req.ip ?? 'unknown'}`;
+  },
+  message: {
+    error: {
+      code: 'rate_limited',
+      message:
+        'Too many password resets in the last hour. Wait a bit before issuing more.',
+    },
+  },
+});
+
 // Public integration API (e.g. AltoHR / ASN bridge). Keyed by the
 // authenticated ApiKey.id so noisy neighbours don't starve other tenants.
 // 60/min/key is generous for a polling integration that refreshes once
