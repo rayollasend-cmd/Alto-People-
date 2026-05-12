@@ -200,7 +200,7 @@ export function NotificationsBell() {
             </div>
           )}
           {items && items.length > 0 && (
-            <ul className="divide-y divide-navy-secondary/60">
+            <ul className="divide-y divide-navy-secondary">
               {items.slice(0, 50).map((n) => (
                 <li key={n.id}>
                   <button

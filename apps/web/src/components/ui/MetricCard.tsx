@@ -30,14 +30,9 @@ export function MetricCard({
   wrap,
   className,
 }: MetricCardProps) {
+  const isInteractive = Boolean(href || wrap);
   const card = (
-    <Card
-      className={cn(
-        (href || wrap) &&
-          'transition hover:border-steel hover:bg-navy-secondary/30 cursor-pointer',
-        className,
-      )}
-    >
+    <Card interactive={isInteractive} className={cn('group', className)}>
       <CardContent className="pt-5">
         <div className="text-[10px] uppercase tracking-widest text-silver">
           {label}
@@ -50,9 +45,14 @@ export function MetricCard({
         >
           {value}
         </div>
-        {hint && <div className="text-xs text-silver/70 mt-2">{hint}</div>}
-        {(href || wrap) && (
-          <div className="text-[10px] text-silver/60 mt-3">View details →</div>
+        {hint && <div className="text-xs text-silver mt-2">{hint}</div>}
+        {isInteractive && (
+          <div className="text-[10px] uppercase tracking-widest mt-3 text-gold/80 group-hover:text-gold-bright transition-colors inline-flex items-center gap-1">
+            View details
+            <span aria-hidden="true" className="transition-transform group-hover:translate-x-0.5">
+              →
+            </span>
+          </div>
         )}
       </CardContent>
     </Card>
