@@ -79,6 +79,37 @@ export function KioskPage() {
     return () => clearInterval(t);
   }, []);
 
+  // Lock down the document while the kiosk is mounted. iOS Safari
+  // evaluates pull-to-refresh on `body`'s overscroll-behavior, not on
+  // the nested fixed div — so setting `overscrollBehavior: 'contain'`
+  // on the page root isn't enough; a downward swipe at the top of the
+  // viewport still triggers the browser's refresh gesture mid-punch.
+  // We set body to `overscroll-behavior: none` and `overflow: hidden`
+  // for the lifetime of the kiosk, restoring on unmount so when an
+  // admin closes the tab the rest of the SPA isn't permanently
+  // affected. touchAction at the body level kills double-tap zoom on
+  // any element a finger lands on before bubbling to the kiosk root.
+  useEffect(() => {
+    const body = document.body;
+    const html = document.documentElement;
+    const prev = {
+      bodyOverscroll: body.style.overscrollBehavior,
+      bodyOverflow: body.style.overflow,
+      bodyTouchAction: body.style.touchAction,
+      htmlOverscroll: html.style.overscrollBehavior,
+    };
+    body.style.overscrollBehavior = 'none';
+    body.style.overflow = 'hidden';
+    body.style.touchAction = 'manipulation';
+    html.style.overscrollBehavior = 'none';
+    return () => {
+      body.style.overscrollBehavior = prev.bodyOverscroll;
+      body.style.overflow = prev.bodyOverflow;
+      body.style.touchAction = prev.bodyTouchAction;
+      html.style.overscrollBehavior = prev.htmlOverscroll;
+    };
+  }, []);
+
   // Phase 102 — drain the queue: on first idle, on browser online event,
   // and on a 30s timer (handles flaky networks where 'online' doesn't
   // fire because the radio thinks it's connected to a captive portal).
@@ -236,7 +267,10 @@ export function KioskPage() {
         // pull-to-refresh on iOS/Android Chrome which would dismiss
         // mid-punch. Selection is already blocked via select-none.
         touchAction: 'manipulation',
-        overscrollBehavior: 'contain',
+        // `none` (not `contain`) — `contain` only blocks scroll
+        // chaining; `none` also kills the browser refresh gesture if
+        // the body-level lock above somehow doesn't apply (older WebViews).
+        overscrollBehavior: 'none',
         WebkitUserSelect: 'none',
         WebkitTouchCallout: 'none',
       }}
