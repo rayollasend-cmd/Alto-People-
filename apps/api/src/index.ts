@@ -14,10 +14,11 @@ import { startAttestationReminderCron } from './lib/attestationReminder.js';
 import { startKioskMaintenanceCron } from './lib/kioskMaintenance.js';
 import { ensureBrandingLoaded } from './lib/branding.js';
 import { preloadPayrollTaxConfig } from './lib/payrollTax.js';
+import { flushPendingAudits } from './lib/audit.js';
 
 const app = createApp();
 
-app.listen(env.PORT, '0.0.0.0', async () => {
+const server = app.listen(env.PORT, '0.0.0.0', async () => {
   logger.info(
     { port: env.PORT, corsOrigins: env.CORS_ORIGIN },
     'api listening',
@@ -125,3 +126,84 @@ app.listen(env.PORT, '0.0.0.0', async () => {
     );
   }
 });
+
+// ---------------------------------------------------------------------------
+// Graceful shutdown
+//
+// Railway sends SIGTERM and waits ~30s before SIGKILL on every redeploy.
+// Without a handler, Node exits the moment we receive the signal,
+// dropping any in-flight HTTP request — including the half-second
+// window between Branch's disbursement API returning success and our
+// critical audit row landing, or the gap between a kiosk punch
+// completing and its selfie being committed.
+//
+// Shutdown sequence:
+//   1. Stop accepting new connections (server.close stops listening
+//      but keeps existing sockets alive until their requests finish).
+//   2. Wait up to SHUTDOWN_DRAIN_MS for in-flight handlers to settle.
+//   3. await flushPendingAudits() — fire-and-forget audit writes that
+//      were queued during step 2 still need to land. recordCritical
+//      callers already await; this catches the routine enqueueAudit
+//      tail.
+//   4. Disconnect Prisma so the pool returns connections to Neon
+//      cleanly instead of leaking sockets.
+//   5. exit(0). If anything in 1-4 hangs past SHUTDOWN_HARD_MS we
+//      force-exit so a stuck handler can't deadlock the deploy.
+//
+// Both SIGTERM (Railway/PM2/k8s) and SIGINT (Ctrl-C in dev) trigger the
+// same path so devs see real behaviour locally.
+// ---------------------------------------------------------------------------
+
+const SHUTDOWN_DRAIN_MS = 15_000;
+const SHUTDOWN_HARD_MS = 25_000;
+let shuttingDown = false;
+
+async function gracefulShutdown(signal: NodeJS.Signals) {
+  if (shuttingDown) return; // second SIGTERM = no-op, let the existing path run
+  shuttingDown = true;
+  logger.info({ signal, drainMs: SHUTDOWN_DRAIN_MS }, 'shutdown requested');
+
+  // Hard timer: if any step below hangs, we force-exit. Railway will
+  // SIGKILL at ~30s anyway; we'd rather log the timeout than disappear.
+  const hardTimer = setTimeout(() => {
+    logger.fatal('shutdown hard timeout — forcing exit');
+    process.exit(1);
+  }, SHUTDOWN_HARD_MS);
+  hardTimer.unref();
+
+  try {
+    // Stop accepting new connections. Existing requests keep going.
+    await new Promise<void>((resolve) => {
+      server.close((err) => {
+        if (err) logger.warn({ err }, 'server.close error during shutdown');
+        resolve();
+      });
+    });
+    logger.info('server stopped accepting connections');
+
+    // Let in-flight requests have one more drain window. Most will
+    // already be done by the time server.close resolves (it waits for
+    // the keep-alive idle), but tail latency happens.
+    await new Promise((r) => setTimeout(r, 500));
+
+    // Drain queued audits. Critical audits are already awaited at the
+    // call site; this catches the fire-and-forget enqueueAudit tail.
+    await flushPendingAudits();
+    logger.info('audit queue flushed');
+
+    // Close Prisma so Neon sees clean disconnects instead of dead
+    // sockets that take a few minutes to time out.
+    await prisma.$disconnect();
+    logger.info('prisma disconnected, exiting');
+
+    clearTimeout(hardTimer);
+    process.exit(0);
+  } catch (err) {
+    logger.error({ err }, 'shutdown encountered error');
+    clearTimeout(hardTimer);
+    process.exit(1);
+  }
+}
+
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
