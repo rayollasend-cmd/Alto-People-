@@ -2,7 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
 import { kioskPunch, kioskVerifyPin } from '@/lib/kiosk99Api';
-import { extractDescriptor, loadFaceModels } from '@/lib/faceMatch';
+import {
+  extractDescriptor,
+  loadFaceModels,
+  getFaceModelsState,
+  onFaceModelsStateChange,
+  type FaceModelsState,
+} from '@/lib/faceMatch';
 import { Logo } from '@/components/Logo';
 import {
   drainQueue,
@@ -441,6 +447,16 @@ function IdleScreen({ now, onTap }: { now: Date; onTap: () => void }) {
     month: 'long',
     day: 'numeric',
   });
+  // Surface face-model preload state so an associate landing while
+  // the ~6.5MB weights are still downloading sees a status hint
+  // instead of hitting an "unavailable" error mid-selfie. The actual
+  // capture step also handles the not-ready case, this is just nicer
+  // upfront feedback for the operator setting up a new tablet.
+  const [faceState, setFaceState] = useState<FaceModelsState>(
+    getFaceModelsState(),
+  );
+  useEffect(() => onFaceModelsStateChange(setFaceState), []);
+
   return (
     <button
       onClick={onTap}
@@ -455,6 +471,17 @@ function IdleScreen({ now, onTap }: { now: Date; onTap: () => void }) {
       <div className="mt-16 px-12 py-6 bg-cyan-600/20 border-2 border-cyan-500 rounded-full text-2xl font-medium animate-pulse">
         Tap to clock in / out
       </div>
+      {faceState === 'loading' && (
+        <div className="mt-6 text-sm text-silver/80 inline-flex items-center gap-2">
+          <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse" />
+          Preparing face match…
+        </div>
+      )}
+      {faceState === 'failed' && (
+        <div className="mt-6 text-sm text-warning">
+          Face match unavailable — PIN-only mode.
+        </div>
+      )}
     </button>
   );
 }

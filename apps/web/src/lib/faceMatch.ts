@@ -41,11 +41,49 @@ function getFaceApi(): Promise<FaceApi> {
 
 let modelsPromise: Promise<void> | null = null;
 
+/**
+ * Coarse load-state for the face-api models. Surfaces in the kiosk
+ * idle screen so an associate landing during a slow CDN fetch sees
+ * "Loading face match…" instead of a silent eight-second wait.
+ *
+ * - 'idle'    — preload hasn't been called yet.
+ * - 'loading' — models are downloading.
+ * - 'ready'   — all three models loaded.
+ * - 'failed'  — last preload threw; safe to retry.
+ */
+export type FaceModelsState = 'idle' | 'loading' | 'ready' | 'failed';
+
+let modelsState: FaceModelsState = 'idle';
+const stateListeners = new Set<(s: FaceModelsState) => void>();
+
+function setModelsState(s: FaceModelsState): void {
+  if (s === modelsState) return;
+  modelsState = s;
+  for (const l of stateListeners) l(s);
+}
+
+export function getFaceModelsState(): FaceModelsState {
+  return modelsState;
+}
+
+/**
+ * Subscribe to load-state transitions. Returns an unsubscribe.
+ */
+export function onFaceModelsStateChange(
+  fn: (s: FaceModelsState) => void,
+): () => void {
+  stateListeners.add(fn);
+  return () => {
+    stateListeners.delete(fn);
+  };
+}
+
 export function loadFaceModels(): Promise<void> {
   if (modelsPromise) return modelsPromise;
   const url =
     (import.meta.env.VITE_FACE_MODELS_URL as string | undefined)?.trim() ||
     DEFAULT_MODELS_URL;
+  setModelsState('loading');
   modelsPromise = (async () => {
     const faceapi = await getFaceApi();
     await Promise.all([
@@ -53,9 +91,11 @@ export function loadFaceModels(): Promise<void> {
       faceapi.nets.faceLandmark68Net.loadFromUri(url),
       faceapi.nets.faceRecognitionNet.loadFromUri(url),
     ]);
+    setModelsState('ready');
   })().catch((err) => {
     // Reset so the next attempt retries (e.g., user reconnects to wifi).
     modelsPromise = null;
+    setModelsState('failed');
     throw err;
   });
   return modelsPromise;

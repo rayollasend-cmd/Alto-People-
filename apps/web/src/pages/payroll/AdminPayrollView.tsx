@@ -269,14 +269,22 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
   const onDisburse = async () => {
     if (!selected || busy) return;
     setBusy(true);
-    setConfirmDisburse(false);
+    // Keep the modal open until the request returns. Closing it on
+    // click loses the only visible signal that something is happening
+    // (the button's spinner is now hidden behind a closed dialog); on
+    // slow networks the user has clicked Disburse and seen nothing for
+    // 5–15 s. We replace the body with an explicit "Processing payouts"
+    // copy below.
     try {
       const updated = await disbursePayrollRun(selected.id);
       setSelected(updated);
       toast.success('Run disbursed.');
       refresh();
+      setConfirmDisburse(false);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Disburse failed.');
+      // Leave the dialog open on failure so the user can retry without
+      // re-traversing the action menu.
     } finally {
       setBusy(false);
     }
@@ -912,21 +920,42 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
         )}
       </Drawer>
 
-      <Dialog open={confirmDisburse} onOpenChange={setConfirmDisburse}>
+      <Dialog
+        open={confirmDisburse}
+        onOpenChange={(v) => {
+          // Lock the dialog closed while the disburse round-trip is in
+          // flight so the user can't reload mid-payout or trigger a
+          // double-submit via Esc.
+          if (!busy) setConfirmDisburse(v);
+        }}
+      >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Disburse this run?</DialogTitle>
+            <DialogTitle>
+              {busy ? 'Processing payouts…' : 'Disburse this run?'}
+            </DialogTitle>
             <DialogDescription>
-              Stubbed in dev — no real funds move. In production, this triggers
-              the configured payout adapter (Wise / Branch) for every paystub.
+              {busy
+                ? 'Talking to the payout adapter for every paystub. This can take 10–30 seconds — keep this tab open and don’t refresh.'
+                : 'Stubbed in dev — no real funds move. In production, this triggers the configured payout adapter (Wise / Branch) for every paystub.'}
             </DialogDescription>
           </DialogHeader>
+          {busy && (
+            <div className="-mt-1 flex items-center gap-2 text-xs text-silver">
+              <span className="h-1.5 w-1.5 rounded-full bg-gold animate-pulse" />
+              Working… results will appear on the run timeline when complete.
+            </div>
+          )}
           <DialogFooter>
-            <Button variant="secondary" onClick={() => setConfirmDisburse(false)}>
+            <Button
+              variant="secondary"
+              onClick={() => setConfirmDisburse(false)}
+              disabled={busy}
+            >
               Cancel
             </Button>
-            <Button onClick={onDisburse} loading={busy}>
-              Disburse
+            <Button onClick={onDisburse} loading={busy} disabled={busy}>
+              {busy ? 'Disbursing…' : 'Disburse'}
             </Button>
           </DialogFooter>
         </DialogContent>
