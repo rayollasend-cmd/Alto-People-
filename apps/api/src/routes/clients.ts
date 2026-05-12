@@ -54,6 +54,13 @@ function auditClient(
  * adding. Counts (open applications, last payroll) are batched into
  * two grouped queries no matter how many clients match.
  */
+// Same pagination contract as /directory: optional ?cursor + ?limit,
+// defaults to the prior "fetch 1000" behaviour so existing callers
+// keep working. The cursor is the id of the last client from the
+// previous page; the API skips it and returns the next batch.
+const CLIENTS_DEFAULT_PAGE_SIZE = 1000;
+const CLIENTS_MAX_PAGE_SIZE = 500;
+
 clientsRouter.get('/', async (req, res, next) => {
   try {
     const where: Prisma.ClientWhereInput = scopeClients(req.user!);
@@ -70,10 +77,28 @@ clientsRouter.get('/', async (req, res, next) => {
       where.name = { contains: q, mode: 'insensitive' };
     }
 
+    // Validate cursor + limit. Bad input is a 400 rather than silently
+    // ignored so a malformed client query doesn't accidentally return
+    // page 0 over and over.
+    const cursorParam =
+      typeof req.query.cursor === 'string' ? req.query.cursor.trim() : '';
+    const cursor = cursorParam.length > 0 ? cursorParam : null;
+    if (cursor && !/^[0-9a-f-]{36}$/i.test(cursor)) {
+      throw new HttpError(400, 'invalid_query', 'cursor must be a UUID');
+    }
+    const limitParam =
+      typeof req.query.limit === 'string' ? Number(req.query.limit) : NaN;
+    const limit = Number.isFinite(limitParam)
+      ? Math.min(Math.max(1, Math.floor(limitParam)), CLIENTS_MAX_PAGE_SIZE)
+      : CLIENTS_DEFAULT_PAGE_SIZE;
+
     const rows = await prisma.client.findMany({
-      take: 1000,
+      take: limit,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       where,
-      orderBy: { name: 'asc' },
+      // (name, id) ordering keeps cursors stable when names collide
+      // (multiple clients literally named "Walmart" exist).
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
     });
     const ids = rows.map((r) => r.id);
 
@@ -126,7 +151,8 @@ clientsRouter.get('/', async (req, res, next) => {
       lastPayrollDisbursedAt:
         lastPayrollByClient.get(row.id)?.toISOString() ?? null,
     }));
-    const payload: ClientListResponse = { clients };
+    const nextCursor = rows.length === limit ? rows[rows.length - 1]!.id : null;
+    const payload: ClientListResponse = { clients, nextCursor };
     res.json(payload);
   } catch (err) {
     next(err);

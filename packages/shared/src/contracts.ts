@@ -128,6 +128,11 @@ export type ClientUpdateInput = z.infer<typeof ClientUpdateInputSchema>;
 
 export const ClientListResponseSchema = z.object({
   clients: z.array(ClientListItemSchema),
+  // When pagination is in use, the id of the last item in this page so
+  // the caller can request the next page via ?cursor=<id>. Null means
+  // there are no more rows. Optional for backwards compatibility with
+  // callers that haven't adopted cursor pagination yet.
+  nextCursor: z.string().uuid().nullable().optional(),
 });
 export type ClientListResponse = z.infer<typeof ClientListResponseSchema>;
 
@@ -2945,6 +2950,9 @@ export type DirectoryEntry = z.infer<typeof DirectoryEntrySchema>;
 
 export const DirectoryListResponseSchema = z.object({
   associates: z.array(DirectoryEntrySchema),
+  // See ClientListResponseSchema.nextCursor for the contract — same
+  // shape, applies to /directory's cursor-paginated reads.
+  nextCursor: z.string().uuid().nullable().optional(),
 });
 export type DirectoryListResponse = z.infer<typeof DirectoryListResponseSchema>;
 

@@ -28,6 +28,14 @@ export const directoryRouter = Router();
 
 const VIEW = requireCapability('view:org');
 
+// Default page size when no explicit ?limit is provided. The pre-cursor
+// behaviour fetched up to 1000 rows in one call; we keep that as the
+// default so callers that haven't opted into pagination continue to
+// work, but cap explicit limits at 500 so a malicious caller can't
+// force a huge query.
+const DEFAULT_PAGE_SIZE = 1000;
+const MAX_PAGE_SIZE = 500;
+
 const QuerySchema = z.object({
   q: z.string().trim().max(120).optional(),
   status: z.enum(['ACTIVE', 'PENDING', 'INACTIVE']).optional(),
@@ -35,17 +43,29 @@ const QuerySchema = z.object({
   employmentType: z
     .enum(['W2_EMPLOYEE', 'CONTRACTOR_1099_INDIVIDUAL', 'CONTRACTOR_1099_BUSINESS'])
     .optional(),
+  // Pagination — optional. `cursor` is the id of the last associate
+  // from the previous page; the API skips it and returns rows after.
+  // `limit` is capped at MAX_PAGE_SIZE to bound query size.
+  cursor: z.string().uuid().optional(),
+  limit: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).optional(),
 });
 
 directoryRouter.get('/directory', VIEW, async (req, res, next) => {
   try {
     const filters = QuerySchema.parse(req.query);
+    const take = filters.limit ?? DEFAULT_PAGE_SIZE;
 
     // Pull every non-deleted associate plus the relations we need to
     // synthesize the row. `applications` ordered desc so the first one in
-    // each array is the freshest.
+    // each array is the freshest. Ordering ends with id as the
+    // tiebreaker so the cursor (id) is stable when lastName/firstName
+    // collide — without that, cursor pagination can skip or duplicate
+    // rows across boundaries.
     const associates = await prisma.associate.findMany({
-      take: 1000,
+      take,
+      ...(filters.cursor
+        ? { cursor: { id: filters.cursor }, skip: 1 }
+        : {}),
       where: {
         deletedAt: null,
         ...(filters.employmentType ? { employmentType: filters.employmentType } : {}),
@@ -120,7 +140,7 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
           take: 1,
         },
       },
-      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }, { id: 'asc' }],
     });
 
     // One open compensation row per associate ⇒ batch-fetch and index.
@@ -235,7 +255,19 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
       ? entries.filter((e) => e.status === filters.status)
       : entries;
 
-    const body = DirectoryListResponseSchema.parse({ associates: filtered });
+    // nextCursor is the id of the last associate FETCHED (not the last
+    // filtered). The cursor walks the underlying rows, not the post-
+    // filter view — if every row in this page is filtered out by
+    // status, the caller still needs to advance past them to find the
+    // next batch. Returning the last fetched id keeps the walk moving.
+    // Null when we received fewer rows than requested → end of stream.
+    const nextCursor =
+      associates.length === take ? associates[associates.length - 1]!.id : null;
+
+    const body = DirectoryListResponseSchema.parse({
+      associates: filtered,
+      nextCursor,
+    });
     res.json(body);
   } catch (err) {
     next(err);
