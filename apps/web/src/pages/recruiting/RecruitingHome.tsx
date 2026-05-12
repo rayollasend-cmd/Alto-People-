@@ -756,6 +756,8 @@ function CreateCandidateDialog({
             <Field label="Phone">
               <Input
                 type="tel"
+                inputMode="tel"
+                autoComplete="tel"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
               />

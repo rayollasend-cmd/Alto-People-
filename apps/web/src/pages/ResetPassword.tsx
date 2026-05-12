@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ChevronLeft, Lock, ShieldCheck } from 'lucide-react';
 import { ApiError, NetworkError, apiFetch } from '@/lib/api';
+import { useFocusFirstError } from '@/lib/useFocusFirstError';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
@@ -23,6 +24,7 @@ export function ResetPassword() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
+  const formRef = useFocusFirstError<HTMLFormElement>(error);
 
   const tooShort = password.length > 0 && password.length < 12;
   const mismatch = confirm.length > 0 && password !== confirm;
@@ -85,6 +87,7 @@ export function ResetPassword() {
           </div>
         ) : (
           <form
+            ref={formRef}
             onSubmit={handleSubmit}
             className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 shadow-2xl animate-zoom-in"
             noValidate

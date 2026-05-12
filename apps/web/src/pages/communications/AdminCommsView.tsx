@@ -471,6 +471,8 @@ function ComposeDialog({ open, onOpenChange, onSent }: ComposeDialogProps) {
             <Field label="Recipient phone (for SMS)">
               <Input
                 type="tel"
+                inputMode="tel"
+                autoComplete="tel"
                 value={recipientPhone}
                 onChange={(e) => setRecipientPhone(e.target.value)}
               />

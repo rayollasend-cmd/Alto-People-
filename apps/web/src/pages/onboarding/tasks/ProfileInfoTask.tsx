@@ -68,6 +68,7 @@ export function ProfileInfoTask() {
             <input
               type="text"
               required
+              autoComplete="given-name"
               value={firstName}
               onChange={(e) => setFirstName(e.target.value)}
               className={inputCls}
@@ -77,6 +78,7 @@ export function ProfileInfoTask() {
             <input
               type="text"
               required
+              autoComplete="family-name"
               value={lastName}
               onChange={(e) => setLastName(e.target.value)}
               className={inputCls}
@@ -85,6 +87,7 @@ export function ProfileInfoTask() {
           <Field label="Date of birth">
             <input
               type="date"
+              autoComplete="bday"
               value={dob}
               onChange={(e) => setDob(e.target.value)}
               className={inputCls}
@@ -93,6 +96,8 @@ export function ProfileInfoTask() {
           <Field label="Phone">
             <input
               type="tel"
+              inputMode="tel"
+              autoComplete="tel"
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               className={inputCls}
@@ -103,6 +108,7 @@ export function ProfileInfoTask() {
         <Field label="Address line 1">
           <input
             type="text"
+            autoComplete="address-line1"
             value={addressLine1}
             onChange={(e) => setAddressLine1(e.target.value)}
             className={inputCls}
@@ -111,6 +117,7 @@ export function ProfileInfoTask() {
         <Field label="Address line 2">
           <input
             type="text"
+            autoComplete="address-line2"
             value={addressLine2}
             onChange={(e) => setAddressLine2(e.target.value)}
             className={inputCls}
@@ -122,6 +129,7 @@ export function ProfileInfoTask() {
             <Field label="City">
               <input
                 type="text"
+                autoComplete="address-level2"
                 value={city}
                 onChange={(e) => setCity(e.target.value)}
                 className={inputCls}
@@ -130,6 +138,7 @@ export function ProfileInfoTask() {
           </div>
           <Field label="State">
             <select
+              autoComplete="address-level1"
               value={state}
               onChange={(e) => setState(e.target.value)}
               className={inputCls}
@@ -144,6 +153,9 @@ export function ProfileInfoTask() {
           <Field label="ZIP">
             <input
               type="text"
+              inputMode="numeric"
+              autoComplete="postal-code"
+              pattern="[0-9-]*"
               value={zip}
               onChange={(e) => setZip(e.target.value)}
               className={inputCls}

@@ -3,6 +3,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Lock, Mail, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { ApiError, NetworkError } from '@/lib/api';
+import { useFocusFirstError } from '@/lib/useFocusFirstError';
 import { Button } from '@/components/ui/Button';
 import { Field } from '@/components/ui/Field';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
@@ -96,6 +97,7 @@ export function Login() {
   };
 
   const canSubmitPassword = !!email && password.length >= 12 && !submitting;
+  const formRef = useFocusFirstError<HTMLFormElement>(error);
   const expectedCodeLength = useRecovery ? 11 : 6;
   const canSubmitMfa = code.trim().length === expectedCodeLength && !submitting;
 
@@ -104,6 +106,7 @@ export function Login() {
       <div className="w-full max-w-md">
         {step === 'password' ? (
           <form
+            ref={formRef}
             onSubmit={handlePasswordSubmit}
             className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 shadow-2xl animate-zoom-in"
             noValidate
