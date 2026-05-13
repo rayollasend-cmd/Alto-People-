@@ -14,6 +14,7 @@ import {
 } from '../../../test/db.js';
 import { resolveStoragePath } from '../../lib/storage.js';
 import { flushPendingAudits } from '../../lib/audit.js';
+import { flushPendingNotifications } from '../../lib/notify.js';
 
 const app = () => createApp();
 
@@ -274,6 +275,22 @@ describe('HR verify / reject', () => {
       where: { action: 'onboarding.task_reopened', entityId: app.id },
     });
     expect(reopen).not.toBeNull();
+
+    // In-app bell row should deeplink to the live application's checklist
+    // (not the generic /me/documents page) so the associate lands where
+    // the just-reopened task is waiting.
+    await flushPendingNotifications();
+    const assocUserRow = await prisma.user.findUniqueOrThrow({
+      where: { id: assocUser.id },
+    });
+    const bellRow = await prisma.notification.findFirst({
+      where: {
+        channel: 'IN_APP',
+        recipientUserId: assocUserRow.id,
+        category: 'documents',
+      },
+    });
+    expect(bellRow?.linkUrl).toBe(`/onboarding/me/${app.id}`);
   });
 
   it('rejecting a non-checklist doc kind does NOT rewind a task', async () => {

@@ -126,6 +126,13 @@ export interface NotifyOpts {
   html?: string;
   /** Tag for filtering in the bell ("onboarding", "documents", etc.). */
   category?: string;
+  /**
+   * Optional in-app deeplink. The topbar bell renders rows with this set
+   * as clickable — `navigate(linkUrl)` on click. Use a relative path
+   * (e.g. "/onboarding/me/<id>") not a full URL; the email template
+   * builds its own absolute link separately.
+   */
+  linkUrl?: string;
 }
 
 /**
@@ -197,6 +204,7 @@ export function notifyUser(
           subject: opts.subject,
           body: opts.body,
           category: opts.category ?? null,
+          linkUrl: opts.linkUrl ?? null,
           sentAt: new Date(),
         },
       });
@@ -250,6 +258,7 @@ export function notifyAllAdmins(
           subject: opts.subject,
           body: opts.body,
           category: opts.category ?? null,
+          linkUrl: opts.linkUrl ?? null,
           sentAt: now,
         })),
       });

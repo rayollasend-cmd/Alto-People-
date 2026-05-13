@@ -526,9 +526,15 @@ documentsRouter.post('/admin/:id/reject', MANAGE, async (req, res, next) => {
     });
     const reviewerName = user.email; // Reviewer's display name (User has no name fields today; surface email).
     const docKindLabel = updated.kind.replace(/_/g, ' ').toLowerCase();
-    const documentsUrl = liveApplicationId
-      ? `${env.APP_BASE_URL}/onboarding/me/${liveApplicationId}`
-      : `${env.APP_BASE_URL}/me/documents`;
+    // Two parallel link forms: a relative path the bell hands to
+    // react-router's navigate(), and an absolute URL the email template
+    // renders for out-of-app clicks. Both point to the same destination —
+    // onboarding checklist when there's a live application, generic
+    // documents view otherwise.
+    const associateLinkPath = liveApplicationId
+      ? `/onboarding/me/${liveApplicationId}`
+      : `/me/documents`;
+    const documentsUrl = `${env.APP_BASE_URL}${associateLinkPath}`;
     const assocTpl = documentRejectedAssociateTemplate({
       firstName: rejAssoc?.firstName ?? 'there',
       documentKind: docKindLabel,
@@ -542,6 +548,7 @@ documentsRouter.post('/admin/:id/reject', MANAGE, async (req, res, next) => {
       body: assocTpl.text,
       html: assocTpl.html,
       category: 'documents',
+      linkUrl: associateLinkPath,
     });
     // Manager copy so the associate's direct manager knows their report is
     // blocked on a re-upload — no-op if the associate has no manager assigned.
@@ -556,6 +563,10 @@ documentsRouter.post('/admin/:id/reject', MANAGE, async (req, res, next) => {
       body: mgrTpl.text,
       html: mgrTpl.html,
       category: 'documents',
+      // Land the manager on the admin documents page so they can spot
+      // the rejected row in context. The admin view groups by associate;
+      // there's no per-associate sub-route to deep-link to today.
+      linkUrl: `/documents`,
     });
 
     res.json(toRecord(updated));
