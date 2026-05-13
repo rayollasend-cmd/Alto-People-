@@ -66,6 +66,7 @@ import {
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { Stepper } from '@/components/ui/Stepper';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
 
@@ -220,7 +221,16 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated }: Props) {
           </DialogDescription>
         </DialogHeader>
 
-        <Stepper step={step} />
+        <Stepper
+          current={step}
+          steps={[
+            { label: STEP_TITLES[1] },
+            { label: STEP_TITLES[2] },
+            { label: STEP_TITLES[3] },
+            { label: STEP_TITLES[4] },
+          ]}
+          className="mb-4"
+        />
 
         <div className="min-h-[260px]">
           {step === 1 && (
@@ -316,40 +326,6 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated }: Props) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function Stepper({ step }: { step: Step }) {
-  return (
-    <ol className="flex items-center justify-between gap-2 mb-4">
-      {([1, 2, 3, 4] as Step[]).map((s) => (
-        <li
-          key={s}
-          className={cn(
-            'flex-1 flex items-center gap-2 px-2 py-1.5 rounded text-xs uppercase tracking-wide',
-            s === step
-              ? 'bg-gold/15 text-gold border border-gold/30'
-              : s < step
-              ? 'text-silver/70'
-              : 'text-silver/30'
-          )}
-        >
-          <span
-            className={cn(
-              'inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-medium',
-              s === step
-                ? 'bg-gold text-black'
-                : s < step
-                ? 'bg-silver/20 text-silver'
-                : 'bg-silver/10 text-silver/50'
-            )}
-          >
-            {s < step ? '✓' : s}
-          </span>
-          <span className="truncate">{STEP_TITLES[s]}</span>
-        </li>
-      ))}
-    </ol>
   );
 }
 

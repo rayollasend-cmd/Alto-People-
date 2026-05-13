@@ -37,16 +37,27 @@ const buttonVariants = cva(
         link: 'text-gold underline-offset-4 hover:underline p-0 h-auto active:scale-100',
       },
       size: {
-        // xs — chip-sized. Use for filter pills, segment toggles, and
-        // anywhere the button is one of many inline controls. Pairs
-        // with variant="secondary" (active) + "ghost" (inactive).
-        xs: 'h-7 px-2.5 text-xs',
-        sm: 'h-8 px-3 text-xs',
+        // Below `lg`, sizes bump up on mobile to meet HIG touch-target
+        // guidance (~44px). The smaller desktop size kicks in at `sm`
+        // (≥640px) where mouse precision makes 28-32px controls fine.
+        // Pattern: `h-{mobile} sm:h-{desktop}`.
+        //
+        // xs — chip-sized. Filter pills, segment toggles, inline controls.
+        // 36px on mobile (close enough to HIG without crowding chip rows),
+        // 28px on desktop. Pairs with variant="secondary" (active) +
+        // "outline"/"ghost" (inactive).
+        xs: 'h-9 px-3 text-xs sm:h-7 sm:px-2.5',
+        // sm — secondary actions, Cancel/Edit/row chrome. 40px mobile / 32px
+        // desktop.
+        sm: 'h-10 px-3 text-xs sm:h-8',
         md: 'h-10 px-4',
         lg: 'h-11 px-6 text-base',
         // Icon-only — square; intended for IconButton use.
         icon: 'h-10 w-10',
-        'icon-sm': 'h-8 w-8',
+        // 40×40 mobile so a thumb can hit destructive row actions (Delete,
+        // Suspend, etc.) without missing, 32×32 desktop where the row
+        // density matters more than tap forgiveness.
+        'icon-sm': 'h-10 w-10 sm:h-8 sm:w-8',
       },
     },
     defaultVariants: {

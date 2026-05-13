@@ -24,6 +24,7 @@ export * from './SectionTitle';
 export * from './SegmentedControl';
 export * from './Select';
 export * from './Skeleton';
+export * from './Stepper';
 export * from './Table';
 export * from './Tabs';
 export * from './Toaster';

@@ -168,6 +168,10 @@ export function TemplatesRail({ clientId, onManage }: Props) {
 
 function TemplateChip({ template }: { template: ShiftTemplate }) {
   const color = colorForPosition(template.position);
+  // Local isDragging state so we can ghost the source chip while a drag
+  // is in flight — mirrors CandidateBoard's kanban pattern. Native HTML5
+  // drag (not dnd-kit), so we toggle on dragStart/dragEnd manually.
+  const [isDragging, setIsDragging] = useState(false);
   const onDragStart = (e: React.DragEvent<HTMLDivElement>) => {
     e.dataTransfer.setData(TEMPLATE_MIME, template.id);
     e.dataTransfer.effectAllowed = 'copy';
@@ -175,15 +179,19 @@ function TemplateChip({ template }: { template: ShiftTemplate }) {
     // drag image rendering (Safari historically); we still gate the drop
     // on the custom mime, but the OS shows the right preview.
     e.dataTransfer.setData('text/plain', template.name);
+    setIsDragging(true);
   };
+  const onDragEnd = () => setIsDragging(false);
 
   return (
     <div
       draggable
       onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       className={cn(
         'relative rounded border bg-navy/70 hover:brightness-125 transition cursor-grab active:cursor-grabbing',
         'p-2 pl-3',
+        isDragging && 'opacity-60 ring-1 ring-gold/60',
       )}
       style={{
         backgroundColor: color.bg,
