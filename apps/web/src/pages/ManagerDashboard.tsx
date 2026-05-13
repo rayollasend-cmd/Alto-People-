@@ -169,7 +169,7 @@ export function ManagerDashboard() {
             <Calendar className="h-3 w-3" aria-hidden="true" />
             {dateLabel}
           </div>
-          <span className="inline-flex items-center gap-1 rounded-full border border-steel/40 bg-steel/15 px-2 py-0.5 text-[10px] uppercase tracking-widest text-sky">
+          <span className="inline-flex items-center gap-1 rounded-full border border-steel/60 bg-steel/20 px-2 py-0.5 text-[10px] uppercase tracking-widest text-white">
             Manager view
           </span>
         </div>

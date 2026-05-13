@@ -179,7 +179,7 @@ export function AdminDashboard() {
             {dateLabel}
           </div>
           {role && (
-            <span className="inline-flex items-center gap-1 rounded-full border border-gold/30 bg-gold/10 px-2 py-0.5 text-[10px] uppercase tracking-widest text-gold">
+            <span className="inline-flex items-center gap-1 rounded-full border border-gold/50 bg-gold/15 px-2 py-0.5 text-[10px] uppercase tracking-widest text-gold-bright">
               {ROLE_LABELS[role]}
             </span>
           )}
@@ -387,8 +387,13 @@ function ActionCard({ item }: { item: ActionItem }) {
     <Link
       to={item.to}
       className={cn(
-        'group flex flex-col rounded-lg border bg-navy p-5 transition-all',
-        'hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/20',
+        // ActionCard sits on the dashboard elevation ladder: rests at
+        // elev-1 (same as other cards in the grid) and lifts to elev-2
+        // on hover plus a 1px vertical translate so the cue compounds.
+        // Matches the rest of the system instead of inventing a one-off
+        // shadow-lg flourish.
+        'group flex flex-col rounded-lg border bg-navy p-5 elev-1 transition-all',
+        'hover:-translate-y-0.5 hover:elev-2',
         'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright focus-visible:ring-offset-2 focus-visible:ring-offset-midnight',
         tone.ring,
       )}
@@ -432,6 +437,9 @@ interface Kpi {
   value: string;
   hint?: string;
   icon: LucideIcon;
+  /** Destination route. When present, the tile becomes clickable and
+   *  lifts on hover via the Card primitive's interactive prop. */
+  to?: string;
 }
 
 function KpiSection({ kpis }: { kpis: DashboardKPIs | null }) {
@@ -467,12 +475,14 @@ function buildKpis(k: DashboardKPIs): Kpi[] {
           ? `${k.associatesClockedIn.toLocaleString()} clocked in now`
           : 'No one on the clock',
       icon: Users,
+      to: '/people',
     },
     {
       label: `Open shifts · next ${k.windowDays}d`,
       value: k.openShiftsNext30d.toLocaleString(),
       hint: k.openShiftsNext30d === 0 ? 'Schedule fully covered' : undefined,
       icon: Clock,
+      to: '/scheduling',
     },
     {
       label: 'Onboarding in flight',
@@ -482,6 +492,7 @@ function buildKpis(k: DashboardKPIs): Kpi[] {
           ? `${k.pendingI9Section2} I-9 Section 2 pending`
           : 'I-9s up to date',
       icon: ClipboardList,
+      to: '/onboarding',
     },
     {
       label: `Net paid · last ${k.windowDays}d`,
@@ -491,14 +502,19 @@ function buildKpis(k: DashboardKPIs): Kpi[] {
           ? `${fmtMoney(k.netPendingDisbursement)} queued`
           : 'No pending runs',
       icon: DollarSign,
+      to: '/payroll',
     },
   ];
 }
 
 function KpiTile({ kpi }: { kpi: Kpi }) {
   const Icon = kpi.icon;
-  return (
-    <Card className="hover:border-gold/30 transition-colors">
+  // Interactive when the tile has a destination — Card's interactive
+  // prop wires up the elev-2 hover + steel border so the affordance
+  // matches the rest of the system instead of inventing a one-off
+  // hover:border-gold/30 hint.
+  const inner = (
+    <Card interactive={Boolean(kpi.to)}>
       <CardContent className="pt-5">
         <div className="flex items-center justify-between">
           <div className="text-[10px] md:text-[11px] uppercase tracking-[0.15em] text-silver">
@@ -510,10 +526,20 @@ function KpiTile({ kpi }: { kpi: Kpi }) {
           {kpi.value}
         </div>
         {kpi.hint && (
-          <div className="text-xs text-silver/80 mt-2 truncate">{kpi.hint}</div>
+          <div className="text-xs text-silver mt-2 truncate">{kpi.hint}</div>
         )}
       </CardContent>
     </Card>
+  );
+  return kpi.to ? (
+    <Link
+      to={kpi.to}
+      className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded-lg"
+    >
+      {inner}
+    </Link>
+  ) : (
+    inner
   );
 }
 

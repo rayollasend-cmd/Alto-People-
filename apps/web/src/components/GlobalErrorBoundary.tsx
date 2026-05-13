@@ -59,7 +59,7 @@ export class GlobalErrorBoundary extends Component<{ children: ReactNode }, Stat
           <div className="flex justify-center gap-2 pt-2">
             <button
               onClick={() => window.location.reload()}
-              className="rounded-md bg-gold px-4 py-2 text-sm font-medium text-navy hover:bg-gold-bright"
+              className="btn-gold rounded-md px-4 py-2 text-sm font-medium text-navy"
             >
               Reload
             </button>

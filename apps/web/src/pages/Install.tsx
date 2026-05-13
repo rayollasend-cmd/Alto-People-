@@ -44,7 +44,7 @@ export function Install() {
           <p className="text-silver mb-6">Alto People is already installed on this device.</p>
           <Link
             to="/"
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-md bg-gold text-navy hover:bg-gold-bright transition font-medium"
+            className="btn-gold inline-flex items-center gap-2 px-4 py-2.5 rounded-md text-navy font-medium"
           >
             Open the app <ChevronRight className="h-4 w-4" />
           </Link>

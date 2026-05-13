@@ -69,7 +69,12 @@ export function DrawerHeader({ className, ...props }: React.HTMLAttributes<HTMLD
   return (
     <div
       className={cn(
-        'p-6 pr-12 border-b border-navy-secondary flex flex-col gap-1',
+        // No bottom border — the drawer's gold/15 left edge from elev-3
+        // already announces the panel's boundary, and the body's own
+        // padding gives the header its visual separation. The previous
+        // navy-secondary bottom border crossed the gold left edge at the
+        // corner and read busy.
+        'p-6 pr-12 flex flex-col gap-1',
         // Push the title clear of the notch on iOS — the close button uses the
         // same max() pattern so the two stay vertically aligned.
         'pt-[max(1.5rem,calc(env(safe-area-inset-top)+0.75rem))] pr-[max(3rem,calc(env(safe-area-inset-right)+2.25rem))]',

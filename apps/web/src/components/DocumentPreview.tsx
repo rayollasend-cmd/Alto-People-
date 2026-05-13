@@ -123,7 +123,7 @@ export function DocumentPreview({ doc, onOpenChange, actions }: DocumentPreviewP
                     </a>
                     <a
                       href={downloadDocumentUrl(doc.id)}
-                      className="inline-flex items-center gap-1.5 text-xs text-navy bg-gold hover:bg-gold-bright px-2.5 py-1 rounded font-medium transition"
+                      className="btn-gold inline-flex items-center gap-1.5 text-xs text-navy px-2.5 py-1 rounded font-medium"
                     >
                       <Download className="h-3.5 w-3.5" />
                       Download
