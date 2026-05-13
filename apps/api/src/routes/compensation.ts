@@ -92,8 +92,14 @@ function shapeBand(b: {
 
 // ----- /comp/associates/:id/records --------------------------------------
 
+// effectiveFrom accepts either a date-only `YYYY-MM-DD` (what the
+// People → Compensation → Set new rate dialog sends, via <input type="date">)
+// or a full ISO-8601 datetime (for programmatic callers). The handler
+// normalises both into a Date instance below.
 const RecordCreateSchema = z.object({
-  effectiveFrom: z.string().datetime().optional(),
+  effectiveFrom: z
+    .union([z.string().date(), z.string().datetime()])
+    .optional(),
   payType: z.enum(['HOURLY', 'SALARY']),
   amount: z.number().positive(),
   reason: z.enum([
