@@ -20,6 +20,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/Card';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -82,7 +83,7 @@ export function ClientDetail() {
   if (error) {
     return (
       <div className="max-w-3xl mx-auto">
-        <p className="text-alert">{error}</p>
+        <ErrorBanner>{error}</ErrorBanner>
       </div>
     );
   }

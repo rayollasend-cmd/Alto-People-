@@ -64,6 +64,9 @@ export function AgreementsHome() {
   );
   const [showNew, setShowNew] = useState(false);
   const [signRow, setSignRow] = useState<MyAgreement | null>(null);
+  // Track which row's action is in flight so each Button shows its own
+  // spinner. Format: `expire:<id>` or `delete:<id>`.
+  const [pendingKey, setPendingKey] = useState<string | null>(null);
 
   const refresh = () => {
     if (tab === 'all') {
@@ -258,10 +261,14 @@ export function AgreementsHome() {
                         {canManage &&
                           a.status !== 'EXPIRED' &&
                           a.status !== 'SUPERSEDED' && (
-                            <button
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              loading={pendingKey === `expire:${a.id}`}
                               onClick={async () => {
                                 if (!(await confirm({ title: 'Mark this agreement expired?', destructive: true })))
                                   return;
+                                setPendingKey(`expire:${a.id}`);
                                 try {
                                   await expireAgreement(a.id);
                                   refresh();
@@ -271,18 +278,25 @@ export function AgreementsHome() {
                                       ? err.message
                                       : 'Failed.',
                                   );
+                                } finally {
+                                  setPendingKey(null);
                                 }
                               }}
-                              className="text-xs text-silver hover:text-warning opacity-60 group-hover:opacity-100"
+                              className="text-silver hover:text-warning opacity-60 group-hover:opacity-100 group-focus-within:opacity-100"
                             >
                               Expire
-                            </button>
+                            </Button>
                           )}
                         {canManage && (
-                          <button
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            loading={pendingKey === `delete:${a.id}`}
+                            aria-label="Delete agreement"
                             onClick={async () => {
                               if (!(await confirm({ title: 'Delete this agreement record?', destructive: true })))
                                 return;
+                              setPendingKey(`delete:${a.id}`);
                               try {
                                 await deleteAgreement(a.id);
                                 refresh();
@@ -292,12 +306,14 @@ export function AgreementsHome() {
                                     ? err.message
                                     : 'Failed.',
                                 );
+                              } finally {
+                                setPendingKey(null);
                               }
                             }}
-                            className="text-silver hover:text-alert opacity-60 group-hover:opacity-100"
+                            className="text-silver hover:text-alert opacity-60 group-hover:opacity-100 group-focus-within:opacity-100"
                           >
                             <Trash2 className="h-4 w-4" />
-                          </button>
+                          </Button>
                         )}
                       </TableCell>
                     </TableRow>

@@ -242,6 +242,10 @@ function LadderDetailDrawer({
   const [data, setData] = useState<LadderDetail | null>(null);
   const [showAddLevel, setShowAddLevel] = useState(false);
   const [skillFor, setSkillFor] = useState<Level | null>(null);
+  // Per-row pending key so each delete button gets its own spinner
+  // instead of disabling the whole drawer. Format: `level:<id>` or
+  // `skill:<id>`.
+  const [pendingKey, setPendingKey] = useState<string | null>(null);
 
   const refresh = () => {
     setData(null);
@@ -300,10 +304,15 @@ function LadderDetailDrawer({
                         )}
                       </div>
                       {canManage && (
-                        <button
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          loading={pendingKey === `level:${lv.id}`}
+                          aria-label={`Delete L${lv.rank} ${lv.title}`}
                           onClick={async () => {
                             if (!(await confirm({ title: `Delete L${lv.rank} ${lv.title}?`, destructive: true })))
                               return;
+                            setPendingKey(`level:${lv.id}`);
                             try {
                               await deleteLevel(lv.id);
                               refresh();
@@ -313,12 +322,14 @@ function LadderDetailDrawer({
                                   ? err.message
                                   : 'Failed.',
                               );
+                            } finally {
+                              setPendingKey(null);
                             }
                           }}
                           className="text-silver hover:text-alert"
                         >
                           <Trash2 className="h-3 w-3" />
-                        </button>
+                        </Button>
                       )}
                     </div>
                     {lv.skills.length > 0 && (
@@ -333,8 +344,13 @@ function LadderDetailDrawer({
                               {SKILL_LEVEL_LABELS[s.minLevel]}
                             </Badge>
                             {canManage && (
-                              <button
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                loading={pendingKey === `skill:${s.id}`}
+                                aria-label={`Remove ${s.skillName}`}
                                 onClick={async () => {
+                                  setPendingKey(`skill:${s.id}`);
                                   try {
                                     await removeLevelSkill(s.id);
                                     refresh();
@@ -344,12 +360,14 @@ function LadderDetailDrawer({
                                         ? err.message
                                         : 'Failed.',
                                     );
+                                  } finally {
+                                    setPendingKey(null);
                                   }
                                 }}
                                 className="text-silver hover:text-alert"
                               >
                                 <Trash2 className="h-3 w-3" />
-                              </button>
+                              </Button>
                             )}
                           </span>
                         ))}

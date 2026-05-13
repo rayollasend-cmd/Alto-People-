@@ -15,6 +15,7 @@ import {
 import { Field, TaskShell, inputCls } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 
 type I9DocumentKind = 'ID' | 'SSN_CARD' | 'I9_SUPPORTING' | 'J1_VISA' | 'J1_DS2019';
@@ -89,7 +90,7 @@ export function I9Task() {
   if (topError) {
     return (
       <TaskShell title="I-9 verification" backTo={backTo}>
-        <p className="text-alert">{topError}</p>
+        <ErrorBanner>{topError}</ErrorBanner>
       </TaskShell>
     );
   }
@@ -271,7 +272,7 @@ function Section1Card({
             />
           </Field>
 
-          {error && <p className="text-sm text-alert">{error}</p>}
+          {error && <ErrorBanner>{error}</ErrorBanner>}
 
           <div className="flex items-center gap-3 pt-1">
             <Button type="submit" loading={submitting} disabled={submitting}>
@@ -434,7 +435,7 @@ function DocumentsCard({
                 {uploading ? 'Uploading…' : 'Take or upload photo'}
               </span>
             </label>
-            {error && <p className="text-sm text-alert mt-2">{error}</p>}
+            {error && <ErrorBanner className="mt-2">{error}</ErrorBanner>}
           </div>
         </>
       )}

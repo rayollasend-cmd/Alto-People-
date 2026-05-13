@@ -22,6 +22,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/Card';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { FormHint } from '@/components/ui/Label';
 import { Select } from '@/components/ui/Select';
@@ -135,7 +136,7 @@ export function QuickbooksSection({ clientId }: Props) {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-alert text-sm">{error}</p>
+          <ErrorBanner>{error}</ErrorBanner>
         </CardContent>
       </Card>
     );
@@ -474,7 +475,7 @@ function AccountMappingForm({
           back to placeholder names and QBO will reject the post.
         </FormHint>
         {loadError && (
-          <p className="text-xs text-alert mt-1">{loadError}</p>
+          <ErrorBanner className="mt-1">{loadError}</ErrorBanner>
         )}
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

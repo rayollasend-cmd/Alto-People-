@@ -172,7 +172,7 @@ export function AssetsHome() {
                           <button
                             onClick={() => setEditTarget(a)}
                             aria-label={`Edit ${a.label}`}
-                            className="opacity-60 group-hover:opacity-100 text-silver hover:text-white transition inline-flex items-center gap-1 text-xs"
+                            className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-white transition inline-flex items-center gap-1 text-xs"
                           >
                             <Pencil className="h-3 w-3" />
                             Edit
@@ -190,7 +190,7 @@ export function AssetsHome() {
                                 toast.error(err instanceof ApiError ? err.message : 'Failed.');
                               }
                             }}
-                            className="opacity-60 group-hover:opacity-100 text-silver hover:text-alert transition text-xs"
+                            className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
                           >
                             Delete
                           </button>

@@ -17,6 +17,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Input } from '@/components/ui/Input';
 import { Field } from '@/components/ui/Field';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -158,7 +159,7 @@ export function BranchEnrollmentDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {error && <p className="text-alert text-sm">{error}</p>}
+        {error && <ErrorBanner>{error}</ErrorBanner>}
         {loading || !data ? (
           <Skeleton className="h-32" />
         ) : (

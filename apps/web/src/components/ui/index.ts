@@ -20,6 +20,7 @@ export * from './Input';
 export * from './Label';
 export * from './MetricCard';
 export * from './PageHeader';
+export * from './SectionTitle';
 export * from './SegmentedControl';
 export * from './Select';
 export * from './Skeleton';

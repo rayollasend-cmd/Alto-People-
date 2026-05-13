@@ -131,7 +131,7 @@ export function LearningPathsHome() {
                       {canManage && (
                         <button
                           onClick={() => setDeleteTarget(p)}
-                          className="opacity-60 group-hover:opacity-100 text-silver hover:text-alert transition text-xs"
+                          className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
                         >
                           Delete
                         </button>

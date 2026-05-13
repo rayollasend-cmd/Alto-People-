@@ -434,7 +434,8 @@ function DetailDrawer({
             />
             <Button
               size="sm"
-              disabled={busy || !signature.trim()}
+              loading={busy}
+              disabled={!signature.trim()}
               onClick={async () => {
                 setBusy(true);
                 try {
@@ -465,7 +466,8 @@ function DetailDrawer({
             <Button
               size="sm"
               variant="destructive"
-              disabled={busy || !rescindReason.trim()}
+              loading={busy}
+              disabled={!rescindReason.trim()}
               onClick={async () => {
                 setBusy(true);
                 try {
