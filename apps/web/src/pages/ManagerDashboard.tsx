@@ -434,19 +434,19 @@ function KpiTile({
   hint?: string;
 }) {
   return (
-    <Card className="hover:border-gold/30 transition-colors">
+    <Card className="border-l-2 border-l-gold/40">
       <CardContent className="pt-5">
         <div className="flex items-center justify-between">
           <div className="text-[10px] md:text-[11px] uppercase tracking-[0.15em] text-silver">
             {label}
           </div>
-          <Icon className="h-3.5 w-3.5 text-silver/70" aria-hidden="true" />
+          <Icon className="h-3.5 w-3.5 text-gold/70" aria-hidden="true" />
         </div>
-        <div className="font-display text-3xl md:text-[2rem] text-white mt-3 leading-none tabular-nums">
+        <div className="font-display text-3xl md:text-[2rem] text-gold-bright mt-3 leading-none tabular-nums">
           {value}
         </div>
         {hint && (
-          <div className="text-xs text-silver/80 mt-2 truncate">{hint}</div>
+          <div className="text-xs text-silver mt-2 truncate">{hint}</div>
         )}
       </CardContent>
     </Card>

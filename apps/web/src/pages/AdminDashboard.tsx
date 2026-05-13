@@ -14,6 +14,7 @@ import {
   FileSearch,
   FileText,
   ShieldCheck,
+  Sparkles,
   Users,
   Wallet,
   type LucideIcon,
@@ -193,6 +194,8 @@ export function AdminDashboard() {
         </p>
       </header>
 
+      <WelcomeCard greetingName={greetingName} />
+
       {error && <ErrorBanner>{error}</ErrorBanner>}
 
       <ActionRequiredSection
@@ -209,6 +212,70 @@ export function AdminDashboard() {
 
       {canSeeAudit && <ActivityFeed entries={activity} />}
     </div>
+  );
+}
+
+/* ========================== Welcome (first login) ======================== */
+
+const WELCOME_DISMISSED_KEY = 'alto.dashboard.welcomeDismissed';
+
+/**
+ * One-time welcome card surfaced on the first session a user lands on
+ * the admin dashboard. Establishes the centre-of-gravity layout
+ * (Action required → KPIs → Onboarding pipeline → Activity feed) so
+ * the user has a mental map of the page on day one. Dismissed
+ * forever once the user clicks ✕ — there's no global "show tour
+ * again" UI, intentionally, because re-tutorialising daily users is
+ * a confidence anti-signal.
+ */
+function WelcomeCard({ greetingName }: { greetingName: string }) {
+  const [dismissed, setDismissed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    try {
+      return window.localStorage.getItem(WELCOME_DISMISSED_KEY) === '1';
+    } catch {
+      return true;
+    }
+  });
+
+  if (dismissed) return null;
+
+  const dismiss = () => {
+    setDismissed(true);
+    try {
+      window.localStorage.setItem(WELCOME_DISMISSED_KEY, '1');
+    } catch {
+      /* private mode etc. — re-show next session is fine */
+    }
+  };
+
+  return (
+    <Card className="border-l-2 border-l-gold/40 relative overflow-hidden">
+      <CardContent className="pt-5">
+        <button
+          type="button"
+          onClick={dismiss}
+          aria-label="Dismiss welcome"
+          className="absolute top-2 right-2 grid place-items-center h-8 w-8 rounded-md text-silver/70 hover:text-white hover:bg-navy-secondary/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+        >
+          <span aria-hidden="true">×</span>
+        </button>
+        <div className="text-[10px] uppercase tracking-widest text-gold flex items-center gap-1.5">
+          <Sparkles className="h-3 w-3" aria-hidden="true" />
+          Welcome
+        </div>
+        <h2 className="font-display text-xl md:text-2xl text-white mt-1 leading-tight">
+          You're set up, {greetingName}.
+        </h2>
+        <p className="text-sm text-silver mt-2 max-w-2xl leading-relaxed">
+          This is your home base. Items needing your attention are pinned
+          at the top, followed by today's workforce metrics. Click any
+          tile to drill in. Drag a sidebar item into the topbar's
+          command palette (<kbd className="px-1 py-0.5 rounded border border-navy-secondary text-[10px] font-mono">⌘K</kbd>) to jump anywhere in two
+          keystrokes.
+        </p>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -509,20 +576,24 @@ function buildKpis(k: DashboardKPIs): Kpi[] {
 
 function KpiTile({ kpi }: { kpi: Kpi }) {
   const Icon = kpi.icon;
-  // Interactive when the tile has a destination — Card's interactive
-  // prop wires up the elev-2 hover + steel border so the affordance
-  // matches the rest of the system instead of inventing a one-off
-  // hover:border-gold/30 hint.
+  // Brand-anointed hero metric. The numeric value renders in
+  // gold-bright with a 2px gold/40 left accent on the card so the
+  // dashboard has a clear centre of gravity — every other surface in
+  // the system stays white/silver, so the gold here reads as "this is
+  // the metric that matters." Interactive carries the elev-2 hover.
   const inner = (
-    <Card interactive={Boolean(kpi.to)}>
+    <Card
+      interactive={Boolean(kpi.to)}
+      className="border-l-2 border-l-gold/40 group-hover:border-l-gold transition-colors"
+    >
       <CardContent className="pt-5">
         <div className="flex items-center justify-between">
           <div className="text-[10px] md:text-[11px] uppercase tracking-[0.15em] text-silver">
             {kpi.label}
           </div>
-          <Icon className="h-3.5 w-3.5 text-silver/70" aria-hidden="true" />
+          <Icon className="h-3.5 w-3.5 text-gold/70" aria-hidden="true" />
         </div>
-        <div className="font-display text-3xl md:text-[2rem] text-white mt-3 leading-none tabular-nums">
+        <div className="font-display text-3xl md:text-[2rem] text-gold-bright mt-3 leading-none tabular-nums">
           {kpi.value}
         </div>
         {kpi.hint && (
@@ -534,7 +605,7 @@ function KpiTile({ kpi }: { kpi: Kpi }) {
   return kpi.to ? (
     <Link
       to={kpi.to}
-      className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded-lg"
+      className="group block focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded-lg"
     >
       {inner}
     </Link>
