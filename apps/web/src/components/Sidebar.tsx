@@ -347,7 +347,7 @@ interface SidebarAccountProps {
 
 function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
   const { user, signOut } = useAuth();
-  const { theme, setTheme } = useTheme();
+  const { preference, theme, setTheme } = useTheme();
   const { density, setDensity } = useDensity();
   const navigate = useNavigate();
   const [signingOut, setSigningOut] = useState(false);
@@ -441,19 +441,23 @@ function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
           </DropdownMenuItem>
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>
-              {theme === 'dark' ? (
+              {preference === 'system' ? (
+                <Monitor className="h-4 w-4" />
+              ) : theme === 'dark' ? (
                 <Moon className="h-4 w-4" />
               ) : (
                 <Sun className="h-4 w-4" />
               )}
               Appearance
-              <span className="ml-auto text-xs text-silver capitalize">{theme}</span>
+              <span className="ml-auto text-xs text-silver capitalize">
+                {preference}
+              </span>
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent>
               <DropdownMenuItem onSelect={() => setTheme('light')}>
                 <Sun className="h-4 w-4" />
                 Light
-                {theme === 'light' && (
+                {preference === 'light' && (
                   <span className="ml-auto text-[10px] uppercase tracking-widest text-gold">
                     Active
                   </span>
@@ -462,17 +466,25 @@ function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
               <DropdownMenuItem onSelect={() => setTheme('dark')}>
                 <Moon className="h-4 w-4" />
                 Dark
-                {theme === 'dark' && (
+                {preference === 'dark' && (
                   <span className="ml-auto text-[10px] uppercase tracking-widest text-gold">
                     Active
                   </span>
                 )}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem disabled>
+              <DropdownMenuItem onSelect={() => setTheme('system')}>
                 <Monitor className="h-4 w-4" />
                 System
-                <span className="ml-auto text-[10px] text-silver/60">Soon</span>
+                {preference === 'system' ? (
+                  <span className="ml-auto text-[10px] uppercase tracking-widest text-gold">
+                    Active
+                  </span>
+                ) : (
+                  <span className="ml-auto text-[10px] text-silver/60 capitalize">
+                    {theme}
+                  </span>
+                )}
               </DropdownMenuItem>
             </DropdownMenuSubContent>
           </DropdownMenuSub>
