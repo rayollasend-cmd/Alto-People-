@@ -1899,7 +1899,7 @@ function AssignDialog({
                 {matches.length > 0 && (
                   <ul
                     role="listbox"
-                    className="mt-1 max-h-56 overflow-y-auto rounded-md border border-navy-secondary bg-navy shadow-xl"
+                    className="mt-1 max-h-56 overflow-y-auto rounded-md border border-navy-secondary bg-navy elev-3"
                   >
                     {matches.map((a, i) => (
                       <li

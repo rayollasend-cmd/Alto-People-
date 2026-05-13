@@ -99,7 +99,7 @@ export function TemplatesRail({ clientId, onManage }: Props) {
 
   return (
     <aside
-      className="fixed right-0 top-20 bottom-4 w-64 z-30 rounded-l-md border border-r-0 border-navy-secondary bg-navy/95 backdrop-blur shadow-xl flex flex-col no-print"
+      className="fixed right-0 top-20 bottom-4 w-64 z-30 rounded-l-md border border-r-0 border-navy-secondary bg-navy/95 backdrop-blur elev-3 flex flex-col no-print"
       aria-label="Templates"
     >
       <div className="flex items-center gap-2 px-3 py-2 border-b border-navy-secondary">

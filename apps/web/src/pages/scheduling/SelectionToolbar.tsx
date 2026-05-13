@@ -152,7 +152,7 @@ export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
 
   return (
     <div className="fixed left-1/2 -translate-x-1/2 z-40 no-print bottom-[max(1.5rem,calc(env(safe-area-inset-bottom)+0.5rem))]">
-      <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-navy border border-gold/40 shadow-2xl">
+      <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-navy border border-gold/40 elev-3">
         <CheckCircle2 className="h-4 w-4 text-gold" />
         <span className="text-sm text-white tabular-nums">
           {selected.length} selected

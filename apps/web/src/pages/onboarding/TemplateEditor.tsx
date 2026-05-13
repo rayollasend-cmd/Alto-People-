@@ -31,13 +31,9 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
-import { Input } from '@/components/ui/Input';
+import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
-
-const TEXTAREA_CX =
-  'w-full rounded-md border border-navy-secondary bg-navy-secondary/40 text-white px-3 py-2 text-sm ' +
-  'focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold';
 
 const TRACK_OPTIONS: Array<{ value: OnboardingTrack; label: string }> = [
   { value: 'STANDARD', label: 'Standard' },
@@ -412,12 +408,11 @@ export function TemplateEditor() {
                 </Field>
                 <Field label="Description" className="md:col-span-2">
                   {(p) => (
-                    <textarea
+                    <Textarea
                       value={t.description ?? ''}
                       onChange={(e) => updateTask(i, { description: e.target.value })}
                       rows={2}
                       maxLength={500}
-                      className={TEXTAREA_CX}
                       placeholder="What the associate should know about this step (optional)"
                       {...p}
                     />

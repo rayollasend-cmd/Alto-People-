@@ -697,7 +697,7 @@ function TimeChip({
       }}
       className={cn(
         'rounded border transition-colors hover:brightness-125 overflow-hidden',
-        isDragging && 'shadow-2xl ring-2 ring-gold/60 opacity-90',
+        isDragging && 'elev-3 ring-2 ring-gold/60 opacity-90',
         isResizing && 'ring-2 ring-gold/70',
         isSelected && 'ring-2 ring-gold ring-offset-1 ring-offset-navy',
         isMoving && 'opacity-50',

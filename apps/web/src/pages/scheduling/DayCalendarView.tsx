@@ -483,7 +483,7 @@ function DayShiftChip({
       }}
       className={cn(
         'rounded border transition-colors hover:brightness-125',
-        isDragging && 'shadow-2xl ring-2 ring-gold/60 opacity-90',
+        isDragging && 'elev-3 ring-2 ring-gold/60 opacity-90',
         resizeDeltaPx !== null && 'ring-2 ring-gold/70'
       )}
       onPointerEnter={hoverHandlers.onPointerEnter}
