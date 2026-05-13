@@ -27,6 +27,7 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Field,
   Input,
   PageHeader,
@@ -104,7 +105,7 @@ export function WorkflowsHome() {
         }
       />
 
-      {error && <p role="alert" className="text-sm text-alert">{error}</p>}
+      {error && <ErrorBanner>{error}</ErrorBanner>}
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
         <TabsList>
@@ -515,7 +516,7 @@ function DefinitionDrawer({
             )}
           </div>
 
-          {error && <p role="alert" className="text-sm text-alert">{error}</p>}
+          {error && <ErrorBanner>{error}</ErrorBanner>}
         </div>
       </DrawerBody>
       <DrawerFooter className="justify-between">

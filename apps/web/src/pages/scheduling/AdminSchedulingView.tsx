@@ -988,13 +988,15 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="xs"
               onClick={() => setWeekStart(startOfWeekMonday(new Date()))}
-              className="px-3 py-1 text-xs uppercase tracking-wider text-silver hover:text-white border border-navy-secondary rounded-md"
+              className="uppercase tracking-wider"
             >
               Today
-            </button>
+            </Button>
             <Button
               variant="ghost"
               size="sm"
@@ -1065,17 +1067,19 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="xs"
               onClick={() => {
                 const t = new Date();
                 t.setHours(0, 0, 0, 0);
                 setDayAnchor(t);
               }}
-              className="px-3 py-1 text-xs uppercase tracking-wider text-silver hover:text-white border border-navy-secondary rounded-md"
+              className="uppercase tracking-wider"
             >
               Today
-            </button>
+            </Button>
             <Button
               variant="ghost"
               size="sm"
@@ -1108,18 +1112,20 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="xs"
               onClick={() => {
                 const t = new Date();
                 t.setDate(1);
                 t.setHours(0, 0, 0, 0);
                 setMonthAnchor(t);
               }}
-              className="px-3 py-1 text-xs uppercase tracking-wider text-silver hover:text-white border border-navy-secondary rounded-md"
+              className="uppercase tracking-wider"
             >
               This month
-            </button>
+            </Button>
             <Button
               variant="ghost"
               size="sm"

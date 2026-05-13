@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronRight, Download, Filter, RefreshCw, Search } from 'lucide-react';
+import { ChevronRight, Download, FileSearch, Filter, RefreshCw, Search } from 'lucide-react';
 import type { AuditSearchEntry } from '@alto-people/shared';
 import {
   auditCsvUrl,
@@ -15,6 +15,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
@@ -131,7 +132,7 @@ export function AuditHome() {
       <Card className="mb-4">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
-            <Filter className="h-4 w-4 text-gold" />
+            <Filter className="h-4 w-4 text-silver/80" />
             Filters
           </CardTitle>
         </CardHeader>
@@ -251,9 +252,17 @@ export function AuditHome() {
             </div>
           )}
           {entries && entries.length === 0 && !loading && (
-            <p className="text-sm text-silver p-6 text-center">
-              No audit rows match these filters.
-            </p>
+            <EmptyState
+              icon={FileSearch}
+              title="No audit rows match these filters"
+              description="Loosen the date range, clear the entity-type filter, or reset the search to see recent activity."
+              action={
+                <Button variant="ghost" onClick={reset}>
+                  <RefreshCw className="h-4 w-4" />
+                  Reset filters
+                </Button>
+              }
+            />
           )}
           {entries && entries.length > 0 && (
             <div className="divide-y divide-navy-secondary">

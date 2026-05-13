@@ -35,6 +35,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -133,8 +134,9 @@ export function HrCasesHome() {
         </div>
         <div className="flex gap-2">
           {canManage && tab === 'queue' && (
-            <select
-              className="text-xs bg-midnight border border-navy-secondary rounded p-1.5 text-white"
+            <Select
+              size="sm"
+              aria-label="Filter by status"
               value={statusFilter}
               onChange={(e) =>
                 setStatusFilter(e.target.value as CaseStatus | 'ALL')
@@ -146,7 +148,7 @@ export function HrCasesHome() {
                   {STATUS_LABELS[s]}
                 </option>
               ))}
-            </select>
+            </Select>
           )}
           <Button onClick={() => setShowNew(true)}>
             <Plus className="mr-2 h-4 w-4" /> New case

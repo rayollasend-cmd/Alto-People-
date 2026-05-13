@@ -104,14 +104,19 @@ export function CandidateBoard({
 
   return (
     <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-      <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
+      {/* Horizontal pipeline: snap-x lets a swipe on mobile lock each
+          stage column to the viewport edge instead of stranding two half-
+          columns. snap-none on sm so desktop drag-and-drop isn't fighting
+          the snap behavior mid-drag. */}
+      <div className="flex gap-3 overflow-x-auto snap-x snap-mandatory pb-2 -mx-1 px-1 sm:snap-none">
         {STAGES_ORDER.map((stage) => (
-          <Column
-            key={stage}
-            stage={stage}
-            candidates={grouped[stage]}
-            pendingId={pendingId}
-          />
+          <div key={stage} className="snap-start">
+            <Column
+              stage={stage}
+              candidates={grouped[stage]}
+              pendingId={pendingId}
+            />
+          </div>
         ))}
       </div>
     </DndContext>

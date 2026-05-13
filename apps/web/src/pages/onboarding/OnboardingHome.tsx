@@ -5,7 +5,7 @@ import { useAuth } from '@/lib/auth';
 import { listApplications } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ApplicationsList } from './ApplicationsList';
 
@@ -51,11 +51,20 @@ function AssociateRedirect() {
   }
 
   if (applicationId === undefined) {
+    // Mirrors the AssociateChecklist shape we're about to redirect into:
+    // hero greeting + subtitle, a progress card, then a stack of task
+    // rows. Keeps the redirect transition from feeling like a layout
+    // shift even if the redirect resolves slowly.
     return (
-      <div className="max-w-2xl mx-auto">
-        <PageHeader title="Onboarding" />
-        <Skeleton className="h-8 w-48 mb-4" />
-        <SkeletonRows count={4} rowHeight="h-16" />
+      <div className="max-w-3xl mx-auto">
+        <Skeleton className="h-9 w-64 mb-2" />
+        <Skeleton className="h-4 w-80 mb-6" />
+        <Skeleton className="h-28 mb-6 rounded-lg" />
+        <div className="space-y-2.5">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-14 rounded-lg" />
+          ))}
+        </div>
       </div>
     );
   }

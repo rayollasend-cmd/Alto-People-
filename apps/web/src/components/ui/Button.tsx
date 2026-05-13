@@ -37,6 +37,10 @@ const buttonVariants = cva(
         link: 'text-gold underline-offset-4 hover:underline p-0 h-auto active:scale-100',
       },
       size: {
+        // xs — chip-sized. Use for filter pills, segment toggles, and
+        // anywhere the button is one of many inline controls. Pairs
+        // with variant="secondary" (active) + "ghost" (inactive).
+        xs: 'h-7 px-2.5 text-xs',
         sm: 'h-8 px-3 text-xs',
         md: 'h-10 px-4',
         lg: 'h-11 px-6 text-base',

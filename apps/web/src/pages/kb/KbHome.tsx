@@ -139,29 +139,26 @@ export function KbHome() {
             />
           </div>
           {categories.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              <button
+            <div className="flex flex-wrap gap-1.5">
+              <Button
+                variant={category === '' ? 'secondary' : 'outline'}
+                size="xs"
                 onClick={() => setCategory('')}
-                className={`text-xs px-2 py-1 rounded border ${
-                  category === ''
-                    ? 'bg-navy-tertiary border-steel text-white'
-                    : 'border-navy-secondary text-silver hover:text-white'
-                }`}
+                aria-pressed={category === ''}
               >
                 All
-              </button>
+              </Button>
               {categories.map((c) => (
-                <button
+                <Button
                   key={c.category}
+                  variant={category === c.category ? 'secondary' : 'outline'}
+                  size="xs"
                   onClick={() => setCategory(c.category)}
-                  className={`text-xs px-2 py-1 rounded border ${
-                    category === c.category
-                      ? 'bg-navy-tertiary border-steel text-white'
-                      : 'border-navy-secondary text-silver hover:text-white'
-                  }`}
+                  aria-pressed={category === c.category}
                 >
-                  {c.category} <span className="text-silver">{c.count}</span>
-                </button>
+                  {c.category}
+                  <span className="ml-1 text-silver/70 tabular-nums">{c.count}</span>
+                </Button>
               ))}
             </div>
           )}

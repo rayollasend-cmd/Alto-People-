@@ -461,14 +461,17 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
         </TabsContent>
         <TabsContent value="runs" className="mt-5">
 
-      <div className="-mx-2 mb-5 flex gap-2 overflow-x-auto px-2 pb-1 sm:mx-0 sm:flex-wrap sm:px-0 sm:pb-0">
+      {/* snap-x snap-mandatory locks each chip to a scroll-stop on
+          mobile so a flick doesn't leave a chip half-clipped at the
+          edge — feels like a deliberate rail instead of a free scroller. */}
+      <div className="-mx-2 mb-5 flex gap-2 overflow-x-auto snap-x snap-mandatory px-2 pb-1 sm:mx-0 sm:flex-wrap sm:px-0 sm:pb-0 sm:snap-none">
         {STATUS_FILTERS.map((f) => (
           <button
             key={f.value}
             type="button"
             onClick={() => setFilter(f.value)}
             className={cn(
-              'shrink-0 rounded-md border px-2.5 py-1.5 text-xs transition-colors sm:px-3 sm:text-sm',
+              'shrink-0 snap-start rounded-md border px-2.5 py-1.5 text-xs transition-colors sm:px-3 sm:text-sm',
               'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
               filter === f.value
                 ? 'border-gold text-gold bg-gold/10'

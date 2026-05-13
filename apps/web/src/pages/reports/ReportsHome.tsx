@@ -359,21 +359,23 @@ function ReportBuilder({
         </div>
         <div>
           <Label>Columns ({columns.length} selected)</Label>
-          <div className="mt-2 max-h-40 overflow-y-auto flex flex-wrap gap-2 p-2 border border-navy-secondary rounded-md bg-navy-secondary/20">
-            {allColumns.map((c) => (
-              <button
-                key={c}
-                type="button"
-                onClick={() => toggleColumn(c)}
-                className={`px-2 py-1 rounded text-xs font-mono border transition ${
-                  columns.includes(c)
-                    ? 'bg-cyan-600/30 border-cyan-500 text-white'
-                    : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
-                }`}
-              >
-                {c}
-              </button>
-            ))}
+          <div className="mt-2 max-h-40 overflow-y-auto flex flex-wrap gap-1.5 p-2 border border-navy-secondary rounded-md bg-navy-secondary/20">
+            {allColumns.map((c) => {
+              const selected = columns.includes(c);
+              return (
+                <Button
+                  key={c}
+                  type="button"
+                  variant={selected ? 'secondary' : 'outline'}
+                  size="xs"
+                  onClick={() => toggleColumn(c)}
+                  aria-pressed={selected}
+                  className="font-mono"
+                >
+                  {c}
+                </Button>
+              );
+            })}
           </div>
         </div>
 

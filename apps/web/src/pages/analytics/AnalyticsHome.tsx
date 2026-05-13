@@ -2,11 +2,13 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Activity,
+  AlertTriangle,
   Building2,
   Calendar,
   ClipboardList,
   DollarSign,
   Download,
+  RefreshCw,
   ShieldCheck,
 } from 'lucide-react';
 import type { DashboardKPIs } from '@alto-people/shared';
@@ -27,6 +29,7 @@ import type { DonutDatum } from '@/components/ui/DonutChart';
 const DonutChart = lazy(() =>
   import('@/components/ui/DonutChart').then((m) => ({ default: m.DonutChart })),
 );
+import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -76,6 +79,7 @@ export function AnalyticsHome() {
   const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [days, setDays] = useState<WindowDays>(30);
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,7 +94,7 @@ export function AnalyticsHome() {
     return () => {
       cancelled = true;
     };
-  }, [days]);
+  }, [days, reloadTick]);
 
   const downloadCsv = () => {
     if (!kpis) return;
@@ -146,6 +150,27 @@ export function AnalyticsHome() {
 
       {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
 
+      {error && !kpis ? (
+        // Hard-error empty state: the section skeletons would otherwise
+        // spin forever with no path forward. Pair with the banner above
+        // (which carries the upstream message) and give a one-click retry.
+        <Card>
+          <CardContent className="py-6">
+            <EmptyState
+              icon={AlertTriangle}
+              title="Couldn't load analytics"
+              description="The KPI service returned an error. Try again — if it persists, check audit / status."
+              action={
+                <Button variant="ghost" onClick={() => setReloadTick((t) => t + 1)}>
+                  <RefreshCw className="h-4 w-4" />
+                  Try again
+                </Button>
+              }
+            />
+          </CardContent>
+        </Card>
+      ) : (
+        <>
       <Section
         title="Workforce"
         icon={Building2}
@@ -185,7 +210,7 @@ export function AnalyticsHome() {
             />
           </div>
         ) : (
-          <SkeletonGrid />
+          <SkeletonGrid count={1} />
         )}
       </Section>
 
@@ -245,7 +270,7 @@ export function AnalyticsHome() {
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-base">
-                    <ClipboardList className="h-4 w-4 text-gold" />
+                    <ClipboardList className="h-4 w-4 text-silver/80" />
                     Application status breakdown
                   </CardTitle>
                 </CardHeader>
@@ -261,9 +286,17 @@ export function AnalyticsHome() {
             )}
           </>
         ) : (
-          <SkeletonGrid count={3} />
+          // Three KPI tiles + the donut placeholder — without the
+          // chart skeleton the page height jumps ~280px when data
+          // lands and the donut renders.
+          <>
+            <SkeletonGrid count={3} />
+            <Skeleton className="h-64 mt-4 rounded-lg" />
+          </>
         )}
       </Section>
+        </>
+      )}
 
       <p className="text-xs text-silver/60 mt-8">
         <Activity className="h-3 w-3 inline mr-1 -mt-0.5" />
@@ -284,7 +317,7 @@ function Section({ title, icon: Icon, description, children }: SectionProps) {
   return (
     <section className="mb-6">
       <div className="flex items-center gap-2 mb-3">
-        <Icon className="h-4 w-4 text-gold" aria-hidden="true" />
+        <Icon className="h-4 w-4 text-silver/80" aria-hidden="true" />
         <h2 className="font-display text-xl text-white">{title}</h2>
       </div>
       {description && <p className="text-xs text-silver mb-3">{description}</p>}
