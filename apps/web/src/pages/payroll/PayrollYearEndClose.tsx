@@ -78,9 +78,15 @@ export function PayrollYearEndClose() {
 
       {data && (
         <>
+          {/* Headline banner: a tinted background gives the status card
+              structure on top of the page so the readiness state reads
+              at-a-glance, and the saturated text/icon punches off the
+              tint instead of competing with a solid 2px border. */}
           <Card
-            className={`mb-4 border-2 ${
-              allReady ? 'border-success' : 'border-warning'
+            className={`mb-4 border ${
+              allReady
+                ? 'border-success/40 bg-success/10'
+                : 'border-warning/40 bg-warning/10'
             }`}
           >
             <CardContent className="py-4 text-sm">
@@ -107,20 +113,31 @@ export function PayrollYearEndClose() {
           <ul className="space-y-2">
             {data.checks.map((c) => (
               <li key={c.key}>
-                <Card>
+                {/* Done rows get a subtle success ring on the left so the
+                    list reads as a graded checklist: tinted-+-saturated
+                    rows on top of plain-card open rows. Otherwise every
+                    row was navy/silver and the only signal was the
+                    icon. */}
+                <Card
+                  className={
+                    c.done
+                      ? 'border-success/30 bg-success/[0.04]'
+                      : 'border-navy-secondary'
+                  }
+                >
                   <CardContent className="flex items-start gap-3 py-3 text-sm">
                     {c.done ? (
                       <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-success" />
                     ) : (
-                      <Circle className="mt-0.5 h-5 w-5 shrink-0 text-silver/40" />
+                      <Circle className="mt-0.5 h-5 w-5 shrink-0 text-silver/50" />
                     )}
                     <div className="flex-1">
                       <div
-                        className={`font-medium ${c.done ? 'text-success' : 'text-silver'}`}
+                        className={`font-medium ${c.done ? 'text-success' : 'text-white'}`}
                       >
                         {c.label}
                       </div>
-                      <div className="text-xs text-silver/60 mt-0.5">{c.detail}</div>
+                      <div className="text-xs text-silver mt-0.5">{c.detail}</div>
                     </div>
                     {!c.done && (
                       <Link
@@ -136,20 +153,26 @@ export function PayrollYearEndClose() {
             ))}
 
             <li>
-              <Card>
+              <Card
+                className={
+                  distributedConfirmed
+                    ? 'border-success/30 bg-success/[0.04]'
+                    : 'border-navy-secondary'
+                }
+              >
                 <CardContent className="flex items-start gap-3 py-3 text-sm">
                   {distributedConfirmed ? (
                     <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-success" />
                   ) : (
-                    <Circle className="mt-0.5 h-5 w-5 shrink-0 text-silver/40" />
+                    <Circle className="mt-0.5 h-5 w-5 shrink-0 text-silver/50" />
                   )}
                   <div className="flex-1">
                     <div
-                      className={`font-medium ${distributedConfirmed ? 'text-success' : 'text-silver'}`}
+                      className={`font-medium ${distributedConfirmed ? 'text-success' : 'text-white'}`}
                     >
                       Recipient copies sent
                     </div>
-                    <div className="text-xs text-silver/60 mt-0.5">
+                    <div className="text-xs text-silver mt-0.5">
                       W-2 Copy B/C/2 to employees and 1099 Copy B/2 to recipients (mail or
                       portal). Manual confirm — distribution isn't tracked in the data
                       model.

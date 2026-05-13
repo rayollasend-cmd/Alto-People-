@@ -678,22 +678,24 @@ function TaxFormsWorkflowSteps({ rows }: { rows: TaxForm[] | null }) {
     },
   ];
   return (
-    <ol className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:grid-cols-5">
+    <ol className="grid grid-cols-1 gap-2 rounded-lg border border-navy-secondary bg-navy-secondary/30 p-3 sm:grid-cols-5">
       {steps.map((s) => (
         <li
           key={s.key}
-          className={`rounded-md border bg-white p-2 text-xs ${
-            s.done ? 'border-success ring-1 ring-success' : 'border-slate-200'
+          className={`rounded-md border p-2 text-xs ${
+            s.done
+              ? 'border-success/40 bg-success/10 ring-1 ring-success/30'
+              : 'border-navy-secondary bg-navy'
           }`}
           title={s.hint}
         >
           <div
-            className={`font-semibold ${s.done ? 'text-success' : 'text-slate-700'}`}
+            className={`font-semibold ${s.done ? 'text-success' : 'text-silver'}`}
           >
             {s.done ? '✓ ' : ''}
             {s.label}
           </div>
-          <div className="mt-0.5 text-slate-500 leading-snug">{s.hint}</div>
+          <div className="mt-0.5 text-silver leading-snug">{s.hint}</div>
         </li>
       ))}
     </ol>

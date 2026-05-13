@@ -368,7 +368,7 @@ function ReportDrawer({
               </span>
             </div>
             {report.sla.isOverdue && (
-              <div className="rounded border border-alert/40 bg-alert/30 p-3 text-sm text-alert">
+              <div className="rounded border border-alert/40 bg-alert/15 p-3 text-sm text-alert">
                 <div className="flex items-start gap-2">
                   <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                   <div>
@@ -452,9 +452,9 @@ function ReportDrawer({
                       key={u.id}
                       className={`rounded p-3 text-sm ${
                         u.internalOnly
-                          ? 'bg-warning/20 border border-warning/30'
+                          ? 'bg-warning/10 border border-warning/30'
                           : u.isFromReporter
-                          ? 'bg-steel/30 border border-steel/30'
+                          ? 'bg-steel/15 border border-steel/30'
                           : 'bg-navy-secondary'
                       }`}
                     >
