@@ -34,6 +34,7 @@ import { Input, Textarea } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip';
 import {
   Table,
   TableBody,
@@ -324,19 +325,34 @@ function GarnishmentRow({
         <TableCell className="text-right">
           <div className="flex items-center justify-end gap-1">
             {g.status === 'ACTIVE' && (
-              <Button variant="ghost" size="icon-sm" onClick={onSuspend} aria-label="Suspend garnishment">
-                <Pause className="h-3.5 w-3.5" />
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="icon-sm" onClick={onSuspend} aria-label="Suspend garnishment">
+                    <Pause className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Suspend</TooltipContent>
+              </Tooltip>
             )}
             {g.status === 'SUSPENDED' && (
-              <Button variant="ghost" size="icon-sm" onClick={onResume} aria-label="Resume garnishment">
-                <Play className="h-3.5 w-3.5" />
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="icon-sm" onClick={onResume} aria-label="Resume garnishment">
+                    <Play className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Resume</TooltipContent>
+              </Tooltip>
             )}
             {(g.status === 'ACTIVE' || g.status === 'SUSPENDED') && (
-              <Button variant="ghost" size="icon-sm" onClick={onTerminate} aria-label="Terminate garnishment">
-                <Square className="h-3.5 w-3.5" />
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="icon-sm" onClick={onTerminate} aria-label="Terminate garnishment">
+                    <Square className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Terminate</TooltipContent>
+              </Tooltip>
             )}
           </div>
         </TableCell>

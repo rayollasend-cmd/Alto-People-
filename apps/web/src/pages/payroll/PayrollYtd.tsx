@@ -72,8 +72,9 @@ export function PayrollYtd() {
               className="w-24"
               aria-label="Tax year"
             />
-            <Button variant="ghost" onClick={() => window.print()}>
-              <Printer className="mr-1 h-4 w-4" /> Print
+            <Button variant="secondary" onClick={() => window.print()}>
+              <Printer className="h-4 w-4" />
+              Print
             </Button>
           </div>
         }

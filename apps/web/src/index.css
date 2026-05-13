@@ -47,8 +47,12 @@
   /* Gold dropped a step so it passes AA on white. */
   --color-gold:           184 134  11;  /* #B8860B — ≈4.6:1 on white */
   --color-gold-bright:    212 158  36;  /* #D49E24 */
-  /* "silver" (secondary text) becomes a dark slate. */
-  --color-silver:          71  85 105;  /* #475569 — slate-600 */
+  /* "silver" (secondary text) becomes a dark slate. Slate-700 (not
+     slate-600) so the fractional opacity utilities used throughout the
+     app (text-silver/60, /70, /80) still clear WCAG AA on white. A
+     softer slate-600 fails AA at /60 and below; bumping the base lets
+     the same Tailwind classes work in both themes without a sweep. */
+  --color-silver:          51  65  85;  /* #334155 — slate-700 */
   --color-steel:           37  99 235;  /* #2563EB */
   --color-sky:            219 234 254;  /* #DBEAFE */
   --color-teal:            13 148 136;  /* #0D9488 */
@@ -135,6 +139,16 @@
 }
 :root[data-theme='light'] .bg-black\/40 {
   background-color: rgba(15, 23, 42, 0.06);
+}
+
+/* Floor the very-tertiary silver alphas in light mode. Slate-700 base
+   carries /60 and above to AA, but /40 and /50 still wash out on white.
+   Override those two utilities with a fixed slate-500 (≈4.6:1 on white)
+   so labels like timestamps, kbd hints, and "n of N" counts stay legible. */
+:root[data-theme='light'] .text-silver\/40,
+:root[data-theme='light'] .text-silver\/50,
+:root[data-theme='light'] .text-silver\/60 {
+  color: rgb(100 116 139); /* slate-500 — readable on white at full opacity */
 }
 
 /* ---------------------------------------------------------------------------

@@ -40,6 +40,7 @@ import { listDirectory, type DirectoryFilters } from '@/lib/directoryApi';
 import { listClients } from '@/lib/clientsApi';
 import type { ClientListItem } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
+import { fmtMoney } from '@/lib/format';
 import {
   type CompChangeReason,
   type CompRecord,
@@ -136,15 +137,8 @@ const PAY_TYPE_SUFFIX: Record<string, string> = {
 
 function fmtPay(amount: string | null, type: string | null, currency: string | null): string {
   if (!amount) return '—';
-  const n = Number(amount);
-  if (!Number.isFinite(n)) return amount;
-  const ccy = currency ?? 'USD';
-  const formatted = new Intl.NumberFormat(undefined, {
-    style: 'currency',
-    currency: ccy,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(n);
+  const formatted = fmtMoney(amount, { currency: currency ?? undefined });
+  if (formatted === '—') return amount;
   return `${formatted}${type ? PAY_TYPE_SUFFIX[type] ?? '' : ''}`;
 }
 
@@ -974,6 +968,7 @@ function PhoneField({
             onClick={() => void save()}
             disabled={saving}
             aria-label="Save phone"
+            title="Save"
             className="grid place-items-center h-8 w-8 rounded text-silver hover:text-white hover:bg-navy-secondary/60 disabled:opacity-40"
           >
             <Check className="h-4 w-4" />
@@ -986,6 +981,7 @@ function PhoneField({
             }}
             disabled={saving}
             aria-label="Cancel"
+            title="Cancel"
             className="grid place-items-center h-8 w-8 rounded text-silver hover:text-white hover:bg-navy-secondary/60 disabled:opacity-40"
           >
             <X className="h-4 w-4" />
@@ -1014,6 +1010,7 @@ function PhoneField({
             type="button"
             onClick={() => setEditing(true)}
             aria-label="Edit phone"
+            title="Edit"
             className="opacity-0 group-hover:opacity-100 focus:opacity-100 grid place-items-center h-9 w-9 rounded text-silver hover:text-white hover:bg-navy-secondary/60 transition-opacity"
           >
             <Pencil className="h-3.5 w-3.5" />

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { listClients } from '@/lib/clientsApi';
+import { fmtDate, fmtMoney } from '@/lib/format';
 import type { ClientListItem } from '@alto-people/shared';
 import {
   applyCycle,
@@ -238,8 +239,8 @@ function BandsTab({ clientId, canManage }: { clientId: string; canManage: boolea
                     <TableCell>{b.jobProfileTitle ?? '—'}</TableCell>
                     <TableCell>{b.level ?? '—'}</TableCell>
                     <TableCell>{b.payType}</TableCell>
-                    <TableCell>
-                      ${b.minAmount} / ${b.midAmount} / ${b.maxAmount}
+                    <TableCell className="tabular-nums">
+                      {fmtMoney(b.minAmount)} · {fmtMoney(b.midAmount)} · {fmtMoney(b.maxAmount)}
                     </TableCell>
                     <TableCell className="text-right">
                       {canManage && (
@@ -480,11 +481,11 @@ function CyclesTab({ clientId, canManage }: { clientId: string; canManage: boole
                         {c.status}
                       </Badge>
                     </TableCell>
-                    <TableCell>
-                      {c.reviewPeriodStart} – {c.reviewPeriodEnd}
+                    <TableCell className="whitespace-nowrap">
+                      {fmtDate(c.reviewPeriodStart)} – {fmtDate(c.reviewPeriodEnd)}
                     </TableCell>
-                    <TableCell>{c.effectiveDate}</TableCell>
-                    <TableCell>{c.budget ? `$${c.budget}` : '—'}</TableCell>
+                    <TableCell className="whitespace-nowrap">{fmtDate(c.effectiveDate)}</TableCell>
+                    <TableCell className="tabular-nums">{fmtMoney(c.budget)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
