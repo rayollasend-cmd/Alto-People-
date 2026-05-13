@@ -774,16 +774,28 @@ function ResultScreen({ result }: { result: PunchResult }) {
     minute: '2-digit',
   });
   if (result.queued) {
-    // We can't show the real CLOCK_IN/OUT distinction until the server
-    // resolves; show a neutral confirmation that the punch is saved.
     return (
-      <div className="text-center">
-        <div className="text-9xl mb-6 text-warning">⏱</div>
-        <div className="text-5xl font-serif mb-3">Saved offline</div>
-        <div className="text-2xl text-silver">
-          We'll sync your punch when the network comes back.
+      <div className="relative text-center px-6">
+        <style>{`@keyframes kiosk-celebrate-in {
+          0% { transform: scale(0.7); opacity: 0; }
+          60% { transform: scale(1.05); opacity: 1; }
+          100% { transform: scale(1); opacity: 1; }
+        }`}</style>
+        <div
+          style={{ animation: 'kiosk-celebrate-in 0.5s cubic-bezier(.34,1.56,.64,1) both' }}
+        >
+          <div className="text-7xl mb-5 text-warning">⏱</div>
+          <div className="text-sm uppercase tracking-[0.3em] text-silver/80 mb-3">
+            Punch saved
+          </div>
+          <div className="font-display text-7xl md:text-8xl leading-none text-white">
+            Saved offline
+          </div>
+          <div className="mt-6 text-2xl text-silver">
+            We'll sync when the network comes back.
+          </div>
+          <div className="mt-2 text-3xl text-gold-bright tabular-nums">{time}</div>
         </div>
-        <div className="text-xl text-silver mt-2">at {time}</div>
       </div>
     );
   }
@@ -791,7 +803,7 @@ function ResultScreen({ result }: { result: PunchResult }) {
   // warmer than full-legal-name on a wall-mounted tablet. Falls back to
   // whatever the server sent if the split is empty (single-name records).
   const firstName = result.associateName.split(' ')[0] || result.associateName;
-  const verb =
+  const greeting =
     result.action === 'CLOCK_IN'
       ? `Welcome, ${firstName}`
       : result.action === 'CLOCK_OUT'
@@ -799,36 +811,57 @@ function ResultScreen({ result }: { result: PunchResult }) {
         : result.action === 'BREAK_START'
           ? `Enjoy your break, ${firstName}`
           : `Welcome back, ${firstName}`;
-  const subhead =
+  const verb =
     result.action === 'CLOCK_IN'
       ? 'Clocked in'
       : result.action === 'CLOCK_OUT'
         ? 'Clocked out'
         : result.action === 'BREAK_START'
-          ? 'Break started'
+          ? 'On break'
           : 'Back from break';
-  const color =
+  const accent =
     result.action === 'CLOCK_IN'
       ? 'text-success'
       : result.action === 'CLOCK_OUT'
         ? 'text-cyan-400'
         : 'text-warning';
+  const halo =
+    result.action === 'CLOCK_IN'
+      ? 'bg-success/20'
+      : result.action === 'CLOCK_OUT'
+        ? 'bg-cyan-500/20'
+        : 'bg-warning/20';
   return (
-    <div className="text-center px-6">
-      <style>{`@keyframes kiosk-check-in {
+    <div className="relative text-center px-6">
+      <style>{`@keyframes kiosk-celebrate-in {
         0% { transform: scale(0.6); opacity: 0; }
-        60% { transform: scale(1.1); opacity: 1; }
+        60% { transform: scale(1.06); opacity: 1; }
         100% { transform: scale(1); opacity: 1; }
+      }
+      @keyframes kiosk-halo {
+        0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.55; }
+        50% { transform: translate(-50%, -50%) scale(1.08); opacity: 0.9; }
       }`}</style>
+      {/* Soft action-tinted halo behind the verb. Sits below the content
+          layer so the text reads cleanly while still feeling lit-from-within. */}
       <div
-        className={`text-9xl mb-6 ${color}`}
-        style={{ animation: 'kiosk-check-in 0.45s cubic-bezier(.34,1.56,.64,1) both' }}
+        aria-hidden="true"
+        className={`pointer-events-none absolute left-1/2 top-1/2 h-[28rem] w-[28rem] rounded-full ${halo} blur-3xl`}
+        style={{ animation: 'kiosk-halo 2.4s ease-in-out infinite' }}
+      />
+      <div
+        className="relative"
+        style={{ animation: 'kiosk-celebrate-in 0.55s cubic-bezier(.34,1.56,.64,1) both' }}
       >
-        ✓
+        <div className={`text-7xl mb-5 ${accent}`}>✓</div>
+        <div className="text-sm uppercase tracking-[0.3em] text-silver/80 mb-3">
+          {greeting}
+        </div>
+        <div className={`font-display text-7xl md:text-8xl leading-none ${accent}`}>
+          {verb}
+        </div>
+        <div className="mt-6 text-3xl text-gold-bright tabular-nums">{time}</div>
       </div>
-      <div className="text-5xl font-serif mb-3">{verb}</div>
-      <div className={`text-2xl ${color} opacity-80`}>{subhead}</div>
-      <div className="text-xl text-silver mt-3">at {time}</div>
     </div>
   );
 }

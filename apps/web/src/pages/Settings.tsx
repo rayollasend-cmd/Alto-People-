@@ -158,6 +158,10 @@ function MfaCard() {
   const [showRegenerate, setShowRegenerate] = useState(false);
   const [regeneratePassword, setRegeneratePassword] = useState('');
   const [regeneratedCodes, setRegeneratedCodes] = useState<string[] | null>(null);
+  // Brief celebration ribbon shown right after the user flips MFA on.
+  // Auto-clears after a few seconds so the regular "two-step sign-in is on"
+  // state takes over for the rest of the session.
+  const [justEnabled, setJustEnabled] = useState(false);
   const queryClient = useQueryClient();
 
   const enabled = user?.mfaEnabled ?? false;
@@ -210,11 +214,12 @@ function MfaCard() {
     setBusy(true);
     try {
       await confirmMfaEnrollment({ code });
-      toast.success('Two-step sign-in is on.');
       setEnroll(null);
       setQrDataUrl(null);
       setCode('');
       setAcknowledged(false);
+      setJustEnabled(true);
+      window.setTimeout(() => setJustEnabled(false), 4000);
       await refreshUser();
     } catch (err) {
       const apiErr = err instanceof ApiError ? err : null;
@@ -415,6 +420,39 @@ function MfaCard() {
           </div>
         ) : enabled ? (
           <div className="space-y-3">
+            {justEnabled && (
+              <div
+                className="relative overflow-hidden rounded-lg border-l-2 border-l-success/70 bg-gradient-to-br from-success/[0.12] via-navy-secondary/40 to-navy-secondary/40 p-5 md:p-6"
+                role="status"
+                style={{ animation: 'mfa-celebrate-in 0.45s cubic-bezier(.34,1.56,.64,1) both' }}
+              >
+                <style>{`@keyframes mfa-celebrate-in {
+                  0% { transform: scale(0.96); opacity: 0; }
+                  60% { transform: scale(1.01); opacity: 1; }
+                  100% { transform: scale(1); opacity: 1; }
+                }`}</style>
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute -top-6 -right-6 h-24 w-24 rounded-full bg-success/20 blur-2xl"
+                />
+                <div className="relative flex items-center gap-4">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-success/20 border border-success/40">
+                    <ShieldCheck className="h-6 w-6 text-success" />
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-widest text-success">
+                      Protected
+                    </div>
+                    <div className="font-display text-2xl md:text-3xl text-white leading-tight">
+                      Two-step sign-in is on.
+                    </div>
+                    <div className="text-sm text-silver mt-0.5">
+                      Your account just got a lot harder to break into.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-sm text-white">
                 <CheckCircle2 className="h-4 w-4 text-success" />

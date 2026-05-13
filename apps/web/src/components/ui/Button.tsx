@@ -18,12 +18,12 @@ const buttonVariants = cva(
         primary:
           'btn-gold text-navy',
         // Secondary — subtle border, used for "Cancel", "Edit", row
-        // actions. Lifts to elev-1 on hover so the affordance reads
-        // alongside the rest of the system (Card interactive,
-        // ActionCard, etc.). Resting state stays flat to keep visual
-        // hierarchy below the primary CTA.
+        // actions. Lifts to elev-1 + translates 2px up on hover so the
+        // affordance reads alongside the rest of the system (Card
+        // interactive, ActionCard, etc.). Resting state stays flat to
+        // keep visual hierarchy below the primary CTA.
         secondary:
-          'bg-navy-secondary/40 text-white border border-navy-secondary hover:border-silver/40 hover:bg-navy-secondary hover:elev-1',
+          'bg-navy-secondary/40 text-white border border-navy-secondary hover:border-silver/40 hover:bg-navy-secondary hover:elev-1 hover:-translate-y-0.5',
         // Outline — transparent with an outline. Good for inverse contexts.
         outline:
           'border border-silver/30 text-silver hover:text-white hover:border-silver/60 bg-transparent',

@@ -17,6 +17,7 @@ import {
   Sparkles,
   Users,
   Wallet,
+  X,
   type LucideIcon,
 } from 'lucide-react';
 import type {
@@ -28,6 +29,7 @@ import { ROLE_LABELS, type Role } from '@/lib/roles';
 import { getDashboardKPIs } from '@/lib/analyticsApi';
 import { searchAuditLogs } from '@/lib/auditApi';
 import { ApiError } from '@/lib/api';
+import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
@@ -250,18 +252,19 @@ function WelcomeCard({ greetingName }: { greetingName: string }) {
   };
 
   return (
-    <Card className="border-l-2 border-l-gold/40 relative overflow-hidden">
+    <Card className="border-l-2 border-l-navy-secondary relative overflow-hidden">
       <CardContent className="pt-5">
-        <button
-          type="button"
+        <Button
+          variant="ghost"
+          size="icon-sm"
           onClick={dismiss}
           aria-label="Dismiss welcome"
-          className="absolute top-2 right-2 grid place-items-center h-8 w-8 rounded-md text-silver/70 hover:text-white hover:bg-navy-secondary/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+          className="absolute top-2 right-2"
         >
-          <span aria-hidden="true">×</span>
-        </button>
-        <div className="text-[10px] uppercase tracking-widest text-gold flex items-center gap-1.5">
-          <Sparkles className="h-3 w-3" aria-hidden="true" />
+          <X className="h-4 w-4" aria-hidden="true" />
+        </Button>
+        <div className="text-[10px] uppercase tracking-widest text-silver/80 flex items-center gap-1.5">
+          <Sparkles className="h-3 w-3 text-gold" aria-hidden="true" />
           Welcome
         </div>
         <h2 className="font-display text-xl md:text-2xl text-white mt-1 leading-tight">

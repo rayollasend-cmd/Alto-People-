@@ -920,44 +920,111 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
         )}
       </Drawer>
 
+      {/* Disburse ceremony — the most consequential moment in payroll
+          deserves a layout that reads as a ceremony, not a generic
+          confirmation. Split-pane: the run summary on the left in
+          hero scale (net amount in gold-bright, associate count + the
+          gross/tax breakdown beneath it); the action panel on the
+          right with the recap + buttons. Wide modal (max-w-3xl) so
+          both panes breathe. Locked while busy. */}
       <Dialog
         open={confirmDisburse}
         onOpenChange={(v) => {
-          // Lock the dialog closed while the disburse round-trip is in
-          // flight so the user can't reload mid-payout or trigger a
-          // double-submit via Esc.
           if (!busy) setConfirmDisburse(v);
         }}
       >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {busy ? 'Processing payouts…' : 'Disburse this run?'}
-            </DialogTitle>
-            <DialogDescription>
-              {busy
-                ? 'Talking to the payout adapter for every paystub. This can take 10–30 seconds — keep this tab open and don’t refresh.'
-                : 'Stubbed in dev — no real funds move. In production, this triggers the configured payout adapter (Wise / Branch) for every paystub.'}
-            </DialogDescription>
-          </DialogHeader>
-          {busy && (
-            <div className="-mt-1 flex items-center gap-2 text-xs text-silver">
-              <span className="h-1.5 w-1.5 rounded-full bg-gold animate-pulse" />
-              Working… results will appear on the run timeline when complete.
+        <DialogContent className="max-w-3xl p-0 overflow-hidden">
+          {selected && (
+            <div className="grid grid-cols-1 md:grid-cols-[1.4fr_1fr] min-h-[20rem]">
+              {/* Left — the moment. Tinted bg + gold accent rail so the
+                  numbers anchor the ceremony. */}
+              <div className="bg-navy-secondary/30 border-r border-navy-secondary border-l-2 border-l-gold/60 p-6 md:p-8 flex flex-col gap-6">
+                <div>
+                  <div className="text-[10px] uppercase tracking-widest text-gold inline-flex items-center gap-1.5">
+                    <Send className="h-3 w-3" aria-hidden="true" />
+                    {busy ? 'Processing payouts' : 'Ready to disburse'}
+                  </div>
+                  <div className="text-[11px] text-silver tabular-nums mt-2">
+                    {selected.periodStart} → {selected.periodEnd}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-[10px] uppercase tracking-widest text-silver">
+                    Net to associates
+                  </div>
+                  <div className="font-display text-4xl md:text-5xl text-gold-bright leading-none tabular-nums mt-2">
+                    {fmtMoney(selected.totalNet)}
+                  </div>
+                  <div className="text-sm text-silver mt-2 tabular-nums">
+                    across{' '}
+                    <span className="text-white">
+                      {selected.itemCount.toLocaleString()}
+                    </span>{' '}
+                    {selected.itemCount === 1 ? 'paystub' : 'paystubs'}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 text-sm pt-2 mt-auto border-t border-navy-secondary">
+                  <div className="pt-3">
+                    <div className="text-[10px] uppercase tracking-widest text-silver">
+                      Gross
+                    </div>
+                    <div className="font-display text-xl text-white tabular-nums mt-1">
+                      {fmtMoney(selected.totalGross)}
+                    </div>
+                  </div>
+                  <div className="pt-3">
+                    <div className="text-[10px] uppercase tracking-widest text-silver">
+                      Tax withheld
+                    </div>
+                    <div className="font-display text-xl text-white tabular-nums mt-1">
+                      −{fmtMoney(selected.totalTax)}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right — the action. Plain navy bg, copy + buttons. */}
+              <div className="p-6 md:p-8 flex flex-col gap-4">
+                <DialogHeader className="space-y-2">
+                  <DialogTitle className="text-2xl">
+                    {busy ? 'Working…' : 'Disburse this run?'}
+                  </DialogTitle>
+                  <DialogDescription className="leading-relaxed">
+                    {busy
+                      ? 'Talking to the payout adapter for every paystub. This can take 10–30 seconds — keep this tab open and don’t refresh.'
+                      : 'This will trigger the configured payout adapter (Wise / Branch in production, stub in dev) for every paystub. The run will move to DISBURSED and associates will see funds within the adapter’s settlement window.'}
+                  </DialogDescription>
+                </DialogHeader>
+
+                {busy && (
+                  <div className="rounded-md border border-gold/30 bg-gold/5 p-3 text-xs text-silver inline-flex items-center gap-2">
+                    <span className="h-1.5 w-1.5 rounded-full bg-gold animate-pulse" />
+                    Results will appear on the run timeline when complete.
+                  </div>
+                )}
+
+                <div className="mt-auto pt-4 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                  <Button
+                    variant="secondary"
+                    onClick={() => setConfirmDisburse(false)}
+                    disabled={busy}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    size="lg"
+                    onClick={onDisburse}
+                    loading={busy}
+                    disabled={busy}
+                  >
+                    {busy ? 'Disbursing…' : `Disburse ${fmtMoney(selected.totalNet)}`}
+                  </Button>
+                </div>
+              </div>
             </div>
           )}
-          <DialogFooter>
-            <Button
-              variant="secondary"
-              onClick={() => setConfirmDisburse(false)}
-              disabled={busy}
-            >
-              Cancel
-            </Button>
-            <Button onClick={onDisburse} loading={busy} disabled={busy}>
-              {busy ? 'Disbursing…' : 'Disburse'}
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
 

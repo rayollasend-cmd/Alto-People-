@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CheckCircle2,
@@ -10,7 +10,9 @@ import {
   MailCheck,
   MailWarning,
   MinusCircle,
+  PartyPopper,
   Send,
+  Sparkles,
   ThumbsDown,
   ThumbsUp,
 } from 'lucide-react';
@@ -123,6 +125,13 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [approveOpen, setApproveOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
+  // Ceremony screen surfaced after a successful approval. Captures the
+  // hire date so the celebration can show it; cleared when the user
+  // dismisses or navigates. The standard toast no longer fires for
+  // approvals — the celebration *is* the success surface.
+  const [celebration, setCelebration] = useState<{ hireDate: string } | null>(
+    null,
+  );
 
   // Capability check (not a hardcoded role list) so every role granted
   // manage:onboarding — HR_ADMINISTRATOR, OPERATIONS_MANAGER, MANAGER,
@@ -213,12 +222,12 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
   const handleApprove = async (hireDate: string) => {
     try {
       await approveApplication(detail.id, { hireDate });
-      toast.success('Application approved', {
-        description: `Hire date set to ${hireDate}. Account activated.`,
-        icon: <ThumbsUp className="h-4 w-4" />,
-      });
       setApproveOpen(false);
       await refresh();
+      // Skip the toast — open the celebration instead. The "hire is real"
+      // moment is the most consequential surface in the onboarding flow
+      // and deserves a ceremony, not a passing notification.
+      setCelebration({ hireDate });
     } catch (err) {
       const msg =
         err instanceof ApiError ? err.message : 'Could not approve.';
@@ -399,6 +408,17 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
         defaultDate={detail.startDate ? detail.startDate.slice(0, 10) : null}
         onConfirm={handleApprove}
       />
+      <ApprovedCelebration
+        open={celebration !== null}
+        onOpenChange={(o) => !o && setCelebration(null)}
+        associateName={detail.associateName}
+        clientName={detail.clientName}
+        position={detail.position}
+        hireDate={celebration?.hireDate ?? ''}
+        applicationId={detail.id}
+        completedTasks={detail.tasks.filter((t) => t.status === 'DONE').length}
+        totalTasks={detail.tasks.length}
+      />
       <ConfirmDialog
         open={rejectOpen}
         onOpenChange={setRejectOpen}
@@ -574,6 +594,140 @@ function ApproveDialog({
             </Button>
           </DialogFooter>
         </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ===== ApprovedCelebration ================================================= */
+
+/**
+ * The post-approval ceremony.
+ *
+ * The moment a hire becomes real is the highest-stakes surface in the
+ * onboarding flow — peers (Rippling, Workday) treat it as a celebration,
+ * not a state change. This dialog replaces the previous "Application
+ * approved" toast with a full-width modal:
+ *
+ *   - Candidate name in font-display at hero scale
+ *   - Success-tinted left rail and a PartyPopper glyph
+ *   - Hire date + position + client confirmation
+ *   - Onboarding checklist progress recap
+ *   - Two CTAs: "View checklist" (secondary) and "Back to applications"
+ *     (primary). The welcome email is already triggered server-side on
+ *     approval; the buttons direct the admin to the next surface.
+ */
+function ApprovedCelebration({
+  open,
+  onOpenChange,
+  associateName,
+  clientName,
+  position,
+  hireDate,
+  applicationId,
+  completedTasks,
+  totalTasks,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  associateName: string;
+  clientName: string;
+  position: string | null;
+  hireDate: string;
+  applicationId: string;
+  completedTasks: number;
+  totalTasks: number;
+}) {
+  const navigate = useNavigate();
+  const hireDateLabel = hireDate
+    ? new Date(`${hireDate}T00:00:00`).toLocaleDateString('en-US', {
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric',
+      })
+    : '';
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl p-0 overflow-hidden">
+        <div className="relative border-l-2 border-l-success/70 bg-gradient-to-br from-success/[0.08] via-navy to-navy p-8 md:p-10">
+          <div
+            aria-hidden="true"
+            className="absolute -top-8 -right-8 h-32 w-32 rounded-full bg-success/15 blur-2xl"
+          />
+          <div className="relative">
+            <div className="inline-flex items-center gap-2 text-[10px] uppercase tracking-widest text-success">
+              <PartyPopper className="h-3 w-3" aria-hidden="true" />
+              Hired
+            </div>
+            <h2 className="font-display text-3xl md:text-5xl text-white mt-3 leading-[1.05] tracking-tight">
+              Welcome, <span className="text-gold-bright">{associateName}</span>.
+            </h2>
+            <p className="text-silver mt-3 text-sm md:text-base max-w-prose leading-relaxed">
+              {position ? `${position} at ${clientName}` : clientName}
+              {hireDateLabel && (
+                <>
+                  {' · '}
+                  <span className="text-white">Starts {hireDateLabel}</span>
+                </>
+              )}
+              . Their account is active and the welcome email is on its way.
+            </p>
+
+            <div className="mt-6 rounded-md border border-navy-secondary bg-navy/60 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-[10px] uppercase tracking-widest text-silver">
+                  Onboarding checklist
+                </div>
+                <div className="text-xs text-silver tabular-nums">
+                  <span className="text-white">{completedTasks}</span>
+                  {' / '}
+                  {totalTasks} complete
+                </div>
+              </div>
+              <div className="mt-2 h-1.5 rounded-full bg-navy-secondary overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-success to-gold transition-all"
+                  style={{
+                    width: `${
+                      totalTasks > 0
+                        ? Math.round((completedTasks / totalTasks) * 100)
+                        : 0
+                    }%`,
+                  }}
+                />
+              </div>
+              <p className="text-xs text-silver mt-2 leading-relaxed">
+                They'll work through the remaining tasks at their own pace.
+                You'll see I-9 Section 2 in your queue when they finish
+                Section 1.
+              </p>
+            </div>
+
+            <div className="mt-7 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  onOpenChange(false);
+                  navigate(`/onboarding/applications/${applicationId}`);
+                }}
+              >
+                <Sparkles className="h-4 w-4" />
+                Review checklist
+              </Button>
+              <Button
+                size="lg"
+                onClick={() => {
+                  onOpenChange(false);
+                  navigate('/onboarding');
+                }}
+              >
+                Back to applications
+              </Button>
+            </div>
+          </div>
+        </div>
       </DialogContent>
     </Dialog>
   );
