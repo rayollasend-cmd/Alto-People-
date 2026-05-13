@@ -332,6 +332,18 @@ documentsRouter.get('/:id/download', async (req, res, next) => {
     if (!doc || !doc.s3Key) {
       throw new HttpError(404, 'document_not_found', 'Document not found');
     }
+    // REJECTED docs stay on disk during the retention window so HR can
+    // review them — but the associate shouldn't be able to re-download
+    // what they were told is no good. 404 (not 403) matches the existing
+    // "doesn't exist for you" pattern and avoids confirming the row.
+    const requester = req.user!;
+    if (
+      doc.status === 'REJECTED' &&
+      requester.role === 'ASSOCIATE' &&
+      requester.associateId === doc.associateId
+    ) {
+      throw new HttpError(404, 'document_not_found', 'Document not found');
+    }
     const path = resolveStoragePath(doc.s3Key);
     if (!existsSync(path)) {
       throw new HttpError(410, 'document_missing', 'Underlying file is no longer available');
@@ -433,17 +445,12 @@ documentsRouter.post('/admin/:id/reject', MANAGE, async (req, res, next) => {
     });
     if (!doc) throw new HttpError(404, 'document_not_found', 'Document not found');
 
-    // Drop the blob — the row stays for audit, but a rejected file shouldn't
-    // linger on disk where it can still be downloaded. Clearing s3Key makes
-    // the download endpoint 404 cleanly.
-    if (doc.s3Key) {
-      try {
-        await unlink(resolveStoragePath(doc.s3Key));
-      } catch {
-        // Best-effort: if the blob is already missing we proceed.
-      }
-    }
-
+    // Don't unlink the blob here — we keep it on disk for the retention
+    // window (REJECTED_DOC_RETENTION_DAYS) so HR can re-open / dispute the
+    // rejection while the file is still there. The download endpoint
+    // blocks the associate from re-fetching it; HR still has access. The
+    // daily maintenance sweep (purgeRejectedDocs) clears the blob and
+    // nulls s3Key once `verifiedAt + retention` is in the past.
     const updated = await prisma.documentRecord.update({
       where: { id: doc.id },
       data: {
@@ -451,7 +458,6 @@ documentsRouter.post('/admin/:id/reject', MANAGE, async (req, res, next) => {
         rejectionReason: parsed.data.reason,
         verifiedById: user.id,
         verifiedAt: new Date(),
-        s3Key: null,
       },
       include: DOC_INCLUDE,
     });

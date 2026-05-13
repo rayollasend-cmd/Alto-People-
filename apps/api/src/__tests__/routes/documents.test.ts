@@ -233,6 +233,39 @@ describe('HR verify / reject', () => {
     expect(reject.status).toBe(200);
     expect(reject.body.status).toBe('REJECTED');
     expect(reject.body.rejectionReason).toBe('image is blurry');
+
+    // Blob stays on disk during the retention window so HR can review;
+    // s3Key is preserved on the row.
+    const row = await prisma.documentRecord.findUniqueOrThrow({
+      where: { id: upload.body.id },
+    });
+    expect(row.s3Key).toBeTruthy();
+    expect(existsSync(resolveStoragePath(row.s3Key!))).toBe(true);
+  });
+
+  it('associate gets 404 downloading their own REJECTED doc; HR can still fetch it', async () => {
+    const { user: assocUser } = await seedAssociate();
+    const aAgent = await loginAs(assocUser.email);
+    const upload = await aAgent
+      .post('/documents/me/upload')
+      .field('kind', 'ID')
+      .attach('file', TINY_PNG, { filename: 'license.png', contentType: 'image/png' });
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+    await hrAgent
+      .post(`/documents/admin/${upload.body.id}/reject`)
+      .send({ reason: 'unreadable' });
+
+    // Associate is locked out — the row was rejected and they shouldn't
+    // be able to re-fetch what they were told is no good.
+    const assocAttempt = await aAgent.get(`/documents/${upload.body.id}/download`);
+    expect(assocAttempt.status).toBe(404);
+
+    // HR still has full access during the retention window.
+    const hrAttempt = await hrAgent.get(`/documents/${upload.body.id}/download`);
+    expect(hrAttempt.status).toBe(200);
+    expect(hrAttempt.headers['content-type']).toMatch(/image\/png/);
   });
 
   it('rejecting an ID doc rewinds the associate\'s DOCUMENT_UPLOAD task', async () => {

@@ -111,6 +111,12 @@ const EnvSchema = z.object({
   // should set 3600 (hourly). Thresholds (18h forgotten-shift, 90d selfie
   // retention) are hard-coded in lib/kioskMaintenance.ts.
   KIOSK_MAINTENANCE_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(0),
+  // Document maintenance cron: purges blob bytes for REJECTED docs once
+  // they've passed REJECTED_DOC_RETENTION_DAYS (30, hard-coded). Defaults
+  // to 86400 (daily) — this is a compliance/storage-hygiene sweep we
+  // want on by default; set to 0 only if a downstream job handles purges.
+  // The DocumentRecord row stays for audit — only the file leaves disk.
+  DOCUMENT_MAINTENANCE_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(86400),
   // Multi-replica deployment hint. The kiosk rate limit keeps state
   // per-process (see lib/kioskRateLimit.ts). When MULTI_REPLICA=1 we
   // refuse to boot unless a shared rate-limit store has been wired up
