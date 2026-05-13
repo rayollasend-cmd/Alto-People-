@@ -55,7 +55,7 @@ export function PayrollReadiness() {
 
       {error && (
         <Card>
-          <CardContent className="py-4 text-sm text-destructive">{error}</CardContent>
+          <CardContent className="py-4 text-sm text-alert">{error}</CardContent>
         </Card>
       )}
 
@@ -195,9 +195,9 @@ function Flag({ ok, href, title }: { ok: boolean; href: string; title: string })
         to={href}
         title={title}
         aria-label={title}
-        className="inline-flex items-center justify-center rounded hover:bg-destructive/10 focus:outline-none focus:ring-2 focus:ring-destructive"
+        className="inline-flex items-center justify-center rounded hover:bg-alert/10 focus:outline-none focus:ring-2 focus:ring-alert"
       >
-        <XCircle className="h-5 w-5 text-destructive" />
+        <XCircle className="h-5 w-5 text-alert" />
       </Link>
     </TableCell>
   );

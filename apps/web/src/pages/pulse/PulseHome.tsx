@@ -313,7 +313,7 @@ function AdminPulseTab() {
                       </Button>
                       <button
                         onClick={() => setDeleteTarget(s)}
-                        className="opacity-60 group-hover:opacity-100 text-silver hover:text-destructive transition text-xs"
+                        className="opacity-60 group-hover:opacity-100 text-silver hover:text-alert transition text-xs"
                       >
                         Delete
                       </button>

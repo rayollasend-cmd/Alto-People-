@@ -365,7 +365,7 @@ function ReimbursementDrawer({
               </div>
             )}
             {data.rejectionReason && (
-              <div className="bg-destructive/20 border border-destructive/40 rounded-md p-3 text-sm text-white">
+              <div className="bg-alert/20 border border-alert/40 rounded-md p-3 text-sm text-white">
                 <div className="font-medium">Rejection reason:</div>
                 <div>{data.rejectionReason}</div>
               </div>
@@ -404,7 +404,7 @@ function ReimbursementDrawer({
                             <TableCell>
                               <button
                                 onClick={() => onDeleteLine(l.id)}
-                                className="text-silver hover:text-destructive"
+                                className="text-silver hover:text-alert"
                               >
                                 <Trash2 className="h-3 w-3" />
                               </button>
@@ -523,7 +523,7 @@ function SettleDialog({
           be added to {data.associateName}'s next regular payroll, after taxes.
         </div>
         {needsWaiver && (
-          <div className="bg-destructive/15 border border-destructive/40 rounded-md p-3 text-sm text-white space-y-2">
+          <div className="bg-alert/15 border border-alert/40 rounded-md p-3 text-sm text-white space-y-2">
             <div className="font-medium">
               {missingReceipts.length} receipt line(s) are missing a receipt.
             </div>

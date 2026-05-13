@@ -259,7 +259,7 @@ export function KbHome() {
                       <TableCell className="text-sm text-success">
                         {a.helpful}{' '}
                         {a.notHelpful > 0 && (
-                          <span className="text-destructive">/ {a.notHelpful}</span>
+                          <span className="text-alert">/ {a.notHelpful}</span>
                         )}
                       </TableCell>
                       <TableCell className="text-right space-x-2">
@@ -305,7 +305,7 @@ export function KbHome() {
                               );
                             }
                           }}
-                          className="text-silver hover:text-destructive opacity-60 group-hover:opacity-100"
+                          className="text-silver hover:text-alert opacity-60 group-hover:opacity-100"
                         >
                           <Trash2 className="h-4 w-4 inline" />
                         </button>

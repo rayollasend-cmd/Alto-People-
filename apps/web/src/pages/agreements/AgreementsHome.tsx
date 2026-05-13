@@ -244,7 +244,7 @@ export function AgreementsHome() {
                           <span
                             className={
                               new Date(a.expiresOn) < new Date()
-                                ? 'text-destructive'
+                                ? 'text-alert'
                                 : 'text-silver'
                             }
                           >
@@ -294,7 +294,7 @@ export function AgreementsHome() {
                                 );
                               }
                             }}
-                            className="text-silver hover:text-destructive opacity-60 group-hover:opacity-100"
+                            className="text-silver hover:text-alert opacity-60 group-hover:opacity-100"
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>

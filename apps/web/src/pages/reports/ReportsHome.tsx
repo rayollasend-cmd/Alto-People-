@@ -142,7 +142,7 @@ export function ReportsHome() {
                       </Button>
                       <button
                         onClick={() => onDelete(r.id)}
-                        className="opacity-60 group-hover:opacity-100 text-silver hover:text-destructive transition text-xs"
+                        className="opacity-60 group-hover:opacity-100 text-silver hover:text-alert transition text-xs"
                       >
                         <Trash2 className="inline h-3 w-3" />
                       </button>
@@ -437,7 +437,7 @@ function ReportBuilder({
                   <button
                     type="button"
                     onClick={() => removeFilter(i)}
-                    className="text-silver hover:text-destructive p-1"
+                    className="text-silver hover:text-alert p-1"
                     title="Remove filter"
                   >
                     <X className="h-4 w-4" />
@@ -502,7 +502,7 @@ function ReportBuilder({
                   <button
                     type="button"
                     onClick={() => removeSort(i)}
-                    className="text-silver hover:text-destructive p-1"
+                    className="text-silver hover:text-alert p-1"
                     title="Remove sort"
                   >
                     <X className="h-4 w-4" />

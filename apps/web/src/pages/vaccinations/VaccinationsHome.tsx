@@ -199,7 +199,7 @@ export function VaccinationsHome() {
                           <span
                             className={
                               new Date(r.expiresOn) < new Date()
-                                ? 'text-destructive'
+                                ? 'text-alert'
                                 : 'text-silver'
                             }
                           >
@@ -225,7 +225,7 @@ export function VaccinationsHome() {
                                 );
                               }
                             }}
-                            className="opacity-60 group-hover:opacity-100 text-silver hover:text-destructive"
+                            className="opacity-60 group-hover:opacity-100 text-silver hover:text-alert"
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>

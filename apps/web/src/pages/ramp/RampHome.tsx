@@ -121,7 +121,7 @@ export function RampHome() {
                       {' / '}
                       {p.total} achieved
                       {p.missed > 0 && (
-                        <span className="text-destructive ml-2">
+                        <span className="text-alert ml-2">
                           {p.missed} missed
                         </span>
                       )}
@@ -362,7 +362,7 @@ function PlanDetailDrawer({
                               );
                             }
                           }}
-                          className="text-silver hover:text-destructive"
+                          className="text-silver hover:text-alert"
                         >
                           <Trash2 className="h-3 w-3" />
                         </button>
@@ -375,7 +375,7 @@ function PlanDetailDrawer({
                       </div>
                     )}
                     {m.status === 'MISSED' && (
-                      <div className="text-xs text-destructive mt-1 flex items-center gap-1">
+                      <div className="text-xs text-alert mt-1 flex items-center gap-1">
                         <XCircle className="h-3 w-3" /> Missed
                       </div>
                     )}

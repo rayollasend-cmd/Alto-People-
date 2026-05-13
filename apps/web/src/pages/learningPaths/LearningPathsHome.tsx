@@ -131,7 +131,7 @@ export function LearningPathsHome() {
                       {canManage && (
                         <button
                           onClick={() => setDeleteTarget(p)}
-                          className="opacity-60 group-hover:opacity-100 text-silver hover:text-destructive transition text-xs"
+                          className="opacity-60 group-hover:opacity-100 text-silver hover:text-alert transition text-xs"
                         >
                           Delete
                         </button>
@@ -430,7 +430,7 @@ function PathDetailDrawer({
                                 toast.error(err instanceof ApiError ? err.message : 'Failed.');
                               }
                             }}
-                            className="text-silver hover:text-destructive"
+                            className="text-silver hover:text-alert"
                             title="Remove step"
                           >
                             <Trash2 className="h-3 w-3" />
@@ -544,7 +544,7 @@ function PathDetailDrawer({
                                     );
                                   }
                                 }}
-                                className="text-silver hover:text-destructive text-xs"
+                                className="text-silver hover:text-alert text-xs"
                                 title="Withdraw"
                               >
                                 <Trash2 className="h-3 w-3" />

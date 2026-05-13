@@ -261,7 +261,7 @@ function KpiCard({
 }) {
   const toneClass =
     tone === 'bad'
-      ? 'text-destructive'
+      ? 'text-alert'
       : tone === 'warn'
         ? 'text-warning'
         : 'text-white';

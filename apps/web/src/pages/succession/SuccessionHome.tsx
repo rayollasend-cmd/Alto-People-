@@ -380,7 +380,7 @@ function CandidateRow({
               toast.error(err instanceof ApiError ? err.message : 'Failed.');
             }
           }}
-          className="text-silver hover:text-destructive"
+          className="text-silver hover:text-alert"
         >
           <Trash2 className="h-3 w-3" />
         </button>

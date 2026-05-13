@@ -315,7 +315,7 @@ function LadderDetailDrawer({
                               );
                             }
                           }}
-                          className="text-silver hover:text-destructive"
+                          className="text-silver hover:text-alert"
                         >
                           <Trash2 className="h-3 w-3" />
                         </button>
@@ -346,7 +346,7 @@ function LadderDetailDrawer({
                                     );
                                   }
                                 }}
-                                className="text-silver hover:text-destructive"
+                                className="text-silver hover:text-alert"
                               >
                                 <Trash2 className="h-3 w-3" />
                               </button>
