@@ -268,6 +268,45 @@ describe('HR verify / reject', () => {
     expect(hrAttempt.headers['content-type']).toMatch(/image\/png/);
   });
 
+  it('HR download lazy-purges a past-retention REJECTED doc and 404s', async () => {
+    const { user: assocUser } = await seedAssociate();
+    const aAgent = await loginAs(assocUser.email);
+    const upload = await aAgent
+      .post('/documents/me/upload')
+      .field('kind', 'ID')
+      .attach('file', TINY_PNG, { filename: 'license.png', contentType: 'image/png' });
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+    await hrAgent
+      .post(`/documents/admin/${upload.body.id}/reject`)
+      .send({ reason: 'unreadable' });
+
+    // Backdate the row's verifiedAt past the 30-day retention so the next
+    // download attempt trips the lazy-purge path.
+    const longAgo = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
+    await prisma.documentRecord.update({
+      where: { id: upload.body.id },
+      data: { verifiedAt: longAgo },
+    });
+    const before = await prisma.documentRecord.findUniqueOrThrow({
+      where: { id: upload.body.id },
+    });
+    expect(before.s3Key).toBeTruthy();
+    expect(existsSync(resolveStoragePath(before.s3Key!))).toBe(true);
+
+    const hrAttempt = await hrAgent.get(`/documents/${upload.body.id}/download`);
+    expect(hrAttempt.status).toBe(404);
+
+    // The file is gone and s3Key is nulled — same end state the daily
+    // cron would have produced.
+    const after = await prisma.documentRecord.findUniqueOrThrow({
+      where: { id: upload.body.id },
+    });
+    expect(after.s3Key).toBeNull();
+    expect(existsSync(resolveStoragePath(before.s3Key!))).toBe(false);
+  });
+
   it('rejecting an ID doc rewinds the associate\'s DOCUMENT_UPLOAD task', async () => {
     const { client, associate, user: assocUser } = await seedAssociate();
     // Spin up an in-flight application with the standard checklist and

@@ -24,6 +24,47 @@ import { env } from '../config/env.js';
 
 export const REJECTED_DOC_RETENTION_DAYS = 30;
 const PURGE_BATCH = 500;
+const RETENTION_MS = REJECTED_DOC_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+
+/**
+ * True iff the doc is REJECTED and the retention window has lapsed.
+ * Pure check (no DB / disk work) — pair with `purgeOneRejectedDoc` to
+ * actually drop the blob. Used by:
+ *   - the download route to lazy-purge on first read past retention,
+ *     so a stale file can't be served between daily cron ticks;
+ *   - the `toRecord` serializer to mark fileAvailable=false in
+ *     listings so the UI doesn't dangle a broken click.
+ */
+export function isRejectedDocPastRetention(
+  doc: { status: string; verifiedAt: Date | null },
+  now: Date = new Date(),
+): boolean {
+  if (doc.status !== 'REJECTED') return false;
+  if (!doc.verifiedAt) return false;
+  return now.getTime() - doc.verifiedAt.getTime() > RETENTION_MS;
+}
+
+/**
+ * Unlink the blob for one specific DocumentRecord and null its s3Key.
+ * Inline equivalent of one iteration of `purgeRejectedDocs`. Safe to
+ * call repeatedly — second call is a no-op once s3Key is already null.
+ */
+export async function purgeOneRejectedDoc(
+  prisma: PrismaClient,
+  docId: string,
+  s3Key: string,
+): Promise<void> {
+  try {
+    await unlink(resolveStoragePath(s3Key));
+  } catch {
+    // File already gone — proceed to null s3Key so the row stops
+    // being re-picked by the cron and lazy paths.
+  }
+  await prisma.documentRecord.update({
+    where: { id: docId },
+    data: { s3Key: null },
+  });
+}
 
 export async function purgeRejectedDocs(
   prisma: PrismaClient = defaultPrisma,
@@ -50,16 +91,7 @@ export async function purgeRejectedDocs(
   for (const row of stale) {
     if (!row.s3Key) continue;
     try {
-      try {
-        await unlink(resolveStoragePath(row.s3Key));
-      } catch {
-        // File already gone (e.g., Railway redeploy wiped uploads) —
-        // proceed to null the column so the row stops getting re-picked.
-      }
-      await prisma.documentRecord.update({
-        where: { id: row.id },
-        data: { s3Key: null },
-      });
+      await purgeOneRejectedDoc(prisma, row.id, row.s3Key);
       purged++;
     } catch (err) {
       errors.push({

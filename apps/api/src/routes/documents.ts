@@ -26,6 +26,10 @@ import {
 } from '../lib/emailTemplates.js';
 import { resolveStoragePath, UPLOAD_ROOT } from '../lib/storage.js';
 import {
+  isRejectedDocPastRetention,
+  purgeOneRejectedDoc,
+} from '../lib/documentMaintenance.js';
+import {
   safeContentDisposition,
   sanitizeUploadFilename,
   verifyFileMagic,
@@ -90,8 +94,15 @@ function toRecord(d: RawDoc): DocumentRecord {
   // in Neon, leaving zombie rows whose download endpoint returns 410.
   // The UI uses this flag to disable preview/download and prompt the
   // associate to re-upload before they hit the broken endpoint.
+  //
+  // Past-retention REJECTED rows also report unavailable even before the
+  // cron or lazy-purge actually drops the blob: the file is conceptually
+  // gone the moment retention lapses, so the listing UI shouldn't dangle
+  // a clickable link that would 404 a moment later.
   const fileAvailable =
-    d.s3Key !== null && existsSync(resolveStoragePath(d.s3Key));
+    d.s3Key !== null &&
+    !isRejectedDocPastRetention(d) &&
+    existsSync(resolveStoragePath(d.s3Key));
   return {
     id: d.id,
     associateId: d.associateId,
@@ -342,6 +353,15 @@ documentsRouter.get('/:id/download', async (req, res, next) => {
       requester.role === 'ASSOCIATE' &&
       requester.associateId === doc.associateId
     ) {
+      throw new HttpError(404, 'document_not_found', 'Document not found');
+    }
+    // Lazy purge on first read past retention. The daily maintenance
+    // cron is the primary path, but between ticks a stale-but-still-
+    // downloadable file would technically be served to HR. Catching it
+    // on the way to disk here closes that window: drop the blob, null
+    // s3Key, and 404 as if the cron had already run.
+    if (doc.s3Key && isRejectedDocPastRetention(doc)) {
+      await purgeOneRejectedDoc(prisma, doc.id, doc.s3Key);
       throw new HttpError(404, 'document_not_found', 'Document not found');
     }
     const path = resolveStoragePath(doc.s3Key);
