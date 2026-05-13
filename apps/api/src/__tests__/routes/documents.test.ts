@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { createApp } from '../../app.js';
 import {
   DEFAULT_TEST_PASSWORD,
+  createApplicationWithChecklist,
   createAssociate,
   createClient,
   createUser,
@@ -231,6 +232,81 @@ describe('HR verify / reject', () => {
     expect(reject.status).toBe(200);
     expect(reject.body.status).toBe('REJECTED');
     expect(reject.body.rejectionReason).toBe('image is blurry');
+  });
+
+  it('rejecting an ID doc rewinds the associate\'s DOCUMENT_UPLOAD task', async () => {
+    const { client, associate, user: assocUser } = await seedAssociate();
+    // Spin up an in-flight application with the standard checklist and
+    // pre-flip the DOCUMENT_UPLOAD task to DONE — mirrors the state right
+    // after the associate hits "I'm done — submit for review".
+    const app = await createApplicationWithChecklist({
+      associateId: associate.id,
+      clientId: client.id,
+    });
+    const docTask = app.checklist!.tasks.find((t) => t.kind === 'DOCUMENT_UPLOAD')!;
+    await prisma.onboardingTask.update({
+      where: { id: docTask.id },
+      data: { status: 'DONE', completedAt: new Date() },
+    });
+
+    const aAgent = await loginAs(assocUser.email);
+    const upload = await aAgent
+      .post('/documents/me/upload')
+      .field('kind', 'ID')
+      .attach('file', TINY_PNG, { filename: 'license.png', contentType: 'image/png' });
+    expect(upload.status).toBe(201);
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+    const reject = await hrAgent
+      .post(`/documents/admin/${upload.body.id}/reject`)
+      .send({ reason: 'image is blurry' });
+    expect(reject.status).toBe(200);
+
+    const after = await prisma.onboardingTask.findUniqueOrThrow({
+      where: { id: docTask.id },
+    });
+    expect(after.status).toBe('PENDING');
+    expect(after.completedAt).toBeNull();
+
+    await flushPendingAudits();
+    const reopen = await prisma.auditLog.findFirst({
+      where: { action: 'onboarding.task_reopened', entityId: app.id },
+    });
+    expect(reopen).not.toBeNull();
+  });
+
+  it('rejecting a non-checklist doc kind does NOT rewind a task', async () => {
+    const { client, associate, user: assocUser } = await seedAssociate();
+    const app = await createApplicationWithChecklist({
+      associateId: associate.id,
+      clientId: client.id,
+    });
+    const docTask = app.checklist!.tasks.find((t) => t.kind === 'DOCUMENT_UPLOAD')!;
+    await prisma.onboardingTask.update({
+      where: { id: docTask.id },
+      data: { status: 'DONE', completedAt: new Date() },
+    });
+
+    const aAgent = await loginAs(assocUser.email);
+    const upload = await aAgent
+      .post('/documents/me/upload')
+      .field('kind', 'OTHER')
+      .attach('file', TINY_PNG, { filename: 'misc.png', contentType: 'image/png' });
+    expect(upload.status).toBe(201);
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+    const reject = await hrAgent
+      .post(`/documents/admin/${upload.body.id}/reject`)
+      .send({ reason: 'wrong document' });
+    expect(reject.status).toBe(200);
+
+    // Task stays DONE — only ID/SSN_CARD/I9_SUPPORTING/J1_* rewind.
+    const after = await prisma.onboardingTask.findUniqueOrThrow({
+      where: { id: docTask.id },
+    });
+    expect(after.status).toBe('DONE');
   });
 
   it('HR reject without reason → 400', async () => {

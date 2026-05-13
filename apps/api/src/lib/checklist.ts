@@ -35,6 +35,33 @@ export async function markTaskSkippedById(
 }
 
 /**
+ * Inverse of `markTaskDoneByKind` — flips a previously-DONE task back to
+ * PENDING and clears `completedAt`. Used when an admin rejects a document
+ * (or other artifact) that the associate had already submitted; the
+ * checklist row needs to re-open so they're prompted to redo the step.
+ *
+ * Skips SKIPPED tasks — those are explicit admin decisions ("we waived
+ * this step") and shouldn't be re-opened by a downstream artifact
+ * rejection. Returns the count of rows that were actually flipped so
+ * callers can decide whether to emit a "task reopened" event.
+ */
+export async function markTaskTodoByKind(
+  tx: Tx,
+  checklistId: string,
+  kind: TaskKind
+): Promise<number> {
+  const result = await tx.onboardingTask.updateMany({
+    where: {
+      checklistId,
+      kind,
+      status: 'DONE',
+    },
+    data: { status: 'PENDING', completedAt: null },
+  });
+  return result.count;
+}
+
+/**
  * Percent complete. SKIPPED counts as complete because the schema
  * intentionally distinguishes IN_PROGRESS from SKIPPED — a skipped
  * task is a completed (decided) state, not a pending one.

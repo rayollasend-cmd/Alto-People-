@@ -1849,11 +1849,17 @@ onboardingRouter.post(
     try {
       const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
 
+      // Exclude REJECTED / EXPIRED rows: those count as "no good doc on
+      // file" so finishing requires a fresh upload after a rejection.
+      // Without this guard the associate could re-hit /document-upload
+      // after a rewind and re-mark the task DONE with only the rejected
+      // file still attached.
       const documentCount = await prisma.documentRecord.count({
         where: {
           associateId: app.associateId,
           deletedAt: null,
           kind: { in: [...ID_CLASS_DOC_KINDS] },
+          status: { notIn: ['REJECTED', 'EXPIRED'] },
         },
       });
       if (documentCount === 0) {
@@ -2083,6 +2089,9 @@ onboardingRouter.post(
             associateId: app.associateId,
             deletedAt: null,
             kind: { in: [...J1_DOC_KINDS] },
+            // See ID_CLASS_DOC_KINDS finish handler for the rationale —
+            // REJECTED docs shouldn't satisfy the requirement after rewind.
+            status: { notIn: ['REJECTED', 'EXPIRED'] },
           },
         }),
       ]);

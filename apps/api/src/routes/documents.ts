@@ -11,11 +11,13 @@ import {
   DocumentRejectInputSchema,
   type DocumentRecord,
 } from '@alto-people/shared';
+import type { DocumentKind, TaskKind } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopeDocuments } from '../lib/scope.js';
-import { recordDocumentEvent } from '../lib/audit.js';
+import { recordDocumentEvent, recordOnboardingEvent } from '../lib/audit.js';
+import { markTaskTodoByKind } from '../lib/checklist.js';
 import { notifyAllAdmins, notifyAssociate, notifyManager } from '../lib/notify.js';
 import {
   documentRejectedAssociateTemplate,
@@ -33,6 +35,26 @@ import { env } from '../config/env.js';
 export const documentsRouter = Router();
 
 const MANAGE = requireCapability('manage:documents');
+
+/**
+ * Map associate-uploaded DocumentKind → the onboarding TaskKind whose
+ * completion that document drives. When an admin rejects a doc, we use
+ * this table to find the corresponding checklist task on the associate's
+ * in-flight application and rewind it back to PENDING so they're
+ * prompted to re-upload as part of their onboarding.
+ *
+ * Only includes kinds an associate can upload themselves. Admin-uploaded
+ * result PDFs (BACKGROUND_CHECK_RESULT, DRUG_TEST_RESULT, etc.) and
+ * server-generated docs (W4_PDF, SIGNED_AGREEMENT) intentionally have no
+ * mapping — rejecting one of those doesn't rewind a self-serve task.
+ */
+const DOC_KIND_TO_TASK_KIND: Partial<Record<DocumentKind, TaskKind>> = {
+  ID: 'DOCUMENT_UPLOAD',
+  SSN_CARD: 'DOCUMENT_UPLOAD',
+  I9_SUPPORTING: 'DOCUMENT_UPLOAD',
+  J1_DS2019: 'J1_DOCS',
+  J1_VISA: 'J1_DOCS',
+};
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
 const ALLOWED_MIMES = new Set([
@@ -443,19 +465,77 @@ documentsRouter.post('/admin/:id/reject', MANAGE, async (req, res, next) => {
       req,
     });
 
+    // Onboarding rewind — if the rejected doc was tied to a self-serve
+    // task on the associate's in-flight application, flip that task back
+    // to PENDING so the checklist re-opens. Looks at the most recent
+    // non-terminal application (DRAFT / SUBMITTED / IN_REVIEW) for this
+    // associate; if they have no live application (e.g. doc uploaded
+    // post-hire via /me/documents) this is a no-op. Best-effort —
+    // failures don't block the rejection itself.
+    //
+    // Also drives the deep link in the rejection email: if there's an
+    // active application, point the associate at its checklist rather
+    // than the generic /me/documents page, so they land where the
+    // (now-reopened) task is waiting for them.
+    const taskKind = DOC_KIND_TO_TASK_KIND[updated.kind];
+    let liveApplicationId: string | null = null;
+    if (taskKind) {
+      try {
+        const liveApp = await prisma.application.findFirst({
+          where: {
+            associateId: updated.associateId,
+            status: { in: ['DRAFT', 'SUBMITTED', 'IN_REVIEW'] },
+          },
+          orderBy: { invitedAt: 'desc' },
+          include: { checklist: { select: { id: true } } },
+        });
+        if (liveApp) {
+          liveApplicationId = liveApp.id;
+          if (liveApp.checklist) {
+            const reopened = await markTaskTodoByKind(
+              prisma,
+              liveApp.checklist.id,
+              taskKind
+            );
+            if (reopened > 0) {
+              await recordOnboardingEvent({
+                actorUserId: user.id,
+                action: 'onboarding.task_reopened',
+                applicationId: liveApp.id,
+                clientId: liveApp.clientId,
+                metadata: {
+                  taskKind,
+                  reason: 'document_rejected',
+                  documentId: updated.id,
+                  documentKind: updated.kind,
+                },
+                req,
+              });
+            }
+          }
+        }
+      } catch {
+        // Best-effort — the rejection itself has already succeeded and
+        // been audited; a rewind failure is recoverable by admin re-saving.
+      }
+    }
+
     const rejAssoc = await prisma.associate.findUnique({
       where: { id: updated.associateId },
       select: { firstName: true, lastName: true },
     });
     const reviewerName = user.email; // Reviewer's display name (User has no name fields today; surface email).
     const docKindLabel = updated.kind.replace(/_/g, ' ').toLowerCase();
+    const documentsUrl = liveApplicationId
+      ? `${env.APP_BASE_URL}/onboarding/me/${liveApplicationId}`
+      : `${env.APP_BASE_URL}/me/documents`;
     const assocTpl = documentRejectedAssociateTemplate({
       firstName: rejAssoc?.firstName ?? 'there',
       documentKind: docKindLabel,
       filename: updated.filename,
       rejectionReason: parsed.data.reason,
       reviewerName,
-      documentsUrl: `${env.APP_BASE_URL}/me/documents`,
+      documentsUrl,
     });
     void notifyAssociate(updated.associateId, {
       subject: assocTpl.subject,
