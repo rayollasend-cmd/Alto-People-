@@ -282,6 +282,15 @@ export function KioskPage() {
       }}
       onContextMenu={(e) => e.preventDefault()}
     >
+      {/* Brand anchor — a thin gold bar across the top of the kiosk
+          says "this is the Alto system" without competing with the
+          cyan tap-to-clock-in surface. Sits below any safe-area inset
+          so an iPad notch doesn't clip it. */}
+      <div
+        className="fixed left-0 right-0 z-50 h-1 bg-gradient-to-r from-transparent via-gold to-transparent opacity-80"
+        style={{ top: 'env(safe-area-inset-top)' }}
+        aria-hidden="true"
+      />
       {stage === 'idle' && (
         <IdleScreen
           now={now}
@@ -463,8 +472,10 @@ function IdleScreen({ now, onTap }: { now: Date; onTap: () => void }) {
       className="w-full h-full flex flex-col items-center justify-center"
     >
       <Logo size="xl" className="mb-6 rounded-xl" alt="Alto HR" />
-      <div className="text-cyan-400 text-sm uppercase tracking-widest mb-4">
+      <div className="text-cyan-400 text-sm uppercase tracking-[0.25em] mb-4 inline-flex items-center gap-2">
+        <span className="h-px w-6 bg-gold/60" aria-hidden="true" />
         Alto Kiosk
+        <span className="h-px w-6 bg-gold/60" aria-hidden="true" />
       </div>
       <div className="text-9xl font-serif font-light tracking-tight">{time}</div>
       <div className="text-2xl text-silver mt-3">{date}</div>

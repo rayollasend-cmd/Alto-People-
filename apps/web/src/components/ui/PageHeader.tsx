@@ -47,17 +47,27 @@ export function PageHeader({
   usePublishPageTitle(typeof title === 'string' ? title : null, breadcrumbs ?? null);
 
   return (
-    <header className={cn('mb-6', className)}>
+    <header className={cn('mb-7', className)}>
       {breadcrumbs && breadcrumbs.length > 0 && (
         <Breadcrumb segments={breadcrumbs} />
       )}
       <div className="flex items-end justify-between gap-4 flex-wrap">
         <div className="min-w-0 flex-1">
-          <h1 className="font-display text-3xl md:text-4xl text-white leading-tight">
+          {/* Editorial serif at hero scale. text-4xl on desktop (was 3xl)
+              + the relaxed leading lets Cormorant Garamond's descenders
+              breathe; tracking-tight + the brand serif together carry
+              the F500 "this is a real product" cue better than the
+              previous compressed type. mt-2 (was mt-1) on the subtitle
+              opens the title block so it doesn't read as a one-liner.
+              max-w on subtitle keeps line length scannable on wide
+              monitors. */}
+          <h1 className="font-display text-[2rem] md:text-[2.5rem] leading-[1.1] tracking-tight text-white">
             {title}
           </h1>
           {subtitle && (
-            <p className="text-silver mt-1 text-sm md:text-base">{subtitle}</p>
+            <p className="text-silver mt-2 text-sm md:text-base max-w-3xl leading-relaxed">
+              {subtitle}
+            </p>
           )}
         </div>
         {(primaryAction || secondaryActions) && (
@@ -67,7 +77,7 @@ export function PageHeader({
           </div>
         )}
       </div>
-      {children && <div className="mt-4">{children}</div>}
+      {children && <div className="mt-5">{children}</div>}
     </header>
   );
 }

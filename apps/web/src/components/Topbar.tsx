@@ -91,7 +91,11 @@ export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
                 {seg.to && !isLast ? (
                   <Link
                     to={seg.to}
-                    className={cn(segClasses, 'hover:text-white transition-colors')}
+                    className={cn(
+                      segClasses,
+                      'hover:text-white transition-colors rounded-sm px-0.5',
+                      'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright focus-visible:ring-offset-2 focus-visible:ring-offset-navy',
+                    )}
                   >
                     {seg.label}
                   </Link>

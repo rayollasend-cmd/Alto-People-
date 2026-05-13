@@ -70,14 +70,21 @@ export default {
         },
       },
       animation: {
-        'accordion-down': 'accordion-down 0.2s ease-out',
-        'accordion-up': 'accordion-up 0.2s ease-out',
-        'fade-in': 'fade-in 0.2s ease-out',
-        'fade-out': 'fade-out 0.15s ease-in',
-        'zoom-in': 'zoom-in 0.18s ease-out',
-        'zoom-out': 'zoom-out 0.15s ease-in',
-        'slide-in-from-right': 'slide-in-from-right 0.25s ease-out',
-        'slide-out-to-right': 'slide-out-to-right 0.2s ease-in',
+        // Open / close timings harmonised so the modal, drawer, and
+        // dropdown surfaces feel like one motion system. Open durations
+        // are slightly longer than close (0.22 vs 0.18) — a "land
+        // softly, depart quickly" cadence — and all use the same
+        // cubic-bezier ease so the curvature reads identical across
+        // surfaces. Dropdown / popover stay shorter (0.15) because
+        // they're contextual flicks, not page-level transitions.
+        'accordion-down': 'accordion-down 0.2s cubic-bezier(0.16,1,0.3,1)',
+        'accordion-up': 'accordion-up 0.18s cubic-bezier(0.4,0,1,1)',
+        'fade-in': 'fade-in 0.22s cubic-bezier(0.16,1,0.3,1)',
+        'fade-out': 'fade-out 0.18s cubic-bezier(0.4,0,1,1)',
+        'zoom-in': 'zoom-in 0.22s cubic-bezier(0.16,1,0.3,1)',
+        'zoom-out': 'zoom-out 0.18s cubic-bezier(0.4,0,1,1)',
+        'slide-in-from-right': 'slide-in-from-right 0.22s cubic-bezier(0.16,1,0.3,1)',
+        'slide-out-to-right': 'slide-out-to-right 0.18s cubic-bezier(0.4,0,1,1)',
         'shimmer': 'shimmer 1.6s infinite',
         'splash-sweep': 'splash-sweep 1.4s ease-in-out infinite',
       },

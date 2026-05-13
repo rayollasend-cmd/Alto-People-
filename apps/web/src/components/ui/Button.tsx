@@ -17,9 +17,13 @@ const buttonVariants = cva(
         // can layer cleanly across hover/active/disabled states.
         primary:
           'btn-gold text-navy',
-        // Secondary — subtle border, used for "Cancel", "Edit", row actions.
+        // Secondary — subtle border, used for "Cancel", "Edit", row
+        // actions. Lifts to elev-1 on hover so the affordance reads
+        // alongside the rest of the system (Card interactive,
+        // ActionCard, etc.). Resting state stays flat to keep visual
+        // hierarchy below the primary CTA.
         secondary:
-          'bg-navy-secondary/40 text-white border border-navy-secondary hover:border-silver/40 hover:bg-navy-secondary',
+          'bg-navy-secondary/40 text-white border border-navy-secondary hover:border-silver/40 hover:bg-navy-secondary hover:elev-1',
         // Outline — transparent with an outline. Good for inverse contexts.
         outline:
           'border border-silver/30 text-silver hover:text-white hover:border-silver/60 bg-transparent',
