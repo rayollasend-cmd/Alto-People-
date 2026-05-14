@@ -15,6 +15,7 @@ import {
   Sparkles,
   ThumbsDown,
   ThumbsUp,
+  UserCheck,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -491,6 +492,17 @@ function DetailActions({
         <FileDown className="h-4 w-4" />
         {compact ? 'Packet' : 'Compliance packet'}
       </a>
+      {!decided && (
+        <Button asChild variant="outline" size="sm">
+          <Link
+            to={`/onboarding/in-person/${detail.id}`}
+            title="Onboard with the associate physically present — scan IDs from the laptop webcam"
+          >
+            <UserCheck className="h-4 w-4" />
+            {compact ? 'In person' : 'Onboard in person'}
+          </Link>
+        </Button>
+      )}
       {!decided && (
         <Button variant="outline" size="sm" onClick={onResend}>
           <Send className="h-4 w-4" />

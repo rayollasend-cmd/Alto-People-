@@ -47,6 +47,7 @@ function lazyNamed<T extends ComponentType<any>>(
 // Onboarding cluster
 const OnboardingHome = lazyNamed(() => import('@/pages/onboarding/OnboardingHome'), 'OnboardingHome');
 const ApplicationDetail = lazyNamed(() => import('@/pages/onboarding/ApplicationDetail'), 'ApplicationDetail');
+const InPersonOnboarding = lazyNamed(() => import('@/pages/onboarding/InPersonOnboarding'), 'InPersonOnboarding');
 const AssociateChecklist = lazyNamed(() => import('@/pages/onboarding/AssociateChecklist'), 'AssociateChecklist');
 const TemplatesList = lazyNamed(() => import('@/pages/onboarding/TemplatesList'), 'TemplatesList');
 const TemplateEditor = lazyNamed(() => import('@/pages/onboarding/TemplateEditor'), 'TemplateEditor');
@@ -234,6 +235,17 @@ const ONBOARDING_ROUTES = [
   {
     path: 'onboarding/applications/:id',
     element: <ApplicationDetail />,
+  },
+  // Phase 145 — in-person onboarding workspace (admin sits with the
+  // associate at the office, scans IDs via webcam, and approves once
+  // the checklist is at 100%).
+  {
+    path: 'onboarding/in-person/:applicationId',
+    element: (
+      <RequireCapability cap="manage:onboarding">
+        <InPersonOnboarding />
+      </RequireCapability>
+    ),
   },
   {
     path: 'onboarding/me/:applicationId',
