@@ -32,6 +32,7 @@ import { Card } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 
@@ -263,24 +264,16 @@ export function TemplateEditor() {
 
   return (
     <div className="max-w-3xl mx-auto">
-      <div className="mb-4">
-        <Link
-          to="/onboarding/templates"
-          className="text-sm text-silver hover:text-gold inline-block"
-        >
-          ← Templates
-        </Link>
-      </div>
+      <PageHeader
+        title={isNew ? 'New onboarding template' : `Edit: ${loadedTemplate?.name ?? '…'}`}
+        subtitle="The task list HR picks from when inviting an associate. Order here is the order the associate sees."
+        breadcrumbs={[
+          { label: 'Onboarding', to: '/onboarding' },
+          { label: 'Templates', to: '/onboarding/templates' },
+          { label: isNew ? 'New' : 'Edit' },
+        ]}
+      />
 
-      <header className="mb-6">
-        <h1 className="font-display text-3xl md:text-4xl text-white mb-1.5 leading-tight">
-          {isNew ? 'New onboarding template' : `Edit: ${loadedTemplate?.name ?? '…'}`}
-        </h1>
-        <p className="text-silver text-sm">
-          The task list HR picks from when inviting an associate. Order here is
-          the order the associate sees.
-        </p>
-      </header>
 
       {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
 

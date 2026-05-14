@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { Archive, Building2, MapPin, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ClientStatus, ClientSummary } from '@alto-people/shared';
@@ -20,6 +20,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/Card';
+import { Breadcrumb } from '@/components/ui/Breadcrumb';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
@@ -99,9 +100,7 @@ export function ClientDetail() {
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
-      <Link to="/clients" className="text-sm text-silver hover:text-gold inline-block">
-        ← All clients
-      </Link>
+      <Breadcrumb segments={[{ label: 'Clients', to: '/clients' }, { label: client.name }]} />
 
       <header className="flex items-start justify-between gap-4 flex-wrap">
         <div>

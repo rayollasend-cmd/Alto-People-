@@ -39,6 +39,7 @@ import { useAuth } from '@/lib/auth';
 import { ProgressBar } from '@/components/ProgressBar';
 import { AuditTimeline } from '@/components/AuditTimeline';
 import { Badge } from '@/components/ui/Badge';
+import { Breadcrumb } from '@/components/ui/Breadcrumb';
 import { Button } from '@/components/ui/Button';
 import {
   Card,
@@ -93,12 +94,13 @@ export function ApplicationDetail() {
   const { id } = useParams<{ id: string }>();
   return (
     <div className="max-w-5xl mx-auto">
-      <Link
-        to="/onboarding"
-        className="text-sm text-silver hover:text-gold inline-block mb-3"
-      >
-        ← All applications
-      </Link>
+      <Breadcrumb
+        className="mb-3"
+        segments={[
+          { label: 'Onboarding', to: '/onboarding' },
+          { label: 'Application' },
+        ]}
+      />
       <ApplicationDetailBody applicationId={id} mode="page" />
     </div>
   );
