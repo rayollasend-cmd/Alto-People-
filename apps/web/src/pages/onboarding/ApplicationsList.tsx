@@ -27,6 +27,8 @@ import {
   listApplications,
   resendInvite,
 } from '@/lib/onboardingApi';
+import { listClients } from '@/lib/clientsApi';
+import type { ClientSummary } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { ProgressBar } from '@/components/ProgressBar';
@@ -45,6 +47,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Select } from '@/components/ui/Select';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import {
   Table,
@@ -90,13 +93,22 @@ const TRACK_LABEL: Record<string, string> = {
   CLIENT_SPECIFIC: 'Client-specific',
 };
 
-const STATUS_FILTERS: Array<{ value: ApplicationStatus | 'ALL'; label: string }> = [
-  { value: 'ALL', label: 'All' },
+// Phase 145 — APPROVED and REJECTED roll up under "Archived" by default.
+// The chip row exposes the working set + a single click to drill into
+// the archive. Real ApplicationStatus values (and the legacy 'ALL') are
+// still accepted via URL for power-user / bookmark access.
+type StatusFilter =
+  | 'ACTIVE'
+  | 'ARCHIVED'
+  | 'ALL'
+  | ApplicationStatus;
+
+const STATUS_FILTERS: Array<{ value: StatusFilter; label: string }> = [
+  { value: 'ACTIVE', label: 'Active' },
   { value: 'DRAFT', label: 'Draft' },
   { value: 'SUBMITTED', label: 'Submitted' },
   { value: 'IN_REVIEW', label: 'In review' },
-  { value: 'APPROVED', label: 'Approved' },
-  { value: 'REJECTED', label: 'Rejected' },
+  { value: 'ARCHIVED', label: 'Archived' },
 ];
 
 const STALE_DAYS = 7;
@@ -131,7 +143,11 @@ export function ApplicationsList() {
   const canManage = can('manage:onboarding');
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const status = (searchParams.get('status') as ApplicationStatus | 'ALL' | null) ?? 'ALL';
+  // Default lands on ACTIVE so terminal applications (Approved/Rejected)
+  // are hidden until the user explicitly clicks Archived. Legacy URLs
+  // with ?status=ALL still pass through unchanged.
+  const status = (searchParams.get('status') as StatusFilter | null) ?? 'ACTIVE';
+  const clientId = searchParams.get('clientId') ?? '';
   const urlQ = searchParams.get('q') ?? '';
   const [qInput, setQInput] = useState(urlQ);
 
@@ -147,10 +163,18 @@ export function ApplicationsList() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qInput]);
 
-  const setStatus = (s: ApplicationStatus | 'ALL') => {
+  const setStatus = (s: StatusFilter) => {
     const next = new URLSearchParams(searchParams);
-    if (s === 'ALL') next.delete('status');
+    // Active is the implicit default — omit the param so the URL stays clean.
+    if (s === 'ACTIVE') next.delete('status');
     else next.set('status', s);
+    setSearchParams(next, { replace: true });
+  };
+
+  const setClientId = (id: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (!id) next.delete('clientId');
+    else next.set('clientId', id);
     setSearchParams(next, { replace: true });
   };
 
@@ -166,6 +190,10 @@ export function ApplicationsList() {
   // chip counts don't require pulling the entire application table to the
   // client every load.
   const [statsData, setStatsData] = useState<ApplicationStatsResponse | null>(null);
+  // Client list for the "Filter by client" dropdown. Loaded once on
+  // mount — clients change rarely enough that a cache miss isn't worth
+  // the extra plumbing.
+  const [clients, setClients] = useState<ClientSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openCreate, setOpenCreate] = useState(false);
   const [openBulkInvite, setOpenBulkInvite] = useState(false);
@@ -191,7 +219,7 @@ export function ApplicationsList() {
 
   const refresh = useCallback(() => {
     setError(null);
-    listApplications({ status, q: urlQ, page, pageSize: PAGE_SIZE })
+    listApplications({ status, q: urlQ, clientId: clientId || undefined, page, pageSize: PAGE_SIZE })
       .then((res) => {
         setItems(res.applications);
         setFilteredTotal(res.total);
@@ -199,7 +227,7 @@ export function ApplicationsList() {
       .catch((err) =>
         setError(err instanceof ApiError ? err.message : 'Failed to load.')
       );
-  }, [status, urlQ, page]);
+  }, [status, urlQ, clientId, page]);
 
   // Roll-up stats for KPIs / banners / chip counts. Tiny payload (counts +
   // up to ~6 sample rows) regardless of how many applications exist.
@@ -213,7 +241,7 @@ export function ApplicationsList() {
   // pointing at nothing after the user narrows results.
   useEffect(() => {
     setPage(1);
-  }, [status, urlQ]);
+  }, [status, urlQ, clientId]);
 
   useEffect(() => {
     refresh();
@@ -222,6 +250,20 @@ export function ApplicationsList() {
   useEffect(() => {
     refreshStats();
   }, [refreshStats]);
+
+  useEffect(() => {
+    let cancelled = false;
+    listClients()
+      .then((res) => {
+        if (!cancelled) setClients(res.clients);
+      })
+      .catch(() => {
+        if (!cancelled) setClients([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const now = Date.now();
   const stats = statsData ?? EMPTY_STATS;
@@ -501,12 +543,35 @@ export function ApplicationsList() {
               </button>
             )}
           </div>
+          {clients && clients.length > 1 && (
+            <Select
+              size="sm"
+              aria-label="Filter by client"
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+              className="max-w-[14rem]"
+            >
+              <option value="">All clients</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+          )}
           <div className="flex flex-wrap gap-1.5">
             {STATUS_FILTERS.map((f) => {
               const count =
                 f.value === 'ALL'
                   ? stats.total
-                  : (stats.byStatus[f.value] ?? 0);
+                  : f.value === 'ACTIVE'
+                    ? (stats.byStatus.DRAFT ?? 0) +
+                      (stats.byStatus.SUBMITTED ?? 0) +
+                      (stats.byStatus.IN_REVIEW ?? 0)
+                    : f.value === 'ARCHIVED'
+                      ? (stats.byStatus.APPROVED ?? 0) +
+                        (stats.byStatus.REJECTED ?? 0)
+                      : (stats.byStatus[f.value] ?? 0);
               const active = status === f.value;
               return (
                 <button

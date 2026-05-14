@@ -29,8 +29,18 @@ import type {
 import { apiFetch } from './api';
 
 export interface ListApplicationsFilters {
+  /**
+   * Real ApplicationStatus values pass through. 'ALL' is the legacy
+   * literal-everything bucket. 'ACTIVE' (DRAFT + SUBMITTED + IN_REVIEW)
+   * and 'ARCHIVED' (APPROVED + REJECTED) are pseudo-buckets that drive
+   * the default chip-filter UI — Active is the working set, Archived
+   * hides terminal applications behind one click.
+   */
   status?: string;
+  /** Free-text search across associate name / email. */
   q?: string;
+  /** Scope the result set to a single client. */
+  clientId?: string;
   page?: number;
   pageSize?: number;
 }
@@ -41,6 +51,7 @@ export function listApplications(
   const p = new URLSearchParams();
   if (filters.status && filters.status !== 'ALL') p.set('status', filters.status);
   if (filters.q && filters.q.trim()) p.set('q', filters.q.trim());
+  if (filters.clientId && filters.clientId.trim()) p.set('clientId', filters.clientId.trim());
   if (filters.page && filters.page > 1) p.set('page', String(filters.page));
   if (filters.pageSize) p.set('pageSize', String(filters.pageSize));
   const qs = p.toString();

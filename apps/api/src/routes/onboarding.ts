@@ -425,12 +425,29 @@ onboardingRouter.get('/applications', async (req, res, next) => {
   try {
     const status = req.query.status?.toString();
     const q = req.query.q?.toString().trim();
+    const clientId = req.query.clientId?.toString().trim();
+
+    // 'ACTIVE' and 'ARCHIVED' are pseudo-statuses for the chip-filter UI:
+    // ACTIVE = the working set (anything not yet decided), ARCHIVED =
+    // terminal states (Approved + Rejected). 'ALL' still passes
+    // everything through unfiltered for power-user URL access. Real
+    // ApplicationStatus values (DRAFT, SUBMITTED, etc.) pass through
+    // unchanged.
+    let statusWhere: Prisma.ApplicationWhereInput = {};
+    if (status === 'ACTIVE') {
+      statusWhere = { status: { in: ['DRAFT', 'SUBMITTED', 'IN_REVIEW'] } };
+    } else if (status === 'ARCHIVED') {
+      statusWhere = { status: { in: ['APPROVED', 'REJECTED'] } };
+    } else if (status && status !== 'ALL') {
+      statusWhere = {
+        status: status as Prisma.ApplicationWhereInput['status'],
+      };
+    }
 
     const where: Prisma.ApplicationWhereInput = {
       ...scopeApplications(req.user!),
-      ...(status && status !== 'ALL'
-        ? { status: status as Prisma.ApplicationWhereInput['status'] }
-        : {}),
+      ...statusWhere,
+      ...(clientId ? { clientId } : {}),
       ...(q
         ? {
             associate: {
