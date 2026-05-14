@@ -172,10 +172,10 @@ registerPrefetch('/time', () => import('@/pages/time/TimeHome'));
 registerPrefetch('/time-off', () => import('@/pages/timeoff/TimeOffHome'));
 registerPrefetch('/scheduling', () => import('@/pages/scheduling/SchedulingHome'));
 registerPrefetch('/payroll', () => import('@/pages/payroll/PayrollHome'));
-registerPrefetch('/documents', () => import('@/pages/documents/AdminDocumentsView'));
+registerPrefetch('/documents', () => import('@/pages/documents/DocumentsHome'));
 registerPrefetch('/communications', () => import('@/pages/communications/CommunicationsHome'));
 registerPrefetch('/compliance', () => import('@/pages/compliance/ComplianceHome'));
-registerPrefetch('/performance', () => import('@/pages/performance/AdminReviewsView'));
+registerPrefetch('/performance', () => import('@/pages/performance/PerformanceHome'));
 registerPrefetch('/benefits', () => import('@/pages/benefits/BenefitsHome'));
 registerPrefetch('/analytics', () => import('@/pages/analytics/AnalyticsHome'));
 registerPrefetch('/audit', () => import('@/pages/audit/AuditHome'));
@@ -185,6 +185,11 @@ registerPrefetch('/admin/users', () => import('@/pages/admin/UsersAdmin'));
 registerPrefetch('/admin/branding', () => import('@/pages/admin/BrandingHome'));
 registerPrefetch('/admin/billing', () => import('@/pages/admin/BillingHome'));
 registerPrefetch('/reports', () => import('@/pages/reports/ReportsHome'));
+// Public, no-auth routes. Prefetched from any link that points at them
+// (e.g. "Report an issue" links inside the authed app surface that send
+// users to the public hotline page).
+registerPrefetch('/kiosk', () => import('@/pages/kiosk/KioskPage'));
+registerPrefetch('/hotline', () => import('@/pages/hotline/HotlinePage'));
 
 // Hover-prime the React Query cache for the heaviest pages. By the
 // time the user clicks, the chunk and the initial list have already
@@ -412,13 +417,13 @@ export const router = createBrowserRouter([
       { path: 'performance', element: <PerformanceHome /> },
       { path: 'recruiting', element: <RecruitingHome /> },
       { path: 'analytics', element: <AnalyticsHome /> },
-      // `settings` is universal (every authed user manages their own), so the
-      // base `view:dashboard` cap is enough.
-      { path: 'settings', element: <RequireCapability cap="view:dashboard"><Settings /></RequireCapability> },
-      { path: 'admin/users', element: <UsersAdmin /> },
-      { path: 'admin/branding', element: <BrandingHome /> },
-      { path: 'admin/billing', element: <BillingHome /> },
-      { path: 'audit', element: <AuditHome /> },
+      // `settings` is universal — every authenticated user manages their own
+      // profile / password / preferences here. RequireAuth above is enough.
+      { path: 'settings', element: <Settings /> },
+      { path: 'admin/users', element: <RequireCapability cap="view:hr-admin"><UsersAdmin /></RequireCapability> },
+      { path: 'admin/branding', element: <RequireCapability cap="view:hr-admin"><BrandingHome /></RequireCapability> },
+      { path: 'admin/billing', element: <RequireCapability cap="view:hr-admin"><BillingHome /></RequireCapability> },
+      { path: 'audit', element: <RequireCapability cap="view:audit"><AuditHome /></RequireCapability> },
       { path: 'benefits', element: <BenefitsHome /> },
       { path: 'people', element: <PeopleDirectory /> },
       { path: 'org', element: <OrgHome /> },
@@ -444,7 +449,7 @@ export const router = createBrowserRouter([
       { path: 'ramp', element: <RampHome /> },
       { path: 'career', element: <CareerHome /> },
       { path: 'tuition', element: <TuitionHome /> },
-      { path: 'hotline-admin', element: <HotlineAdmin /> },
+      { path: 'hotline-admin', element: <RequireCapability cap="manage:performance"><HotlineAdmin /></RequireCapability> },
       { path: 'equity', element: <EquityHome /> },
       { path: 'volunteer', element: <VtoHome /> },
       { path: 'team', element: <TeamHome /> },
