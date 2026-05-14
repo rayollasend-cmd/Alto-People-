@@ -375,7 +375,7 @@ const LAYOUT_ROUTES = [
   { path: 'worktags', element: <RequireCapability cap="view:hr-admin"><WorktagsHome /></RequireCapability> },
   { path: 'reports', element: <RequireCapability cap="view:analytics"><ReportsHome /></RequireCapability> },
   { path: 'reimbursements', element: <RequireCapability cap="view:dashboard"><ReimbursementsHome /></RequireCapability> },
-  { path: 'time-attendance/kiosk', element: <KioskAdmin /> },
+  { path: 'time-attendance/kiosk', element: <RequireCapability cap="manage:time"><KioskAdmin /></RequireCapability> },
 ];
 
 // Modules whose key has no explicit route above get a generic

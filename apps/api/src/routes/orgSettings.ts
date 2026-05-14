@@ -181,10 +181,12 @@ orgSettingsRouter.delete(
   },
 );
 
-// Public-ish: any authenticated user can read the logo so it can render in
-// emails-being-previewed UIs and in the in-app chrome later. We don't
-// gate on view:hr-admin here because every signed-in chrome surface needs
-// to render the logo.
+// Intentionally public — no auth middleware. The logo URL is embedded
+// in outbound transactional emails (invite, welcome, password reset)
+// where the recipient may not have a session yet, so requiring auth
+// would break email rendering. A logo is by nature a public brand
+// asset; if you ever need to keep it private, surface it via a signed
+// short-lived URL instead of gating this endpoint.
 orgSettingsRouter.get(
   '/admin/org/settings/logo',
   async (_req, res) => {
