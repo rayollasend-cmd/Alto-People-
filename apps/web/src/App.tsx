@@ -297,57 +297,99 @@ const ONBOARDING_ROUTES = [
   },
 ];
 
+// Authenticated routes that live under the Layout shell. Extracted to a
+// named const so we can compute PLACEHOLDER_MODULES below by checking
+// "does this module key already have an explicit route?" instead of
+// hand-maintaining a giant exclusion block list (which silently fell
+// out of sync — placeholder duplicates of real routes were registered
+// alongside the real ones; React Router picked the first match so the
+// duplicates were dead weight).
+const LAYOUT_ROUTES = [
+  { index: true, element: <Dashboard /> },
+  { path: 'time-attendance', element: <TimeHome /> },
+  { path: 'time-off', element: <TimeOffHome /> },
+  { path: 'clients', element: <ClientsHome /> },
+  { path: 'clients/:id', element: <ClientDetail /> },
+  { path: 'scheduling', element: <SchedulingHome /> },
+  { path: 'payroll', element: <PayrollHome /> },
+  { path: 'documents', element: <DocumentsHome /> },
+  { path: 'compliance', element: <ComplianceHome /> },
+  { path: 'communications', element: <CommunicationsHome /> },
+  { path: 'performance', element: <PerformanceHome /> },
+  { path: 'recruiting', element: <RecruitingHome /> },
+  { path: 'analytics', element: <AnalyticsHome /> },
+  // `settings` is universal — every authenticated user manages their own
+  // profile / password / preferences here. RequireAuth above is enough.
+  { path: 'settings', element: <Settings /> },
+  { path: 'admin/users', element: <RequireCapability cap="view:hr-admin"><UsersAdmin /></RequireCapability> },
+  { path: 'admin/branding', element: <RequireCapability cap="view:hr-admin"><BrandingHome /></RequireCapability> },
+  { path: 'admin/billing', element: <RequireCapability cap="view:hr-admin"><BillingHome /></RequireCapability> },
+  { path: 'audit', element: <RequireCapability cap="view:audit"><AuditHome /></RequireCapability> },
+  { path: 'benefits', element: <BenefitsHome /> },
+  { path: 'people', element: <PeopleDirectory /> },
+  { path: 'org', element: <OrgHome /> },
+  { path: 'org/chart', element: <OrgChart /> },
+  { path: 'celebrations', element: <CelebrationsHome /> },
+  { path: 'assets', element: <AssetsHome /> },
+  { path: 'pulse', element: <PulseHome /> },
+  { path: 'headcount', element: <HeadcountHome /> },
+  { path: 'skills', element: <SkillsHome /> },
+  { path: 'mentorship', element: <MentorshipHome /> },
+  { path: 'expirations', element: <ExpirationsHome /> },
+  { path: 'learning-paths', element: <LearningPathsHome /> },
+  { path: 'succession', element: <SuccessionHome /> },
+  { path: 'probation', element: <ProbationHome /> },
+  { path: 'holidays', element: <HolidaysHome /> },
+  { path: 'discipline', element: <DisciplineHome /> },
+  { path: 'separations', element: <SeparationHome /> },
+  { path: 'internal-jobs', element: <InternalJobsHome /> },
+  { path: 'vaccinations', element: <VaccinationsHome /> },
+  { path: 'agreements', element: <AgreementsHome /> },
+  { path: 'hr-cases', element: <HrCasesHome /> },
+  { path: 'help-center', element: <KbHome /> },
+  { path: 'ramp', element: <RampHome /> },
+  { path: 'career', element: <CareerHome /> },
+  { path: 'tuition', element: <TuitionHome /> },
+  { path: 'hotline-admin', element: <RequireCapability cap="manage:performance"><HotlineAdmin /></RequireCapability> },
+  { path: 'equity', element: <EquityHome /> },
+  { path: 'volunteer', element: <VtoHome /> },
+  { path: 'team', element: <TeamHome /> },
+  { path: 'workflows', element: <WorkflowsHome /> },
+  { path: 'me', element: <MeHome /> },
+  { path: 'compensation', element: <CompensationHome /> },
+  { path: 'performance/extras', element: <RequireCapability cap="view:performance"><PerformanceExtras /></RequireCapability> },
+  { path: 'marketplace', element: <MarketplaceHome /> },
+  { path: 'payrules', element: <PayRulesHome /> },
+  { path: 'directory', element: <DirCommsHome /> },
+  { path: 'compliance/osha', element: <RequireCapability cap="view:compliance"><OshaWcEeoHome /></RequireCapability> },
+  { path: 'templates', element: <RequireCapability cap="view:hr-admin"><TemplatesHome /></RequireCapability> },
+  { path: 'recruiting/extras', element: <RequireCapability cap="view:recruiting"><RecruitingExtras /></RequireCapability> },
+  { path: 'payroll/tax', element: <RequireCapability cap="view:payroll"><PayrollTaxHome /></RequireCapability> },
+  { path: 'payroll/config', element: <RequireCapability cap="process:payroll"><PayrollConfigView /></RequireCapability> },
+  { path: 'payroll/readiness', element: <RequireCapability cap="process:payroll"><PayrollReadiness /></RequireCapability> },
+  { path: 'payroll/ytd', element: <RequireCapability cap="process:payroll"><PayrollYtd /></RequireCapability> },
+  { path: 'payroll/year-end-close', element: <RequireCapability cap="process:payroll"><PayrollYearEndClose /></RequireCapability> },
+  { path: 'benefits/lifecycle', element: <RequireCapability cap="view:hr-admin"><BenefitsLifecycle /></RequireCapability> },
+  { path: 'integrations', element: <RequireCapability cap="view:integrations"><IntegrationsHome /></RequireCapability> },
+  { path: 'learning', element: <RequireCapability cap="view:dashboard"><LearningHome /></RequireCapability> },
+  { path: 'worktags', element: <RequireCapability cap="view:hr-admin"><WorktagsHome /></RequireCapability> },
+  { path: 'reports', element: <RequireCapability cap="view:analytics"><ReportsHome /></RequireCapability> },
+  { path: 'reimbursements', element: <RequireCapability cap="view:dashboard"><ReimbursementsHome /></RequireCapability> },
+  { path: 'time-attendance/kiosk', element: <KioskAdmin /> },
+];
+
+// Modules whose key has no explicit route above get a generic
+// ModulePlaceholder route auto-registered. Self-maintaining — adding a
+// real route to LAYOUT_ROUTES is enough to take its module out of the
+// placeholder list.
+const EXPLICIT_PATHS = new Set<string>(
+  LAYOUT_ROUTES.flatMap((r) => ('path' in r && r.path ? [r.path] : []))
+);
+// onboarding has its own home page via ONBOARDING_ROUTES spread, not
+// LAYOUT_ROUTES — exclude its module from placeholders manually.
+EXPLICIT_PATHS.add('onboarding');
 const PLACEHOLDER_MODULES = MODULES.filter(
-  (m) =>
-    m.key !== 'onboarding' &&
-    m.key !== 'time-attendance' &&
-    m.key !== 'kiosk' &&
-    m.key !== 'time-off' &&
-    m.key !== 'scheduling' &&
-    m.key !== 'payroll' &&
-    m.key !== 'documents' &&
-    m.key !== 'compliance' &&
-    m.key !== 'communications' &&
-    m.key !== 'performance' &&
-    m.key !== 'recruiting' &&
-    m.key !== 'clients' &&
-    m.key !== 'analytics' &&
-    m.key !== 'audit' &&
-    m.key !== 'benefits' &&
-    m.key !== 'org' &&
-    m.key !== 'org-chart' &&
-    m.key !== 'people' &&
-    m.key !== 'celebrations' &&
-    m.key !== 'assets' &&
-    m.key !== 'pulse' &&
-    m.key !== 'headcount' &&
-    m.key !== 'skills' &&
-    m.key !== 'mentorship' &&
-    m.key !== 'expirations' &&
-    m.key !== 'learning-paths' &&
-    m.key !== 'team' &&
-    m.key !== 'workflows' &&
-    m.key !== 'me' &&
-    m.key !== 'compensation' &&
-    m.key !== 'marketplace' &&
-    m.key !== 'payrules' &&
-    m.key !== 'dircomms' &&
-    m.key !== 'succession' &&
-    m.key !== 'probation' &&
-    m.key !== 'holidays' &&
-    m.key !== 'discipline' &&
-    m.key !== 'separations' &&
-    m.key !== 'internal-jobs' &&
-    m.key !== 'vaccinations' &&
-    m.key !== 'agreements' &&
-    m.key !== 'hr-cases' &&
-    m.key !== 'help-center' &&
-    m.key !== 'ramp' &&
-    m.key !== 'career' &&
-    m.key !== 'tuition' &&
-    m.key !== 'hotline' &&
-    m.key !== 'equity' &&
-    m.key !== 'volunteer'
+  (m) => !EXPLICIT_PATHS.has(m.path.replace(/^\//, ''))
 );
 
 export const router = createBrowserRouter([
@@ -404,77 +446,7 @@ export const router = createBrowserRouter([
     ),
     errorElement: <RouterErrorPage />,
     children: [
-      { index: true, element: <Dashboard /> },
-      { path: 'time-attendance', element: <TimeHome /> },
-      { path: 'time-off', element: <TimeOffHome /> },
-      { path: 'clients', element: <ClientsHome /> },
-      { path: 'clients/:id', element: <ClientDetail /> },
-      { path: 'scheduling', element: <SchedulingHome /> },
-      { path: 'payroll', element: <PayrollHome /> },
-      { path: 'documents', element: <DocumentsHome /> },
-      { path: 'compliance', element: <ComplianceHome /> },
-      { path: 'communications', element: <CommunicationsHome /> },
-      { path: 'performance', element: <PerformanceHome /> },
-      { path: 'recruiting', element: <RecruitingHome /> },
-      { path: 'analytics', element: <AnalyticsHome /> },
-      // `settings` is universal — every authenticated user manages their own
-      // profile / password / preferences here. RequireAuth above is enough.
-      { path: 'settings', element: <Settings /> },
-      { path: 'admin/users', element: <RequireCapability cap="view:hr-admin"><UsersAdmin /></RequireCapability> },
-      { path: 'admin/branding', element: <RequireCapability cap="view:hr-admin"><BrandingHome /></RequireCapability> },
-      { path: 'admin/billing', element: <RequireCapability cap="view:hr-admin"><BillingHome /></RequireCapability> },
-      { path: 'audit', element: <RequireCapability cap="view:audit"><AuditHome /></RequireCapability> },
-      { path: 'benefits', element: <BenefitsHome /> },
-      { path: 'people', element: <PeopleDirectory /> },
-      { path: 'org', element: <OrgHome /> },
-      { path: 'org/chart', element: <OrgChart /> },
-      { path: 'celebrations', element: <CelebrationsHome /> },
-      { path: 'assets', element: <AssetsHome /> },
-      { path: 'pulse', element: <PulseHome /> },
-      { path: 'headcount', element: <HeadcountHome /> },
-      { path: 'skills', element: <SkillsHome /> },
-      { path: 'mentorship', element: <MentorshipHome /> },
-      { path: 'expirations', element: <ExpirationsHome /> },
-      { path: 'learning-paths', element: <LearningPathsHome /> },
-      { path: 'succession', element: <SuccessionHome /> },
-      { path: 'probation', element: <ProbationHome /> },
-      { path: 'holidays', element: <HolidaysHome /> },
-      { path: 'discipline', element: <DisciplineHome /> },
-      { path: 'separations', element: <SeparationHome /> },
-      { path: 'internal-jobs', element: <InternalJobsHome /> },
-      { path: 'vaccinations', element: <VaccinationsHome /> },
-      { path: 'agreements', element: <AgreementsHome /> },
-      { path: 'hr-cases', element: <HrCasesHome /> },
-      { path: 'help-center', element: <KbHome /> },
-      { path: 'ramp', element: <RampHome /> },
-      { path: 'career', element: <CareerHome /> },
-      { path: 'tuition', element: <TuitionHome /> },
-      { path: 'hotline-admin', element: <RequireCapability cap="manage:performance"><HotlineAdmin /></RequireCapability> },
-      { path: 'equity', element: <EquityHome /> },
-      { path: 'volunteer', element: <VtoHome /> },
-      { path: 'team', element: <TeamHome /> },
-      { path: 'workflows', element: <WorkflowsHome /> },
-      { path: 'me', element: <MeHome /> },
-      { path: 'compensation', element: <CompensationHome /> },
-      { path: 'performance/extras', element: <RequireCapability cap="view:performance"><PerformanceExtras /></RequireCapability> },
-      { path: 'marketplace', element: <MarketplaceHome /> },
-      { path: 'payrules', element: <PayRulesHome /> },
-      { path: 'directory', element: <DirCommsHome /> },
-      { path: 'compliance/osha', element: <RequireCapability cap="view:compliance"><OshaWcEeoHome /></RequireCapability> },
-      { path: 'templates', element: <RequireCapability cap="view:hr-admin"><TemplatesHome /></RequireCapability> },
-      { path: 'recruiting/extras', element: <RequireCapability cap="view:recruiting"><RecruitingExtras /></RequireCapability> },
-      { path: 'payroll/tax', element: <RequireCapability cap="view:payroll"><PayrollTaxHome /></RequireCapability> },
-      { path: 'payroll/config', element: <RequireCapability cap="process:payroll"><PayrollConfigView /></RequireCapability> },
-      { path: 'payroll/readiness', element: <RequireCapability cap="process:payroll"><PayrollReadiness /></RequireCapability> },
-      { path: 'payroll/ytd', element: <RequireCapability cap="process:payroll"><PayrollYtd /></RequireCapability> },
-      { path: 'payroll/year-end-close', element: <RequireCapability cap="process:payroll"><PayrollYearEndClose /></RequireCapability> },
-      { path: 'benefits/lifecycle', element: <RequireCapability cap="view:hr-admin"><BenefitsLifecycle /></RequireCapability> },
-      { path: 'integrations', element: <RequireCapability cap="view:integrations"><IntegrationsHome /></RequireCapability> },
-      { path: 'learning', element: <RequireCapability cap="view:dashboard"><LearningHome /></RequireCapability> },
-      { path: 'worktags', element: <RequireCapability cap="view:hr-admin"><WorktagsHome /></RequireCapability> },
-      { path: 'reports', element: <RequireCapability cap="view:analytics"><ReportsHome /></RequireCapability> },
-      { path: 'reimbursements', element: <RequireCapability cap="view:dashboard"><ReimbursementsHome /></RequireCapability> },
-      { path: 'time-attendance/kiosk', element: <KioskAdmin /> },
+      ...LAYOUT_ROUTES,
       ...ONBOARDING_ROUTES,
       ...PLACEHOLDER_MODULES.map((m) => ({
         path: m.path.replace(/^\//, ''),
