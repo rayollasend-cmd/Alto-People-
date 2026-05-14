@@ -14,6 +14,7 @@ import {
 } from '@/lib/timeOffApi';
 import { ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
+import { PageHeader } from '@/components/ui/PageHeader';
 import {
   Card,
   CardContent,
@@ -98,18 +99,16 @@ export function AssociateTimeOffView() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="font-display text-2xl text-white">Time off</h1>
-          <p className="text-sm text-silver mt-1">
-            Submit a request, see your balance, track approvals.
-          </p>
-        </div>
-        <Button onClick={() => setOpenCreate(true)}>
-          <Plus className="h-4 w-4" />
-          Request time off
-        </Button>
-      </div>
+      <PageHeader
+        title="Time off"
+        subtitle="Submit a request, see your balance, track approvals."
+        primaryAction={
+          <Button onClick={() => setOpenCreate(true)}>
+            <Plus className="h-4 w-4" />
+            Request time off
+          </Button>
+        }
+      />
 
       <BalanceGrid balances={balances} />
 

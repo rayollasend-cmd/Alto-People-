@@ -4,6 +4,7 @@ import { I9Tab } from './I9Tab';
 import { BackgroundTab } from './BackgroundTab';
 import { J1Tab } from './J1Tab';
 import { ComplianceScorecard } from './ComplianceScorecard';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
 
 type Tab = 'scorecard' | 'i9' | 'background' | 'j1';
@@ -17,6 +18,10 @@ export function ComplianceHome() {
 
   return (
     <div className="max-w-6xl mx-auto">
+      <PageHeader
+        title="Compliance"
+        subtitle="Track I-9, background-check, and J-1 obligations across every active associate."
+      />
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="scorecard">Scorecard</TabsTrigger>

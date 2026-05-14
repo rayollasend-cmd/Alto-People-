@@ -106,13 +106,6 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="font-display text-2xl text-white">Time-off requests</h1>
-        <p className="text-sm text-silver mt-1">
-          Approve or deny associate requests. Approving debits their balance.
-        </p>
-      </div>
-
       <div className="flex flex-wrap gap-1 border-b border-navy-secondary">
         {TABS.map((t) => (
           <button

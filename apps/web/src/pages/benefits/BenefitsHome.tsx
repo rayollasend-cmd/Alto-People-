@@ -114,10 +114,10 @@ export function BenefitsHome() {
   if (!user?.associateId) {
     return (
       <div className="max-w-3xl mx-auto">
-        <h1 className="font-display text-3xl text-white mb-2">Benefits</h1>
-        <p className="text-silver">
-          Benefits enrollment is for associates. This account isn't linked to one.
-        </p>
+        <PageHeader
+          title="Benefits"
+          subtitle="Benefits enrollment is for associates. This account isn't linked to one."
+        />
       </div>
     );
   }
