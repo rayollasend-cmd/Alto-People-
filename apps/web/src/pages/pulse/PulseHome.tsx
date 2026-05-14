@@ -160,9 +160,9 @@ function RespondCard({
               <button
                 key={n}
                 onClick={() => setScore(n)}
-                className={`flex-1 py-3 rounded-md border transition ${
+                className={`flex-1 py-3 rounded-md border transition-colors ${
                   score === n
-                    ? 'bg-cyan-600 border-cyan-500 text-white'
+                    ? 'bg-gold border-gold text-navy'
                     : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
                 }`}
               >
@@ -174,7 +174,7 @@ function RespondCard({
           <div className="flex gap-3">
             <button
               onClick={() => setScore(1)}
-              className={`flex-1 py-3 rounded-md border transition ${
+              className={`flex-1 py-3 rounded-md border transition-colors ${
                 score === 1
                   ? 'bg-success border-success text-white'
                   : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
@@ -184,7 +184,7 @@ function RespondCard({
             </button>
             <button
               onClick={() => setScore(0)}
-              className={`flex-1 py-3 rounded-md border transition ${
+              className={`flex-1 py-3 rounded-md border transition-colors ${
                 score === 0
                   ? 'bg-alert border-alert text-white'
                   : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
@@ -581,7 +581,7 @@ function ResultsDrawer({
                     <div className="w-8 text-xs text-silver">{k}</div>
                     <div className="flex-1 h-3 rounded bg-navy-secondary/40 overflow-hidden">
                       <div
-                        className="h-full bg-cyan-500"
+                        className="h-full bg-gold"
                         style={{ width: `${(v / max) * 100}%` }}
                       />
                     </div>

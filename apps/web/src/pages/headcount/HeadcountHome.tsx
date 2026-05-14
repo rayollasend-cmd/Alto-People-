@@ -67,7 +67,7 @@ export function HeadcountHome() {
           label="Active headcount"
           value={snap?.total ?? null}
           icon={Users}
-          accent="text-cyan-400"
+          accent="text-gold"
         />
         <KpiCard
           label="Hires"
@@ -98,9 +98,9 @@ export function HeadcountHome() {
           <button
             key={d}
             onClick={() => setDays(d as 30 | 90 | 365)}
-            className={`px-3 py-1 rounded-full border transition ${
+            className={`px-3 py-1 rounded-full border transition-colors ${
               days === d
-                ? 'bg-cyan-600 border-cyan-500 text-white'
+                ? 'bg-gold border-gold text-navy'
                 : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
             }`}
           >
@@ -223,7 +223,7 @@ function BreakdownCard({
                   <div className="w-44 truncate text-silver">{r.label}</div>
                   <div className="flex-1 h-3 rounded bg-navy-secondary/40 overflow-hidden">
                     <div
-                      className="h-full bg-cyan-500"
+                      className="h-full bg-gold"
                       style={{ width: `${(r.count / max) * 100}%` }}
                     />
                   </div>

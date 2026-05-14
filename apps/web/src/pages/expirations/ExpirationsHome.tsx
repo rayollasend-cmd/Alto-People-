@@ -81,9 +81,9 @@ export function ExpirationsHome() {
           <button
             key={d}
             onClick={() => setDays(d as 30 | 60 | 90)}
-            className={`px-3 py-1 rounded-full border transition ${
+            className={`px-3 py-1 rounded-full border transition-colors ${
               days === d
-                ? 'bg-cyan-600 border-cyan-500 text-white'
+                ? 'bg-gold border-gold text-navy'
                 : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
             }`}
           >
@@ -93,9 +93,9 @@ export function ExpirationsHome() {
         <span className="ml-4 text-silver">Type:</span>
         <button
           onClick={() => setFilter('all')}
-          className={`px-3 py-1 rounded-full border transition ${
+          className={`px-3 py-1 rounded-full border transition-colors ${
             filter === 'all'
-              ? 'bg-cyan-600 border-cyan-500 text-white'
+              ? 'bg-gold border-gold text-navy'
               : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
           }`}
         >
@@ -103,9 +103,9 @@ export function ExpirationsHome() {
         </button>
         <button
           onClick={() => setFilter('cert')}
-          className={`px-3 py-1 rounded-full border transition ${
+          className={`px-3 py-1 rounded-full border transition-colors ${
             filter === 'cert'
-              ? 'bg-cyan-600 border-cyan-500 text-white'
+              ? 'bg-gold border-gold text-navy'
               : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
           }`}
         >
@@ -140,7 +140,7 @@ export function ExpirationsHome() {
           <Bucket
             title="Due later (within 1 year)"
             icon={Calendar}
-            accent="text-cyan-400"
+            accent="text-gold"
             count={data.counts.dueLater}
             items={data.dueLater}
             emptyHint="Nothing further out."

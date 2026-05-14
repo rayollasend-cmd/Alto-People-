@@ -746,9 +746,9 @@ function DiagnoseDrawer({ onClose }: { onClose: () => void }) {
               setErr(null);
               setResult(null);
             }}
-            className={`flex-1 px-3 py-1.5 rounded-md text-sm border transition ${
+            className={`flex-1 px-3 py-1.5 rounded-md text-sm border transition-colors ${
               mode === 'number'
-                ? 'bg-cyan-500/20 border-cyan-500/60 text-white'
+                ? 'bg-gold/15 border-gold/60 text-white'
                 : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
             }`}
           >
@@ -761,9 +761,9 @@ function DiagnoseDrawer({ onClose }: { onClose: () => void }) {
               setErr(null);
               setResult(null);
             }}
-            className={`flex-1 px-3 py-1.5 rounded-md text-sm border transition ${
+            className={`flex-1 px-3 py-1.5 rounded-md text-sm border transition-colors ${
               mode === 'name'
-                ? 'bg-cyan-500/20 border-cyan-500/60 text-white'
+                ? 'bg-gold/15 border-gold/60 text-white'
                 : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
             }`}
           >
@@ -1133,7 +1133,7 @@ function LogTab() {
                         href={`/api/kiosk-punches/${p.id}/selfie`}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-cyan-400 underline text-xs"
+                        className="text-gold hover:text-gold-bright underline underline-offset-2 text-xs"
                       >
                         view
                       </a>

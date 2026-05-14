@@ -284,7 +284,7 @@ export function KioskPage() {
     >
       {/* Brand anchor — a thin gold bar across the top of the kiosk
           says "this is the Alto system" without competing with the
-          cyan tap-to-clock-in surface. Sits below any safe-area inset
+          gold tap-to-clock-in surface. Sits below any safe-area inset
           so an iPad notch doesn't clip it. */}
       <div
         className="fixed left-0 right-0 z-50 h-1 bg-gradient-to-r from-transparent via-gold to-transparent opacity-80"
@@ -409,7 +409,7 @@ function SetupScreen({ onSaved }: { onSaved: (token: string) => void }) {
   return (
     <div className="fixed inset-0 bg-midnight text-white flex items-center justify-center p-6">
       <div className="max-w-md w-full bg-navy-secondary border border-navy-secondary rounded-2xl p-8 shadow-2xl">
-        <div className="text-cyan-400 text-sm uppercase tracking-widest mb-2">
+        <div className="text-gold text-sm uppercase tracking-widest mb-2">
           Alto Kiosk
         </div>
         <h1 className="text-3xl font-serif mb-4">Pair this device</h1>
@@ -437,7 +437,7 @@ function SetupScreen({ onSaved }: { onSaved: (token: string) => void }) {
         )}
         <button
           onClick={onSave}
-          className="mt-4 w-full bg-cyan-600 hover:bg-cyan-500 transition rounded-md py-3 font-medium"
+          className="mt-4 w-full bg-gold hover:bg-gold-bright text-navy transition-colors rounded-md py-3 font-medium"
         >
           Pair device
         </button>
@@ -472,19 +472,19 @@ function IdleScreen({ now, onTap }: { now: Date; onTap: () => void }) {
       className="w-full h-full flex flex-col items-center justify-center"
     >
       <Logo size="xl" className="mb-6 rounded-xl" alt="Alto HR" />
-      <div className="text-cyan-400 text-sm uppercase tracking-[0.25em] mb-4 inline-flex items-center gap-2">
+      <div className="text-gold text-sm uppercase tracking-[0.25em] mb-4 inline-flex items-center gap-2">
         <span className="h-px w-6 bg-gold/60" aria-hidden="true" />
         Alto Kiosk
         <span className="h-px w-6 bg-gold/60" aria-hidden="true" />
       </div>
       <div className="text-9xl font-serif font-light tracking-tight">{time}</div>
       <div className="text-2xl text-silver mt-3">{date}</div>
-      <div className="mt-16 px-12 py-6 bg-cyan-600/20 border-2 border-cyan-500 rounded-full text-2xl font-medium animate-pulse">
+      <div className="mt-16 px-12 py-6 bg-gold/15 border border-gold/60 text-gold rounded-full text-2xl font-medium animate-pulse">
         Tap to clock in / out
       </div>
       {faceState === 'loading' && (
         <div className="mt-6 text-sm text-silver/80 inline-flex items-center gap-2">
-          <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse" />
+          <span className="h-1.5 w-1.5 rounded-full bg-gold animate-pulse" />
           Preparing face match…
         </div>
       )}
@@ -548,7 +548,7 @@ function PinPad({
       </div>
       <button
         onClick={() => onIntent(intent === 'BREAK' ? null : 'BREAK')}
-        className={`mb-6 px-4 py-1.5 rounded-full text-sm border transition ${
+        className={`mb-6 px-4 py-1.5 rounded-full text-sm border transition-colors ${
           intent === 'BREAK'
             ? 'bg-warning/20 border-warning/60 text-warning'
             : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
@@ -572,7 +572,7 @@ function PinPad({
               pin.length > i
                 ? intent === 'BREAK'
                   ? 'bg-warning border-warning text-navy-secondary'
-                  : 'bg-cyan-500 border-cyan-400 text-navy-secondary'
+                  : 'bg-gold border-gold-bright text-navy'
                 : error
                   ? 'bg-navy-secondary/40 border-alert/60 text-silver'
                   : 'bg-navy-secondary/40 border-navy-secondary text-silver'
@@ -594,26 +594,26 @@ function PinPad({
           <button
             key={d}
             onClick={() => press(d)}
-            className="aspect-square bg-navy-secondary hover:bg-navy-secondary/70 rounded-2xl text-4xl font-light transition active:scale-95"
+            className="aspect-square bg-navy-secondary hover:bg-navy-secondary/70 rounded-2xl text-4xl font-light transition-transform active:scale-95"
           >
             {d}
           </button>
         ))}
         <button
           onClick={onCancel}
-          className="aspect-square bg-navy-secondary/40 hover:bg-navy-secondary/70 rounded-2xl text-sm text-silver transition active:scale-95"
+          className="aspect-square bg-navy-secondary/40 hover:bg-navy-secondary/70 rounded-2xl text-sm text-silver transition-transform active:scale-95"
         >
           Cancel
         </button>
         <button
           onClick={() => press('0')}
-          className="aspect-square bg-navy-secondary hover:bg-navy-secondary/70 rounded-2xl text-4xl font-light transition active:scale-95"
+          className="aspect-square bg-navy-secondary hover:bg-navy-secondary/70 rounded-2xl text-4xl font-light transition-transform active:scale-95"
         >
           0
         </button>
         <button
           onClick={back}
-          className="aspect-square bg-navy-secondary/40 hover:bg-navy-secondary/70 rounded-2xl text-2xl text-silver transition active:scale-95"
+          className="aspect-square bg-navy-secondary/40 hover:bg-navy-secondary/70 rounded-2xl text-2xl text-silver transition-transform active:scale-95"
         >
           ⌫
         </button>
@@ -714,7 +714,7 @@ function SelfieCapture({
         <div className="flex gap-3 justify-center">
           <button
             onClick={onSkip}
-            className="px-6 py-3 bg-cyan-600 hover:bg-cyan-500 rounded-md font-medium transition"
+            className="px-6 py-3 bg-gold hover:bg-gold-bright text-navy rounded-md font-medium transition-colors"
           >
             Continue without selfie
           </button>
@@ -746,14 +746,14 @@ function SelfieCapture({
             washed out. */}
         {countdown !== null && countdown > 0 && (
           <div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-black/30">
-            <div className="w-40 h-40 rounded-full border-4 border-cyan-400/80 bg-black/40 flex items-center justify-center text-[8rem] leading-none font-bold text-white drop-shadow-[0_4px_8px_rgba(0,0,0,0.8)]">
+            <div className="w-40 h-40 rounded-full border-4 border-gold/80 bg-black/40 flex items-center justify-center text-[8rem] leading-none font-bold text-white drop-shadow-[0_4px_8px_rgba(0,0,0,0.8)]">
               {countdown}
             </div>
           </div>
         )}
         {analyzing && (
           <div className="absolute inset-0 flex items-center justify-center bg-midnight/60 rounded-2xl">
-            <div className="text-cyan-400 text-2xl animate-pulse">⋯</div>
+            <div className="text-gold text-2xl animate-pulse">⋯</div>
           </div>
         )}
       </div>
@@ -823,13 +823,13 @@ function ResultScreen({ result }: { result: PunchResult }) {
     result.action === 'CLOCK_IN'
       ? 'text-success'
       : result.action === 'CLOCK_OUT'
-        ? 'text-cyan-400'
+        ? 'text-gold'
         : 'text-warning';
   const halo =
     result.action === 'CLOCK_IN'
       ? 'bg-success/20'
       : result.action === 'CLOCK_OUT'
-        ? 'bg-cyan-500/20'
+        ? 'bg-gold/20'
         : 'bg-warning/20';
   return (
     <div className="relative text-center px-6">

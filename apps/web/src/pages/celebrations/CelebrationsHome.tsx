@@ -77,12 +77,12 @@ export function CelebrationsHome() {
                       <button
                         key={`${c.associateId}-${c.kind}-${c.date}`}
                         onClick={() => setTarget(c)}
-                        className="flex items-center gap-3 p-3 rounded-md border border-navy-secondary hover:border-cyan-500/40 hover:bg-navy-secondary/40 transition text-left group"
+                        className="flex items-center gap-3 p-3 rounded-md border border-navy-secondary hover:border-gold/40 hover:bg-navy-secondary/40 transition-colors text-left group"
                       >
                         <div className={`h-10 w-10 rounded-full grid place-items-center ${
                           c.kind === 'BIRTHDAY'
-                            ? 'bg-pink-500/20 text-pink-300'
-                            : 'bg-warning/20 text-warning'
+                            ? 'bg-warning/20 text-warning'
+                            : 'bg-gold/20 text-gold'
                         }`}>
                           {c.kind === 'BIRTHDAY' ? <Cake className="h-5 w-5" /> : <PartyPopper className="h-5 w-5" />}
                         </div>
@@ -100,7 +100,7 @@ export function CelebrationsHome() {
                         <Badge variant={c.kind === 'BIRTHDAY' ? 'pending' : 'accent'}>
                           {c.kind === 'BIRTHDAY' ? 'Birthday' : 'Anniversary'}
                         </Badge>
-                        <Send className="h-4 w-4 text-silver opacity-60 group-hover:opacity-100 transition" />
+                        <Send className="h-4 w-4 text-silver opacity-60 group-hover:opacity-100 transition-opacity" />
                       </button>
                     ))}
                   </div>

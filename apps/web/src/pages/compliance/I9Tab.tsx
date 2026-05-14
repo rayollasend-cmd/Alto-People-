@@ -62,7 +62,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
             type="button"
             onClick={() => setFilter(f)}
             className={cn(
-              'px-3 py-1.5 rounded text-xs uppercase tracking-wider border transition',
+              'px-3 py-1.5 rounded text-xs uppercase tracking-wider border transition-colors',
               filter === f
                 ? 'border-gold text-gold bg-gold/10'
                 : 'border-navy-secondary text-silver hover:text-white',
@@ -362,7 +362,7 @@ function Section2Verifier({
                 <li key={doc.id}>
                   <label
                     className={cn(
-                      'block p-2 rounded border transition',
+                      'block p-2 rounded border transition-colors',
                       missing
                         ? 'border-alert/40 bg-alert/5 cursor-not-allowed'
                         : checked

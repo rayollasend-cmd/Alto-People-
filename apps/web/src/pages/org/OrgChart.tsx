@@ -155,7 +155,7 @@ function TreeNode({
             <ChevronRight className="h-4 w-4" />
           ))}
         </button>
-        <div className="h-7 w-7 rounded-full bg-cyan-600/20 border border-cyan-500/40 grid place-items-center text-xs text-cyan-300">
+        <div className="h-7 w-7 rounded-full bg-gold/15 border border-gold/40 grid place-items-center text-xs text-gold">
           {`${node.firstName.charAt(0)}${node.lastName.charAt(0)}`.toUpperCase()}
         </div>
         <div className="flex-1 min-w-0">
@@ -168,7 +168,7 @@ function TreeNode({
           </div>
         </div>
         {hasChildren && (
-          <div className="text-xs text-silver opacity-60 group-hover:opacity-100 transition flex items-center gap-1">
+          <div className="text-xs text-silver opacity-60 group-hover:opacity-100 transition-opacity flex items-center gap-1">
             <Users className="h-3 w-3" />
             {countTeam(node)}
           </div>

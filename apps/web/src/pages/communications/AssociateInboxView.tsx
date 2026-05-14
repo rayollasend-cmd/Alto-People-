@@ -97,7 +97,7 @@ export function AssociateInboxView() {
                         type="button"
                         onClick={() => onClick(n)}
                         className={cn(
-                          'block w-full text-left p-4 rounded border transition',
+                          'block w-full text-left p-4 rounded border transition-colors',
                           n.readAt
                             ? 'border-navy-secondary bg-navy/60'
                             : 'border-gold/40 bg-gold/5 hover:bg-gold/10',

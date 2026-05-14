@@ -567,7 +567,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                     type="button"
                     onClick={() => setFilter(f.value)}
                     className={cn(
-                      'px-3 py-1.5 rounded text-xs uppercase tracking-wider border transition',
+                      'px-3 py-1.5 rounded text-xs uppercase tracking-wider border transition-colors',
                       filter === f.value
                         ? 'border-gold text-gold bg-gold/10'
                         : 'border-navy-secondary text-silver hover:text-white'
