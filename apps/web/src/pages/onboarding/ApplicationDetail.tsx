@@ -493,7 +493,7 @@ function DetailActions({
         {compact ? 'Packet' : 'Compliance packet'}
       </a>
       {!decided && (
-        <Button asChild variant="outline" size="sm">
+        <Button asChild variant="secondary" size="sm">
           <Link
             to={`/onboarding/in-person/${detail.id}`}
             title="Onboard with the associate physically present — scan IDs from the laptop webcam"

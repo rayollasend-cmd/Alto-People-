@@ -13,6 +13,7 @@ import {
   Plus,
   Search,
   Send,
+  UserCheck,
   Users,
   X,
 } from 'lucide-react';
@@ -853,6 +854,21 @@ export function ApplicationsList() {
                           className="flex items-center justify-end gap-0.5 opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
                           data-no-row-click
                         >
+                          {a.status !== 'APPROVED' && a.status !== 'REJECTED' && (
+                            <Button
+                              asChild
+                              variant="ghost"
+                              size="sm"
+                              title="Onboard in person — open the walk-in workspace"
+                            >
+                              <Link
+                                to={`/onboarding/in-person/${a.id}`}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <UserCheck className="h-3.5 w-3.5" />
+                              </Link>
+                            </Button>
+                          )}
                           <Button
                             variant="ghost"
                             size="sm"
@@ -1102,6 +1118,22 @@ function ApplicationCard({
           className="flex items-center gap-1 opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
           data-no-row-click
         >
+          {a.status !== 'APPROVED' && a.status !== 'REJECTED' && (
+            <Button
+              asChild
+              variant="ghost"
+              size="sm"
+              title="Onboard in person"
+            >
+              <Link
+                to={`/onboarding/in-person/${a.id}`}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <UserCheck className="h-3.5 w-3.5" />
+                In person
+              </Link>
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="sm"
