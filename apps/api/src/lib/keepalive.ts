@@ -4,10 +4,12 @@ import { prisma } from '../db.js';
  * Periodically ping Postgres so Neon's serverless compute doesn't suspend
  * mid-session. The ping is a single `SELECT 1` — cheapest possible query.
  *
- * Runs only when KEEP_ALIVE_INTERVAL_SECONDS > 0 (opt-in via env). Defaults
- * off because every ping consumes Neon compute hours; the trade-off makes
- * sense for a developer working in the browser, not for a production
- * deployment that can absorb the occasional cold start.
+ * Production defaults to 240s (every 4 min, comfortably under Neon's 5-min
+ * idle threshold) — see config/env.ts. Dev and test default off so a local
+ * Neon dev branch isn't held continuously open. The trade-off in prod is
+ * Neon compute hours vs. user-visible cold-start failures; cold-start
+ * failures showed up in Sentry as PrismaClientKnownRequestError on the
+ * login endpoint, so the warmth pays for itself.
  */
 export function startKeepAlive(intervalSeconds: number): NodeJS.Timeout | null {
   if (intervalSeconds <= 0) return null;

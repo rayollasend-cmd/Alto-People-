@@ -38,10 +38,14 @@ const EnvSchema = z.object({
     .string()
     .min(44, 'MFA_SECRET_ENCRYPTION_KEY must be base64-encoded 32 bytes (use openssl rand -base64 32)')
     .optional(),
-  // Optional: ping the DB every N seconds to keep Neon's serverless compute
-  // from suspending. 0 (default) disables. 240 = every 4 min, comfortably
-  // under Neon's 5-min idle threshold. Each ping is a single SELECT 1, but
-  // it does count against your Neon compute hours — leave at 0 in production.
+  // Ping the DB every N seconds to keep Neon's serverless compute from
+  // suspending mid-session. Each ping is a single SELECT 1. Production
+  // applies a default of 240 (every 4 min, comfortably under Neon's 5-min
+  // idle threshold) further down in this file — without it, the first
+  // request after an idle window hits a cold-start P1001 that the in-
+  // memory retry can only partially mask. Set explicitly to 0 in prod to
+  // opt back out (e.g. if Neon compute hours become a billing concern and
+  // a higher-tier plan is cheaper than constant warmth).
   KEEP_ALIVE_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(0),
   // Phase 16 invitation flow.
   // Base URL the magic link in invitation emails points to. In dev this is
@@ -233,6 +237,21 @@ if (parsed.data.NODE_ENV === 'production') {
     );
     process.exit(1);
   }
+}
+
+// Production-only default for KEEP_ALIVE_INTERVAL_SECONDS. Only override
+// when the env var wasn't set explicitly — an operator who set it to 0 on
+// purpose (e.g. to save Neon compute hours) must not be silently flipped
+// back on. process.env carries the raw string before zod coerces it; an
+// undefined or empty value means "not explicitly set" and gets the prod
+// default of 240s. Dev and test stay at 0 so iterating locally doesn't
+// hold a Neon dev branch open continuously.
+if (
+  parsed.data.NODE_ENV === 'production' &&
+  (process.env.KEEP_ALIVE_INTERVAL_SECONDS === undefined ||
+    process.env.KEEP_ALIVE_INTERVAL_SECONDS.trim() === '')
+) {
+  parsed.data.KEEP_ALIVE_INTERVAL_SECONDS = 240;
 }
 
 if (parsed.data.PAYROLL_DISBURSEMENT_PROVIDER === 'BRANCH') {
