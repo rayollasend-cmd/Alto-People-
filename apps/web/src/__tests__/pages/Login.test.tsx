@@ -95,4 +95,20 @@ describe('<Login>', () => {
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toMatch(/too many login attempts/i);
   });
+
+  it('shows a transient-error message on 5xx instead of blaming credentials', async () => {
+    const user = userEvent.setup();
+    const signIn = vi.fn(async () => {
+      throw new ApiError(500, 'internal', 'boom');
+    });
+    renderLogin(signIn);
+
+    await user.type(screen.getByLabelText(/email/i), 'admin@altohr.com');
+    await user.type(screen.getByLabelText(/password/i), 'password-1234');
+    await user.click(screen.getByRole('button', { name: /sign in/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toMatch(/trouble signing you in/i);
+    expect(alert.textContent).not.toMatch(/invalid email or password/i);
+  });
 });

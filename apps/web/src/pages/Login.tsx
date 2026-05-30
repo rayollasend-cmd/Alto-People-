@@ -56,6 +56,11 @@ export function Login() {
         setError('Network error — check your connection and try again.');
       } else if (err instanceof ApiError && err.status === 429) {
         setError('Too many login attempts. Please wait a minute and try again.');
+      } else if (err instanceof ApiError && err.status >= 500) {
+        // Don't blame the user's credentials for a server-side fault — most
+        // commonly a transient DB cold-start from Neon. Telling them their
+        // password is wrong sends them to the reset flow for no reason.
+        setError("We're having trouble signing you in. Please try again in a moment.");
       } else {
         setError('Invalid email or password.');
       }
@@ -85,6 +90,8 @@ export function Login() {
           setCode('');
         } else if (err.code === 'invalid_code') {
           setError('That code is incorrect or expired.');
+        } else if (err.status >= 500) {
+          setError("We're having trouble verifying your code. Please try again in a moment.");
         } else {
           setError('Could not verify code.');
         }
