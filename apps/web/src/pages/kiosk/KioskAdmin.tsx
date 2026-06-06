@@ -498,6 +498,10 @@ function TokenRevealDrawer({ token, onClose }: { token: string; onClose: () => v
   );
 }
 
+// Sentinel for the client picker's cross-client view. Distinct from '' so
+// the existing "no selection" guards (!clientId) keep working.
+const ALL_CLIENTS = '__all__';
+
 function PinsTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
   const [clients, setClients] = useState<
@@ -538,7 +542,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
       return;
     }
     setRows(null);
-    listKioskPins(clientId)
+    listKioskPins(clientId === ALL_CLIENTS ? undefined : clientId)
       .then((r) => setRows(r.pins))
       .catch(() => setRows([]));
   };
@@ -564,6 +568,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
               value={clientId}
               onChange={(e) => setClientId(e.target.value)}
             >
+              <option value={ALL_CLIENTS}>All clients</option>
               {clients.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
@@ -577,7 +582,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
             <Stethoscope className="mr-2 h-4 w-4" /> Diagnose PIN
           </Button>
         )}
-        {canManage && clientId && (
+        {canManage && clientId && clientId !== ALL_CLIENTS && (
           <Button onClick={() => setShowNew(true)}>
             <Plus className="mr-2 h-4 w-4" /> Issue employee number
           </Button>
@@ -602,6 +607,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Associate</TableHead>
+                  {clientId === ALL_CLIENTS && <TableHead>Client</TableHead>}
                   <TableHead>Email</TableHead>
                   <TableHead>Employee #</TableHead>
                   <TableHead>Issued</TableHead>
@@ -614,6 +620,9 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                     <TableCell className="font-medium text-white">
                       {p.associateName}
                     </TableCell>
+                    {clientId === ALL_CLIENTS && (
+                      <TableCell className="text-silver">{p.clientName}</TableCell>
+                    )}
                     <TableCell className="text-silver">{p.associateEmail}</TableCell>
                     <TableCell className="font-mono tracking-widest text-white">
                       {p.employeeNumber ?? <span className="text-silver/50">—</span>}
