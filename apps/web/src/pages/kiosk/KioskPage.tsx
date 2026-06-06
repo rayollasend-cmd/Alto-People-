@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
-import { kioskPunch, kioskVerifyPin } from '@/lib/kiosk99Api';
+import { kioskAttachFace, kioskConfig, kioskPunch, kioskVerifyPin } from '@/lib/kiosk99Api';
 import {
   extractDescriptor,
   loadFaceModels,
@@ -29,6 +29,13 @@ import {
 
 const TOKEN_STORAGE_KEY = 'alto.kiosk.deviceToken';
 
+// A kiosk is bolted to a wall — its position doesn't change during a
+// session, so we cache one coarse fix and reuse it across the preflight
+// and the punch rather than waking the GPS radio twice per clock-in.
+// Refreshed if older than this, purely as a belt-and-suspenders against
+// a device that somehow gets relocated without a reload.
+const LOCATION_TTL_MS = 5 * 60 * 1000;
+
 type Stage = 'setup' | 'idle' | 'pin' | 'selfie' | 'result' | 'error';
 
 interface PunchResult {
@@ -55,6 +62,16 @@ export function KioskPage() {
   const [pinError, setPinError] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [queued, setQueued] = useState<number>(() => queueSize());
+  // Whether this device has a geofence. Fetched once at boot; when false
+  // the tablet never touches geolocation (the common case). Defaults to
+  // false — the server still enforces the fence on punch, so a missed
+  // config fetch fails safe (and self-heals: see the location_required
+  // retry in the preflight).
+  const geofenceRequiredRef = useRef(false);
+  // Session-cached coarse location, shared by preflight + punch.
+  const cachedLocationRef = useRef<{ lat: number; lng: number; at: number } | null>(
+    null,
+  );
 
   // Boot: read token from localStorage, otherwise show setup.
   // Also kick off face-api model preload here so by the time someone
@@ -68,6 +85,16 @@ export function KioskPage() {
       if (stored) {
         setToken(stored);
         setStage('idle');
+        // Learn whether this kiosk has a geofence so we can skip GPS
+        // entirely when it doesn't. Best-effort — a failure leaves the
+        // default (false) and the server still enforces on punch.
+        void kioskConfig(stored)
+          .then((c) => {
+            geofenceRequiredRef.current = c.geofenceRequired;
+          })
+          .catch(() => {
+            /* keep default; preflight self-heals on location_required */
+          });
       } else {
         setStage('setup');
       }
@@ -152,29 +179,71 @@ export function KioskPage() {
     setStage('idle');
   };
 
-  // Best-effort geolocation. We try once per punch (not cached at boot)
-  // so a kiosk that gets moved doesn't punch with stale coords. If the
-  // browser denies or it times out, we send null and let the server
-  // decide — the server enforces required-or-not based on the device's
-  // configured geofence.
-  const tryGetLocation = (): Promise<{ lat: number; lng: number } | null> =>
-    new Promise((resolve) => {
+  // Best-effort geolocation, tuned for a stationary wall-mounted tablet:
+  //
+  //  - Skipped entirely unless this kiosk actually has a geofence — most
+  //    don't, and waking the GPS radio for coords the server ignores was
+  //    several wasted seconds per clock-in (`force` overrides this for the
+  //    location_required self-heal path).
+  //  - `enableHighAccuracy: false` — coarse Wi-Fi/cell positioning is
+  //    plenty for a geofence radius and resolves near-instantly instead of
+  //    spinning up GPS hardware for a first fix.
+  //  - Cached for the session and reused across the preflight and the
+  //    punch, so a single clock-in never fetches twice.
+  //
+  // On denial/timeout we resolve null and let the server decide.
+  const tryGetLocation = (
+    force = false,
+  ): Promise<{ lat: number; lng: number } | null> => {
+    if (!force && !geofenceRequiredRef.current) return Promise.resolve(null);
+    const cached = cachedLocationRef.current;
+    if (cached && Date.now() - cached.at < LOCATION_TTL_MS) {
+      return Promise.resolve({ lat: cached.lat, lng: cached.lng });
+    }
+    return new Promise((resolve) => {
       if (!('geolocation' in navigator)) return resolve(null);
       navigator.geolocation.getCurrentPosition(
-        (pos) =>
-          resolve({
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude,
-          }),
+        (pos) => {
+          const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          cachedLocationRef.current = { ...loc, at: Date.now() };
+          resolve(loc);
+        },
         () => resolve(null),
-        { enableHighAccuracy: true, timeout: 6000, maximumAge: 60_000 },
+        { enableHighAccuracy: false, timeout: 5000, maximumAge: 300_000 },
       );
     });
+  };
 
-  const submit = async (
-    selfieData: string | null,
-    faceDescriptor: number[] | null,
+  // Upload the deferred selfie + face descriptor off the punch's critical
+  // path. The selfie is the biggest payload in the flow (~50-200KB base64),
+  // so keeping it out of the punch request is what makes a clock-in feel
+  // instant on slow Wi-Fi; descriptor extraction is CPU-heavy on top. Both
+  // are audit/flag-only on the server (a mismatch still reaches the review
+  // queue, just a beat later), so this whole thing is best-effort — the
+  // associate is already on the result screen.
+  const attachSelfieAndFace = async (
+    selfieData: string,
+    punchId: string,
+    deviceToken: string,
   ) => {
+    let faceDescriptor: number[] | null = null;
+    try {
+      await loadFaceModels();
+      const img = new Image();
+      img.src = selfieData;
+      await img.decode();
+      faceDescriptor = await extractDescriptor(img);
+    } catch {
+      /* face match is optional — still upload the selfie below */
+    }
+    try {
+      await kioskAttachFace({ deviceToken, punchId, selfie: selfieData, faceDescriptor });
+    } catch {
+      /* best-effort — the punch already succeeded */
+    }
+  };
+
+  const submit = async (selfieData: string | null) => {
     if (!token) {
       setStage('setup');
       return;
@@ -185,10 +254,14 @@ export function KioskPage() {
     const payload = {
       deviceToken: token,
       pin,
-      selfie: selfieData,
+      // Deferred to the background attach (see attachSelfieAndFace) so the
+      // large selfie upload + CPU-heavy descriptor extraction don't sit in
+      // front of the result screen. Kept tiny, the punch returns fast even
+      // on a slow uplink.
+      selfie: null,
       latitude: loc?.lat ?? null,
       longitude: loc?.lng ?? null,
-      faceDescriptor,
+      faceDescriptor: null,
       idempotencyKey,
       clientPunchedAt: capturedAt,
       intent,
@@ -202,6 +275,9 @@ export function KioskPage() {
       });
       setStage('result');
       window.setTimeout(reset, 4000);
+      // Fire-and-forget: upload the selfie + attach the descriptor now that
+      // the associate is already clocked in.
+      if (selfieData) void attachSelfieAndFace(selfieData, r.punchId, token);
     } catch (err) {
       // Server rejected (4xx) → real error, show it. Network failure →
       // queue and tell the user "saved offline".
@@ -240,7 +316,9 @@ export function KioskPage() {
         deviceToken: token,
         pin,
         selfie: selfieData,
-        faceDescriptor,
+        // Offline punches skip face capture — it's a best-effort fraud
+        // signal and the selfie image is still queued for HR review.
+        faceDescriptor: null,
         latitude: loc?.lat ?? null,
         longitude: loc?.lng ?? null,
         capturedAt,
@@ -318,14 +396,30 @@ export function KioskPage() {
             // on a 5-second selfie countdown. Network failure falls
             // through so the regular offline-queue flow still works.
             if (!token) return;
-            try {
-              const loc = await tryGetLocation();
-              await kioskVerifyPin({
+            const verify = (loc: { lat: number; lng: number } | null) =>
+              kioskVerifyPin({
                 deviceToken: token,
                 pin,
                 latitude: loc?.lat ?? null,
                 longitude: loc?.lng ?? null,
               });
+            try {
+              let loc = await tryGetLocation();
+              try {
+                await verify(loc);
+              } catch (err) {
+                // Self-heal: a geofenced kiosk whose config we never
+                // fetched (or that gained a geofence since boot) asks for
+                // location. Flip the flag, grab one coarse fix, and retry
+                // before surfacing anything to the user.
+                if (err instanceof ApiError && err.code === 'location_required') {
+                  geofenceRequiredRef.current = true;
+                  loc = await tryGetLocation(true);
+                  await verify(loc);
+                } else {
+                  throw err;
+                }
+              }
               setStage('selfie');
             } catch (err) {
               if (err instanceof ApiError && err.status >= 400 && err.status < 500) {
@@ -359,8 +453,8 @@ export function KioskPage() {
       )}
       {stage === 'selfie' && (
         <SelfieCapture
-          onCaptured={(data, descriptor) => void submit(data, descriptor)}
-          onSkip={() => void submit(null, null)}
+          onCaptured={(data) => void submit(data)}
+          onSkip={() => void submit(null)}
           onCancel={reset}
         />
       )}
@@ -627,7 +721,7 @@ function SelfieCapture({
   onSkip,
   onCancel,
 }: {
-  onCaptured: (dataUrl: string, descriptor: number[] | null) => void;
+  onCaptured: (dataUrl: string) => void;
   onSkip: () => void;
   onCancel: () => void;
 }) {
@@ -660,8 +754,9 @@ function SelfieCapture({
           videoRef.current.srcObject = stream;
           await videoRef.current.play();
         }
-        // Auto-snap after 2 seconds (gives the user time to position).
-        setCountdown(2);
+        // Auto-snap after 1 second — enough to position without making a
+        // clock-in feel slow. (Was 2s; the extra second was dead time.)
+        setCountdown(1);
       } catch (err) {
         setStreamErr(
           err instanceof Error ? err.message : 'Camera access denied.',
@@ -686,20 +781,12 @@ function SelfieCapture({
       if (!ctx) return;
       ctx.drawImage(v, 0, 0);
       const data = c.toDataURL('image/jpeg', 0.7);
-      // Extract descriptor from the captured frame. Best-effort — if the
-      // models didn't load (offline kiosk) or no face is found, we still
-      // submit the punch with descriptor=null.
+      // Submit immediately. The selfie upload + descriptor extraction run
+      // off the critical path in the parent (attachSelfieAndFace) so the
+      // associate isn't held on the camera — both are audit/flag-only and
+      // never gate the punch.
       setAnalyzing(true);
-      (async () => {
-        let descriptor: number[] | null = null;
-        try {
-          await loadFaceModels();
-          descriptor = await extractDescriptor(c);
-        } catch {
-          /* swallow — face match is optional */
-        }
-        onCapturedRef.current(data, descriptor);
-      })();
+      onCapturedRef.current(data);
       return;
     }
     const t = window.setTimeout(() => setCountdown(countdown - 1), 1000);

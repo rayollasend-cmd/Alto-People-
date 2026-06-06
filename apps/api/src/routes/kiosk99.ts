@@ -4,13 +4,16 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
-import { hashPassword, verifyPassword } from '../lib/passwords.js';
+import { verifyPassword } from '../lib/passwords.js';
 import {
   distanceMeters,
   generateDeviceToken,
   generatePin,
+  hashDeviceToken,
   hmacPin,
+  isLegacyDeviceHash,
   tokenLookupPrefix,
+  verifyDeviceTokenHash,
 } from '../lib/kioskAuth.js';
 import { enforcePunchRateLimit } from '../lib/kioskRateLimit.js';
 import { encryptString, decryptString } from '../lib/crypto.js';
@@ -147,7 +150,7 @@ kiosk99Router.post('/kiosk-devices', MANAGE, async (req, res) => {
   }
 
   const { plaintext, prefix } = generateDeviceToken();
-  const tokenHash = await hashPassword(plaintext);
+  const tokenHash = hashDeviceToken(plaintext);
   const created = await prisma.kioskDevice.create({
     data: {
       clientId: resolvedClientId,
@@ -183,7 +186,7 @@ kiosk99Router.post('/kiosk-devices/:id/rotate', MANAGE, async (req, res) => {
     throw new HttpError(404, 'device_not_found', 'Device not found.');
   }
   const { plaintext, prefix } = generateDeviceToken();
-  const tokenHash = await hashPassword(plaintext);
+  const tokenHash = hashDeviceToken(plaintext);
   const updated = await prisma.kioskDevice.update({
     where: { id: existing.id },
     data: {
@@ -923,6 +926,31 @@ type DeviceLookupRow = NonNullable<
   Awaited<ReturnType<typeof findDeviceByPlaintextToken>>
 >;
 
+// Match a candidate device row against the plaintext token. Fast path is
+// a constant-time keyed-SHA256 compare. Rows still carrying a legacy
+// argon2id hash verify the slow way ONCE, then get re-hashed to the fast
+// scheme (and backfilled with a tokenPrefix) so every subsequent punch
+// skips argon2 and lands on the O(1) lookup path.
+async function matchDeviceToken(
+  d: { id: string; tokenHash: string },
+  plaintext: string,
+): Promise<boolean> {
+  if (isLegacyDeviceHash(d.tokenHash)) {
+    if (await verifyPassword(d.tokenHash, plaintext)) {
+      await prisma.kioskDevice.update({
+        where: { id: d.id },
+        data: {
+          tokenHash: hashDeviceToken(plaintext),
+          tokenPrefix: tokenLookupPrefix(plaintext),
+        },
+      });
+      return true;
+    }
+    return false;
+  }
+  return verifyDeviceTokenHash(d.tokenHash, plaintext);
+}
+
 async function findDeviceByPlaintextToken(plaintext: string) {
   const prefix = tokenLookupPrefix(plaintext);
   const fast = await prisma.kioskDevice.findMany({
@@ -931,7 +959,7 @@ async function findDeviceByPlaintextToken(plaintext: string) {
     take: 20,
   });
   for (const d of fast) {
-    if (await verifyPassword(d.tokenHash, plaintext)) return d;
+    if (await matchDeviceToken(d, plaintext)) return d;
   }
   const legacy = await prisma.kioskDevice.findMany({
     where: { isActive: true, tokenPrefix: null },
@@ -939,10 +967,34 @@ async function findDeviceByPlaintextToken(plaintext: string) {
     take: 500,
   });
   for (const d of legacy) {
-    if (await verifyPassword(d.tokenHash, plaintext)) return d;
+    if (await matchDeviceToken(d, plaintext)) return d;
   }
   return null;
 }
+
+// Lightweight per-device config the tablet fetches once at boot. Today
+// it only reports whether this kiosk has a geofence — the tablet uses
+// that to decide whether to spin up geolocation AT ALL. A non-geofenced
+// kiosk has no reason to wake the GPS radio (slow, especially the first
+// fix), so this lets the common case skip location entirely. The server
+// still enforces the geofence on punch regardless of what the client does.
+const DeviceTokenOnlySchema = z.object({ deviceToken: z.string().min(10) });
+
+kiosk99Router.post('/kiosk/config', async (req, res) => {
+  const input = DeviceTokenOnlySchema.parse(req.body);
+  const device = await findDeviceByPlaintextToken(input.deviceToken);
+  if (!device) {
+    throw new HttpError(401, 'invalid_device', 'Device not registered.');
+  }
+  const geofenceRequired =
+    device.location?.latitude != null &&
+    device.location?.longitude != null &&
+    device.location?.geofenceRadiusMeters != null;
+  res.json({
+    geofenceRequired,
+    tokenExpiresAt: device.tokenExpiresAt?.toISOString() ?? null,
+  });
+});
 
 kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
   const input = VerifyPinInputSchema.parse(req.body);
@@ -962,7 +1014,10 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
       'This kiosk\'s device token expired. Re-pair from the admin page.',
     );
   }
-  enforcePunchRateLimit(device.id);
+  // Separate bucket from the punch — see enforcePunchRateLimit. The
+  // preflight and the punch it precedes are one clock-in, ~1s apart;
+  // sharing a bucket would false-429 the punch.
+  enforcePunchRateLimit(device.id, 'preflight');
 
   // Geofence check — Location-only after Phase 131; per-device
   // override columns were dropped in
@@ -1219,21 +1274,60 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     throw new HttpError(401, 'invalid_pin', 'Wrong PIN.');
   }
 
-  // 5. Phase 101 — face match (flag-only, never reject). If we have a
-  // descriptor and a reference, compute Euclidean distance. If we have a
-  // descriptor but no reference, we'll enroll inside the transaction
-  // below (so enrollment ties to the punch row).
+  // 5 + 5b — the Phase 101 face-reference lookup and the Phase 104
+  // impossible-travel lookback both key off this associateId and are
+  // independent of each other, so fire them concurrently to save a Neon
+  // round-trip on the hot path.
+  //
+  // Face match is flag-only and never rejects. With the tablet now
+  // attaching the descriptor off the critical path (POST
+  // /kiosk/punch/:id/face), input.faceDescriptor is usually absent here
+  // and the ref lookup is skipped entirely — but offline-queue replays
+  // can still carry one, so we keep the inline path.
+  //
+  // Impossible-travel: if this associate's most recent accepted punch in
+  // the last 12h happened on a different kiosk too far to physically
+  // reach in the elapsed time, flag for review. Catches "buddy gives you
+  // their PIN at site A while you punch at site B".
+  const TRAVEL_LOOKBACK_HOURS = 12;
+  const TRAVEL_KM_PER_HOUR = 100; // conservative "max ground travel"
+  const lookbackSince = new Date(
+    Date.now() - TRAVEL_LOOKBACK_HOURS * 3_600_000,
+  );
+  const [faceRef, prevPunch] = await Promise.all([
+    input.faceDescriptor
+      ? prisma.kioskFaceReference.findUnique({
+          where: { associateId: pinRow.associateId },
+          select: { descriptor: true },
+        })
+      : Promise.resolve(null),
+    prisma.kioskPunch.findFirst({
+      where: {
+        associateId: pinRow.associateId,
+        action: { in: ['CLOCK_IN', 'CLOCK_OUT'] },
+        kioskDeviceId: { not: device.id },
+        createdAt: { gte: lookbackSince },
+      },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        device: {
+          select: {
+            location: {
+              select: { latitude: true, longitude: true },
+            },
+          },
+        },
+      },
+    }),
+  ]);
+
   let faceDistance: number | null = null;
   let faceMismatch: boolean | null = null;
   let shouldEnrollFace = false;
   let faceReferenceUsed = false;
   if (input.faceDescriptor) {
-    const ref = await prisma.kioskFaceReference.findUnique({
-      where: { associateId: pinRow.associateId },
-      select: { descriptor: true },
-    });
-    if (ref) {
-      const refVec = bytesToDescriptor(ref.descriptor);
+    if (faceRef) {
+      const refVec = bytesToDescriptor(faceRef.descriptor);
       faceDistance = euclideanDistance(refVec, input.faceDescriptor);
       faceMismatch = faceDistance > FACE_MATCH_THRESHOLD;
       faceReferenceUsed = true;
@@ -1242,36 +1336,7 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     }
   }
 
-  // 5b. Phase 104 — impossible-travel detection. Look at this associate's
-  // most recent prior accepted punch within the last 12 hours; if it
-  // happened on a different kiosk too far away to physically reach in
-  // the elapsed time, flag this punch for review. This catches the
-  // "buddy gives you their PIN at site A while you punch at site B"
-  // pattern that face matching alone might miss (low light, bad angle).
   let impossibleTravel: { distKm: number; minutes: number } | null = null;
-  const TRAVEL_LOOKBACK_HOURS = 12;
-  const TRAVEL_KM_PER_HOUR = 100; // conservative "max ground travel"
-  const lookbackSince = new Date(
-    Date.now() - TRAVEL_LOOKBACK_HOURS * 3_600_000,
-  );
-  const prevPunch = await prisma.kioskPunch.findFirst({
-    where: {
-      associateId: pinRow.associateId,
-      action: { in: ['CLOCK_IN', 'CLOCK_OUT'] },
-      kioskDeviceId: { not: device.id },
-      createdAt: { gte: lookbackSince },
-    },
-    orderBy: { createdAt: 'desc' },
-    include: {
-      device: {
-        select: {
-          location: {
-            select: { latitude: true, longitude: true },
-          },
-        },
-      },
-    },
-  });
   // Pick a coordinate for "where this punch happened": prefer the
   // kiosk Location's geofence center (fixed, accurate), fall back to
   // the punch's reported lat/lng for sites without a configured
@@ -1486,4 +1551,139 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     at: result.timeEntry.updatedAt.toISOString(),
     punchId: result.punchId,
   });
+});
+
+// Attach the selfie + face descriptor to a punch AFTER the fact. The
+// tablet returns the user to the result screen the instant /kiosk/punch
+// responds, then uploads the (large, base64) selfie and computes the
+// (CPU-heavy) face descriptor in the background and posts both here.
+//
+// Why defer the selfie too: it's a ~50-200KB base64 blob, the single
+// biggest payload in the flow. Keeping it off the punch request makes the
+// clock-in feel instant on a slow uplink — the punch is a few hundred
+// bytes and returns immediately, the image follows. Both selfie storage
+// and face matching are flag-only / audit-only (they never gate the
+// clock-in), so this is best-effort and safe for the client to drop.
+//
+// NOTE: the OFFLINE path keeps the selfie inline on the queued punch
+// (drainQueue has no companion attach call), so offline punches still
+// carry their image — only the live path defers it.
+const AttachFaceSchema = z.object({
+  deviceToken: z.string().min(10),
+  // Deferred selfie, base64 data URL or raw — same shape /kiosk/punch takes.
+  selfie: z.string().max(2_000_000).optional().nullable(),
+  faceDescriptor: z
+    .array(z.number().finite())
+    .length(128)
+    .optional()
+    .nullable(),
+});
+
+kiosk99Router.post('/kiosk/punch/:id/face', async (req, res) => {
+  const punchId = z.string().uuid().parse(req.params.id);
+  const input = AttachFaceSchema.parse(req.body);
+
+  const device = await findDeviceByPlaintextToken(input.deviceToken);
+  if (!device) {
+    throw new HttpError(401, 'invalid_device', 'Device not registered.');
+  }
+
+  const punch = await prisma.kioskPunch.findUnique({
+    where: { id: punchId },
+    select: {
+      id: true,
+      kioskDeviceId: true,
+      associateId: true,
+      action: true,
+      anomalyKind: true,
+      reviewStatus: true,
+    },
+  });
+  // Bind the punch to the calling device and require a real associate —
+  // don't leak which check failed.
+  if (!punch || punch.kioskDeviceId !== device.id || !punch.associateId) {
+    throw new HttpError(404, 'punch_not_found', 'Punch not found.');
+  }
+  if (punch.action === 'REJECTED') {
+    res.json({ ok: true, skipped: true });
+    return;
+  }
+  const associateId = punch.associateId;
+
+  // Store the deferred selfie. Best-effort and independent of the face
+  // descriptor: a malformed/oversize image is skipped without aborting the
+  // face match below.
+  let selfie: Buffer | null = null;
+  try {
+    selfie = decodeSelfie(input.selfie ?? null);
+  } catch {
+    /* malformed selfie — skip storing, still attach face */
+  }
+  if (selfie) {
+    await prisma.kioskPunch.update({
+      where: { id: punch.id },
+      data: { selfie },
+    });
+  }
+
+  if (!input.faceDescriptor) {
+    res.json({ ok: true });
+    return;
+  }
+
+  const ref = await prisma.kioskFaceReference.findUnique({
+    where: { associateId },
+    select: { descriptor: true },
+  });
+  if (!ref) {
+    // First sighting — enroll this descriptor as the reference. upsert
+    // (not create) so a concurrent first-punch for the same new associate
+    // can't trip a P2002 on the unique associateId: the loser just bumps
+    // lastUsedAt instead of 500-ing.
+    await prisma.kioskFaceReference.upsert({
+      where: { associateId },
+      create: {
+        associateId,
+        descriptor: descriptorToBytes(input.faceDescriptor),
+        enrolledByPunchId: punch.id,
+        lastUsedAt: new Date(),
+      },
+      update: { lastUsedAt: new Date() },
+    });
+    res.json({ ok: true, enrolled: true });
+    return;
+  }
+
+  const faceDistance = euclideanDistance(
+    bytesToDescriptor(ref.descriptor),
+    input.faceDescriptor,
+  );
+  const faceMismatch = faceDistance > FACE_MATCH_THRESHOLD;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.kioskFaceReference.updateMany({
+      where: { associateId },
+      data: { lastUsedAt: new Date() },
+    });
+    await tx.kioskPunch.update({
+      where: { id: punch.id },
+      data: {
+        faceDistance,
+        faceMismatch,
+        // Only escalate to a FACE_MISMATCH anomaly when the punch wasn't
+        // already flagged for something stronger (impossible-travel wins,
+        // mirroring the inline punch logic). Surface it in the review
+        // queue if it isn't already there.
+        ...(faceMismatch && punch.anomalyKind == null
+          ? {
+              anomalyKind: 'FACE_MISMATCH',
+              anomalyDetail: `face distance ${faceDistance.toFixed(3)} > threshold ${FACE_MATCH_THRESHOLD}`,
+              reviewStatus: punch.reviewStatus ?? 'PENDING',
+            }
+          : {}),
+      },
+    });
+  });
+
+  res.json({ ok: true, faceMismatch });
 });

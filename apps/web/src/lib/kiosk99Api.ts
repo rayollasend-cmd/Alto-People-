@@ -91,6 +91,36 @@ export const rotateKioskDevice = (id: string) =>
     { method: 'POST', body: {} },
   );
 
+/** Per-device boot config. The tablet fetches this once when it has a
+ *  token so it knows whether to bother spinning up geolocation at all —
+ *  a kiosk with no geofence skips GPS entirely. The server still
+ *  enforces the geofence on every punch regardless. */
+export const kioskConfig = (deviceToken: string) =>
+  apiFetch<{ geofenceRequired: boolean; tokenExpiresAt: string | null }>(
+    '/kiosk/config',
+    { method: 'POST', body: { deviceToken } },
+  );
+
+/** Attach the deferred selfie + face descriptor to an already-recorded
+ *  punch. Called by the tablet in the background after the punch succeeds,
+ *  so neither the large selfie upload nor the CPU-heavy descriptor
+ *  extraction blocks the associate. Best-effort — both are audit/flag-only
+ *  on the server. */
+export const kioskAttachFace = (payload: {
+  deviceToken: string;
+  punchId: string;
+  selfie?: string | null;
+  faceDescriptor?: number[] | null;
+}) =>
+  apiFetch<{ ok: true }>(`/kiosk/punch/${payload.punchId}/face`, {
+    method: 'POST',
+    body: {
+      deviceToken: payload.deviceToken,
+      selfie: payload.selfie ?? null,
+      faceDescriptor: payload.faceDescriptor ?? null,
+    },
+  });
+
 /** Preflight PIN check. The tablet calls this right after the 4th
  *  digit is entered, BEFORE opening the camera. Throws on invalid
  *  device / token expiry / wrong PIN / outside-geofence so the kiosk
