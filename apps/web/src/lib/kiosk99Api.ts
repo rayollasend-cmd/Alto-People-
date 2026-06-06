@@ -27,6 +27,7 @@ export interface KioskPin {
   associateName: string;
   associateEmail: string;
   clientId: string;
+  clientName: string;
   /** 4-digit number, decrypted server-side. Null on legacy pre-encryption rows. */
   employeeNumber: string | null;
   createdAt: string;
@@ -147,8 +148,12 @@ export const revokeKioskDevice = (id: string) =>
 export const deleteKioskDevice = (id: string) =>
   apiFetch<void>(`/kiosk-devices/${id}`, { method: 'DELETE' });
 
-export const listKioskPins = (clientId: string) =>
-  apiFetch<{ pins: KioskPin[] }>(`/kiosk-pins?clientId=${clientId}`);
+/** List employee numbers. Pass a clientId to scope to one client, or omit
+ *  it for the cross-client "All clients" view. */
+export const listKioskPins = (clientId?: string) =>
+  apiFetch<{ pins: KioskPin[] }>(
+    clientId ? `/kiosk-pins?clientId=${clientId}` : '/kiosk-pins',
+  );
 
 export const assignKioskPin = (input: {
   associateId: string;

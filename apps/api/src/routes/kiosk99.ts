@@ -230,14 +230,25 @@ const PinInputSchema = z.object({
 });
 
 kiosk99Router.get('/kiosk-pins', MANAGE, async (req, res) => {
-  const clientId = z.string().uuid().parse(req.query.clientId);
+  // clientId optional — omit it for the cross-client "All clients" view.
+  // Scoped per-client it sorts newest-first (matches issuing order); the
+  // all-clients view groups by client then name so the flat list stays
+  // scannable.
+  const clientId = z.string().uuid().optional().parse(req.query.clientId);
   const rows = await prisma.kioskPin.findMany({
-    take: 500,
-    where: { clientId },
+    take: 1000,
+    where: { ...(clientId ? { clientId } : {}) },
     include: {
       associate: { select: { firstName: true, lastName: true, email: true } },
+      client: { select: { name: true } },
     },
-    orderBy: { createdAt: 'desc' },
+    orderBy: clientId
+      ? { createdAt: 'desc' }
+      : [
+          { client: { name: 'asc' } },
+          { associate: { lastName: 'asc' } },
+          { associate: { firstName: 'asc' } },
+        ],
   });
   res.json({
     pins: rows.map((p) => ({
@@ -246,6 +257,7 @@ kiosk99Router.get('/kiosk-pins', MANAGE, async (req, res) => {
       associateName: `${p.associate.firstName} ${p.associate.lastName}`,
       associateEmail: p.associate.email,
       clientId: p.clientId,
+      clientName: p.client.name,
       // Decrypt for HR display. Old rows pre-dating the encryption
       // column return null — HR will need to rotate to recover the
       // plaintext.
