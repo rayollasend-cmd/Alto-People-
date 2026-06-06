@@ -71,13 +71,24 @@ export function setKioskRateLimitStore(next: KioskRateLimitStore): void {
 }
 
 /**
- * Throws 429 if the device punched within the last THROTTLE_MS.
- * Stamps the device's lastPunchAt. Call after device-token
- * verification so an attacker can't burn cycles with garbage tokens.
+ * Throws 429 if the device acted within the last THROTTLE_MS, then stamps
+ * the timestamp. Call after device-token verification so an attacker can't
+ * burn cycles with garbage tokens.
+ *
+ * `bucket` namespaces the throttle. A clock-in fires TWO requests a beat
+ * apart — the preflight (verify-pin) and the punch itself — so they must
+ * NOT share a bucket: a shared one means the preflight's stamp can trip a
+ * spurious 429 on the punch that follows ~1s later (worse now that the
+ * selfie countdown is 1s). Separate buckets keep each independently
+ * throttled against its own rapid-fire without cross-interference.
  */
-export function enforcePunchRateLimit(deviceId: string): void {
+export function enforcePunchRateLimit(
+  deviceId: string,
+  bucket: 'punch' | 'preflight' = 'punch',
+): void {
   const now = Date.now();
-  const s = store.read(deviceId);
+  const key = `${bucket}:${deviceId}`;
+  const s = store.read(key);
 
   if (s.lastPunchAt && now - s.lastPunchAt < THROTTLE_MS) {
     throw new HttpError(
@@ -87,7 +98,7 @@ export function enforcePunchRateLimit(deviceId: string): void {
     );
   }
   s.lastPunchAt = now;
-  store.write(deviceId, s);
+  store.write(key, s);
 }
 
 /** Test/admin helper — wipe everything. Not exposed via HTTP. */

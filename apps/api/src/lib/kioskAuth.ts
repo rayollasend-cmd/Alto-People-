@@ -1,4 +1,10 @@
-import { createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
+import {
+  createHash,
+  createHmac,
+  randomBytes,
+  randomInt,
+  timingSafeEqual,
+} from 'node:crypto';
 import { env } from '../config/env.js';
 
 /**
@@ -60,17 +66,23 @@ export function generateDeviceToken(): { plaintext: string; prefix: string } {
  * random string (see generateDeviceToken). It has no low-entropy structure
  * to brute-force, so the memory-hard argon2id we use for passwords buys us
  * nothing here — it just costs ~30-100ms and a ~19MB allocation on EVERY
- * punch (and every preflight), which is the bulk of the kiosk's per-clock
- * latency under load. A keyed SHA-256 is constant-time to compute and
- * cryptographically sufficient for a 256-bit secret; the HMAC key
- * (KIOSK_PIN_SECRET) means a DB-only dump still can't precompute matches.
+ * punch (and every preflight), which was the bulk of the kiosk's per-clock
+ * latency under load.
+ *
+ * We use a PLAIN, unkeyed SHA-256 rather than an HMAC. For a full-entropy
+ * 256-bit input, HMAC adds no security — SHA-256's preimage resistance
+ * already makes a stolen-DB hash useless for forging a token, with or
+ * without a secret key. Keying it would only COUPLE device authentication
+ * to KIOSK_PIN_SECRET, so a secret rotation/misconfig would silently
+ * un-pair every kiosk on top of breaking PINs. Unkeyed, device tokens
+ * survive any secret change — strictly more reliable, equally secure.
  *
  * Stored as 64-char lowercase hex, which is how verifyDeviceTokenHash and
  * isLegacyDeviceHash tell a fast hash apart from a legacy `$argon2id$...`
  * one during the lazy migration.
  */
 export function hashDeviceToken(plaintext: string): string {
-  return createHmac('sha256', pinSecret()).update(plaintext).digest('hex');
+  return createHash('sha256').update(plaintext).digest('hex');
 }
 
 /** Constant-time compare of a plaintext token against a fast-scheme hash. */

@@ -214,25 +214,32 @@ export function KioskPage() {
     });
   };
 
-  // Compute the face descriptor off the punch's critical path and attach
-  // it to the just-created punch. Face match is flag-only on the server,
-  // so this never blocks the associate — they're already on the result
-  // screen. A mismatch still reaches the review queue, just a beat later.
-  const computeAndAttachFace = async (
+  // Upload the deferred selfie + face descriptor off the punch's critical
+  // path. The selfie is the biggest payload in the flow (~50-200KB base64),
+  // so keeping it out of the punch request is what makes a clock-in feel
+  // instant on slow Wi-Fi; descriptor extraction is CPU-heavy on top. Both
+  // are audit/flag-only on the server (a mismatch still reaches the review
+  // queue, just a beat later), so this whole thing is best-effort — the
+  // associate is already on the result screen.
+  const attachSelfieAndFace = async (
     selfieData: string,
     punchId: string,
     deviceToken: string,
   ) => {
+    let faceDescriptor: number[] | null = null;
     try {
       await loadFaceModels();
       const img = new Image();
       img.src = selfieData;
       await img.decode();
-      const descriptor = await extractDescriptor(img);
-      if (!descriptor) return;
-      await kioskAttachFace({ deviceToken, punchId, faceDescriptor: descriptor });
+      faceDescriptor = await extractDescriptor(img);
     } catch {
-      /* best-effort fraud signal — never surfaced to the user */
+      /* face match is optional — still upload the selfie below */
+    }
+    try {
+      await kioskAttachFace({ deviceToken, punchId, selfie: selfieData, faceDescriptor });
+    } catch {
+      /* best-effort — the punch already succeeded */
     }
   };
 
@@ -247,12 +254,13 @@ export function KioskPage() {
     const payload = {
       deviceToken: token,
       pin,
-      selfie: selfieData,
+      // Deferred to the background attach (see attachSelfieAndFace) so the
+      // large selfie upload + CPU-heavy descriptor extraction don't sit in
+      // front of the result screen. Kept tiny, the punch returns fast even
+      // on a slow uplink.
+      selfie: null,
       latitude: loc?.lat ?? null,
       longitude: loc?.lng ?? null,
-      // Attached in the background after the punch lands (see
-      // computeAndAttachFace) so the CPU-heavy extraction doesn't sit in
-      // front of the result screen.
       faceDescriptor: null,
       idempotencyKey,
       clientPunchedAt: capturedAt,
@@ -267,9 +275,9 @@ export function KioskPage() {
       });
       setStage('result');
       window.setTimeout(reset, 4000);
-      // Fire-and-forget: extract + attach the descriptor now that the
-      // associate is already clocked in.
-      if (selfieData) void computeAndAttachFace(selfieData, r.punchId, token);
+      // Fire-and-forget: upload the selfie + attach the descriptor now that
+      // the associate is already clocked in.
+      if (selfieData) void attachSelfieAndFace(selfieData, r.punchId, token);
     } catch (err) {
       // Server rejected (4xx) → real error, show it. Network failure →
       // queue and tell the user "saved offline".
@@ -773,10 +781,10 @@ function SelfieCapture({
       if (!ctx) return;
       ctx.drawImage(v, 0, 0);
       const data = c.toDataURL('image/jpeg', 0.7);
-      // Submit immediately. The face descriptor is extracted off the
-      // critical path by the parent (computeAndAttachFace) so the
-      // associate isn't held on the camera for CPU-heavy inference —
-      // face match is flag-only and never gates the punch.
+      // Submit immediately. The selfie upload + descriptor extraction run
+      // off the critical path in the parent (attachSelfieAndFace) so the
+      // associate isn't held on the camera — both are audit/flag-only and
+      // never gate the punch.
       setAnalyzing(true);
       onCapturedRef.current(data);
       return;

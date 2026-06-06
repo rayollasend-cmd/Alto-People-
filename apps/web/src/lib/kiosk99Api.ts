@@ -101,20 +101,23 @@ export const kioskConfig = (deviceToken: string) =>
     { method: 'POST', body: { deviceToken } },
   );
 
-/** Attach a face descriptor to an already-recorded punch. Called by the
- *  tablet in the background after the punch succeeds, so the CPU-heavy
- *  descriptor extraction never blocks the associate. Best-effort —
- *  face match is flag-only on the server. */
+/** Attach the deferred selfie + face descriptor to an already-recorded
+ *  punch. Called by the tablet in the background after the punch succeeds,
+ *  so neither the large selfie upload nor the CPU-heavy descriptor
+ *  extraction blocks the associate. Best-effort — both are audit/flag-only
+ *  on the server. */
 export const kioskAttachFace = (payload: {
   deviceToken: string;
   punchId: string;
-  faceDescriptor: number[];
+  selfie?: string | null;
+  faceDescriptor?: number[] | null;
 }) =>
   apiFetch<{ ok: true }>(`/kiosk/punch/${payload.punchId}/face`, {
     method: 'POST',
     body: {
       deviceToken: payload.deviceToken,
-      faceDescriptor: payload.faceDescriptor,
+      selfie: payload.selfie ?? null,
+      faceDescriptor: payload.faceDescriptor ?? null,
     },
   });
 

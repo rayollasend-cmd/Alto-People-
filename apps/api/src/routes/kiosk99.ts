@@ -1014,7 +1014,10 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
       'This kiosk\'s device token expired. Re-pair from the admin page.',
     );
   }
-  enforcePunchRateLimit(device.id);
+  // Separate bucket from the punch — see enforcePunchRateLimit. The
+  // preflight and the punch it precedes are one clock-in, ~1s apart;
+  // sharing a bucket would false-429 the punch.
+  enforcePunchRateLimit(device.id, 'preflight');
 
   // Geofence check — Location-only after Phase 131; per-device
   // override columns were dropped in
@@ -1550,16 +1553,30 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
   });
 });
 
-// Attach a face descriptor to a punch AFTER the fact. The tablet returns
-// the user to the result screen the instant /kiosk/punch responds, then
-// computes the (CPU-heavy) face descriptor in the background and posts it
-// here. Face matching is flag-only — it never gates clock-in — so moving
-// it off the critical path is pure latency win with no loss of the fraud
-// signal: a mismatch still lands the punch in the review queue, just a
-// beat later. Idempotent and safe to drop (best-effort from the client).
+// Attach the selfie + face descriptor to a punch AFTER the fact. The
+// tablet returns the user to the result screen the instant /kiosk/punch
+// responds, then uploads the (large, base64) selfie and computes the
+// (CPU-heavy) face descriptor in the background and posts both here.
+//
+// Why defer the selfie too: it's a ~50-200KB base64 blob, the single
+// biggest payload in the flow. Keeping it off the punch request makes the
+// clock-in feel instant on a slow uplink — the punch is a few hundred
+// bytes and returns immediately, the image follows. Both selfie storage
+// and face matching are flag-only / audit-only (they never gate the
+// clock-in), so this is best-effort and safe for the client to drop.
+//
+// NOTE: the OFFLINE path keeps the selfie inline on the queued punch
+// (drainQueue has no companion attach call), so offline punches still
+// carry their image — only the live path defers it.
 const AttachFaceSchema = z.object({
   deviceToken: z.string().min(10),
-  faceDescriptor: z.array(z.number().finite()).length(128),
+  // Deferred selfie, base64 data URL or raw — same shape /kiosk/punch takes.
+  selfie: z.string().max(2_000_000).optional().nullable(),
+  faceDescriptor: z
+    .array(z.number().finite())
+    .length(128)
+    .optional()
+    .nullable(),
 });
 
 kiosk99Router.post('/kiosk/punch/:id/face', async (req, res) => {
@@ -1593,19 +1610,45 @@ kiosk99Router.post('/kiosk/punch/:id/face', async (req, res) => {
   }
   const associateId = punch.associateId;
 
+  // Store the deferred selfie. Best-effort and independent of the face
+  // descriptor: a malformed/oversize image is skipped without aborting the
+  // face match below.
+  let selfie: Buffer | null = null;
+  try {
+    selfie = decodeSelfie(input.selfie ?? null);
+  } catch {
+    /* malformed selfie — skip storing, still attach face */
+  }
+  if (selfie) {
+    await prisma.kioskPunch.update({
+      where: { id: punch.id },
+      data: { selfie },
+    });
+  }
+
+  if (!input.faceDescriptor) {
+    res.json({ ok: true });
+    return;
+  }
+
   const ref = await prisma.kioskFaceReference.findUnique({
     where: { associateId },
     select: { descriptor: true },
   });
   if (!ref) {
-    // First sighting — enroll this descriptor as the reference.
-    await prisma.kioskFaceReference.create({
-      data: {
+    // First sighting — enroll this descriptor as the reference. upsert
+    // (not create) so a concurrent first-punch for the same new associate
+    // can't trip a P2002 on the unique associateId: the loser just bumps
+    // lastUsedAt instead of 500-ing.
+    await prisma.kioskFaceReference.upsert({
+      where: { associateId },
+      create: {
         associateId,
         descriptor: descriptorToBytes(input.faceDescriptor),
         enrolledByPunchId: punch.id,
         lastUsedAt: new Date(),
       },
+      update: { lastUsedAt: new Date() },
     });
     res.json({ ok: true, enrolled: true });
     return;
