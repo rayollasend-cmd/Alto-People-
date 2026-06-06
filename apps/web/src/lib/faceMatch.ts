@@ -78,19 +78,39 @@ export function onFaceModelsStateChange(
   };
 }
 
+async function loadAllFrom(faceapi: FaceApi, url: string): Promise<void> {
+  await Promise.all([
+    faceapi.nets.tinyFaceDetector.loadFromUri(url),
+    faceapi.nets.faceLandmark68Net.loadFromUri(url),
+    faceapi.nets.faceRecognitionNet.loadFromUri(url),
+  ]);
+}
+
 export function loadFaceModels(): Promise<void> {
   if (modelsPromise) return modelsPromise;
-  const url =
-    (import.meta.env.VITE_FACE_MODELS_URL as string | undefined)?.trim() ||
-    DEFAULT_MODELS_URL;
+  // Prefer a self-hosted weights dir when configured (set
+  // VITE_FACE_MODELS_URL=/face-models after `npm run build:face-models`).
+  // Self-hosting avoids the ~6.5MB jsDelivr fetch (and its re-fetches when
+  // the tablet cache is evicted), but we fall back to the CDN if the
+  // self-hosted files aren't deployed — a missing manifest makes
+  // loadFromUri reject, which we catch and retry against jsDelivr. This is
+  // less latency-critical now that descriptor extraction runs off the
+  // punch's critical path, but a faster, more reliable model load still
+  // means the fraud signal attaches sooner.
+  const selfHost = (import.meta.env.VITE_FACE_MODELS_URL as string | undefined)?.trim();
   setModelsState('loading');
   modelsPromise = (async () => {
     const faceapi = await getFaceApi();
-    await Promise.all([
-      faceapi.nets.tinyFaceDetector.loadFromUri(url),
-      faceapi.nets.faceLandmark68Net.loadFromUri(url),
-      faceapi.nets.faceRecognitionNet.loadFromUri(url),
-    ]);
+    if (selfHost) {
+      try {
+        await loadAllFrom(faceapi, selfHost);
+        setModelsState('ready');
+        return;
+      } catch {
+        /* self-hosted weights missing/unreachable — fall back to CDN */
+      }
+    }
+    await loadAllFrom(faceapi, DEFAULT_MODELS_URL);
     setModelsState('ready');
   })().catch((err) => {
     // Reset so the next attempt retries (e.g., user reconnects to wifi).
