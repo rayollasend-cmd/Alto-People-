@@ -558,10 +558,11 @@ function TokenRevealDrawer({ token, onClose }: { token: string; onClose: () => v
 const ALL_CLIENTS = '__all__';
 
 // Employee numbers are sensitive — a shared admin screen or a screen-share
-// shouldn't leak everyone's clock-in code at a glance. Mask by default,
-// reveal per-row on demand, and offer a one-tap copy.
+// shouldn't leak every code at a glance — but admins on this manage:time
+// page do need to read them, so we show the code by default and offer a
+// per-row eye to HIDE one (e.g. while screen-sharing), plus a one-tap copy.
 function EmployeeNumberCell({ value }: { value: string | null }) {
-  const [revealed, setRevealed] = useState(false);
+  const [revealed, setRevealed] = useState(true);
   const [copied, setCopied] = useState(false);
   if (!value) {
     return (
