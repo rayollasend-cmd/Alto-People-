@@ -8,6 +8,7 @@ import {
   Key,
   Mail,
   Plus,
+  RotateCw,
   ScanFace,
   ScrollText,
   Search,
@@ -958,6 +959,51 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                             className="inline-flex items-center gap-1 text-xs text-silver opacity-60 transition hover:text-white group-hover:opacity-100 group-focus-within:opacity-100"
                           >
                             <Mail className="h-3.5 w-3.5" /> Email
+                          </button>
+                        )}
+                        {canManage && (
+                          <button
+                            onClick={async () => {
+                              if (
+                                !(await confirm({
+                                  title: `Rotate ${p.associateName}'s clock-in number?`,
+                                  description: p.associateEmail
+                                    ? `Issues a NEW 4-digit number — their current one stops working immediately — and emails it to ${p.associateEmail}. Use this for a code showing “—” (unreadable) or a forgotten number.`
+                                    : `Issues a NEW 4-digit number — their current one stops working immediately. No email on file, so share the number shown after.`,
+                                  destructive: true,
+                                }))
+                              )
+                                return;
+                              try {
+                                const r = await assignKioskPin({
+                                  clientId: p.clientId,
+                                  associateId: p.associateId,
+                                });
+                                // Show the fresh number so HR has it even if
+                                // the email can't be delivered.
+                                setShowPin({
+                                  associateName: p.associateName,
+                                  employeeNumber: r.employeeNumber,
+                                });
+                                if (p.associateEmail) {
+                                  void emailKioskPin(r.id)
+                                    .then(() =>
+                                      toast.success(`Emailed ${p.associateEmail}.`),
+                                    )
+                                    .catch(() =>
+                                      toast.error('Rotated, but the email didn’t send.'),
+                                    );
+                                }
+                                refresh();
+                              } catch (err) {
+                                toast.error(
+                                  err instanceof ApiError ? err.message : 'Rotate failed.',
+                                );
+                              }
+                            }}
+                            className="inline-flex items-center gap-1 text-xs text-silver opacity-60 transition hover:text-white group-hover:opacity-100 group-focus-within:opacity-100"
+                          >
+                            <RotateCw className="h-3.5 w-3.5" /> Rotate
                           </button>
                         )}
                         {canManage && (
