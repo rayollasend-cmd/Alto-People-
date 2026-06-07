@@ -6,6 +6,7 @@ import {
   Eye,
   EyeOff,
   Key,
+  Mail,
   Plus,
   ScanFace,
   ScrollText,
@@ -21,6 +22,7 @@ import {
   deleteKioskDevice,
   deleteKioskPin,
   diagnoseKioskPin,
+  emailKioskPin,
   listKioskDevices,
   listKioskFaceReferences,
   listKioskPins,
@@ -897,22 +899,48 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                     </TableCell>
                     <TableCell>{new Date(p.createdAt).toLocaleDateString()}</TableCell>
                     <TableCell className="text-right">
-                      {canManage && (
-                        <button
-                          onClick={async () => {
-                            if (!(await confirm({ title: 'Revoke this employee number?', destructive: true }))) return;
-                            try {
-                              await deleteKioskPin(p.id);
-                              refresh();
-                            } catch (err) {
-                              toast.error(err instanceof ApiError ? err.message : 'Failed.');
-                            }
-                          }}
-                          className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
-                        >
-                          Revoke
-                        </button>
-                      )}
+                      <div className="flex items-center justify-end gap-3">
+                        {canManage && p.employeeNumber && (
+                          <button
+                            onClick={async () => {
+                              if (
+                                !(await confirm({
+                                  title: `Email ${p.associateName} their clock-in number?`,
+                                  description: `It will be sent to ${p.associateEmail}.`,
+                                }))
+                              )
+                                return;
+                              try {
+                                await emailKioskPin(p.id);
+                                toast.success(`Emailed ${p.associateEmail}.`);
+                              } catch (err) {
+                                toast.error(
+                                  err instanceof ApiError ? err.message : 'Failed to email.',
+                                );
+                              }
+                            }}
+                            className="inline-flex items-center gap-1 text-xs text-silver opacity-60 transition hover:text-white group-hover:opacity-100 group-focus-within:opacity-100"
+                          >
+                            <Mail className="h-3.5 w-3.5" /> Email
+                          </button>
+                        )}
+                        {canManage && (
+                          <button
+                            onClick={async () => {
+                              if (!(await confirm({ title: 'Revoke this employee number?', destructive: true }))) return;
+                              try {
+                                await deleteKioskPin(p.id);
+                                refresh();
+                              } catch (err) {
+                                toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                              }
+                            }}
+                            className="text-xs text-silver opacity-60 transition hover:text-alert group-hover:opacity-100 group-focus-within:opacity-100"
+                          >
+                            Revoke
+                          </button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

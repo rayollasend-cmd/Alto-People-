@@ -167,6 +167,13 @@ export const assignKioskPin = (input: {
 export const deleteKioskPin = (id: string) =>
   apiFetch<void>(`/kiosk-pins/${id}`, { method: 'DELETE' });
 
+/** Email an associate their kiosk employee number. */
+export const emailKioskPin = (id: string) =>
+  apiFetch<{ ok: true; email: string }>(`/kiosk-pins/${id}/email`, {
+    method: 'POST',
+    body: {},
+  });
+
 export interface KioskPinDiagnosis {
   employeeNumber: string;
   matchedPin: {

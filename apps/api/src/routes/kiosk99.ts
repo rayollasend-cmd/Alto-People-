@@ -17,7 +17,8 @@ import {
 } from '../lib/kioskAuth.js';
 import { enforcePunchRateLimit } from '../lib/kioskRateLimit.js';
 import { encryptString, decryptString } from '../lib/crypto.js';
-import { recordCriticalAudit } from '../lib/audit.js';
+import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
+import { send } from '../lib/notifications.js';
 
 /**
  * Phase 99 — Kiosk-mode clock in/out: 4-digit PIN + selfie.
@@ -339,6 +340,91 @@ kiosk99Router.post('/kiosk-pins', MANAGE, async (req, res) => {
 kiosk99Router.delete('/kiosk-pins/:id', MANAGE, async (req, res) => {
   await prisma.kioskPin.delete({ where: { id: req.params.id } });
   res.status(204).end();
+});
+
+// Email an associate their kiosk employee number. HR fires this from the
+// "With codes" list so someone who forgot their clock-in number gets it
+// without HR reading it aloud. The associate can already see it on their
+// My Profile page — this is just a convenience push to their inbox.
+kiosk99Router.post('/kiosk-pins/:id/email', MANAGE, async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  const pin = await prisma.kioskPin.findUnique({
+    where: { id },
+    include: {
+      associate: { select: { firstName: true, email: true } },
+      client: { select: { name: true } },
+    },
+  });
+  if (!pin) {
+    throw new HttpError(404, 'not_found', 'Employee number not found.');
+  }
+  if (!pin.associate.email) {
+    throw new HttpError(
+      400,
+      'no_email',
+      'This associate has no email address on file.',
+    );
+  }
+  if (!pin.pinEncrypted) {
+    // Legacy row predating the encryption column — we can't recover the
+    // plaintext to email. HR must rotate to a fresh number first.
+    throw new HttpError(
+      409,
+      'no_plaintext_number',
+      'This number predates encryption — rotate it first to email a fresh one.',
+    );
+  }
+
+  const employeeNumber = decryptString(pin.pinEncrypted);
+  const subject = 'Your Alto kiosk clock-in number';
+  const body = [
+    `Hi ${pin.associate.firstName},`,
+    ``,
+    `Here is your employee number for clocking in and out at the ${pin.client.name} kiosk:`,
+    ``,
+    `    ${employeeNumber}`,
+    ``,
+    `Enter this 4-digit number on the kiosk tablet to clock in and out. You can also see it any time on your My Profile page.`,
+    ``,
+    `If you didn't expect this email, contact your HR team.`,
+    ``,
+    `— Alto People`,
+  ].join('\n');
+
+  try {
+    await send({
+      channel: 'EMAIL',
+      recipient: { userId: null, phone: null, email: pin.associate.email },
+      subject,
+      body,
+    });
+  } catch {
+    throw new HttpError(
+      502,
+      'email_failed',
+      'Could not send the email. Try again in a moment.',
+    );
+  }
+
+  // Sending a clock-in credential out of the system is worth a trail of
+  // who sent it to whom. Fire-and-forget so an audit blip doesn't fail a
+  // send that already went out.
+  enqueueAudit(
+    {
+      actorUserId: req.user!.id,
+      clientId: pin.clientId,
+      action: 'kiosk.pin_emailed',
+      entityType: 'KioskPin',
+      entityId: pin.id,
+      metadata: {
+        associateId: pin.associateId,
+        recipientEmail: pin.associate.email,
+      },
+    },
+    'kiosk.pin_emailed',
+  );
+
+  res.json({ ok: true, email: pin.associate.email });
 });
 
 // HR diagnostic for "wrong PIN" complaints. Given a 4-digit employee
