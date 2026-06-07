@@ -342,6 +342,31 @@ kiosk99Router.delete('/kiosk-pins/:id', MANAGE, async (req, res) => {
   res.status(204).end();
 });
 
+// Shared subject + body for the "here is your kiosk number" email, used by
+// both the single and bulk send paths so the wording can't drift.
+function pinEmailContent(
+  firstName: string,
+  clientName: string,
+  employeeNumber: string,
+): { subject: string; body: string } {
+  return {
+    subject: 'Your Alto kiosk clock-in number',
+    body: [
+      `Hi ${firstName},`,
+      ``,
+      `Here is your employee number for clocking in and out at the ${clientName} kiosk:`,
+      ``,
+      `    ${employeeNumber}`,
+      ``,
+      `Enter this 4-digit number on the kiosk tablet to clock in and out. You can also see it any time on your My Profile page.`,
+      ``,
+      `If you didn't expect this email, contact your HR team.`,
+      ``,
+      `— Alto People`,
+    ].join('\n'),
+  };
+}
+
 // Email an associate their kiosk employee number. HR fires this from the
 // "With codes" list so someone who forgot their clock-in number gets it
 // without HR reading it aloud. The associate can already see it on their
@@ -375,21 +400,11 @@ kiosk99Router.post('/kiosk-pins/:id/email', MANAGE, async (req, res) => {
     );
   }
 
-  const employeeNumber = decryptString(pin.pinEncrypted);
-  const subject = 'Your Alto kiosk clock-in number';
-  const body = [
-    `Hi ${pin.associate.firstName},`,
-    ``,
-    `Here is your employee number for clocking in and out at the ${pin.client.name} kiosk:`,
-    ``,
-    `    ${employeeNumber}`,
-    ``,
-    `Enter this 4-digit number on the kiosk tablet to clock in and out. You can also see it any time on your My Profile page.`,
-    ``,
-    `If you didn't expect this email, contact your HR team.`,
-    ``,
-    `— Alto People`,
-  ].join('\n');
+  const { subject, body } = pinEmailContent(
+    pin.associate.firstName,
+    pin.client.name,
+    decryptString(pin.pinEncrypted),
+  );
 
   try {
     await send({
@@ -455,26 +470,19 @@ kiosk99Router.post('/kiosk-pins/email', MANAGE, async (req, res) => {
     );
   }
 
-  const subject = 'Your Alto kiosk clock-in number';
-  const oneSend = (p: (typeof emailable)[number]) =>
-    send({
+  const oneSend = (p: (typeof emailable)[number]) => {
+    const { subject, body } = pinEmailContent(
+      p.associate.firstName,
+      p.client.name,
+      decryptString(p.pinEncrypted!),
+    );
+    return send({
       channel: 'EMAIL',
       recipient: { userId: null, phone: null, email: p.associate.email },
       subject,
-      body: [
-        `Hi ${p.associate.firstName},`,
-        ``,
-        `Here is your employee number for clocking in and out at the ${p.client.name} kiosk:`,
-        ``,
-        `    ${decryptString(p.pinEncrypted!)}`,
-        ``,
-        `Enter this 4-digit number on the kiosk tablet to clock in and out. You can also see it any time on your My Profile page.`,
-        ``,
-        `If you didn't expect this email, contact your HR team.`,
-        ``,
-        `— Alto People`,
-      ].join('\n'),
+      body,
     });
+  };
 
   // Await the first send so a misconfigured mailer fails loudly instead of
   // silently dropping the whole batch. The Resend client serializes +

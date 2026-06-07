@@ -62,12 +62,15 @@ export function KioskPage() {
   const [pinError, setPinError] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [queued, setQueued] = useState<number>(() => queueSize());
-  // Whether this device has a geofence. Fetched once at boot; when false
-  // the tablet never touches geolocation (the common case). Defaults to
-  // false — the server still enforces the fence on punch, so a missed
-  // config fetch fails safe (and self-heals: see the location_required
-  // retry in the preflight).
-  const geofenceRequiredRef = useRef(false);
+  // Whether this device has a geofence — tri-state on purpose. Boot config
+  // resolves it to 'yes'/'no'; until then (or if config failed, e.g. the
+  // tablet booted offline) it stays 'unknown'. We only SKIP geolocation
+  // when we positively know it's 'no'. If we skipped on 'unknown' too, an
+  // offline-at-boot geofenced kiosk would queue punches with null coords
+  // that then get dropped on sync — so 'unknown' attempts a (coarse,
+  // best-effort) fix. The latency win still holds: config resolves on boot
+  // well before anyone walks up to punch.
+  const geofenceModeRef = useRef<'unknown' | 'yes' | 'no'>('unknown');
   // Session-cached coarse location, shared by preflight + punch.
   const cachedLocationRef = useRef<{ lat: number; lng: number; at: number } | null>(
     null,
@@ -90,7 +93,7 @@ export function KioskPage() {
         // default (false) and the server still enforces on punch.
         void kioskConfig(stored)
           .then((c) => {
-            geofenceRequiredRef.current = c.geofenceRequired;
+            geofenceModeRef.current = c.geofenceRequired ? 'yes' : 'no';
           })
           .catch(() => {
             /* keep default; preflight self-heals on location_required */
@@ -195,7 +198,7 @@ export function KioskPage() {
   const tryGetLocation = (
     force = false,
   ): Promise<{ lat: number; lng: number } | null> => {
-    if (!force && !geofenceRequiredRef.current) return Promise.resolve(null);
+    if (!force && geofenceModeRef.current === 'no') return Promise.resolve(null);
     const cached = cachedLocationRef.current;
     if (cached && Date.now() - cached.at < LOCATION_TTL_MS) {
       return Promise.resolve({ lat: cached.lat, lng: cached.lng });
@@ -413,7 +416,7 @@ export function KioskPage() {
                 // location. Flip the flag, grab one coarse fix, and retry
                 // before surfacing anything to the user.
                 if (err instanceof ApiError && err.code === 'location_required') {
-                  geofenceRequiredRef.current = true;
+                  geofenceModeRef.current = 'yes';
                   loc = await tryGetLocation(true);
                   await verify(loc);
                 } else {
