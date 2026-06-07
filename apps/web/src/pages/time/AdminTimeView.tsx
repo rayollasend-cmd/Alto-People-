@@ -1390,6 +1390,9 @@ function TimeEntryFormDrawer({
   const [notes, setNotes] = useState(
     mode === 'edit' && entry ? entry.notes ?? '' : '',
   );
+  const [payRate, setPayRate] = useState(
+    mode === 'edit' && entry?.payRate != null ? String(entry.payRate) : '',
+  );
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -1410,6 +1413,15 @@ function TimeEntryFormDrawer({
       setErr('Clock-out must be after clock-in.');
       return;
     }
+    let payRateVal: number | null = null;
+    if (payRate.trim() !== '') {
+      const n = Number(payRate);
+      if (!Number.isFinite(n) || n < 0) {
+        setErr('Pay rate must be a non-negative number.');
+        return;
+      }
+      payRateVal = n;
+    }
     setBusy(true);
     try {
       if (mode === 'create') {
@@ -1417,6 +1429,7 @@ function TimeEntryFormDrawer({
           associateId: assoc!.id,
           clockInAt: localInputToIso(clockInLocal),
           clockOutAt: clockOutLocal ? localInputToIso(clockOutLocal) : null,
+          payRate: payRateVal,
           notes: notes.trim() || null,
         });
         toast.success(
@@ -1426,6 +1439,7 @@ function TimeEntryFormDrawer({
         await adminEditTimeEntry(entry.id, {
           clockInAt: localInputToIso(clockInLocal),
           clockOutAt: clockOutLocal ? localInputToIso(clockOutLocal) : null,
+          payRate: payRateVal,
           notes: notes.trim() || null,
         });
         toast.success(
@@ -1504,6 +1518,22 @@ function TimeEntryFormDrawer({
               Setting a clock-out clocks this associate out.
             </p>
           )}
+        </div>
+        <div>
+          <FieldLabel>Pay rate ($/hr)</FieldLabel>
+          <Input
+            type="number"
+            min="0"
+            step="0.01"
+            inputMode="decimal"
+            value={payRate}
+            onChange={(e) => setPayRate(e.target.value)}
+            placeholder="e.g. 18.50"
+          />
+          <p className="mt-1 text-xs text-silver">
+            Recorded on this entry for reporting. Payroll pays from the
+            associate&rsquo;s Compensation record, not this field.
+          </p>
         </div>
         <div>
           <FieldLabel>Notes</FieldLabel>
