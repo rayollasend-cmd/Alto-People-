@@ -230,6 +230,20 @@ const PinInputSchema = z.object({
     .optional(),
 });
 
+// Decrypt a stored employee number, tolerating a row that can't be
+// decrypted (e.g. encrypted under a since-rotated key, or seeded in another
+// environment). Returns null instead of throwing — otherwise a single bad
+// row 500s the whole /kiosk-pins list, which the admin UI swallows and
+// renders as "0 with codes", hiding every other associate's code too.
+function safeDecrypt(buf: Buffer | null): string | null {
+  if (!buf) return null;
+  try {
+    return decryptString(buf);
+  } catch {
+    return null;
+  }
+}
+
 kiosk99Router.get('/kiosk-pins', MANAGE, async (req, res) => {
   // clientId optional — omit it for the cross-client "All clients" view.
   // Scoped per-client it sorts newest-first (matches issuing order); the
@@ -259,12 +273,11 @@ kiosk99Router.get('/kiosk-pins', MANAGE, async (req, res) => {
       associateEmail: p.associate.email,
       clientId: p.clientId,
       clientName: p.client.name,
-      // Decrypt for HR display. Old rows pre-dating the encryption
-      // column return null — HR will need to rotate to recover the
-      // plaintext.
-      employeeNumber: p.pinEncrypted
-        ? decryptString(p.pinEncrypted)
-        : null,
+      // Decrypt for HR display. Old rows pre-dating the encryption column,
+      // or any row that fails to decrypt, return null — HR rotates to
+      // recover the plaintext. safeDecrypt guarantees one bad row can't
+      // sink the whole list.
+      employeeNumber: safeDecrypt(p.pinEncrypted),
       createdAt: p.createdAt.toISOString(),
     })),
   });
@@ -688,15 +701,7 @@ kiosk99Router.get('/kiosk-pins/diagnose', MANAGE, async (req, res) => {
       'PIN and current assignment match. If clock-in is still failing, check that the kiosk device is registered to the same client (Devices tab) and that the device token has not expired.';
   }
 
-  const decryptedNumber = pin.pinEncrypted
-    ? (() => {
-        try {
-          return decryptString(pin.pinEncrypted);
-        } catch {
-          return null;
-        }
-      })()
-    : null;
+  const decryptedNumber = safeDecrypt(pin.pinEncrypted);
 
   res.json({
     employeeNumber: employeeNumber ?? '',
