@@ -1,5 +1,18 @@
-import { useEffect, useState } from 'react';
-import { AlertTriangle, Copy, Key, Plus, ScanFace, Stethoscope, Tablet } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  AlertTriangle,
+  Check,
+  Copy,
+  Eye,
+  EyeOff,
+  Key,
+  Plus,
+  ScanFace,
+  ScrollText,
+  Search,
+  Stethoscope,
+  Tablet,
+} from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
   assignKioskPin,
@@ -64,6 +77,31 @@ export function KioskAdmin() {
   const canManage = user ? hasCapability(user.role, 'manage:time') : false;
   const [tab, setTab] = useState<Tab>('devices');
 
+  // Lightweight counts for the tab badges so HR sees pending review work
+  // and broken kiosks at a glance without opening each tab. Refetched on
+  // tab switch so the numbers stay roughly live after in-tab actions
+  // (reviewing a punch, revoking a device, …).
+  const [pendingReview, setPendingReview] = useState<number | null>(null);
+  const [offlineDevices, setOfflineDevices] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void listKioskPunches({ reviewStatus: 'PENDING' })
+      .then((r) => !cancelled && setPendingReview(r.punches.length))
+      .catch(() => !cancelled && setPendingReview(null));
+    void listKioskDevices()
+      .then(
+        (r) =>
+          !cancelled &&
+          setOfflineDevices(r.devices.filter(isDeviceOffline).length),
+      )
+      .catch(() => !cancelled && setOfflineDevices(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [tab]);
+
+  const countLabel = (n: number) => (n > 99 ? '99+' : String(n));
+
   return (
     <div className="space-y-5">
       <PageHeader
@@ -75,14 +113,26 @@ export function KioskAdmin() {
         <TabsList>
           <TabsTrigger value="devices">
             <Tablet className="mr-2 h-4 w-4" /> Devices
+            {offlineDevices ? (
+              <Badge variant="destructive" className="ml-2">
+                {countLabel(offlineDevices)}
+              </Badge>
+            ) : null}
           </TabsTrigger>
           <TabsTrigger value="pins">
             <Key className="mr-2 h-4 w-4" /> Employee numbers
           </TabsTrigger>
           <TabsTrigger value="review">
             <AlertTriangle className="mr-2 h-4 w-4" /> Review
+            {pendingReview ? (
+              <Badge variant="pending" className="ml-2">
+                {countLabel(pendingReview)}
+              </Badge>
+            ) : null}
           </TabsTrigger>
-          <TabsTrigger value="log">Punch log</TabsTrigger>
+          <TabsTrigger value="log">
+            <ScrollText className="mr-2 h-4 w-4" /> Punch log
+          </TabsTrigger>
           <TabsTrigger value="faces">
             <ScanFace className="mr-2 h-4 w-4" /> Face refs
           </TabsTrigger>
@@ -502,6 +552,57 @@ function TokenRevealDrawer({ token, onClose }: { token: string; onClose: () => v
 // the existing "no selection" guards (!clientId) keep working.
 const ALL_CLIENTS = '__all__';
 
+// Employee numbers are sensitive — a shared admin screen or a screen-share
+// shouldn't leak everyone's clock-in code at a glance. Mask by default,
+// reveal per-row on demand, and offer a one-tap copy.
+function EmployeeNumberCell({ value }: { value: string | null }) {
+  const [revealed, setRevealed] = useState(false);
+  const [copied, setCopied] = useState(false);
+  if (!value) {
+    return (
+      <span
+        className="text-silver/50"
+        title="Issued before codes were stored — rotate to recover the number."
+      >
+        —
+      </span>
+    );
+  }
+  return (
+    <div className="flex items-center gap-2">
+      <span className="font-mono tracking-widest text-white tabular-nums">
+        {revealed ? value : '••••'}
+      </span>
+      <button
+        type="button"
+        onClick={() => setRevealed((r) => !r)}
+        className="text-silver hover:text-white transition opacity-60 group-hover:opacity-100"
+        aria-label={revealed ? 'Hide employee number' : 'Show employee number'}
+        title={revealed ? 'Hide' : 'Show'}
+      >
+        {revealed ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          void navigator.clipboard.writeText(value);
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1200);
+        }}
+        className="text-silver hover:text-white transition opacity-60 group-hover:opacity-100"
+        aria-label="Copy employee number"
+        title="Copy"
+      >
+        {copied ? (
+          <Check className="h-3.5 w-3.5 text-success" />
+        ) : (
+          <Copy className="h-3.5 w-3.5" />
+        )}
+      </button>
+    </div>
+  );
+}
+
 function PinsTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
   const [clients, setClients] = useState<
@@ -515,6 +616,17 @@ function PinsTab({ canManage }: { canManage: boolean }) {
     associateName: string;
     employeeNumber: string;
   } | null>(null);
+  // Search box (with-codes view) + "With codes / Missing" roster toggle.
+  const [q, setQ] = useState('');
+  const [view, setView] = useState<'with' | 'missing'>('with');
+  // PIN-eligible associates (ACTIVE = approved application) at the selected
+  // client, used to compute who is MISSING a code. Per-client only — the
+  // directory is cursor-paginated, so we don't diff across all clients.
+  const [eligible, setEligible] = useState<
+    Array<{ id: string; name: string; email: string }> | null
+  >(null);
+  // When issuing from a "missing" row, preselect that associate in the drawer.
+  const [issueFor, setIssueFor] = useState<string | null>(null);
 
   // Load the client picker once. Default to the first client so HR
   // doesn't land on an empty state.
@@ -551,6 +663,59 @@ function PinsTab({ canManage }: { canManage: boolean }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId]);
 
+  // Fetch PIN-eligible associates whenever a specific client is selected,
+  // so we can show both the "X missing" summary and the Missing view.
+  useEffect(() => {
+    if (!clientId || clientId === ALL_CLIENTS) {
+      setEligible(null);
+      return;
+    }
+    setEligible(null);
+    let cancelled = false;
+    listDirectory({ clientId, status: 'ACTIVE' })
+      .then((r) => {
+        if (cancelled) return;
+        setEligible(
+          r.associates.map((a) => ({
+            id: a.id,
+            name: `${a.firstName} ${a.lastName}`,
+            email: a.email,
+          })),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setEligible([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId]);
+
+  // All clients has no Missing view (no single roster to diff against), so
+  // it always falls back to the with-codes list.
+  const effectiveView = clientId === ALL_CLIENTS ? 'with' : view;
+
+  const pinnedIds = useMemo(
+    () => new Set((rows ?? []).map((p) => p.associateId)),
+    [rows],
+  );
+  const missing = useMemo(
+    () => (eligible ?? []).filter((a) => !pinnedIds.has(a.id)),
+    [eligible, pinnedIds],
+  );
+  const filteredRows = useMemo(() => {
+    const list = rows ?? [];
+    const term = q.trim().toLowerCase();
+    if (!term) return list;
+    return list.filter(
+      (p) =>
+        p.associateName.toLowerCase().includes(term) ||
+        p.associateEmail.toLowerCase().includes(term) ||
+        (p.employeeNumber ?? '').includes(term) ||
+        p.clientName.toLowerCase().includes(term),
+    );
+  }, [rows, q]);
+
   return (
     <div className="space-y-4">
       <div className="flex items-end gap-3">
@@ -583,17 +748,115 @@ function PinsTab({ canManage }: { canManage: boolean }) {
           </Button>
         )}
         {canManage && clientId && clientId !== ALL_CLIENTS && (
-          <Button onClick={() => setShowNew(true)}>
+          <Button onClick={() => { setIssueFor(null); setShowNew(true); }}>
             <Plus className="mr-2 h-4 w-4" /> Issue employee number
           </Button>
         )}
       </div>
+
+      {clientId && (
+        <div className="flex flex-wrap items-center gap-3">
+          {clientId !== ALL_CLIENTS && (
+            <div className="inline-flex overflow-hidden rounded-md border border-navy-secondary text-sm">
+              <button
+                type="button"
+                onClick={() => setView('with')}
+                className={`px-3 py-1.5 transition-colors ${
+                  effectiveView === 'with'
+                    ? 'bg-gold/15 text-white'
+                    : 'bg-navy-secondary/40 text-silver hover:text-white'
+                }`}
+              >
+                With codes{rows ? ` (${rows.length})` : ''}
+              </button>
+              <button
+                type="button"
+                onClick={() => setView('missing')}
+                className={`border-l border-navy-secondary px-3 py-1.5 transition-colors ${
+                  effectiveView === 'missing'
+                    ? 'bg-gold/15 text-white'
+                    : 'bg-navy-secondary/40 text-silver hover:text-white'
+                }`}
+              >
+                Missing{eligible ? ` (${missing.length})` : ''}
+              </button>
+            </div>
+          )}
+          {effectiveView === 'with' && (
+            <div className="relative min-w-[200px] max-w-sm flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-silver" />
+              <Input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search name, email, or number"
+                className="pl-9"
+              />
+            </div>
+          )}
+          <div className="ml-auto text-xs text-silver">
+            {effectiveView === 'missing'
+              ? `${missing.length} eligible associate${missing.length === 1 ? '' : 's'} without a code`
+              : rows
+                ? `Showing ${filteredRows.length} of ${rows.length}${
+                    clientId !== ALL_CLIENTS && eligible && missing.length > 0
+                      ? ` · ${missing.length} missing a code`
+                      : ''
+                  }`
+                : ''}
+          </div>
+        </div>
+      )}
+
       <Card>
         <CardContent className="p-0">
           {!clientId ? (
             <div className="p-6 text-sm text-silver">
               Pick a client to manage employee numbers.
             </div>
+          ) : effectiveView === 'missing' ? (
+            eligible === null ? (
+              <div className="p-6"><SkeletonRows count={3} /></div>
+            ) : missing.length === 0 ? (
+              <EmptyState
+                icon={Check}
+                title="Everyone's covered"
+                description="Every PIN-eligible associate at this client already has an employee number."
+              />
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Associate</TableHead>
+                    <TableHead>Email</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {missing.map((a) => (
+                    <TableRow key={a.id} className="group">
+                      <TableCell className="font-medium text-white">
+                        {a.name}
+                      </TableCell>
+                      <TableCell className="text-silver">{a.email}</TableCell>
+                      <TableCell className="text-right">
+                        {canManage && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              setIssueFor(a.id);
+                              setShowNew(true);
+                            }}
+                          >
+                            <Plus className="mr-1 h-3.5 w-3.5" /> Issue number
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )
           ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
@@ -602,6 +865,10 @@ function PinsTab({ canManage }: { canManage: boolean }) {
               title="No employee numbers"
               description="Issue a 4-digit number to each associate after they finish onboarding so they can clock in via the kiosk."
             />
+          ) : filteredRows.length === 0 ? (
+            <div className="p-6 text-sm text-silver">
+              No associates match “{q}”.
+            </div>
           ) : (
             <Table>
               <TableHeader>
@@ -615,7 +882,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((p) => (
+                {filteredRows.map((p) => (
                   <TableRow key={p.id} className="group">
                     <TableCell className="font-medium text-white">
                       {p.associateName}
@@ -624,8 +891,8 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                       <TableCell className="text-silver">{p.clientName}</TableCell>
                     )}
                     <TableCell className="text-silver">{p.associateEmail}</TableCell>
-                    <TableCell className="font-mono tracking-widest text-white">
-                      {p.employeeNumber ?? <span className="text-silver/50">—</span>}
+                    <TableCell>
+                      <EmployeeNumberCell value={p.employeeNumber} />
                     </TableCell>
                     <TableCell>{new Date(p.createdAt).toLocaleDateString()}</TableCell>
                     <TableCell className="text-right">
@@ -656,9 +923,14 @@ function PinsTab({ canManage }: { canManage: boolean }) {
       {showNew && (
         <NewPinDrawer
           clientId={clientId}
-          onClose={() => setShowNew(false)}
+          initialAssociateId={issueFor ?? undefined}
+          onClose={() => {
+            setShowNew(false);
+            setIssueFor(null);
+          }}
           onSaved={(associateName, employeeNumber) => {
             setShowNew(false);
+            setIssueFor(null);
             setShowPin({ associateName, employeeNumber });
             refresh();
           }}
@@ -907,10 +1179,12 @@ function DiagnoseDrawer({ onClose }: { onClose: () => void }) {
 
 function NewPinDrawer({
   clientId,
+  initialAssociateId,
   onClose,
   onSaved,
 }: {
   clientId: string;
+  initialAssociateId?: string;
   onClose: () => void;
   onSaved: (associateName: string, employeeNumber: string) => void;
 }) {
@@ -942,10 +1216,18 @@ function NewPinDrawer({
           status: a.status,
         }));
         setAssociates(list);
-        // Default to the first eligible associate so HR doesn't have to
-        // hunt for a selectable row.
-        const firstEligible = list.find((a) => a.status === 'ACTIVE');
-        if (firstEligible) setAssociateId(firstEligible.id);
+        // Preselect the associate we were opened for (issuing from a
+        // "missing a code" row), if they're eligible; otherwise default to
+        // the first eligible one so HR doesn't have to hunt for a row.
+        const preset =
+          initialAssociateId &&
+          list.find((a) => a.id === initialAssociateId && a.status === 'ACTIVE');
+        if (preset) {
+          setAssociateId(initialAssociateId);
+        } else {
+          const firstEligible = list.find((a) => a.status === 'ACTIVE');
+          if (firstEligible) setAssociateId(firstEligible.id);
+        }
       })
       .catch(() => {
         if (!cancelled) setAssociates([]);
@@ -953,7 +1235,7 @@ function NewPinDrawer({
     return () => {
       cancelled = true;
     };
-  }, [clientId]);
+  }, [clientId, initialAssociateId]);
 
   const selected = associates?.find((a) => a.id === associateId);
   const eligibleCount =
@@ -1061,8 +1343,20 @@ function NewPinDrawer({
   );
 }
 
+type ActionFilter =
+  | 'ALL'
+  | 'CLOCK_IN'
+  | 'CLOCK_OUT'
+  | 'BREAK_START'
+  | 'BREAK_END'
+  | 'REJECTED';
+
 function LogTab() {
   const [rows, setRows] = useState<KioskPunchSummary[] | null>(null);
+  const [q, setQ] = useState('');
+  const [action, setAction] = useState<ActionFilter>('ALL');
+  const [anomaliesOnly, setAnomaliesOnly] = useState(false);
+  const [range, setRange] = useState<'all' | 'today' | '7d'>('all');
 
   const refresh = () => {
     setRows(null);
@@ -1074,92 +1368,183 @@ function LogTab() {
     refresh();
   }, []);
 
+  // Client-side filtering over the loaded page — covers the common
+  // "find it fast" need without extra round-trips. The page is capped at
+  // 500; the count line flags when you're at the cap so a filter that
+  // comes up empty isn't mistaken for "no such punch".
+  const filtered = useMemo(() => {
+    let list = rows ?? [];
+    const term = q.trim().toLowerCase();
+    if (term) {
+      list = list.filter(
+        (p) =>
+          (p.associateName ?? '').toLowerCase().includes(term) ||
+          p.deviceName.toLowerCase().includes(term) ||
+          (p.rejectReason ?? '').toLowerCase().includes(term) ||
+          (p.anomalyDetail ?? '').toLowerCase().includes(term),
+      );
+    }
+    if (action !== 'ALL') list = list.filter((p) => p.action === action);
+    if (anomaliesOnly)
+      list = list.filter((p) => p.anomalyKind != null || p.faceMismatch);
+    if (range !== 'all') {
+      const start =
+        range === 'today'
+          ? (() => {
+              const d = new Date();
+              d.setHours(0, 0, 0, 0);
+              return d.getTime();
+            })()
+          : Date.now() - 7 * 24 * 60 * 60 * 1000;
+      list = list.filter((p) => new Date(p.createdAt).getTime() >= start);
+    }
+    return list;
+  }, [rows, q, action, anomaliesOnly, range]);
+
+  const selectClass =
+    'h-9 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-sm text-white';
+
   return (
-    <Card>
-      <CardContent className="p-0">
-        {rows === null ? (
-          <div className="p-6"><SkeletonRows count={3} /></div>
-        ) : rows.length === 0 ? (
-          <EmptyState
-            icon={Tablet}
-            title="No punches yet"
-            description="Once associates start clocking in via kiosk, the audit log appears here."
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>When</TableHead>
-                <TableHead>Device</TableHead>
-                <TableHead>Associate</TableHead>
-                <TableHead>Action</TableHead>
-                <TableHead>Distance</TableHead>
-                <TableHead>Face</TableHead>
-                <TableHead>Selfie</TableHead>
-                <TableHead>Notes</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((p) => (
-                <TableRow key={p.id}>
-                  <TableCell>{new Date(p.createdAt).toLocaleString()}</TableCell>
-                  <TableCell className="font-mono text-xs">{p.deviceName}</TableCell>
-                  <TableCell>{p.associateName ?? '—'}</TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={
-                        p.action === 'CLOCK_IN'
-                          ? 'success'
-                          : p.action === 'CLOCK_OUT'
-                            ? 'accent'
-                            : p.action === 'BREAK_START' || p.action === 'BREAK_END'
-                              ? 'pending'
-                              : 'destructive'
-                      }
-                    >
-                      {p.action}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-xs">
-                    {p.distanceMeters != null ? `${p.distanceMeters}m` : '—'}
-                  </TableCell>
-                  <TableCell className="text-xs">
-                    {p.faceDistance == null ? (
-                      '—'
-                    ) : p.faceMismatch ? (
-                      <Badge variant="destructive">
-                        Mismatch ({p.faceDistance.toFixed(2)})
-                      </Badge>
-                    ) : (
-                      <Badge variant="success">
-                        Match ({p.faceDistance.toFixed(2)})
-                      </Badge>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {p.hasSelfie ? (
-                      <a
-                        href={`/api/kiosk-punches/${p.id}/selfie`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-gold hover:text-gold-bright underline underline-offset-2 text-xs"
-                      >
-                        view
-                      </a>
-                    ) : (
-                      '—'
-                    )}
-                  </TableCell>
-                  <TableCell className="text-xs text-silver">
-                    {p.rejectReason ?? ''}
-                  </TableCell>
+    <div className="space-y-3">
+      {rows && rows.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[200px] max-w-xs flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-silver" />
+            <Input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search associate, device, reason"
+              className="h-9 pl-9"
+            />
+          </div>
+          <select
+            className={selectClass}
+            value={action}
+            onChange={(e) => setAction(e.target.value as ActionFilter)}
+          >
+            <option value="ALL">All actions</option>
+            <option value="CLOCK_IN">Clock in</option>
+            <option value="CLOCK_OUT">Clock out</option>
+            <option value="BREAK_START">Break start</option>
+            <option value="BREAK_END">Break end</option>
+            <option value="REJECTED">Rejected</option>
+          </select>
+          <select
+            className={selectClass}
+            value={range}
+            onChange={(e) => setRange(e.target.value as 'all' | 'today' | '7d')}
+          >
+            <option value="all">Any time</option>
+            <option value="today">Today</option>
+            <option value="7d">Last 7 days</option>
+          </select>
+          <button
+            type="button"
+            onClick={() => setAnomaliesOnly((v) => !v)}
+            className={`h-9 rounded-md border px-3 text-sm transition-colors ${
+              anomaliesOnly
+                ? 'border-warning/60 bg-warning/15 text-warning'
+                : 'border-navy-secondary bg-navy-secondary/40 text-silver hover:text-white'
+            }`}
+          >
+            <AlertTriangle className="mr-1 inline h-3.5 w-3.5" /> Anomalies only
+          </button>
+          <div className="ml-auto text-xs text-silver">
+            Showing {filtered.length} of {rows.length}
+            {rows.length >= 500 ? ' (capped at 500)' : ''}
+          </div>
+        </div>
+      )}
+      <Card>
+        <CardContent className="p-0">
+          {rows === null ? (
+            <div className="p-6"><SkeletonRows count={3} /></div>
+          ) : rows.length === 0 ? (
+            <EmptyState
+              icon={Tablet}
+              title="No punches yet"
+              description="Once associates start clocking in via kiosk, the audit log appears here."
+            />
+          ) : filtered.length === 0 ? (
+            <div className="p-6 text-sm text-silver">
+              No punches match these filters.
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>When</TableHead>
+                  <TableHead>Device</TableHead>
+                  <TableHead>Associate</TableHead>
+                  <TableHead>Action</TableHead>
+                  <TableHead>Distance</TableHead>
+                  <TableHead>Face</TableHead>
+                  <TableHead>Selfie</TableHead>
+                  <TableHead>Notes</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </CardContent>
-    </Card>
+              </TableHeader>
+              <TableBody>
+                {filtered.map((p) => (
+                  <TableRow key={p.id}>
+                    <TableCell>{new Date(p.createdAt).toLocaleString()}</TableCell>
+                    <TableCell className="font-mono text-xs">{p.deviceName}</TableCell>
+                    <TableCell>{p.associateName ?? '—'}</TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={
+                          p.action === 'CLOCK_IN'
+                            ? 'success'
+                            : p.action === 'CLOCK_OUT'
+                              ? 'accent'
+                              : p.action === 'BREAK_START' || p.action === 'BREAK_END'
+                                ? 'pending'
+                                : 'destructive'
+                        }
+                      >
+                        {p.action}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      {p.distanceMeters != null ? `${p.distanceMeters}m` : '—'}
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      {p.faceDistance == null ? (
+                        '—'
+                      ) : p.faceMismatch ? (
+                        <Badge variant="destructive">
+                          Mismatch ({p.faceDistance.toFixed(2)})
+                        </Badge>
+                      ) : (
+                        <Badge variant="success">
+                          Match ({p.faceDistance.toFixed(2)})
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {p.hasSelfie ? (
+                        <a
+                          href={`/api/kiosk-punches/${p.id}/selfie`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-gold hover:text-gold-bright underline underline-offset-2 text-xs"
+                        >
+                          view
+                        </a>
+                      ) : (
+                        '—'
+                      )}
+                    </TableCell>
+                    <TableCell className="text-xs text-silver">
+                      {p.rejectReason ?? ''}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
