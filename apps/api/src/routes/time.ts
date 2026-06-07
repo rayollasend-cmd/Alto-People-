@@ -1211,6 +1211,7 @@ async function loadExportRows(
     clockInAt: { gte: from, lt: to },
     ...(input.status ? { status: input.status } : {}),
     ...(input.clientId ? { clientId: input.clientId } : {}),
+    ...(input.locationId ? { locationId: input.locationId } : {}),
     ...(input.associateId ? { associateId: input.associateId } : {}),
   };
   const rows = await prisma.timeEntry.findMany({
@@ -1221,6 +1222,148 @@ async function loadExportRows(
   });
   return { from, to, rows, truncated: rows.length === TIME_EXPORT_MAX_ROWS };
 }
+
+// Federal weekly overtime threshold (40h) — matches payrollAggregator's
+// regular/OT split so the summary reconciles with payroll.
+const WEEK_REGULAR_CAP_MIN = 40 * 60;
+const TIME_SUMMARY_MAX_ROWS = 20000;
+
+// Per-associate payroll-prep summary: regular vs overtime hours + pay rate,
+// scoped to a facility (Location) over a date range. APPROVED time only —
+// that's what payroll pays.
+timeRouter.post('/admin/export-summary.csv', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = TimeExportInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const from = new Date(parsed.data.from);
+    const to = new Date(parsed.data.to);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || to <= from) {
+      throw new HttpError(400, 'invalid_range', 'from / to must be valid, to after from');
+    }
+
+    const where: Prisma.TimeEntryWhereInput = {
+      ...scopeTimeEntries(req.user!),
+      status: 'APPROVED',
+      clockInAt: { gte: from, lt: to },
+      ...(parsed.data.locationId ? { locationId: parsed.data.locationId } : {}),
+      ...(parsed.data.clientId ? { clientId: parsed.data.clientId } : {}),
+      ...(parsed.data.associateId ? { associateId: parsed.data.associateId } : {}),
+    };
+    const rows = await prisma.timeEntry.findMany({
+      where,
+      orderBy: { clockInAt: 'asc' },
+      include: {
+        associate: { select: { firstName: true, lastName: true } },
+        breaks: true,
+      },
+      take: TIME_SUMMARY_MAX_ROWS,
+    });
+    if (rows.length === TIME_SUMMARY_MAX_ROWS) {
+      res.setHeader('X-Truncated', 'true');
+    }
+
+    // Accumulate net worked minutes per associate per ISO week (OT is a
+    // weekly concept, so we split each week then sum across weeks).
+    type Acc = { name: string; weeks: Map<string, number>; shifts: number };
+    const byAssoc = new Map<string, Acc>();
+    for (const r of rows) {
+      const acc =
+        byAssoc.get(r.associateId) ?? {
+          name: `${r.associate.firstName} ${r.associate.lastName}`,
+          weeks: new Map<string, number>(),
+          shifts: 0,
+        };
+      const wk = String(startOfWeekUTC(r.clockInAt).getTime());
+      acc.weeks.set(wk, (acc.weeks.get(wk) ?? 0) + netWorkedMinutes(r, r.breaks));
+      acc.shifts += 1;
+      byAssoc.set(r.associateId, acc);
+    }
+
+    // Current pay rate per associate (open CompensationRecord).
+    const associateIds = Array.from(byAssoc.keys());
+    const rateMap = new Map<string, { amount: number; payType: string }>();
+    if (associateIds.length > 0) {
+      const comps = await prisma.compensationRecord.findMany({
+        where: { associateId: { in: associateIds }, effectiveTo: null },
+        orderBy: { effectiveFrom: 'desc' },
+        select: { associateId: true, amount: true, payType: true },
+      });
+      for (const c of comps) {
+        if (!rateMap.has(c.associateId)) {
+          rateMap.set(c.associateId, { amount: Number(c.amount), payType: c.payType });
+        }
+      }
+    }
+
+    // Facility label for the header.
+    let facility = 'All locations';
+    if (parsed.data.locationId) {
+      const loc = await prisma.location.findUnique({
+        where: { id: parsed.data.locationId },
+        select: { name: true, client: { select: { name: true } } },
+      });
+      facility = loc
+        ? `${loc.client?.name ? loc.client.name + ' · ' : ''}${loc.name}`
+        : 'Location';
+    } else if (parsed.data.clientId) {
+      facility = (await loadClientName(parsed.data.clientId)) ?? 'Client';
+    }
+
+    const dayStr = (d: Date) => d.toISOString().slice(0, 10);
+    const fname = `time-summary-${dayStr(from)}-to-${dayStr(new Date(to.getTime() - 1))}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+
+    res.write(`Time summary,${csvEscape(facility)}\n`);
+    res.write(`Range,${dayStr(from)} to ${dayStr(new Date(to.getTime() - 1))}\n`);
+    res.write(`Status,APPROVED only\n`);
+    res.write(`Overtime rule,Over 40 hours per week (federal)\n\n`);
+    res.write('Associate,Pay type,Pay rate,Regular hours,Overtime hours,Total hours,Shifts\n');
+
+    const fmtH = (min: number) => (min / 60).toFixed(2);
+    const sorted = Array.from(byAssoc.entries()).sort((a, b) =>
+      a[1].name.localeCompare(b[1].name),
+    );
+    let totReg = 0;
+    let totOt = 0;
+    let totShifts = 0;
+    for (const [associateId, acc] of sorted) {
+      let regMin = 0;
+      let otMin = 0;
+      for (const wkMin of acc.weeks.values()) {
+        regMin += Math.min(wkMin, WEEK_REGULAR_CAP_MIN);
+        otMin += Math.max(0, wkMin - WEEK_REGULAR_CAP_MIN);
+      }
+      totReg += regMin;
+      totOt += otMin;
+      totShifts += acc.shifts;
+      const rate = rateMap.get(associateId);
+      res.write(
+        [
+          acc.name,
+          rate?.payType ?? '',
+          rate ? rate.amount.toFixed(2) : '',
+          fmtH(regMin),
+          fmtH(otMin),
+          fmtH(regMin + otMin),
+          String(acc.shifts),
+        ]
+          .map(csvEscape)
+          .join(',') + '\n',
+      );
+    }
+    res.write(
+      ['TOTAL', '', '', fmtH(totReg), fmtH(totOt), fmtH(totReg + totOt), String(totShifts)]
+        .map(csvEscape)
+        .join(',') + '\n',
+    );
+    res.end();
+  } catch (err) {
+    next(err);
+  }
+});
 
 timeRouter.post('/admin/export.csv', MANAGE, async (req, res, next) => {
   try {
