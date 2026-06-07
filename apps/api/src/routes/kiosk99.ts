@@ -265,21 +265,44 @@ kiosk99Router.get('/kiosk-pins', MANAGE, async (req, res) => {
           { associate: { firstName: 'asc' } },
         ],
   });
+
+  // Each associate's current worksite (open AssociateAssignment's Location),
+  // so HR can filter the list to a single store/location within a client.
+  const locByAssoc = new Map<string, { id: string; name: string }>();
+  const associateIds = rows.map((r) => r.associateId);
+  if (associateIds.length > 0) {
+    const assignments = await prisma.associateAssignment.findMany({
+      where: { associateId: { in: associateIds }, endedAt: null },
+      orderBy: { startedAt: 'desc' },
+      select: { associateId: true, location: { select: { id: true, name: true } } },
+    });
+    for (const a of assignments) {
+      if (!locByAssoc.has(a.associateId)) {
+        locByAssoc.set(a.associateId, { id: a.location.id, name: a.location.name });
+      }
+    }
+  }
+
   res.json({
-    pins: rows.map((p) => ({
-      id: p.id,
-      associateId: p.associateId,
-      associateName: `${p.associate.firstName} ${p.associate.lastName}`,
-      associateEmail: p.associate.email,
-      clientId: p.clientId,
-      clientName: p.client.name,
-      // Decrypt for HR display. Old rows pre-dating the encryption column,
-      // or any row that fails to decrypt, return null — HR rotates to
-      // recover the plaintext. safeDecrypt guarantees one bad row can't
-      // sink the whole list.
-      employeeNumber: safeDecrypt(p.pinEncrypted),
-      createdAt: p.createdAt.toISOString(),
-    })),
+    pins: rows.map((p) => {
+      const loc = locByAssoc.get(p.associateId) ?? null;
+      return {
+        id: p.id,
+        associateId: p.associateId,
+        associateName: `${p.associate.firstName} ${p.associate.lastName}`,
+        associateEmail: p.associate.email,
+        clientId: p.clientId,
+        clientName: p.client.name,
+        locationId: loc?.id ?? null,
+        locationName: loc?.name ?? null,
+        // Decrypt for HR display. Old rows pre-dating the encryption column,
+        // or any row that fails to decrypt, return null — HR rotates to
+        // recover the plaintext. safeDecrypt guarantees one bad row can't
+        // sink the whole list.
+        employeeNumber: safeDecrypt(p.pinEncrypted),
+        createdAt: p.createdAt.toISOString(),
+      };
+    }),
   });
 });
 

@@ -629,8 +629,19 @@ function PinsTab({ canManage }: { canManage: boolean }) {
   // client, used to compute who is MISSING a code. Per-client only — the
   // directory is cursor-paginated, so we don't diff across all clients.
   const [eligible, setEligible] = useState<
-    Array<{ id: string; name: string; email: string }> | null
+    Array<{
+      id: string;
+      name: string;
+      email: string;
+      currentLocationId: string | null;
+    }> | null
   >(null);
+  // Worksite filter — for a client with multiple stores/locations, narrow the
+  // list to one location.
+  const [locationOptions, setLocationOptions] = useState<
+    Array<{ id: string; name: string }>
+  >([]);
+  const [locationFilter, setLocationFilter] = useState('');
   // When issuing from a "missing" row, preselect that associate in the drawer.
   const [issueFor, setIssueFor] = useState<string | null>(null);
 
@@ -686,11 +697,33 @@ function PinsTab({ canManage }: { canManage: boolean }) {
             id: a.id,
             name: `${a.firstName} ${a.lastName}`,
             email: a.email,
+            currentLocationId: a.currentLocationId,
           })),
         );
       })
       .catch(() => {
         if (!cancelled) setEligible([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId]);
+
+  // Locations for the selected client, for the worksite filter. Reset the
+  // filter whenever the client changes.
+  useEffect(() => {
+    setLocationFilter('');
+    setLocationOptions([]);
+    if (!clientId || clientId === ALL_CLIENTS) return;
+    let cancelled = false;
+    listClientLocations(clientId)
+      .then((r) => {
+        if (!cancelled) {
+          setLocationOptions(r.locations.map((l) => ({ id: l.id, name: l.name })));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setLocationOptions([]);
       });
     return () => {
       cancelled = true;
@@ -706,11 +739,17 @@ function PinsTab({ canManage }: { canManage: boolean }) {
     [rows],
   );
   const missing = useMemo(
-    () => (eligible ?? []).filter((a) => !pinnedIds.has(a.id)),
-    [eligible, pinnedIds],
+    () =>
+      (eligible ?? []).filter(
+        (a) =>
+          !pinnedIds.has(a.id) &&
+          (!locationFilter || a.currentLocationId === locationFilter),
+      ),
+    [eligible, pinnedIds, locationFilter],
   );
   const filteredRows = useMemo(() => {
-    const list = rows ?? [];
+    let list = rows ?? [];
+    if (locationFilter) list = list.filter((p) => p.locationId === locationFilter);
     const term = q.trim().toLowerCase();
     if (!term) return list;
     return list.filter(
@@ -720,7 +759,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
         (p.employeeNumber ?? '').includes(term) ||
         p.clientName.toLowerCase().includes(term),
     );
-  }, [rows, q]);
+  }, [rows, q, locationFilter]);
   // Rows we can actually email — a recoverable (non-legacy) number. Drives
   // the "Email all" bulk action over whatever's currently in view.
   const emailableRows = useMemo(
@@ -761,6 +800,23 @@ function PinsTab({ canManage }: { canManage: boolean }) {
             </select>
           )}
         </div>
+        {clientId && clientId !== ALL_CLIENTS && locationOptions.length > 0 && (
+          <div className="max-w-xs flex-1">
+            <Label>Location</Label>
+            <select
+              className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+              value={locationFilter}
+              onChange={(e) => setLocationFilter(e.target.value)}
+            >
+              <option value="">All locations</option>
+              {locationOptions.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         {canManage && (
           <Button variant="ghost" onClick={() => setShowDiagnose(true)}>
             <Stethoscope className="mr-2 h-4 w-4" /> Diagnose PIN
@@ -967,6 +1023,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                 <TableRow>
                   <TableHead>Associate</TableHead>
                   {clientId === ALL_CLIENTS && <TableHead>Client</TableHead>}
+                  <TableHead>Location</TableHead>
                   <TableHead>Email</TableHead>
                   <TableHead>Employee #</TableHead>
                   <TableHead>Issued</TableHead>
@@ -982,6 +1039,9 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                     {clientId === ALL_CLIENTS && (
                       <TableCell className="text-silver">{p.clientName}</TableCell>
                     )}
+                    <TableCell className="text-silver">
+                      {p.locationName ?? '—'}
+                    </TableCell>
                     <TableCell className="text-silver">{p.associateEmail}</TableCell>
                     <TableCell>
                       <EmployeeNumberCell value={p.employeeNumber} />
