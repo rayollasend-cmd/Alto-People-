@@ -129,6 +129,36 @@ interface AdminTimeViewProps {
 
 type Tab = 'live' | 'queue';
 
+// The live dashboard carries a lightweight ActiveDashboardEntry; widen it to
+// a TimeEntry so the edit / clock-out drawer (shared with the queue) can open
+// straight from a live row. These rows are always ACTIVE.
+function liveEntryToTimeEntry(e: ActiveDashboardEntry): TimeEntry {
+  return {
+    id: e.id,
+    associateId: e.associateId,
+    associateName: e.associateName,
+    clientId: e.clientId,
+    clientName: e.clientName,
+    clockInAt: e.clockInAt,
+    clockOutAt: null,
+    status: 'ACTIVE',
+    notes: null,
+    rejectionReason: null,
+    approvedById: null,
+    approverEmail: null,
+    approvedAt: null,
+    minutesElapsed: e.minutesElapsed,
+    jobId: e.jobId,
+    jobName: e.jobName,
+    payRate: null,
+    clockInLat: e.clockInLat,
+    clockInLng: e.clockInLng,
+    clockOutLat: null,
+    clockOutLng: null,
+    anomalies: [],
+  };
+}
+
 export function AdminTimeView({ canManage }: AdminTimeViewProps) {
   const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>('live');
@@ -190,10 +220,14 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     }
   }, []);
 
-  // Refresh everything after an admin create/edit/clock-out.
+  // Refresh after an admin create/edit/clock-out — only the visible tab's
+  // data plus the pending-review KPI. The other tab refetches on switch.
   const afterMutation = useCallback(async () => {
-    await Promise.all([refresh(), refreshActive(), refreshPendingCount()]);
-  }, [refresh, refreshActive, refreshPendingCount]);
+    await Promise.all([
+      tab === 'queue' ? refresh() : refreshActive(),
+      refreshPendingCount(),
+    ]);
+  }, [tab, refresh, refreshActive, refreshPendingCount]);
 
   useEffect(() => {
     if (tab === 'queue') refresh();
@@ -474,6 +508,9 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                         <TableHead>Elapsed</TableHead>
                         <TableHead>Status</TableHead>
                         <TableHead>Geofence</TableHead>
+                        {canManage && (
+                          <TableHead className="text-right">Actions</TableHead>
+                        )}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -509,6 +546,17 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                               <Badge variant="destructive">Off-site</Badge>
                             )}
                           </TableCell>
+                          {canManage && (
+                            <TableCell className="text-right">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => setEditTarget(liveEntryToTimeEntry(e))}
+                              >
+                                Clock out
+                              </Button>
+                            </TableCell>
+                          )}
                         </TableRow>
                       ))}
                     </TableBody>
@@ -558,6 +606,17 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                           {formatHM(e.minutesElapsed)}
                         </span>
                       </div>
+                      {canManage && (
+                        <div className="mt-2 flex justify-end">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setEditTarget(liveEntryToTimeEntry(e))}
+                          >
+                            Clock out
+                          </Button>
+                        </div>
+                      )}
                     </li>
                   ))}
                 </ul>

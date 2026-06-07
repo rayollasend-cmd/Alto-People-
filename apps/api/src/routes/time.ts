@@ -932,6 +932,26 @@ timeRouter.patch('/admin/entries/:id', MANAGE, async (req, res, next) => {
     const becomingCompleted = existing.status === 'ACTIVE' && !!clockOutAt;
     const status = becomingCompleted ? 'COMPLETED' : existing.status;
 
+    // Clocking out an ACTIVE entry must close any still-open break — same as
+    // self clock-out. Otherwise the break stays open on a COMPLETED row and
+    // netWorkedMinutes counts it as running to "now", skewing paid time.
+    const openBreak = becomingCompleted
+      ? existing.breaks.find((b) => !b.endedAt)
+      : undefined;
+    if (openBreak && clockOutAt) {
+      await prisma.breakEntry.update({
+        where: { id: openBreak.id },
+        data: { endedAt: clockOutAt },
+      });
+    }
+    // Anomaly math below should see the now-closed break.
+    const effectiveBreaks =
+      openBreak && clockOutAt
+        ? existing.breaks.map((b) =>
+            b.id === openBreak.id ? { ...b, endedAt: clockOutAt } : b,
+          )
+        : existing.breaks;
+
     // A job change re-snapshots payRate + clientId from the new job.
     let jobUpdate: { jobId?: string | null; payRate?: number | null; clientId?: string | null } = {};
     if (parsed.data.jobId !== undefined) {
@@ -962,7 +982,7 @@ timeRouter.patch('/admin/entries/:id', MANAGE, async (req, res, next) => {
         excludeEntryId: existing.id,
         clockInAt,
         clockOutAt,
-        breaks: existing.breaks,
+        breaks: effectiveBreaks,
         state: existing.associate?.state ?? null,
         geofenceInOk: anomalies.includes('GEOFENCE_VIOLATION_IN') ? false : null,
         geofenceOutOk: anomalies.includes('GEOFENCE_VIOLATION_OUT') ? false : null,
