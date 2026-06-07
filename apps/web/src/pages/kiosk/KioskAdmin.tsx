@@ -727,6 +727,13 @@ function PinsTab({ canManage }: { canManage: boolean }) {
     () => filteredRows.filter((p) => p.employeeNumber),
     [filteredRows],
   );
+  // Rows whose number can't be displayed (legacy / un-decryptable). The
+  // only fix is to re-issue; drives the "Rotate all" bulk action.
+  const unreadableRows = useMemo(
+    () => filteredRows.filter((p) => !p.employeeNumber),
+    [filteredRows],
+  );
+  const [rotatingAll, setRotatingAll] = useState(false);
 
   return (
     <div className="space-y-4">
@@ -791,6 +798,50 @@ function PinsTab({ canManage }: { canManage: boolean }) {
             }}
           >
             <Mail className="mr-2 h-4 w-4" /> Email all ({emailableRows.length})
+          </Button>
+        )}
+        {canManage && effectiveView === 'with' && unreadableRows.length > 0 && (
+          <Button
+            variant="ghost"
+            disabled={rotatingAll}
+            onClick={async () => {
+              const n = unreadableRows.length;
+              if (
+                !(await confirm({
+                  title: `Re-issue ${n} unreadable number${n === 1 ? '' : 's'}?`,
+                  description:
+                    `These codes can't be displayed (encrypted under a key prod no longer has), so they can only be fixed by re-issuing. ` +
+                    `Each associate gets a NEW number and their current one stops working immediately. ` +
+                    `The new numbers will appear in this list — share them with each associate (email delivery isn't guaranteed yet).`,
+                  destructive: true,
+                }))
+              )
+                return;
+              setRotatingAll(true);
+              let ok = 0;
+              let fail = 0;
+              for (const p of unreadableRows) {
+                try {
+                  await assignKioskPin({
+                    clientId: p.clientId,
+                    associateId: p.associateId,
+                  });
+                  ok++;
+                } catch {
+                  fail++;
+                }
+              }
+              setRotatingAll(false);
+              toast.success(
+                `Re-issued ${ok} number${ok === 1 ? '' : 's'} — now visible in the list.${
+                  fail ? ` ${fail} failed (check onboarding status).` : ''
+                }`,
+              );
+              refresh();
+            }}
+          >
+            <RotateCw className="mr-2 h-4 w-4" />
+            {rotatingAll ? 'Re-issuing…' : `Rotate all — (${unreadableRows.length})`}
           </Button>
         )}
       </div>
