@@ -427,6 +427,92 @@ kiosk99Router.post('/kiosk-pins/:id/email', MANAGE, async (req, res) => {
   res.json({ ok: true, email: pin.associate.email });
 });
 
+// Bulk variant — email every selected associate their number in one go
+// (e.g. a new-site rollout). Mirrors the single send but skips rows that
+// can't be emailed (no address, or a legacy number we can't decrypt)
+// rather than failing the whole batch.
+const BulkEmailSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1).max(1000),
+});
+
+kiosk99Router.post('/kiosk-pins/email', MANAGE, async (req, res) => {
+  const { ids } = BulkEmailSchema.parse(req.body);
+  const pins = await prisma.kioskPin.findMany({
+    where: { id: { in: ids } },
+    include: {
+      associate: { select: { firstName: true, email: true } },
+      client: { select: { name: true } },
+    },
+  });
+
+  const emailable = pins.filter((p) => p.associate.email && p.pinEncrypted);
+  const skipped = pins.length - emailable.length;
+  if (emailable.length === 0) {
+    throw new HttpError(
+      400,
+      'nothing_to_send',
+      'None of the selected numbers can be emailed (no address on file, or legacy numbers that need rotating first).',
+    );
+  }
+
+  const subject = 'Your Alto kiosk clock-in number';
+  const oneSend = (p: (typeof emailable)[number]) =>
+    send({
+      channel: 'EMAIL',
+      recipient: { userId: null, phone: null, email: p.associate.email },
+      subject,
+      body: [
+        `Hi ${p.associate.firstName},`,
+        ``,
+        `Here is your employee number for clocking in and out at the ${p.client.name} kiosk:`,
+        ``,
+        `    ${decryptString(p.pinEncrypted!)}`,
+        ``,
+        `Enter this 4-digit number on the kiosk tablet to clock in and out. You can also see it any time on your My Profile page.`,
+        ``,
+        `If you didn't expect this email, contact your HR team.`,
+        ``,
+        `— Alto People`,
+      ].join('\n'),
+    });
+
+  // Await the first send so a misconfigured mailer fails loudly instead of
+  // silently dropping the whole batch. The Resend client serializes +
+  // throttles internally, so the rest go fire-and-forget and drain in the
+  // background — the request stays fast no matter the batch size.
+  try {
+    await oneSend(emailable[0]!);
+  } catch {
+    throw new HttpError(
+      502,
+      'email_failed',
+      'Could not send email — check the mail configuration and try again.',
+    );
+  }
+  for (const p of emailable.slice(1)) {
+    void oneSend(p).catch(() => {
+      /* logged inside send(); one failure shouldn't fail the batch */
+    });
+  }
+
+  enqueueAudit(
+    {
+      actorUserId: req.user!.id,
+      action: 'kiosk.pins_bulk_emailed',
+      entityType: 'KioskPin',
+      entityId: emailable[0]!.id,
+      metadata: {
+        count: emailable.length,
+        skipped,
+        pinIds: emailable.map((p) => p.id),
+      },
+    },
+    'kiosk.pins_bulk_emailed',
+  );
+
+  res.json({ queued: emailable.length, skipped });
+});
+
 // HR diagnostic for "wrong PIN" complaints. Given a 4-digit employee
 // number, return the full picture: which client the PIN is under,
 // which associate it belongs to, that associate's current open shift

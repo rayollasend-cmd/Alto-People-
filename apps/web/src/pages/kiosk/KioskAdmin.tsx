@@ -23,6 +23,7 @@ import {
   deleteKioskPin,
   diagnoseKioskPin,
   emailKioskPin,
+  emailKioskPinsBulk,
   listKioskDevices,
   listKioskFaceReferences,
   listKioskPins,
@@ -718,6 +719,12 @@ function PinsTab({ canManage }: { canManage: boolean }) {
         p.clientName.toLowerCase().includes(term),
     );
   }, [rows, q]);
+  // Rows we can actually email — a recoverable (non-legacy) number. Drives
+  // the "Email all" bulk action over whatever's currently in view.
+  const emailableRows = useMemo(
+    () => filteredRows.filter((p) => p.employeeNumber),
+    [filteredRows],
+  );
 
   return (
     <div className="space-y-4">
@@ -753,6 +760,35 @@ function PinsTab({ canManage }: { canManage: boolean }) {
         {canManage && clientId && clientId !== ALL_CLIENTS && (
           <Button onClick={() => { setIssueFor(null); setShowNew(true); }}>
             <Plus className="mr-2 h-4 w-4" /> Issue employee number
+          </Button>
+        )}
+        {canManage && effectiveView === 'with' && emailableRows.length > 0 && (
+          <Button
+            variant="ghost"
+            onClick={async () => {
+              if (
+                !(await confirm({
+                  title: `Email clock-in numbers to ${emailableRows.length} associate${emailableRows.length === 1 ? '' : 's'}?`,
+                  description:
+                    'Each associate receives their own 4-digit number at the email on file.',
+                }))
+              )
+                return;
+              try {
+                const r = await emailKioskPinsBulk(emailableRows.map((p) => p.id));
+                toast.success(
+                  `Queued ${r.queued} email${r.queued === 1 ? '' : 's'}${
+                    r.skipped ? ` · ${r.skipped} skipped` : ''
+                  }.`,
+                );
+              } catch (err) {
+                toast.error(
+                  err instanceof ApiError ? err.message : 'Failed to email.',
+                );
+              }
+            }}
+          >
+            <Mail className="mr-2 h-4 w-4" /> Email all ({emailableRows.length})
           </Button>
         )}
       </div>

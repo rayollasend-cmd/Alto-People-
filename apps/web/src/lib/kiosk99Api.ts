@@ -174,6 +174,14 @@ export const emailKioskPin = (id: string) =>
     body: {},
   });
 
+/** Bulk-email selected associates their employee numbers. Returns how many
+ *  were queued and how many were skipped (no address / legacy number). */
+export const emailKioskPinsBulk = (ids: string[]) =>
+  apiFetch<{ queued: number; skipped: number }>('/kiosk-pins/email', {
+    method: 'POST',
+    body: { ids },
+  });
+
 export interface KioskPinDiagnosis {
   employeeNumber: string;
   matchedPin: {
