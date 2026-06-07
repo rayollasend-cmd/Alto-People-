@@ -816,6 +816,9 @@ timeRouter.post('/admin/entries', MANAGE, async (req, res, next) => {
       clientId = job.clientId;
       payRate = job.payRate ? Number(job.payRate) : null;
     }
+    // Explicit rate wins over the job-derived one (recorded on the entry for
+    // reporting; payroll pays from the shift/comp record).
+    if (parsed.data.payRate !== undefined) payRate = parsed.data.payRate;
     // Resolve client/location from the associate's open assignment when no
     // job pinned it, so the entry is denormalized the same as a self/kiosk
     // clock-in (history + scoping stay correct).
@@ -997,6 +1000,7 @@ timeRouter.patch('/admin/entries/:id', MANAGE, async (req, res, next) => {
         status,
         ...(parsed.data.notes !== undefined ? { notes: parsed.data.notes } : {}),
         ...jobUpdate,
+        ...(parsed.data.payRate !== undefined ? { payRate: parsed.data.payRate } : {}),
         anomalies,
       },
       include: ENTRY_INCLUDE,

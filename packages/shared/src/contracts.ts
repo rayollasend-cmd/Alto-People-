@@ -1008,6 +1008,10 @@ export const AdminCreateTimeEntryInputSchema = z.object({
   jobId: UuidSchema.nullable().optional(),
   clockInAt: z.string().datetime(),
   clockOutAt: z.string().datetime().nullable().optional(),
+  /** Recorded hourly rate on the entry (display/reporting). Overrides the
+   *  job-derived rate when supplied. Does NOT drive payroll — that pays from
+   *  the scheduled shift / compensation record. */
+  payRate: z.number().nonnegative().max(100000).nullable().optional(),
   notes: z.string().max(500).nullable().optional(),
 });
 export type AdminCreateTimeEntryInput = z.infer<
@@ -1024,6 +1028,9 @@ export const AdminEditTimeEntryInputSchema = z
     clockInAt: z.string().datetime().optional(),
     clockOutAt: z.string().datetime().nullable().optional(),
     jobId: UuidSchema.nullable().optional(),
+    /** Recorded hourly rate on the entry (display/reporting). null clears it.
+     *  Does NOT drive payroll. */
+    payRate: z.number().nonnegative().max(100000).nullable().optional(),
     notes: z.string().max(500).nullable().optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
