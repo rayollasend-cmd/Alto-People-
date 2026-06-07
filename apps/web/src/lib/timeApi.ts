@@ -1,6 +1,8 @@
 import type {
   ActiveDashboardResponse,
   ActiveTimeEntryResponse,
+  AdminCreateTimeEntryInput,
+  AdminEditTimeEntryInput,
   BreakEntry,
   BreakType,
   BulkTimeApproveInput,
@@ -129,6 +131,26 @@ export function rejectTimeEntry(
 ): Promise<TimeEntry> {
   return apiFetch<TimeEntry>(`/time/admin/entries/${id}/reject`, {
     method: 'POST',
+    body,
+  });
+}
+
+/** Admin: create a time entry on behalf of an associate. Omit clockOutAt to
+ *  clock them in (ACTIVE); supply it to log a completed shift. */
+export function adminCreateTimeEntry(
+  body: AdminCreateTimeEntryInput
+): Promise<TimeEntry> {
+  return apiFetch<TimeEntry>('/time/admin/entries', { method: 'POST', body });
+}
+
+/** Admin: edit a pre-approval entry (times/job/notes), or clock an associate
+ *  out by passing clockOutAt on their ACTIVE entry. */
+export function adminEditTimeEntry(
+  id: string,
+  body: AdminEditTimeEntryInput
+): Promise<TimeEntry> {
+  return apiFetch<TimeEntry>(`/time/admin/entries/${id}`, {
+    method: 'PATCH',
     body,
   });
 }

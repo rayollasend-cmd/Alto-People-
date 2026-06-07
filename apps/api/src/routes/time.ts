@@ -1,8 +1,10 @@
 import { Router } from 'express';
-import { Prisma } from '@prisma/client';
+import { Prisma, type BreakType } from '@prisma/client';
 import {
   ActiveDashboardResponseSchema,
   ActiveTimeEntryResponseSchema,
+  AdminCreateTimeEntryInputSchema,
+  AdminEditTimeEntryInputSchema,
   BulkTimeApproveInputSchema,
   BulkTimeRejectInputSchema,
   ClockInInputV2Schema,
@@ -59,6 +61,55 @@ const ENTRY_INCLUDE = {
 function minutesElapsed(row: { clockInAt: Date; clockOutAt: Date | null }): number {
   const end = row.clockOutAt ?? new Date();
   return Math.max(0, Math.floor((end.getTime() - row.clockInAt.getTime()) / 60_000));
+}
+
+// Recompute a completed entry's anomalies. Weekly-overtime detection needs
+// the rest of the associate's week, so we sum it here (excluding this entry)
+// exactly as the clock-out path does. Used by the admin create/edit routes.
+async function recomputeAnomalies(params: {
+  associateId: string;
+  excludeEntryId: string | null;
+  clockInAt: Date;
+  clockOutAt: Date;
+  breaks: { type: BreakType; startedAt: Date; endedAt: Date | null }[];
+  state: string | null;
+  geofenceInOk: boolean | null;
+  geofenceOutOk: boolean | null;
+}): Promise<TimeAnomaly[]> {
+  const weekStart = startOfWeekUTC(params.clockInAt);
+  const weekEnd = endOfWeekUTC(params.clockInAt);
+  const weekly = await prisma.timeEntry.findMany({
+    take: 100,
+    where: {
+      associateId: params.associateId,
+      clockInAt: { gte: weekStart, lt: weekEnd },
+      ...(params.excludeEntryId ? { id: { not: params.excludeEntryId } } : {}),
+    },
+    include: { breaks: true },
+  });
+  const weeklySoFar = weekly.reduce(
+    (sum, e) => sum + netWorkedMinutes(e, e.breaks),
+    0,
+  );
+  const thisMinutes = netWorkedMinutes(
+    { clockInAt: params.clockInAt, clockOutAt: params.clockOutAt },
+    params.breaks,
+  );
+  return detectAnomalies({
+    entry: {
+      clockInAt: params.clockInAt,
+      clockOutAt: params.clockOutAt,
+      geofenceInOk: params.geofenceInOk,
+      geofenceOutOk: params.geofenceOutOk,
+    },
+    breaks: params.breaks.map((b) => ({
+      type: b.type,
+      startedAt: b.startedAt,
+      endedAt: b.endedAt,
+    })),
+    weeklyMinutesIncludingThis: weeklySoFar + thisMinutes,
+    state: params.state,
+  });
 }
 
 async function loadClientName(clientId: string | null): Promise<string | null> {
@@ -718,6 +769,251 @@ timeRouter.post('/admin/entries/:id/reject', MANAGE, async (req, res, next) => {
       associateId: updated.associateId,
       clientId: updated.clientId,
       metadata: { reason: parsed.data.reason },
+      req,
+    });
+
+    res.json(await toEntry(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Admin clock-in/out + edit on behalf of an associate ============= */
+
+// Create an entry for an associate — HR fixes a missed kiosk punch or logs
+// a shift after the fact. No clockOutAt → an ACTIVE entry ("clock them in",
+// bypassing the kiosk-only rule since this is admin-initiated); with one →
+// a COMPLETED shift. Anomalies computed for completed entries.
+timeRouter.post('/admin/entries', MANAGE, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    const parsed = AdminCreateTimeEntryInputSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const { associateId, jobId, notes } = parsed.data;
+    const clockInAt = new Date(parsed.data.clockInAt);
+    const clockOutAt = parsed.data.clockOutAt ? new Date(parsed.data.clockOutAt) : null;
+    if (clockOutAt && clockOutAt.getTime() <= clockInAt.getTime()) {
+      throw new HttpError(400, 'invalid_range', 'Clock-out must be after clock-in.');
+    }
+
+    const associate = await prisma.associate.findUnique({
+      where: { id: associateId },
+      select: { id: true, state: true },
+    });
+    if (!associate) {
+      throw new HttpError(404, 'associate_not_found', 'Associate not found.');
+    }
+
+    let clientId: string | null = null;
+    let payRate: number | null = null;
+    if (jobId) {
+      const job = await prisma.job.findFirst({
+        where: { id: jobId, deletedAt: null, isActive: true },
+      });
+      if (!job) throw new HttpError(404, 'job_not_found', 'Job not found or inactive');
+      clientId = job.clientId;
+      payRate = job.payRate ? Number(job.payRate) : null;
+    }
+    // Resolve client/location from the associate's open assignment when no
+    // job pinned it, so the entry is denormalized the same as a self/kiosk
+    // clock-in (history + scoping stay correct).
+    const resolved = await resolveAssociateGeofence(prisma, associateId, clientId);
+    if (resolved.clientId && !clientId) clientId = resolved.clientId;
+
+    const status: 'ACTIVE' | 'COMPLETED' = clockOutAt ? 'COMPLETED' : 'ACTIVE';
+    const anomalies: TimeAnomaly[] = clockOutAt
+      ? await recomputeAnomalies({
+          associateId,
+          excludeEntryId: null,
+          clockInAt,
+          clockOutAt,
+          breaks: [],
+          state: associate.state ?? null,
+          geofenceInOk: null,
+          geofenceOutOk: null,
+        })
+      : [];
+
+    let entry;
+    try {
+      entry = await prisma.timeEntry.create({
+        data: {
+          associateId,
+          clientId,
+          locationId: resolved.locationId,
+          jobId: jobId ?? null,
+          clockInAt,
+          clockOutAt,
+          payRate,
+          notes: notes ?? null,
+          status,
+          anomalies,
+        },
+        include: ENTRY_INCLUDE,
+      });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new HttpError(
+          409,
+          'already_clocked_in',
+          'That associate already has an open (active) entry — clock them out or edit it instead.',
+        );
+      }
+      throw err;
+    }
+
+    await recordTimeEvent({
+      actorUserId: user.id,
+      action: 'time.admin_created',
+      timeEntryId: entry.id,
+      associateId: entry.associateId,
+      clientId: entry.clientId,
+      metadata: { onBehalf: true, status, hasClockOut: !!clockOutAt, jobId: jobId ?? null },
+      req,
+    });
+
+    res.status(201).json(await toEntry(entry));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Edit an entry before it's approved: fix clock times, re-tag a job, attach
+// notes, or clock an associate out (supply clockOutAt on an ACTIVE entry →
+// it becomes COMPLETED). Blocked once APPROVED — reject it first.
+timeRouter.patch('/admin/entries/:id', MANAGE, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    const parsed = AdminEditTimeEntryInputSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+
+    const existing = await prisma.timeEntry.findFirst({
+      where: { id: req.params.id, ...scopeTimeEntries(user) },
+      include: { breaks: true, associate: { select: { state: true } } },
+    });
+    if (!existing) {
+      throw new HttpError(404, 'time_entry_not_found', 'Time entry not found');
+    }
+    if (existing.status === 'APPROVED') {
+      throw new HttpError(
+        409,
+        'already_approved',
+        'This entry is approved. Reject it first to change the times.',
+      );
+    }
+
+    const clockInAt = parsed.data.clockInAt
+      ? new Date(parsed.data.clockInAt)
+      : existing.clockInAt;
+    const clockOutAt =
+      parsed.data.clockOutAt !== undefined
+        ? parsed.data.clockOutAt
+          ? new Date(parsed.data.clockOutAt)
+          : null
+        : existing.clockOutAt;
+    if (clockOutAt && clockOutAt.getTime() <= clockInAt.getTime()) {
+      throw new HttpError(400, 'invalid_range', 'Clock-out must be after clock-in.');
+    }
+    // A non-ACTIVE entry must keep a clock-out — don't let an edit strip it
+    // and leave a "completed" row with no end time.
+    if (!clockOutAt && existing.status !== 'ACTIVE') {
+      throw new HttpError(
+        400,
+        'clockout_required',
+        'A completed entry must keep a clock-out time.',
+      );
+    }
+
+    // Supplying a clock-out on an ACTIVE entry = admin clocking them out.
+    const becomingCompleted = existing.status === 'ACTIVE' && !!clockOutAt;
+    const status = becomingCompleted ? 'COMPLETED' : existing.status;
+
+    // Clocking out an ACTIVE entry must close any still-open break — same as
+    // self clock-out. Otherwise the break stays open on a COMPLETED row and
+    // netWorkedMinutes counts it as running to "now", skewing paid time.
+    const openBreak = becomingCompleted
+      ? existing.breaks.find((b) => !b.endedAt)
+      : undefined;
+    if (openBreak && clockOutAt) {
+      await prisma.breakEntry.update({
+        where: { id: openBreak.id },
+        data: { endedAt: clockOutAt },
+      });
+    }
+    // Anomaly math below should see the now-closed break.
+    const effectiveBreaks =
+      openBreak && clockOutAt
+        ? existing.breaks.map((b) =>
+            b.id === openBreak.id ? { ...b, endedAt: clockOutAt } : b,
+          )
+        : existing.breaks;
+
+    // A job change re-snapshots payRate + clientId from the new job.
+    let jobUpdate: { jobId?: string | null; payRate?: number | null; clientId?: string | null } = {};
+    if (parsed.data.jobId !== undefined) {
+      if (parsed.data.jobId) {
+        const job = await prisma.job.findFirst({
+          where: { id: parsed.data.jobId, deletedAt: null, isActive: true },
+        });
+        if (!job) throw new HttpError(404, 'job_not_found', 'Job not found or inactive');
+        jobUpdate = {
+          jobId: job.id,
+          payRate: job.payRate ? Number(job.payRate) : null,
+          clientId: job.clientId,
+        };
+      } else {
+        jobUpdate = { jobId: null };
+      }
+    }
+
+    // Recompute anomalies whenever there's a clock-out time. Admin edits
+    // carry no fresh GPS, so we preserve any geofence flags already on the
+    // entry rather than clearing them.
+    let anomalies: TimeAnomaly[] = Array.isArray(existing.anomalies)
+      ? (existing.anomalies as TimeAnomaly[])
+      : [];
+    if (clockOutAt) {
+      anomalies = await recomputeAnomalies({
+        associateId: existing.associateId,
+        excludeEntryId: existing.id,
+        clockInAt,
+        clockOutAt,
+        breaks: effectiveBreaks,
+        state: existing.associate?.state ?? null,
+        geofenceInOk: anomalies.includes('GEOFENCE_VIOLATION_IN') ? false : null,
+        geofenceOutOk: anomalies.includes('GEOFENCE_VIOLATION_OUT') ? false : null,
+      });
+    }
+
+    const updated = await prisma.timeEntry.update({
+      where: { id: existing.id },
+      data: {
+        clockInAt,
+        clockOutAt,
+        status,
+        ...(parsed.data.notes !== undefined ? { notes: parsed.data.notes } : {}),
+        ...jobUpdate,
+        anomalies,
+      },
+      include: ENTRY_INCLUDE,
+    });
+
+    await recordTimeEvent({
+      actorUserId: user.id,
+      action: becomingCompleted ? 'time.admin_clock_out' : 'time.admin_edited',
+      timeEntryId: updated.id,
+      associateId: updated.associateId,
+      clientId: updated.clientId,
+      metadata: {
+        onBehalf: true,
+        fromStatus: existing.status,
+        toStatus: status,
+        editedFields: Object.keys(parsed.data),
+      },
       req,
     });
 
