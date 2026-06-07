@@ -167,6 +167,21 @@ export const assignKioskPin = (input: {
 export const deleteKioskPin = (id: string) =>
   apiFetch<void>(`/kiosk-pins/${id}`, { method: 'DELETE' });
 
+/** Email an associate their kiosk employee number. */
+export const emailKioskPin = (id: string) =>
+  apiFetch<{ ok: true; email: string }>(`/kiosk-pins/${id}/email`, {
+    method: 'POST',
+    body: {},
+  });
+
+/** Bulk-email selected associates their employee numbers. Returns how many
+ *  were queued and how many were skipped (no address / legacy number). */
+export const emailKioskPinsBulk = (ids: string[]) =>
+  apiFetch<{ queued: number; skipped: number }>('/kiosk-pins/email', {
+    method: 'POST',
+    body: { ids },
+  });
+
 export interface KioskPinDiagnosis {
   employeeNumber: string;
   matchedPin: {
@@ -221,15 +236,31 @@ export const listKioskPunches = (params?: {
   associateId?: string;
   deviceId?: string;
   reviewStatus?: KioskPunchReviewStatus;
+  action?: KioskPunchSummary['action'];
+  anomaliesOnly?: boolean;
+  /** ISO timestamps bounding createdAt. */
+  from?: string;
+  to?: string;
   sort?: 'newest' | 'oldest';
+  /** Id of the previous page's last row, for cursor pagination. */
+  cursor?: string;
+  limit?: number;
 }) => {
   const q = new URLSearchParams();
   if (params?.associateId) q.set('associateId', params.associateId);
   if (params?.deviceId) q.set('deviceId', params.deviceId);
   if (params?.reviewStatus) q.set('reviewStatus', params.reviewStatus);
+  if (params?.action) q.set('action', params.action);
+  if (params?.anomaliesOnly) q.set('anomaliesOnly', 'true');
+  if (params?.from) q.set('from', params.from);
+  if (params?.to) q.set('to', params.to);
   if (params?.sort) q.set('sort', params.sort);
+  if (params?.cursor) q.set('cursor', params.cursor);
+  if (params?.limit != null) q.set('limit', String(params.limit));
   const suffix = q.toString() ? `?${q.toString()}` : '';
-  return apiFetch<{ punches: KioskPunchSummary[] }>(`/kiosk-punches${suffix}`);
+  return apiFetch<{ punches: KioskPunchSummary[]; nextCursor: string | null }>(
+    `/kiosk-punches${suffix}`,
+  );
 };
 
 export const reviewKioskPunch = (

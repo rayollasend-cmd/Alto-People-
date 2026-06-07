@@ -17,7 +17,8 @@ import {
 } from '../lib/kioskAuth.js';
 import { enforcePunchRateLimit } from '../lib/kioskRateLimit.js';
 import { encryptString, decryptString } from '../lib/crypto.js';
-import { recordCriticalAudit } from '../lib/audit.js';
+import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
+import { send } from '../lib/notifications.js';
 
 /**
  * Phase 99 — Kiosk-mode clock in/out: 4-digit PIN + selfie.
@@ -341,6 +342,177 @@ kiosk99Router.delete('/kiosk-pins/:id', MANAGE, async (req, res) => {
   res.status(204).end();
 });
 
+// Email an associate their kiosk employee number. HR fires this from the
+// "With codes" list so someone who forgot their clock-in number gets it
+// without HR reading it aloud. The associate can already see it on their
+// My Profile page — this is just a convenience push to their inbox.
+kiosk99Router.post('/kiosk-pins/:id/email', MANAGE, async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  const pin = await prisma.kioskPin.findUnique({
+    where: { id },
+    include: {
+      associate: { select: { firstName: true, email: true } },
+      client: { select: { name: true } },
+    },
+  });
+  if (!pin) {
+    throw new HttpError(404, 'not_found', 'Employee number not found.');
+  }
+  if (!pin.associate.email) {
+    throw new HttpError(
+      400,
+      'no_email',
+      'This associate has no email address on file.',
+    );
+  }
+  if (!pin.pinEncrypted) {
+    // Legacy row predating the encryption column — we can't recover the
+    // plaintext to email. HR must rotate to a fresh number first.
+    throw new HttpError(
+      409,
+      'no_plaintext_number',
+      'This number predates encryption — rotate it first to email a fresh one.',
+    );
+  }
+
+  const employeeNumber = decryptString(pin.pinEncrypted);
+  const subject = 'Your Alto kiosk clock-in number';
+  const body = [
+    `Hi ${pin.associate.firstName},`,
+    ``,
+    `Here is your employee number for clocking in and out at the ${pin.client.name} kiosk:`,
+    ``,
+    `    ${employeeNumber}`,
+    ``,
+    `Enter this 4-digit number on the kiosk tablet to clock in and out. You can also see it any time on your My Profile page.`,
+    ``,
+    `If you didn't expect this email, contact your HR team.`,
+    ``,
+    `— Alto People`,
+  ].join('\n');
+
+  try {
+    await send({
+      channel: 'EMAIL',
+      recipient: { userId: null, phone: null, email: pin.associate.email },
+      subject,
+      body,
+    });
+  } catch {
+    throw new HttpError(
+      502,
+      'email_failed',
+      'Could not send the email. Try again in a moment.',
+    );
+  }
+
+  // Sending a clock-in credential out of the system is worth a trail of
+  // who sent it to whom. Fire-and-forget so an audit blip doesn't fail a
+  // send that already went out.
+  enqueueAudit(
+    {
+      actorUserId: req.user!.id,
+      clientId: pin.clientId,
+      action: 'kiosk.pin_emailed',
+      entityType: 'KioskPin',
+      entityId: pin.id,
+      metadata: {
+        associateId: pin.associateId,
+        recipientEmail: pin.associate.email,
+      },
+    },
+    'kiosk.pin_emailed',
+  );
+
+  res.json({ ok: true, email: pin.associate.email });
+});
+
+// Bulk variant — email every selected associate their number in one go
+// (e.g. a new-site rollout). Mirrors the single send but skips rows that
+// can't be emailed (no address, or a legacy number we can't decrypt)
+// rather than failing the whole batch.
+const BulkEmailSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1).max(1000),
+});
+
+kiosk99Router.post('/kiosk-pins/email', MANAGE, async (req, res) => {
+  const { ids } = BulkEmailSchema.parse(req.body);
+  const pins = await prisma.kioskPin.findMany({
+    where: { id: { in: ids } },
+    include: {
+      associate: { select: { firstName: true, email: true } },
+      client: { select: { name: true } },
+    },
+  });
+
+  const emailable = pins.filter((p) => p.associate.email && p.pinEncrypted);
+  const skipped = pins.length - emailable.length;
+  if (emailable.length === 0) {
+    throw new HttpError(
+      400,
+      'nothing_to_send',
+      'None of the selected numbers can be emailed (no address on file, or legacy numbers that need rotating first).',
+    );
+  }
+
+  const subject = 'Your Alto kiosk clock-in number';
+  const oneSend = (p: (typeof emailable)[number]) =>
+    send({
+      channel: 'EMAIL',
+      recipient: { userId: null, phone: null, email: p.associate.email },
+      subject,
+      body: [
+        `Hi ${p.associate.firstName},`,
+        ``,
+        `Here is your employee number for clocking in and out at the ${p.client.name} kiosk:`,
+        ``,
+        `    ${decryptString(p.pinEncrypted!)}`,
+        ``,
+        `Enter this 4-digit number on the kiosk tablet to clock in and out. You can also see it any time on your My Profile page.`,
+        ``,
+        `If you didn't expect this email, contact your HR team.`,
+        ``,
+        `— Alto People`,
+      ].join('\n'),
+    });
+
+  // Await the first send so a misconfigured mailer fails loudly instead of
+  // silently dropping the whole batch. The Resend client serializes +
+  // throttles internally, so the rest go fire-and-forget and drain in the
+  // background — the request stays fast no matter the batch size.
+  try {
+    await oneSend(emailable[0]!);
+  } catch {
+    throw new HttpError(
+      502,
+      'email_failed',
+      'Could not send email — check the mail configuration and try again.',
+    );
+  }
+  for (const p of emailable.slice(1)) {
+    void oneSend(p).catch(() => {
+      /* logged inside send(); one failure shouldn't fail the batch */
+    });
+  }
+
+  enqueueAudit(
+    {
+      actorUserId: req.user!.id,
+      action: 'kiosk.pins_bulk_emailed',
+      entityType: 'KioskPin',
+      entityId: emailable[0]!.id,
+      metadata: {
+        count: emailable.length,
+        skipped,
+        pinIds: emailable.map((p) => p.id),
+      },
+    },
+    'kiosk.pins_bulk_emailed',
+  );
+
+  res.json({ queued: emailable.length, skipped });
+});
+
 // HR diagnostic for "wrong PIN" complaints. Given a 4-digit employee
 // number, return the full picture: which client the PIN is under,
 // which associate it belongs to, that associate's current open shift
@@ -567,6 +739,23 @@ kiosk99Router.get('/kiosk-punches', MANAGE, async (req, res) => {
     .enum(['PENDING', 'APPROVED', 'REJECTED'])
     .optional()
     .parse(req.query.reviewStatus);
+  const action = z
+    .enum(['CLOCK_IN', 'CLOCK_OUT', 'BREAK_START', 'BREAK_END', 'REJECTED'])
+    .optional()
+    .parse(req.query.action);
+  // Anomalies-only — any punch the system flagged (face mismatch or
+  // impossible travel), regardless of where it sits in the review flow.
+  const anomaliesOnly = req.query.anomaliesOnly === 'true';
+  const from = z
+    .string()
+    .datetime({ offset: true })
+    .optional()
+    .parse(req.query.from);
+  const to = z
+    .string()
+    .datetime({ offset: true })
+    .optional()
+    .parse(req.query.to);
   // 'oldest' surfaces the most stale review-queue items first; HR
   // working the queue wants the back of the line, not the front.
   // Defaults to newest-first to match the existing punch log.
@@ -574,22 +763,57 @@ kiosk99Router.get('/kiosk-punches', MANAGE, async (req, res) => {
     .enum(['newest', 'oldest'])
     .optional()
     .parse(req.query.sort);
+  // Cursor pagination so the log isn't trapped behind a single 500-row
+  // page — a busy multi-client deployment burns through 500 punches in a
+  // day or two, and a filter for last month genuinely can't reach past the
+  // cap without this. `cursor` is the id of the previous page's last row.
+  const cursor = z.string().uuid().optional().parse(req.query.cursor);
+  const limit = Math.min(
+    Math.max(
+      z.coerce.number().int().optional().parse(req.query.limit) ?? 500,
+      1,
+    ),
+    500,
+  );
+
+  const dir: Prisma.SortOrder = sort === 'oldest' ? 'asc' : 'desc';
+  const where: Prisma.KioskPunchWhereInput = {
+    ...(associateId ? { associateId } : {}),
+    ...(deviceId ? { kioskDeviceId: deviceId } : {}),
+    ...(reviewStatus ? { reviewStatus } : {}),
+    ...(action ? { action } : {}),
+    ...(anomaliesOnly ? { anomalyKind: { not: null } } : {}),
+    ...(from || to
+      ? {
+          createdAt: {
+            ...(from ? { gte: new Date(from) } : {}),
+            ...(to ? { lte: new Date(to) } : {}),
+          },
+        }
+      : {}),
+  };
+
+  // Peek one row past the page to learn whether there's a next cursor.
+  // (createdAt, id) ordering keeps pagination stable across same-timestamp
+  // punches.
   const rows = await prisma.kioskPunch.findMany({
-    where: {
-      ...(associateId ? { associateId } : {}),
-      ...(deviceId ? { kioskDeviceId: deviceId } : {}),
-      ...(reviewStatus ? { reviewStatus } : {}),
-    },
+    where,
     include: {
       device: { select: { name: true, clientId: true } },
       associate: { select: { firstName: true, lastName: true } },
       reviewedBy: { select: { email: true } },
     },
-    orderBy: { createdAt: sort === 'oldest' ? 'asc' : 'desc' },
-    take: 500,
+    orderBy: [{ createdAt: dir }, { id: dir }],
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
   });
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  const nextCursor = hasMore ? page[page.length - 1]!.id : null;
+
   res.json({
-    punches: rows.map((p) => ({
+    nextCursor,
+    punches: page.map((p) => ({
       id: p.id,
       kioskDeviceId: p.kioskDeviceId,
       deviceName: p.device.name,
