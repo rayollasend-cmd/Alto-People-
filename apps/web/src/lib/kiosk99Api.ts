@@ -28,6 +28,9 @@ export interface KioskPin {
   associateEmail: string;
   clientId: string;
   clientName: string;
+  /** Associate's current worksite (open assignment's Location), or null. */
+  locationId: string | null;
+  locationName: string | null;
   /** 4-digit number, decrypted server-side. Null on legacy pre-encryption rows. */
   employeeNumber: string | null;
   createdAt: string;
