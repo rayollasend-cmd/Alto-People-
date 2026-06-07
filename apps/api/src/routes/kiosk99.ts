@@ -567,6 +567,23 @@ kiosk99Router.get('/kiosk-punches', MANAGE, async (req, res) => {
     .enum(['PENDING', 'APPROVED', 'REJECTED'])
     .optional()
     .parse(req.query.reviewStatus);
+  const action = z
+    .enum(['CLOCK_IN', 'CLOCK_OUT', 'BREAK_START', 'BREAK_END', 'REJECTED'])
+    .optional()
+    .parse(req.query.action);
+  // Anomalies-only — any punch the system flagged (face mismatch or
+  // impossible travel), regardless of where it sits in the review flow.
+  const anomaliesOnly = req.query.anomaliesOnly === 'true';
+  const from = z
+    .string()
+    .datetime({ offset: true })
+    .optional()
+    .parse(req.query.from);
+  const to = z
+    .string()
+    .datetime({ offset: true })
+    .optional()
+    .parse(req.query.to);
   // 'oldest' surfaces the most stale review-queue items first; HR
   // working the queue wants the back of the line, not the front.
   // Defaults to newest-first to match the existing punch log.
@@ -574,22 +591,57 @@ kiosk99Router.get('/kiosk-punches', MANAGE, async (req, res) => {
     .enum(['newest', 'oldest'])
     .optional()
     .parse(req.query.sort);
+  // Cursor pagination so the log isn't trapped behind a single 500-row
+  // page — a busy multi-client deployment burns through 500 punches in a
+  // day or two, and a filter for last month genuinely can't reach past the
+  // cap without this. `cursor` is the id of the previous page's last row.
+  const cursor = z.string().uuid().optional().parse(req.query.cursor);
+  const limit = Math.min(
+    Math.max(
+      z.coerce.number().int().optional().parse(req.query.limit) ?? 500,
+      1,
+    ),
+    500,
+  );
+
+  const dir: Prisma.SortOrder = sort === 'oldest' ? 'asc' : 'desc';
+  const where: Prisma.KioskPunchWhereInput = {
+    ...(associateId ? { associateId } : {}),
+    ...(deviceId ? { kioskDeviceId: deviceId } : {}),
+    ...(reviewStatus ? { reviewStatus } : {}),
+    ...(action ? { action } : {}),
+    ...(anomaliesOnly ? { anomalyKind: { not: null } } : {}),
+    ...(from || to
+      ? {
+          createdAt: {
+            ...(from ? { gte: new Date(from) } : {}),
+            ...(to ? { lte: new Date(to) } : {}),
+          },
+        }
+      : {}),
+  };
+
+  // Peek one row past the page to learn whether there's a next cursor.
+  // (createdAt, id) ordering keeps pagination stable across same-timestamp
+  // punches.
   const rows = await prisma.kioskPunch.findMany({
-    where: {
-      ...(associateId ? { associateId } : {}),
-      ...(deviceId ? { kioskDeviceId: deviceId } : {}),
-      ...(reviewStatus ? { reviewStatus } : {}),
-    },
+    where,
     include: {
       device: { select: { name: true, clientId: true } },
       associate: { select: { firstName: true, lastName: true } },
       reviewedBy: { select: { email: true } },
     },
-    orderBy: { createdAt: sort === 'oldest' ? 'asc' : 'desc' },
-    take: 500,
+    orderBy: [{ createdAt: dir }, { id: dir }],
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
   });
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  const nextCursor = hasMore ? page[page.length - 1]!.id : null;
+
   res.json({
-    punches: rows.map((p) => ({
+    nextCursor,
+    punches: page.map((p) => ({
       id: p.id,
       kioskDeviceId: p.kioskDeviceId,
       deviceName: p.device.name,

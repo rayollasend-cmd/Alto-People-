@@ -12,6 +12,7 @@ import {
   Search,
   Stethoscope,
   Tablet,
+  X,
 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
@@ -1343,6 +1344,113 @@ function NewPinDrawer({
   );
 }
 
+// ISO lower-bound for the punch-log date filter.
+function rangeFrom(range: 'all' | 'today' | '7d' | '30d'): string | undefined {
+  if (range === 'all') return undefined;
+  if (range === 'today') {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  }
+  const days = range === '7d' ? 7 : 30;
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+// Typeahead that resolves a name/email to an associate id so the punch log
+// can filter by associate SERVER-SIDE — i.e. across all history, not just
+// the loaded page. Debounced lookup against the directory; selecting shows
+// a removable chip.
+function AssociatePicker({
+  value,
+  onChange,
+}: {
+  value: { id: string; name: string } | null;
+  onChange: (v: { id: string; name: string } | null) => void;
+}) {
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState(false);
+  const [results, setResults] = useState<
+    Array<{ id: string; name: string; email: string }>
+  >([]);
+  useEffect(() => {
+    const term = q.trim();
+    if (term.length < 2) {
+      setResults([]);
+      return;
+    }
+    let cancelled = false;
+    const t = window.setTimeout(() => {
+      listDirectory({ q: term })
+        .then((r) => {
+          if (cancelled) return;
+          setResults(
+            r.associates.slice(0, 8).map((a) => ({
+              id: a.id,
+              name: `${a.firstName} ${a.lastName}`,
+              email: a.email,
+            })),
+          );
+        })
+        .catch(() => !cancelled && setResults([]));
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [q]);
+
+  if (value) {
+    return (
+      <span className="inline-flex h-9 items-center gap-2 rounded-md border border-gold/40 bg-gold/10 px-3 text-sm text-white">
+        {value.name}
+        <button
+          type="button"
+          onClick={() => onChange(null)}
+          aria-label="Clear associate filter"
+          className="text-silver hover:text-white"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </span>
+    );
+  }
+  return (
+    <div className="relative min-w-[200px]">
+      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-silver" />
+      <Input
+        value={q}
+        onChange={(e) => {
+          setQ(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => window.setTimeout(() => setOpen(false), 150)}
+        placeholder="Filter by associate"
+        className="h-9 pl-9"
+      />
+      {open && results.length > 0 && (
+        <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-md border border-navy-secondary bg-midnight shadow-xl">
+          {results.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                onChange({ id: a.id, name: a.name });
+                setQ('');
+                setOpen(false);
+              }}
+              className="block w-full px-3 py-2 text-left text-sm text-white hover:bg-navy-secondary/60"
+            >
+              {a.name} <span className="text-silver">— {a.email}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 type ActionFilter =
   | 'ALL'
   | 'CLOCK_IN'
@@ -1353,122 +1461,169 @@ type ActionFilter =
 
 function LogTab() {
   const [rows, setRows] = useState<KioskPunchSummary[] | null>(null);
-  const [q, setQ] = useState('');
-  const [action, setAction] = useState<ActionFilter>('ALL');
-  const [anomaliesOnly, setAnomaliesOnly] = useState(false);
-  const [range, setRange] = useState<'all' | 'today' | '7d'>('all');
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [devices, setDevices] = useState<Array<{ id: string; name: string }>>([]);
 
-  const refresh = () => {
-    setRows(null);
-    listKioskPunches()
-      .then((r) => setRows(r.punches))
-      .catch(() => setRows([]));
-  };
+  // All filters are server-side, so they search ALL history through cursor
+  // pagination — not just one loaded page. (Earlier this filtered a single
+  // 500-row page client-side, which silently missed anything older.)
+  const [associate, setAssociate] = useState<{ id: string; name: string } | null>(
+    null,
+  );
+  const [deviceId, setDeviceId] = useState('');
+  const [action, setAction] = useState<ActionFilter>('ALL');
+  const [range, setRange] = useState<'all' | 'today' | '7d' | '30d'>('all');
+  const [anomaliesOnly, setAnomaliesOnly] = useState(false);
+
+  const PAGE = 100;
+  const queryParams = (cursor?: string) => ({
+    associateId: associate?.id,
+    deviceId: deviceId || undefined,
+    action: action === 'ALL' ? undefined : action,
+    anomaliesOnly: anomaliesOnly || undefined,
+    from: rangeFrom(range),
+    cursor,
+    limit: PAGE,
+  });
+
+  // (Re)load the first page whenever a filter changes.
   useEffect(() => {
-    refresh();
+    let cancelled = false;
+    setRows(null);
+    setNextCursor(null);
+    listKioskPunches(queryParams())
+      .then((r) => {
+        if (cancelled) return;
+        setRows(r.punches);
+        setNextCursor(r.nextCursor);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setRows([]);
+        setNextCursor(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [associate?.id, deviceId, action, range, anomaliesOnly]);
+
+  // Device dropdown options.
+  useEffect(() => {
+    listKioskDevices()
+      .then((r) =>
+        setDevices(r.devices.map((d) => ({ id: d.id, name: d.name }))),
+      )
+      .catch(() => setDevices([]));
   }, []);
 
-  // Client-side filtering over the loaded page — covers the common
-  // "find it fast" need without extra round-trips. The page is capped at
-  // 500; the count line flags when you're at the cap so a filter that
-  // comes up empty isn't mistaken for "no such punch".
-  const filtered = useMemo(() => {
-    let list = rows ?? [];
-    const term = q.trim().toLowerCase();
-    if (term) {
-      list = list.filter(
-        (p) =>
-          (p.associateName ?? '').toLowerCase().includes(term) ||
-          p.deviceName.toLowerCase().includes(term) ||
-          (p.rejectReason ?? '').toLowerCase().includes(term) ||
-          (p.anomalyDetail ?? '').toLowerCase().includes(term),
-      );
-    }
-    if (action !== 'ALL') list = list.filter((p) => p.action === action);
-    if (anomaliesOnly)
-      list = list.filter((p) => p.anomalyKind != null || p.faceMismatch);
-    if (range !== 'all') {
-      const start =
-        range === 'today'
-          ? (() => {
-              const d = new Date();
-              d.setHours(0, 0, 0, 0);
-              return d.getTime();
-            })()
-          : Date.now() - 7 * 24 * 60 * 60 * 1000;
-      list = list.filter((p) => new Date(p.createdAt).getTime() >= start);
-    }
-    return list;
-  }, [rows, q, action, anomaliesOnly, range]);
+  const loadMore = () => {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    listKioskPunches(queryParams(nextCursor))
+      .then((r) => {
+        setRows((prev) => [...(prev ?? []), ...r.punches]);
+        setNextCursor(r.nextCursor);
+      })
+      .catch(() => {})
+      .finally(() => setLoadingMore(false));
+  };
+
+  const hasFilters =
+    !!associate ||
+    !!deviceId ||
+    action !== 'ALL' ||
+    range !== 'all' ||
+    anomaliesOnly;
 
   const selectClass =
     'h-9 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-sm text-white';
 
   return (
     <div className="space-y-3">
-      {rows && rows.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative min-w-[200px] max-w-xs flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-silver" />
-            <Input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search associate, device, reason"
-              className="h-9 pl-9"
-            />
-          </div>
-          <select
-            className={selectClass}
-            value={action}
-            onChange={(e) => setAction(e.target.value as ActionFilter)}
-          >
-            <option value="ALL">All actions</option>
-            <option value="CLOCK_IN">Clock in</option>
-            <option value="CLOCK_OUT">Clock out</option>
-            <option value="BREAK_START">Break start</option>
-            <option value="BREAK_END">Break end</option>
-            <option value="REJECTED">Rejected</option>
-          </select>
-          <select
-            className={selectClass}
-            value={range}
-            onChange={(e) => setRange(e.target.value as 'all' | 'today' | '7d')}
-          >
-            <option value="all">Any time</option>
-            <option value="today">Today</option>
-            <option value="7d">Last 7 days</option>
-          </select>
+      <div className="flex flex-wrap items-center gap-2">
+        <AssociatePicker value={associate} onChange={setAssociate} />
+        <select
+          className={selectClass}
+          value={deviceId}
+          onChange={(e) => setDeviceId(e.target.value)}
+        >
+          <option value="">All devices</option>
+          {devices.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.name}
+            </option>
+          ))}
+        </select>
+        <select
+          className={selectClass}
+          value={action}
+          onChange={(e) => setAction(e.target.value as ActionFilter)}
+        >
+          <option value="ALL">All actions</option>
+          <option value="CLOCK_IN">Clock in</option>
+          <option value="CLOCK_OUT">Clock out</option>
+          <option value="BREAK_START">Break start</option>
+          <option value="BREAK_END">Break end</option>
+          <option value="REJECTED">Rejected</option>
+        </select>
+        <select
+          className={selectClass}
+          value={range}
+          onChange={(e) => setRange(e.target.value as typeof range)}
+        >
+          <option value="all">Any time</option>
+          <option value="today">Today</option>
+          <option value="7d">Last 7 days</option>
+          <option value="30d">Last 30 days</option>
+        </select>
+        <button
+          type="button"
+          onClick={() => setAnomaliesOnly((v) => !v)}
+          className={`h-9 rounded-md border px-3 text-sm transition-colors ${
+            anomaliesOnly
+              ? 'border-warning/60 bg-warning/15 text-warning'
+              : 'border-navy-secondary bg-navy-secondary/40 text-silver hover:text-white'
+          }`}
+        >
+          <AlertTriangle className="mr-1 inline h-3.5 w-3.5" /> Anomalies only
+        </button>
+        {hasFilters && (
           <button
             type="button"
-            onClick={() => setAnomaliesOnly((v) => !v)}
-            className={`h-9 rounded-md border px-3 text-sm transition-colors ${
-              anomaliesOnly
-                ? 'border-warning/60 bg-warning/15 text-warning'
-                : 'border-navy-secondary bg-navy-secondary/40 text-silver hover:text-white'
-            }`}
+            onClick={() => {
+              setAssociate(null);
+              setDeviceId('');
+              setAction('ALL');
+              setRange('all');
+              setAnomaliesOnly(false);
+            }}
+            className="h-9 px-2 text-sm text-silver hover:text-white"
           >
-            <AlertTriangle className="mr-1 inline h-3.5 w-3.5" /> Anomalies only
+            Clear
           </button>
-          <div className="ml-auto text-xs text-silver">
-            Showing {filtered.length} of {rows.length}
-            {rows.length >= 500 ? ' (capped at 500)' : ''}
-          </div>
+        )}
+        <div className="ml-auto text-xs text-silver">
+          {rows ? `${rows.length} loaded${nextCursor ? '+' : ''}` : ''}
         </div>
-      )}
+      </div>
       <Card>
         <CardContent className="p-0">
           {rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
-            <EmptyState
-              icon={Tablet}
-              title="No punches yet"
-              description="Once associates start clocking in via kiosk, the audit log appears here."
-            />
-          ) : filtered.length === 0 ? (
-            <div className="p-6 text-sm text-silver">
-              No punches match these filters.
-            </div>
+            hasFilters ? (
+              <div className="p-6 text-sm text-silver">
+                No punches match these filters.
+              </div>
+            ) : (
+              <EmptyState
+                icon={Tablet}
+                title="No punches yet"
+                description="Once associates start clocking in via kiosk, the audit log appears here."
+              />
+            )
           ) : (
             <Table>
               <TableHeader>
@@ -1484,7 +1639,7 @@ function LogTab() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map((p) => (
+                {rows.map((p) => (
                   <TableRow key={p.id}>
                     <TableCell>{new Date(p.createdAt).toLocaleString()}</TableCell>
                     <TableCell className="font-mono text-xs">{p.deviceName}</TableCell>
@@ -1544,6 +1699,13 @@ function LogTab() {
           )}
         </CardContent>
       </Card>
+      {nextCursor && rows && rows.length > 0 && (
+        <div className="flex justify-center">
+          <Button variant="ghost" onClick={loadMore} disabled={loadingMore}>
+            {loadingMore ? 'Loading…' : 'Load more'}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
