@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Check,
@@ -1551,25 +1551,27 @@ function LogTab() {
     limit: PAGE,
   });
 
+  // Generation counter: bumped on every filter-driven reload so an
+  // in-flight "Load more" from a previous filter can't splice its stale
+  // page onto the new result set.
+  const loadIdRef = useRef(0);
+
   // (Re)load the first page whenever a filter changes.
   useEffect(() => {
-    let cancelled = false;
+    const myId = ++loadIdRef.current;
     setRows(null);
     setNextCursor(null);
     listKioskPunches(queryParams())
       .then((r) => {
-        if (cancelled) return;
+        if (loadIdRef.current !== myId) return;
         setRows(r.punches);
         setNextCursor(r.nextCursor);
       })
       .catch(() => {
-        if (cancelled) return;
+        if (loadIdRef.current !== myId) return;
         setRows([]);
         setNextCursor(null);
       });
-    return () => {
-      cancelled = true;
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [associate?.id, deviceId, action, range, anomaliesOnly]);
 
@@ -1584,9 +1586,12 @@ function LogTab() {
 
   const loadMore = () => {
     if (!nextCursor || loadingMore) return;
+    const myId = loadIdRef.current;
     setLoadingMore(true);
     listKioskPunches(queryParams(nextCursor))
       .then((r) => {
+        // Filters changed while this page was in flight — drop it.
+        if (loadIdRef.current !== myId) return;
         setRows((prev) => [...(prev ?? []), ...r.punches]);
         setNextCursor(r.nextCursor);
       })
