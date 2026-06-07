@@ -996,6 +996,43 @@ export const TimeRejectInputSchema = z.object({
 });
 export type TimeRejectInput = z.infer<typeof TimeRejectInputSchema>;
 
+/* ===== Admin clock-in/out + edit on behalf of an associate ============== */
+
+/**
+ * Create a time entry for an associate (HR fixes a missed kiosk punch, or
+ * logs a shift after the fact). Omit clockOutAt to "clock them in" — an
+ * ACTIVE entry; supply it to log a completed shift. Admin-only.
+ */
+export const AdminCreateTimeEntryInputSchema = z.object({
+  associateId: UuidSchema,
+  jobId: UuidSchema.nullable().optional(),
+  clockInAt: z.string().datetime(),
+  clockOutAt: z.string().datetime().nullable().optional(),
+  notes: z.string().max(500).nullable().optional(),
+});
+export type AdminCreateTimeEntryInput = z.infer<
+  typeof AdminCreateTimeEntryInputSchema
+>;
+
+/**
+ * Edit a time entry before it's approved (fix clock times, attach notes,
+ * re-tag a job, or clock someone out by supplying clockOutAt on an ACTIVE
+ * entry). Rejected once the entry is APPROVED. Admin-only.
+ */
+export const AdminEditTimeEntryInputSchema = z
+  .object({
+    clockInAt: z.string().datetime().optional(),
+    clockOutAt: z.string().datetime().nullable().optional(),
+    jobId: UuidSchema.nullable().optional(),
+    notes: z.string().max(500).nullable().optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, {
+    message: 'Provide at least one field to change.',
+  });
+export type AdminEditTimeEntryInput = z.infer<
+  typeof AdminEditTimeEntryInputSchema
+>;
+
 export const ActiveTimeEntryResponseSchema = z.object({
   active: TimeEntrySchema.nullable(),
 });

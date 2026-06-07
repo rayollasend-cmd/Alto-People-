@@ -9,6 +9,8 @@ import {
   FileText,
   ListChecks,
   MapPinOff,
+  Pencil,
+  Plus,
   Search,
   Smartphone,
   X,
@@ -19,6 +21,8 @@ import type {
   TimeEntryStatus,
 } from '@alto-people/shared';
 import {
+  adminCreateTimeEntry,
+  adminEditTimeEntry,
   approveTimeEntry,
   bulkApproveTimeEntries,
   bulkRejectTimeEntries,
@@ -27,6 +31,8 @@ import {
   listAdminTimeEntries,
   rejectTimeEntry,
 } from '@/lib/timeApi';
+import { listDirectory } from '@/lib/directoryApi';
+import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import {
@@ -144,6 +150,9 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [rejectOpen, setRejectOpen] = useState<null | { mode: 'one'; id: string } | { mode: 'bulk' }>(null);
   const [drawerTarget, setDrawerTarget] = useState<TimeEntry | null>(null);
+  // Admin clock-in/out + edit on behalf of an associate.
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<TimeEntry | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -180,6 +189,11 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
       // KPI is best-effort; leave previous value.
     }
   }, []);
+
+  // Refresh everything after an admin create/edit/clock-out.
+  const afterMutation = useCallback(async () => {
+    await Promise.all([refresh(), refreshActive(), refreshPendingCount()]);
+  }, [refresh, refreshActive, refreshPendingCount]);
 
   useEffect(() => {
     if (tab === 'queue') refresh();
@@ -341,13 +355,19 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
         }
         secondaryActions={
           canManage ? (
-            <Button
-              variant="outline"
-              onClick={() => navigate('/time-attendance/kiosk')}
-            >
-              <Smartphone className="mr-2 h-4 w-4" />
-              Kiosk &amp; PINs
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={() => setCreateOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                Add entry
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => navigate('/time-attendance/kiosk')}
+              >
+                <Smartphone className="mr-2 h-4 w-4" />
+                Kiosk &amp; PINs
+              </Button>
+            </div>
           ) : undefined
         }
       />
@@ -966,9 +986,35 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
               setRejectOpen({ mode: 'one', id: drawerTarget.id });
               setDrawerTarget(null);
             }}
+            onEdit={() => {
+              setEditTarget(drawerTarget);
+              setDrawerTarget(null);
+            }}
           />
         )}
       </Drawer>
+
+      {createOpen && (
+        <TimeEntryFormDrawer
+          mode="create"
+          onClose={() => setCreateOpen(false)}
+          onSaved={async () => {
+            setCreateOpen(false);
+            await afterMutation();
+          }}
+        />
+      )}
+      {editTarget && (
+        <TimeEntryFormDrawer
+          mode="edit"
+          entry={editTarget}
+          onClose={() => setEditTarget(null)}
+          onSaved={async () => {
+            setEditTarget(null);
+            await afterMutation();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -979,17 +1025,21 @@ function TimeEntryDetailPanel({
   busy,
   onApprove,
   onReject,
+  onEdit,
 }: {
   entry: TimeEntry;
   canManage: boolean;
   busy: boolean;
   onApprove: () => void;
   onReject: () => void;
+  onEdit: () => void;
 }) {
   const showApprove =
     canManage && (entry.status === 'COMPLETED' || entry.status === 'REJECTED');
   const showReject =
     canManage && (entry.status === 'COMPLETED' || entry.status === 'APPROVED');
+  // Edit/clock-out is allowed any time before approval.
+  const showEdit = canManage && entry.status !== 'APPROVED';
   return (
     <>
       <DrawerHeader>
@@ -1082,8 +1132,14 @@ function TimeEntryDetailPanel({
           </div>
         )}
       </DrawerBody>
-      {(showApprove || showReject) && (
+      {(showApprove || showReject || showEdit) && (
         <DrawerFooter>
+          {showEdit && (
+            <Button variant="outline" onClick={onEdit} disabled={busy}>
+              <Pencil className="mr-2 h-4 w-4" />
+              {entry.status === 'ACTIVE' ? 'Edit / clock out' : 'Edit times'}
+            </Button>
+          )}
           {showReject && (
             <Button
               variant="ghost"
@@ -1102,6 +1158,294 @@ function TimeEntryDetailPanel({
         </DrawerFooter>
       )}
     </>
+  );
+}
+
+/* ===== Admin: create / edit a time entry on behalf of an associate ===== */
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+// ISO → value for <input type="datetime-local"> (local wall-clock).
+function isoToLocalInput(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(
+    d.getHours(),
+  )}:${pad2(d.getMinutes())}`;
+}
+
+function localInputToIso(local: string): string {
+  return new Date(local).toISOString();
+}
+
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mb-1 text-[11px] uppercase tracking-widest text-silver">
+      {children}
+    </div>
+  );
+}
+
+// Debounced directory typeahead → resolves to an associate id.
+function AssociateSearchField({
+  value,
+  onChange,
+}: {
+  value: { id: string; name: string } | null;
+  onChange: (v: { id: string; name: string } | null) => void;
+}) {
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState(false);
+  const [results, setResults] = useState<
+    Array<{ id: string; name: string; email: string }>
+  >([]);
+  useEffect(() => {
+    const term = q.trim();
+    if (term.length < 2) {
+      setResults([]);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(() => {
+      listDirectory({ q: term })
+        .then((r) => {
+          if (cancelled) return;
+          setResults(
+            r.associates.slice(0, 8).map((a) => ({
+              id: a.id,
+              name: `${a.firstName} ${a.lastName}`,
+              email: a.email,
+            })),
+          );
+        })
+        .catch(() => !cancelled && setResults([]));
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [q]);
+
+  if (value) {
+    return (
+      <div>
+        <FieldLabel>Associate</FieldLabel>
+        <span className="inline-flex h-9 items-center gap-2 rounded-md border border-gold/40 bg-gold/10 px-3 text-sm text-white">
+          {value.name}
+          <button
+            type="button"
+            onClick={() => onChange(null)}
+            aria-label="Clear associate"
+            className="text-silver hover:text-white"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <FieldLabel>Associate</FieldLabel>
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-silver" />
+        <Input
+          value={q}
+          onChange={(e) => {
+            setQ(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+          placeholder="Search associate by name or email"
+          className="pl-9"
+        />
+        {open && results.length > 0 && (
+          <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-md border border-navy-secondary bg-midnight shadow-xl">
+            {results.map((a) => (
+              <button
+                key={a.id}
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  onChange({ id: a.id, name: a.name });
+                  setQ('');
+                  setOpen(false);
+                }}
+                className="block w-full px-3 py-2 text-left text-sm text-white hover:bg-navy-secondary/60"
+              >
+                {a.name} <span className="text-silver">— {a.email}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TimeEntryFormDrawer({
+  mode,
+  entry,
+  onClose,
+  onSaved,
+}: {
+  mode: 'create' | 'edit';
+  entry?: TimeEntry;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [assoc, setAssoc] = useState<{ id: string; name: string } | null>(
+    mode === 'edit' && entry
+      ? { id: entry.associateId, name: entry.associateName ?? '—' }
+      : null,
+  );
+  const [clockInLocal, setClockInLocal] = useState(
+    mode === 'edit' && entry ? isoToLocalInput(entry.clockInAt) : '',
+  );
+  const [clockOutLocal, setClockOutLocal] = useState(
+    mode === 'edit' && entry ? isoToLocalInput(entry.clockOutAt) : '',
+  );
+  const [notes, setNotes] = useState(
+    mode === 'edit' && entry ? entry.notes ?? '' : '',
+  );
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const isActive = mode === 'edit' && entry?.status === 'ACTIVE';
+  const clockOutOptional = mode === 'create' || isActive;
+
+  const submit = async () => {
+    setErr(null);
+    if (mode === 'create' && !assoc) {
+      setErr('Pick an associate.');
+      return;
+    }
+    if (!clockInLocal) {
+      setErr('Clock-in time is required.');
+      return;
+    }
+    if (clockOutLocal && new Date(clockOutLocal) <= new Date(clockInLocal)) {
+      setErr('Clock-out must be after clock-in.');
+      return;
+    }
+    setBusy(true);
+    try {
+      if (mode === 'create') {
+        await adminCreateTimeEntry({
+          associateId: assoc!.id,
+          clockInAt: localInputToIso(clockInLocal),
+          clockOutAt: clockOutLocal ? localInputToIso(clockOutLocal) : null,
+          notes: notes.trim() || null,
+        });
+        toast.success(
+          clockOutLocal ? 'Shift logged.' : `Clocked in ${assoc!.name}.`,
+        );
+      } else if (entry) {
+        await adminEditTimeEntry(entry.id, {
+          clockInAt: localInputToIso(clockInLocal),
+          clockOutAt: clockOutLocal ? localInputToIso(clockOutLocal) : null,
+          notes: notes.trim() || null,
+        });
+        toast.success(
+          isActive && clockOutLocal
+            ? `Clocked out ${entry.associateName ?? 'associate'}.`
+            : 'Entry updated.',
+        );
+      }
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : 'Save failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Drawer open onOpenChange={(o) => !o && onClose()} width="max-w-lg">
+      <DrawerHeader>
+        <DrawerTitle>
+          {mode === 'create' ? 'Add time entry' : 'Edit time entry'}
+        </DrawerTitle>
+        <DrawerDescription>
+          {mode === 'create'
+            ? 'Log a shift for an associate. Leave clock-out empty to clock them in (still on the clock).'
+            : isActive
+              ? 'Fix the clock-in, or set a clock-out to clock this associate out.'
+              : 'Adjust the clock times before approval.'}
+        </DrawerDescription>
+      </DrawerHeader>
+      <DrawerBody className="space-y-4">
+        {err && (
+          <div className="rounded-md border border-alert/40 bg-alert/10 p-2 text-sm text-alert">
+            {err}
+          </div>
+        )}
+        {mode === 'create' ? (
+          <AssociateSearchField value={assoc} onChange={setAssoc} />
+        ) : (
+          <div>
+            <FieldLabel>Associate</FieldLabel>
+            <div className="text-white">{entry?.associateName ?? '—'}</div>
+          </div>
+        )}
+        <div>
+          <FieldLabel>Clock in</FieldLabel>
+          <Input
+            type="datetime-local"
+            value={clockInLocal}
+            onChange={(e) => setClockInLocal(e.target.value)}
+          />
+        </div>
+        <div>
+          <FieldLabel>Clock out{clockOutOptional ? ' (optional)' : ''}</FieldLabel>
+          <div className="flex gap-2">
+            <Input
+              type="datetime-local"
+              value={clockOutLocal}
+              onChange={(e) => setClockOutLocal(e.target.value)}
+              className="flex-1"
+            />
+            {clockOutOptional && (
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() =>
+                  setClockOutLocal(isoToLocalInput(new Date().toISOString()))
+                }
+              >
+                Now
+              </Button>
+            )}
+          </div>
+          {isActive && (
+            <p className="mt-1 text-xs text-silver">
+              Setting a clock-out clocks this associate out.
+            </p>
+          )}
+        </div>
+        <div>
+          <FieldLabel>Notes</FieldLabel>
+          <Textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={2}
+            maxLength={500}
+            placeholder="Optional — why this entry was added or changed."
+          />
+        </div>
+      </DrawerBody>
+      <DrawerFooter>
+        <Button variant="ghost" onClick={onClose} disabled={busy}>
+          Cancel
+        </Button>
+        <Button onClick={submit} loading={busy} disabled={busy}>
+          {mode === 'create' ? 'Create entry' : 'Save changes'}
+        </Button>
+      </DrawerFooter>
+    </Drawer>
   );
 }
 
