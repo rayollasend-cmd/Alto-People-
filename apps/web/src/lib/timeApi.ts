@@ -179,19 +179,20 @@ export function bulkRejectTimeEntries(
  * apiFetch here (it parses JSON), so we hand-roll the request the same way
  * scheduling export does.
  */
-export async function exportTimeEntries(
-  format: 'csv' | 'pdf',
-  body: TimeExportInput
+async function downloadExportPost(
+  url: string,
+  body: unknown,
+  fallbackName: string
 ): Promise<void> {
-  const res = await fetch(`/api/time/admin/export.${format}`, {
+  const res = await fetch(url, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    // Try to surface the server's error message; fall back to a generic one.
-    let message = `${format.toUpperCase()} export failed.`;
+    // Surface the server's error message; fall back to a generic one.
+    let message = 'Export failed.';
     try {
       const data = await res.json();
       if (data?.error?.message) message = data.error.message;
@@ -201,16 +202,36 @@ export async function exportTimeEntries(
     throw new Error(message);
   }
   const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
+  const objUrl = URL.createObjectURL(blob);
   // Prefer the server's Content-Disposition filename if it set one.
   const cd = res.headers.get('content-disposition') ?? '';
   const m = /filename="([^"]+)"/.exec(cd);
-  const filename = m?.[1] ?? `time-export.${format}`;
   const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
+  a.href = objUrl;
+  a.download = m?.[1] ?? fallbackName;
   document.body.appendChild(a);
   a.click();
   a.remove();
-  URL.revokeObjectURL(url);
+  URL.revokeObjectURL(objUrl);
+}
+
+export function exportTimeEntries(
+  format: 'csv' | 'pdf',
+  body: TimeExportInput
+): Promise<void> {
+  return downloadExportPost(
+    `/api/time/admin/export.${format}`,
+    body,
+    `time-export.${format}`
+  );
+}
+
+/** Per-associate summary CSV: regular vs overtime hours + pay rate, scoped
+ *  to a facility (Location), APPROVED time only. */
+export function exportTimeSummary(body: TimeExportInput): Promise<void> {
+  return downloadExportPost(
+    '/api/time/admin/export-summary.csv',
+    body,
+    'time-summary.csv'
+  );
 }

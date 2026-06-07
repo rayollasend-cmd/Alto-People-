@@ -27,11 +27,13 @@ import {
   bulkApproveTimeEntries,
   bulkRejectTimeEntries,
   exportTimeEntries,
+  exportTimeSummary,
   getActiveDashboard,
   listAdminTimeEntries,
   rejectTimeEntry,
 } from '@/lib/timeApi';
 import { listDirectory } from '@/lib/directoryApi';
+import { listClients, listClientLocations } from '@/lib/clientsApi';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
@@ -176,6 +178,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
   const [fromYmd, setFromYmd] = useState<string>(defaultFromYmd());
   const [toYmd, setToYmd] = useState<string>(defaultToYmd());
   const [exportBusy, setExportBusy] = useState<null | 'csv' | 'pdf'>(null);
+  const [summaryOpen, setSummaryOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [rejectOpen, setRejectOpen] = useState<null | { mode: 'one'; id: string } | { mode: 'bulk' }>(null);
@@ -724,6 +727,16 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                     <FileText className="h-4 w-4" />
                     PDF
                   </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setSummaryOpen(true)}
+                    disabled={exportBusy !== null}
+                  >
+                    <ListChecks className="h-4 w-4" />
+                    Summary
+                  </Button>
                 </div>
               )}
             </div>
@@ -1052,6 +1065,13 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
           />
         )}
       </Drawer>
+
+      <SummaryExportDialog
+        open={summaryOpen}
+        onOpenChange={setSummaryOpen}
+        fromIso={ymdToIsoStart(fromYmd)}
+        toIso={ymdToIsoEndExclusive(toYmd)}
+      />
 
       {createOpen && (
         <TimeEntryFormDrawer
@@ -1505,6 +1525,131 @@ function TimeEntryFormDrawer({
         </Button>
       </DrawerFooter>
     </Drawer>
+  );
+}
+
+// Per-associate summary export: pick a facility (Client → Location) to scope,
+// then download the regular/overtime/pay-rate CSV for the queue's date range.
+function SummaryExportDialog({
+  open,
+  onOpenChange,
+  fromIso,
+  toIso,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  fromIso: string;
+  toIso: string;
+}) {
+  const [clients, setClients] = useState<Array<{ id: string; name: string }>>([]);
+  const [clientId, setClientId] = useState('');
+  const [locations, setLocations] = useState<Array<{ id: string; name: string }>>([]);
+  const [locationId, setLocationId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    listClients()
+      .then((r) => setClients(r.clients.map((c) => ({ id: c.id, name: c.name }))))
+      .catch(() => setClients([]));
+  }, [open]);
+  useEffect(() => {
+    setLocationId('');
+    if (!clientId) {
+      setLocations([]);
+      return;
+    }
+    listClientLocations(clientId)
+      .then((r) => setLocations(r.locations.map((l) => ({ id: l.id, name: l.name }))))
+      .catch(() => setLocations([]));
+  }, [clientId]);
+
+  const selectClass =
+    'mt-1 h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white';
+
+  const download = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await exportTimeSummary({
+        from: fromIso,
+        to: toIso,
+        ...(clientId ? { clientId } : {}),
+        ...(locationId ? { locationId } : {}),
+      });
+      onOpenChange(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Export failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Summary export</DialogTitle>
+          <DialogDescription>
+            One row per associate — regular &amp; overtime hours and pay rate —
+            for the date range selected in the queue. APPROVED time only.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          {err && (
+            <div className="rounded-md border border-alert/40 bg-alert/10 p-2 text-sm text-alert">
+              {err}
+            </div>
+          )}
+          <div>
+            <FieldLabel>Client</FieldLabel>
+            <select
+              className={selectClass}
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+            >
+              <option value="">All clients</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <FieldLabel>Facility (location)</FieldLabel>
+            <select
+              className={selectClass}
+              value={locationId}
+              onChange={(e) => setLocationId(e.target.value)}
+              disabled={!clientId}
+            >
+              <option value="">
+                {clientId ? 'All locations at this client' : 'Pick a client first'}
+              </option>
+              {locations.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <p className="text-xs text-silver">
+            Overtime = hours over 40 per week (federal), matching payroll.
+          </p>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
+            Cancel
+          </Button>
+          <Button onClick={download} loading={busy} disabled={busy}>
+            <Download className="mr-2 h-4 w-4" />
+            Download CSV
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

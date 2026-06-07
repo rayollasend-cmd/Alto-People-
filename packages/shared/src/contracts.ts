@@ -1075,6 +1075,8 @@ export const TimeExportInputSchema = z.object({
   to: z.string().datetime(),
   status: TimeEntryStatusSchema.optional(),
   clientId: UuidSchema.optional(),
+  /** Facility scope — filter to a single worksite Location. */
+  locationId: UuidSchema.optional(),
   associateId: UuidSchema.optional(),
 });
 export type TimeExportInput = z.infer<typeof TimeExportInputSchema>;
