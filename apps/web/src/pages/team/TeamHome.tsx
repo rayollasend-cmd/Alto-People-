@@ -6,6 +6,8 @@ import { ApiError } from '@/lib/api';
 import {
   approveTeamTimeOff,
   approveTeamTimesheet,
+  bulkApproveTeamTimeOff,
+  bulkApproveTeamTimesheets,
   denyTeamTimeOff,
   getTeamDashboard,
   getTeamInbox,
@@ -369,6 +371,27 @@ function TimesheetsTab() {
       toast.error(err instanceof ApiError ? err.message : 'Reject failed'),
   });
 
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const bulkM = useMutation({
+    mutationFn: (ids: string[]) => bulkApproveTeamTimesheets(ids),
+    onSuccess: (r) => {
+      toast.success(
+        `Approved ${r.approved}${r.skipped.length ? ` · ${r.skipped.length} skipped` : ''}`,
+      );
+      setSelected(new Set());
+      invalidateTeam();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'Bulk approve failed'),
+  });
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
   const reject = async (id: string) => {
     const reason = (
       await prompt({
@@ -407,56 +430,109 @@ function TimesheetsTab() {
     );
   }
 
+  const allIds = q.data.map((e) => e.id);
+  const allSelected = allIds.length > 0 && allIds.every((id) => selected.has(id));
+
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Associate</TableHead>
-          <TableHead>Client</TableHead>
-          <TableHead>Clock in</TableHead>
-          <TableHead>Clock out</TableHead>
-          <TableHead className="text-right">Actions</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {q.data.map((e) => (
-          <TableRow key={e.id}>
-            <TableCell className="font-medium">
-              <div className="flex items-center gap-2.5">
-                <Avatar name={e.associateName} size="sm" />
-                <span>{e.associateName}</span>
-              </div>
-            </TableCell>
-            <TableCell className="text-silver">{e.clientName ?? '—'}</TableCell>
-            <TableCell className="text-silver tabular-nums">
-              {new Date(e.clockInAt).toLocaleString()}
-            </TableCell>
-            <TableCell className="text-silver tabular-nums">
-              {e.clockOutAt ? new Date(e.clockOutAt).toLocaleString() : '—'}
-            </TableCell>
-            <TableCell className="text-right">
-              <div className="flex justify-end gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => reject(e.id)}
-                  disabled={pendingId === e.id}
-                >
-                  Reject
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={() => approveM.mutate(e.id)}
-                  loading={pendingId === e.id}
-                >
-                  Approve
-                </Button>
-              </div>
-            </TableCell>
+    <div className="space-y-3">
+      {selected.size > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-gold/40 bg-gold/10 px-3 py-2">
+          <div className="text-sm text-gold">
+            <span className="font-medium tabular-nums">{selected.size}</span>{' '}
+            selected
+          </div>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setSelected(new Set())}
+              disabled={bulkM.isPending}
+            >
+              Clear
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => bulkM.mutate(Array.from(selected))}
+              loading={bulkM.isPending}
+            >
+              Approve {selected.size}
+            </Button>
+          </div>
+        </div>
+      )}
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-8">
+              <input
+                type="checkbox"
+                className="accent-gold"
+                checked={allSelected}
+                aria-label="Select all"
+                onChange={(ev) =>
+                  setSelected(ev.target.checked ? new Set(allIds) : new Set())
+                }
+              />
+            </TableHead>
+            <TableHead>Associate</TableHead>
+            <TableHead>Client</TableHead>
+            <TableHead>Clock in</TableHead>
+            <TableHead>Clock out</TableHead>
+            <TableHead className="text-right">Actions</TableHead>
           </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+        </TableHeader>
+        <TableBody>
+          {q.data.map((e) => (
+            <TableRow
+              key={e.id}
+              data-state={selected.has(e.id) ? 'selected' : undefined}
+            >
+              <TableCell>
+                <input
+                  type="checkbox"
+                  className="accent-gold"
+                  checked={selected.has(e.id)}
+                  aria-label={`Select ${e.associateName}`}
+                  onChange={() => toggle(e.id)}
+                />
+              </TableCell>
+              <TableCell className="font-medium">
+                <div className="flex items-center gap-2.5">
+                  <Avatar name={e.associateName} size="sm" />
+                  <span>{e.associateName}</span>
+                </div>
+              </TableCell>
+              <TableCell className="text-silver">{e.clientName ?? '—'}</TableCell>
+              <TableCell className="text-silver tabular-nums">
+                {new Date(e.clockInAt).toLocaleString()}
+              </TableCell>
+              <TableCell className="text-silver tabular-nums">
+                {e.clockOutAt ? new Date(e.clockOutAt).toLocaleString() : '—'}
+              </TableCell>
+              <TableCell className="text-right">
+                <div className="flex justify-end gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => reject(e.id)}
+                    disabled={pendingId === e.id}
+                  >
+                    Reject
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => approveM.mutate(e.id)}
+                    loading={pendingId === e.id}
+                  >
+                    Approve
+                  </Button>
+                </div>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
   );
 }
 
@@ -504,6 +580,27 @@ function TimeOffTab() {
     denyM.mutate({ id, note });
   };
 
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const bulkM = useMutation({
+    mutationFn: (ids: string[]) => bulkApproveTeamTimeOff(ids),
+    onSuccess: (r) => {
+      toast.success(
+        `Approved ${r.approved}${r.skipped.length ? ` · ${r.skipped.length} skipped` : ''}`,
+      );
+      setSelected(new Set());
+      invalidateTeam();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'Bulk approve failed'),
+  });
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
   const pendingId =
     approveM.isPending && typeof approveM.variables === 'string'
       ? approveM.variables
@@ -529,55 +626,108 @@ function TimeOffTab() {
     );
   }
 
+  const allIds = q.data.map((r) => r.id);
+  const allSelected = allIds.length > 0 && allIds.every((id) => selected.has(id));
+
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Associate</TableHead>
-          <TableHead>Category</TableHead>
-          <TableHead>Dates</TableHead>
-          <TableHead>Hours</TableHead>
-          <TableHead className="text-right">Actions</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {q.data.map((r) => (
-          <TableRow key={r.id}>
-            <TableCell className="font-medium">
-              <div className="flex items-center gap-2.5">
-                <Avatar name={r.associateName} size="sm" />
-                <span>{r.associateName}</span>
-              </div>
-            </TableCell>
-            <TableCell className="text-silver">{r.category}</TableCell>
-            <TableCell className="text-silver tabular-nums">
-              {r.startDate} → {r.endDate}
-            </TableCell>
-            <TableCell className="tabular-nums">
-              {(r.requestedMinutes / 60).toFixed(1)}h
-            </TableCell>
-            <TableCell className="text-right">
-              <div className="flex justify-end gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => deny(r.id)}
-                  disabled={pendingId === r.id}
-                >
-                  Deny
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={() => approveM.mutate(r.id)}
-                  loading={pendingId === r.id}
-                >
-                  Approve
-                </Button>
-              </div>
-            </TableCell>
+    <div className="space-y-3">
+      {selected.size > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-gold/40 bg-gold/10 px-3 py-2">
+          <div className="text-sm text-gold">
+            <span className="font-medium tabular-nums">{selected.size}</span>{' '}
+            selected
+          </div>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setSelected(new Set())}
+              disabled={bulkM.isPending}
+            >
+              Clear
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => bulkM.mutate(Array.from(selected))}
+              loading={bulkM.isPending}
+            >
+              Approve {selected.size}
+            </Button>
+          </div>
+        </div>
+      )}
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-8">
+              <input
+                type="checkbox"
+                className="accent-gold"
+                checked={allSelected}
+                aria-label="Select all"
+                onChange={(ev) =>
+                  setSelected(ev.target.checked ? new Set(allIds) : new Set())
+                }
+              />
+            </TableHead>
+            <TableHead>Associate</TableHead>
+            <TableHead>Category</TableHead>
+            <TableHead>Dates</TableHead>
+            <TableHead>Hours</TableHead>
+            <TableHead className="text-right">Actions</TableHead>
           </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+        </TableHeader>
+        <TableBody>
+          {q.data.map((r) => (
+            <TableRow
+              key={r.id}
+              data-state={selected.has(r.id) ? 'selected' : undefined}
+            >
+              <TableCell>
+                <input
+                  type="checkbox"
+                  className="accent-gold"
+                  checked={selected.has(r.id)}
+                  aria-label={`Select ${r.associateName}`}
+                  onChange={() => toggle(r.id)}
+                />
+              </TableCell>
+              <TableCell className="font-medium">
+                <div className="flex items-center gap-2.5">
+                  <Avatar name={r.associateName} size="sm" />
+                  <span>{r.associateName}</span>
+                </div>
+              </TableCell>
+              <TableCell className="text-silver">{r.category}</TableCell>
+              <TableCell className="text-silver tabular-nums">
+                {r.startDate} → {r.endDate}
+              </TableCell>
+              <TableCell className="tabular-nums">
+                {(r.requestedMinutes / 60).toFixed(1)}h
+              </TableCell>
+              <TableCell className="text-right">
+                <div className="flex justify-end gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => deny(r.id)}
+                    disabled={pendingId === r.id}
+                  >
+                    Deny
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => approveM.mutate(r.id)}
+                    loading={pendingId === r.id}
+                  >
+                    Approve
+                  </Button>
+                </div>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
   );
 }

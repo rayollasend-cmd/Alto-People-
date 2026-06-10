@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
+import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
@@ -502,6 +503,65 @@ teamRouter.post(
   },
 );
 
+// Bulk-approve timesheets — same rules as the single endpoint, one entry per
+// loop so a stale/ineligible row is skipped (not fatal) and the rest succeed.
+teamRouter.post(
+  '/timesheets/bulk-approve',
+  APPROVE_TIME,
+  async (req: Request, res: Response) => {
+    const user = req.user!;
+    const ids = z.array(z.string().uuid()).min(1).max(200).parse(req.body?.ids);
+    let approved = 0;
+    const skipped: { id: string; reason: string }[] = [];
+    for (const id of ids) {
+      try {
+        const entry = await prisma.timeEntry.findUnique({ where: { id } });
+        if (!entry) {
+          skipped.push({ id, reason: 'not_found' });
+          continue;
+        }
+        await requireDirectReportAssociate(user.associateId, entry.associateId);
+        if (entry.status === 'ACTIVE') {
+          skipped.push({ id, reason: 'still_active' });
+          continue;
+        }
+        if (entry.status === 'APPROVED') {
+          skipped.push({ id, reason: 'already_approved' });
+          continue;
+        }
+        const updated = await prisma.timeEntry.update({
+          where: { id },
+          data: {
+            status: 'APPROVED',
+            approvedById: user.id,
+            approvedAt: new Date(),
+            rejectionReason: null,
+          },
+        });
+        const accrual = await accrueSickLeaveForEntry(prisma, updated.id);
+        await recordTimeEvent({
+          actorUserId: user.id,
+          action: 'time.approved.by_manager',
+          timeEntryId: updated.id,
+          associateId: updated.associateId,
+          clientId: updated.clientId,
+          metadata: {
+            bulk: true,
+            ...(accrual.accrued
+              ? { sickAccrualMinutes: accrual.earnedMinutes, state: accrual.state }
+              : {}),
+          },
+          req,
+        });
+        approved++;
+      } catch (err) {
+        skipped.push({ id, reason: err instanceof HttpError ? err.code : 'error' });
+      }
+    }
+    res.json({ approved, skipped });
+  },
+);
+
 // ----- Time off ------------------------------------------------------------
 
 teamRouter.get('/timeoff', VIEW, async (req: Request, res: Response) => {
@@ -574,6 +634,38 @@ teamRouter.post(
       throw err;
     }
     res.json({ ok: true });
+  },
+);
+
+// Bulk-approve time-off — per-request approveRequest, skipping ineligible
+// ones (not a direct report, already decided) so the batch succeeds-partial.
+teamRouter.post(
+  '/timeoff/bulk-approve',
+  APPROVE_PTO,
+  async (req: Request, res: Response) => {
+    const user = req.user!;
+    const ids = z.array(z.string().uuid()).min(1).max(200).parse(req.body?.ids);
+    let approved = 0;
+    const skipped: { id: string; reason: string }[] = [];
+    for (const id of ids) {
+      try {
+        const reqRow = await prisma.timeOffRequest.findUnique({ where: { id } });
+        if (!reqRow) {
+          skipped.push({ id, reason: 'not_found' });
+          continue;
+        }
+        await requireDirectReportAssociate(user.associateId, reqRow.associateId);
+        await approveRequest(prisma, id, user.id, null);
+        approved++;
+      } catch (err) {
+        if (err instanceof IllegalStateError) {
+          skipped.push({ id, reason: 'illegal_state' });
+          continue;
+        }
+        skipped.push({ id, reason: err instanceof HttpError ? err.code : 'error' });
+      }
+    }
+    res.json({ approved, skipped });
   },
 );
 
