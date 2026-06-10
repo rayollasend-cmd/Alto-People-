@@ -18,7 +18,10 @@ export function ComplianceDonut({ fully, total }: { fully: number; total: number
   return (
     <div className="flex flex-col items-center text-center">
       <div className="relative shrink-0" style={{ width: SIZE, height: SIZE }}>
-        <ResponsiveContainer width="100%" height="100%">
+        {/* Fixed px (not 100%): the parent is exactly SIZE square, so there's
+            nothing to measure — and measuring "100%" a tick early during mount
+            is what produces recharts' width(-1)/height(-1) warning. */}
+        <ResponsiveContainer width={SIZE} height={SIZE}>
           <PieChart>
             <Pie
               data={[
