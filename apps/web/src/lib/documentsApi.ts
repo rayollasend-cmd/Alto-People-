@@ -92,6 +92,18 @@ export function verifyDocument(id: string): Promise<DocumentRecord> {
   return apiFetch<DocumentRecord>(`/documents/admin/${id}/verify`, { method: 'POST' });
 }
 
+export interface BulkVerifyResult {
+  verified: number;
+  skipped: { id: string; reason: string }[];
+}
+
+export function bulkVerifyDocuments(ids: string[]): Promise<BulkVerifyResult> {
+  return apiFetch<BulkVerifyResult>('/documents/admin/bulk-verify', {
+    method: 'POST',
+    body: { ids },
+  });
+}
+
 export function rejectDocument(
   id: string,
   body: DocumentRejectInput

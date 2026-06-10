@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import multer from 'multer';
 import { Prisma } from '@prisma/client';
 import { randomUUID, createHash } from 'node:crypto';
@@ -448,6 +449,69 @@ documentsRouter.post('/admin/:id/verify', MANAGE, async (req, res, next) => {
       req,
     });
     res.json(toRecord(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Bulk-verify the good docs in one pass. Mirrors the single-verify path
+// (status → VERIFIED, stamp verifier, clear any prior rejection reason, audit
+// each). Processes per-id so one bad id never sinks the batch; rows that are
+// missing or already verified come back in `skipped` with a reason. Reject
+// stays per-row — it carries a per-doc reason plus onboarding/email side
+// effects we don't want to fan out blindly.
+const BulkVerifySchema = z.object({
+  ids: z.array(z.string().uuid()).min(1).max(200),
+});
+
+documentsRouter.post('/admin/bulk-verify', MANAGE, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    const parsed = BulkVerifySchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'ids is required', parsed.error.flatten());
+    }
+    let verified = 0;
+    const skipped: { id: string; reason: string }[] = [];
+    for (const id of parsed.data.ids) {
+      try {
+        const doc = await prisma.documentRecord.findFirst({
+          where: { id, deletedAt: null },
+          select: { id: true, status: true },
+        });
+        if (!doc) {
+          skipped.push({ id, reason: 'not_found' });
+          continue;
+        }
+        if (doc.status === 'VERIFIED') {
+          skipped.push({ id, reason: 'already_verified' });
+          continue;
+        }
+        const updated = await prisma.documentRecord.update({
+          where: { id: doc.id },
+          data: {
+            status: 'VERIFIED',
+            verifiedById: user.id,
+            verifiedAt: new Date(),
+            rejectionReason: null,
+          },
+          select: { id: true, associateId: true, clientId: true },
+        });
+        await recordDocumentEvent({
+          actorUserId: user.id,
+          action: 'document.verified',
+          documentId: updated.id,
+          associateId: updated.associateId,
+          clientId: updated.clientId,
+          metadata: { bulk: true },
+          req,
+        });
+        verified += 1;
+      } catch {
+        skipped.push({ id, reason: 'error' });
+      }
+    }
+    res.json({ verified, skipped });
   } catch (err) {
     next(err);
   }
