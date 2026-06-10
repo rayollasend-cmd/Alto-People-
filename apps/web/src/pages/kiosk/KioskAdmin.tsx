@@ -835,6 +835,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
     [filteredRows],
   );
   const [rotatingAll, setRotatingAll] = useState(false);
+  const [assigningAll, setAssigningAll] = useState(false);
 
   return (
     <div className="space-y-4">
@@ -960,6 +961,49 @@ function PinsTab({ canManage }: { canManage: boolean }) {
           >
             <RotateCw className="mr-2 h-4 w-4" />
             {rotatingAll ? 'Re-issuing…' : `Rotate all — (${unreadableRows.length})`}
+          </Button>
+        )}
+        {canManage && effectiveView === 'missing' && missing.length > 0 && (
+          <Button
+            disabled={assigningAll}
+            onClick={async () => {
+              const n = missing.length;
+              const loc = locationFilter
+                ? locationOptions.find((l) => l.id === locationFilter)?.name
+                : null;
+              if (
+                !(await confirm({
+                  title: `Issue numbers to ${n} associate${n === 1 ? '' : 's'}?`,
+                  description:
+                    `Generates a fresh 4-digit clock-in number for every eligible associate ` +
+                    `${loc ? `at ${loc} ` : ''}who doesn't have one yet. ` +
+                    `The new numbers appear in the "With codes" list — share them with each associate.`,
+                }))
+              )
+                return;
+              setAssigningAll(true);
+              let ok = 0;
+              let fail = 0;
+              for (const a of missing) {
+                try {
+                  await assignKioskPin({ clientId, associateId: a.id });
+                  ok++;
+                } catch {
+                  fail++;
+                }
+              }
+              setAssigningAll(false);
+              toast.success(
+                `Issued ${ok} number${ok === 1 ? '' : 's'} — now in the With codes list.${
+                  fail ? ` ${fail} failed (check onboarding status).` : ''
+                }`,
+              );
+              setView('with');
+              refresh();
+            }}
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            {assigningAll ? 'Issuing…' : `Assign all (${missing.length})`}
           </Button>
         )}
       </div>
