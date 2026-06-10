@@ -63,7 +63,10 @@ export function DonutChart({
   return (
     <div className={cn('flex flex-col md:flex-row items-center gap-6', className)}>
       <div className="relative shrink-0" style={{ width: size, height: size }}>
-        <ResponsiveContainer width="100%" height="100%">
+        {/* Fixed px (not 100%): the parent is exactly `size` square, so the
+            100% measurement is unnecessary and is what triggers recharts'
+            width(-1)/height(-1) warning when measured early during mount. */}
+        <ResponsiveContainer width={size} height={size}>
           <PieChart>
             <Pie
               data={withColors}
