@@ -117,7 +117,7 @@ export function PayrollConfigView() {
             data={config.fedBracketsHoh}
           />
 
-          <p className="text-xs text-silver/60 mt-6 flex items-start gap-2">
+          <p className="text-xs text-silver/70 mt-6 flex items-start gap-2">
             <ShieldAlert className="h-3 w-3 mt-0.5 flex-shrink-0" />
             <span>
               Last updated {new Date(config.updatedAt).toLocaleString()}. Edits go through a database

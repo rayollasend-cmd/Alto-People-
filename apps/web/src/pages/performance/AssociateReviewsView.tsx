@@ -113,7 +113,7 @@ export function AssociateReviewsView() {
                 </div>
               )}
               {r.reviewerEmail && (
-                <div className="text-[10px] uppercase tracking-widest text-silver/60 mt-3">
+                <div className="text-[10px] uppercase tracking-widest text-silver/70 mt-3">
                   Reviewed by {r.reviewerEmail}
                 </div>
               )}
@@ -128,7 +128,7 @@ export function AssociateReviewsView() {
 function Section({ label, body }: { label: string; body: string }) {
   return (
     <div className="mb-2">
-      <div className="text-[10px] uppercase tracking-widest text-silver/60">{label}</div>
+      <div className="text-[10px] uppercase tracking-widest text-silver/70">{label}</div>
       <div className="text-sm text-silver whitespace-pre-line">{body}</div>
     </div>
   );

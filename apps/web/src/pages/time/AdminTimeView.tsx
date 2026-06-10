@@ -480,7 +480,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
           <CardHeader className="flex-row items-center justify-between">
             <CardTitle className="text-base">Currently clocked in</CardTitle>
             <div className="relative w-64">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-silver/60 pointer-events-none" />
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-silver/70 pointer-events-none" />
               <Input
                 placeholder="Search associate, client, job…"
                 value={liveSearch}
@@ -542,7 +542,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                           </TableCell>
                           <TableCell>
                             {e.geofenceOk === null && (
-                              <span className="text-xs text-silver/60">N/A</span>
+                              <span className="text-xs text-silver/70">N/A</span>
                             )}
                             {e.geofenceOk === true && <Badge variant="success">OK</Badge>}
                             {e.geofenceOk === false && (
@@ -628,7 +628,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                     No matches for &ldquo;{liveSearch}&rdquo;.
                   </p>
                 )}
-                <div className="mt-3 text-[10px] uppercase tracking-widest text-silver/60">
+                <div className="mt-3 text-[10px] uppercase tracking-widest text-silver/70">
                   Auto-refreshes every 30s
                 </div>
               </>
@@ -694,7 +694,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                 <label className="block text-[10px] uppercase tracking-wider text-silver mb-1">
                   Search
                 </label>
-                <Search className="absolute left-2.5 top-[2.1rem] h-4 w-4 text-silver/60 pointer-events-none" />
+                <Search className="absolute left-2.5 top-[2.1rem] h-4 w-4 text-silver/70 pointer-events-none" />
                 <Input
                   placeholder="Associate name…"
                   value={queueSearch}
@@ -1728,7 +1728,7 @@ function KpiCard({ icon: Icon, label, value, tone }: KpiCardProps) {
           <div className="text-[10px] uppercase tracking-wider text-silver">
             {label}
           </div>
-          <Icon className="h-3.5 w-3.5 text-silver/60" />
+          <Icon className="h-3.5 w-3.5 text-silver/70" />
         </div>
         <Skeleton className="h-9 w-12 mt-1" />
       </Card>
@@ -1740,7 +1740,7 @@ function KpiCard({ icon: Icon, label, value, tone }: KpiCardProps) {
         <div className="text-[10px] uppercase tracking-wider text-silver">
           {label}
         </div>
-        <Icon className="h-3.5 w-3.5 text-silver/60" />
+        <Icon className="h-3.5 w-3.5 text-silver/70" />
       </div>
       <div className={cn('text-3xl font-display tabular-nums', TONE_TEXT[tone])}>
         {value}

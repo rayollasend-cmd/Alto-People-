@@ -153,9 +153,9 @@ function PaystubGroup({
       className="rounded-lg border border-navy-secondary bg-navy/40 [&[open]>summary>svg.chev]:rotate-90"
     >
       <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs hover:bg-navy-secondary/40">
-        <ChevronRight className="chev h-4 w-4 text-silver/60 transition-transform" />
+        <ChevronRight className="chev h-4 w-4 text-silver/70 transition-transform" />
         <span className="font-medium text-white">{heading}</span>
-        <span className="ml-auto text-silver/60">
+        <span className="ml-auto text-silver/70">
           {items.length} paystub{items.length === 1 ? '' : 's'}
         </span>
       </summary>
@@ -210,9 +210,9 @@ function PaystubCard({
       >
         <div className="flex items-center gap-3 mb-2">
           {expanded ? (
-            <ChevronDown className="h-4 w-4 text-silver/60 shrink-0" />
+            <ChevronDown className="h-4 w-4 text-silver/70 shrink-0" />
           ) : (
-            <ChevronRight className="h-4 w-4 text-silver/60 shrink-0" />
+            <ChevronRight className="h-4 w-4 text-silver/70 shrink-0" />
           )}
           <div className="flex-1 text-sm text-silver">
             {item.hoursWorked.toFixed(2)} hrs · {fmtMoney(item.hourlyRate)}/hr
@@ -228,11 +228,11 @@ function PaystubCard({
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm pl-7">
           <div>
-            <div className="text-xs uppercase tracking-widest text-silver/60">Gross</div>
+            <div className="text-xs uppercase tracking-widest text-silver/70">Gross</div>
             <div className="text-white tabular-nums">{fmtMoney(item.grossPay)}</div>
           </div>
           <div>
-            <div className="text-xs uppercase tracking-widest text-silver/60">
+            <div className="text-xs uppercase tracking-widest text-silver/70">
               {item.postTaxDeductions > 0 ? 'Tax + post-tax' : 'Taxes'}
             </div>
             <div className="text-white tabular-nums">
@@ -361,14 +361,14 @@ function PaystubCard({
               <div className="font-display text-2xl text-gold tabular-nums">
                 {fmtMoney(item.netPay)}
               </div>
-              <div className="text-[10px] uppercase tracking-wide text-silver/50">
+              <div className="text-[10px] uppercase tracking-wide text-silver/70">
                 YTD net {fmtMoney(ytd.net)}
               </div>
             </div>
           </div>
 
           {item.disbursementRef && (
-            <div className="text-xs text-silver/60">Disbursement ref: {item.disbursementRef}</div>
+            <div className="text-xs text-silver/70">Disbursement ref: {item.disbursementRef}</div>
           )}
           {item.failureReason && (
             <div className="text-xs text-alert">{item.failureReason}</div>
@@ -394,7 +394,7 @@ function PaystubCard({
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="text-[10px] uppercase tracking-widest text-silver/50 mb-1.5">{title}</div>
+      <div className="text-[10px] uppercase tracking-widest text-silver/70 mb-1.5">{title}</div>
       {children}
     </div>
   );
@@ -416,7 +416,7 @@ function PaystubTable({
     <div className="-mx-2 overflow-x-auto sm:mx-0">
       <table className="w-full min-w-[20rem] text-xs">
       <thead>
-        <tr className="text-silver/50">
+        <tr className="text-silver/70">
           {headers.map((h, i) => (
             <th
               key={i}

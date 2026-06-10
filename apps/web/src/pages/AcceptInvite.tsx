@@ -130,7 +130,7 @@ export function AcceptInvite() {
               <p className="text-silver text-sm mb-1">
                 Set a password to access your onboarding tasks.
               </p>
-              <p className="text-silver/60 text-xs mb-6">{invite.email}</p>
+              <p className="text-silver/70 text-xs mb-6">{invite.email}</p>
 
               <Field
                 label="Password"
@@ -141,7 +141,7 @@ export function AcceptInvite() {
                 {(p) => (
                   <div className="relative">
                     <Lock
-                      className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/60 pointer-events-none"
+                      className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/70 pointer-events-none"
                       aria-hidden="true"
                     />
                     <Input
@@ -170,7 +170,7 @@ export function AcceptInvite() {
                 {(p) => (
                   <div className="relative">
                     <Lock
-                      className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/60 pointer-events-none"
+                      className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/70 pointer-events-none"
                       aria-hidden="true"
                     />
                     <Input
@@ -197,7 +197,7 @@ export function AcceptInvite() {
               >
                 {submitting ? 'Setting up…' : 'Set password & sign in'}
               </Button>
-              <p className="text-[10px] text-silver/60 text-center mt-4">
+              <p className="text-[10px] text-silver/70 text-center mt-4">
                 This link expires {new Date(invite.expiresAt).toLocaleString()}.
               </p>
             </form>

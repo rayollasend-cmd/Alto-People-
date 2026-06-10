@@ -473,7 +473,7 @@ function QuickActions() {
           >
             <Icon className="h-4 w-4 text-silver group-hover:text-gold transition-colors" aria-hidden="true" />
             <span className="flex-1 truncate">{label}</span>
-            <ArrowRight className="h-3.5 w-3.5 text-silver/50 group-hover:text-gold transition-colors" />
+            <ArrowRight className="h-3.5 w-3.5 text-silver/70 group-hover:text-gold transition-colors" />
           </Link>
         ))}
       </div>

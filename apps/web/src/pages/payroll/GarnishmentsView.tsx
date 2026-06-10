@@ -295,24 +295,24 @@ function GarnishmentRow({
       <TableCell>
         <div className="text-silver">{g.associateName}</div>
         {g.caseNumber && (
-          <div className="text-xs text-silver/50">Case #{g.caseNumber}</div>
+          <div className="text-xs text-silver/70">Case #{g.caseNumber}</div>
         )}
       </TableCell>
       <TableCell>
         <div className="text-silver">{KIND_LABEL[g.kind]}</div>
         {g.agencyName && (
-          <div className="text-xs text-silver/50">{g.agencyName}</div>
+          <div className="text-xs text-silver/70">{g.agencyName}</div>
         )}
       </TableCell>
       <TableCell className="text-silver">{perPeriod}</TableCell>
       <TableCell className="text-right tabular-nums text-white">
         {fmtMoney(withheld)}
-        <div className="text-[10px] text-silver/50">{g.deductionCount} run{g.deductionCount === 1 ? '' : 's'}</div>
+        <div className="text-[10px] text-silver/70">{g.deductionCount} run{g.deductionCount === 1 ? '' : 's'}</div>
       </TableCell>
       <TableCell className="text-right tabular-nums text-silver">
         {cap !== null ? fmtMoney(cap) : '—'}
         {cap !== null && (
-          <div className="text-[10px] text-silver/50">
+          <div className="text-[10px] text-silver/70">
             {Math.min(100, Math.round((withheld / cap) * 100))}% complete
           </div>
         )}

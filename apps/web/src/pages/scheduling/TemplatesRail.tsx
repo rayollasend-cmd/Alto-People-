@@ -137,7 +137,7 @@ export function TemplatesRail({ clientId, onManage }: Props) {
           </div>
         )}
         {templates && templates.length === 0 && (
-          <div className="text-center px-3 py-6 text-xs text-silver/60">
+          <div className="text-center px-3 py-6 text-xs text-silver/70">
             No templates yet.
             <button
               type="button"
@@ -158,7 +158,7 @@ export function TemplatesRail({ clientId, onManage }: Props) {
           <Plus className="h-3.5 w-3.5" />
           New template
         </Button>
-        <div className="mt-1.5 text-[10px] text-silver/50 text-center">
+        <div className="mt-1.5 text-[10px] text-silver/70 text-center">
           Drag a template onto a cell to apply.
         </div>
       </div>
@@ -207,7 +207,7 @@ function TemplateChip({ template }: { template: ShiftTemplate }) {
       <div className="text-[10px] text-silver/80 tabular-nums truncate">
         {DAYS[template.dayOfWeek]} · {fmtMin(template.startMinute)}–{fmtMin(template.endMinute)}
       </div>
-      <div className="text-[10px] text-silver/60 truncate">
+      <div className="text-[10px] text-silver/70 truncate">
         {template.position}
         {template.clientName && ` · ${template.clientName}`}
       </div>

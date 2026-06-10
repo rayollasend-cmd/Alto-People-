@@ -435,7 +435,7 @@ export function RecruitingHome() {
                     {(c.position || c.source) && (
                       <div className="mt-0.5 ml-[2.4rem] text-[11px] text-silver/70 truncate">
                         {c.position ?? '—'}
-                        <span className="mx-1.5 text-silver/50">·</span>
+                        <span className="mx-1.5 text-silver/70">·</span>
                         {c.source ?? 'manual'}
                       </div>
                     )}
@@ -651,7 +651,7 @@ function KpiCard({ icon: Icon, label, value, tone }: KpiCardProps) {
     <Card className="p-4">
       <div className="flex items-start justify-between mb-1">
         <div className="text-[10px] uppercase tracking-wider text-silver">{label}</div>
-        <Icon className="h-3.5 w-3.5 text-silver/60" />
+        <Icon className="h-3.5 w-3.5 text-silver/70" />
       </div>
       {value === null ? (
         <Skeleton className="h-9 w-12 mt-1" />

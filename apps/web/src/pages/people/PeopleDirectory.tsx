@@ -309,7 +309,7 @@ export function PeopleDirectory() {
               Search
             </label>
             <div className="relative mt-1">
-              <Search className="h-3.5 w-3.5 text-silver/50 absolute left-2.5 top-1/2 -translate-y-1/2" />
+              <Search className="h-3.5 w-3.5 text-silver/70 absolute left-2.5 top-1/2 -translate-y-1/2" />
               <Input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -320,7 +320,7 @@ export function PeopleDirectory() {
                 <button
                   type="button"
                   onClick={() => setSearch('')}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-silver/60 hover:text-white"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-silver/70 hover:text-white"
                   aria-label="Clear search"
                 >
                   <X className="h-3.5 w-3.5" />
@@ -709,11 +709,11 @@ const DirectoryRow = memo(function DirectoryRow({
             <span className="truncate">{r.workplaceClientName}</span>
           </Link>
         ) : (
-          <span className="text-silver/50" aria-hidden="true">—</span>
+          <span className="text-silver/70" aria-hidden="true">—</span>
         )}
       </TableCell>
       <TableCell className="hidden md:table-cell text-silver">
-        {r.position ?? <span className="text-silver/50" aria-hidden="true">—</span>}
+        {r.position ?? <span className="text-silver/70" aria-hidden="true">—</span>}
       </TableCell>
       <TableCell className="hidden lg:table-cell text-xs text-silver">
         {EMPLOYMENT_LABEL[r.employmentType] ?? r.employmentType}
@@ -735,11 +735,11 @@ const DirectoryRow = memo(function DirectoryRow({
             r.managerName
           )
         ) : (
-          <span className="text-silver/50" aria-hidden="true">—</span>
+          <span className="text-silver/70" aria-hidden="true">—</span>
         )}
       </TableCell>
       <TableCell className="hidden xl:table-cell text-silver text-xs tabular-nums">
-        {r.startDate ?? <span className="text-silver/50" aria-hidden="true">—</span>}
+        {r.startDate ?? <span className="text-silver/70" aria-hidden="true">—</span>}
       </TableCell>
     </TableRow>
   );
@@ -785,7 +785,7 @@ const DirectoryPhoneCard = memo(function DirectoryPhoneCard({
                   </span>
                 )}
                 {r.workplaceClientName && r.position && (
-                  <span className="mx-1.5 text-silver/50" aria-hidden="true">·</span>
+                  <span className="mx-1.5 text-silver/70" aria-hidden="true">·</span>
                 )}
                 {r.position}
               </div>
@@ -1319,7 +1319,7 @@ function CompensationTab({ associate: a }: { associate: DirectoryEntry }) {
                   <TableCell className="text-silver text-xs">
                     {REASON_LABEL[r.reason]}
                     {r.notes && (
-                      <span className="block text-[10px] text-silver/60 truncate max-w-[180px]">
+                      <span className="block text-[10px] text-silver/70 truncate max-w-[180px]">
                         {r.notes}
                       </span>
                     )}

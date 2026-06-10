@@ -154,7 +154,7 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
                     <span className="font-medium text-white">
                       {dayHeading(group.key)}
                     </span>
-                    <span className="text-xs text-silver/60">· {group.key}</span>
+                    <span className="text-xs text-silver/70">· {group.key}</span>
                     <span className="ml-auto text-xs text-silver">
                       {group.entries.length}{' '}
                       {group.entries.length === 1 ? 'message' : 'messages'}
@@ -222,7 +222,7 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
                             <div className="lg:hidden mt-1 text-xs text-silver truncate max-w-[60vw]">
                               {n.subject ?? '(no subject)'}
                             </div>
-                            <div className="md:hidden text-[10px] text-silver/60 tabular-nums">
+                            <div className="md:hidden text-[10px] text-silver/70 tabular-nums">
                               {fmtTimeOnly(n.createdAt)}
                             </div>
                           </TableCell>

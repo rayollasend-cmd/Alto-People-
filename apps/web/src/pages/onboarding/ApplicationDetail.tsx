@@ -445,7 +445,7 @@ function DetailMeta({ detail }: { detail: ApplicationDetailType }) {
       <span className="text-white">{detail.clientName}</span>
       {detail.position && (
         <>
-          <span className="text-silver/50">·</span>
+          <span className="text-silver/70">·</span>
           <span>{detail.position}</span>
         </>
       )}
@@ -840,7 +840,7 @@ const STATUS_TONE: Record<
   PENDING: {
     bg: 'bg-navy',
     border: 'border-navy-secondary hover:border-silver/40',
-    iconCx: 'text-silver/60',
+    iconCx: 'text-silver/70',
     icon: Circle,
     badgeBg: 'bg-silver/10',
     badgeText: 'text-silver',

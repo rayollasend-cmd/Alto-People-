@@ -165,7 +165,7 @@ export function TemplatesList() {
             <section key={track}>
               <h2 className="text-xs uppercase tracking-widest text-silver mb-2">
                 {TRACK_LABEL[track] ?? track}
-                <span className="ml-2 tabular-nums text-silver/60">
+                <span className="ml-2 tabular-nums text-silver/70">
                   {list.length}
                 </span>
               </h2>
@@ -201,7 +201,7 @@ export function TemplatesList() {
                           .map((tk) => tk.title)
                           .join(' · ')}
                         {t.tasks.length > 3 && (
-                          <span className="text-silver/50">
+                          <span className="text-silver/70">
                             {' '}
                             + {t.tasks.length - 3} more
                           </span>

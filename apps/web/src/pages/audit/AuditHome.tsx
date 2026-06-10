@@ -277,7 +277,7 @@ export function AuditHome() {
                     <span className="font-medium text-white">
                       {dayHeading(group.key)}
                     </span>
-                    <span className="text-xs text-silver/60">
+                    <span className="text-xs text-silver/70">
                       · {group.key}
                     </span>
                     <span className="ml-auto text-xs text-silver">
@@ -316,12 +316,12 @@ export function AuditHome() {
                           </TableCell>
                           <TableCell className="text-silver text-xs truncate max-w-[16ch]">
                             {e.actorEmail ?? (
-                              <span className="text-silver/50">system</span>
+                              <span className="text-silver/70">system</span>
                             )}
                           </TableCell>
                           <TableCell className="text-silver text-xs">
                             <div className="text-white">{e.entityType}</div>
-                            <div className="font-mono text-[10px] text-silver/60 truncate max-w-[20ch]">
+                            <div className="font-mono text-[10px] text-silver/70 truncate max-w-[20ch]">
                               {e.entityId}
                             </div>
                           </TableCell>
@@ -348,7 +348,7 @@ export function AuditHome() {
         </div>
       )}
       {entries && entries.length > 0 && !nextBefore && (
-        <p className="text-xs text-silver/60 mt-4 text-center">
+        <p className="text-xs text-silver/70 mt-4 text-center">
           End of results — {entries.length} row{entries.length === 1 ? '' : 's'}.
         </p>
       )}

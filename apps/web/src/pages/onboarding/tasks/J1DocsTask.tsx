@@ -344,7 +344,7 @@ export function J1DocsTask() {
           className={cn(
             'w-full px-4 py-6 rounded-md border-2 border-dashed transition-colors',
             uploading
-              ? 'border-navy-secondary text-silver/50 cursor-wait'
+              ? 'border-navy-secondary text-silver/70 cursor-wait'
               : 'border-navy-secondary text-silver hover:border-gold/60 hover:text-gold'
           )}
         >
@@ -355,7 +355,7 @@ export function J1DocsTask() {
         <div>
           <div className="text-xs uppercase tracking-widest text-silver mb-2">
             Uploaded J-1 documents{' '}
-            <span className="ml-1 tabular-nums text-silver/60">
+            <span className="ml-1 tabular-nums text-silver/70">
               {j1Docs.length}
             </span>
           </div>

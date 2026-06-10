@@ -291,7 +291,7 @@ export function BrandingHome() {
                     className="max-h-24 max-w-full"
                   />
                 ) : (
-                  <div className="text-silver/60 text-sm">No logo on file.</div>
+                  <div className="text-silver/70 text-sm">No logo on file.</div>
                 )}
               </div>
               <input
@@ -325,7 +325,7 @@ export function BrandingHome() {
                 )}
               </div>
               {branding?.logoUpdatedAt && (
-                <p className="text-silver/60 text-xs">
+                <p className="text-silver/70 text-xs">
                   Last updated{' '}
                   {new Date(branding.logoUpdatedAt).toLocaleString()}
                 </p>

@@ -275,7 +275,7 @@ export function AssociateTimeView() {
             <div className="text-sm text-silver mb-6">
               since {new Date(active.clockInAt).toLocaleTimeString()}
               {active.clockInLat != null && active.clockInLng != null && (
-                <span className="ml-2 text-silver/60">
+                <span className="ml-2 text-silver/70">
                   · {active.clockInLat.toFixed(4)}, {active.clockInLng.toFixed(4)}
                 </span>
               )}
@@ -288,7 +288,7 @@ export function AssociateTimeView() {
                 className={cn(
                   'px-6 py-3 rounded font-medium text-base transition',
                   busy
-                    ? 'bg-navy-secondary text-silver/50 cursor-not-allowed'
+                    ? 'bg-navy-secondary text-silver/70 cursor-not-allowed'
                     : 'bg-alert text-white hover:opacity-90'
                 )}
               >
@@ -363,7 +363,7 @@ export function AssociateTimeView() {
             >
               {busy ? 'Saving…' : 'Clock in'}
             </Button>
-            <p className="text-xs text-silver/60 mt-3">
+            <p className="text-xs text-silver/70 mt-3">
               Your browser will ask permission to share your location for geofence verification.
             </p>
           </>

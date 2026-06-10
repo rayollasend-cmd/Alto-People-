@@ -247,10 +247,10 @@ export function AmendPayrollWizard({ open, onOpenChange, sourceRun, onAmended }:
 
           <div>
             <div className="flex items-center justify-between mb-2">
-              <div className="text-[10px] uppercase tracking-widest text-silver/60">
+              <div className="text-[10px] uppercase tracking-widest text-silver/70">
                 Paystubs ({sourceRun.items.length})
               </div>
-              <div className="text-[11px] text-silver/60">
+              <div className="text-[11px] text-silver/70">
                 {correctionEntries.length} editing
               </div>
             </div>
@@ -272,7 +272,7 @@ export function AmendPayrollWizard({ open, onOpenChange, sourceRun, onAmended }:
                         <div className="text-sm text-white truncate">
                           {it.associateName ?? '—'}
                         </div>
-                        <div className="text-[11px] text-silver/60">
+                        <div className="text-[11px] text-silver/70">
                           {it.hoursWorked.toFixed(2)} hrs · gross{' '}
                           {fmtMoney(it.grossPay)} · net {fmtMoney(it.netPay)}
                         </div>

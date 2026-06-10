@@ -174,7 +174,7 @@ function AgreementCard({
         <span
           className={cn(
             'text-xs uppercase tracking-widest shrink-0',
-            signed ? 'text-gold' : 'text-silver/60'
+            signed ? 'text-gold' : 'text-silver/70'
           )}
         >
           {signed ? 'Signed' : 'Required'}
@@ -207,7 +207,7 @@ function AgreementCard({
           <div
             className={cn(
               'text-xs flex items-center gap-1.5',
-              scrolledToEnd ? 'text-success' : 'text-silver/60'
+              scrolledToEnd ? 'text-success' : 'text-silver/70'
             )}
           >
             {scrolledToEnd ? (

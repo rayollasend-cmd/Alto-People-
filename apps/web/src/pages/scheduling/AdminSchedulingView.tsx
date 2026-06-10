@@ -1200,7 +1200,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             className="h-8 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 py-1 text-xs text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
             aria-label="From date"
           />
-          <span className="text-silver/60 text-xs">→</span>
+          <span className="text-silver/70 text-xs">→</span>
           <input
             type="date"
             value={listTo}
@@ -1243,7 +1243,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           >
             Clear
           </button>
-          <span className="ml-auto text-[10px] text-silver/60 tabular-nums">
+          <span className="ml-auto text-[10px] text-silver/70 tabular-nums">
             {filteredShifts ? `${filteredShifts.length} shifts` : ''}
           </span>
         </div>
@@ -1663,7 +1663,7 @@ function KpiStrip({ kpis }: { kpis: SchedulingKpis | null }) {
       {kpis.draftShifts > 0 && (
         <Kpi label="Draft" value={String(kpis.draftShifts)} tone="text-silver" />
       )}
-      <div className="text-[10px] uppercase tracking-wider text-silver/50 self-end ml-auto">
+      <div className="text-[10px] uppercase tracking-wider text-silver/70 self-end ml-auto">
         this week
       </div>
     </div>
@@ -1935,7 +1935,7 @@ function AssignDialog({
                           <div className="truncate">
                             {a.firstName} {a.lastName}
                           </div>
-                          <div className="text-[10px] text-silver/60 truncate">
+                          <div className="text-[10px] text-silver/70 truncate">
                             {a.email}
                           </div>
                         </div>
@@ -1944,14 +1944,14 @@ function AssignDialog({
                   </ul>
                 )}
                 {query.trim() && matches.length === 0 && (
-                  <div className="mt-1 px-3 py-2 text-xs text-silver/60 rounded-md border border-navy-secondary bg-navy">
+                  <div className="mt-1 px-3 py-2 text-xs text-silver/70 rounded-md border border-navy-secondary bg-navy">
                     No associates match “{query}”.
                   </div>
                 )}
               </div>
             )}
             {checking && (
-              <div className="text-[11px] text-silver/60 mt-1">Checking conflicts…</div>
+              <div className="text-[11px] text-silver/70 mt-1">Checking conflicts…</div>
             )}
             {isClean && (
               <div className="text-[11px] text-success mt-1 inline-flex items-center gap-1">
@@ -2150,7 +2150,7 @@ function AutoFillDialog({
                     <span
                       className={cn(
                         'inline-flex items-center gap-1',
-                        c.matchesAvailability ? 'text-success' : 'text-silver/60'
+                        c.matchesAvailability ? 'text-success' : 'text-silver/70'
                       )}
                     >
                       {c.matchesAvailability ? (
@@ -2663,7 +2663,7 @@ function CreateShiftDialog({
             >
               {showAdvanced ? '▾' : '▸'} Advanced
               {!showAdvanced && (
-                <span className="normal-case tracking-normal text-silver/50">
+                <span className="normal-case tracking-normal text-silver/70">
                   · rates, late-notice reason
                 </span>
               )}

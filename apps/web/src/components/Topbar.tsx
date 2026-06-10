@@ -106,7 +106,7 @@ export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
                 )}
                 {!isLast && (
                   <ChevronRight
-                    className="h-3.5 w-3.5 text-silver/60 shrink-0"
+                    className="h-3.5 w-3.5 text-silver/70 shrink-0"
                     aria-hidden="true"
                   />
                 )}

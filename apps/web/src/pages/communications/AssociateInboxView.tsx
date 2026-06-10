@@ -79,10 +79,10 @@ export function AssociateInboxView() {
                 className="rounded-lg border border-navy-secondary bg-navy/40 [&[open]>summary>svg.chev]:rotate-90"
               >
                 <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs hover:bg-navy-secondary/40">
-                  <ChevronRight className="chev h-4 w-4 text-silver/60 transition-transform" />
+                  <ChevronRight className="chev h-4 w-4 text-silver/70 transition-transform" />
                   <span className="font-medium text-white">{dayHeading(group.key)}</span>
-                  <span className="text-silver/60">· {group.key}</span>
-                  <span className="ml-auto text-silver/60">
+                  <span className="text-silver/70">· {group.key}</span>
+                  <span className="ml-auto text-silver/70">
                     {group.entries.length} message
                     {group.entries.length === 1 ? '' : 's'}
                     {unreadInGroup > 0 && (
@@ -120,7 +120,7 @@ export function AssociateInboxView() {
                           {n.body}
                         </div>
                         {n.senderEmail && (
-                          <div className="text-[10px] uppercase tracking-widest text-silver/60 mt-2">
+                          <div className="text-[10px] uppercase tracking-widest text-silver/70 mt-2">
                             From {n.senderEmail}
                           </div>
                         )}

@@ -513,11 +513,11 @@ export function ApplicationsList() {
                 </span>
               ))}
               {stats.bounced > stats.bouncedSamples.length && (
-                <span className="text-silver/60">
+                <span className="text-silver/70">
                   {' '}+ {stats.bounced - stats.bouncedSamples.length} more
                 </span>
               )}
-              <span className="text-silver/60 ml-2">
+              <span className="text-silver/70 ml-2">
                 · Open the application to see the provider error and fix the
                 email address.
               </span>
@@ -545,13 +545,13 @@ export function ApplicationsList() {
                   >
                     {a.associateName}
                   </Link>{' '}
-                  <span className="text-silver/60 tabular-nums">
+                  <span className="text-silver/70 tabular-nums">
                     ({daysSince(a.invitedAt, now)}d)
                   </span>
                 </span>
               ))}
               {stats.stale > stats.staleSamples.length && (
-                <span className="text-silver/60">
+                <span className="text-silver/70">
                   {' '}+ {stats.stale - stats.staleSamples.length} more
                 </span>
               )}
@@ -572,7 +572,7 @@ export function ApplicationsList() {
       {canManage && (
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <div className="relative flex-1 w-full sm:min-w-[200px] max-w-xs">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-silver/60 pointer-events-none" />
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-silver/70 pointer-events-none" />
             <Input
               type="search"
               placeholder="Search by name or email…"
@@ -584,7 +584,7 @@ export function ApplicationsList() {
               <button
                 type="button"
                 onClick={() => setQInput('')}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-silver/60 hover:text-white"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-silver/70 hover:text-white"
                 aria-label="Clear search"
               >
                 <X className="h-3.5 w-3.5" />
@@ -636,7 +636,7 @@ export function ApplicationsList() {
                 >
                   {f.label}
                   {statsData && (
-                    <span className="text-[10px] tabular-nums text-silver/60">
+                    <span className="text-[10px] tabular-nums text-silver/70">
                       {count}
                     </span>
                   )}

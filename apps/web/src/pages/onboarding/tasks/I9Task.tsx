@@ -192,7 +192,7 @@ function Section1Card({
         <span
           className={cn(
             'text-xs uppercase tracking-widest',
-            done ? 'text-gold' : 'text-silver/60'
+            done ? 'text-gold' : 'text-silver/70'
           )}
         >
           {done ? 'Signed' : 'Required'}
@@ -219,7 +219,7 @@ function Section1Card({
               <span className="text-white italic">{status.section1.typedName}</span>
             </div>
           )}
-          <div className="text-xs text-silver/60 mt-2">
+          <div className="text-xs text-silver/70 mt-2">
             Signed at {new Date(status.section1.completedAt).toLocaleString()}.
           </div>
         </div>
@@ -372,7 +372,7 @@ function DocumentsCard({
               ? 'text-gold'
               : submitted
                 ? 'text-success'
-                : 'text-silver/60'
+                : 'text-silver/70'
           )}
         >
           {section2Done
@@ -461,7 +461,7 @@ function DocumentsCard({
             >
               <div className="flex-1 min-w-0">
                 <div className="text-white truncate">{d.filename}</div>
-                <div className="text-xs text-silver/60 mt-0.5">
+                <div className="text-xs text-silver/70 mt-0.5">
                   {KIND_LABEL[d.kind] ?? d.kind}
                   {d.side ? ` · ${d.side === 'FRONT' ? 'Front' : 'Back'}` : ''}
                   {' · '}
@@ -491,7 +491,7 @@ function DocumentsCard({
           ))}
         </ul>
       ) : (
-        <p className="text-xs text-silver/60">
+        <p className="text-xs text-silver/70">
           No documents uploaded yet.
         </p>
       )}
@@ -532,7 +532,7 @@ function Section2Status({ status }: { status: I9Status }) {
         <span
           className={cn(
             'text-xs uppercase tracking-widest',
-            s2 ? 'text-gold' : 'text-silver/60'
+            s2 ? 'text-gold' : 'text-silver/70'
           )}
         >
           {s2 ? 'Verified' : 'Pending HR'}
@@ -548,7 +548,7 @@ function Section2Status({ status }: { status: I9Status }) {
           )}
           .
           {s2.documentList && (
-            <span className="block text-xs text-silver/60 mt-1">
+            <span className="block text-xs text-silver/70 mt-1">
               List: {s2.documentList === 'LIST_A' ? 'List A (single document)' : 'Lists B + C'}
             </span>
           )}

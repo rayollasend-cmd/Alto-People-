@@ -237,7 +237,7 @@ function SidebarBrand({ railCollapsed, onToggleRail }: SidebarBrandProps) {
         </TooltipTrigger>
         <TooltipContent side="right">
           {railCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          <span className="ml-2 text-silver/60">⌘\</span>
+          <span className="ml-2 text-silver/70">⌘\</span>
         </TooltipContent>
       </Tooltip>
     </div>
@@ -481,7 +481,7 @@ function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
                     Active
                   </span>
                 ) : (
-                  <span className="ml-auto text-[10px] text-silver/60 capitalize">
+                  <span className="ml-auto text-[10px] text-silver/70 capitalize">
                     {theme}
                   </span>
                 )}

@@ -98,7 +98,7 @@ export function ForgotPassword() {
               {(p) => (
                 <div className="relative">
                   <Mail
-                    className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/60 pointer-events-none"
+                    className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/70 pointer-events-none"
                     aria-hidden="true"
                   />
                   <Input
@@ -138,7 +138,7 @@ export function ForgotPassword() {
           </form>
         )}
 
-        <p className="text-center text-xs text-silver/60 mt-6">
+        <p className="text-center text-xs text-silver/70 mt-6">
           Alto Etho LLC d/b/a Alto HR · v0.1.0
         </p>
       </div>

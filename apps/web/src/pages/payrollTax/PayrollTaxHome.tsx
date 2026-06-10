@@ -505,7 +505,7 @@ function GarnishmentHistoryDrawer({
       </DrawerHeader>
       <DrawerBody>
         <div className="space-y-3 text-sm">
-          <div className="text-xs text-silver/60">
+          <div className="text-xs text-silver/70">
             {GARN_KIND_LABEL[garnishment.kind]} · case {garnishment.caseNumber ?? '—'} ·
             withheld ${garnishment.amountWithheld}
             {garnishment.totalCap && <> of ${garnishment.totalCap}</>}
@@ -532,7 +532,7 @@ function GarnishmentHistoryDrawer({
                 {rows.map((d) => (
                   <TableRow key={d.id}>
                     <TableCell>{new Date(d.deductedOn).toLocaleString()}</TableCell>
-                    <TableCell className="text-xs text-silver/60">
+                    <TableCell className="text-xs text-silver/70">
                       {d.payrollRunId ? d.payrollRunId.slice(0, 8) : 'Manual'}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">${d.amount}</TableCell>
@@ -592,7 +592,7 @@ function GarnishmentManualDeductDrawer({
       </DrawerHeader>
       <DrawerBody>
         <div className="space-y-3 text-sm">
-          <p className="text-xs text-silver/60">
+          <p className="text-xs text-silver/70">
             Use this when a deduction needs to be recorded outside a payroll run (e.g.
             retroactive correction). The garnishment's amountWithheld is incremented and the
             status flips to COMPLETED if the cap is reached.
