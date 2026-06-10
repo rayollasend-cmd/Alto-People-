@@ -115,7 +115,7 @@ export function ConfirmEmailChange() {
           )}
         </div>
 
-        <p className="text-center text-xs text-silver/60 mt-6">
+        <p className="text-center text-xs text-silver/70 mt-6">
           Alto Etho LLC d/b/a Alto HR · v0.1.0
         </p>
       </div>

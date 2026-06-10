@@ -486,7 +486,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
             <button
               type="button"
               onClick={() => setSearch('')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-silver/60 hover:text-white"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-silver/70 hover:text-white"
               aria-label="Clear search"
             >
               <X className="h-3.5 w-3.5" />
@@ -537,7 +537,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                 >
                   {f.label}
                   {allDocs && (
-                    <span className="text-[10px] tabular-nums text-silver/60">
+                    <span className="text-[10px] tabular-nums text-silver/70">
                       {count}
                     </span>
                   )}
@@ -546,7 +546,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
             })}
           </div>
         )}
-        <span className="ml-auto text-[10px] text-silver/60 tabular-nums">
+        <span className="ml-auto text-[10px] text-silver/70 tabular-nums">
           {view === 'queue'
             ? visibleDocs
               ? `${visibleDocs.length} shown`
@@ -854,35 +854,35 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                       {g.uploaded > 0 ? (
                         <Badge variant="pending">{g.uploaded}</Badge>
                       ) : (
-                        <span className="text-silver/50 text-xs">—</span>
+                        <span className="text-silver/70 text-xs">—</span>
                       )}
                     </TableCell>
                     <TableCell className="hidden md:table-cell">
                       {g.verified > 0 ? (
                         <Badge variant="success">{g.verified}</Badge>
                       ) : (
-                        <span className="text-silver/50 text-xs">—</span>
+                        <span className="text-silver/70 text-xs">—</span>
                       )}
                     </TableCell>
                     <TableCell className="hidden md:table-cell">
                       {g.rejected > 0 ? (
                         <Badge variant="destructive">{g.rejected}</Badge>
                       ) : (
-                        <span className="text-silver/50 text-xs">—</span>
+                        <span className="text-silver/70 text-xs">—</span>
                       )}
                     </TableCell>
                     <TableCell className="hidden lg:table-cell">
                       {g.expired > 0 ? (
                         <Badge variant="destructive">{g.expired}</Badge>
                       ) : (
-                        <span className="text-silver/50 text-xs">—</span>
+                        <span className="text-silver/70 text-xs">—</span>
                       )}
                     </TableCell>
                     <TableCell className="hidden lg:table-cell text-silver text-xs tabular-nums">
                       {fmtAge(new Date(g.lastActivity).toISOString(), now)}
                     </TableCell>
                     <TableCell className="text-right">
-                      <ChevronRight className="h-4 w-4 text-silver/60" />
+                      <ChevronRight className="h-4 w-4 text-silver/70" />
                     </TableCell>
                   </TableRow>
                 ))}

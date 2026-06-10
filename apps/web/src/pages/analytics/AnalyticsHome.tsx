@@ -142,7 +142,7 @@ export function AnalyticsHome() {
           onChange={(d) => setDays(d as WindowDays)}
           options={WINDOW_PRESETS.map((d) => ({ value: d, label: `${d}d` }))}
         />
-        <span className="text-xs text-silver/60 ml-2">
+        <span className="text-xs text-silver/70 ml-2">
           (Affects scheduling & payroll metrics. Headcount, backlogs, and
           status counts are point-in-time.)
         </span>
@@ -298,7 +298,7 @@ export function AnalyticsHome() {
         </>
       )}
 
-      <p className="text-xs text-silver/60 mt-8">
+      <p className="text-xs text-silver/70 mt-8">
         <Activity className="h-3 w-3 inline mr-1 -mt-0.5" />
         Numbers are live — refresh to recompute.
       </p>

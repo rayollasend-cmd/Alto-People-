@@ -1162,7 +1162,7 @@ function TimelineTab() {
                   <div className="text-xs text-silver">
                     {e.status}
                     {e.parentId && (
-                      <span className="ml-2 text-silver/60">
+                      <span className="ml-2 text-silver/70">
                         ↳ linked to {e.parentKind?.toLowerCase()}
                       </span>
                     )}

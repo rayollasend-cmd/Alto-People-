@@ -123,18 +123,18 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
         </DialogDescription>
         <Command label="Command palette" className="bg-navy">
           <div className="flex items-center border-b border-navy-secondary px-3">
-            <Search className="h-4 w-4 text-silver/60 mr-2 shrink-0" aria-hidden="true" />
+            <Search className="h-4 w-4 text-silver/70 mr-2 shrink-0" aria-hidden="true" />
             <Command.Input
               autoFocus
               value={search}
               onValueChange={setSearch}
               placeholder="Type a command or search…"
               className={cn(
-                'flex h-12 w-full bg-transparent text-sm text-white placeholder:text-silver/60',
+                'flex h-12 w-full bg-transparent text-sm text-white placeholder:text-silver/70',
                 'outline-none border-0 focus:ring-0'
               )}
             />
-            <span className="ml-2 hidden sm:inline-flex items-center gap-1 text-[10px] text-silver/60 border border-navy-secondary rounded px-1.5 py-0.5 font-mono">
+            <span className="ml-2 hidden sm:inline-flex items-center gap-1 text-[10px] text-silver/70 border border-navy-secondary rounded px-1.5 py-0.5 font-mono">
               ESC
             </span>
           </div>

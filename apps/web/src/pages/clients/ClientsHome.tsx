@@ -273,7 +273,7 @@ export function ClientsHome() {
                   <TableCell
                     className={cn(
                       'text-right hidden sm:table-cell tabular-nums',
-                      c.openApplications > 0 ? 'text-silver' : 'text-silver/60'
+                      c.openApplications > 0 ? 'text-silver' : 'text-silver/70'
                     )}
                   >
                     {c.openApplications}
@@ -281,7 +281,7 @@ export function ClientsHome() {
                   <TableCell
                     className={cn(
                       'text-right hidden md:table-cell tabular-nums',
-                      c.activeAssociateCount > 0 ? 'text-success' : 'text-silver/60'
+                      c.activeAssociateCount > 0 ? 'text-success' : 'text-silver/70'
                     )}
                   >
                     {c.activeAssociateCount}
@@ -324,7 +324,7 @@ function ClientCard({ client }: { client: ClientListItem }) {
           </div>
           <div className="text-xs text-silver mt-0.5 flex items-center gap-1.5 flex-wrap">
             {client.industry && <span>{client.industry}</span>}
-            {client.industry && client.state && <span className="text-silver/50">·</span>}
+            {client.industry && client.state && <span className="text-silver/70">·</span>}
             <span className="inline-flex items-center gap-0.5">
               <MapPin className="h-3 w-3" aria-hidden="true" />
               {stateLabel}
@@ -381,7 +381,7 @@ function KpiTile({
         ? 'text-success'
         : tone === 'silver'
           ? 'text-white'
-          : 'text-silver/60';
+          : 'text-silver/70';
   return (
     <div className="min-w-0">
       <div className="text-[10px] uppercase tracking-widest text-silver/80 flex items-center gap-1">

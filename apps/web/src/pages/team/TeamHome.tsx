@@ -199,7 +199,7 @@ function KpiTile({
           <div className="text-[10px] uppercase tracking-widest text-silver/80">
             {label}
           </div>
-          <Icon className={`h-4 w-4 ${highlight ? 'text-gold' : 'text-silver/60'}`} />
+          <Icon className={`h-4 w-4 ${highlight ? 'text-gold' : 'text-silver/70'}`} />
         </div>
         <div
           className={`font-display text-3xl tabular-nums mt-1 ${highlight ? 'text-gold' : 'text-white'}`}

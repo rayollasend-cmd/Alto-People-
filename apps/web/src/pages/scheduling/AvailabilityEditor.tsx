@@ -95,7 +95,7 @@ export function AvailabilityEditor() {
     <section className="bg-navy border border-navy-secondary rounded-lg p-5 mb-5">
       <div className="flex items-baseline justify-between mb-3">
         <h2 className="font-display text-2xl text-white">My availability</h2>
-        <span className="text-xs text-silver/60">
+        <span className="text-xs text-silver/70">
           Used by HR to suggest you for open shifts
         </span>
       </div>

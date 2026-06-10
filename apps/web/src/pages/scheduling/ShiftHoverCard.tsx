@@ -199,12 +199,12 @@ export function ShiftHoverCard({
         />
         {shift.notes && (
           <div className="flex items-start gap-2 text-xs text-silver/80">
-            <StickyNote className="h-3.5 w-3.5 text-silver/50 mt-0.5 shrink-0" />
+            <StickyNote className="h-3.5 w-3.5 text-silver/70 mt-0.5 shrink-0" />
             <div className="whitespace-pre-wrap">{shift.notes}</div>
           </div>
         )}
         {shift.payRate != null && (
-          <div className="text-xs text-silver/60 tabular-nums">
+          <div className="text-xs text-silver/70 tabular-nums">
             ${shift.payRate.toFixed(2)}/hr · projected $
             {(
               (shift.payRate * (shift.scheduledMinutes ?? 0)) /
@@ -274,7 +274,7 @@ function Fact({
 }) {
   return (
     <div className="flex items-center gap-2 text-xs text-silver">
-      <Icon className="h-3.5 w-3.5 text-silver/50 shrink-0" />
+      <Icon className="h-3.5 w-3.5 text-silver/70 shrink-0" />
       <span className="truncate">{text}</span>
     </div>
   );

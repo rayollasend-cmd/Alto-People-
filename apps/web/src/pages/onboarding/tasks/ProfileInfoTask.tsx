@@ -196,7 +196,7 @@ export function Field({
         {label}
       </span>
       {children}
-      {hint && <span className="block text-xs text-silver/60 mt-1">{hint}</span>}
+      {hint && <span className="block text-xs text-silver/70 mt-1">{hint}</span>}
     </label>
   );
 }

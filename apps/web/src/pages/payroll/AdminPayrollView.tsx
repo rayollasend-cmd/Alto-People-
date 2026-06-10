@@ -598,7 +598,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                             {r.periodStart} → {r.periodEnd}
                           </div>
                           {r.clientName && (
-                            <div className="text-[11px] text-silver/60 mt-0.5">
+                            <div className="text-[11px] text-silver/70 mt-0.5">
                               {r.clientName}
                             </div>
                           )}
@@ -647,7 +647,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                             {r.periodStart} → {r.periodEnd}
                           </div>
                           {r.clientName && (
-                            <div className="text-[11px] text-silver/60 mt-0.5 truncate">
+                            <div className="text-[11px] text-silver/70 mt-0.5 truncate">
                               {r.clientName}
                             </div>
                           )}
@@ -667,7 +667,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                           </span>
                         </div>
                         <div className="text-right">
-                          <div className="text-[10px] uppercase tracking-widest text-silver/50">
+                          <div className="text-[10px] uppercase tracking-widest text-silver/70">
                             Net
                           </div>
                           <div className="tabular-nums text-gold text-base">
@@ -723,7 +723,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                   </div>
                   {selected.cancelReason && (
                     <div className="text-silver mt-1">
-                      <span className="text-silver/60">Reason: </span>
+                      <span className="text-silver/70">Reason: </span>
                       {selected.cancelReason}
                     </div>
                   )}
@@ -736,7 +736,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                       filed in QuickBooks.
                     </div>
                   )}
-                  <div className="text-silver/60 mt-1.5">
+                  <div className="text-silver/70 mt-1.5">
                     Alto did not pull funds back from associates. Recover
                     disbursed amounts out-of-band or via amendment + next-run
                     deduction.
@@ -754,7 +754,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                   </div>
                   {selected.amendmentReason && (
                     <div className="text-silver mt-1">
-                      <span className="text-silver/60">Reason: </span>
+                      <span className="text-silver/70">Reason: </span>
                       {selected.amendmentReason}
                     </div>
                   )}
@@ -809,7 +809,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
               {selected.items.length > 0 && (
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <div className="text-[10px] uppercase tracking-widest text-silver/50">
+                    <div className="text-[10px] uppercase tracking-widest text-silver/70">
                       Paystubs ({selected.items.length})
                     </div>
                     {selected.items.some((it) => it.status === 'HELD') && (
@@ -838,7 +838,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
 
               {(selected.qboJournalEntryId || selected.qboSyncError) && (
                 <div className="mt-5 rounded border border-silver/15 bg-black/30 p-3 text-xs">
-                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-silver/50 mb-1.5">
+                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-silver/70 mb-1.5">
                     <LinkIcon className="h-3 w-3" />
                     QuickBooks sync
                   </div>
@@ -1259,8 +1259,8 @@ function PayrollHero({
             )}
           </div>
         ) : (
-          <div className="flex items-center gap-3 text-silver/60 text-sm">
-            <CalendarDays className="h-5 w-5 text-silver/50" />
+          <div className="flex items-center gap-3 text-silver/70 text-sm">
+            <CalendarDays className="h-5 w-5 text-silver/70" />
             No active pay schedule. Create one in the <strong>Pay schedules</strong> tab to project the next run.
           </div>
         )}
@@ -1268,7 +1268,7 @@ function PayrollHero({
 
       {/* Last run snapshot. */}
       <div className="rounded-lg border border-silver/15 bg-black/30 p-5">
-        <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest text-silver/60 mb-1.5">
+        <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest text-silver/70 mb-1.5">
           <FileText className="h-3.5 w-3.5" />
           Last run
         </div>
@@ -1288,12 +1288,12 @@ function PayrollHero({
               </span>
             </div>
             <div className="mt-3">
-              <div className="text-[11px] uppercase tracking-widest text-silver/60">Net paid</div>
+              <div className="text-[11px] uppercase tracking-widest text-silver/70">Net paid</div>
               <div className="tabular-nums text-gold mt-0.5">{fmtMoney(lr.totalNet)}</div>
             </div>
           </button>
         ) : (
-          <div className="text-sm text-silver/60">
+          <div className="text-sm text-silver/70">
             No prior runs. Your first run will appear here once created.
           </div>
         )}
@@ -1360,7 +1360,7 @@ function SortableTh({
         className={cn(
           'inline-flex items-center gap-1 text-[10px] uppercase tracking-widest transition-colors',
           'focus:outline-none focus-visible:text-gold',
-          isActive ? 'text-gold' : 'text-silver/60 hover:text-silver'
+          isActive ? 'text-gold' : 'text-silver/70 hover:text-silver'
         )}
       >
         {label}
@@ -1428,7 +1428,7 @@ function RunStatusStepper({
               <span
                 className={cn(
                   'inline-flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-medium transition-colors',
-                  reached ? 'bg-gold text-black' : 'bg-silver/10 text-silver/50',
+                  reached ? 'bg-gold text-black' : 'bg-silver/10 text-silver/70',
                   current && 'ring-2 ring-gold/30 ring-offset-2 ring-offset-navy'
                 )}
               >
@@ -1437,7 +1437,7 @@ function RunStatusStepper({
               <span
                 className={cn(
                   'mt-1 text-[10px] uppercase tracking-widest text-center truncate max-w-[80px]',
-                  reached ? 'text-silver' : 'text-silver/50'
+                  reached ? 'text-silver' : 'text-silver/70'
                 )}
               >
                 {s.label}
@@ -1502,7 +1502,7 @@ function DrawerStat({
       <div
         className={cn(
           'text-[10px] uppercase tracking-widest',
-          highlight ? 'text-gold' : 'text-silver/60'
+          highlight ? 'text-gold' : 'text-silver/70'
         )}
         title={hint}
       >
@@ -1639,16 +1639,16 @@ function PaystubAdminCard({
       >
         <div className="flex items-center gap-2 min-w-0 flex-1">
           {expanded ? (
-            <ChevronDown className="h-4 w-4 text-silver/50 shrink-0" />
+            <ChevronDown className="h-4 w-4 text-silver/70 shrink-0" />
           ) : (
-            <ChevronRight className="h-4 w-4 text-silver/50 shrink-0" />
+            <ChevronRight className="h-4 w-4 text-silver/70 shrink-0" />
           )}
           <Avatar name={item.associateName ?? '—'} size="sm" />
           <div className="min-w-0">
             <div className="text-sm text-white truncate">
               {item.associateName ?? '—'}
             </div>
-            <div className="text-[11px] text-silver/50 truncate">
+            <div className="text-[11px] text-silver/70 truncate">
               {item.hoursWorked.toFixed(2)} hrs · {fmtMoney(item.hourlyRate)}/hr
               {item.taxState ? ` · ${item.taxState}` : ''}
             </div>
@@ -1661,7 +1661,7 @@ function PaystubAdminCard({
           </Badge>
         </div>
         <div className="text-right shrink-0">
-          <div className="text-[10px] uppercase tracking-widest text-silver/50">Net</div>
+          <div className="text-[10px] uppercase tracking-widest text-silver/70">Net</div>
           <div className="tabular-nums text-gold">{fmtMoney(item.netPay)}</div>
         </div>
       </button>
@@ -1698,7 +1698,7 @@ function PaystubAdminCard({
               <DrillRow label="Net pay" value={fmtMoney(item.netPay)} bold accent />
             </div>
             <div className="space-y-1">
-              <div className="text-[10px] uppercase tracking-widest text-silver/50 mb-1">
+              <div className="text-[10px] uppercase tracking-widest text-silver/70 mb-1">
                 Employer cost
               </div>
               <DrillRow
@@ -1731,7 +1731,7 @@ function PaystubAdminCard({
                 )}
                 bold
               />
-              <div className="text-[10px] uppercase tracking-widest text-silver/50 mt-3 mb-1">
+              <div className="text-[10px] uppercase tracking-widest text-silver/70 mt-3 mb-1">
                 YTD (before this run)
               </div>
               <DrillRow
@@ -1753,7 +1753,7 @@ function PaystubAdminCard({
             </div>
           )}
           {item.disbursementRef && (
-            <div className="text-silver/60">
+            <div className="text-silver/70">
               Disbursement ref:{' '}
               <span className="font-mono text-silver">{item.disbursementRef}</span>
             </div>
@@ -1795,7 +1795,7 @@ function DrillRow({
 }) {
   return (
     <div className="flex items-center justify-between gap-2">
-      <span className={cn(muted ? 'text-silver/50' : 'text-silver/70')}>{label}</span>
+      <span className={cn(muted ? 'text-silver/70' : 'text-silver/70')}>{label}</span>
       <span
         className={cn(
           'tabular-nums',
@@ -1822,7 +1822,7 @@ function HeroStat({
 }) {
   return (
     <div>
-      <div className="flex items-center gap-1 text-[10px] uppercase tracking-widest text-silver/50">
+      <div className="flex items-center gap-1 text-[10px] uppercase tracking-widest text-silver/70">
         {icon}
         {label}
       </div>

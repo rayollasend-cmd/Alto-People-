@@ -52,7 +52,7 @@ export class GlobalErrorBoundary extends Component<{ children: ReactNode }, Stat
             usually fixes it.
           </p>
           {requestId && (
-            <p className="text-xs text-silver/60 font-mono">
+            <p className="text-xs text-silver/70 font-mono">
               Trace: {requestId}
             </p>
           )}

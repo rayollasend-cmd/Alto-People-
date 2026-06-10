@@ -169,7 +169,7 @@ export function MonthCalendarView({
               key={d}
               className={cn(
                 'px-2 py-2 text-[10px] uppercase tracking-wider text-silver border-r border-navy-secondary last:border-r-0',
-                (i === 5 || i === 6) && 'text-silver/60'
+                (i === 5 || i === 6) && 'text-silver/70'
               )}
             >
               {d}
@@ -273,7 +273,7 @@ function SummaryStat({
   return (
     <div className="inline-flex items-baseline gap-1">
       <span className={cn('font-semibold tabular-nums', valueCx)}>{value}</span>
-      <span className="text-[10px] uppercase tracking-wider text-silver/60">
+      <span className="text-[10px] uppercase tracking-wider text-silver/70">
         {label}
       </span>
     </div>
@@ -461,7 +461,7 @@ function MonthShiftChip({
             <div className="text-silver/80">{shift.clientName}</div>
           )}
           {shift.location && (
-            <div className="text-silver/60">{shift.location}</div>
+            <div className="text-silver/70">{shift.location}</div>
           )}
           <div className="pt-0.5 flex items-center gap-2">
             <span
@@ -560,7 +560,7 @@ function DayDetailDialog({
                   </div>
                   <div className="text-xs text-silver/80 mt-0.5">
                     {s.assignedAssociateName ?? (
-                      <span className="italic text-silver/50">unassigned</span>
+                      <span className="italic text-silver/70">unassigned</span>
                     )}
                   </div>
                 </button>
@@ -650,7 +650,7 @@ const STATUS_CHIP_TONE: Record<
   CANCELLED: {
     bg: 'bg-alert/10',
     border: 'border-alert/60',
-    text: 'text-silver/60 line-through',
+    text: 'text-silver/70 line-through',
     time: 'text-alert/70',
     initials: 'text-alert/70',
     hover: 'hover:bg-alert/15',

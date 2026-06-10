@@ -135,7 +135,7 @@ export function PayrollYtd() {
                 <TableBody>
                   {filtered.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={10} className="text-center text-silver/50">
+                      <TableCell colSpan={10} className="text-center text-silver/70">
                         {q
                           ? 'No matches.'
                           : `No disbursed paystubs for ${year} yet.`}
@@ -151,7 +151,7 @@ export function PayrollYtd() {
                         >
                           {r.firstName} {r.lastName}
                         </Link>
-                        <div className="text-xs text-silver/50">{r.email}</div>
+                        <div className="text-xs text-silver/70">{r.email}</div>
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
                         {r.paystubCount}
@@ -183,7 +183,7 @@ export function PayrollYtd() {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-[10px] uppercase tracking-widest text-silver/50">{label}</div>
+      <div className="text-[10px] uppercase tracking-widest text-silver/70">{label}</div>
       <div className="text-sm text-silver tabular-nums">{value}</div>
     </div>
   );

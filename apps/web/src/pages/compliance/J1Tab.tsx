@@ -161,7 +161,7 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
                       <div className="sm:hidden text-[11px] text-silver/70 truncate">
                         {p.country}
                       </div>
-                      <div className="md:hidden text-[10px] text-silver/60 tabular-nums">
+                      <div className="md:hidden text-[10px] text-silver/70 tabular-nums">
                         {p.programStartDate} → {p.programEndDate}
                       </div>
                     </div>

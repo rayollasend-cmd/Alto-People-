@@ -455,7 +455,7 @@ function PreviewStateBanner({
   }
   if (emptyMessage) {
     return (
-      <div className="rounded border border-silver/15 bg-black/30 p-3 text-xs text-silver/60">
+      <div className="rounded border border-silver/15 bg-black/30 p-3 text-xs text-silver/70">
         {emptyMessage}
       </div>
     );
@@ -489,7 +489,7 @@ function ExceptionStrip({
   const [open, setOpen] = useState(false);
   if (loading) {
     return (
-      <div className="flex items-center gap-2 text-[11px] text-silver/60 py-2">
+      <div className="flex items-center gap-2 text-[11px] text-silver/70 py-2">
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
         Checking pre-flight exceptions…
       </div>
@@ -526,12 +526,12 @@ function ExceptionStrip({
               ? `${blocking} blocking ${blocking === 1 ? 'issue' : 'issues'}`
               : `${exceptions.exceptions.length} ${exceptions.exceptions.length === 1 ? 'issue' : 'issues'} to review`}
           </span>
-          <span className="text-silver/60">
+          <span className="text-silver/70">
             {warning > 0 && ` · ${warning} warning${warning === 1 ? '' : 's'}`}
             {info > 0 && ` · ${info} info`}
           </span>
         </span>
-        {open ? <ChevronDown className="h-4 w-4 text-silver/60" /> : <ChevronRight className="h-4 w-4 text-silver/60" />}
+        {open ? <ChevronDown className="h-4 w-4 text-silver/70" /> : <ChevronRight className="h-4 w-4 text-silver/70" />}
       </button>
       {open && (
         <ul className="border-t border-silver/10 divide-y divide-silver/5 max-h-56 overflow-y-auto">
@@ -563,7 +563,7 @@ function ExceptionStrip({
                   Fix <ExternalLink className="h-2.5 w-2.5" />
                 </Link>
               </div>
-              <div className="text-silver/60 mt-0.5 ml-4">{ex.message}</div>
+              <div className="text-silver/70 mt-0.5 ml-4">{ex.message}</div>
             </li>
           ))}
         </ul>
@@ -635,13 +635,13 @@ function PaycheckCard({
       >
         <div className="flex items-center gap-2 min-w-0 flex-1">
           {expanded ? (
-            <ChevronDown className="h-4 w-4 text-silver/50 shrink-0" />
+            <ChevronDown className="h-4 w-4 text-silver/70 shrink-0" />
           ) : (
-            <ChevronRight className="h-4 w-4 text-silver/50 shrink-0" />
+            <ChevronRight className="h-4 w-4 text-silver/70 shrink-0" />
           )}
           <div className="min-w-0">
             <div className="text-sm text-white truncate">{item.associateName}</div>
-            <div className="text-[11px] text-silver/50 truncate">
+            <div className="text-[11px] text-silver/70 truncate">
               {item.taxState ?? '—'} · {item.payFrequency.toLowerCase()}
               {item.overtimeHours > 0 && (
                 <> · <span className="text-gold">{item.overtimeHours.toFixed(1)}h OT</span></>
@@ -687,7 +687,7 @@ function PaycheckCard({
           )}
           {exceptions.length > 0 && (
             <div className="border-t border-silver/10 pt-2">
-              <div className="text-[10px] uppercase tracking-widest text-silver/50 mb-1">
+              <div className="text-[10px] uppercase tracking-widest text-silver/70 mb-1">
                 Exceptions
               </div>
               <ul className="space-y-1">
@@ -699,7 +699,7 @@ function PaycheckCard({
                     <SeverityDot severity={e.severity} />
                     <div>
                       <span className="text-silver">{EXCEPTION_COPY[e.kind].label}</span>
-                      <span className="text-silver/60"> — {e.message}</span>
+                      <span className="text-silver/70"> — {e.message}</span>
                     </div>
                   </li>
                 ))}
@@ -723,7 +723,7 @@ function CardStat({
 }) {
   return (
     <div>
-      <div className="text-[10px] uppercase tracking-widest text-silver/50">
+      <div className="text-[10px] uppercase tracking-widest text-silver/70">
         {label}
       </div>
       <div className={cn('tabular-nums text-sm', highlight ? 'text-gold' : 'text-white')}>
@@ -745,7 +745,7 @@ function InfoTip({ text }: { text: string }) {
       <TooltipTrigger asChild>
         <button
           type="button"
-          className="inline-flex items-center justify-center text-silver/50 hover:text-silver focus:outline-none focus-visible:text-gold align-middle ml-1"
+          className="inline-flex items-center justify-center text-silver/70 hover:text-silver focus:outline-none focus-visible:text-gold align-middle ml-1"
           aria-label={`What is this?`}
         >
           <HelpCircle className="h-3 w-3" />
@@ -893,7 +893,7 @@ function DrillRow({
 }) {
   return (
     <div className="flex justify-between gap-2">
-      <span className="text-silver/60 inline-flex items-center">{label}</span>
+      <span className="text-silver/70 inline-flex items-center">{label}</span>
       <span
         className={cn(
           'tabular-nums',
@@ -935,7 +935,7 @@ function Step2({
       <PreviewStateBanner loading={loading} error={error} onRetry={onRetry} />
 
       {preview && preview.items.length === 0 && (
-        <div className="rounded border border-silver/15 bg-black/30 p-3 text-xs text-silver/60">
+        <div className="rounded border border-silver/15 bg-black/30 p-3 text-xs text-silver/70">
           No approved time entries fell inside this period. Either the period
           is wrong or no one's time is approved yet.
         </div>
@@ -1021,7 +1021,7 @@ function Step3({
             ))}
           </div>
 
-          <p className="text-[10px] text-silver/50">
+          <p className="text-[10px] text-silver/70">
             Withholding tables: IRS Pub 15-T 2024. State tables include CA, NY,
             NJ, GA, OH, VA, MN (bracketed) and 11 flat-rate states. Long-tail
             states use a 4% conservative fallback.
@@ -1030,7 +1030,7 @@ function Step3({
       )}
 
       {schedule && (
-        <p className="text-xs text-silver/50">
+        <p className="text-xs text-silver/70">
           Pay date will land on{' '}
           <strong className="text-silver/80">{schedule.nextPayDate}</strong>{' '}
           ({schedule.payDateOffsetDays} day offset from period end).
@@ -1043,7 +1043,7 @@ function Step3({
 function Stat({ label, value, highlight }: { label: React.ReactNode; value: string; highlight?: boolean }) {
   return (
     <div className={cn('rounded border border-silver/15 bg-black/30 px-3 py-2', highlight && 'border-gold/40 bg-gold/5')}>
-      <div className={cn('text-[10px] uppercase tracking-widest inline-flex items-center', highlight ? 'text-gold' : 'text-silver/50')}>
+      <div className={cn('text-[10px] uppercase tracking-widest inline-flex items-center', highlight ? 'text-gold' : 'text-silver/70')}>
         {label}
       </div>
       <div className={cn('mt-0.5 tabular-nums', highlight ? 'text-gold' : 'text-white')}>{value}</div>
@@ -1119,35 +1119,35 @@ function Step4({
           </div>
           <dl className="grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-4">
             <div>
-              <dt className="text-silver/60">Federal income tax</dt>
+              <dt className="text-silver/70">Federal income tax</dt>
               <dd className="text-silver">{fmtMoney(taxBreakdown.fit)}</dd>
             </div>
             <div>
-              <dt className="text-silver/60">FICA (6.2%)</dt>
+              <dt className="text-silver/70">FICA (6.2%)</dt>
               <dd className="text-silver">{fmtMoney(taxBreakdown.fica)}</dd>
             </div>
             <div>
-              <dt className="text-silver/60">Medicare (1.45%)</dt>
+              <dt className="text-silver/70">Medicare (1.45%)</dt>
               <dd className="text-silver">{fmtMoney(taxBreakdown.medicare)}</dd>
             </div>
             <div>
-              <dt className="text-silver/60">State income tax</dt>
+              <dt className="text-silver/70">State income tax</dt>
               <dd className="text-silver">{fmtMoney(taxBreakdown.sit)}</dd>
             </div>
             <div>
-              <dt className="text-silver/60">Pre-tax deductions</dt>
+              <dt className="text-silver/70">Pre-tax deductions</dt>
               <dd className="text-silver">{fmtMoney(taxBreakdown.preTax)}</dd>
             </div>
             <div>
-              <dt className="text-silver/60">Post-tax deductions</dt>
+              <dt className="text-silver/70">Post-tax deductions</dt>
               <dd className="text-silver">{fmtMoney(taxBreakdown.postTax)}</dd>
             </div>
             <div>
-              <dt className="text-silver/60">Garnishments</dt>
+              <dt className="text-silver/70">Garnishments</dt>
               <dd className="text-silver">{fmtMoney(preview.totals.totalGarnishments)}</dd>
             </div>
             <div>
-              <dt className="text-silver/60">Total employee tax</dt>
+              <dt className="text-silver/70">Total employee tax</dt>
               <dd className="text-silver font-semibold">
                 {fmtMoney(preview.totals.totalEmployeeTax)}
               </dd>

@@ -176,7 +176,7 @@ export function DayCalendarView({
               {hourLabels.map((h, i) => (
                 <div
                   key={h}
-                  className="absolute left-0 right-0 px-2 text-[10px] text-silver/60 tabular-nums"
+                  className="absolute left-0 right-0 px-2 text-[10px] text-silver/70 tabular-nums"
                   style={{ top: i * PX_PER_HOUR - 6 }}
                 >
                   {h % 12 === 0 ? 12 : h % 12}
@@ -214,7 +214,7 @@ export function DayCalendarView({
 
           {/* Associate columns */}
           {visibleAssociates.length === 0 ? (
-            <div className="flex-1 px-4 py-6 text-center text-sm text-silver/60">
+            <div className="flex-1 px-4 py-6 text-center text-sm text-silver/70">
               No associates have shifts today.
             </div>
           ) : (
@@ -498,7 +498,7 @@ function DayShiftChip({
       <div
         {...listeners}
         {...attributes}
-        className="absolute left-1.5 top-1 text-silver/50 hover:text-gold cursor-grab active:cursor-grabbing no-print"
+        className="absolute left-1.5 top-1 text-silver/70 hover:text-gold cursor-grab active:cursor-grabbing no-print"
         aria-label={`Move ${shift.position}`}
       >
         <GripVertical className="h-3 w-3" />

@@ -151,7 +151,7 @@ export function AssociateTimeOffView() {
                     )}
                     {r.reviewerNote && (
                       <div className="text-xs text-silver mt-1">
-                        <span className="text-silver/60">Note from {r.reviewerEmail ?? 'HR'}:</span>{' '}
+                        <span className="text-silver/70">Note from {r.reviewerEmail ?? 'HR'}:</span>{' '}
                         {r.reviewerNote}
                       </div>
                     )}

@@ -152,7 +152,7 @@ function Column({
       </div>
       <div className="p-2 min-h-[120px] max-h-[calc(100vh-22rem)] overflow-y-auto space-y-2">
         {candidates.length === 0 ? (
-          <div className="text-[11px] text-silver/50 text-center py-6 select-none">
+          <div className="text-[11px] text-silver/70 text-center py-6 select-none">
             Drop here
           </div>
         ) : (
@@ -218,7 +218,7 @@ function CandidateCard({
         </div>
       </div>
       <div className="mt-2 flex items-center justify-between gap-2">
-        <span className="text-[10px] uppercase tracking-wider text-silver/60 truncate">
+        <span className="text-[10px] uppercase tracking-wider text-silver/70 truncate">
           {candidate.source ?? 'manual'}
         </span>
         <div className="flex items-center gap-1.5 shrink-0">

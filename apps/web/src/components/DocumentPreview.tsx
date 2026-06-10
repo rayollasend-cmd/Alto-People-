@@ -68,13 +68,13 @@ export function DocumentPreview({ doc, onOpenChange, actions }: DocumentPreviewP
                   <span className="uppercase tracking-wider">
                     {doc.kind.replace(/_/g, ' ')}
                   </span>
-                  <span className="text-silver/50">·</span>
+                  <span className="text-silver/70">·</span>
                   <span>{fmtSize(doc.size)}</span>
-                  <span className="text-silver/50">·</span>
+                  <span className="text-silver/70">·</span>
                   <span>{doc.mimeType}</span>
                   {doc.associateName && (
                     <>
-                      <span className="text-silver/50">·</span>
+                      <span className="text-silver/70">·</span>
                       <span>{doc.associateName}</span>
                     </>
                   )}
@@ -130,7 +130,7 @@ export function DocumentPreview({ doc, onOpenChange, actions }: DocumentPreviewP
                     </a>
                   </>
                 ) : (
-                  <span className="text-xs text-silver/50">
+                  <span className="text-xs text-silver/70">
                     Preview / download disabled — file missing on server
                   </span>
                 )}
@@ -183,7 +183,7 @@ function PreviewBody({ doc }: { doc: DocumentRecord }) {
   }
   return (
     <div className="text-center px-8 max-w-md">
-      <FileWarning className="h-10 w-10 text-silver/60 mx-auto mb-3" />
+      <FileWarning className="h-10 w-10 text-silver/70 mx-auto mb-3" />
       <p className="text-white font-medium">Preview not available</p>
       <p className="text-sm text-silver mt-1">
         This file type ({doc.mimeType}) can't be previewed in-browser. Download

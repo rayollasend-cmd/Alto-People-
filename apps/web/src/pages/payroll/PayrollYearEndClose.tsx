@@ -129,7 +129,7 @@ export function PayrollYearEndClose() {
                     {c.done ? (
                       <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-success" />
                     ) : (
-                      <Circle className="mt-0.5 h-5 w-5 shrink-0 text-silver/50" />
+                      <Circle className="mt-0.5 h-5 w-5 shrink-0 text-silver/70" />
                     )}
                     <div className="flex-1">
                       <div
@@ -164,7 +164,7 @@ export function PayrollYearEndClose() {
                   {distributedConfirmed ? (
                     <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-success" />
                   ) : (
-                    <Circle className="mt-0.5 h-5 w-5 shrink-0 text-silver/50" />
+                    <Circle className="mt-0.5 h-5 w-5 shrink-0 text-silver/70" />
                   )}
                   <div className="flex-1">
                     <div

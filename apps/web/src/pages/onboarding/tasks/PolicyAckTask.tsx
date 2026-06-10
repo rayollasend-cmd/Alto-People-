@@ -179,7 +179,7 @@ function PolicyRow({
         ) : (
           <ChevronDown
             className={cn(
-              'h-4 w-4 text-silver/60 transition-transform shrink-0',
+              'h-4 w-4 text-silver/70 transition-transform shrink-0',
               expanded && 'rotate-180'
             )}
           />
@@ -268,7 +268,7 @@ function PolicyBody({
           <span
             className={cn(
               'text-xs flex items-center gap-1.5',
-              scrolledToEnd ? 'text-success' : 'text-silver/60'
+              scrolledToEnd ? 'text-success' : 'text-silver/70'
             )}
           >
             {scrolledToEnd ? (

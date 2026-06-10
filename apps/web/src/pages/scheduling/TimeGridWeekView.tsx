@@ -315,7 +315,7 @@ export function TimeGridWeekView({
 
           {/* Associate rows */}
           {visibleAssociates.length === 0 && (
-            <div className="col-span-9 px-4 py-6 text-center text-sm text-silver/60">
+            <div className="col-span-9 px-4 py-6 text-center text-sm text-silver/70">
               No associates have shifts this week.
             </div>
           )}
@@ -467,7 +467,7 @@ function HourGutter() {
       {hours.map((h, i) => (
         <div
           key={h}
-          className="absolute right-1.5 text-[9px] text-silver/50 tabular-nums"
+          className="absolute right-1.5 text-[9px] text-silver/70 tabular-nums"
           style={{ top: i * PX_PER_HOUR - 5 }}
         >
           {i === 0 || i === hours.length - 1

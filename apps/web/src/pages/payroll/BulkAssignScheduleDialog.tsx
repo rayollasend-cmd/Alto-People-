@@ -87,7 +87,7 @@ export function BulkAssignScheduleDialog({ open, schedule, onOpenChange, onSaved
 
         <div className="space-y-3">
           <div className="relative">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/50" />
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/70" />
             <Input
               value={q}
               onChange={(e) => setQ(e.target.value)}
@@ -97,10 +97,10 @@ export function BulkAssignScheduleDialog({ open, schedule, onOpenChange, onSaved
           </div>
           <div className="max-h-72 overflow-y-auto rounded border border-silver/20 bg-black/20">
             {!people && (
-              <div className="p-4 text-sm text-silver/60">Loading directory…</div>
+              <div className="p-4 text-sm text-silver/70">Loading directory…</div>
             )}
             {people && filtered.length === 0 && (
-              <div className="p-4 text-sm text-silver/60">No matching associates.</div>
+              <div className="p-4 text-sm text-silver/70">No matching associates.</div>
             )}
             {filtered.map((p) => (
               <label
@@ -117,7 +117,7 @@ export function BulkAssignScheduleDialog({ open, schedule, onOpenChange, onSaved
                   <span className="text-silver">
                     {p.firstName} {p.lastName}
                   </span>
-                  <span className="ml-2 text-xs text-silver/50">{p.email}</span>
+                  <span className="ml-2 text-xs text-silver/70">{p.email}</span>
                 </span>
                 {p.workplaceClientName && (
                   <span className="text-[10px] uppercase tracking-wide text-silver/40">
@@ -127,7 +127,7 @@ export function BulkAssignScheduleDialog({ open, schedule, onOpenChange, onSaved
               </label>
             ))}
           </div>
-          <p className="text-xs text-silver/60">
+          <p className="text-xs text-silver/70">
             <Users className="mr-1 inline h-3 w-3" />
             {selected.size} selected
           </p>

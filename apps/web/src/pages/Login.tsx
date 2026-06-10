@@ -130,7 +130,7 @@ export function Login() {
                 {(p) => (
                   <div className="relative">
                     <Mail
-                      className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/60 pointer-events-none"
+                      className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/70 pointer-events-none"
                       aria-hidden="true"
                     />
                     <Input
@@ -158,7 +158,7 @@ export function Login() {
                   </Link>
                 </div>
                 <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/60 pointer-events-none" />
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/70 pointer-events-none" />
                   <Input
                     id="login-password"
                     type="password"
@@ -186,13 +186,13 @@ export function Login() {
               {submitting ? 'Signing in…' : 'Sign in'}
             </Button>
 
-            <div className="mt-6 flex items-center justify-center gap-1.5 text-[10px] uppercase tracking-widest text-silver/60">
+            <div className="mt-6 flex items-center justify-center gap-1.5 text-[10px] uppercase tracking-widest text-silver/70">
               <ShieldCheck className="h-3 w-3" aria-hidden="true" />
               Secured by Alto HR
             </div>
 
             {import.meta.env.DEV && (
-              <p className="text-center text-xs text-silver/60 mt-4">
+              <p className="text-center text-xs text-silver/70 mt-4">
                 Dev seed: admin@altohr.com / alto-admin-dev
               </p>
             )}
@@ -274,14 +274,14 @@ export function Login() {
               </button>
             </div>
 
-            <div className="mt-6 flex items-center justify-center gap-1.5 text-[10px] uppercase tracking-widest text-silver/60">
+            <div className="mt-6 flex items-center justify-center gap-1.5 text-[10px] uppercase tracking-widest text-silver/70">
               <ShieldCheck className="h-3 w-3" aria-hidden="true" />
               Secured by Alto HR
             </div>
           </form>
         )}
 
-        <p className="text-center text-xs text-silver/60 mt-6">
+        <p className="text-center text-xs text-silver/70 mt-6">
           Alto Etho LLC d/b/a Alto HR · v0.1.0
         </p>
       </div>

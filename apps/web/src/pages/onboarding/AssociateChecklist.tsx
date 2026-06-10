@@ -253,7 +253,7 @@ const STATUS_TONE: Record<
   },
   PENDING: {
     icon: Circle,
-    iconCx: 'text-silver/60',
+    iconCx: 'text-silver/70',
     border: 'border-navy-secondary',
     bg: 'bg-navy',
     label: 'Pending',
@@ -322,7 +322,7 @@ function AssociateTaskRow({ task, applicationId, isNext }: AssociateTaskRowProps
             <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
           </span>
         ) : (
-          <span className="text-[10px] uppercase tracking-wider text-silver/60 px-1.5 py-0.5 rounded bg-silver/10">
+          <span className="text-[10px] uppercase tracking-wider text-silver/70 px-1.5 py-0.5 rounded bg-silver/10">
             Coming soon
           </span>
         )}

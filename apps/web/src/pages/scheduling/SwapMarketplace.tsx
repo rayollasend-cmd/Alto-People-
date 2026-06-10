@@ -21,7 +21,7 @@ const STATUS_CLS: Record<ShiftSwapStatus, string> = {
   PEER_DECLINED: 'text-alert',
   MANAGER_APPROVED: 'text-success',
   MANAGER_REJECTED: 'text-alert',
-  CANCELLED: 'text-silver/60',
+  CANCELLED: 'text-silver/70',
 };
 
 export function SwapMarketplace() {

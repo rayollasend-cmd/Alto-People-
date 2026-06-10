@@ -394,7 +394,7 @@ export function WeekCalendarView({
 
           {/* ===== Associate rows ===== */}
           {visibleAssociates.length === 0 && (
-            <div className="col-span-8 px-4 py-6 text-center text-sm text-silver/60">
+            <div className="col-span-8 px-4 py-6 text-center text-sm text-silver/70">
               No associates have shifts this week.
             </div>
           )}
@@ -446,15 +446,15 @@ export function WeekCalendarView({
                 )}
               >
                 {count === 0 ? (
-                  <div className="text-[11px] text-silver/50">—</div>
+                  <div className="text-[11px] text-silver/70">—</div>
                 ) : (
                   <div className="flex items-baseline gap-2 text-[11px] tabular-nums">
                     <span className="text-white font-medium">{count}</span>
-                    <span className="text-silver/60">·</span>
+                    <span className="text-silver/70">·</span>
                     <span className="text-silver">{hrs.toFixed(1)}h</span>
                     {cost > 0 && (
                       <>
-                        <span className="text-silver/60">·</span>
+                        <span className="text-silver/70">·</span>
                         <span className="text-silver">{formatCost(cost)}</span>
                       </>
                     )}
@@ -534,7 +534,7 @@ function Row({
             {associate.firstName} {associate.lastName}
           </div>
           <div className="text-[10px] tabular-nums">
-            <span className={overTime ? 'text-warning' : 'text-silver/60'}>
+            <span className={overTime ? 'text-warning' : 'text-silver/70'}>
               {(minutes / 60).toFixed(1)}h
               {overTime && ' • OT'}
             </span>
@@ -684,7 +684,7 @@ function Cell({
             <button
               type="button"
               onClick={onCreate}
-              className="text-[10px] text-silver/50 hover:text-gold inline-flex items-center justify-center gap-1 mt-auto opacity-60 group-hover:opacity-100 transition-opacity"
+              className="text-[10px] text-silver/70 hover:text-gold inline-flex items-center justify-center gap-1 mt-auto opacity-60 group-hover:opacity-100 transition-opacity"
               aria-label="Add another shift"
             >
               <Plus className="h-3 w-3" />
@@ -828,7 +828,7 @@ function ShiftChip({
       <div
         {...listeners}
         {...attributes}
-        className="absolute left-1.5 top-1.5 text-silver/50 hover:text-gold cursor-grab active:cursor-grabbing no-print"
+        className="absolute left-1.5 top-1.5 text-silver/70 hover:text-gold cursor-grab active:cursor-grabbing no-print"
         aria-label={`Move ${shift.position}`}
       >
         <GripVertical className="h-3 w-3" />

@@ -370,7 +370,7 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
                   </div>
                 ))}
                 {invalidRows.length > 8 && (
-                  <div className="text-silver/60 mt-1">
+                  <div className="text-silver/70 mt-1">
                     + {invalidRows.length - 8} more invalid rows
                   </div>
                 )}
@@ -442,7 +442,7 @@ function BulkResultsPanel({ results }: { results: BulkInviteResultRow[] }) {
                 </div>
               )}
               {r.ok && r.inviteUrl && (
-                <div className="text-silver/60 mt-0.5 truncate font-mono">
+                <div className="text-silver/70 mt-0.5 truncate font-mono">
                   {r.inviteUrl}
                 </div>
               )}

@@ -341,7 +341,7 @@ function OnboardingTile({ refreshEpoch }: { refreshEpoch: number }) {
                         {pct}%
                       </span>
                       <PctBar pct={pct} severity={pctSeverity(pct)} className="w-16 sm:w-24" />
-                      <ChevronRight className="h-3.5 w-3.5 text-silver/60 group-hover:text-silver" />
+                      <ChevronRight className="h-3.5 w-3.5 text-silver/70 group-hover:text-silver" />
                     </div>
                   </button>
                 );
@@ -918,7 +918,7 @@ function TrainingTile({ refreshEpoch }: { refreshEpoch: number }) {
                         {pct}%
                       </span>
                       <PctBar pct={pct} severity={pctSeverity(pct)} />
-                      <ChevronRight className="h-3.5 w-3.5 text-silver/60 group-hover:text-silver" />
+                      <ChevronRight className="h-3.5 w-3.5 text-silver/70 group-hover:text-silver" />
                     </div>
                   ) : (
                     <Badge variant="outline">

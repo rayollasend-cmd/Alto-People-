@@ -629,7 +629,7 @@ function EmployeeNumberCell({ value }: { value: string | null }) {
   if (!value) {
     return (
       <span
-        className="text-silver/50"
+        className="text-silver/70"
         title="Issued before codes were stored — rotate to recover the number."
       >
         —

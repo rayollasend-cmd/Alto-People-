@@ -157,7 +157,7 @@ export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
         <span className="text-sm text-white tabular-nums">
           {selected.length} selected
         </span>
-        <span className="text-silver/50">·</span>
+        <span className="text-silver/70">·</span>
         <Button
           variant="primary"
           onClick={onPublish}
@@ -196,11 +196,11 @@ export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
           <Trash2 className="h-3.5 w-3.5" />
           Cancel
         </Button>
-        <span className="text-silver/50">·</span>
+        <span className="text-silver/70">·</span>
         <button
           type="button"
           onClick={onClear}
-          className="text-silver/60 hover:text-silver p-1"
+          className="text-silver/70 hover:text-silver p-1"
           aria-label="Clear selection"
         >
           <X className="h-4 w-4" />

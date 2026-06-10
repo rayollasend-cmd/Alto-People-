@@ -338,7 +338,7 @@ export function TemplateEditor() {
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-xs uppercase tracking-widest text-silver">
           Checklist tasks{' '}
-          <span className="ml-1 tabular-nums text-silver/60">{tasks.length}</span>
+          <span className="ml-1 tabular-nums text-silver/70">{tasks.length}</span>
         </h2>
         <Button variant="secondary" size="sm" onClick={addTask}>
           <Plus className="h-3.5 w-3.5" />
@@ -350,7 +350,7 @@ export function TemplateEditor() {
         {tasks.map((t, i) => (
           <Card key={t._key} className="p-3">
             <div className="flex items-start gap-2.5">
-              <div className="flex flex-col items-center pt-1.5 text-silver/60">
+              <div className="flex flex-col items-center pt-1.5 text-silver/70">
                 <button
                   type="button"
                   onClick={() => moveTask(i, -1)}

@@ -144,7 +144,7 @@ export function PaySchedulesView({ canProcess }: Props) {
               <CardHeader className="flex flex-row items-start justify-between gap-2 pb-3">
                 <div className="min-w-0">
                   <CardTitle className="text-base truncate">{s.name}</CardTitle>
-                  <div className="text-xs text-silver/60 mt-0.5">
+                  <div className="text-xs text-silver/70 mt-0.5">
                     {FREQ_LABEL[s.frequency]} · {FREQ_HINT[s.frequency]}
                   </div>
                 </div>
@@ -193,7 +193,7 @@ export function PaySchedulesView({ canProcess }: Props) {
                 </MetaRow>
                 <MetaRow label="Next pay date">
                   <span className="text-gold">{s.nextPayDate}</span>
-                  <span className="text-silver/50 ml-1">
+                  <span className="text-silver/70 ml-1">
                     (+{s.payDateOffsetDays}d after period end)
                   </span>
                 </MetaRow>
@@ -204,7 +204,7 @@ export function PaySchedulesView({ canProcess }: Props) {
                   </span>
                 </MetaRow>
                 {!s.isActive && (
-                  <div className="text-[10px] uppercase tracking-widest text-silver/50 mt-2">
+                  <div className="text-[10px] uppercase tracking-widest text-silver/70 mt-2">
                     Inactive
                   </div>
                 )}
@@ -256,7 +256,7 @@ export function PaySchedulesView({ canProcess }: Props) {
 function MetaRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-baseline justify-between gap-3">
-      <span className="text-silver/50 text-[10px] uppercase tracking-widest">{label}</span>
+      <span className="text-silver/70 text-[10px] uppercase tracking-widest">{label}</span>
       <span className="text-silver tabular-nums">{children}</span>
     </div>
   );

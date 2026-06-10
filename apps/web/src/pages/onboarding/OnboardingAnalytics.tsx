@@ -188,7 +188,7 @@ export function OnboardingAnalytics() {
                       >
                         {count}
                       </div>
-                      <div className="text-[10px] text-silver/60 tabular-nums mt-0.5">
+                      <div className="text-[10px] text-silver/70 tabular-nums mt-0.5">
                         {pct.toFixed(0)}%
                       </div>
                     </div>
@@ -324,7 +324,7 @@ function KpiCard({ icon: Icon, label, value, hint, tone }: KpiCardProps) {
         <div className="text-[10px] uppercase tracking-wider text-silver">
           {label}
         </div>
-        <Icon className="h-3.5 w-3.5 text-silver/60" />
+        <Icon className="h-3.5 w-3.5 text-silver/70" />
       </div>
       <div className={cn('text-3xl font-display tabular-nums', TONE_TEXT[tone])}>
         {value}
