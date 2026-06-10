@@ -357,7 +357,7 @@ function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
       return <div className="h-12 border-t border-navy-secondary" />;
     }
     return (
-      <div className="px-4 py-3 border-t border-navy-secondary text-[10px] uppercase tracking-widest text-silver/50">
+      <div className="px-4 py-3 border-t border-navy-secondary text-[10px] uppercase tracking-widest text-silver/70">
         Alto Etho LLC · v0.1.0
       </div>
     );

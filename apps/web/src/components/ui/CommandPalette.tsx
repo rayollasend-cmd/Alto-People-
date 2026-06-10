@@ -150,7 +150,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
                 <Command.Group
                   key={group}
                   heading={group}
-                  className="text-[10px] uppercase tracking-widest text-silver/60 px-2 pt-2 pb-1"
+                  className="text-[10px] uppercase tracking-widest text-silver/80 px-2 pt-2 pb-1"
                 >
                   {groupItems.map((item) => (
                     <Command.Item
@@ -177,7 +177,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
               );
             })}
           </Command.List>
-          <div className="flex items-center justify-between border-t border-navy-secondary px-3 py-2 text-[10px] text-silver/60">
+          <div className="flex items-center justify-between border-t border-navy-secondary px-3 py-2 text-[10px] text-silver/80">
             <div className="inline-flex items-center gap-1.5">
               <Briefcase className="h-3 w-3" aria-hidden="true" />
               Alto People

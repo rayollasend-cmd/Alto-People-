@@ -160,7 +160,7 @@ export function NotificationsBell() {
             <button
               type="button"
               onClick={onMarkAllRead}
-              className="inline-flex items-center gap-1 text-[10px] text-gold hover:text-gold-bright"
+              className="inline-flex items-center gap-1 rounded text-[10px] text-gold hover:text-gold-bright focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
             >
               <CheckCheck className="h-3 w-3" />
               Mark all read
