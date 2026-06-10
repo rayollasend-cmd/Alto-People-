@@ -8,6 +8,8 @@ export interface DirectoryFilters {
   q?: string;
   status?: DirectoryStatus;
   clientId?: string;
+  departmentId?: string;
+  locationId?: string;
   employmentType?:
     | 'W2_EMPLOYEE'
     | 'CONTRACTOR_1099_INDIVIDUAL'
@@ -21,6 +23,8 @@ export function listDirectory(
   if (filters.q) p.set('q', filters.q);
   if (filters.status) p.set('status', filters.status);
   if (filters.clientId) p.set('clientId', filters.clientId);
+  if (filters.departmentId) p.set('departmentId', filters.departmentId);
+  if (filters.locationId) p.set('locationId', filters.locationId);
   if (filters.employmentType) p.set('employmentType', filters.employmentType);
   const qs = p.toString();
   return apiFetch<DirectoryListResponse>(`/people/directory${qs ? `?${qs}` : ''}`);

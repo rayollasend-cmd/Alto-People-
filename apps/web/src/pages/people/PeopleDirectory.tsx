@@ -61,6 +61,7 @@ import { hasCapability } from '@/lib/roles';
 import { nudgeApplicant } from '@/lib/onboardingApi';
 import {
   getAssociatePayoutMethod,
+  listDepartments,
   patchAssociateProfile,
   revealAssociatePayoutMethod,
   transferAssociate,
@@ -209,6 +210,25 @@ export function PeopleDirectory() {
     staleTime: 5 * 60_000,
   });
 
+  // Departments for the directory facet. Same long cache / silent-failure
+  // treatment as clients — the picker just falls back to "All departments".
+  const { data: departments = [] } = useQuery({
+    queryKey: ['departments', 'list'],
+    queryFn: async () => (await listDepartments()).departments,
+    staleTime: 5 * 60_000,
+  });
+
+  // Locations cascade off the selected workplace — a store-level facet only
+  // makes sense once a client is chosen. The locationId is cleared in the
+  // Workplace onChange below so it can never dangle on a different client.
+  const { data: locations = [] } = useQuery({
+    queryKey: ['client-locations', filters.clientId],
+    queryFn: async () =>
+      (await listClientLocations(filters.clientId!)).locations,
+    enabled: Boolean(filters.clientId),
+    staleTime: 5 * 60_000,
+  });
+
   // keepPreviousData makes filter/search changes show the old rows
   // (faded by isFetching) until the new ones arrive instead of flashing
   // a skeleton — much smoother on slow connections.
@@ -327,13 +347,45 @@ export function PeopleDirectory() {
             label="Workplace"
             value={filters.clientId ?? ''}
             onChange={(v) =>
-              setFilters((f) => ({ ...f, clientId: v || undefined }))
+              // Changing the workplace drops any location filter — a store
+              // from the previous client would match nothing here.
+              setFilters((f) => ({
+                ...f,
+                clientId: v || undefined,
+                locationId: undefined,
+              }))
             }
             options={[
               { value: '', label: 'All' },
               ...clients.map((c) => ({ value: c.id, label: c.name })),
             ]}
           />
+          {filters.clientId && locations.length > 0 && (
+            <FilterPicker
+              label="Location"
+              value={filters.locationId ?? ''}
+              onChange={(v) =>
+                setFilters((f) => ({ ...f, locationId: v || undefined }))
+              }
+              options={[
+                { value: '', label: 'All' },
+                ...locations.map((l) => ({ value: l.id, label: l.name })),
+              ]}
+            />
+          )}
+          {departments.length > 0 && (
+            <FilterPicker
+              label="Department"
+              value={filters.departmentId ?? ''}
+              onChange={(v) =>
+                setFilters((f) => ({ ...f, departmentId: v || undefined }))
+              }
+              options={[
+                { value: '', label: 'All' },
+                ...departments.map((d) => ({ value: d.id, label: d.name })),
+              ]}
+            />
+          )}
           <FilterPicker
             label="Employment type"
             value={filters.employmentType ?? ''}
@@ -365,12 +417,12 @@ export function PeopleDirectory() {
         <EmptyState
           icon={Users}
           title={
-            filters.q || filters.status || filters.clientId || filters.employmentType
+            filters.q || filters.status || filters.clientId || filters.departmentId || filters.locationId || filters.employmentType
               ? 'No associates match these filters'
               : 'No associates yet'
           }
           description={
-            filters.q || filters.status || filters.clientId || filters.employmentType
+            filters.q || filters.status || filters.clientId || filters.departmentId || filters.locationId || filters.employmentType
               ? 'Loosen a filter or clear the search.'
               : 'Once you invite associates through onboarding they show up here.'
           }

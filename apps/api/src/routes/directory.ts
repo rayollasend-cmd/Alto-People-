@@ -40,6 +40,8 @@ const QuerySchema = z.object({
   q: z.string().trim().max(120).optional(),
   status: z.enum(['ACTIVE', 'PENDING', 'INACTIVE']).optional(),
   clientId: z.string().uuid().optional(),
+  departmentId: z.string().uuid().optional(),
+  locationId: z.string().uuid().optional(),
   employmentType: z
     .enum(['W2_EMPLOYEE', 'CONTRACTOR_1099_INDIVIDUAL', 'CONTRACTOR_1099_BUSINESS'])
     .optional(),
@@ -69,6 +71,14 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
       where: {
         deletedAt: null,
         ...(filters.employmentType ? { employmentType: filters.employmentType } : {}),
+        ...(filters.departmentId ? { departmentId: filters.departmentId } : {}),
+        ...(filters.locationId
+          ? {
+              assignments: {
+                some: { endedAt: null, locationId: filters.locationId },
+              },
+            }
+          : {}),
         ...(filters.clientId
           ? {
               applications: {
