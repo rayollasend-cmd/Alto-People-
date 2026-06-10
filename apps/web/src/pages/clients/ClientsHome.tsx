@@ -129,6 +129,7 @@ export function ClientsHome() {
       <PageHeader
         title="Clients"
         subtitle="Configure work-site state, geofence, and per-client jobs."
+        breadcrumbs={[{ label: 'Workforce' }, { label: 'Clients' }]}
         primaryAction={
           canManage ? (
             <Button onClick={() => setShowNew(true)}>
