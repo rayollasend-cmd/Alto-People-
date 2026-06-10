@@ -60,6 +60,10 @@ export function KioskPage() {
   // failures like an expired device token that bounce to a full-page
   // error). Cleared the moment the user touches the keypad again.
   const [pinError, setPinError] = useState<string | null>(null);
+  // True while a PIN is being verified over the network. Freezes the keypad
+  // on this shared device so a second person can't start typing over an
+  // in-flight punch.
+  const [verifying, setVerifying] = useState(false);
   const [now, setNow] = useState(() => new Date());
   const [queued, setQueued] = useState<number>(() => queueSize());
   // Whether this device has a geofence — tri-state on purpose. Boot config
@@ -393,12 +397,15 @@ export function KioskPage() {
           intent={intent}
           onIntent={setIntent}
           error={pinError}
+          submitting={verifying}
           onSubmit={async () => {
             // Preflight the PIN before opening the camera. A made-up
             // code stops here instead of showing the user themselves
             // on a 5-second selfie countdown. Network failure falls
             // through so the regular offline-queue flow still works.
-            if (!token) return;
+            if (!token || verifying) return;
+            setVerifying(true);
+            try {
             const verify = (loc: { lat: number; lng: number } | null) =>
               kioskVerifyPin({
                 deviceToken: token,
@@ -449,6 +456,9 @@ export function KioskPage() {
               // Network failure → assume offline; let the user proceed
               // to selfie and the punch will land in the offline queue.
               setStage('selfie');
+            }
+            } finally {
+              setVerifying(false);
             }
           }}
           onCancel={reset}
@@ -602,6 +612,7 @@ function PinPad({
   onSubmit,
   onCancel,
   error,
+  submitting = false,
 }: {
   pin: string;
   onChange: (p: string) => void;
@@ -610,14 +621,16 @@ function PinPad({
   onSubmit: () => void;
   onCancel: () => void;
   error?: string | null;
+  submitting?: boolean;
 }) {
-  // Auto-advance once 4 digits are entered.
+  // Auto-advance once 4 digits are entered — but not while a previous
+  // verify is still in flight, so we never fire two punches.
   useEffect(() => {
-    if (pin.length === 4) {
+    if (pin.length === 4 && !submitting) {
       const t = window.setTimeout(onSubmit, 150);
       return () => clearTimeout(t);
     }
-  }, [pin, onSubmit]);
+  }, [pin, onSubmit, submitting]);
 
   // Shake the dots row whenever a new error arrives. Keyed on the
   // error string so two consecutive wrong PINs both re-trigger.
@@ -627,9 +640,11 @@ function PinPad({
   }, [error]);
 
   const press = (d: string) => {
-    if (pin.length < 4) onChange(pin + d);
+    if (!submitting && pin.length < 4) onChange(pin + d);
   };
-  const back = () => onChange(pin.slice(0, -1));
+  const back = () => {
+    if (!submitting) onChange(pin.slice(0, -1));
+  };
 
   return (
     <div className="flex flex-col items-center w-full max-w-sm px-4">
@@ -686,11 +701,17 @@ function PinPad({
           </span>
         ) : null}
       </div>
-      <div className="grid grid-cols-3 gap-3 w-full">
+      <div
+        className={`grid grid-cols-3 gap-3 w-full transition-opacity ${
+          submitting ? 'opacity-40 pointer-events-none' : ''
+        }`}
+        aria-busy={submitting}
+      >
         {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((d) => (
           <button
             key={d}
             onClick={() => press(d)}
+            disabled={submitting}
             className="aspect-square bg-navy-secondary hover:bg-navy-secondary/70 rounded-2xl text-4xl font-light transition-transform active:scale-95"
           >
             {d}
@@ -698,18 +719,21 @@ function PinPad({
         ))}
         <button
           onClick={onCancel}
+          disabled={submitting}
           className="aspect-square bg-navy-secondary/40 hover:bg-navy-secondary/70 rounded-2xl text-sm text-silver transition-transform active:scale-95"
         >
           Cancel
         </button>
         <button
           onClick={() => press('0')}
+          disabled={submitting}
           className="aspect-square bg-navy-secondary hover:bg-navy-secondary/70 rounded-2xl text-4xl font-light transition-transform active:scale-95"
         >
           0
         </button>
         <button
           onClick={back}
+          disabled={submitting}
           className="aspect-square bg-navy-secondary/40 hover:bg-navy-secondary/70 rounded-2xl text-2xl text-silver transition-transform active:scale-95"
         >
           ⌫

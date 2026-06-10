@@ -1351,8 +1351,8 @@ function LoginHistoryCard() {
                 <TableRow>
                   <TableHead>Event</TableHead>
                   <TableHead>When</TableHead>
-                  <TableHead>Device</TableHead>
-                  <TableHead>IP</TableHead>
+                  <TableHead className="hidden sm:table-cell">Device</TableHead>
+                  <TableHead className="hidden sm:table-cell">IP</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1362,10 +1362,10 @@ function LoginHistoryCard() {
                     <TableCell className="text-silver">
                       {formatter.format(new Date(e.at))}
                     </TableCell>
-                    <TableCell className="text-silver">
+                    <TableCell className="hidden sm:table-cell text-silver">
                       {shortenAgent(e.userAgent)}
                     </TableCell>
-                    <TableCell className="text-silver font-mono text-xs">
+                    <TableCell className="hidden sm:table-cell text-silver font-mono text-xs">
                       {e.ip ?? '—'}
                     </TableCell>
                   </TableRow>
