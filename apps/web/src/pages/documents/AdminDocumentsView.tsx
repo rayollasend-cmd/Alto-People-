@@ -12,7 +12,11 @@ import {
   XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { DocumentRecord, DocumentStatus } from '@alto-people/shared';
+import type {
+  DocumentKind,
+  DocumentRecord,
+  DocumentStatus,
+} from '@alto-people/shared';
 import {
   listAdminDocuments,
   rejectDocument,
@@ -43,6 +47,7 @@ import {
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
 import { Field } from '@/components/ui/Field';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SkeletonRows } from '@/components/ui/Skeleton';
@@ -95,6 +100,9 @@ const fmtSize = (b: number): string => {
   return `${(b / 1024 / 1024).toFixed(2)} MB`;
 };
 
+const fmtKind = (k: string): string =>
+  k.replace(/_/g, ' ').replace(/\bPDF\b/i, 'PDF');
+
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const fmtAge = (iso: string, now: number): string => {
   const d = Math.floor((now - new Date(iso).getTime()) / ONE_DAY_MS);
@@ -118,6 +126,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   // Default to "Action needed" so HR lands on everything that requires them
   // (uploads to review + expired docs to renew), not just one slice of it.
   const [filter, setFilter] = useState<DocFilter>('ACTION_NEEDED');
+  const [kindFilter, setKindFilter] = useState<DocumentKind | 'ALL'>('ALL');
   const [docs, setDocs] = useState<DocumentRecord[] | null>(null);
   // Unfiltered roll-up for the KPI / chip counts so they stay stable as
   // the user filters. Same pattern as the onboarding inbox. Doubles as the
@@ -135,11 +144,12 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   const refresh = useCallback(async () => {
     try {
       setError(null);
+      const kindParam = kindFilter === 'ALL' ? undefined : kindFilter;
       // 'ACTION_NEEDED' spans two statuses, which the backend's single-status
-      // query can't express — fetch all and narrow client-side. The other
-      // filters map straight to a status param.
+      // query can't express — fetch all (optionally kind-scoped) and narrow
+      // client-side. The other filters map straight to status + kind params.
       if (filter === 'ACTION_NEEDED') {
-        const res = await listAdminDocuments({});
+        const res = await listAdminDocuments(kindParam ? { kind: kindParam } : {});
         setDocs(
           res.documents.filter((d) =>
             ACTION_NEEDED_STATUSES.includes(d.status),
@@ -147,12 +157,15 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         );
         return;
       }
-      const res = await listAdminDocuments(filter === 'ALL' ? {} : { status: filter });
+      const res = await listAdminDocuments({
+        ...(filter === 'ALL' ? {} : { status: filter }),
+        ...(kindParam ? { kind: kindParam } : {}),
+      });
       setDocs(res.documents);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load.');
     }
-  }, [filter]);
+  }, [filter, kindFilter]);
 
   const refreshAll = useCallback(async () => {
     try {
@@ -196,6 +209,14 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
           : Math.floor((now - oldestUploaded) / ONE_DAY_MS),
     };
   }, [allDocs, now]);
+
+  // Only offer kinds that actually exist in the tenant, sorted, so the
+  // dropdown stays short instead of listing all 16 possible kinds.
+  const availableKinds = useMemo(() => {
+    const set = new Set<DocumentKind>();
+    for (const d of allDocs ?? []) set.add(d.kind);
+    return Array.from(set).sort();
+  }, [allDocs]);
 
   const visibleDocs = useMemo(() => {
     if (!docs) return null;
@@ -434,6 +455,23 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
             </button>
           )}
         </div>
+        {/* Kind filter — only worth showing once more than one kind exists. */}
+        {view === 'queue' && availableKinds.length > 1 && (
+          <Select
+            size="sm"
+            aria-label="Filter by document type"
+            value={kindFilter}
+            onChange={(e) => setKindFilter(e.target.value as DocumentKind | 'ALL')}
+            className="max-w-[14rem]"
+          >
+            <option value="ALL">All types</option>
+            {availableKinds.map((k) => (
+              <option key={k} value={k}>
+                {fmtKind(k)}
+              </option>
+            ))}
+          </Select>
+        )}
         {/* Status chips only make sense for the flat queue. The associate
             view shows per-status counts inline on each folder row instead. */}
         {view === 'queue' && (
