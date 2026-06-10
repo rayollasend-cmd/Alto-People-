@@ -1417,8 +1417,14 @@ onboardingRouter.get(
       const filename = `compliance-packet-${full.associate.lastName}-${full.associate.firstName}-${app.id.slice(0, 8)}.pdf`
         .toLowerCase()
         .replace(/[^a-z0-9.-]+/g, '-');
+      // ?inline=1 → view in the browser; default → download. Same choice
+      // the documents route offers.
+      const inline = req.query.inline === '1';
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader(
+        'Content-Disposition',
+        `${inline ? 'inline' : 'attachment'}; filename="${filename}"`,
+      );
       res.setHeader('Content-Length', String(pdf.length));
       res.end(pdf);
     } catch (err) {
