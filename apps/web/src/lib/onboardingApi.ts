@@ -135,6 +135,21 @@ export function bulkResendInvite(body: BulkResendInput): Promise<BulkResendRespo
   });
 }
 
+export interface BulkRejectResult {
+  rejected: number;
+  skipped: { applicationId: string; reason: string }[];
+}
+
+export function bulkRejectApplications(body: {
+  applicationIds: string[];
+  reason: string;
+}): Promise<BulkRejectResult> {
+  return apiFetch<BulkRejectResult>('/onboarding/applications/bulk-reject', {
+    method: 'POST',
+    body,
+  });
+}
+
 export function nudgeApplicant(
   applicationId: string,
   body: NudgeInput
