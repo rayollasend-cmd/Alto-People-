@@ -25,6 +25,7 @@ import {
   diagnoseKioskPin,
   emailKioskPin,
   emailKioskPinsBulk,
+  kioskPinsHealth,
   listKioskDevices,
   listKioskFaceReferences,
   listKioskPins,
@@ -38,6 +39,7 @@ import {
   type KioskFaceReferenceSummary,
   type KioskPin,
   type KioskPinDiagnosis,
+  type KioskPinHealth,
   type KioskPunchSummary,
 } from '@/lib/kiosk99Api';
 import { listDirectory } from '@/lib/directoryApi';
@@ -114,6 +116,7 @@ export function KioskAdmin() {
         subtitle="Register tablets, issue 4-digit employee numbers, and review the punch log."
         breadcrumbs={[{ label: 'Time' }, { label: 'Kiosk' }]}
       />
+      {canManage && <PinHealthBanner onTab={() => setTab('pins')} />}
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="devices">
@@ -148,6 +151,65 @@ export function KioskAdmin() {
         <TabsContent value="log"><LogTab /></TabsContent>
         <TabsContent value="faces"><FacesTab canManage={canManage} /></TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+// Early-warning banner: flags codes that won't clock in (PIN secret drifted)
+// or can't be displayed (encryption key drifted), before associates hit it at
+// the kiosk. Silent when everything's healthy.
+function PinHealthBanner({ onTab }: { onTab: () => void }) {
+  const [health, setHealth] = useState<KioskPinHealth | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    kioskPinsHealth()
+      .then((h) => !cancelled && setHealth(h))
+      .catch(() => !cancelled && setHealth(null));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!health) return null;
+  const { wontClockIn, unreadable, healthy, total } = health;
+  if (wontClockIn === 0 && unreadable === 0) return null;
+
+  return (
+    <div className="rounded-md border border-alert/50 bg-alert/10 p-3 text-sm">
+      <div className="flex items-start gap-2">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-alert" />
+        <div className="min-w-0">
+          <div className="font-medium text-alert">Kiosk codes need attention</div>
+          <ul className="mt-1 space-y-0.5 text-silver">
+            {wontClockIn > 0 && (
+              <li>
+                <span className="font-medium text-alert">{wontClockIn}</span> code
+                {wontClockIn === 1 ? '' : 's'} won&rsquo;t clock in — the PIN secret
+                (<span className="font-mono text-xs">KIOSK_PIN_SECRET</span>) changed.
+              </li>
+            )}
+            {unreadable > 0 && (
+              <li>
+                <span className="font-medium text-warning">{unreadable}</span> code
+                {unreadable === 1 ? '' : 's'} can&rsquo;t be displayed and likely
+                won&rsquo;t clock in — the encryption key
+                (<span className="font-mono text-xs">PAYOUT_ENCRYPTION_KEY</span>) changed.
+              </li>
+            )}
+          </ul>
+          <div className="mt-1.5 text-xs text-silver">
+            Lock those secrets in your host so they can&rsquo;t drift again, then{' '}
+            <button
+              type="button"
+              onClick={onTab}
+              className="font-medium text-white underline underline-offset-2 hover:text-gold"
+            >
+              Employee numbers → Rotate all
+            </button>{' '}
+            to re-issue the affected codes. {healthy} of {total} are healthy.
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

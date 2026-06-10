@@ -158,6 +158,25 @@ export const listKioskPins = (clientId?: string) =>
     clientId ? `/kiosk-pins?clientId=${clientId}` : '/kiosk-pins',
   );
 
+export interface KioskPinHealth {
+  total: number;
+  healthy: number;
+  /** Can't decrypt → PAYOUT_ENCRYPTION_KEY changed. */
+  unreadable: number;
+  /** Decrypts, but the stored hash ≠ current KIOSK_PIN_SECRET → won't match. */
+  wontClockIn: number;
+  /** Pre-encryption rows with no plaintext to verify. */
+  legacy: number;
+  truncated: boolean;
+}
+
+/** Health check across kiosk codes — flags codes that won't clock in (PIN
+ *  secret drifted) or can't be displayed (encryption key drifted). */
+export const kioskPinsHealth = (clientId?: string) =>
+  apiFetch<KioskPinHealth>(
+    clientId ? `/kiosk-pins/health?clientId=${clientId}` : '/kiosk-pins/health',
+  );
+
 export const assignKioskPin = (input: {
   associateId: string;
   clientId: string;

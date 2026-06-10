@@ -306,6 +306,49 @@ kiosk99Router.get('/kiosk-pins', MANAGE, async (req, res) => {
   });
 });
 
+// PIN health — early warning that a server secret drifted. For each code we
+// can decrypt (PAYOUT_ENCRYPTION_KEY current), we re-HMAC the plaintext with
+// the CURRENT KIOSK_PIN_SECRET and compare to the stored hash: a mismatch
+// means that code will fail clock-in (the secret changed). Codes we can't
+// decrypt at all flag the encryption key drifting. Either way → rotate.
+kiosk99Router.get('/kiosk-pins/health', MANAGE, async (req, res) => {
+  const clientId = z.string().uuid().optional().parse(req.query.clientId);
+  const pins = await prisma.kioskPin.findMany({
+    where: { ...(clientId ? { clientId } : {}) },
+    select: { pinEncrypted: true, pinHmac: true },
+    take: 5000,
+  });
+  let healthy = 0;
+  let unreadable = 0; // can't decrypt → PAYOUT_ENCRYPTION_KEY changed
+  let wontClockIn = 0; // decrypts, but hash ≠ current secret → won't match
+  let legacy = 0; // pre-encryption rows, no plaintext to verify
+  for (const p of pins) {
+    if (!p.pinEncrypted) {
+      legacy++;
+      continue;
+    }
+    const plaintext = safeDecrypt(p.pinEncrypted);
+    if (plaintext === null) {
+      unreadable++;
+      continue;
+    }
+    try {
+      if (hmacPin(plaintext).equals(p.pinHmac)) healthy++;
+      else wontClockIn++;
+    } catch {
+      wontClockIn++;
+    }
+  }
+  res.json({
+    total: pins.length,
+    healthy,
+    unreadable,
+    wontClockIn,
+    legacy,
+    truncated: pins.length === 5000,
+  });
+});
+
 kiosk99Router.post('/kiosk-pins', MANAGE, async (req, res) => {
   const input = PinInputSchema.parse(req.body);
 
