@@ -87,6 +87,29 @@ export function approveTeamTimesheet(id: string): Promise<{ ok: true }> {
   return apiFetch(`/team/timesheets/${id}/approve`, { method: 'POST' });
 }
 
+export interface BulkApproveResult {
+  approved: number;
+  skipped: { id: string; reason: string }[];
+}
+
+export function bulkApproveTeamTimesheets(
+  ids: string[],
+): Promise<BulkApproveResult> {
+  return apiFetch('/team/timesheets/bulk-approve', {
+    method: 'POST',
+    body: { ids },
+  });
+}
+
+export function bulkApproveTeamTimeOff(
+  ids: string[],
+): Promise<BulkApproveResult> {
+  return apiFetch('/team/timeoff/bulk-approve', {
+    method: 'POST',
+    body: { ids },
+  });
+}
+
 export function rejectTeamTimesheet(
   id: string,
   reason: string,
