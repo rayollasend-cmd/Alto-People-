@@ -1553,7 +1553,19 @@ function FailedPaymentsSummary({
               className="flex items-start justify-between gap-3 text-sm rounded border border-alert/20 bg-black/30 px-2.5 py-1.5"
             >
               <div className="min-w-0 flex-1">
-                <div className="text-white truncate">{it.associateName ?? '—'}</div>
+                <div className="text-white truncate">
+                  {it.associateName ? (
+                    <Link
+                      to={`/people?associateId=${it.associateId}`}
+                      className="hover:text-gold-bright"
+                      title="Open this associate's record"
+                    >
+                      {it.associateName}
+                    </Link>
+                  ) : (
+                    '—'
+                  )}
+                </div>
                 <div className="text-[11px] text-silver/70">
                   {it.failureReason ?? 'Held by HR'}
                 </div>
