@@ -151,9 +151,24 @@ function fmtPay(amount: string | null, type: string | null, currency: string | n
  * full profile drawer with contact info, onboarding %, and links into the
  * detail pages (org structure, agreements, documents, comp history).
  */
+// Status values a ?status= deep-link is allowed to seed. Guards against junk
+// in the URL turning into a filter the picker can't represent.
+const SEEDABLE_STATUSES = new Set<DirectoryStatus>([
+  'ACTIVE',
+  'PENDING',
+  'INACTIVE',
+]);
+
 export function PeopleDirectory() {
   const queryClient = useQueryClient();
-  const [filters, setFilters] = useState<DirectoryFilters>({});
+  // Seed the status filter from ?status= so dashboard tiles / cross-links can
+  // deep-link straight to a filtered directory (e.g. /people?status=ACTIVE).
+  const [filters, setFilters] = useState<DirectoryFilters>(() => {
+    const raw = new URLSearchParams(window.location.search).get(
+      'status',
+    ) as DirectoryStatus | null;
+    return raw && SEEDABLE_STATUSES.has(raw) ? { status: raw } : {};
+  });
   const [search, setSearch] = useState('');
   // useDeferredValue keeps the search input itself snappy even when the
   // committed `search` change would cause an expensive React re-render
@@ -658,7 +673,19 @@ const DirectoryRow = memo(function DirectoryRow({
         {fmtPay(r.payAmount, r.payType, r.payCurrency)}
       </TableCell>
       <TableCell className="hidden xl:table-cell text-silver">
-        {r.managerName ?? (
+        {r.managerName ? (
+          r.managerId ? (
+            <Link
+              to={`/people?associateId=${r.managerId}`}
+              onClick={(e) => e.stopPropagation()}
+              className="hover:text-white"
+            >
+              {r.managerName}
+            </Link>
+          ) : (
+            r.managerName
+          )
+        ) : (
           <span className="text-silver/50" aria-hidden="true">—</span>
         )}
       </TableCell>
@@ -868,6 +895,14 @@ function ProfileTab({
                 <span className="text-xs tabular-nums text-silver">
                   {a.onboardingPercent}%
                 </span>
+                {a.applicationId && (
+                  <Link
+                    to={`/onboarding/applications/${a.applicationId}`}
+                    className="text-xs text-gold hover:text-gold-bright whitespace-nowrap"
+                  >
+                    View checklist
+                  </Link>
+                )}
               </div>
             }
           />
@@ -909,7 +944,25 @@ function ProfileTab({
       )}
 
       <Section title="Org assignment">
-        <InfoRow label="Manager" value={a.managerName ?? '—'} />
+        <InfoRow
+          label="Manager"
+          value={
+            a.managerName ? (
+              a.managerId ? (
+                <Link
+                  to={`/people?associateId=${a.managerId}`}
+                  className="text-gold hover:text-gold-bright"
+                >
+                  {a.managerName}
+                </Link>
+              ) : (
+                a.managerName
+              )
+            ) : (
+              '—'
+            )
+          }
+        />
         <InfoRow label="Department" value={a.departmentName ?? '—'} />
         <InfoRow label="Job profile" value={a.jobProfileTitle ?? '—'} />
       </Section>

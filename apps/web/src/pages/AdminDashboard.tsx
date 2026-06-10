@@ -545,7 +545,7 @@ function buildKpis(k: DashboardKPIs): Kpi[] {
           ? `${k.associatesClockedIn.toLocaleString()} clocked in now`
           : 'No one on the clock',
       icon: Users,
-      to: '/people',
+      to: '/people?status=ACTIVE',
     },
     {
       label: `Open shifts · next ${k.windowDays}d`,
@@ -698,7 +698,19 @@ function OnboardingFunnel({ kpis }: { kpis: DashboardKPIs | null }) {
               const count = counts[status] ?? 0;
               const pct = total > 0 ? Math.round((count / total) * 100) : 0;
               return (
-                <div key={status} className="min-w-0">
+                <Link
+                  key={status}
+                  // APPROVED/REJECTED aren't standalone filters in the list —
+                  // they live under the "Archived" view; the in-flight states
+                  // map straight through.
+                  to={`/onboarding?status=${
+                    status === 'APPROVED' || status === 'REJECTED'
+                      ? 'ARCHIVED'
+                      : status
+                  }`}
+                  className="min-w-0 block rounded-md -m-1 p-1 hover:bg-navy-secondary/40 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                  title={`View ${PIPELINE_LABEL[status].toLowerCase()} applications`}
+                >
                   <div className="text-[10px] uppercase tracking-widest text-silver">
                     {PIPELINE_LABEL[status]}
                   </div>
@@ -727,7 +739,7 @@ function OnboardingFunnel({ kpis }: { kpis: DashboardKPIs | null }) {
                   <div className="text-[10px] text-silver/70 mt-1 tabular-nums">
                     {pct}% of pipeline
                   </div>
-                </div>
+                </Link>
               );
             })}
           </div>
