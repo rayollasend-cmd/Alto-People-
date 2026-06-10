@@ -27,6 +27,7 @@ export function initSentry(): void {
       'Non-Error promise rejection captured',
       'AbortError',
       'NetworkError',
+      'TimeoutError',
     ],
   });
 }

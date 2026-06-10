@@ -19,7 +19,7 @@ import {
   ROLE_CAPABILITIES,
   hasCapability,
 } from '@alto-people/shared';
-import { ApiError, NetworkError, apiFetch } from './api';
+import { ApiError, NetworkError, TimeoutError, apiFetch } from './api';
 
 interface AuthState {
   /** Initial /auth/me probe in flight. Components should hold rendering. */
@@ -75,8 +75,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (err instanceof ApiError && err.status === 401) {
           // Cookie was present but stale. Server cleared it; we clear local state.
           setUser(null);
-        } else if (err instanceof NetworkError) {
-          // Keep user state untouched; show "reconnecting" affordance.
+        } else if (err instanceof NetworkError || err instanceof TimeoutError) {
+          // Offline OR a cold-backend timeout — keep the user's session and
+          // show the "reconnecting" affordance. Critically, do NOT fall to the
+          // else branch, which clears the user and bounces them to login: a
+          // slow cold start must never look like a logout.
           setIsOffline(true);
         } else {
           setUser(null);
