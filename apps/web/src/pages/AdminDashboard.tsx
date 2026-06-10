@@ -741,6 +741,22 @@ function OnboardingFunnel({ kpis }: { kpis: DashboardKPIs | null }) {
 
 const ACTIVITY_FEED_PREVIEW = 6;
 
+// Map an audit entry's entity to an in-app route when one exists, so the
+// activity row becomes a cross-link. Only the entity types that have a real
+// destination are linkable; everything else stays plain text. People have no
+// standalone detail page — the directory opens a drawer via ?associateId.
+function entityHref(entityType: string, entityId: string): string | null {
+  switch (entityType.toLowerCase()) {
+    case 'application':
+      return `/onboarding/applications/${entityId}`;
+    case 'associate':
+    case 'person':
+      return `/people?associateId=${entityId}`;
+    default:
+      return null;
+  }
+}
+
 function ActivityFeed({ entries }: { entries: AuditSearchEntry[] | null }) {
   const [expanded, setExpanded] = useState(false);
   const collapsible =
@@ -786,33 +802,48 @@ function ActivityFeed({ entries }: { entries: AuditSearchEntry[] | null }) {
           ) : (
             <>
               <ul className="divide-y divide-navy-secondary">
-                {visible!.map((e) => (
-                  <li
-                    key={e.id}
-                    className="px-5 py-3 flex items-center gap-3 hover:bg-navy-secondary/20 transition-colors"
-                  >
-                    <div className="h-8 w-8 rounded-full bg-navy-secondary/60 grid place-items-center shrink-0 text-silver text-xs">
-                      {(e.actorEmail ?? 'S')
-                        .split(/[@._-]+/)[0]
-                        ?.slice(0, 2)
-                        .toUpperCase() ?? '••'}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm text-white truncate">
-                        <span className="text-silver">
-                          {e.actorEmail ?? 'System'}
-                        </span>{' '}
-                        {humanizeAction(e.action)}
+                {visible!.map((e) => {
+                  const href = e.entityId
+                    ? entityHref(e.entityType, e.entityId)
+                    : null;
+                  return (
+                    <li
+                      key={e.id}
+                      className="px-5 py-3 flex items-center gap-3 hover:bg-navy-secondary/20 transition-colors"
+                    >
+                      <div className="h-8 w-8 rounded-full bg-navy-secondary/60 grid place-items-center shrink-0 text-silver text-xs">
+                        {(e.actorEmail ?? 'S')
+                          .split(/[@._-]+/)[0]
+                          ?.slice(0, 2)
+                          .toUpperCase() ?? '••'}
                       </div>
-                      <div className="text-[11px] text-silver/70">
-                        {e.entityType} ·{' '}
-                        <span className="tabular-nums">
-                          {fmtRelative(e.createdAt)}
-                        </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm text-white truncate">
+                          <span className="text-silver">
+                            {e.actorEmail ?? 'System'}
+                          </span>{' '}
+                          {humanizeAction(e.action)}
+                        </div>
+                        <div className="text-[11px] text-silver/70">
+                          {href ? (
+                            <Link
+                              to={href}
+                              className="text-gold hover:text-gold-bright"
+                            >
+                              {e.entityType}
+                            </Link>
+                          ) : (
+                            e.entityType
+                          )}{' '}
+                          ·{' '}
+                          <span className="tabular-nums">
+                            {fmtRelative(e.createdAt)}
+                          </span>
+                        </div>
                       </div>
-                    </div>
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
               {collapsible && (
                 <div className="px-5 py-3 flex justify-center border-t border-navy-secondary/60">

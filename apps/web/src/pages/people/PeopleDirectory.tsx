@@ -252,6 +252,13 @@ export function PeopleDirectory() {
               label="Pending onboarding"
               value={stats.PENDING}
               tone={stats.PENDING > 0 ? 'text-warning' : 'text-silver'}
+              active={filters.status === 'PENDING'}
+              onClick={() =>
+                setFilters((f) => ({
+                  ...f,
+                  status: f.status === 'PENDING' ? undefined : 'PENDING',
+                }))
+              }
             />
             <Kpi label="Inactive" value={stats.INACTIVE} tone="text-silver" />
           </CardContent>
@@ -404,16 +411,40 @@ function Kpi({
   label,
   value,
   tone = 'text-white',
+  onClick,
+  active,
 }: {
   label: string;
   value: number;
   tone?: string;
+  onClick?: () => void;
+  active?: boolean;
 }) {
-  return (
-    <div className="min-w-[7rem]">
+  const body = (
+    <>
       <div className="text-[10px] uppercase tracking-wider text-silver">{label}</div>
       <div className={cn('text-2xl font-semibold tabular-nums', tone)}>{value}</div>
-    </div>
+    </>
+  );
+  if (!onClick) {
+    return <div className="min-w-[7rem]">{body}</div>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        'min-w-[7rem] text-left rounded-md -mx-1.5 px-1.5 py-0.5 transition-colors',
+        'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+        active
+          ? 'bg-gold/10 ring-1 ring-gold/40'
+          : 'hover:bg-navy-secondary/40',
+      )}
+      title={active ? 'Clear filter' : `Filter to ${label.toLowerCase()}`}
+    >
+      {body}
+    </button>
   );
 }
 

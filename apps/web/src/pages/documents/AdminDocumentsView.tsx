@@ -57,7 +57,17 @@ import {
 import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
 import { cn } from '@/lib/cn';
 
-const STATUS_FILTERS: Array<{ value: DocumentStatus | 'ALL'; label: string }> = [
+// Filter value space: the real DocumentStatuses plus two synthetic buckets.
+// 'ACTION_NEEDED' rolls up the states that require HR to do something —
+// UPLOADED (needs review) and EXPIRED (needs a renewal request). REJECTED is
+// deliberately excluded: the ball is in the associate's court until they
+// re-upload.
+type DocFilter = DocumentStatus | 'ALL' | 'ACTION_NEEDED';
+
+const ACTION_NEEDED_STATUSES: DocumentStatus[] = ['UPLOADED', 'EXPIRED'];
+
+const STATUS_FILTERS: Array<{ value: DocFilter; label: string }> = [
+  { value: 'ACTION_NEEDED', label: 'Action needed' },
   { value: 'UPLOADED', label: 'Awaiting review' },
   { value: 'VERIFIED', label: 'Verified' },
   { value: 'REJECTED', label: 'Rejected' },
@@ -105,8 +115,9 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     'queue',
     ['queue', 'associates'],
   );
-  // Default to "Awaiting review" so HR lands on the actionable queue.
-  const [filter, setFilter] = useState<DocumentStatus | 'ALL'>('UPLOADED');
+  // Default to "Action needed" so HR lands on everything that requires them
+  // (uploads to review + expired docs to renew), not just one slice of it.
+  const [filter, setFilter] = useState<DocFilter>('ACTION_NEEDED');
   const [docs, setDocs] = useState<DocumentRecord[] | null>(null);
   // Unfiltered roll-up for the KPI / chip counts so they stay stable as
   // the user filters. Same pattern as the onboarding inbox. Doubles as the
@@ -124,6 +135,18 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   const refresh = useCallback(async () => {
     try {
       setError(null);
+      // 'ACTION_NEEDED' spans two statuses, which the backend's single-status
+      // query can't express — fetch all and narrow client-side. The other
+      // filters map straight to a status param.
+      if (filter === 'ACTION_NEEDED') {
+        const res = await listAdminDocuments({});
+        setDocs(
+          res.documents.filter((d) =>
+            ACTION_NEEDED_STATUSES.includes(d.status),
+          ),
+        );
+        return;
+      }
       const res = await listAdminDocuments(filter === 'ALL' ? {} : { status: filter });
       setDocs(res.documents);
     } catch (err) {
@@ -417,7 +440,11 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
           <div className="flex flex-wrap gap-1.5">
             {STATUS_FILTERS.map((f) => {
               const count =
-                f.value === 'ALL' ? stats.total : (stats.byStatus[f.value] ?? 0);
+                f.value === 'ALL'
+                  ? stats.total
+                  : f.value === 'ACTION_NEEDED'
+                    ? stats.uploaded + stats.expired
+                    : (stats.byStatus[f.value] ?? 0);
               const active = filter === f.value;
               return (
                 <button

@@ -428,6 +428,13 @@ export function ApplicationsList() {
             label={`Stuck > ${STALE_DAYS}d`}
             value={String(stats.stale)}
             tone={stats.stale > 0 ? 'text-alert' : 'text-success'}
+            // Same jump-off as the stale banner's "Review": most stuck
+            // applicants are invited-but-unfinished (SUBMITTED). Only wired
+            // when there's something to review.
+            active={stats.stale > 0 && status === 'SUBMITTED'}
+            onClick={
+              stats.stale > 0 ? () => setStatus('SUBMITTED') : undefined
+            }
           />
           <Kpi
             label="Email bounced"
@@ -1170,16 +1177,38 @@ function Kpi({
   label,
   value,
   tone = 'text-white',
+  onClick,
+  active,
 }: {
   label: string;
   value: string;
   tone?: string;
+  onClick?: () => void;
+  active?: boolean;
 }) {
-  return (
-    <div className="min-w-[6rem]">
+  const body = (
+    <>
       <div className="text-[10px] uppercase tracking-wider text-silver">{label}</div>
       <div className={cn('text-xl font-semibold tabular-nums', tone)}>{value}</div>
-    </div>
+    </>
+  );
+  if (!onClick) {
+    return <div className="min-w-[6rem]">{body}</div>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        'min-w-[6rem] text-left rounded-md -mx-1.5 px-1.5 py-0.5 transition-colors',
+        'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+        active ? 'bg-gold/10 ring-1 ring-gold/40' : 'hover:bg-navy-secondary/50',
+      )}
+      title="Review stuck applications"
+    >
+      {body}
+    </button>
   );
 }
 
