@@ -30,6 +30,7 @@ import { getDashboardKPIs } from '@/lib/analyticsApi';
 import { searchAuditLogs } from '@/lib/auditApi';
 import { ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
+import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
@@ -182,9 +183,9 @@ export function AdminDashboard() {
             {dateLabel}
           </div>
           {role && (
-            <span className="inline-flex items-center gap-1 rounded-full border border-gold/50 bg-gold/15 px-2 py-0.5 text-[10px] uppercase tracking-widest text-gold-bright">
+            <Badge variant="accent" className="uppercase tracking-widest">
               {ROLE_LABELS[role]}
-            </span>
+            </Badge>
           )}
         </div>
         <h1 className="font-display text-3xl md:text-4xl text-white mt-2 leading-tight">

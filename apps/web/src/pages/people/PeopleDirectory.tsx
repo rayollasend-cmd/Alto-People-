@@ -89,6 +89,7 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Field,
   Input,
   Label,
@@ -405,11 +406,7 @@ export function PeopleDirectory() {
         </CardContent>
       </Card>
 
-      {error && (
-        <div className="text-sm text-alert" role="alert">
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
 
       {!rows && !error && <SkeletonRows count={8} rowHeight="h-14" />}
 
@@ -2081,11 +2078,7 @@ function DocumentsTab({ associateId }: { associateId: string }) {
   }
 
   if (error) {
-    return (
-      <div className="text-sm text-alert" role="alert">
-        {error}
-      </div>
-    );
+    return <ErrorBanner>{error}</ErrorBanner>;
   }
   if (!docs) {
     return <SkeletonRows count={3} rowHeight="h-9" />;
