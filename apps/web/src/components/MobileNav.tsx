@@ -125,7 +125,7 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
             if (!items || items.length === 0) return null;
             return (
               <div key={group} className="mt-3">
-                <div className="px-4 py-1 text-[10px] font-semibold uppercase tracking-widest text-silver/60">
+                <div className="px-4 py-1 text-[10px] font-semibold uppercase tracking-widest text-silver/80">
                   {GROUP_LABEL[group]}
                 </div>
                 {items.map((m) => (

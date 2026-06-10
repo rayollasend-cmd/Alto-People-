@@ -131,7 +131,7 @@ export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
       >
         <Search className="h-3.5 w-3.5" aria-hidden="true" />
         <span className="flex-1 text-left">Search or jump to…</span>
-        <kbd className="hidden lg:inline-flex items-center gap-0.5 text-[10px] font-mono text-silver/60 border border-navy-secondary rounded px-1 py-0.5">
+        <kbd className="hidden lg:inline-flex items-center gap-0.5 text-[10px] font-mono text-silver/80 border border-navy-secondary rounded px-1 py-0.5">
           ⌘K
         </kbd>
       </button>

@@ -158,7 +158,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
                 min={numericProps?.numericMin}
                 max={numericProps?.numericMax}
                 step={numericProps?.numericStep ?? 1}
-                className="bg-midnight border border-navy-secondary rounded p-2 text-white"
+                className="bg-midnight border border-navy-secondary rounded p-2 text-white focus:outline-none focus:border-gold focus-visible:ring-2 focus-visible:ring-gold/40"
               />
             </div>
           )}

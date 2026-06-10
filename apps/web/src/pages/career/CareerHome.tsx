@@ -102,8 +102,16 @@ export function CareerHome() {
           {ladders.map((l) => (
             <Card key={l.id}>
               <CardContent
-                className="p-4 cursor-pointer hover:bg-navy-tertiary transition"
+                role="button"
+                tabIndex={0}
+                className="p-4 cursor-pointer hover:bg-navy-tertiary transition rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
                 onClick={() => setOpenId(l.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setOpenId(l.id);
+                  }
+                }}
               >
                 <div className="flex items-start justify-between">
                   <div>

@@ -43,6 +43,7 @@ export const DropdownMenuItem = React.forwardRef<
       // py-2.5 on touch (no hover capability) so the row clears 44px.
       'relative flex cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-2.5 md:py-1.5 text-sm outline-none transition-colors',
       'focus:bg-navy-secondary focus:text-white',
+      'focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gold-bright',
       'data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
       inset && 'pl-8',
       destructive && 'text-alert focus:bg-alert/10 focus:text-alert',
