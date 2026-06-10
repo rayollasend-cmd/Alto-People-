@@ -92,7 +92,7 @@ export function ReimbursementsHome() {
     <div className="space-y-5">
       <PageHeader
         title="Reimbursements"
-        subtitle="Submit, approve, and pay employee expense reports."
+        subtitle="Submit, approve, and pay associate expense reports."
         breadcrumbs={[{ label: 'Payroll' }, { label: 'Spend' }]}
       />
       <div className="flex justify-end">
