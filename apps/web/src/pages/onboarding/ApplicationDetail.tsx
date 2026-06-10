@@ -6,6 +6,7 @@ import {
   Circle,
   Clock,
   Copy,
+  Eye,
   FileDown,
   MailCheck,
   MailWarning,
@@ -483,6 +484,19 @@ function DetailActions({
   return (
     <div className="flex flex-wrap gap-2 shrink-0">
       <a
+        href={`${compliancePacketUrl(detail.id)}?inline=1`}
+        target="_blank"
+        rel="noreferrer"
+        className={cn(
+          'inline-flex items-center gap-2 px-3 text-sm rounded-md border border-navy-secondary bg-navy-secondary/40 text-white hover:border-gold/60 hover:text-gold transition-colors',
+          compact ? 'h-8' : 'h-9'
+        )}
+        title="View the audit packet in the browser"
+      >
+        <Eye className="h-4 w-4" />
+        {compact ? 'View' : 'View packet'}
+      </a>
+      <a
         href={compliancePacketUrl(detail.id)}
         download={`compliance-packet-${detail.associateName.replace(/\s+/g, '-').toLowerCase()}.pdf`}
         className={cn(
@@ -492,7 +506,7 @@ function DetailActions({
         title="Download single-PDF audit packet for this application"
       >
         <FileDown className="h-4 w-4" />
-        {compact ? 'Packet' : 'Compliance packet'}
+        {compact ? 'Packet' : 'Download'}
       </a>
       {!decided && (
         <Button asChild variant="secondary" size="sm">

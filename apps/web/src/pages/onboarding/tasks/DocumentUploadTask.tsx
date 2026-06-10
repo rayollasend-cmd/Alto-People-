@@ -258,18 +258,20 @@ export function DocumentUploadTask() {
                   >
                     {STATUS_LABEL[d.status] ?? d.status}
                   </span>
-                  {d.status === 'REJECTED' && (
+                  {d.status !== 'VERIFIED' && (
                     <button
                       type="button"
                       onClick={() => {
                         setReplaceTarget(d);
                         // Re-trigger the hidden file input. The handler
                         // sees replaceTarget and does upload + delete-old
-                        // in one go.
+                        // in one go. Allowed for any not-yet-verified doc —
+                        // an applicant who uploaded the wrong/blurry file can
+                        // swap it without waiting for HR to reject it first.
                         fileInputRef.current?.click();
                       }}
                       className="text-warning hover:opacity-80"
-                      aria-label="Replace rejected document"
+                      aria-label="Replace this document"
                       title="Re-upload to replace"
                     >
                       <RotateCcw className="h-3.5 w-3.5" />
