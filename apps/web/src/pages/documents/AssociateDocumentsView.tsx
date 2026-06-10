@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Eye, FileText } from 'lucide-react';
+import { Eye, FileText, RotateCw } from 'lucide-react';
 import type { DocumentKind, DocumentRecord } from '@alto-people/shared';
 import {
   deleteMyDocument,
@@ -52,6 +52,7 @@ export function AssociateDocumentsView() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
   const [deleteTarget, setDeleteTarget] = useState<DocumentRecord | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [previewDoc, setPreviewDoc] = useState<DocumentRecord | null>(null);
@@ -104,6 +105,15 @@ export function AssociateDocumentsView() {
     }
   };
 
+  // Renew an expired document: pre-select its kind in the upload form and
+  // bring the form into view + focus the file picker, so re-uploading is one
+  // intent instead of "scroll up, find the right kind, attach".
+  const startRenewal = (d: DocumentRecord) => {
+    setKind(d.kind);
+    formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    fileRef.current?.focus();
+  };
+
   const inputCls =
     'w-full px-3 py-2 rounded bg-navy-secondary/60 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white';
 
@@ -115,6 +125,7 @@ export function AssociateDocumentsView() {
       />
 
       <form
+        ref={formRef}
         onSubmit={handleUpload}
         className="bg-navy border border-navy-secondary rounded-lg p-5 mb-6 space-y-3"
       >
@@ -191,6 +202,11 @@ export function AssociateDocumentsView() {
                     {d.rejectionReason && (
                       <span className="text-alert ml-2">{d.rejectionReason}</span>
                     )}
+                    {d.status === 'EXPIRED' && (
+                      <span className="text-gold ml-2">
+                        · expired — please upload a fresh copy
+                      </span>
+                    )}
                     {!d.fileAvailable && (
                       <span className="text-alert ml-2">
                         · file missing — please re-upload
@@ -198,6 +214,17 @@ export function AssociateDocumentsView() {
                     )}
                   </div>
                 </div>
+                {(d.status === 'EXPIRED' || d.status === 'REJECTED') && (
+                  <button
+                    type="button"
+                    onClick={() => startRenewal(d)}
+                    className="text-xs text-gold hover:text-gold-bright inline-flex items-center gap-1"
+                    title="Re-upload to replace this document"
+                  >
+                    <RotateCw className="h-3.5 w-3.5" />
+                    Renew
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setPreviewDoc(d)}
