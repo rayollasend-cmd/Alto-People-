@@ -206,12 +206,55 @@ export function AssociateTimeView() {
     ? Math.max(0, Math.floor((Date.now() - new Date(active.clockInAt).getTime()) / 60_000))
     : 0;
 
+  // Approaching-overtime nudge. Sum this workweek's worked minutes (Sun 00:00
+  // local → now) from loaded history plus any in-progress shift, and warn as
+  // the associate nears the federal 40h/week overtime line. Directional, not a
+  // payroll figure — breaks and the employer's exact workweek may differ.
+  const WEEKLY_OT_MIN = 40 * 60;
+  const OT_WARN_MIN = 35 * 60;
+  const weekStart = new Date();
+  weekStart.setHours(0, 0, 0, 0);
+  weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+  const weekMinutes =
+    (entries ?? [])
+      .filter((e) => new Date(e.clockInAt) >= weekStart)
+      .reduce((sum, e) => sum + (e.minutesElapsed ?? 0), 0) + liveMinutes;
+  const weekHours = (weekMinutes / 60).toFixed(1);
+  const overtimeNudge =
+    weekMinutes >= WEEKLY_OT_MIN
+      ? {
+          tone: 'border-alert/40 bg-alert/[0.07] text-silver',
+          text: `You've logged ${weekHours}h this workweek — past the 40h line, so additional hours count as overtime. Check with your manager if that's unexpected.`,
+        }
+      : weekMinutes >= OT_WARN_MIN
+        ? {
+            tone: 'border-gold/40 bg-gold/[0.07] text-silver',
+            text: `You've logged ${weekHours}h this workweek — about ${(
+              (WEEKLY_OT_MIN - weekMinutes) /
+              60
+            ).toFixed(1)}h from the 40h overtime line.`,
+          }
+        : null;
+
   return (
     <div className="max-w-3xl mx-auto">
       <PageHeader
         title="Time & Attendance"
         subtitle="Clock in when you start. Clock out when you stop."
       />
+
+      {overtimeNudge && (
+        <div
+          className={cn(
+            'mb-6 flex items-start gap-2.5 rounded-lg border p-3 text-sm',
+            overtimeNudge.tone,
+          )}
+          role="status"
+        >
+          <Clock className="h-4 w-4 shrink-0 mt-0.5 text-gold" />
+          <span>{overtimeNudge.text}</span>
+        </div>
+      )}
 
       <section
         className={cn(

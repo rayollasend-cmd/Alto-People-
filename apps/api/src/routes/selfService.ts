@@ -69,12 +69,16 @@ selfServiceRouter.get('/me/profile', async (req, res) => {
       photoUpdatedAt: true,
       department: { select: { name: true } },
       jobProfile: { select: { title: true } },
+      manager: { select: { firstName: true, lastName: true } },
     },
   });
   if (!a) throw new HttpError(404, 'not_found', 'Associate not found.');
-  const { photoS3Key, photoUpdatedAt, ...rest } = a;
+  const { photoS3Key, photoUpdatedAt, manager, ...rest } = a;
   res.json({
     ...rest,
+    managerName: manager
+      ? `${manager.firstName} ${manager.lastName}`.trim()
+      : null,
     photoUrl: profilePhotoUrlFor({ id: a.id, photoS3Key, photoUpdatedAt }),
   });
 });

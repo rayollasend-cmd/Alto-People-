@@ -290,6 +290,7 @@ function ProfilePanel({
             label="Department"
             value={profile.department?.name ?? '—'}
           />
+          <ReadonlyField label="Manager" value={profile.managerName ?? '—'} />
           <ReadonlyField
             label="Job profile"
             value={profile.jobProfile?.title ?? '—'}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
+  AlertTriangle,
   ArrowRight,
   CheckCircle2,
   Circle,
@@ -24,6 +25,39 @@ import {
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
+
+// Per-status banner copy for the associate. DRAFT is intentionally absent —
+// no banner while they're still working through the checklist.
+const STATUS_BANNER: Record<
+  ApplicationDetail['status'],
+  { icon: typeof Clock; title: string; body: string; cls: string } | undefined
+> = {
+  DRAFT: undefined,
+  SUBMITTED: {
+    icon: Clock,
+    title: 'Application submitted',
+    body: "Thanks! HR will start reviewing your information shortly — there's nothing else you need to do right now.",
+    cls: 'border-gold/40 bg-gold/[0.07] text-silver',
+  },
+  IN_REVIEW: {
+    icon: Clock,
+    title: 'In review',
+    body: "HR is reviewing your application. We'll reach out if anything else is needed — keep an eye on your email.",
+    cls: 'border-gold/40 bg-gold/[0.07] text-silver',
+  },
+  APPROVED: {
+    icon: Sparkles,
+    title: "You're approved — welcome aboard!",
+    body: 'Your onboarding is complete. Your manager will be in touch about next steps and your first shift.',
+    cls: 'border-success/40 bg-success/[0.07] text-silver',
+  },
+  REJECTED: {
+    icon: AlertTriangle,
+    title: 'Your application needs attention',
+    body: 'Please reach out to your HR contact — they can walk you through what to do next.',
+    cls: 'border-alert/40 bg-alert/[0.07] text-silver',
+  },
+};
 
 const TASK_LABEL: Record<string, string> = {
   PROFILE_INFO: 'Profile information',
@@ -97,6 +131,11 @@ export function AssociateChecklist() {
     (t) => t.status !== 'DONE' && t.status !== 'SKIPPED' && REAL_KINDS.has(t.kind)
   );
 
+  // Plain-language status banner so a non-technical hire understands where
+  // their application sits in HR's pipeline. DRAFT shows nothing — the
+  // checklist below is self-explanatory while they're still filling it out.
+  const statusBanner = STATUS_BANNER[detail.status] ?? null;
+
   return (
     <div className="max-w-3xl mx-auto">
       <header className="mb-6">
@@ -109,6 +148,24 @@ export function AssociateChecklist() {
           {detail.position && ` · ${detail.position}`}
         </p>
       </header>
+
+      {statusBanner && (
+        <div
+          className={cn(
+            'mb-6 flex items-start gap-3 rounded-lg border p-3.5',
+            statusBanner.cls,
+          )}
+          role="status"
+        >
+          <statusBanner.icon className="h-5 w-5 shrink-0 mt-0.5" />
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-white">
+              {statusBanner.title}
+            </div>
+            <div className="text-xs mt-0.5">{statusBanner.body}</div>
+          </div>
+        </div>
+      )}
 
       <Card className="mb-6 overflow-hidden">
         <CardHeader className="pb-2">

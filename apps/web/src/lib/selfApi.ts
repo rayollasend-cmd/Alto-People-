@@ -15,6 +15,7 @@ export interface SelfProfile {
   photoUrl: string | null;
   department: { name: string } | null;
   jobProfile: { title: string } | null;
+  managerName: string | null;
 }
 
 export interface EmergencyContact {
