@@ -1330,14 +1330,20 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
     },
   });
   if (!pinRow || pinRow.clientId !== device.clientId) {
-    // Audit a REJECTED row so HR can still see brute-force patterns
-    // in the punch log even though we no longer hard-lock the device.
-    // clientPunchedAt + idempotency are absent on preflight by design.
+    // Two distinct failures that used to both read "Wrong PIN":
+    //  - no PIN matches the hash → unrecognized number (or a changed
+    //    KIOSK_PIN_SECRET, which makes EVERY pre-rotation PIN stop matching).
+    //  - a PIN matches but belongs to a different client than this kiosk →
+    //    the associate is at the wrong site / the device is mis-registered.
+    // The punch-log reason now tells these apart for diagnosis.
+    const wrongSite = !!pinRow && pinRow.clientId !== device.clientId;
     await prisma.kioskPunch.create({
       data: {
         kioskDeviceId: device.id,
         action: 'REJECTED',
-        rejectReason: 'pin_not_found_preflight',
+        rejectReason: wrongSite
+          ? 'pin_wrong_client_preflight'
+          : 'pin_not_recognized_preflight',
         clientPunchedAt: new Date(),
       },
     });
@@ -1345,6 +1351,13 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
       where: { id: device.id },
       data: { lastSeenAt: new Date() },
     });
+    if (wrongSite) {
+      throw new HttpError(
+        403,
+        'wrong_site',
+        'This number is registered to a different site. Ask your manager to set up your kiosk site.',
+      );
+    }
     throw new HttpError(401, 'invalid_pin', 'Wrong PIN.');
   }
 
@@ -1522,15 +1535,19 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
   });
 
   if (!pinRow || pinRow.clientId !== device.clientId) {
-    // Record a REJECTED punch row so HR can still spot brute-force
-    // patterns in the punch log — we no longer hard-lock the device
-    // (kiosks are shared, and locking one out blocked an entire site
-    // whenever three associates mistyped in a row).
+    // Two distinct failures, previously both surfaced as "Wrong PIN":
+    //  - no PIN matches the hash → unrecognized number (or a changed
+    //    KIOSK_PIN_SECRET, which makes EVERY pre-rotation PIN stop matching).
+    //  - a PIN matches but belongs to a different client than this kiosk →
+    //    the associate is at the wrong site / the device is mis-registered.
+    // Distinct reasons so the punch log makes the cause obvious. (We still
+    // record a REJECTED row and never hard-lock the shared device.)
+    const wrongSite = !!pinRow && pinRow.clientId !== device.clientId;
     await prisma.kioskPunch.create({
       data: {
         kioskDeviceId: device.id,
         action: 'REJECTED',
-        rejectReason: 'pin_not_found',
+        rejectReason: wrongSite ? 'pin_wrong_client' : 'pin_not_recognized',
         selfie,
         punchLat,
         punchLng,
@@ -1543,6 +1560,13 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
       where: { id: device.id },
       data: { lastSeenAt: new Date() },
     });
+    if (wrongSite) {
+      throw new HttpError(
+        403,
+        'wrong_site',
+        'This number is registered to a different site. Ask your manager to set up your kiosk site.',
+      );
+    }
     throw new HttpError(401, 'invalid_pin', 'Wrong PIN.');
   }
 
