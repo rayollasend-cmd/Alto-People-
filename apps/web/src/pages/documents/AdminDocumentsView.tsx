@@ -18,6 +18,7 @@ import type {
   DocumentStatus,
 } from '@alto-people/shared';
 import {
+  bulkVerifyDocuments,
   listAdminDocuments,
   rejectDocument,
   verifyDocument,
@@ -140,6 +141,10 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   const [rejectSubmitting, setRejectSubmitting] = useState(false);
   const [selectedAssociateId, setSelectedAssociateId] = useState<string | null>(null);
   const [previewDoc, setPreviewDoc] = useState<DocumentRecord | null>(null);
+  // Bulk-verify selection (queue view only). Only docs that can transition to
+  // VERIFIED — UPLOADED or REJECTED — are ever selectable.
+  const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -183,6 +188,12 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   useEffect(() => {
     refreshAll();
   }, [refreshAll]);
+
+  // Drop any selection when the visible slice changes (filter / kind / view),
+  // so a bulk-verify can never act on rows the user can no longer see.
+  useEffect(() => {
+    setSelectedDocs(new Set());
+  }, [filter, kindFilter, view]);
 
   const now = Date.now();
 
@@ -328,6 +339,33 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
       });
     } finally {
       setPendingId(null);
+    }
+  };
+
+  const toggleDoc = (id: string) =>
+    setSelectedDocs((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const onBulkVerify = async () => {
+    if (bulkBusy || selectedDocs.size === 0) return;
+    setBulkBusy(true);
+    try {
+      const res = await bulkVerifyDocuments(Array.from(selectedDocs));
+      toast.success(
+        `Verified ${res.verified}${res.skipped.length ? ` · ${res.skipped.length} skipped` : ''}`,
+      );
+      setSelectedDocs(new Set());
+      await Promise.all([refresh(), refreshAll()]);
+    } catch (err) {
+      toast.error('Bulk verify failed', {
+        description: err instanceof ApiError ? err.message : undefined,
+      });
+    } finally {
+      setBulkBusy(false);
     }
   };
 
@@ -556,11 +594,65 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         />
       )}
 
-      {view === 'queue' && visibleDocs && visibleDocs.length > 0 && (
+      {view === 'queue' && visibleDocs && visibleDocs.length > 0 && (() => {
+        const verifiable = visibleDocs.filter(
+          (d) => d.status === 'UPLOADED' || d.status === 'REJECTED',
+        );
+        const allVerifiableSelected =
+          verifiable.length > 0 &&
+          verifiable.every((d) => selectedDocs.has(d.id));
+        return (
         <Card className="overflow-hidden">
+          {canManage && selectedDocs.size > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gold/30 bg-gold/[0.07] px-3 py-2">
+              <div className="text-sm text-gold">
+                <span className="font-medium tabular-nums">
+                  {selectedDocs.size}
+                </span>{' '}
+                selected
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setSelectedDocs(new Set())}
+                  disabled={bulkBusy}
+                >
+                  Clear
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={onBulkVerify}
+                  loading={bulkBusy}
+                  className="text-success"
+                >
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  Verify {selectedDocs.size}
+                </Button>
+              </div>
+            </div>
+          )}
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
+                {canManage && (
+                  <TableHead className="w-8">
+                    <input
+                      type="checkbox"
+                      className="accent-gold"
+                      aria-label="Select all verifiable"
+                      checked={allVerifiableSelected}
+                      disabled={verifiable.length === 0}
+                      onChange={(e) =>
+                        setSelectedDocs(
+                          e.target.checked
+                            ? new Set(verifiable.map((d) => d.id))
+                            : new Set(),
+                        )
+                      }
+                    />
+                  </TableHead>
+                )}
                 <TableHead>File</TableHead>
                 <TableHead className="hidden md:table-cell">Kind</TableHead>
                 <TableHead className="hidden sm:table-cell">Associate</TableHead>
@@ -571,8 +663,24 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {visibleDocs.map((d) => (
+              {visibleDocs.map((d) => {
+                const selectable =
+                  d.status === 'UPLOADED' || d.status === 'REJECTED';
+                return (
                 <TableRow key={d.id} className="group">
+                  {canManage && (
+                    <TableCell className="w-8">
+                      {selectable && (
+                        <input
+                          type="checkbox"
+                          className="accent-gold"
+                          aria-label={`Select ${d.filename}`}
+                          checked={selectedDocs.has(d.id)}
+                          onChange={() => toggleDoc(d.id)}
+                        />
+                      )}
+                    </TableCell>
+                  )}
                   <TableCell>
                     <button
                       type="button"
@@ -670,11 +778,13 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                     </TableCell>
                   )}
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
         </Card>
-      )}
+        );
+      })()}
 
       {view === 'associates' && !allDocs && !error && (
         <Card>
