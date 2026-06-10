@@ -143,6 +143,38 @@ export function listMyPayrollItems(): Promise<PayrollItemListResponse> {
   return apiFetch<PayrollItemListResponse>('/payroll/me/items');
 }
 
+/**
+ * Download an associate's own paystub PDF. The backend
+ * (`GET /payroll/items/:id/paystub.pdf`) already authorizes the item owner,
+ * so this works for self-service. Streams the PDF as a blob and triggers a
+ * browser download using the filename the server supplies.
+ */
+export async function downloadMyPaystub(itemId: string): Promise<void> {
+  const res = await fetch(`/api/payroll/items/${itemId}/paystub.pdf`, {
+    method: 'GET',
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    throw new Error(
+      res.status === 404
+        ? 'Paystub not available.'
+        : `Could not download paystub (${res.status}).`,
+    );
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const cd = res.headers.get('content-disposition') ?? '';
+  const m = /filename="([^"]+)"/.exec(cd);
+  const filename = m?.[1] ?? `paystub-${itemId.slice(0, 8)}.pdf`;
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 /* ===== Wave 1.1 — Pay schedules ======================================== */
 
 export function listPayrollSchedules(

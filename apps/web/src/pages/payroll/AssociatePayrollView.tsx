@@ -2,18 +2,21 @@
 // Payroll layout: per-kind earning lines, separate Deductions section,
 // and a Current + YTD column on every numeric row. The full breakdown
 // expands inline so an associate can read their tax math without leaving
-// the page (the PDF download still lives on the run drawer for HR).
+// the page. Associates can also download their own paystub as a PDF —
+// the backend authorizes the item owner on GET /payroll/items/:id/paystub.pdf.
 
 import { useEffect, useMemo, useState } from 'react';
+import { toast } from 'sonner';
 import type { PayrollItem, PayrollItemEarning } from '@alto-people/shared';
-import { listMyPayrollItems } from '@/lib/payrollApi';
+import { downloadMyPaystub, listMyPayrollItems } from '@/lib/payrollApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { dayHeading, groupByDayBy } from '@/lib/dayGroup';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Button } from '@/components/ui/Button';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { ChevronDown, ChevronRight, Wallet } from 'lucide-react';
+import { ChevronDown, ChevronRight, Download, Wallet } from 'lucide-react';
 
 const fmtMoney = (n: number) =>
   n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
@@ -184,6 +187,19 @@ function PaystubCard({
 }) {
   const badge = statusBadge(item.status);
   const ytd = useMemo(() => computeYtd(item, allItems), [item, allItems]);
+  const [downloading, setDownloading] = useState(false);
+
+  const onDownload = async () => {
+    if (downloading) return;
+    setDownloading(true);
+    try {
+      await downloadMyPaystub(item.id);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Download failed.');
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   return (
     <li className="bg-navy border border-navy-secondary rounded-lg overflow-hidden">
@@ -357,6 +373,18 @@ function PaystubCard({
           {item.failureReason && (
             <div className="text-xs text-alert">{item.failureReason}</div>
           )}
+
+          <div className="flex justify-end pt-1">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onDownload}
+              loading={downloading}
+            >
+              <Download className="h-3.5 w-3.5" />
+              Download PDF
+            </Button>
+          </div>
         </div>
       )}
     </li>
