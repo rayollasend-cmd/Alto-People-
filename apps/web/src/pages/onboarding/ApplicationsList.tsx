@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
+  Ban,
   BarChart3,
   ClipboardList,
   LayoutGrid,
@@ -23,11 +24,13 @@ import type {
   ApplicationSummary,
 } from '@alto-people/shared';
 import {
+  bulkRejectApplications,
   bulkResendInvite,
   getApplicationStats,
   listApplications,
   resendInvite,
 } from '@/lib/onboardingApi';
+import { usePrompt } from '@/lib/confirm';
 import { listClients } from '@/lib/clientsApi';
 import type { ClientSummary } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
@@ -142,6 +145,7 @@ function daysSince(iso: string, now: number): number {
 export function ApplicationsList() {
   const { can } = useAuth();
   const canManage = can('manage:onboarding');
+  const prompt = usePrompt();
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Default lands on ACTIVE so terminal applications (Approved/Rejected)
@@ -200,6 +204,7 @@ export function ApplicationsList() {
   const [openBulkInvite, setOpenBulkInvite] = useState(false);
   const [resendingIds, setResendingIds] = useState<Set<string>>(new Set());
   const [bulkResending, setBulkResending] = useState(false);
+  const [bulkRejecting, setBulkRejecting] = useState(false);
 
   // Bulk-select state. The set holds applicationIds; "select all" applies
   // to the *currently visible* (filtered) rows so it never spans pages
@@ -368,6 +373,41 @@ export function ApplicationsList() {
       toast.error('Could not bulk resend', { description: msg });
     } finally {
       setBulkResending(false);
+    }
+  };
+
+  const onBulkReject = async () => {
+    if (selected.size === 0 || bulkRejecting) return;
+    const n = selected.size;
+    const reason = (
+      await prompt({
+        title: `Reject ${n} application${n === 1 ? '' : 's'}?`,
+        description:
+          'Each candidate (and their manager) is emailed that they were declined. Already-decided applications are skipped. This cannot be undone.',
+        reasonLabel: 'Reason for rejection',
+        confirmLabel: `Reject ${n}`,
+        destructive: true,
+      })
+    )?.trim();
+    if (!reason) return;
+    setBulkRejecting(true);
+    try {
+      const res = await bulkRejectApplications({
+        applicationIds: Array.from(selected),
+        reason,
+      });
+      toast.success(
+        `Rejected ${res.rejected}${res.skipped.length ? ` · ${res.skipped.length} skipped` : ''}`,
+      );
+      setSelected(new Set());
+      refresh();
+      refreshStats();
+    } catch (err) {
+      toast.error('Could not bulk reject', {
+        description: err instanceof ApiError ? err.message : undefined,
+      });
+    } finally {
+      setBulkRejecting(false);
     }
   };
 
@@ -702,6 +742,7 @@ export function ApplicationsList() {
             variant="secondary"
             onClick={onBulkResend}
             loading={bulkResending}
+            disabled={bulkRejecting}
           >
             <MailPlus className="h-4 w-4" />
             Resend invite
@@ -709,7 +750,19 @@ export function ApplicationsList() {
           <Button
             size="sm"
             variant="ghost"
+            onClick={onBulkReject}
+            loading={bulkRejecting}
+            disabled={bulkResending}
+            className="text-alert hover:text-alert"
+          >
+            <Ban className="h-4 w-4" />
+            Reject
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
             onClick={() => setSelected(new Set())}
+            disabled={bulkRejecting}
           >
             Clear
           </Button>

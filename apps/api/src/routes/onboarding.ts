@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import type { Prisma } from '@prisma/client';
 import {
   ApplicationCreateInputSchema,
@@ -3262,6 +3263,104 @@ onboardingRouter.post(
 
       const body: BulkResendResponse = { succeeded, failed, results };
       res.status(200).json(body);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/* BULK REJECT (HR/Ops only) -------------------------------------------- */
+// Reject many in-flight applications at once with one shared reason. Mirrors
+// the single /:id/reject path per row (status -> REJECTED, audit, decline
+// emails to associate + manager). Per-id try/catch so one bad row never sinks
+// the batch; already-decided / out-of-scope rows come back in `skipped`.
+// Outward-facing (each rejected candidate is emailed) so the UI gates this
+// behind a count + reason confirmation.
+const BulkRejectSchema = z.object({
+  applicationIds: z.array(z.string().uuid()).min(1).max(200),
+  reason: z.string().trim().min(1).max(2000),
+});
+
+onboardingRouter.post(
+  '/applications/bulk-reject',
+  MANAGE,
+  async (req, res, next) => {
+    try {
+      const parsed = BulkRejectSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+      }
+      const { applicationIds, reason } = parsed.data;
+
+      let rejected = 0;
+      const skipped: { applicationId: string; reason: string }[] = [];
+
+      for (const applicationId of applicationIds) {
+        try {
+          const app = await prisma.application.findFirst({
+            where: { ...scopeApplications(req.user!), id: applicationId },
+          });
+          if (!app) {
+            skipped.push({ applicationId, reason: 'not_found' });
+            continue;
+          }
+          if (app.status === 'APPROVED' || app.status === 'REJECTED') {
+            skipped.push({ applicationId, reason: 'already_decided' });
+            continue;
+          }
+
+          await prisma.application.update({
+            where: { id: app.id },
+            data: {
+              status: 'REJECTED',
+              rejectedAt: new Date(),
+              rejectionReason: reason,
+            },
+          });
+          await recordOnboardingEvent({
+            actorUserId: req.user!.id,
+            action: 'application.rejected',
+            applicationId: app.id,
+            clientId: app.clientId,
+            metadata: { reason, bulk: true },
+            req,
+          });
+
+          const rejAssoc = await prisma.associate.findUnique({
+            where: { id: app.associateId },
+            select: { firstName: true, lastName: true },
+          });
+          const rejClient = await prisma.client.findUnique({
+            where: { id: app.clientId },
+            select: { name: true },
+          });
+          const rejTpl = applicationRejectedTemplate({
+            firstName: rejAssoc?.firstName ?? 'there',
+            clientName: rejClient?.name ?? 'your assigned client',
+            rejectionReason: reason,
+            decisionDate: new Date().toISOString().slice(0, 10),
+          });
+          void notifyAssociate(app.associateId, {
+            subject: rejTpl.subject,
+            body: rejTpl.text,
+            html: rejTpl.html,
+            category: 'onboarding',
+          });
+          void notifyManager(app.associateId, {
+            subject: 'Application declined on your team',
+            body: `An application for one of your direct reports was declined. Reason: ${reason}.`,
+            category: 'onboarding',
+          });
+          rejected++;
+        } catch (err) {
+          skipped.push({
+            applicationId,
+            reason: err instanceof HttpError ? err.code : 'error',
+          });
+        }
+      }
+
+      res.json({ rejected, skipped });
     } catch (err) {
       next(err);
     }
