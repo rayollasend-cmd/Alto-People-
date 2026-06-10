@@ -1147,7 +1147,9 @@ function PhoneField({
             onClick={() => setEditing(true)}
             aria-label="Edit phone"
             title="Edit"
-            className="opacity-0 group-hover:opacity-100 focus:opacity-100 grid place-items-center h-9 w-9 rounded text-silver hover:text-white hover:bg-navy-secondary/60 transition-opacity"
+            // Always visible on touch devices (no hover to reveal it);
+            // hover-revealed on pointer devices to keep the row clean.
+            className="opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100 grid place-items-center h-9 w-9 rounded text-silver hover:text-white hover:bg-navy-secondary/60 transition-opacity focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
           >
             <Pencil className="h-3.5 w-3.5" />
           </button>
