@@ -6,6 +6,7 @@ import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import express, { type Request } from 'express';
+import compression from 'compression';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
@@ -137,6 +138,14 @@ export function createApp() {
   }
 
   app.use(stripApiPrefix);
+  // gzip everything compressible — API JSON and the SPA bundles alike.
+  // Measured before this existed: the main JS chunk left the server as
+  // 441 KB raw (Railway's proxy only gzips text/html), which dominated
+  // first-load time on store tablets. ~70% smaller on the wire with this.
+  // compression() skips already-compressed content types (images, PDFs)
+  // via its mime filter, and there are no SSE/streaming endpoints to
+  // worry about buffering.
+  app.use(compression());
   // Mounted before helmet so every response — including helmet's 4xx /
   // CSP-blocked ones — carries the trace ID. Stays before attachUser so
   // auth-failure logs have an id.
@@ -354,14 +363,32 @@ export function createApp() {
   // and-braces check — running the API standalone in prod (no web build
   // present) shouldn't 500 every request from express.static.
   if (env.NODE_ENV === 'production' && existsSync(WEB_DIST)) {
-    // `index: false` so we explicitly hand `/` to the SPA fallback below.
+    // Vite content-hashes everything under /assets, so a given URL's bytes
+    // can never change — cache forever. A deploy changes the hash, and the
+    // no-cache index.html below picks up the new URLs immediately.
+    app.use(
+      '/assets',
+      express.static(path.join(WEB_DIST, 'assets'), {
+        maxAge: '1y',
+        immutable: true,
+        index: false,
+      })
+    );
+    // Everything else in dist (manifest, icons, face-models) isn't hashed —
+    // keep the shorter TTL. `index: false` so we explicitly hand `/` to the
+    // SPA fallback below.
     app.use(express.static(WEB_DIST, { maxAge: '1d', index: false }));
     app.get('*', (req, res, next) => {
       // If the original URL was /api/*, the request was tagged by
       // stripApiPrefix. Skip the SPA fallback so unmatched API endpoints
       // return JSON 404 (via notFoundHandler) instead of HTML 200.
       if ((req as Request & { isApiCall?: boolean }).isApiCall) return next();
-      res.sendFile(path.join(WEB_DIST, 'index.html'));
+      // no-cache (revalidate, not "don't store") so every navigation checks
+      // for a new deploy's index.html — the asset URLs inside are what
+      // actually bust the immutable cache above.
+      res.sendFile(path.join(WEB_DIST, 'index.html'), {
+        headers: { 'Cache-Control': 'no-cache' },
+      });
     });
   }
 
