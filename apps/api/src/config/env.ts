@@ -182,6 +182,20 @@ const EnvSchema = z.object({
   // a Volume to this service and set UPLOAD_DIR to its mount path
   // (e.g. /data/uploads). See apps/api/STORAGE.md.
   UPLOAD_DIR: z.string().optional(),
+  // Nightly off-site backup of UPLOAD_ROOT to any S3-compatible bucket
+  // (AWS S3, Backblaze B2, Cloudflare R2). The Railway Volume protects
+  // files against REDEPLOYS, not against deletion/corruption — Neon has
+  // point-in-time recovery for the database; this is the equivalent for
+  // the document blobs. All four BACKUP_S3_* must be set or the job
+  // stays off (no half-configured surprises). ENDPOINT only for non-AWS
+  // providers. See apps/api/BACKUPS.md.
+  BACKUP_S3_BUCKET: z.string().optional(),
+  BACKUP_S3_REGION: z.string().optional(),
+  BACKUP_S3_ACCESS_KEY_ID: z.string().optional(),
+  BACKUP_S3_SECRET_ACCESS_KEY: z.string().optional(),
+  BACKUP_S3_ENDPOINT: z.string().url().optional(),
+  BACKUP_INTERVAL_HOURS: z.coerce.number().int().positive().default(24),
+  BACKUP_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
   // Sentry DSN. When set, unhandled errors from the request pipeline +
   // any error reaching the global error handler get reported. Unset =>
   // no reporting, no SDK init, zero network calls. Reasonable default
