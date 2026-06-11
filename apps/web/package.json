@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "build:pwa-icons": "node scripts/build-pwa-icons.mjs",
-    "build:face-models": "node scripts/fetch-face-models.mjs"
+    "build:face-models": "node scripts/fetch-face-models.mjs",
+    "lint": "eslint src"
   },
   "dependencies": {
     "@alto-people/shared": "*",
@@ -48,9 +49,12 @@
     "@testing-library/user-event": "^14.6.1",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
+    "@typescript-eslint/parser": "^8.61.0",
     "@vitejs/plugin-react": "^4.3.1",
     "@vitest/ui": "^2.1.9",
     "autoprefixer": "^10.4.20",
+    "eslint": "^10.4.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "jsdom": "^25.0.1",
     "postcss": "^8.4.47",
     "sharp": "^0.34.5",
