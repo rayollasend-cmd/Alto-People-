@@ -1,3 +1,4 @@
+import { useLocation } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
   Award,
@@ -677,3 +678,28 @@ export const DASHBOARD_NAV = {
   label: 'Dashboard',
   icon: Briefcase,
 } as const;
+
+/**
+ * The nav path that should be highlighted for the current location:
+ * the module whose path is the LONGEST prefix of the pathname (same
+ * longest-prefix rule as the route prefetcher).
+ *
+ * Plain NavLink prefix matching can't do this — some modules are nested
+ * under others (Kiosk & PINs at /time-attendance/kiosk sits under Time &
+ * Attendance at /time-attendance), and with prefix matching BOTH light
+ * up. Longest-prefix keeps exactly one active: the deepest module that
+ * owns the URL, while detail pages (/clients/:id) still highlight their
+ * parent module.
+ */
+export function useActiveNavPath(): string | null {
+  const { pathname } = useLocation();
+  let best: string | null = null;
+  for (const m of [DASHBOARD_NAV, ...MODULES]) {
+    const p = m.path;
+    // Dashboard ('/') is exact-only — as a prefix it would match every URL.
+    const hit =
+      p === '/' ? pathname === '/' : pathname === p || pathname.startsWith(`${p}/`);
+    if (hit && (best === null || p.length > best.length)) best = p;
+  }
+  return best;
+}

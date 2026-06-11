@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   ChevronDown,
   ChevronUp,
@@ -21,6 +21,7 @@ import {
   DASHBOARD_NAV,
   GROUP_LABEL,
   MODULES,
+  useActiveNavPath,
   type ModuleGroup,
   type ModuleNav,
 } from '@/lib/modules';
@@ -98,6 +99,7 @@ function writeRailCollapsed(value: boolean): void {
 export function Sidebar() {
   const { can } = useAuth();
   const visible = MODULES.filter((m) => can(m.requires));
+  const activePath = useActiveNavPath();
 
   const grouped: Partial<Record<ModuleGroup, ModuleNav[]>> = {};
   for (const m of visible) {
@@ -157,7 +159,7 @@ export function Sidebar() {
       <nav className="flex-1 overflow-y-auto overscroll-contain py-2" aria-label="Primary navigation">
         <SidebarLink
           to={DASHBOARD_NAV.path}
-          end
+          active={activePath === DASHBOARD_NAV.path}
           label={DASHBOARD_NAV.label}
           icon={DASHBOARD_NAV.icon}
           railCollapsed={railCollapsed}
@@ -179,6 +181,7 @@ export function Sidebar() {
                 <SidebarLink
                   key={m.key}
                   to={m.path}
+                  active={activePath === m.path}
                   label={m.label}
                   icon={m.icon}
                   railCollapsed={railCollapsed}
@@ -293,42 +296,43 @@ interface SidebarLinkProps {
   to: string;
   label: string;
   icon: LucideIcon;
-  end?: boolean;
+  /** Computed by the parent via useActiveNavPath (longest-prefix wins).
+   *  NavLink's own prefix matching would light up BOTH "Time &
+   *  Attendance" and "Kiosk & PINs" on /time-attendance/kiosk. */
+  active: boolean;
   railCollapsed: boolean;
 }
 
-function SidebarLink({ to, label, icon: Icon, end, railCollapsed }: SidebarLinkProps) {
+function SidebarLink({ to, label, icon: Icon, active, railCollapsed }: SidebarLinkProps) {
   // Hover + focus prefetch — by the time the user actually clicks, the
   // page's lazy chunk is already warm. onTouchStart covers touch, which
   // fires before the synthetic click.
   const preload = () => prefetchRoute(to);
 
   const link = (
-    <NavLink
+    <Link
       to={to}
-      end={end}
       aria-label={railCollapsed ? label : undefined}
+      aria-current={active ? 'page' : undefined}
       onMouseEnter={preload}
       onFocus={preload}
       onTouchStart={preload}
-      className={({ isActive }) =>
-        cn(
-          'group relative my-0.5 flex items-center rounded-md text-sm transition-colors',
-          // F500 cue: thin gold bar on the left of the active item.
-          // Pseudo-element sits inside the link so it doesn't shift sibling layout.
-          'before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-0.5 before:rounded-r before:bg-gold before:opacity-0 before:transition-opacity',
-          railCollapsed
-            ? 'mx-2 h-9 w-9 justify-center'
-            : 'mx-2 gap-2.5 px-3 py-2',
-          isActive
-            ? 'bg-navy-secondary text-white before:opacity-100'
-            : 'text-silver hover:text-white hover:bg-navy-secondary/50',
-        )
-      }
+      className={cn(
+        'group relative my-0.5 flex items-center rounded-md text-sm transition-colors',
+        // F500 cue: thin gold bar on the left of the active item.
+        // Pseudo-element sits inside the link so it doesn't shift sibling layout.
+        'before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-0.5 before:rounded-r before:bg-gold before:opacity-0 before:transition-opacity',
+        railCollapsed
+          ? 'mx-2 h-9 w-9 justify-center'
+          : 'mx-2 gap-2.5 px-3 py-2',
+        active
+          ? 'bg-navy-secondary text-white before:opacity-100'
+          : 'text-silver hover:text-white hover:bg-navy-secondary/50',
+      )}
     >
       <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
       {!railCollapsed && <span className="truncate">{label}</span>}
-    </NavLink>
+    </Link>
   );
 
   if (!railCollapsed) return link;
