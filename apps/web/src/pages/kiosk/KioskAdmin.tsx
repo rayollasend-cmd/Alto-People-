@@ -63,6 +63,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -75,6 +76,7 @@ import {
   TabsList,
   TabsTrigger,
 } from '@/components/ui';
+import { fmtDate, fmtDateTime } from '@/lib/format';
 import { Label } from '@/components/ui/Label';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { toast } from 'sonner';
@@ -423,7 +425,7 @@ function DevicesTab({
                             isDeviceOffline(d) ? 'text-warning' : undefined
                           }
                         >
-                          {new Date(d.lastSeenAt).toLocaleString()}
+                          {fmtDateTime(d.lastSeenAt)}
                           {isDeviceOffline(d) && (
                             <Badge variant="pending" className="ml-2">
                               Offline
@@ -606,8 +608,8 @@ function NewDeviceDrawer({
               No clients yet — create one in Clients first.
             </div>
           ) : (
-            <select
-              className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+            <Select
+              className="mt-1"
               value={clientId}
               onChange={(e) => setClientId(e.target.value)}
             >
@@ -616,7 +618,7 @@ function NewDeviceDrawer({
                   {c.name}
                 </option>
               ))}
-            </select>
+            </Select>
           )}
         </div>
         <div>
@@ -629,8 +631,8 @@ function NewDeviceDrawer({
               detail page first.
             </div>
           ) : (
-            <select
-              className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+            <Select
+              className="mt-1"
               value={locationId}
               onChange={(e) => setLocationId(e.target.value)}
             >
@@ -640,7 +642,7 @@ function NewDeviceDrawer({
                   {l.state ? ` · ${l.state}` : ''}
                 </option>
               ))}
-            </select>
+            </Select>
           )}
         </div>
         <div>
@@ -1014,8 +1016,8 @@ function PinsTab({ canManage }: { canManage: boolean }) {
               No clients yet — create one in Clients first.
             </div>
           ) : (
-            <select
-              className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+            <Select
+              className="mt-1"
               value={clientId}
               onChange={(e) => setClientId(e.target.value)}
             >
@@ -1025,14 +1027,14 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                   {c.name}
                 </option>
               ))}
-            </select>
+            </Select>
           )}
         </div>
         {clientId && clientId !== ALL_CLIENTS && locationOptions.length > 0 && (
           <div className="max-w-xs flex-1">
             <Label>Location</Label>
-            <select
-              className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+            <Select
+              className="mt-1"
               value={locationFilter}
               onChange={(e) => setLocationFilter(e.target.value)}
             >
@@ -1042,7 +1044,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                   {l.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
         )}
         {canManage && (
@@ -1348,7 +1350,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                     <TableCell>
                       <FaceConsentCell pin={p} canManage={canManage} onChanged={refresh} />
                     </TableCell>
-                    <TableCell>{new Date(p.createdAt).toLocaleDateString()}</TableCell>
+                    <TableCell>{fmtDate(p.createdAt)}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-3">
                         {canManage && p.employeeNumber && (
@@ -1675,7 +1677,7 @@ function DiagnoseDrawer({ onClose }: { onClose: () => void }) {
                   <span className="text-silver">Open shift:</span>{' '}
                   <span className="text-white">
                     {result.openTimeEntry
-                      ? `clocked in ${new Date(result.openTimeEntry.clockInAt).toLocaleString()}`
+                      ? `clocked in ${fmtDateTime(result.openTimeEntry.clockInAt)}`
                       : 'None'}
                   </span>
                 </div>
@@ -1809,8 +1811,8 @@ function NewPinDrawer({
             </div>
           ) : (
             <>
-              <select
-                className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+              <Select
+                className="mt-1"
                 value={associateId}
                 onChange={(e) => setAssociateId(e.target.value)}
               >
@@ -1830,7 +1832,7 @@ function NewPinDrawer({
                     </option>
                   );
                 })}
-              </select>
+              </Select>
               {eligibleCount === 0 && (
                 <div className="mt-1 text-xs text-warning">
                   No associates here have an approved application yet —
@@ -2152,15 +2154,13 @@ function LogTab() {
     range !== 'all' ||
     anomaliesOnly;
 
-  const selectClass =
-    'h-9 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-sm text-white';
-
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <AssociatePicker value={associate} onChange={setAssociate} />
-        <select
-          className={selectClass}
+        <Select
+          size="sm"
+          className="h-9 w-auto"
           value={deviceId}
           onChange={(e) => setDeviceId(e.target.value)}
         >
@@ -2170,9 +2170,10 @@ function LogTab() {
               {d.name}
             </option>
           ))}
-        </select>
-        <select
-          className={selectClass}
+        </Select>
+        <Select
+          size="sm"
+          className="h-9 w-auto"
           value={action}
           onChange={(e) => setAction(e.target.value as ActionFilter)}
         >
@@ -2182,9 +2183,10 @@ function LogTab() {
           <option value="BREAK_START">Break start</option>
           <option value="BREAK_END">Break end</option>
           <option value="REJECTED">Rejected</option>
-        </select>
-        <select
-          className={selectClass}
+        </Select>
+        <Select
+          size="sm"
+          className="h-9 w-auto"
           value={range}
           onChange={(e) => setRange(e.target.value as typeof range)}
         >
@@ -2192,7 +2194,7 @@ function LogTab() {
           <option value="today">Today</option>
           <option value="7d">Last 7 days</option>
           <option value="30d">Last 30 days</option>
-        </select>
+        </Select>
         <button
           type="button"
           onClick={() => setAnomaliesOnly((v) => !v)}
@@ -2266,7 +2268,7 @@ function LogTab() {
               <TableBody>
                 {rows.map((p) => (
                   <TableRow key={p.id}>
-                    <TableCell>{new Date(p.createdAt).toLocaleString()}</TableCell>
+                    <TableCell>{fmtDateTime(p.createdAt)}</TableCell>
                     <TableCell className="font-mono text-xs">{p.deviceName}</TableCell>
                     <TableCell>{p.associateName ?? '—'}</TableCell>
                     <TableCell>
@@ -2379,10 +2381,10 @@ function FacesTab({ canManage }: { canManage: boolean }) {
                   </TableCell>
                   <TableCell className="text-silver">{r.associateEmail}</TableCell>
                   <TableCell className="text-xs">
-                    {new Date(r.enrolledAt).toLocaleString()}
+                    {fmtDateTime(r.enrolledAt)}
                   </TableCell>
                   <TableCell className="text-xs text-silver">
-                    {new Date(r.updatedAt).toLocaleDateString()}
+                    {fmtDate(r.updatedAt)}
                   </TableCell>
                   <TableCell className="text-right">
                     {canManage && (
@@ -2633,7 +2635,7 @@ function ReviewTab({
                       </TableCell>
                     )}
                     <TableCell className="text-xs">
-                      {new Date(p.createdAt).toLocaleString()}
+                      {fmtDateTime(p.createdAt)}
                     </TableCell>
                     <TableCell>{renderPendingBadge(p.createdAt)}</TableCell>
                     <TableCell className="font-medium text-white">

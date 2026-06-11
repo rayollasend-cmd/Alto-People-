@@ -2,34 +2,33 @@ import { useEffect, useState } from 'react';
 import type { CalendarFeedUrlResponse, Shift } from '@alto-people/shared';
 import { getMyCalendarUrl, listMyShifts } from '@/lib/schedulingApi';
 import { ApiError } from '@/lib/api';
-import { cn } from '@/lib/cn';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { toast } from '@/components/ui/Toaster';
+import { fmtDateTime, fmtTime } from '@/lib/format';
 import { CalendarDays, Check, Copy, ExternalLink } from 'lucide-react';
 import { AvailabilityEditor } from './AvailabilityEditor';
 import { SwapMarketplace } from './SwapMarketplace';
 
 function formatRange(s: Shift): string {
-  const a = new Date(s.startsAt);
-  const b = new Date(s.endsAt);
-  return `${a.toLocaleString()} – ${b.toLocaleTimeString()}`;
+  return `${fmtDateTime(s.startsAt)} – ${fmtTime(s.endsAt)}`;
 }
 
-function statusBadge(status: Shift['status']): { label: string; cls: string } {
+function statusBadge(status: Shift['status']): { label: string; variant: 'accent' | 'default' | 'success' | 'destructive' } {
   switch (status) {
     case 'ASSIGNED':
-      return { label: 'Confirmed', cls: 'bg-gold/20 text-gold border-gold/40' };
+      return { label: 'Confirmed', variant: 'accent' };
     case 'OPEN':
-      return { label: 'Open', cls: 'bg-silver/10 text-silver border-silver/30' };
+      return { label: 'Open', variant: 'default' };
     case 'COMPLETED':
-      return { label: 'Worked', cls: 'bg-success/15 text-success border-success/30' };
+      return { label: 'Worked', variant: 'success' };
     case 'DRAFT':
-      return { label: 'Draft', cls: 'bg-silver/10 text-silver border-silver/30' };
+      return { label: 'Draft', variant: 'default' };
     case 'CANCELLED':
-      return { label: 'Cancelled', cls: 'bg-alert/15 text-alert border-alert/30' };
+      return { label: 'Cancelled', variant: 'destructive' };
   }
 }
 
@@ -92,14 +91,9 @@ export function AssociateScheduleView() {
                     <div className="text-xs text-silver/70">{s.location}</div>
                   )}
                 </div>
-                <span
-                  className={cn(
-                    'shrink-0 text-xs uppercase tracking-widest px-2 py-1 rounded border',
-                    badge.cls
-                  )}
-                >
+                <Badge variant={badge.variant} className="shrink-0">
                   {badge.label}
-                </span>
+                </Badge>
               </li>
             );
           })}

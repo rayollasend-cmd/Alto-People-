@@ -13,6 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
+import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/cn';
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -570,32 +571,37 @@ function DayDetailDialog({
         </ul>
         <div className="flex gap-2 pt-2">
           {canManage && day && (
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={() => onCreate(day)}
-              className="flex-1 h-9 px-3 rounded-md border border-navy-secondary text-sm text-silver hover:text-gold hover:border-gold/40 transition-colors inline-flex items-center justify-center gap-1.5"
+              className="flex-1"
             >
               <Plus className="h-3.5 w-3.5" />
               Add shift on this day
-            </button>
+            </Button>
           )}
           {day && (
-            <button
+            <Button
               type="button"
+              variant="primary"
+              size="sm"
               onClick={() => onOpenDayView(day)}
-              className="flex-1 h-9 px-3 rounded-md bg-gold text-navy text-sm font-medium hover:bg-gold-bright transition-colors"
+              className="flex-1"
             >
               Open day view
-            </button>
+            </Button>
           )}
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon-sm"
             onClick={onClose}
-            className="h-9 px-2 text-silver hover:text-white transition-colors"
             aria-label="Close"
           >
             <X className="h-4 w-4" />
-          </button>
+          </Button>
         </div>
       </DialogContent>
     </Dialog>
