@@ -137,6 +137,23 @@ export interface EmployeeNumber {
 export const getEmployeeNumber = () =>
   apiFetch<EmployeeNumber>('/self/me/employee-number');
 
+export interface FaceConsent {
+  /** null = never asked — the kiosk will show its one-time question. */
+  status: 'GRANTED' | 'DECLINED' | null;
+  at: string | null;
+}
+
+export const getFaceConsent = () =>
+  apiFetch<FaceConsent>('/self/me/face-consent');
+
+/** Self-service consent change. Declining scrubs stored selfies + face
+ *  template immediately, server-side. */
+export const setFaceConsent = (consent: boolean) =>
+  apiFetch<{ ok: true; status: 'GRANTED' | 'DECLINED' }>(
+    '/self/me/face-consent',
+    { method: 'POST', body: { consent } },
+  );
+
 // Profile photo upload — separate codepath because apiFetch JSON-encodes
 // the body. We post the raw FormData and rely on the browser to set the
 // multipart boundary header.

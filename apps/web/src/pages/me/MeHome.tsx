@@ -10,6 +10,7 @@ import {
   deleteDependent,
   deleteEmergency,
   getEmployeeNumber,
+  getFaceConsent,
   getProfile,
   listBeneficiaries,
   listDependents,
@@ -18,12 +19,14 @@ import {
   listTaxDocs,
   updateBeneficiary,
   updateDependent,
+  setFaceConsent,
   updateEmergency,
   updateSelfProfile,
   type Beneficiary,
   type Dependent,
   type EmergencyContact,
   type EmployeeNumber,
+  type FaceConsent,
   type LifeEvent,
   type SelfProfile,
   type TaxDoc,
@@ -282,6 +285,7 @@ function ProfilePanel({
     <Card>
       <CardContent className="p-6 space-y-5">
         <EmployeeNumberRow employeeNumber={employeeNumber} />
+        <FaceConsentRow />
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <ReadonlyField label="Name" value={`${profile.firstName} ${profile.lastName}`} />
@@ -343,6 +347,98 @@ function ProfilePanel({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+// Self-service biometric consent — the associate's own switch for kiosk
+// face verification, mirroring the kiosk's one-time question. Declining
+// here scrubs stored selfies + the face template immediately (server
+// enforces it); granting from your own authenticated profile is valid
+// affirmative consent. This closes the loop the kiosk copy promises —
+// without making anyone go through their manager.
+function FaceConsentRow() {
+  const confirm = useConfirm();
+  const [consent, setConsent] = useState<FaceConsent | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getFaceConsent()
+      .then((c) => !cancelled && setConsent(c))
+      .catch(() => !cancelled && setConsent({ status: null, at: null }));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const change = async (next: boolean) => {
+    const ok = await confirm(
+      next
+        ? {
+            title: 'Turn on face verification?',
+            description:
+              'The kiosk will take a quick photo at each punch to confirm it’s really you. Photos are deleted after 90 days; a numeric face template is kept while you actively punch and deleted if you turn this off.',
+          }
+        : {
+            title: 'Turn off face verification?',
+            description:
+              'Your stored punch photos and face template are deleted immediately. You’ll clock in with just your number from now on.',
+            destructive: true,
+          },
+    );
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const r = await setFaceConsent(next);
+      setConsent({ status: r.status, at: new Date().toISOString() });
+      toast.success(
+        next
+          ? 'Face verification is on.'
+          : 'Face verification is off — stored photos and template deleted.',
+      );
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-md border border-navy-secondary bg-navy-secondary/30 p-4">
+      <div className="text-xs uppercase tracking-widest text-silver">
+        Kiosk face verification
+      </div>
+      {consent === null ? (
+        <Skeleton className="mt-2 h-9 w-56" />
+      ) : (
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          {consent.status === 'GRANTED' ? (
+            <Badge variant="success">On</Badge>
+          ) : consent.status === 'DECLINED' ? (
+            <Badge variant="outline">Off — number only</Badge>
+          ) : (
+            <Badge variant="pending">Not set</Badge>
+          )}
+          <span className="text-xs text-silver">
+            {consent.status === 'GRANTED'
+              ? 'The kiosk takes a quick photo at each punch to confirm it’s you.'
+              : consent.status === 'DECLINED'
+                ? 'You clock in with just your number — no photo is taken or stored.'
+                : 'The kiosk will ask you once at your next punch. You can also decide here.'}
+          </span>
+          {consent.status !== 'GRANTED' && (
+            <Button size="sm" variant="ghost" disabled={busy} onClick={() => change(true)}>
+              Turn on
+            </Button>
+          )}
+          {consent.status !== 'DECLINED' && (
+            <Button size="sm" variant="ghost" disabled={busy} onClick={() => change(false)}>
+              Turn off
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
