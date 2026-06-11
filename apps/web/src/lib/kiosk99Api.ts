@@ -45,7 +45,11 @@ export interface KioskPin {
 
 export type KioskPunchReviewStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
-export type KioskAnomalyKind = 'FACE_MISMATCH' | 'IMPOSSIBLE_TRAVEL' | 'GEOFENCE';
+export type KioskAnomalyKind =
+  | 'FACE_MISMATCH'
+  | 'IMPOSSIBLE_TRAVEL'
+  | 'GEOFENCE'
+  | 'FACE_ENROLLMENT';
 
 export interface KioskPunchSummary {
   id: string;
@@ -140,6 +144,8 @@ export const kioskAttachFace = (payload: {
  *  themselves on camera) for a punch that can't succeed. Returns the
  *  associate's first name and the action the punch is predicted to
  *  take, so the camera screen can say "Clocking you in, Maria". */
+export type FaceConsentStatus = 'GRANTED' | 'DECLINED';
+
 export const kioskVerifyPin = (payload: {
   deviceToken: string;
   pin: string;
@@ -151,7 +157,22 @@ export const kioskVerifyPin = (payload: {
     ok: true;
     associateFirstName: string;
     predictedAction: 'CLOCK_IN' | 'CLOCK_OUT' | 'BREAK_START' | 'BREAK_END';
+    /** null = never asked → the kiosk shows the one-time consent screen. */
+    faceConsent: FaceConsentStatus | null;
   }>('/kiosk/verify-pin', {
+    method: 'POST',
+    body: payload,
+    timeoutMs: KIOSK_TIMEOUT_MS,
+  });
+
+/** Record the associate's one-time face-verification consent decision.
+ *  Requires a valid PIN (it's their decision, asserted at the keypad). */
+export const kioskFaceConsent = (payload: {
+  deviceToken: string;
+  pin: string;
+  consent: boolean;
+}) =>
+  apiFetch<{ ok: true; status: FaceConsentStatus }>('/kiosk/face-consent', {
     method: 'POST',
     body: payload,
     timeoutMs: KIOSK_TIMEOUT_MS,

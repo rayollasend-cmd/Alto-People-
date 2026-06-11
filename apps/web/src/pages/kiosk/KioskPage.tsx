@@ -4,8 +4,10 @@ import { useConfirm } from '@/lib/confirm';
 import {
   kioskAttachFace,
   kioskConfig,
+  kioskFaceConsent,
   kioskPunch,
   kioskVerifyPin,
+  type FaceConsentStatus,
   type KioskPunchAction,
 } from '@/lib/kiosk99Api';
 import {
@@ -42,7 +44,19 @@ const TOKEN_STORAGE_KEY = 'alto.kiosk.deviceToken';
 // a device that somehow gets relocated without a reload.
 const LOCATION_TTL_MS = 5 * 60 * 1000;
 
-type Stage = 'setup' | 'idle' | 'pin' | 'selfie' | 'result' | 'error';
+// 'consent' — one-time face-verification consent, shown after the first
+// successful PIN entry when the associate has never been asked.
+// 'submitting' — brief interstitial for the PIN-only path (declined
+// consent), which skips the camera and goes straight to the punch.
+type Stage =
+  | 'setup'
+  | 'idle'
+  | 'pin'
+  | 'consent'
+  | 'selfie'
+  | 'submitting'
+  | 'result'
+  | 'error';
 
 interface PunchResult {
   action: 'CLOCK_IN' | 'CLOCK_OUT' | 'BREAK_START' | 'BREAK_END';
@@ -77,6 +91,7 @@ export function KioskPage() {
   const [preflight, setPreflight] = useState<{
     firstName: string;
     predictedAction: KioskPunchAction;
+    faceConsent: FaceConsentStatus | null;
   } | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [queued, setQueued] = useState<number>(() => queueSize());
@@ -475,8 +490,19 @@ export function KioskPage() {
               setPreflight({
                 firstName: v.associateFirstName,
                 predictedAction: v.predictedAction,
+                faceConsent: v.faceConsent,
               });
-              setStage('selfie');
+              // Route by consent: never asked → one-time consent
+              // screen; declined → PIN-only, no camera; granted →
+              // selfie as usual.
+              if (v.faceConsent === null) {
+                setStage('consent');
+              } else if (v.faceConsent === 'DECLINED') {
+                setStage('submitting');
+                void submit(null);
+              } else {
+                setStage('selfie');
+              }
             } catch (err) {
               if (err instanceof ApiError && err.status >= 400 && err.status < 500) {
                 if (err.code === 'device_token_expired' || err.code === 'invalid_device') {
@@ -527,6 +553,30 @@ export function KioskPage() {
           onCancel={reset}
         />
       )}
+      {stage === 'consent' && preflight && (
+        <ConsentScreen
+          firstName={preflight.firstName}
+          onChoice={(agree) => {
+            // Record best-effort: a network failure must not block this
+            // punch — the decision just stays unrecorded and the kiosk
+            // asks again next time.
+            if (token) {
+              void kioskFaceConsent({
+                deviceToken: token,
+                pin,
+                consent: agree,
+              }).catch(() => {});
+            }
+            if (agree) {
+              setStage('selfie');
+            } else {
+              setStage('submitting');
+              void submit(null);
+            }
+          }}
+          onCancel={reset}
+        />
+      )}
       {stage === 'selfie' && (
         <SelfieCapture
           preflight={preflight}
@@ -534,6 +584,12 @@ export function KioskPage() {
           onSkip={() => void submit(null)}
           onCancel={reset}
         />
+      )}
+      {stage === 'submitting' && (
+        <div className="text-center">
+          <div className="text-gold text-4xl animate-pulse mb-4">⋯</div>
+          <div className="text-2xl text-silver">One moment…</div>
+        </div>
       )}
       {/* Result + error screens dismiss on tap-anywhere so the next
           person in line doesn't have to wait out the auto-reset timer. */}
@@ -821,6 +877,55 @@ function PinPad({
           ⌫
         </button>
       </div>
+    </div>
+  );
+}
+
+// One-time biometric consent. Shown after the first valid PIN entry for
+// an associate who has never been asked (faceConsent === null). Both
+// choices are first-class: declining means PIN-only punches forever
+// (the camera never opens for them) until they change their mind via HR.
+function ConsentScreen({
+  firstName,
+  onChoice,
+  onCancel,
+}: {
+  firstName: string;
+  onChoice: (agree: boolean) => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="flex flex-col items-center max-w-lg px-6 text-center">
+      <div className="text-3xl text-white mb-3">
+        Quick question, <span className="text-gold-bright">{firstName}</span>
+      </div>
+      <p className="text-silver text-lg mb-2">
+        This kiosk can take a quick photo at each punch to confirm it&rsquo;s
+        really you (it stops anyone else clocking in with your number).
+      </p>
+      <p className="text-silver/80 text-sm mb-8">
+        Photos are used only to verify your punches and are deleted after 90
+        days. If you&rsquo;d rather not, you can clock in with just your number —
+        no photo, ever. You can change this later through your manager.
+      </p>
+      <button
+        onClick={() => onChoice(true)}
+        className="w-full min-h-[56px] bg-gold hover:bg-gold-bright text-navy rounded-xl py-4 text-xl font-medium transition-colors"
+      >
+        OK — use photo verification
+      </button>
+      <button
+        onClick={() => onChoice(false)}
+        className="w-full min-h-[56px] mt-3 bg-navy-secondary hover:bg-navy-secondary/70 text-white rounded-xl py-4 text-xl transition-colors"
+      >
+        No thanks — number only
+      </button>
+      <button
+        onClick={onCancel}
+        className="mt-6 min-h-[44px] px-6 text-silver text-base hover:text-white transition"
+      >
+        Cancel
+      </button>
     </div>
   );
 }
