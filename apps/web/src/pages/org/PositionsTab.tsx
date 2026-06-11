@@ -154,9 +154,9 @@ export function PositionsTab({
             <TableRow>
               <TableHead>Code</TableHead>
               <TableHead>Title</TableHead>
-              <TableHead>Department</TableHead>
+              <TableHead className="hidden md:table-cell">Department</TableHead>
               <TableHead>Filled by</TableHead>
-              <TableHead>FTE</TableHead>
+              <TableHead className="hidden lg:table-cell">FTE</TableHead>
               <TableHead>Status</TableHead>
             </TableRow>
           </TableHeader>
@@ -172,8 +172,11 @@ export function PositionsTab({
                 }}
               >
                 <TableCell className="font-medium tabular-nums">{p.code}</TableCell>
-                <TableCell>{p.title}</TableCell>
-                <TableCell className="text-silver">{p.departmentName ?? '—'}</TableCell>
+                <TableCell>
+                  {p.title}
+                  <div className="text-[11px] text-silver/70 md:hidden">{p.departmentName ?? '—'}</div>
+                </TableCell>
+                <TableCell className="text-silver hidden md:table-cell">{p.departmentName ?? '—'}</TableCell>
                 <TableCell className="text-silver">
                   {p.filledByName ? (
                     <div className="flex items-center gap-2">
@@ -184,7 +187,7 @@ export function PositionsTab({
                     '—'
                   )}
                 </TableCell>
-                <TableCell className="tabular-nums">{p.fteAuthorized}</TableCell>
+                <TableCell className="tabular-nums hidden lg:table-cell">{p.fteAuthorized}</TableCell>
                 <TableCell>
                   <Badge variant={STATUS_VARIANT[p.status]}>{p.status}</Badge>
                 </TableCell>

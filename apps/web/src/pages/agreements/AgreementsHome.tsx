@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { FileSignature, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
+import { fmtDate } from '@/lib/format';
 import {
   deleteAgreement,
   expireAgreement,
@@ -162,7 +163,7 @@ export function AgreementsHome() {
                       </div>
                       <div className="text-xs text-silver">
                         {a.signedAt
-                          ? `Signed ${new Date(a.signedAt).toLocaleDateString()}`
+                          ? `Signed ${fmtDate(a.signedAt)}`
                           : 'Awaiting your signature'}
                         {a.expiresOn && ` · expires ${a.expiresOn}`}
                       </div>
@@ -211,8 +212,8 @@ export function AgreementsHome() {
                     <TableHead>Associate</TableHead>
                     <TableHead>Kind</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Signed</TableHead>
-                    <TableHead>Expires</TableHead>
+                    <TableHead className="hidden md:table-cell">Signed</TableHead>
+                    <TableHead className="hidden md:table-cell">Expires</TableHead>
                     <TableHead className="text-right"></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -226,6 +227,12 @@ export function AgreementsHome() {
                         <div className="text-xs text-silver">
                           {a.associateEmail}
                         </div>
+                        <div className="text-[11px] text-silver/70 md:hidden">
+                          {a.signedAt
+                            ? `Signed ${fmtDate(a.signedAt)}`
+                            : 'Not signed'}
+                          {a.expiresOn && ` · expires ${a.expiresOn}`}
+                        </div>
                       </TableCell>
                       <TableCell className="text-sm">
                         {a.kind === 'OTHER' && a.customLabel
@@ -237,12 +244,10 @@ export function AgreementsHome() {
                           {STATUS_LABELS[a.status]}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-sm text-silver">
-                        {a.signedAt
-                          ? new Date(a.signedAt).toLocaleDateString()
-                          : '—'}
+                      <TableCell className="text-sm text-silver hidden md:table-cell">
+                        {fmtDate(a.signedAt)}
                       </TableCell>
-                      <TableCell className="text-sm">
+                      <TableCell className="text-sm hidden md:table-cell">
                         {a.expiresOn ? (
                           <span
                             className={

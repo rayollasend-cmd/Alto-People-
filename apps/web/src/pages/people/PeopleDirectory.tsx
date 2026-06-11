@@ -40,7 +40,7 @@ import { listDirectory, type DirectoryFilters } from '@/lib/directoryApi';
 import { listClients } from '@/lib/clientsApi';
 import type { ClientListItem } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { fmtMoney } from '@/lib/format';
+import { fmtDate, fmtMoney } from '@/lib/format';
 import {
   type CompChangeReason,
   type CompRecord,
@@ -531,17 +531,18 @@ function FilterPicker({
       <label className="text-[10px] uppercase tracking-wider text-silver">
         {label}
       </label>
-      <select
+      <Select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="mt-1 w-full h-10 px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
+        size="sm"
+        className="mt-1"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>
             {o.label}
           </option>
         ))}
-      </select>
+      </Select>
     </div>
   );
 }
@@ -575,7 +576,7 @@ function DirectoryTable({
   if (rows.length <= VIRTUALIZE_THRESHOLD) {
     return (
       <Card className="overflow-hidden">
-        <Table>
+        <Table caption="Associate directory">
           <TableHeader>
             <DirectoryHeaderRow />
           </TableHeader>
@@ -636,7 +637,7 @@ function VirtualDirectoryTable({
   return (
     <Card className="overflow-hidden">
       <div ref={scrollRef} className={`overflow-y-auto ${VIRTUAL_CONTAINER_MAX_VH}`}>
-        <Table>
+        <Table caption="Associate directory">
           <TableHeader>
             <DirectoryHeaderRow />
           </TableHeader>
@@ -1026,7 +1027,7 @@ function ProfileTab({
       <Section title="On record">
         <InfoRow
           label="In Alto HR since"
-          value={new Date(a.createdAt).toLocaleDateString()}
+          value={fmtDate(a.createdAt)}
         />
       </Section>
     </div>
@@ -1270,7 +1271,7 @@ function CompensationTab({ associate: a }: { associate: DirectoryEntry }) {
               {current && (
                 <div className="text-[11px] text-silver mt-1">
                   {REASON_LABEL[current.reason]} · effective{' '}
-                  {new Date(current.effectiveFrom).toLocaleDateString()}
+                  {fmtDate(current.effectiveFrom)}
                 </div>
               )}
             </div>
@@ -1298,7 +1299,7 @@ function CompensationTab({ associate: a }: { associate: DirectoryEntry }) {
           </div>
         )}
         {records && records.length > 0 && (
-          <Table>
+          <Table caption="Pay rate history">
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead>Effective</TableHead>
@@ -1310,11 +1311,11 @@ function CompensationTab({ associate: a }: { associate: DirectoryEntry }) {
               {records.map((r) => (
                 <TableRow key={r.id}>
                   <TableCell className="text-silver text-xs tabular-nums whitespace-nowrap">
-                    {new Date(r.effectiveFrom).toLocaleDateString()}
+                    {fmtDate(r.effectiveFrom)}
                     {r.effectiveTo && (
                       <>
                         {' – '}
-                        {new Date(r.effectiveTo).toLocaleDateString()}
+                        {fmtDate(r.effectiveTo)}
                       </>
                     )}
                   </TableCell>
@@ -1591,7 +1592,7 @@ function PayoutMethodSection({ associateId }: { associateId: string }) {
             {data.verifiedAt && (
               <InfoRow
                 label="Verified"
-                value={new Date(data.verifiedAt).toLocaleDateString()}
+                value={fmtDate(data.verifiedAt)}
               />
             )}
             <div className="pt-2">
@@ -2326,7 +2327,7 @@ function DocumentsTab({ associateId }: { associateId: string }) {
         </div>
         {uploadButton}
       </div>
-      <Table>
+      <Table caption="Documents">
         <TableHeader>
           <TableRow className="hover:bg-transparent">
             <TableHead>Document</TableHead>
@@ -2362,7 +2363,7 @@ function DocumentsTab({ associateId }: { associateId: string }) {
                 </Badge>
               </TableCell>
               <TableCell className="hidden sm:table-cell text-xs text-silver tabular-nums">
-                {new Date(d.createdAt).toLocaleDateString()}
+                {fmtDate(d.createdAt)}
               </TableCell>
               <TableCell>
                 <div className="flex justify-end items-center gap-1">

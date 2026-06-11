@@ -231,8 +231,8 @@ function DepartmentsTab({
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
-              <TableHead>Code</TableHead>
-              <TableHead>Parent</TableHead>
+              <TableHead className="hidden md:table-cell">Code</TableHead>
+              <TableHead className="hidden md:table-cell">Parent</TableHead>
               <TableHead className="text-right">Associates</TableHead>
             </TableRow>
           </TableHeader>
@@ -249,9 +249,14 @@ function DepartmentsTab({
                     setDrawerTarget(d);
                   }}
                 >
-                  <TableCell className="font-medium">{d.name}</TableCell>
-                  <TableCell className="text-silver">{d.code ?? '—'}</TableCell>
-                  <TableCell className="text-silver">{parent?.name ?? '—'}</TableCell>
+                  <TableCell className="font-medium">
+                    {d.name}
+                    <div className="text-[11px] text-silver/70 md:hidden">
+                      {[d.code, parent?.name].filter(Boolean).join(' · ') || '—'}
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-silver hidden md:table-cell">{d.code ?? '—'}</TableCell>
+                  <TableCell className="text-silver hidden md:table-cell">{parent?.name ?? '—'}</TableCell>
                   <TableCell className="text-right tabular-nums">
                     {d.associateCount}
                   </TableCell>
@@ -778,9 +783,9 @@ function JobProfilesTab({
             <TableRow>
               <TableHead>Code</TableHead>
               <TableHead>Title</TableHead>
-              <TableHead>Family</TableHead>
-              <TableHead>Level</TableHead>
-              <TableHead>FLSA</TableHead>
+              <TableHead className="hidden md:table-cell">Family</TableHead>
+              <TableHead className="hidden md:table-cell">Level</TableHead>
+              <TableHead className="hidden lg:table-cell">FLSA</TableHead>
               <TableHead className="text-right">Associates</TableHead>
             </TableRow>
           </TableHeader>
@@ -796,10 +801,15 @@ function JobProfilesTab({
                 }}
               >
                 <TableCell className="font-medium tabular-nums">{j.code}</TableCell>
-                <TableCell>{j.title}</TableCell>
-                <TableCell className="text-silver">{j.family ?? '—'}</TableCell>
-                <TableCell className="text-silver">{j.level ?? '—'}</TableCell>
                 <TableCell>
+                  {j.title}
+                  <div className="text-[11px] text-silver/70 md:hidden">
+                    {[j.family, j.level].filter(Boolean).join(' · ') || '—'}
+                  </div>
+                </TableCell>
+                <TableCell className="text-silver hidden md:table-cell">{j.family ?? '—'}</TableCell>
+                <TableCell className="text-silver hidden md:table-cell">{j.level ?? '—'}</TableCell>
+                <TableCell className="hidden lg:table-cell">
                   <Badge variant={j.isExempt ? 'accent' : 'default'}>
                     {j.isExempt ? 'Exempt' : 'Non-exempt'}
                   </Badge>
@@ -1092,9 +1102,9 @@ function PeopleTab({
           <TableHeader>
             <TableRow>
               <TableHead>Associate</TableHead>
-              <TableHead>Manager</TableHead>
-              <TableHead>Department</TableHead>
-              <TableHead>Cost ctr</TableHead>
+              <TableHead className="hidden md:table-cell">Manager</TableHead>
+              <TableHead className="hidden md:table-cell">Department</TableHead>
+              <TableHead className="hidden lg:table-cell">Cost ctr</TableHead>
               <TableHead>Job profile</TableHead>
             </TableRow>
           </TableHeader>
@@ -1112,12 +1122,17 @@ function PeopleTab({
                 <TableCell className="font-medium">
                   <div className="flex items-center gap-2.5">
                     <Avatar src={a.photoUrl} name={`${a.firstName} ${a.lastName}`} email={a.email} size="sm" />
-                    <span>{a.firstName} {a.lastName}</span>
+                    <div className="min-w-0">
+                      <span>{a.firstName} {a.lastName}</span>
+                      <div className="text-[11px] text-silver/70 md:hidden">
+                        {[a.managerName, a.departmentName].filter(Boolean).join(' · ') || '—'}
+                      </div>
+                    </div>
                   </div>
                 </TableCell>
-                <TableCell className="text-silver">{a.managerName ?? '—'}</TableCell>
-                <TableCell className="text-silver">{a.departmentName ?? '—'}</TableCell>
-                <TableCell className="text-silver tabular-nums">
+                <TableCell className="text-silver hidden md:table-cell">{a.managerName ?? '—'}</TableCell>
+                <TableCell className="text-silver hidden md:table-cell">{a.departmentName ?? '—'}</TableCell>
+                <TableCell className="text-silver tabular-nums hidden lg:table-cell">
                   {a.costCenterCode ?? '—'}
                 </TableCell>
                 <TableCell className="text-silver">{a.jobProfileTitle ?? '—'}</TableCell>

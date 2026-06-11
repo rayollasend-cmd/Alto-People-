@@ -140,10 +140,10 @@ export function SeparationHome() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Associate</TableHead>
-                  <TableHead>Reason</TableHead>
-                  <TableHead>Last day</TableHead>
+                  <TableHead className="hidden md:table-cell">Reason</TableHead>
+                  <TableHead className="hidden md:table-cell">Last day</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Exit interview</TableHead>
+                  <TableHead className="hidden lg:table-cell">Exit interview</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -159,17 +159,20 @@ export function SeparationHome() {
                         {s.associateName}
                       </div>
                       <div className="text-xs text-silver">{s.associateEmail}</div>
+                      <div className="text-[11px] text-silver/70 md:hidden">
+                        {s.lastDayWorked} · {REASON_LABELS[s.reason]}
+                      </div>
                     </TableCell>
-                    <TableCell className="text-sm text-silver">
+                    <TableCell className="hidden md:table-cell text-sm text-silver">
                       {REASON_LABELS[s.reason]}
                     </TableCell>
-                    <TableCell className="text-sm text-silver">
+                    <TableCell className="hidden md:table-cell text-sm text-silver">
                       {s.lastDayWorked}
                     </TableCell>
                     <TableCell>
                       <Badge variant={STATUS_VARIANT[s.status]}>{s.status}</Badge>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="hidden lg:table-cell">
                       {s.exitInterviewCompletedAt ? (
                         <Badge variant="success">
                           Done {s.rating !== null ? `· ${s.rating}/10` : ''}
