@@ -26,6 +26,7 @@ import {
   approveTimeEntry,
   bulkApproveTimeEntries,
   bulkRejectTimeEntries,
+  countAdminTimeEntries,
   exportTimeEntries,
   exportTimeSummary,
   getActiveDashboard,
@@ -95,6 +96,25 @@ function statusVariant(s: TimeEntryStatus): 'success' | 'pending' | 'destructive
     case 'ACTIVE': return 'accent';
     default: return 'default';
   }
+}
+
+// Net-first duration. The headline figure is worked-time NET of breaks —
+// what payroll actually pays — with the gross span and break time as a
+// subline whenever they differ. Showing only gross made approvals
+// disagree with every money surface (summary export, OT, accrual).
+function DurationCell({ entry }: { entry: TimeEntry }) {
+  const net = entry.netMinutes ?? entry.minutesElapsed;
+  const breakMin = Math.max(0, entry.minutesElapsed - net);
+  return (
+    <div className="tabular-nums">
+      {formatHM(net)}
+      {breakMin > 0 && (
+        <div className="text-[10px] text-silver/70">
+          {formatHM(entry.minutesElapsed)} gross − {formatHM(breakMin)} break
+        </div>
+      )}
+    </div>
+  );
 }
 
 // Inline anomaly chips for queue rows. Reviewers used to see flags only
@@ -242,8 +262,8 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
 
   const refreshPendingCount = useCallback(async () => {
     try {
-      const res = await listAdminTimeEntries({ status: 'COMPLETED' });
-      setPendingCount(res.entries.length);
+      const res = await countAdminTimeEntries('COMPLETED');
+      setPendingCount(res.count);
     } catch {
       // KPI is best-effort; leave previous value.
     }
@@ -918,8 +938,8 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                                 ? new Date(e.clockOutAt).toLocaleTimeString()
                                 : '—'}
                             </TableCell>
-                            <TableCell className="tabular-nums">
-                              {formatHM(e.minutesElapsed)}
+                            <TableCell>
+                              <DurationCell entry={e} />
                             </TableCell>
                             <TableCell>
                               <Badge variant={statusVariant(e.status)}>{e.status}</Badge>
@@ -1028,7 +1048,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                                       : ' → —'}
                                   </span>
                                   <span className="tabular-nums text-white">
-                                    {formatHM(e.minutesElapsed)}
+                                    {formatHM(e.netMinutes ?? e.minutesElapsed)}
                                   </span>
                                 </div>
                                 <AnomalyChips anomalies={e.anomalies} />
@@ -1213,7 +1233,10 @@ function TimeEntryDetailPanel({
               ? new Date(entry.clockOutAt).toLocaleString()
               : 'Still on the clock'}
           </DetailRow>
-          <DetailRow label="Duration">{formatHM(entry.minutesElapsed)}</DetailRow>
+          <DetailRow label="Worked (net of breaks)">
+            {formatHM(entry.netMinutes ?? entry.minutesElapsed)}
+          </DetailRow>
+          <DetailRow label="Gross span">{formatHM(entry.minutesElapsed)}</DetailRow>
           <DetailRow label="Pay rate">
             {entry.payRate != null
               ? `$${entry.payRate.toFixed(2)}/hr`
@@ -1242,6 +1265,30 @@ function TimeEntryDetailPanel({
             </DetailRow>
           )}
         </dl>
+
+        {entry.breaks && entry.breaks.length > 0 && (
+          <div className="mb-5 rounded-md border border-navy-secondary bg-navy-secondary/30 p-3 text-sm">
+            <div className="text-[10px] uppercase tracking-widest text-silver mb-1.5">
+              Breaks
+            </div>
+            <ul className="space-y-1 text-silver">
+              {entry.breaks.map((b) => (
+                <li key={b.id} className="flex items-center justify-between gap-3">
+                  <span>
+                    {b.type === 'MEAL' ? 'Meal' : 'Rest'}{' '}
+                    <span className="tabular-nums">
+                      {new Date(b.startedAt).toLocaleTimeString()} –{' '}
+                      {b.endedAt
+                        ? new Date(b.endedAt).toLocaleTimeString()
+                        : 'still open'}
+                    </span>
+                  </span>
+                  <span className="tabular-nums text-white">{formatHM(b.minutes)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {entry.anomalies && entry.anomalies.length > 0 && (
           <div className="mb-5 rounded-md border border-warning/40 bg-warning/[0.07] p-3 text-sm">

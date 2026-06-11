@@ -176,6 +176,26 @@ function buildEntry(row: RawEntry, clientName: string | null): TimeEntry {
     // (the UI used to track this in component state and forget it).
     onBreak:
       row.status === 'ACTIVE' && row.breaks.some((b) => b.endedAt === null),
+    // Net-of-breaks worked time — what payroll/OT/accrual actually use.
+    // Reviewers approving the gross figure (minutesElapsed) couldn't see
+    // why payroll paid less.
+    netMinutes: netWorkedMinutes(
+      { clockInAt: row.clockInAt, clockOutAt: row.clockOutAt },
+      row.breaks,
+    ),
+    breaks: row.breaks.map((b) => {
+      const end = b.endedAt ?? row.clockOutAt ?? new Date();
+      return {
+        id: b.id,
+        type: b.type,
+        startedAt: b.startedAt.toISOString(),
+        endedAt: b.endedAt ? b.endedAt.toISOString() : null,
+        minutes: Math.max(
+          0,
+          Math.floor((end.getTime() - b.startedAt.getTime()) / 60_000),
+        ),
+      };
+    }),
   };
 }
 
@@ -650,6 +670,24 @@ timeRouter.get('/admin/active', MANAGE, async (req, res, next) => {
 });
 
 /* ===== HR/Ops (/admin) =================================================== */
+
+// Cheap COUNT for the "Pending review" KPI — the UI used to fetch up to
+// 500 full rows (serializer and all) just to read .length, and the KPI
+// could never show more than the cap.
+timeRouter.get('/admin/entries/count', MANAGE, async (req, res, next) => {
+  try {
+    const status = req.query.status?.toString();
+    const count = await prisma.timeEntry.count({
+      where: {
+        ...scopeTimeEntries(req.user!),
+        ...(status ? { status: status as Prisma.TimeEntryWhereInput['status'] } : {}),
+      },
+    });
+    res.json({ count });
+  } catch (err) {
+    next(err);
+  }
+});
 
 timeRouter.get('/admin/entries', MANAGE, async (req, res, next) => {
   try {
@@ -1323,17 +1361,29 @@ timeRouter.post('/admin/export-summary.csv', MANAGE, async (req, res, next) => {
       ...(parsed.data.clientId ? { clientId: parsed.data.clientId } : {}),
       ...(parsed.data.associateId ? { associateId: parsed.data.associateId } : {}),
     };
-    const rows = await prisma.timeEntry.findMany({
-      where,
-      orderBy: { clockInAt: 'asc' },
-      include: {
-        associate: { select: { firstName: true, lastName: true } },
-        breaks: true,
-      },
-      take: TIME_SUMMARY_MAX_ROWS,
-    });
+    // Same filters, COMPLETED instead of APPROVED: anything still pending
+    // review in this window means the weekly OT split below is computed on
+    // a partial week — a 45h week with 5h unapproved exports as 40 regular
+    // / 0 OT and looks final. Count them and say so.
+    const [rows, pendingCount] = await Promise.all([
+      prisma.timeEntry.findMany({
+        where,
+        orderBy: { clockInAt: 'asc' },
+        include: {
+          associate: { select: { firstName: true, lastName: true } },
+          breaks: true,
+        },
+        take: TIME_SUMMARY_MAX_ROWS,
+      }),
+      prisma.timeEntry.count({
+        where: { ...where, status: 'COMPLETED' },
+      }),
+    ]);
     if (rows.length === TIME_SUMMARY_MAX_ROWS) {
       res.setHeader('X-Truncated', 'true');
+    }
+    if (pendingCount > 0) {
+      res.setHeader('X-Pending', String(pendingCount));
     }
 
     // Accumulate net worked minutes per associate per ISO week (OT is a
@@ -1391,8 +1441,17 @@ timeRouter.post('/admin/export-summary.csv', MANAGE, async (req, res, next) => {
     res.write(`Time summary,${csvEscape(facility)}\n`);
     res.write(`Range,${dayStr(from)} to ${dayStr(new Date(to.getTime() - 1))}\n`);
     res.write(`Status,APPROVED only\n`);
-    res.write(`Overtime rule,Over 40 hours per week (federal)\n\n`);
-    res.write('Associate,Pay type,Pay rate,Regular hours,Overtime hours,Total hours,Shifts\n');
+    res.write(`Overtime rule,Over 40 hours per week (federal)\n`);
+    res.write(
+      `Rate note,"Current rate" is today's compensation record — not necessarily the rate when the hours were worked\n`,
+    );
+    if (pendingCount > 0) {
+      res.write(
+        `WARNING,${pendingCount} entr${pendingCount === 1 ? 'y is' : 'ies are'} still pending review in this range — hours and the regular/overtime split are PROVISIONAL until the queue is cleared\n`,
+      );
+    }
+    res.write('\n');
+    res.write('Associate,Pay type,Current rate,Regular hours,Overtime hours,Total hours,Shifts\n');
 
     const fmtH = (min: number) => (min / 60).toFixed(2);
     const sorted = Array.from(byAssoc.entries()).sort((a, b) =>
@@ -1455,8 +1514,12 @@ timeRouter.post('/admin/export.csv', MANAGE, async (req, res, next) => {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
 
+    // grossMinutes = clock-in → clock-out; netMinutes = what payroll pays
+    // (breaks subtracted). Both, explicitly named — the old single
+    // "minutes" column was gross and never reconciled with the summary
+    // export, which is net.
     res.write(
-      'clockInAt,clockOutAt,minutes,associate,client,job,status,rejectionReason\n'
+      'clockInAt,clockOutAt,grossMinutes,netMinutes,breakMinutes,associate,client,job,status,rejectionReason\n'
     );
     // Pre-fetch client names so we don't issue one SELECT per row.
     const clientIds = Array.from(
@@ -1472,10 +1535,17 @@ timeRouter.post('/admin/export.csv', MANAGE, async (req, res, next) => {
       for (const c of cs) clientMap.set(c.id, c.name);
     }
     for (const r of rows) {
+      const gross = minutesElapsed(r);
+      const net = netWorkedMinutes(
+        { clockInAt: r.clockInAt, clockOutAt: r.clockOutAt },
+        r.breaks,
+      );
       const cols = [
         r.clockInAt.toISOString(),
         r.clockOutAt ? r.clockOutAt.toISOString() : '',
-        String(minutesElapsed(r)),
+        String(gross),
+        String(net),
+        String(Math.max(0, gross - net)),
         `${r.associate.firstName} ${r.associate.lastName}`,
         r.clientId ? clientMap.get(r.clientId) ?? '' : '',
         r.job?.name ?? '',
