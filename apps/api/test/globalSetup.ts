@@ -4,6 +4,18 @@ import { resolve } from 'node:path';
 
 const ENV_TEST = resolve(__dirname, '../.env.test');
 
+// Cross-run mutex key. Every test run TRUNCATEs the shared alto_test
+// schema between tests, so two vitest processes running concurrently
+// (a stray editor test runner, an orphaned previous run, two terminals)
+// destroy each other's fixtures and produce phantom "Record not found"
+// failures. A session-level Postgres advisory lock serializes runs:
+// the second one simply waits. Held on a DIRECT (non-pooled)
+// connection — through a transaction-mode pooler a session lock can
+// land on an arbitrary backend and silently not exclude anyone. If a
+// run is killed, the server releases the lock when its connection
+// drops, so a crashed run can't deadlock the next one.
+const SUITE_LOCK_KEY = 727_274_001;
+
 export default async function globalSetup() {
   loadDotenv({ path: ENV_TEST, override: true });
 
@@ -35,6 +47,39 @@ export default async function globalSetup() {
   } finally {
     await bootstrap.$disconnect();
   }
+
+  // Serialize concurrent runs (see SUITE_LOCK_KEY above). The lock client
+  // must stay connected for the entire run — the session IS the lock — so
+  // it's created here and released in the teardown this function returns.
+  // pg_try_advisory_lock (boolean) instead of pg_advisory_lock (void):
+  // Prisma can't deserialize a void column, and the poll loop gives us
+  // progress logging for free.
+  const lockClient = new PrismaClient({
+    datasourceUrl: process.env.DIRECT_URL ?? process.env.DATABASE_URL,
+  });
+  console.log(
+    '[globalSetup] acquiring test-suite lock (waits if another run is active)…',
+  );
+  for (let waitedMs = 0; ; waitedMs += 3000) {
+    const rows = await lockClient.$queryRawUnsafe<Array<{ locked: boolean }>>(
+      `SELECT pg_try_advisory_lock(${SUITE_LOCK_KEY}) AS locked`,
+    );
+    if (rows[0]?.locked) break;
+    if (waitedMs >= 10 * 60 * 1000) {
+      await lockClient.$disconnect().catch(() => {});
+      throw new Error(
+        'globalSetup: another test run has held the suite lock for 10+ minutes; ' +
+          'kill the stale vitest process (or its DB session) and retry.',
+      );
+    }
+    if (waitedMs % 15000 === 0) {
+      console.warn(
+        `[globalSetup] another test run is active — waiting (${Math.round(waitedMs / 1000)}s)…`,
+      );
+    }
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  console.log('[globalSetup] test-suite lock acquired');
 
   // Apply migrations against alto_test. `migrate deploy` is idempotent —
   // a no-op once everything is up-to-date. Neon cold-starts can fail the
@@ -82,5 +127,18 @@ export default async function globalSetup() {
       lastErr = err;
     }
   }
-  if (lastErr) throw lastErr;
+  if (lastErr) {
+    // Don't hold the suite lock if we're bailing out.
+    await lockClient.$disconnect().catch(() => {});
+    throw lastErr;
+  }
+
+  // Teardown: release the suite lock. If the process dies instead, the
+  // server releases it when the connection drops — no deadlock either way.
+  return async () => {
+    await lockClient
+      .$queryRawUnsafe(`SELECT pg_advisory_unlock(${SUITE_LOCK_KEY})`)
+      .catch(() => {});
+    await lockClient.$disconnect().catch(() => {});
+  };
 }
