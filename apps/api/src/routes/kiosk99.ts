@@ -1334,35 +1334,12 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
   // sharing a bucket would false-429 the punch.
   enforcePunchRateLimit(device.id, 'preflight');
 
-  // Geofence check — Location-only after Phase 131; per-device
-  // override columns were dropped in
-  // 20260512040000_drop_kiosk_device_geofence.
-  const fenceLat = device.location?.latitude
-    ? Number(device.location.latitude)
-    : null;
-  const fenceLng = device.location?.longitude
-    ? Number(device.location.longitude)
-    : null;
-  const fenceRadius = device.location?.geofenceRadiusMeters ?? null;
-  if (fenceLat != null && fenceLng != null && fenceRadius != null) {
-    if (input.latitude == null || input.longitude == null) {
-      throw new HttpError(
-        400,
-        'location_required',
-        'This kiosk requires location. Allow location access and try again.',
-      );
-    }
-    const dist = Math.round(
-      distanceMeters(fenceLat, fenceLng, input.latitude, input.longitude),
-    );
-    if (dist > fenceRadius) {
-      throw new HttpError(
-        403,
-        'geofence_violation',
-        'This kiosk is outside its allowed location.',
-      );
-    }
-  }
+  // No geofence gate here. Geofence is advisory: the punch itself
+  // records distance and flags out-of-fence as an anomaly (kind
+  // GEOFENCE) for HR review, but never blocks. A hard block bought no
+  // security (coords are client-reported and trivially spoofable) and
+  // its location_required dance locked whole sites out of clock-in
+  // whenever a tablet's location permission was denied.
 
   // PIN match — same global HMAC lookup + cross-client safety check.
   const pinHmac = hmacPin(input.pin);
@@ -1498,12 +1475,16 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
   // burn cycles with garbage tokens) but before any DB writes.
   enforcePunchRateLimit(device.id);
 
-  // 2. Geofence check. If the device's Location has a geofence,
-  // coordinates are required and must be within radius. Distance is
-  // recorded on every punch (even accepted ones) so HR can see drift.
-  // Phase 131 finalized — Location is the single source; per-device
-  // override columns were dropped in
-  // 20260512040000_drop_kiosk_device_geofence.
+  // 2. Geofence — ADVISORY. Record whatever coordinates the tablet sent
+  // and, when the device's Location has a fence configured, the distance
+  // from its center. Out-of-fence punches still succeed; they're flagged
+  // below (anomalyKind GEOFENCE) into the same review queue as face
+  // mismatch / impossible travel. A hard block bought no security —
+  // coords are client-reported and trivially spoofable — while its
+  // failure mode (tablet location permission denied → location_required
+  // → nobody at the site can clock in) was very real. Phase 131 —
+  // Location is the single geofence source; per-device override columns
+  // were dropped in 20260512040000_drop_kiosk_device_geofence.
   const fenceLat = device.location?.latitude
     ? Number(device.location.latitude)
     : null;
@@ -1512,54 +1493,19 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     : null;
   const fenceRadius = device.location?.geofenceRadiusMeters ?? null;
 
-  let punchLat: number | null = null;
-  let punchLng: number | null = null;
+  const punchLat = input.latitude ?? null;
+  const punchLng = input.longitude ?? null;
   let dist: number | null = null;
-  if (fenceLat != null && fenceLng != null && fenceRadius != null) {
-    if (input.latitude == null || input.longitude == null) {
-      await prisma.kioskPunch.create({
-        data: {
-          kioskDeviceId: device.id,
-          action: 'REJECTED',
-          rejectReason: 'location_required',
-          idempotencyKey: input.idempotencyKey ?? null,
-          clientPunchedAt,
-        },
-      });
-      throw new HttpError(
-        400,
-        'location_required',
-        'This kiosk requires location. Allow location access and try again.',
-      );
-    }
-    punchLat = input.latitude;
-    punchLng = input.longitude;
-    dist = Math.round(
-      distanceMeters(fenceLat, fenceLng, punchLat, punchLng),
-    );
-    if (dist > fenceRadius) {
-      await prisma.kioskPunch.create({
-        data: {
-          kioskDeviceId: device.id,
-          action: 'REJECTED',
-          rejectReason: `geofence_violation (${dist}m vs ${fenceRadius}m)`,
-          punchLat,
-          punchLng,
-          distanceMeters: dist,
-          idempotencyKey: input.idempotencyKey ?? null,
-          clientPunchedAt,
-        },
-      });
-      await prisma.kioskDevice.update({
-        where: { id: device.id },
-        data: { lastSeenAt: new Date() },
-      });
-      throw new HttpError(
-        403,
-        'geofence_violation',
-        'This kiosk is outside its allowed location.',
-      );
-    }
+  let geofenceOutside = false;
+  if (
+    fenceLat != null &&
+    fenceLng != null &&
+    fenceRadius != null &&
+    punchLat != null &&
+    punchLng != null
+  ) {
+    dist = Math.round(distanceMeters(fenceLat, fenceLng, punchLat, punchLng));
+    geofenceOutside = dist > fenceRadius;
   }
 
   // 3. Decode selfie up front so a bad upload doesn't waste a PIN lookup.
@@ -1822,11 +1768,14 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     }
 
     // Phase 104 — pick a primary anomaly classification. Impossible-travel
-    // is the stronger fraud signal (the user is provably elsewhere), so
-    // it wins over face mismatch when both fire on the same punch.
+    // is the strongest fraud signal (the user is provably elsewhere), so
+    // it wins over face mismatch, which in turn beats the advisory
+    // geofence flag (weakest: coords are self-reported and a fence miss
+    // is usually GPS drift, not fraud).
     let anomalyKind:
       | 'IMPOSSIBLE_TRAVEL'
       | 'FACE_MISMATCH'
+      | 'GEOFENCE'
       | null = null;
     let anomalyDetail: string | null = null;
     if (impossibleTravel) {
@@ -1835,6 +1784,9 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     } else if (faceMismatch) {
       anomalyKind = 'FACE_MISMATCH';
       anomalyDetail = `face distance ${faceDistance?.toFixed(3) ?? '?'} > threshold ${FACE_MATCH_THRESHOLD}`;
+    } else if (geofenceOutside) {
+      anomalyKind = 'GEOFENCE';
+      anomalyDetail = `${dist}m from site center, fence radius ${fenceRadius}m`;
     }
 
     const punch = await tx.kioskPunch.create({
@@ -1882,6 +1834,13 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
       data: { lastSeenAt: new Date() },
     });
     return { timeEntry, action, punchId: punch.id };
+  }, {
+    // The punch txn is ~8 queries behind an advisory lock. On Railway
+    // (co-located with Neon) it's tens of ms, but from a far region —
+    // local dev, tests — the RTTs alone can blow Prisma's 5s default
+    // and 500 a legitimate clock-in. Generous ceiling; the advisory
+    // lock already serializes per-associate so length isn't a risk.
+    timeout: 15_000,
   });
 
   res.json({
@@ -2011,9 +1970,11 @@ kiosk99Router.post('/kiosk/punch/:id/face', async (req, res) => {
         faceMismatch,
         // Only escalate to a FACE_MISMATCH anomaly when the punch wasn't
         // already flagged for something stronger (impossible-travel wins,
-        // mirroring the inline punch logic). Surface it in the review
-        // queue if it isn't already there.
-        ...(faceMismatch && punch.anomalyKind == null
+        // mirroring the inline punch logic; face mismatch outranks the
+        // advisory GEOFENCE flag and upgrades it). Surface it in the
+        // review queue if it isn't already there.
+        ...(faceMismatch &&
+        (punch.anomalyKind == null || punch.anomalyKind === 'GEOFENCE')
           ? {
               anomalyKind: 'FACE_MISMATCH',
               anomalyDetail: `face distance ${faceDistance.toFixed(3)} > threshold ${FACE_MATCH_THRESHOLD}`,

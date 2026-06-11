@@ -98,11 +98,22 @@ export function clearQueue(): void {
   window.localStorage.removeItem(STORAGE_KEY);
 }
 
+// The server throttles /kiosk/punch to one per second per device, so
+// replays must be spaced past that window or every item after the first
+// 429s and the drain stalls at one punch per 30s tick.
+const THROTTLE_SPACING_MS = 1100;
+
+// With spacing, a long drain can outlive the 30s tick that started it —
+// don't let a second drain interleave with (and double-send ahead of) the
+// first. idempotencyKey would dedup server-side, but each duplicate still
+// burns a throttle slot.
+let draining = false;
+
 /**
  * Try to send all queued punches. Stops on the first network failure —
  * no point hammering an offline server. Returns the count successfully
  * synced. Permanent failures (4xx) drop the entry; transient failures
- * (network / 5xx) leave it in place with attempts++.
+ * (network / 5xx / 429) leave it in place with attempts++.
  */
 export async function drainQueue(): Promise<{
   synced: number;
@@ -111,17 +122,35 @@ export async function drainQueue(): Promise<{
 }> {
   const q = readQueue();
   if (q.length === 0) return { synced: 0, remaining: 0, errors: 0 };
+  if (draining) return { synced: 0, remaining: q.length, errors: 0 };
+  draining = true;
+  try {
+    return await drainItems(q);
+  } finally {
+    draining = false;
+  }
+}
 
+async function drainItems(q: QueuedPunch[]): Promise<{
+  synced: number;
+  remaining: number;
+  errors: number;
+}> {
   let synced = 0;
   let errors = 0;
   const remaining: QueuedPunch[] = [];
   let networkDown = false;
+  let first = true;
 
   for (const item of q) {
     if (networkDown) {
       remaining.push(item);
       continue;
     }
+    if (!first) {
+      await new Promise((r) => setTimeout(r, THROTTLE_SPACING_MS));
+    }
+    first = false;
     try {
       await kioskPunch({
         deviceToken: item.deviceToken,
@@ -152,6 +181,14 @@ export async function drainQueue(): Promise<{
     }
   }
 
-  writeQueue(remaining);
-  return { synced, remaining: remaining.length, errors };
+  // A paced drain takes ~1.1s per item, so punches enqueued WHILE we were
+  // draining are in storage but not in our `q` snapshot. Carry them over
+  // instead of clobbering them.
+  const snapshot = new Set(q.map((i) => i.idempotencyKey));
+  const enqueuedMidDrain = readQueue().filter(
+    (i) => !snapshot.has(i.idempotencyKey),
+  );
+  const merged = [...remaining, ...enqueuedMidDrain];
+  writeQueue(merged);
+  return { synced, remaining: merged.length, errors };
 }
