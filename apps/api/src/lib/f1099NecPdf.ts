@@ -1,25 +1,25 @@
-// Gap 11 — Form 1099-NEC plain-paper renderer.
+﻿// Gap 11 â€” Form 1099-NEC plain-paper renderer.
 //
-// One layout, four copy variants per IRS Pub 1141 §4.05:
+// One layout, four copy variants per IRS Pub 1141 Â§4.05:
 //
-//   Copy A — For Internal Revenue Service Center (red drop-out ink in
+//   Copy A â€” For Internal Revenue Service Center (red drop-out ink in
 //            production; we render plain-paper for AccuWage / IRS FIRE
 //            review and let e-file via Pub 1220 carry the actual filing)
-//   Copy 1 — For State Tax Department
-//   Copy B — For Recipient (the contractor's copy)
-//   Copy 2 — To be filed with recipient's state income tax return
-//   Copy C — For Payer's records
+//   Copy 1 â€” For State Tax Department
+//   Copy B â€” For Recipient (the contractor's copy)
+//   Copy 2 â€” To be filed with recipient's state income tax return
+//   Copy C â€” For Payer's records
 //
 // Box layout follows the official 2024 form:
 //   Box 1  Nonemployee compensation
 //   Box 2  Payer made direct sales totaling $5,000+ (checkbox)
-//   Box 3  (reserved — blank)
+//   Box 3  (reserved â€” blank)
 //   Box 4  Federal income tax withheld (backup withholding)
 //   Box 5  State tax withheld
 //   Box 6  State / Payer's state no.
 //   Box 7  State income
 //
-// Same austere plain-paper aesthetic as w2Pdf — cell()/usd() helpers
+// Same austere plain-paper aesthetic as w2Pdf â€” cell()/usd() helpers
 // are local copies so 1099-NEC and W-2 renderers can evolve
 // independently. Substitute-form approval (Pub 1141) is a separate
 // process; this is a starting point for finance to review.
@@ -31,17 +31,17 @@ import type { Form1099NecBoxes, Form1099StateLine } from './f1099NecAggregator.j
 export type F1099CopyVariant = 'A' | '1' | 'B' | '2' | 'C';
 
 const COPY_LABEL: Record<F1099CopyVariant, string> = {
-  A: 'Copy A—For Internal Revenue Service Center. Send this entire page with Form 1096 to the IRS; photocopies are not acceptable.',
-  '1': 'Copy 1—For State Tax Department.',
-  B: 'Copy B—For Recipient.',
-  '2': "Copy 2—To be filed with recipient's state income tax return, when required.",
-  C: "Copy C—For Payer's records.",
+  A: 'Copy Aâ€”For Internal Revenue Service Center. Send this entire page with Form 1096 to the IRS; photocopies are not acceptable.',
+  '1': 'Copy 1â€”For State Tax Department.',
+  B: 'Copy Bâ€”For Recipient.',
+  '2': "Copy 2â€”To be filed with recipient's state income tax return, when required.",
+  C: "Copy Câ€”For Payer's records.",
 };
 
 export interface Form1099NecPdfData {
   taxYear: number;
   /**
-   * Which copy to render. Defaults to Copy B (the recipient copy) — the
+   * Which copy to render. Defaults to Copy B (the recipient copy) â€” the
    * common case for contractor-facing download.
    */
   copyVariant?: F1099CopyVariant;
@@ -55,13 +55,13 @@ export interface Form1099NecPdfData {
     city: string | null;
     state: string | null;
     zip: string | null;
-    /** Optional callback phone — IRS allows but doesn't require. */
+    /** Optional callback phone â€” IRS allows but doesn't require. */
     phone?: string | null;
   };
   /** Recipient block (top-right + name/address rows). */
   recipient: {
     /**
-     * Recipient TIN — SSN for individuals (XXX-XX-XXXX), EIN for
+     * Recipient TIN â€” SSN for individuals (XXX-XX-XXXX), EIN for
      * businesses (XX-XXXXXXX). Caller passes pre-formatted.
      */
     tin: string;
@@ -73,7 +73,7 @@ export interface Form1099NecPdfData {
     state: string | null;
     zip: string | null;
   };
-  /** Per-recipient account number — IRS field, can be blank. */
+  /** Per-recipient account number â€” IRS field, can be blank. */
   accountNumber: string;
   /** Box totals from f1099NecAggregator. */
   boxes: Form1099NecBoxes;
@@ -86,7 +86,16 @@ export interface Form1099NecPdfData {
 
 export async function renderForm1099NecPdf(data: Form1099NecPdfData): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: 'LETTER', margin: 36 });
+    const doc = new PDFDocument({
+    // Deterministic bytes: pdfkit stamps CreationDate=now by default, so
+    // every re-render hashed differently and the pdfHash immutability
+    // check warned on EVERY re-download — permanent log noise. Pin the
+    // date to the form's own timestamp (meta.generatedAt = TaxForm
+    // createdAt), making identical inputs produce identical bytes.
+      size: 'LETTER',
+      margin: 36,
+      info: { CreationDate: new Date(data.meta.generatedAt) },
+    });
     const chunks: Buffer[] = [];
     doc.on('data', (c: Buffer) => chunks.push(c));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
@@ -126,7 +135,7 @@ function drawHeader(doc: PDFKit.PDFDocument, data: Form1099NecPdfData): void {
   doc
     .fontSize(7)
     .fillColor('#666')
-    .text('Department of the Treasury — Internal Revenue Service', 36, 66, {
+    .text('Department of the Treasury â€” Internal Revenue Service', 36, 66, {
       width: 540,
     });
   doc.fillColor('#000');
@@ -136,7 +145,7 @@ function drawHeader(doc: PDFKit.PDFDocument, data: Form1099NecPdfData): void {
 }
 
 function drawIdBlock(doc: PDFKit.PDFDocument, data: Form1099NecPdfData): void {
-  // Header tile — payer (left, taller) | TIN row (right) | recipient block.
+  // Header tile â€” payer (left, taller) | TIN row (right) | recipient block.
   const payerLines = [
     data.payer.name,
     data.payer.addressLine1,
@@ -200,7 +209,7 @@ function drawWageBoxes(doc: PDFKit.PDFDocument, boxes: Form1099NecBoxes): void {
     '1  Nonemployee compensation',
     usd(boxes.box1NonemployeeCompensation),
   );
-  // Box 2 is a checkbox — render literal "[ X ]" or "[   ]" inside.
+  // Box 2 is a checkbox â€” render literal "[ X ]" or "[   ]" inside.
   cell(
     doc,
     mid,
@@ -223,7 +232,7 @@ function drawWageBoxes(doc: PDFKit.PDFDocument, boxes: Form1099NecBoxes): void {
 }
 
 function drawStateLines(doc: PDFKit.PDFDocument, lines: Form1099StateLine[]): void {
-  // Boxes 5/6/7 — one row per state (up to 2 fit cleanly on the form).
+  // Boxes 5/6/7 â€” one row per state (up to 2 fit cleanly on the form).
   const top = 410;
   const rowH = 32;
 
@@ -236,7 +245,7 @@ function drawStateLines(doc: PDFKit.PDFDocument, lines: Form1099StateLine[]): vo
   doc.font('Helvetica');
 
   if (lines.length === 0) {
-    cell(doc, 36, top, 540, rowH, '', '— No state withholding —');
+    cell(doc, 36, top, 540, rowH, '', 'â€” No state withholding â€”');
     return;
   }
 
@@ -265,7 +274,7 @@ function drawFooter(doc: PDFKit.PDFDocument, data: Form1099NecPdfData): void {
     .fontSize(7)
     .fillColor('#666')
     .text(
-      `Form 1099-NEC (${data.taxYear})  ·  Copy ${variant}  ·  ID ${data.meta.formId.slice(0, 8)}  ·  ` +
+      `Form 1099-NEC (${data.taxYear})  Â·  Copy ${variant}  Â·  ID ${data.meta.formId.slice(0, 8)}  Â·  ` +
         `Generated by Alto People at ${data.meta.generatedAt}`,
       36,
       702,
