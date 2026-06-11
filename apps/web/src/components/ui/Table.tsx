@@ -6,18 +6,31 @@ import { cn } from '@/lib/cn';
  * for sortable / filterable / paginated grids; today these are styled
  * <table> elements with consistent borders, padding, and hover states.
  */
-export const Table = React.forwardRef<
-  HTMLTableElement,
-  React.HTMLAttributes<HTMLTableElement>
->(({ className, ...props }, ref) => (
-  <div className="relative w-full overflow-auto">
-    <table
-      ref={ref}
-      className={cn('w-full caption-bottom text-sm', className)}
-      {...props}
-    />
-  </div>
-));
+export interface TableProps extends React.HTMLAttributes<HTMLTableElement> {
+  /**
+   * Screen-reader-only table name (VPAT 1.3.1). Most tables sit under a
+   * visible heading sighted users associate by proximity; AT users get
+   * "table, 6 columns" with no context. Pass the same name the heading
+   * shows — it renders as an sr-only <caption>, so nothing changes
+   * visually. For a VISIBLE caption, use <TableCaption> instead.
+   */
+  caption?: string;
+}
+
+export const Table = React.forwardRef<HTMLTableElement, TableProps>(
+  ({ className, caption, children, ...props }, ref) => (
+    <div className="relative w-full overflow-auto">
+      <table
+        ref={ref}
+        className={cn('w-full caption-bottom text-sm', className)}
+        {...props}
+      >
+        {caption && <caption className="sr-only">{caption}</caption>}
+        {children}
+      </table>
+    </div>
+  )
+);
 Table.displayName = 'Table';
 
 export const TableHeader = React.forwardRef<

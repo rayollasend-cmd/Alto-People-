@@ -285,7 +285,7 @@ export function AuditHome() {
                       {group.entries.length === 1 ? '' : 's'}
                     </span>
                   </summary>
-                  <Table>
+                  <Table caption="Audit log">
                     <TableHeader>
                       <TableRow>
                         <TableHead className="whitespace-nowrap w-24">

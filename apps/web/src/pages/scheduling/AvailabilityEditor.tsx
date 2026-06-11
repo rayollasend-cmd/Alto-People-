@@ -6,6 +6,7 @@ import {
 } from '@/lib/schedulingApi';
 import { ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
+import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -127,19 +128,21 @@ export function AvailabilityEditor() {
                   key={idx}
                   className="grid grid-cols-12 gap-2 items-center"
                 >
-                  <select
-                    value={w.dayOfWeek}
-                    onChange={(e) =>
-                      updateWindow(idx, { dayOfWeek: Number(e.target.value) })
-                    }
-                    className="col-span-3 px-2 py-1.5 rounded bg-navy-secondary/60 border border-navy-secondary text-white text-sm"
-                  >
-                    {DAYS.map((d, i) => (
-                      <option key={d} value={i}>
-                        {d}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="col-span-3">
+                    <Select
+                      value={w.dayOfWeek}
+                      onChange={(e) =>
+                        updateWindow(idx, { dayOfWeek: Number(e.target.value) })
+                      }
+                      size="sm"
+                    >
+                      {DAYS.map((d, i) => (
+                        <option key={d} value={i}>
+                          {d}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
                   <input
                     type="time"
                     value={w.start}
@@ -153,25 +156,28 @@ export function AvailabilityEditor() {
                     onChange={(e) => updateWindow(idx, { end: e.target.value })}
                     className="col-span-3 px-2 py-1.5 rounded bg-navy-secondary/60 border border-navy-secondary text-white text-sm"
                   />
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
+                    size="xs"
                     onClick={() => removeWindow(idx)}
-                    className="col-span-2 text-xs text-silver/70 hover:text-alert"
+                    className="col-span-2 text-silver/70 hover:text-alert hover:bg-transparent"
                   >
                     Remove
-                  </button>
+                  </Button>
                 </li>
               ))}
             </ul>
           )}
           <div className="flex items-center gap-2">
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={addWindow}
-              className="px-3 py-1.5 rounded text-sm border border-silver/30 text-silver hover:text-white"
             >
               + Add window
-            </button>
+            </Button>
             <Button
               type="button"
               size="sm"

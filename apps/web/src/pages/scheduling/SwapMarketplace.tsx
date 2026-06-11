@@ -10,6 +10,8 @@ import {
 } from '@/lib/schedulingApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { Button } from '@/components/ui/Button';
+import { fmtDateTime, fmtTime } from '@/lib/format';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 
@@ -112,8 +114,8 @@ export function SwapMarketplace() {
                     {s.shiftPosition} · {s.shiftClientName ?? '—'}
                   </div>
                   <div className="text-xs text-silver tabular-nums">
-                    {new Date(s.shiftStartsAt).toLocaleString()} –{' '}
-                    {new Date(s.shiftEndsAt).toLocaleTimeString()}
+                    {fmtDateTime(s.shiftStartsAt)} –{' '}
+                    {fmtTime(s.shiftEndsAt)}
                   </div>
                   <div className="text-xs text-silver mt-1">
                     {tab === 'incoming' ? (
@@ -152,14 +154,15 @@ export function SwapMarketplace() {
                   )}
                   {tab === 'outgoing' &&
                     (s.status === 'PENDING_PEER' || s.status === 'PEER_ACCEPTED') && (
-                      <button
+                      <Button
                         type="button"
+                        variant="outline"
+                        size="xs"
                         onClick={() => wrap(s.id, () => cancelSwap(s.id))}
                         disabled={pendingId === s.id}
-                        className="text-xs px-2 py-1 rounded border border-silver/30 text-silver hover:bg-silver/10 disabled:opacity-50"
                       >
                         Cancel
-                      </button>
+                      </Button>
                     )}
                 </div>
               </div>

@@ -12,6 +12,7 @@ import { Topbar } from './Topbar';
 import { MobileNav } from './MobileNav';
 import { InstallPrompt } from './InstallPrompt';
 import { NavigationProgress } from './NavigationProgress';
+import { RouteAnnouncer } from './RouteAnnouncer';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 // Per-route Suspense fallback shown while a lazy-loaded page chunk streams
@@ -77,6 +78,7 @@ export function Layout() {
   return (
     <TooltipProvider delayDuration={250}>
       <NavigationProgress />
+      <RouteAnnouncer />
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-gold focus:px-3 focus:py-2 focus:text-navy focus:font-medium focus:shadow-lg"
