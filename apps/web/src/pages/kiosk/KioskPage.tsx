@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ApiError } from '@/lib/api';
+import { ApiError, apiFetch } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
 import {
   kioskAttachFace,
@@ -68,6 +68,177 @@ interface PunchResult {
 
 type Intent = 'BREAK' | null;
 
+// ----- Associate-facing strings (EN/ES) -----------------------------------
+// A plain dictionary, not an i18n library — the kiosk has ~40 strings and
+// exactly one consumer. Spanish first because the workforce skews
+// hospitality/J-1; translations are workable but flagged for native review.
+// Admin-facing screens (setup/pairing) stay English on purpose. Server
+// error messages for rare hard failures also surface in English; the
+// common rejections (wrong PIN, throttle, break-without-clock-in) are
+// client-side strings and fully translated.
+type Lang = 'en' | 'es';
+const LANG_STORAGE_KEY = 'alto.kiosk.lang';
+
+interface KioskStrings {
+  locale: string;
+  tapToClock: string;
+  preparingFace: string;
+  faceUnavailable: string;
+  enterPin: string;
+  enterPinBreak: string;
+  onBreak: string;
+  goingOnBreak: string;
+  cancel: string;
+  tryAgain: string;
+  wrongPin: string;
+  oneAtATime: string;
+  notClockedIn: string;
+  consentTitle: string;
+  consentBody1: string;
+  consentBody2: string;
+  consentYes: string;
+  consentNo: string;
+  oneMoment: string;
+  verifying: string;
+  smile: string;
+  notYou: string;
+  centerFace: string;
+  privacy: string;
+  cameraUnavailable: string;
+  continueWithoutSelfie: string;
+  greet: Record<KioskPunchAction, string>;
+  resultPrefix: Record<KioskPunchAction, string>;
+  resultVerb: Record<KioskPunchAction, string>;
+  punchSaved: string;
+  savedOffline: string;
+  syncWhenBack: string;
+  tapToDismiss: string;
+  queuedOne: string;
+  queuedMany: string;
+  langToggleLabel: string;
+}
+
+const STRINGS: Record<Lang, KioskStrings> = {
+  en: {
+    locale: 'en-US',
+    tapToClock: 'Tap to clock in / out',
+    preparingFace: 'Preparing face match…',
+    faceUnavailable: 'Face match unavailable — PIN-only mode.',
+    enterPin: 'Enter your 4-digit PIN',
+    enterPinBreak: 'Break — enter your 4-digit PIN',
+    onBreak: '☕ On break',
+    goingOnBreak: 'Going on break?',
+    cancel: 'Cancel',
+    tryAgain: 'Try again',
+    wrongPin: 'Wrong PIN. Try again.',
+    oneAtATime: 'One at a time — wait a second, then tap Try again.',
+    notClockedIn: "You're not clocked in — turn off break to clock in.",
+    consentTitle: 'Quick question,',
+    consentBody1:
+      "This kiosk can take a quick photo at each punch to confirm it's really you (it stops anyone else clocking in with your number).",
+    consentBody2:
+      'Photos are used only to verify your punches and are deleted after 90 days. To recognize you, the system also stores a numeric face template (a string of numbers, not a photo); it’s deleted when you stop working with us, after a year without punches, or any time you withdraw consent through your manager. If you’d rather not, you can clock in with just your number — no photo, no face template, ever.',
+    consentYes: 'OK — use photo verification',
+    consentNo: 'No thanks — number only',
+    oneMoment: 'One moment…',
+    verifying: 'Verifying…',
+    smile: 'Smile for the camera',
+    notYou: 'Not you? Tap Cancel below.',
+    centerFace: 'Center your face in the oval',
+    privacy: 'Your photo is used only to verify this time punch.',
+    cameraUnavailable: 'Camera unavailable',
+    continueWithoutSelfie: 'Continue without selfie',
+    greet: {
+      CLOCK_IN: 'Clocking you in',
+      CLOCK_OUT: 'Clocking you out',
+      BREAK_START: 'Starting your break',
+      BREAK_END: 'Ending your break',
+    },
+    resultPrefix: {
+      CLOCK_IN: 'Welcome',
+      CLOCK_OUT: 'See you later',
+      BREAK_START: 'Enjoy your break',
+      BREAK_END: 'Welcome back',
+    },
+    resultVerb: {
+      CLOCK_IN: 'Clocked in',
+      CLOCK_OUT: 'Clocked out',
+      BREAK_START: 'On break',
+      BREAK_END: 'Back from break',
+    },
+    punchSaved: 'Punch saved',
+    savedOffline: 'Saved offline',
+    syncWhenBack: "We'll sync when the network comes back.",
+    tapToDismiss: 'Tap anywhere to dismiss',
+    queuedOne: 'punch waiting to sync',
+    queuedMany: 'punches waiting to sync',
+    langToggleLabel: 'Español',
+  },
+  es: {
+    locale: 'es-US',
+    tapToClock: 'Toca para marcar entrada / salida',
+    preparingFace: 'Preparando verificación facial…',
+    faceUnavailable: 'Verificación facial no disponible — solo PIN.',
+    enterPin: 'Ingresa tu PIN de 4 dígitos',
+    enterPinBreak: 'Descanso — ingresa tu PIN de 4 dígitos',
+    onBreak: '☕ En descanso',
+    goingOnBreak: '¿Vas a tomar descanso?',
+    cancel: 'Cancelar',
+    tryAgain: 'Reintentar',
+    wrongPin: 'PIN incorrecto. Intenta de nuevo.',
+    oneAtATime: 'Uno a la vez — espera un segundo y toca Reintentar.',
+    notClockedIn: 'No has marcado entrada — desactiva el descanso para entrar.',
+    consentTitle: 'Una pregunta rápida,',
+    consentBody1:
+      'Este quiosco puede tomar una foto rápida en cada marcación para confirmar que realmente eres tú (evita que otra persona marque con tu número).',
+    consentBody2:
+      'Las fotos se usan solo para verificar tus marcaciones y se eliminan a los 90 días. Para reconocerte, el sistema también guarda una plantilla facial numérica (una serie de números, no una foto); se elimina cuando dejas de trabajar con nosotros, tras un año sin marcaciones, o cuando retires tu consentimiento con tu supervisor. Si prefieres no usarla, puedes marcar solo con tu número — sin foto ni plantilla facial, nunca.',
+    consentYes: 'Sí — usar verificación con foto',
+    consentNo: 'No, gracias — solo número',
+    oneMoment: 'Un momento…',
+    verifying: 'Verificando…',
+    smile: 'Sonríe para la cámara',
+    notYou: '¿No eres tú? Toca Cancelar abajo.',
+    centerFace: 'Centra tu cara en el óvalo',
+    privacy: 'Tu foto se usa solo para verificar esta marcación.',
+    cameraUnavailable: 'Cámara no disponible',
+    continueWithoutSelfie: 'Continuar sin foto',
+    greet: {
+      CLOCK_IN: 'Marcando tu entrada',
+      CLOCK_OUT: 'Marcando tu salida',
+      BREAK_START: 'Iniciando tu descanso',
+      BREAK_END: 'Terminando tu descanso',
+    },
+    resultPrefix: {
+      CLOCK_IN: 'Hola',
+      CLOCK_OUT: 'Hasta luego',
+      BREAK_START: 'Disfruta tu descanso',
+      BREAK_END: 'Hola de nuevo',
+    },
+    resultVerb: {
+      CLOCK_IN: 'Entrada marcada',
+      CLOCK_OUT: 'Salida marcada',
+      BREAK_START: 'En descanso',
+      BREAK_END: 'De vuelta del descanso',
+    },
+    punchSaved: 'Marcación guardada',
+    savedOffline: 'Guardado sin conexión',
+    syncWhenBack: 'Se sincronizará cuando vuelva la conexión.',
+    tapToDismiss: 'Toca en cualquier lugar para cerrar',
+    queuedOne: 'marcación por sincronizar',
+    queuedMany: 'marcaciones por sincronizar',
+    langToggleLabel: 'English',
+  },
+};
+
+function readStoredLang(): Lang {
+  try {
+    return window.localStorage.getItem(LANG_STORAGE_KEY) === 'es' ? 'es' : 'en';
+  } catch {
+    return 'en';
+  }
+}
+
 export function KioskPage() {
   const [stage, setStage] = useState<Stage>('idle');
   const [token, setToken] = useState<string | null>(null);
@@ -95,6 +266,19 @@ export function KioskPage() {
   } | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [queued, setQueued] = useState<number>(() => queueSize());
+  // Associate-facing language. Persisted per device — a site whose crew
+  // prefers Spanish sets it once and the tablet stays Spanish.
+  const [lang, setLang] = useState<Lang>(() => readStoredLang());
+  const t = STRINGS[lang];
+  const toggleLang = () => {
+    const next: Lang = lang === 'en' ? 'es' : 'en';
+    setLang(next);
+    try {
+      window.localStorage.setItem(LANG_STORAGE_KEY, next);
+    } catch {
+      /* private mode — toggle still works for this session */
+    }
+  };
   // Whether this device has a geofence — tri-state on purpose. Boot config
   // resolves it to 'yes'/'no'; until then (or if config failed, e.g. the
   // tablet booted offline) it stays 'unknown'. We only SKIP geolocation
@@ -147,6 +331,85 @@ export function KioskPage() {
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
+  }, []);
+
+  // Self-update. A wall tablet keeps this tab open for weeks and the page
+  // deliberately blocks pull-to-refresh — so without this, every deploy
+  // (including bug fixes to THIS page) only arrives when someone walks
+  // over and hard-refreshes. Poll the build version every 5 minutes;
+  // when it changes, reload — but only from the idle screen, never
+  // mid-punch. stageRef mirrors stage so the poll callback sees the
+  // current value without re-arming the interval on every stage change.
+  const stageRef = useRef<Stage>(stage);
+  useEffect(() => {
+    stageRef.current = stage;
+  }, [stage]);
+  const knownVersionRef = useRef<string | null>(null);
+  const pendingReloadRef = useRef(false);
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const r = await apiFetch<{ version: string }>('/health/version', {
+          timeoutMs: 8_000,
+        });
+        if (cancelled) return;
+        if (knownVersionRef.current === null) {
+          knownVersionRef.current = r.version;
+        } else if (knownVersionRef.current !== r.version) {
+          if (stageRef.current === 'idle') {
+            window.location.reload();
+          } else {
+            pendingReloadRef.current = true;
+          }
+        }
+      } catch {
+        /* offline / waking — try again next tick */
+      }
+    };
+    void check();
+    const timer = window.setInterval(check, 5 * 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+  // A new version that landed mid-punch applies on the next return to idle.
+  useEffect(() => {
+    if (stage === 'idle' && pendingReloadRef.current) {
+      window.location.reload();
+    }
+  }, [stage]);
+
+  // Keep the screen awake. A wall kiosk that dims or locks between
+  // punches greets every associate with a black rectangle. The Screen
+  // Wake Lock API is best-effort (Safari/old WebViews may lack it) and
+  // the browser silently releases the lock whenever the tab is hidden —
+  // re-acquire on visibility. OS-level kiosk mode remains the real
+  // backstop; this just covers stock-browser installs.
+  useEffect(() => {
+    type WakeLockSentinel = { release: () => Promise<void> } | null;
+    let lock: WakeLockSentinel = null;
+    const acquire = async () => {
+      try {
+        const wl = (navigator as Navigator & {
+          wakeLock?: { request: (type: 'screen') => Promise<NonNullable<WakeLockSentinel>> };
+        }).wakeLock;
+        if (!wl) return;
+        lock = await wl.request('screen');
+      } catch {
+        /* denied / unsupported — kiosk still works, screen may sleep */
+      }
+    };
+    void acquire();
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void acquire();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      void lock?.release().catch(() => {});
+    };
   }, []);
 
   // Lock down the document while the kiosk is mounted. iOS Safari
@@ -380,7 +643,7 @@ export function KioskPage() {
         // can retype immediately. Same UX as the preflight rejection.
         if (err.code === 'invalid_pin') {
           setPin('');
-          setPinError('Wrong PIN. Try again.');
+          setPinError(t.wrongPin);
           setStage('pin');
           return;
         }
@@ -450,14 +713,27 @@ export function KioskPage() {
       {stage === 'idle' && (
         <IdleScreen
           now={now}
+          t={t}
           onTap={() => {
             // Models were pre-warmed on mount — just open the pad.
             setStage('pin');
           }}
         />
       )}
+      {/* Language toggle — idle screen only so it never competes with a
+          punch in progress. Persisted per device. */}
+      {stage === 'idle' && (
+        <button
+          type="button"
+          onClick={toggleLang}
+          className="fixed bottom-4 right-4 min-h-[44px] px-4 py-2 rounded-full border border-navy-secondary bg-navy-secondary/40 text-silver text-sm hover:text-white transition-colors"
+        >
+          {t.langToggleLabel}
+        </button>
+      )}
       {stage === 'pin' && (
         <PinPad
+          t={t}
           pin={pin}
           onChange={(p) => {
             setPin(p);
@@ -533,14 +809,14 @@ export function KioskPage() {
                 // or having to wait out a full-page error timeout.
                 if (err.code === 'invalid_pin') {
                   setPin('');
-                  setPinError('Wrong PIN. Try again.');
+                  setPinError(t.wrongPin);
                   return;
                 }
                 // Break toggle while not clocked in — caught at the
                 // keypad now (predictPunchAction), not after a selfie.
                 // Keep the PIN; turning the toggle off clears this.
                 if (err.code === 'not_clocked_in') {
-                  setPinError("You're not clocked in — turn off break to clock in.");
+                  setPinError(t.notClockedIn);
                   return;
                 }
                 // Throttle collision — e.g. the previous associate's
@@ -548,7 +824,7 @@ export function KioskPage() {
                 // stamped the bucket. The typed PIN is fine; keep it —
                 // the PinPad shows a "Try again" button for this case.
                 if (err.status === 429) {
-                  setPinError('One at a time — wait a second, then tap Try again.');
+                  setPinError(t.oneAtATime);
                   return;
                 }
                 setError(err.message);
@@ -571,6 +847,7 @@ export function KioskPage() {
       )}
       {stage === 'consent' && preflight && (
         <ConsentScreen
+          t={t}
           firstName={preflight.firstName}
           onChoice={(agree) => {
             // Record best-effort: a network failure must not block this
@@ -595,6 +872,7 @@ export function KioskPage() {
       )}
       {stage === 'selfie' && (
         <SelfieCapture
+          t={t}
           preflight={preflight}
           onCaptured={(data) => void submit(data)}
           onSkip={() => void submit(null)}
@@ -604,7 +882,7 @@ export function KioskPage() {
       {stage === 'submitting' && (
         <div className="text-center">
           <div className="text-gold text-4xl animate-pulse mb-4">⋯</div>
-          <div className="text-2xl text-silver">One moment…</div>
+          <div className="text-2xl text-silver">{t.oneMoment}</div>
         </div>
       )}
       {/* Result + error screens dismiss on tap-anywhere so the next
@@ -616,7 +894,7 @@ export function KioskPage() {
           aria-label="Done — return to clock"
           className="fixed inset-0 flex items-center justify-center focus:outline-none"
         >
-          <ResultScreen result={result} />
+          <ResultScreen result={result} t={t} />
         </button>
       )}
       {stage === 'error' && (
@@ -627,14 +905,14 @@ export function KioskPage() {
         >
           <div className="text-6xl mb-6">⚠️</div>
           <div className="text-3xl text-alert max-w-2xl px-8">{error}</div>
-          <div className="mt-8 text-base text-silver/80">Tap anywhere to dismiss</div>
+          <div className="mt-8 text-base text-silver/80">{t.tapToDismiss}</div>
         </button>
       )}
       {/* Phase 102 — queued punch indicator. Only shown when there's a
           backlog so the normal idle screen stays clean. */}
       {queued > 0 && (
         <div className="fixed top-4 left-4 px-3 py-1.5 bg-warning/20 border border-warning/40 rounded-full text-warning text-xs">
-          {queued} punch{queued === 1 ? '' : 'es'} waiting to sync
+          {queued} {queued === 1 ? t.queuedOne : t.queuedMany}
         </div>
       )}
       {/* Reset hidden affordance: triple-tap top-right corner unlocks setup. */}
@@ -705,12 +983,20 @@ function SetupScreen({ onSaved }: { onSaved: (token: string) => void }) {
   );
 }
 
-function IdleScreen({ now, onTap }: { now: Date; onTap: () => void }) {
-  const time = now.toLocaleTimeString('en-US', {
+function IdleScreen({
+  now,
+  t,
+  onTap,
+}: {
+  now: Date;
+  t: KioskStrings;
+  onTap: () => void;
+}) {
+  const time = now.toLocaleTimeString(t.locale, {
     hour: 'numeric',
     minute: '2-digit',
   });
-  const date = now.toLocaleDateString('en-US', {
+  const date = now.toLocaleDateString(t.locale, {
     weekday: 'long',
     month: 'long',
     day: 'numeric',
@@ -739,24 +1025,23 @@ function IdleScreen({ now, onTap }: { now: Date; onTap: () => void }) {
       <div className="text-9xl font-serif font-light tracking-tight">{time}</div>
       <div className="text-2xl text-silver mt-3">{date}</div>
       <div className="mt-16 px-12 py-6 bg-gold/15 border border-gold/60 text-gold rounded-full text-2xl font-medium animate-pulse">
-        Tap to clock in / out
+        {t.tapToClock}
       </div>
       {faceState === 'loading' && (
         <div className="mt-6 text-sm text-silver/80 inline-flex items-center gap-2">
           <span className="h-1.5 w-1.5 rounded-full bg-gold animate-pulse" />
-          Preparing face match…
+          {t.preparingFace}
         </div>
       )}
       {faceState === 'failed' && (
-        <div className="mt-6 text-sm text-warning">
-          Face match unavailable — PIN-only mode.
-        </div>
+        <div className="mt-6 text-sm text-warning">{t.faceUnavailable}</div>
       )}
     </button>
   );
 }
 
 function PinPad({
+  t,
   pin,
   onChange,
   intent,
@@ -766,6 +1051,7 @@ function PinPad({
   error,
   submitting = false,
 }: {
+  t: KioskStrings;
   pin: string;
   onChange: (p: string) => void;
   intent: Intent;
@@ -825,9 +1111,7 @@ function PinPad({
         40%, 80% { transform: translateX(10px); }
       }`}</style>
       <div className="text-2xl text-silver mb-3">
-        {intent === 'BREAK'
-          ? 'Break — enter your 4-digit PIN'
-          : 'Enter your 4-digit PIN'}
+        {intent === 'BREAK' ? t.enterPinBreak : t.enterPin}
       </div>
       {/* min-h 44px — this pill is the only path into the break flow,
           so it gets a full-size touch target, not a caption-sized one. */}
@@ -839,7 +1123,7 @@ function PinPad({
             : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
         }`}
       >
-        {intent === 'BREAK' ? '☕ On break' : 'Going on break?'}
+        {intent === 'BREAK' ? t.onBreak : t.goingOnBreak}
       </button>
       <div
         key={shakeKey}
@@ -882,7 +1166,7 @@ function PinPad({
             onClick={onSubmit}
             className="min-h-[44px] px-6 py-2 bg-gold hover:bg-gold-bright text-navy rounded-full text-base font-medium transition-colors"
           >
-            Try again
+            {t.tryAgain}
           </button>
         ) : null}
       </div>
@@ -907,7 +1191,7 @@ function PinPad({
           disabled={submitting}
           className="aspect-square bg-navy-secondary/40 hover:bg-navy-secondary/70 rounded-2xl text-sm text-silver transition-transform active:scale-95"
         >
-          Cancel
+          {t.cancel}
         </button>
         <button
           onClick={() => press('0')}
@@ -933,10 +1217,12 @@ function PinPad({
 // choices are first-class: declining means PIN-only punches forever
 // (the camera never opens for them) until they change their mind via HR.
 function ConsentScreen({
+  t,
   firstName,
   onChoice,
   onCancel,
 }: {
+  t: KioskStrings;
   firstName: string;
   onChoice: (agree: boolean) => void;
   onCancel: () => void;
@@ -944,59 +1230,44 @@ function ConsentScreen({
   return (
     <div className="flex flex-col items-center max-w-lg px-6 text-center">
       <div className="text-3xl text-white mb-3">
-        Quick question, <span className="text-gold-bright">{firstName}</span>
+        {t.consentTitle} <span className="text-gold-bright">{firstName}</span>
       </div>
-      <p className="text-silver text-lg mb-2">
-        This kiosk can take a quick photo at each punch to confirm it&rsquo;s
-        really you (it stops anyone else clocking in with your number).
-      </p>
-      <p className="text-silver/80 text-sm mb-8">
-        Photos are used only to verify your punches and are deleted after 90
-        days. To recognize you, the system also stores a numeric face
-        template (a string of numbers, not a photo); it&rsquo;s deleted when you
-        stop working with us, after a year without punches, or any time you
-        withdraw consent through your manager. If you&rsquo;d rather not, you can
-        clock in with just your number — no photo, no face template, ever.
-      </p>
+      <p className="text-silver text-lg mb-2">{t.consentBody1}</p>
+      <p className="text-silver/80 text-sm mb-8">{t.consentBody2}</p>
       <button
         onClick={() => onChoice(true)}
         className="w-full min-h-[56px] bg-gold hover:bg-gold-bright text-navy rounded-xl py-4 text-xl font-medium transition-colors"
       >
-        OK — use photo verification
+        {t.consentYes}
       </button>
       <button
         onClick={() => onChoice(false)}
         className="w-full min-h-[56px] mt-3 bg-navy-secondary hover:bg-navy-secondary/70 text-white rounded-xl py-4 text-xl transition-colors"
       >
-        No thanks — number only
+        {t.consentNo}
       </button>
       <button
         onClick={onCancel}
         className="mt-6 min-h-[44px] px-6 text-silver text-base hover:text-white transition"
       >
-        Cancel
+        {t.cancel}
       </button>
     </div>
   );
 }
 
-// Action-specific greeting for the camera screen. Saying WHAT the punch
-// will do (and to WHOM) before the snap is the associate's only chance
-// to catch two classes of mistake: a punch about to go the wrong
-// direction, and a typo'd PIN that landed on someone else's valid code.
-const PREDICTED_GREETING: Record<KioskPunchAction, string> = {
-  CLOCK_IN: 'Clocking you in',
-  CLOCK_OUT: 'Clocking you out',
-  BREAK_START: 'Starting your break',
-  BREAK_END: 'Ending your break',
-};
-
+// The camera screen greeting names WHAT the punch will do (and to WHOM)
+// before the snap — the associate's only chance to catch two classes of
+// mistake: a punch about to go the wrong direction, and a typo'd PIN
+// that landed on someone else's valid code. Strings live in t.greet.
 function SelfieCapture({
+  t,
   preflight,
   onCaptured,
   onSkip,
   onCancel,
 }: {
+  t: KioskStrings;
   preflight: { firstName: string; predictedAction: KioskPunchAction } | null;
   onCaptured: (dataUrl: string) => void;
   onSkip: () => void;
@@ -1073,20 +1344,20 @@ function SelfieCapture({
   if (streamErr) {
     return (
       <div className="text-center max-w-md px-4">
-        <div className="text-2xl mb-4">Camera unavailable</div>
+        <div className="text-2xl mb-4">{t.cameraUnavailable}</div>
         <div className="text-silver text-sm mb-6">{streamErr}</div>
         <div className="flex gap-3 justify-center">
           <button
             onClick={onSkip}
             className="px-6 py-3 bg-gold hover:bg-gold-bright text-navy rounded-md font-medium transition-colors"
           >
-            Continue without selfie
+            {t.continueWithoutSelfie}
           </button>
           <button
             onClick={onCancel}
             className="px-6 py-3 bg-navy-secondary rounded-md text-silver transition"
           >
-            Cancel
+            {t.cancel}
           </button>
         </div>
       </div>
@@ -1100,19 +1371,17 @@ function SelfieCapture({
           direction is wrong (expected clock-in, says clock-out), Cancel
           is right below. */}
       {analyzing ? (
-        <div className="text-2xl text-silver mb-4">Verifying…</div>
+        <div className="text-2xl text-silver mb-4">{t.verifying}</div>
       ) : preflight ? (
         <div className="text-center mb-4">
           <div className="text-3xl text-white">
-            {PREDICTED_GREETING[preflight.predictedAction]},{' '}
+            {t.greet[preflight.predictedAction]},{' '}
             <span className="text-gold-bright">{preflight.firstName}</span>
           </div>
-          <div className="text-base text-silver mt-1">
-            Not you? Tap Cancel below.
-          </div>
+          <div className="text-base text-silver mt-1">{t.notYou}</div>
         </div>
       ) : (
-        <div className="text-2xl text-silver mb-4">Smile for the camera</div>
+        <div className="text-2xl text-silver mb-4">{t.smile}</div>
       )}
       <div className="relative">
         <video
@@ -1135,7 +1404,7 @@ function SelfieCapture({
               {countdown}
             </div>
             <div className="absolute bottom-2 inset-x-0 text-center text-sm text-white/90 drop-shadow">
-              Center your face in the oval
+              {t.centerFace}
             </div>
           </div>
         )}
@@ -1150,20 +1419,20 @@ function SelfieCapture({
           warning otherwise. (Biometric-consent law compliance, e.g.
           BIPA, is a policy matter handled outside this screen.) */}
       <div className="mt-4 text-sm text-silver/80 max-w-sm text-center">
-        Your photo is used only to verify this time punch.
+        {t.privacy}
       </div>
       <button
         onClick={onCancel}
         className="mt-4 min-h-[44px] px-6 text-silver text-base hover:text-white transition"
       >
-        Cancel
+        {t.cancel}
       </button>
     </div>
   );
 }
 
-function ResultScreen({ result }: { result: PunchResult }) {
-  const time = new Date(result.at).toLocaleTimeString('en-US', {
+function ResultScreen({ result, t }: { result: PunchResult; t: KioskStrings }) {
+  const time = new Date(result.at).toLocaleTimeString(t.locale, {
     hour: 'numeric',
     minute: '2-digit',
   });
@@ -1180,14 +1449,12 @@ function ResultScreen({ result }: { result: PunchResult }) {
         >
           <div className="text-7xl mb-5 text-warning">⏱</div>
           <div className="text-sm uppercase tracking-[0.3em] text-silver/80 mb-3">
-            Punch saved
+            {t.punchSaved}
           </div>
           <div className="font-display text-7xl md:text-8xl leading-none text-white">
-            Saved offline
+            {t.savedOffline}
           </div>
-          <div className="mt-6 text-2xl text-silver">
-            We'll sync when the network comes back.
-          </div>
+          <div className="mt-6 text-2xl text-silver">{t.syncWhenBack}</div>
           <div className="mt-2 text-3xl text-gold-bright tabular-nums">{time}</div>
         </div>
       </div>
@@ -1197,22 +1464,8 @@ function ResultScreen({ result }: { result: PunchResult }) {
   // warmer than full-legal-name on a wall-mounted tablet. Falls back to
   // whatever the server sent if the split is empty (single-name records).
   const firstName = result.associateName.split(' ')[0] || result.associateName;
-  const greeting =
-    result.action === 'CLOCK_IN'
-      ? `Welcome, ${firstName}`
-      : result.action === 'CLOCK_OUT'
-        ? `See you later, ${firstName}`
-        : result.action === 'BREAK_START'
-          ? `Enjoy your break, ${firstName}`
-          : `Welcome back, ${firstName}`;
-  const verb =
-    result.action === 'CLOCK_IN'
-      ? 'Clocked in'
-      : result.action === 'CLOCK_OUT'
-        ? 'Clocked out'
-        : result.action === 'BREAK_START'
-          ? 'On break'
-          : 'Back from break';
+  const greeting = `${t.resultPrefix[result.action]}, ${firstName}`;
+  const verb = t.resultVerb[result.action];
   const accent =
     result.action === 'CLOCK_IN'
       ? 'text-success'
