@@ -25,6 +25,14 @@ import {
 
 const app = () => createApp();
 
+// 1×1 transparent PNG — uploads now run verifyFileMagic, so fixtures must
+// send bytes whose magic matches the declared image/png mimetype.
+const TINY_PNG = Buffer.from(
+  '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c63000100000005000100' +
+    '0d0a2db40000000049454e44ae426082',
+  'hex'
+);
+
 beforeEach(async () => {
   await truncateAll();
 });
@@ -112,7 +120,7 @@ describe('Notification hooks', () => {
     const res = await a
       .post('/documents/me/upload')
       .field('kind', 'ID')
-      .attach('file', Buffer.from('fake png bytes'), { filename: 'license.png', contentType: 'image/png' });
+      .attach('file', TINY_PNG, { filename: 'license.png', contentType: 'image/png' });
     expect(res.status).toBe(201);
     await flushPendingNotifications();
 
@@ -144,7 +152,7 @@ describe('Notification hooks', () => {
     const upload = await aA
       .post('/documents/me/upload')
       .field('kind', 'ID')
-      .attach('file', Buffer.from('xxx'), { filename: 'id.png', contentType: 'image/png' });
+      .attach('file', TINY_PNG, { filename: 'id.png', contentType: 'image/png' });
     const docId = upload.body.id;
     // Wait for the upload's HR notification to settle BEFORE wiping the table,
     // otherwise the fire-and-forget insert lands after deleteMany and pollutes

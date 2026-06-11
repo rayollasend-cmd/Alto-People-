@@ -30,12 +30,16 @@ async function loginAs(email: string): Promise<TestAgent<Test>> {
 }
 
 async function createClientInState(state: string | null) {
+  const name = `Client ${Math.random().toString(36).slice(2, 8)}`;
   return prisma.client.create({
     data: {
-      name: `Client ${Math.random().toString(36).slice(2, 8)}`,
+      name,
       industry: 'hospitality',
       status: 'ACTIVE',
       state,
+      // Phase 131 — shift create auto-derives locationId from the client's
+      // first active Location and 400s (no_location_for_client) without one.
+      locations: { create: { name } },
     },
   });
 }
