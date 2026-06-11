@@ -7,6 +7,8 @@ import { recordChange } from '../lib/associateHistory.js';
 import { emit as emitWorkflow } from '../lib/workflow.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { decryptString } from '../lib/crypto.js';
+import { enqueueAudit } from '../lib/audit.js';
+import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
 
 /**
  * Phase 82 — Self-service post-onboarding.
@@ -133,6 +135,55 @@ selfServiceRouter.get('/me/employee-number', async (req, res) => {
     employeeNumber: decryptString(pin.pinEncrypted),
     issuedAt: pin.createdAt.toISOString(),
   });
+});
+
+// ----- Face-verification consent -------------------------------------------
+// BIPA-style biometric rights are strongest when the data subject can
+// exercise them directly — withdrawing through a manager (the kiosk-admin
+// path) is a fallback, not the only door. Both directions are valid here
+// because the caller IS the associate, authenticated: granting from your
+// own profile is affirmative consent; declining scrubs stored biometrics
+// immediately, same rule as every other decline path.
+
+selfServiceRouter.get('/me/face-consent', async (req, res) => {
+  const id = requireAssociate(req);
+  const a = await prisma.associate.findUnique({
+    where: { id },
+    select: { faceConsentStatus: true, faceConsentAt: true },
+  });
+  if (!a) throw new HttpError(404, 'not_found', 'Associate not found.');
+  res.json({
+    status: a.faceConsentStatus,
+    at: a.faceConsentAt?.toISOString() ?? null,
+  });
+});
+
+selfServiceRouter.post('/me/face-consent', async (req, res) => {
+  const id = requireAssociate(req);
+  const { consent } = z.object({ consent: z.boolean() }).parse(req.body);
+  const status = consent ? 'GRANTED' : 'DECLINED';
+  await prisma.associate.update({
+    where: { id },
+    data: { faceConsentStatus: status, faceConsentAt: new Date() },
+  });
+  if (!consent) {
+    await purgeAssociateBiometrics(prisma, id);
+  }
+  enqueueAudit(
+    {
+      actorUserId: req.user!.id,
+      action: consent
+        ? 'kiosk.face_consent_granted_self'
+        : 'kiosk.face_consent_declined_self',
+      entityType: 'Associate',
+      entityId: id,
+      metadata: {},
+    },
+    consent
+      ? 'kiosk.face_consent_granted_self'
+      : 'kiosk.face_consent_declined_self',
+  );
+  res.json({ ok: true, status });
 });
 
 // ----- Emergency contacts -------------------------------------------------
