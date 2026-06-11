@@ -233,6 +233,22 @@ export function KioskPage() {
   // 3s used to cut off "registered to a different site…" mid-sentence.
   const errorDwellMs = (msg: string) => Math.max(6_000, msg.length * 60);
 
+  // Abandoned-screen timeout. A half-typed PIN left behind shouldn't
+  // greet the next associate — and an unanswered CONSENT prompt is
+  // worse: the next person could answer a legally-recorded biometric
+  // question for someone else. 60s of inactivity on either screen
+  // returns to idle (any keypad activity restarts the clock via the
+  // pin/intent deps). Result/error screens have their own dwell
+  // timers; the selfie screen self-advances in ~1s.
+  const ABANDONED_AFTER_MS = 60_000;
+  useEffect(() => {
+    if (stage !== 'pin' && stage !== 'consent') return;
+    const t = window.setTimeout(reset, ABANDONED_AFTER_MS);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only
+    // touches stable setters; pin/intent are deliberate "activity" deps.
+  }, [stage, pin, intent]);
+
   // Best-effort geolocation, tuned for a stationary wall-mounted tablet:
   //
   //  - Skipped entirely unless this kiosk actually has a geofence — most
@@ -529,10 +545,10 @@ export function KioskPage() {
                 }
                 // Throttle collision — e.g. the previous associate's
                 // preflight landed under a second ago, or a queue drain
-                // stamped the bucket. The typed PIN is fine; keep it and
-                // let them just tap submit again.
+                // stamped the bucket. The typed PIN is fine; keep it —
+                // the PinPad shows a "Try again" button for this case.
                 if (err.status === 429) {
-                  setPinError('One at a time — wait a second, then tap ✓ again.');
+                  setPinError('One at a time — wait a second, then tap Try again.');
                   return;
                 }
                 setError(err.message);
@@ -761,12 +777,31 @@ function PinPad({
 }) {
   // Auto-advance once 4 digits are entered — but not while a previous
   // verify is still in flight, so we never fire two punches.
+  //
+  // Fired AT MOST ONCE per (pin, intent) combination, tracked in a ref.
+  // Without the guard this effect re-arms on every parent render
+  // (onSubmit is a fresh closure each time), and the error paths that
+  // KEEP the typed PIN (429, not_clocked_in) re-rendered straight back
+  // into it — an infinite verify loop hammering the server 1-2×/sec
+  // until someone tapped Cancel. Retrying a kept PIN is now explicit
+  // (the "Try again" button below) — except toggling the break pill,
+  // which changes the key and deliberately re-fires: the not_clocked_in
+  // message tells the associate to do exactly that, so the resubmit
+  // should be automatic once they comply.
+  const firedForRef = useRef<string | null>(null);
+  const submitKey = `${pin}|${intent ?? ''}`;
   useEffect(() => {
-    if (pin.length === 4 && !submitting) {
-      const t = window.setTimeout(onSubmit, 150);
-      return () => clearTimeout(t);
+    if (pin.length < 4) {
+      firedForRef.current = null;
+      return;
     }
-  }, [pin, onSubmit, submitting]);
+    if (submitting || firedForRef.current === submitKey) return;
+    const t = window.setTimeout(() => {
+      firedForRef.current = submitKey;
+      onSubmit();
+    }, 150);
+    return () => clearTimeout(t);
+  }, [pin, intent, submitKey, onSubmit, submitting]);
 
   // Shake the dots row whenever a new error arrives. Keyed on the
   // error string so two consecutive wrong PINs both re-trigger.
@@ -832,11 +867,23 @@ function PinPad({
           </div>
         ))}
       </div>
-      <div className="h-7 mb-4 flex items-center justify-center">
+      <div className="min-h-7 mb-4 flex flex-col items-center justify-center gap-2">
         {error ? (
           <span className="text-alert text-base font-medium" aria-live="polite">
             {error}
           </span>
+        ) : null}
+        {/* Errors that keep the typed PIN (throttle collision,
+            not-clocked-in) need an explicit retry — auto-advance fires
+            once per PIN on purpose, and there's no other submit
+            affordance on the pad. */}
+        {error && pin.length === 4 && !submitting ? (
+          <button
+            onClick={onSubmit}
+            className="min-h-[44px] px-6 py-2 bg-gold hover:bg-gold-bright text-navy rounded-full text-base font-medium transition-colors"
+          >
+            Try again
+          </button>
         ) : null}
       </div>
       <div
@@ -905,8 +952,11 @@ function ConsentScreen({
       </p>
       <p className="text-silver/80 text-sm mb-8">
         Photos are used only to verify your punches and are deleted after 90
-        days. If you&rsquo;d rather not, you can clock in with just your number —
-        no photo, ever. You can change this later through your manager.
+        days. To recognize you, the system also stores a numeric face
+        template (a string of numbers, not a photo); it&rsquo;s deleted when you
+        stop working with us, after a year without punches, or any time you
+        withdraw consent through your manager. If you&rsquo;d rather not, you can
+        clock in with just your number — no photo, no face template, ever.
       </p>
       <button
         onClick={() => onChoice(true)}
