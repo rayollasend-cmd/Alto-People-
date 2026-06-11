@@ -127,8 +127,8 @@ export function DisciplineHome() {
                 <TableRow>
                   <TableHead>Associate</TableHead>
                   <TableHead>Kind</TableHead>
-                  <TableHead>Incident</TableHead>
-                  <TableHead>Effective</TableHead>
+                  <TableHead className="hidden md:table-cell">Incident</TableHead>
+                  <TableHead className="hidden lg:table-cell">Effective</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -145,6 +145,9 @@ export function DisciplineHome() {
                         {a.associateName}
                       </div>
                       <div className="text-xs text-silver">{a.associateEmail}</div>
+                      <div className="text-[11px] text-silver/70 md:hidden">
+                        {a.incidentDate}
+                      </div>
                     </TableCell>
                     <TableCell>
                       <Badge variant={KIND_VARIANT[a.kind]}>
@@ -154,10 +157,10 @@ export function DisciplineHome() {
                           : ''}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-sm text-silver">
+                    <TableCell className="hidden md:table-cell text-sm text-silver">
                       {a.incidentDate}
                     </TableCell>
-                    <TableCell className="text-sm text-silver">
+                    <TableCell className="hidden lg:table-cell text-sm text-silver">
                       {a.effectiveDate}
                     </TableCell>
                     <TableCell>

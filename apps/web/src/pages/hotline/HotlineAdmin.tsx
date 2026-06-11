@@ -159,12 +159,12 @@ export function HotlineAdmin() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Tracking code</TableHead>
-                  <TableHead>Category</TableHead>
+                  <TableHead className="hidden md:table-cell">Category</TableHead>
                   <TableHead>Subject</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>SLA</TableHead>
-                  <TableHead>Filed</TableHead>
-                  <TableHead>Replies</TableHead>
+                  <TableHead className="hidden lg:table-cell">Filed</TableHead>
+                  <TableHead className="hidden lg:table-cell">Replies</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -177,11 +177,18 @@ export function HotlineAdmin() {
                     <TableCell className="font-mono text-xs">
                       {r.trackingCode}
                     </TableCell>
-                    <TableCell className="text-sm">
+                    <TableCell className="text-sm hidden md:table-cell">
                       {CATEGORY_LABELS[r.category]}
                     </TableCell>
                     <TableCell className="text-sm font-medium text-white">
                       {r.subject}
+                      <div className="text-[11px] text-silver/70 md:hidden">
+                        {CATEGORY_LABELS[r.category]}
+                      </div>
+                      <div className="text-[11px] text-silver/70 lg:hidden">
+                        {new Date(r.createdAt).toLocaleDateString()}
+                        {r.updateCount > 0 ? ` · ${r.updateCount} repl.` : ''}
+                      </div>
                     </TableCell>
                     <TableCell>
                       <Badge variant={STATUS_VARIANT[r.status]}>
@@ -191,10 +198,10 @@ export function HotlineAdmin() {
                     <TableCell>
                       <SlaChip sla={r.sla} />
                     </TableCell>
-                    <TableCell className="text-xs text-silver">
+                    <TableCell className="text-xs text-silver hidden lg:table-cell">
                       {new Date(r.createdAt).toLocaleDateString()}
                     </TableCell>
-                    <TableCell className="text-sm">{r.updateCount}</TableCell>
+                    <TableCell className="text-sm hidden lg:table-cell">{r.updateCount}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

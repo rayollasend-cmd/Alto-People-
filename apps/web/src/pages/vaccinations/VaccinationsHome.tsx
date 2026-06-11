@@ -165,9 +165,9 @@ export function VaccinationsHome() {
                   <TableRow>
                     <TableHead>Associate</TableHead>
                     <TableHead>Kind</TableHead>
-                    <TableHead>Dose</TableHead>
-                    <TableHead>Administered</TableHead>
-                    <TableHead>Expires</TableHead>
+                    <TableHead className="hidden lg:table-cell">Dose</TableHead>
+                    <TableHead className="hidden md:table-cell">Administered</TableHead>
+                    <TableHead className="hidden md:table-cell">Expires</TableHead>
                     <TableHead className="text-right"></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -181,20 +181,24 @@ export function VaccinationsHome() {
                         <div className="text-xs text-silver">
                           {r.associateEmail}
                         </div>
+                        <div className="text-[11px] text-silver/70 md:hidden">
+                          {r.administeredOn}
+                          {r.expiresOn ? ` · exp ${r.expiresOn}` : ''}
+                        </div>
                       </TableCell>
                       <TableCell className="text-sm">
                         {r.kind === 'OTHER' && r.customLabel
                           ? r.customLabel
                           : KIND_LABELS[r.kind]}
                       </TableCell>
-                      <TableCell className="text-sm text-silver">
+                      <TableCell className="hidden lg:table-cell text-sm text-silver">
                         {r.doseNumber}
                         {r.totalDoses ? ` / ${r.totalDoses}` : ''}
                       </TableCell>
-                      <TableCell className="text-sm text-silver">
+                      <TableCell className="hidden md:table-cell text-sm text-silver">
                         {r.administeredOn}
                       </TableCell>
-                      <TableCell className="text-sm">
+                      <TableCell className="hidden md:table-cell text-sm">
                         {r.expiresOn ? (
                           <span
                             className={
@@ -257,7 +261,7 @@ export function VaccinationsHome() {
                   <TableRow>
                     <TableHead>Associate</TableHead>
                     <TableHead>Kind</TableHead>
-                    <TableHead>Expires</TableHead>
+                    <TableHead className="hidden md:table-cell">Expires</TableHead>
                     <TableHead>Days</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -266,13 +270,16 @@ export function VaccinationsHome() {
                     <TableRow key={r.id}>
                       <TableCell className="font-medium text-white">
                         {r.associateName}
+                        <div className="text-[11px] text-silver/70 md:hidden">
+                          {r.expiresOn}
+                        </div>
                       </TableCell>
                       <TableCell className="text-sm">
                         {r.kind === 'OTHER' && r.customLabel
                           ? r.customLabel
                           : KIND_LABELS[r.kind]}
                       </TableCell>
-                      <TableCell className="text-sm text-silver">
+                      <TableCell className="hidden md:table-cell text-sm text-silver">
                         {r.expiresOn}
                       </TableCell>
                       <TableCell>

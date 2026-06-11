@@ -149,9 +149,9 @@ export function ProbationHome() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Associate</TableHead>
-                  <TableHead>Period</TableHead>
+                  <TableHead className="hidden md:table-cell">Period</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Decision</TableHead>
+                  <TableHead className="hidden lg:table-cell">Decision</TableHead>
                   {canManage && <TableHead className="text-right">Actions</TableHead>}
                 </TableRow>
               </TableHeader>
@@ -168,8 +168,12 @@ export function ProbationHome() {
                         <div className="text-xs text-silver">
                           {p.currentTitle ?? p.associateEmail}
                         </div>
+                        <div className="text-[11px] text-silver/70 md:hidden">
+                          {p.startDate} → {p.endDate}
+                          {overdue && ' · Overdue'}
+                        </div>
                       </TableCell>
-                      <TableCell className="text-sm text-silver">
+                      <TableCell className="hidden md:table-cell text-sm text-silver">
                         {p.startDate} → {p.endDate}
                         {overdue && (
                           <Badge variant="destructive" className="ml-2">
@@ -182,7 +186,7 @@ export function ProbationHome() {
                           {p.status}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-xs text-silver max-w-xs truncate">
+                      <TableCell className="hidden lg:table-cell text-xs text-silver max-w-xs truncate">
                         {p.decision ?? '—'}
                       </TableCell>
                       {canManage && (

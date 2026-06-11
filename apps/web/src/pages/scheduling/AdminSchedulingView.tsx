@@ -61,6 +61,7 @@ import { useConfirm } from '@/lib/confirm';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { fmtDateTime } from '@/lib/format';
 import {
   Dialog,
   DialogContent,
@@ -121,7 +122,7 @@ const STATUS_VARIANT: Record<
 };
 
 function fmt(iso: string): string {
-  return new Date(iso).toLocaleString();
+  return fmtDateTime(iso);
 }
 
 /**
@@ -812,7 +813,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const onQuickCancel = async (s: Shift) => {
     const ok = await confirm({
       title: 'Cancel shift?',
-      description: `Cancel ${s.position} on ${new Date(s.startsAt).toLocaleString()}?`,
+      description: `Cancel ${s.position} on ${fmtDateTime(s.startsAt)}?`,
       confirmLabel: 'Cancel shift',
     });
     if (!ok) return;
@@ -873,7 +874,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           {locationFilter ? ` · location: ${locationFilter}` : ''}
         </div>
         <div className="text-[10px] text-gray-500 mt-1">
-          Generated {new Date().toLocaleString()}
+          Generated {fmtDateTime(new Date())}
         </div>
       </div>
 
@@ -2267,7 +2268,7 @@ function AdminSwapsPanel() {
                   <div className="text-xs text-silver mt-0.5">
                     {s.shiftPosition} · {s.shiftClientName ?? '—'} ·{' '}
                     <span className="tabular-nums">
-                      {new Date(s.shiftStartsAt).toLocaleString()}
+                      {fmtDateTime(s.shiftStartsAt)}
                     </span>
                   </div>
                   {s.note && (
@@ -3094,17 +3095,16 @@ function ViewTab({
 }) {
   const active = current === value;
   return (
-    <button
+    <Button
       type="button"
+      variant={active ? 'primary' : 'ghost'}
+      size="xs"
       onClick={() => onClick(value)}
-      className={cn(
-        'px-3 py-1 text-xs uppercase tracking-wider rounded-sm transition-colors inline-flex items-center gap-1.5',
-        active ? 'bg-gold text-navy' : 'text-silver hover:text-white'
-      )}
+      className="uppercase tracking-wider rounded-sm"
     >
       <Icon className="h-3.5 w-3.5" />
       {label}
-    </button>
+    </Button>
   );
 }
 
@@ -3151,35 +3151,39 @@ function FilterBar({
         className={cn(inputCx, 'w-32')}
         aria-label="Filter by position"
       />
-      <select
-        value={clientFilter}
-        onChange={(e) => setClientFilter(e.target.value)}
-        className={cn(inputCx, 'min-w-[10rem]')}
-        aria-label="Filter by client"
-      >
-        <option value="">All clients</option>
-        {clients.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.name}
+      <div className="min-w-[10rem]">
+        <Select
+          value={clientFilter}
+          onChange={(e) => setClientFilter(e.target.value)}
+          size="sm"
+          aria-label="Filter by client"
+        >
+          <option value="">All clients</option>
+          {clients.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </Select>
+      </div>
+      <div className="min-w-[10rem]">
+        <Select
+          value={locationFilter}
+          onChange={(e) => setLocationFilter(e.target.value)}
+          size="sm"
+          aria-label="Filter by location"
+          disabled={locationOptions.length === 0}
+        >
+          <option value="">
+            {locationOptions.length === 0 ? '— no locations —' : 'All locations'}
           </option>
-        ))}
-      </select>
-      <select
-        value={locationFilter}
-        onChange={(e) => setLocationFilter(e.target.value)}
-        className={cn(inputCx, 'min-w-[10rem]')}
-        aria-label="Filter by location"
-        disabled={locationOptions.length === 0}
-      >
-        <option value="">
-          {locationOptions.length === 0 ? '— no locations —' : 'All locations'}
-        </option>
-        {locationOptions.map((l) => (
-          <option key={l} value={l}>
-            {l}
-          </option>
-        ))}
-      </select>
+          {locationOptions.map((l) => (
+            <option key={l} value={l}>
+              {l}
+            </option>
+          ))}
+        </Select>
+      </div>
       {anyActive && (
         <button
           type="button"

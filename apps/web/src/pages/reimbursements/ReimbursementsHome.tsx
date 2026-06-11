@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Plus, Receipt, Trash2 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
+import { fmtDate } from '@/lib/format';
 import {
   addExpenseLine,
   createReimbursement,
@@ -115,11 +116,11 @@ export function ReimbursementsHome() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Title</TableHead>
-                  <TableHead>Submitter</TableHead>
-                  <TableHead>Lines</TableHead>
+                  <TableHead className="hidden md:table-cell">Submitter</TableHead>
+                  <TableHead className="hidden lg:table-cell">Lines</TableHead>
                   <TableHead>Total</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Submitted</TableHead>
+                  <TableHead className="hidden md:table-cell">Submitted</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -129,19 +130,23 @@ export function ReimbursementsHome() {
                     className="cursor-pointer"
                     onClick={() => setActive(r)}
                   >
-                    <TableCell className="font-medium text-white">{r.title}</TableCell>
-                    <TableCell>{r.associateName}</TableCell>
-                    <TableCell>{r.lineCount}</TableCell>
+                    <TableCell className="font-medium text-white">
+                      {r.title}
+                      <div className="text-[11px] text-silver/70 md:hidden">
+                        {r.associateName}
+                        {r.submittedAt && ` · ${fmtDate(r.submittedAt)}`}
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">{r.associateName}</TableCell>
+                    <TableCell className="hidden lg:table-cell">{r.lineCount}</TableCell>
                     <TableCell>
                       {r.currency} {Number(r.totalAmount).toFixed(2)}
                     </TableCell>
                     <TableCell>
                       <Badge variant={STATUS_BADGE[r.status]}>{STATUS_LABEL[r.status]}</Badge>
                     </TableCell>
-                    <TableCell>
-                      {r.submittedAt
-                        ? new Date(r.submittedAt).toLocaleDateString()
-                        : '—'}
+                    <TableCell className="hidden md:table-cell">
+                      {fmtDate(r.submittedAt)}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -387,7 +392,7 @@ function ReimbursementDrawer({
                     <TableHeader>
                       <TableRow>
                         <TableHead>Date</TableHead>
-                        <TableHead>Kind</TableHead>
+                        <TableHead className="hidden md:table-cell">Kind</TableHead>
                         <TableHead>Description</TableHead>
                         <TableHead>Amount</TableHead>
                         {editable && <TableHead className="w-12"></TableHead>}
@@ -397,8 +402,11 @@ function ReimbursementDrawer({
                       {data.lines.map((l) => (
                         <TableRow key={l.id}>
                           <TableCell>{l.incurredOn}</TableCell>
-                          <TableCell>{KIND_LABEL[l.kind]}</TableCell>
-                          <TableCell>{l.description}</TableCell>
+                          <TableCell className="hidden md:table-cell">{KIND_LABEL[l.kind]}</TableCell>
+                          <TableCell>
+                            {l.description}
+                            <div className="text-[11px] text-silver/70 md:hidden">{KIND_LABEL[l.kind]}</div>
+                          </TableCell>
                           <TableCell>${Number(l.amount).toFixed(2)}</TableCell>
                           {editable && (
                             <TableCell>

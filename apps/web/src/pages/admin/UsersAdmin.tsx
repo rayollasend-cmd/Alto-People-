@@ -5,6 +5,7 @@ import { ROLE_LABELS, ROLES, type Role } from '@/lib/roles';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { ApiError } from '@/lib/api';
+import { fmtDate } from '@/lib/format';
 import {
   forcePasswordReset,
   listAdminUsers,
@@ -272,14 +273,14 @@ export function UsersAdmin() {
           ) : rows.length === 0 ? (
             <div className="p-6 text-sm text-silver">No users match those filters.</div>
           ) : (
-            <Table>
+            <Table caption="User accounts">
               <TableHeader>
                 <TableRow>
                   <TableHead>User</TableHead>
                   <TableHead>Role</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Client</TableHead>
-                  <TableHead>Created</TableHead>
+                  <TableHead className="hidden md:table-cell">Client</TableHead>
+                  <TableHead className="hidden lg:table-cell">Created</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -299,6 +300,12 @@ export function UsersAdmin() {
                         {u.associateName && (
                           <div className="text-xs text-silver">{u.email}</div>
                         )}
+                        <div className="text-[11px] text-silver/70 md:hidden">
+                          {u.clientName ?? '—'}
+                        </div>
+                        <div className="text-[11px] text-silver/70 lg:hidden">
+                          {fmtDate(u.createdAt)}
+                        </div>
                       </TableCell>
                       <TableCell>
                         <select
@@ -334,11 +341,11 @@ export function UsersAdmin() {
                           </select>
                         </div>
                       </TableCell>
-                      <TableCell className="text-silver text-xs">
+                      <TableCell className="text-silver text-xs hidden md:table-cell">
                         {u.clientName ?? '—'}
                       </TableCell>
-                      <TableCell className="text-silver text-xs">
-                        {new Date(u.createdAt).toLocaleDateString()}
+                      <TableCell className="text-silver text-xs hidden lg:table-cell">
+                        {fmtDate(u.createdAt)}
                       </TableCell>
                       <TableCell className="text-right">
                         <Button
