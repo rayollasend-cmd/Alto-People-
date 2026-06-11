@@ -1,10 +1,11 @@
 import { useEffect, useRef } from 'react';
-import { NavLink } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { Briefcase, X, type LucideIcon } from 'lucide-react';
 import {
   DASHBOARD_NAV,
   GROUP_LABEL,
   MODULES,
+  useActiveNavPath,
   type ModuleGroup,
   type ModuleNav,
 } from '@/lib/modules';
@@ -26,6 +27,7 @@ interface MobileNavProps {
 export function MobileNav({ open, onClose }: MobileNavProps) {
   const { can } = useAuth();
   const visible = MODULES.filter((m) => can(m.requires));
+  const activePath = useActiveNavPath();
   const panelRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -119,7 +121,12 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
         </div>
 
         <nav className="flex-1 overflow-y-auto py-2" onClick={onClose}>
-          <MobileLink to={DASHBOARD_NAV.path} end label={DASHBOARD_NAV.label} icon={DASHBOARD_NAV.icon} />
+          <MobileLink
+            to={DASHBOARD_NAV.path}
+            active={activePath === DASHBOARD_NAV.path}
+            label={DASHBOARD_NAV.label}
+            icon={DASHBOARD_NAV.icon}
+          />
           {GROUP_ORDER.map((group) => {
             const items = grouped[group];
             if (!items || items.length === 0) return null;
@@ -129,7 +136,13 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
                   {GROUP_LABEL[group]}
                 </div>
                 {items.map((m) => (
-                  <MobileLink key={m.key} to={m.path} label={m.label} icon={m.icon} />
+                  <MobileLink
+                    key={m.key}
+                    to={m.path}
+                    active={activePath === m.path}
+                    label={m.label}
+                    icon={m.icon}
+                  />
                 ))}
               </div>
             );
@@ -144,26 +157,26 @@ interface MobileLinkProps {
   to: string;
   label: string;
   icon: LucideIcon;
-  end?: boolean;
+  /** Computed by the parent via useActiveNavPath (longest-prefix wins) —
+   *  see SidebarLink for why NavLink's own prefix matching is wrong here. */
+  active: boolean;
 }
 
-function MobileLink({ to, label, icon: Icon, end }: MobileLinkProps) {
+function MobileLink({ to, label, icon: Icon, active }: MobileLinkProps) {
   return (
-    <NavLink
+    <Link
       to={to}
-      end={end}
-      className={({ isActive }) =>
-        cn(
-          'relative mx-2 my-0.5 flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm transition-colors',
-          'before:absolute before:left-0 before:top-2 before:bottom-2 before:w-0.5 before:rounded-r before:bg-gold before:opacity-0 before:transition-opacity',
-          isActive
-            ? 'bg-navy-secondary text-white before:opacity-100'
-            : 'text-silver hover:text-white hover:bg-navy-secondary/50'
-        )
-      }
+      aria-current={active ? 'page' : undefined}
+      className={cn(
+        'relative mx-2 my-0.5 flex items-center gap-2.5 rounded-md px-3 py-2.5 text-sm transition-colors',
+        'before:absolute before:left-0 before:top-2 before:bottom-2 before:w-0.5 before:rounded-r before:bg-gold before:opacity-0 before:transition-opacity',
+        active
+          ? 'bg-navy-secondary text-white before:opacity-100'
+          : 'text-silver hover:text-white hover:bg-navy-secondary/50'
+      )}
     >
       <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
       <span className="truncate">{label}</span>
-    </NavLink>
+    </Link>
   );
 }
