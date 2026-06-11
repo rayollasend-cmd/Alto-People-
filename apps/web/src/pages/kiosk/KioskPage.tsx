@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
-import { kioskAttachFace, kioskConfig, kioskPunch, kioskVerifyPin } from '@/lib/kiosk99Api';
+import {
+  kioskAttachFace,
+  kioskConfig,
+  kioskPunch,
+  kioskVerifyPin,
+  type KioskPunchAction,
+} from '@/lib/kiosk99Api';
 import {
   extractDescriptor,
   loadFaceModels,
@@ -64,6 +70,14 @@ export function KioskPage() {
   // on this shared device so a second person can't start typing over an
   // in-flight punch.
   const [verifying, setVerifying] = useState(false);
+  // What the preflight learned: who this is and what the punch will do.
+  // Drives the camera-screen greeting ("Clocking you in, Maria"). Null
+  // when the preflight couldn't reach the server (offline flow) — the
+  // camera screen falls back to a generic prompt.
+  const [preflight, setPreflight] = useState<{
+    firstName: string;
+    predictedAction: KioskPunchAction;
+  } | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [queued, setQueued] = useState<number>(() => queueSize());
   // Whether this device has a geofence — tri-state on purpose. Boot config
@@ -178,14 +192,31 @@ export function KioskPage() {
     };
   }, []);
 
+  // Auto-return-to-idle timer for the result/error screens. Tracked in a
+  // ref so a tap-to-dismiss can cancel it — otherwise a stale timer fires
+  // mid-way through the NEXT person's PIN entry and wipes their input.
+  const resetTimerRef = useRef<number | null>(null);
   const reset = () => {
+    if (resetTimerRef.current !== null) {
+      window.clearTimeout(resetTimerRef.current);
+      resetTimerRef.current = null;
+    }
     setPin('');
     setIntent(null);
     setResult(null);
     setError(null);
     setPinError(null);
+    setPreflight(null);
     setStage('idle');
   };
+  const scheduleReset = (ms: number) => {
+    if (resetTimerRef.current !== null) window.clearTimeout(resetTimerRef.current);
+    resetTimerRef.current = window.setTimeout(reset, ms);
+  };
+  // Hard errors auto-dismiss after long enough to actually read them —
+  // ~60ms/char (slow reading speed under stress), floored at 6s. A flat
+  // 3s used to cut off "registered to a different site…" mid-sentence.
+  const errorDwellMs = (msg: string) => Math.max(6_000, msg.length * 60);
 
   // Best-effort geolocation, tuned for a stationary wall-mounted tablet:
   //
@@ -281,7 +312,7 @@ export function KioskPage() {
         at: r.at,
       });
       setStage('result');
-      window.setTimeout(reset, 4000);
+      scheduleReset(4000);
       // Fire-and-forget: upload the selfie + attach the descriptor now that
       // the associate is already clocked in.
       if (selfieData) void attachSelfieAndFace(selfieData, r.punchId, token);
@@ -324,7 +355,7 @@ export function KioskPage() {
         }
         setError(err.message);
         setStage('error');
-        window.setTimeout(reset, 3000);
+        scheduleReset(errorDwellMs(err.message));
         return;
       }
       enqueuePunch({
@@ -350,7 +381,7 @@ export function KioskPage() {
         queued: true,
       });
       setStage('result');
-      window.setTimeout(reset, 4000);
+      scheduleReset(4000);
     }
   };
 
@@ -404,14 +435,20 @@ export function KioskPage() {
             if (pinError) setPinError(null);
           }}
           intent={intent}
-          onIntent={setIntent}
+          onIntent={(i) => {
+            setIntent(i);
+            // Toggling break is "keypad activity" too — clear any stale
+            // inline error (e.g. not_clocked_in tells them to do exactly
+            // this, so the message shouldn't linger once they have).
+            if (pinError) setPinError(null);
+          }}
           error={pinError}
           submitting={verifying}
           onSubmit={async () => {
             // Preflight the PIN before opening the camera. A made-up
             // code stops here instead of showing the user themselves
-            // on a 5-second selfie countdown. Network failure falls
-            // through so the regular offline-queue flow still works.
+            // on a selfie countdown. Network failure falls through so
+            // the regular offline-queue flow still works.
             if (!token || verifying) return;
             setVerifying(true);
             try {
@@ -421,6 +458,7 @@ export function KioskPage() {
                 pin,
                 latitude: loc?.lat ?? null,
                 longitude: loc?.lng ?? null,
+                intent,
               });
             try {
               // Coords are best-effort. The geofence is advisory
@@ -428,7 +466,16 @@ export function KioskPage() {
               // succeed and get flagged for HR review — so a denied
               // location permission never blocks a clock-in.
               const loc = await tryGetLocation();
-              await verify(loc);
+              const v = await verify(loc);
+              // Carry who this is + what the punch will do into the
+              // camera screen ("Clocking you in, Maria"). Also the
+              // associate's chance to catch a typo'd PIN that landed on
+              // someone ELSE's valid code — a wrong name on screen is
+              // the only tell.
+              setPreflight({
+                firstName: v.associateFirstName,
+                predictedAction: v.predictedAction,
+              });
               setStage('selfie');
             } catch (err) {
               if (err instanceof ApiError && err.status >= 400 && err.status < 500) {
@@ -447,6 +494,13 @@ export function KioskPage() {
                   setPinError('Wrong PIN. Try again.');
                   return;
                 }
+                // Break toggle while not clocked in — caught at the
+                // keypad now (predictPunchAction), not after a selfie.
+                // Keep the PIN; turning the toggle off clears this.
+                if (err.code === 'not_clocked_in') {
+                  setPinError("You're not clocked in — turn off break to clock in.");
+                  return;
+                }
                 // Throttle collision — e.g. the previous associate's
                 // preflight landed under a second ago, or a queue drain
                 // stamped the bucket. The typed PIN is fine; keep it and
@@ -457,11 +511,13 @@ export function KioskPage() {
                 }
                 setError(err.message);
                 setStage('error');
-                window.setTimeout(reset, 3000);
+                scheduleReset(errorDwellMs(err.message));
                 return;
               }
-              // Network failure → assume offline; let the user proceed
-              // to selfie and the punch will land in the offline queue.
+              // Network failure / kiosk timeout → assume offline; let
+              // the user proceed to selfie and the punch will land in
+              // the offline queue. No preflight info in this path, so
+              // the camera screen shows its generic prompt.
               setStage('selfie');
             }
             } finally {
@@ -473,17 +529,34 @@ export function KioskPage() {
       )}
       {stage === 'selfie' && (
         <SelfieCapture
+          preflight={preflight}
           onCaptured={(data) => void submit(data)}
           onSkip={() => void submit(null)}
           onCancel={reset}
         />
       )}
-      {stage === 'result' && result && <ResultScreen result={result} />}
+      {/* Result + error screens dismiss on tap-anywhere so the next
+          person in line doesn't have to wait out the auto-reset timer. */}
+      {stage === 'result' && result && (
+        <button
+          type="button"
+          onClick={reset}
+          aria-label="Done — return to clock"
+          className="fixed inset-0 flex items-center justify-center focus:outline-none"
+        >
+          <ResultScreen result={result} />
+        </button>
+      )}
       {stage === 'error' && (
-        <div className="text-center">
+        <button
+          type="button"
+          onClick={reset}
+          className="fixed inset-0 flex flex-col items-center justify-center text-center focus:outline-none"
+        >
           <div className="text-6xl mb-6">⚠️</div>
-          <div className="text-3xl text-alert">{error}</div>
-        </div>
+          <div className="text-3xl text-alert max-w-2xl px-8">{error}</div>
+          <div className="mt-8 text-base text-silver/80">Tap anywhere to dismiss</div>
+        </button>
       )}
       {/* Phase 102 — queued punch indicator. Only shown when there's a
           backlog so the normal idle screen stays clean. */}
@@ -665,9 +738,11 @@ function PinPad({
           ? 'Break — enter your 4-digit PIN'
           : 'Enter your 4-digit PIN'}
       </div>
+      {/* min-h 44px — this pill is the only path into the break flow,
+          so it gets a full-size touch target, not a caption-sized one. */}
       <button
         onClick={() => onIntent(intent === 'BREAK' ? null : 'BREAK')}
-        className={`mb-6 px-4 py-1.5 rounded-full text-sm border transition-colors ${
+        className={`mb-6 min-h-[44px] px-5 py-2.5 rounded-full text-base border transition-colors ${
           intent === 'BREAK'
             ? 'bg-warning/20 border-warning/60 text-warning'
             : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
@@ -750,11 +825,24 @@ function PinPad({
   );
 }
 
+// Action-specific greeting for the camera screen. Saying WHAT the punch
+// will do (and to WHOM) before the snap is the associate's only chance
+// to catch two classes of mistake: a punch about to go the wrong
+// direction, and a typo'd PIN that landed on someone else's valid code.
+const PREDICTED_GREETING: Record<KioskPunchAction, string> = {
+  CLOCK_IN: 'Clocking you in',
+  CLOCK_OUT: 'Clocking you out',
+  BREAK_START: 'Starting your break',
+  BREAK_END: 'Ending your break',
+};
+
 function SelfieCapture({
+  preflight,
   onCaptured,
   onSkip,
   onCancel,
 }: {
+  preflight: { firstName: string; predictedAction: KioskPunchAction } | null;
   onCaptured: (dataUrl: string) => void;
   onSkip: () => void;
   onCancel: () => void;
@@ -852,9 +940,25 @@ function SelfieCapture({
 
   return (
     <div className="flex flex-col items-center">
-      <div className="text-xl text-silver mb-4">
-        {analyzing ? 'Verifying…' : 'Smile for the camera'}
-      </div>
+      {/* Identity + direction check. Big and personal on purpose: if the
+          name is wrong (typo'd PIN hit someone else's code) or the
+          direction is wrong (expected clock-in, says clock-out), Cancel
+          is right below. */}
+      {analyzing ? (
+        <div className="text-2xl text-silver mb-4">Verifying…</div>
+      ) : preflight ? (
+        <div className="text-center mb-4">
+          <div className="text-3xl text-white">
+            {PREDICTED_GREETING[preflight.predictedAction]},{' '}
+            <span className="text-gold-bright">{preflight.firstName}</span>
+          </div>
+          <div className="text-base text-silver mt-1">
+            Not you? Tap Cancel below.
+          </div>
+        </div>
+      ) : (
+        <div className="text-2xl text-silver mb-4">Smile for the camera</div>
+      )}
       <div className="relative">
         <video
           ref={videoRef}
@@ -862,13 +966,21 @@ function SelfieCapture({
           muted
           playsInline
         />
-        {/* Soft vignette so the countdown number reads clearly against
-            the live feed; on bright daylight selfies the bare number
-            washed out. */}
+        {/* Soft vignette + face-framing oval. The countdown is short, so
+            the oval does the positioning work — associates learn where to
+            stand after a punch or two, which keeps face-match quality up
+            (and the admin review queue quiet) without slowing the line. */}
         {countdown !== null && countdown > 0 && (
-          <div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-black/30">
-            <div className="w-40 h-40 rounded-full border-4 border-gold/80 bg-black/40 flex items-center justify-center text-[8rem] leading-none font-bold text-white drop-shadow-[0_4px_8px_rgba(0,0,0,0.8)]">
+          <div className="absolute inset-0 rounded-2xl bg-black/30">
+            <div
+              aria-hidden="true"
+              className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-40 h-52 rounded-[50%] border-2 border-dashed border-white/70"
+            />
+            <div className="absolute top-2 right-2 w-14 h-14 rounded-full border-2 border-gold/80 bg-black/50 flex items-center justify-center text-3xl font-bold text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">
               {countdown}
+            </div>
+            <div className="absolute bottom-2 inset-x-0 text-center text-sm text-white/90 drop-shadow">
+              Center your face in the oval
             </div>
           </div>
         )}
@@ -879,9 +991,15 @@ function SelfieCapture({
         )}
       </div>
       <canvas ref={canvasRef} className="hidden" />
+      {/* Plain-language privacy note — the photo appears with zero
+          warning otherwise. (Biometric-consent law compliance, e.g.
+          BIPA, is a policy matter handled outside this screen.) */}
+      <div className="mt-4 text-sm text-silver/80 max-w-sm text-center">
+        Your photo is used only to verify this time punch.
+      </div>
       <button
         onClick={onCancel}
-        className="mt-6 text-silver text-sm hover:text-white transition"
+        className="mt-4 min-h-[44px] px-6 text-silver text-base hover:text-white transition"
       >
         Cancel
       </button>

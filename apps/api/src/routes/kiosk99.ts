@@ -1211,7 +1211,40 @@ const VerifyPinInputSchema = z.object({
   pin: z.string().regex(/^\d{4}$/, 'PIN must be 4 digits.'),
   latitude: z.number().min(-90).max(90).optional().nullable(),
   longitude: z.number().min(-180).max(180).optional().nullable(),
+  // Same intent the punch will carry, so the preflight can predict the
+  // action the punch would take ("Clocking you IN") and reject a break
+  // toggle from someone who isn't clocked in BEFORE the camera opens.
+  intent: z.enum(['BREAK']).optional().nullable(),
 });
+
+type PunchAction = 'CLOCK_IN' | 'CLOCK_OUT' | 'BREAK_START' | 'BREAK_END';
+
+/**
+ * Read-only mirror of the punch decision tree (see the punch txn below)
+ * so the preflight can tell the associate what their punch will do.
+ * It's a prediction — the punch re-derives inside its transaction, so a
+ * race (e.g. an admin closing the entry between preflight and punch)
+ * just makes the greeting wrong for a beat, never the data.
+ */
+async function predictPunchAction(
+  associateId: string,
+  intent: 'BREAK' | null,
+): Promise<PunchAction | null> {
+  const open = await prisma.timeEntry.findFirst({
+    where: { associateId, status: 'ACTIVE' },
+    orderBy: { clockInAt: 'desc' },
+    select: { id: true },
+  });
+  if (!open) return intent === 'BREAK' ? null : 'CLOCK_IN';
+  const openBreak = await prisma.breakEntry.findFirst({
+    where: { timeEntryId: open.id, endedAt: null },
+    select: { id: true },
+  });
+  if (intent === 'BREAK') return openBreak ? 'BREAK_END' : 'BREAK_START';
+  // No intent: an open break ends the break (inferred — see punch txn),
+  // otherwise the entry clocks out.
+  return openBreak ? 'BREAK_END' : 'CLOCK_OUT';
+}
 
 // Two-stage device lookup, shared by /kiosk/verify-pin and
 // /kiosk/punch. Phase 131 hardening — bcrypt-verify is ~5ms per row,
@@ -1381,9 +1414,27 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
     throw new HttpError(401, 'invalid_pin', 'Wrong PIN.');
   }
 
+  // Predict what the punch will do so the camera screen can say
+  // "Clocking you IN, Maria" instead of leaving the direction a mystery
+  // until the result screen. A null prediction means the punch would
+  // 409 (break toggle while not clocked in) — surface that NOW, at the
+  // keypad, instead of after a selfie.
+  const predictedAction = await predictPunchAction(
+    pinRow.associateId,
+    input.intent ?? null,
+  );
+  if (predictedAction === null) {
+    throw new HttpError(
+      409,
+      'not_clocked_in',
+      'You need to clock in before starting a break.',
+    );
+  }
+
   res.json({
     ok: true,
     associateFirstName: pinRow.associate.firstName,
+    predictedAction,
   });
 });
 
@@ -1724,30 +1775,41 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
       }
       timeEntry = open;
     } else if (open) {
-      // Don't allow clocking out while a break is open — close the break
-      // first so payable hours math stays clean.
       const openBreak = await tx.breakEntry.findFirst({
         where: { timeEntryId: open.id, endedAt: null },
+        orderBy: { startedAt: 'desc' },
       });
       if (openBreak) {
+        // Inferred break-end. An associate with an open break who
+        // punches WITHOUT the break toggle almost always means "I'm
+        // back", not "clock me out" — the old behavior silently clocked
+        // them out (unpaid for the rest of the shift) whenever they
+        // forgot the toggle. Ending the break is the safe reading:
+        // worst case someone actually leaving punches once more to
+        // clock out, versus losing a half-day of paid time. The
+        // preflight predicts this same outcome, so the camera screen
+        // already told them "Welcome back".
         await tx.breakEntry.update({
           where: { id: openBreak.id },
           data: { endedAt: at },
         });
+        timeEntry = open;
+        action = 'BREAK_END';
+      } else {
+        timeEntry = await tx.timeEntry.update({
+          where: { id: open.id },
+          data: {
+            clockOutAt: at,
+            status: 'COMPLETED',
+            // Snapshot coords on the time entry too, for downstream audit
+            // reports without joining KioskPunch.
+            ...(punchLat != null && punchLng != null
+              ? { clockOutLat: punchLat, clockOutLng: punchLng }
+              : {}),
+          },
+        });
+        action = 'CLOCK_OUT';
       }
-      timeEntry = await tx.timeEntry.update({
-        where: { id: open.id },
-        data: {
-          clockOutAt: at,
-          status: 'COMPLETED',
-          // Snapshot coords on the time entry too, for downstream audit
-          // reports without joining KioskPunch.
-          ...(punchLat != null && punchLng != null
-            ? { clockOutLat: punchLat, clockOutLng: punchLng }
-            : {}),
-        },
-      });
-      action = 'CLOCK_OUT';
     } else {
       timeEntry = await tx.timeEntry.create({
         data: {
