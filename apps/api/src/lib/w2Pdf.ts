@@ -1,21 +1,21 @@
-// Gap 1 — Form W-2 plain-paper renderer.
+﻿// Gap 1 â€” Form W-2 plain-paper renderer.
 //
-// One layout, five copy variants (A/B/C/D/2) — the only material
+// One layout, five copy variants (A/B/C/D/2) â€” the only material
 // difference between the recipient copies is the header label per IRS
-// Pub 1141 §4.05. Copy A is the SSA submission copy; Copy B is the
+// Pub 1141 Â§4.05. Copy A is the SSA submission copy; Copy B is the
 // employee's federal-return attachment; Copy C is the employee's
 // personal record; Copy 2 is the employee's state/local-return
 // attachment; Copy D is the employer's record.
 //
 // Practical reality: most employers (this product included) submit
-// Copy A *electronically* via EFW2 — paper Copy A on red drop-out
+// Copy A *electronically* via EFW2 â€” paper Copy A on red drop-out
 // ink with prior IRS approval is rare. We still render a Copy A
 // variant so a finance reviewer can compare the form's shape, and so
 // the 4-up multi-copy layout below has all the labels it needs.
 //
 // Output is intentionally austere; Rippling/Gusto's plain-paper W-2
 // looks essentially identical. Substitute-form approval (Pub 1141) is
-// a separate process — this renderer is a starting point that finance
+// a separate process â€” this renderer is a starting point that finance
 // can review before we commit to either pursuing approval or shipping
 // pre-printed forms.
 
@@ -30,18 +30,18 @@ import type { W2Boxes, W2StateLine } from './w2Aggregator.js';
 export type W2CopyVariant = 'A' | 'B' | 'C' | 'D' | '2';
 
 const COPY_LABEL: Record<W2CopyVariant, string> = {
-  A: 'Copy A—For Social Security Administration. Send this entire page with Form W-3 to the SSA; photocopies are not acceptable.',
-  B: "Copy B—To Be Filed With Employee's FEDERAL Tax Return.",
-  C: "Copy C—For EMPLOYEE'S RECORDS (See Notice to Employee on the back of Copy B.)",
-  D: 'Copy D—For Employer.',
-  '2': "Copy 2—To Be Filed With Employee's State, City, or Local Income Tax Return.",
+  A: 'Copy Aâ€”For Social Security Administration. Send this entire page with Form W-3 to the SSA; photocopies are not acceptable.',
+  B: "Copy Bâ€”To Be Filed With Employee's FEDERAL Tax Return.",
+  C: "Copy Câ€”For EMPLOYEE'S RECORDS (See Notice to Employee on the back of Copy B.)",
+  D: 'Copy Dâ€”For Employer.',
+  '2': "Copy 2â€”To Be Filed With Employee's State, City, or Local Income Tax Return.",
 };
 
 export interface W2PdfData {
   taxYear: number;
   /**
    * Which copy to render. Defaults to Copy B (employee files with their
-   * federal return) — the most-requested copy. The 4-up layout below
+   * federal return) â€” the most-requested copy. The 4-up layout below
    * passes B/C/2/2 explicitly.
    */
   copyVariant?: W2CopyVariant;
@@ -82,7 +82,16 @@ export interface W2PdfData {
 
 export async function renderW2Pdf(data: W2PdfData): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: 'LETTER', margin: 36 });
+    const doc = new PDFDocument({
+    // Deterministic bytes: pdfkit stamps CreationDate=now by default, so
+    // every re-render hashed differently and the pdfHash immutability
+    // check warned on EVERY re-download — permanent log noise. Pin the
+    // date to the form's own timestamp (meta.generatedAt = TaxForm
+    // createdAt), making identical inputs produce identical bytes.
+      size: 'LETTER',
+      margin: 36,
+      info: { CreationDate: new Date(data.meta.generatedAt) },
+    });
     const chunks: Buffer[] = [];
     doc.on('data', (c: Buffer) => chunks.push(c));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
@@ -99,41 +108,50 @@ export async function renderW2Pdf(data: W2PdfData): Promise<Buffer> {
 }
 
 /**
- * 4-up multi-copy paper layout — packs Copy B (federal), Copy C
+ * 4-up multi-copy paper layout â€” packs Copy B (federal), Copy C
  * (employee record), and two Copy 2's (state/local) onto one Letter-
  * size sheet. This is the standard payroll-house format that's
  * pre-perforated by 1099/W-2 paper vendors so the employee can tear
  * off each copy.
  *
- * Page divides into four 4×5.5" quadrants (top-left, top-right,
+ * Page divides into four 4Ã—5.5" quadrants (top-left, top-right,
  * bottom-left, bottom-right) with a shared header strip across the
  * top and a thin tear/cut line down the middle and across the
  * horizontal seam. Each quadrant uses PDFKit's `save/translate/scale`
- * to reuse the single-copy layout at half scale — no duplicated
+ * to reuse the single-copy layout at half scale â€” no duplicated
  * draw code.
  */
 export async function renderW2Pdf4Up(data: W2PdfData): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: 'LETTER', margin: 0 });
+    const doc = new PDFDocument({
+    // Deterministic bytes: pdfkit stamps CreationDate=now by default, so
+    // every re-render hashed differently and the pdfHash immutability
+    // check warned on EVERY re-download — permanent log noise. Pin the
+    // date to the form's own timestamp (meta.generatedAt = TaxForm
+    // createdAt), making identical inputs produce identical bytes.
+      size: 'LETTER',
+      margin: 0,
+      info: { CreationDate: new Date(data.meta.generatedAt) },
+    });
     const chunks: Buffer[] = [];
     doc.on('data', (c: Buffer) => chunks.push(c));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    // Letter @ 72dpi = 612 × 792. Each quadrant is 306 × 396.
+    // Letter @ 72dpi = 612 Ã— 792. Each quadrant is 306 Ã— 396.
     const W = 612;
     const H = 792;
     const halfW = W / 2;
     const halfH = H / 2;
 
-    // Tear/cut guides — single-pixel hairlines at the seams.
+    // Tear/cut guides â€” single-pixel hairlines at the seams.
     doc
       .strokeColor('#999')
       .lineWidth(0.3)
       .moveTo(halfW, 0).lineTo(halfW, H).stroke()
       .moveTo(0, halfH).lineTo(W, halfH).stroke();
 
-    // The four quadrants — Copy B (federal) / C (employee record)
+    // The four quadrants â€” Copy B (federal) / C (employee record)
     // top, two Copy 2's (state) bottom. This matches every paper
     // vendor's preprinted W-2 stock I've checked.
     const quadrants: Array<{ x: number; y: number; copy: W2CopyVariant }> = [
@@ -145,7 +163,7 @@ export async function renderW2Pdf4Up(data: W2PdfData): Promise<Buffer> {
 
     for (const q of quadrants) {
       doc.save();
-      // The single-copy renderer assumes a full 612×792 canvas; squeeze
+      // The single-copy renderer assumes a full 612Ã—792 canvas; squeeze
       // it into the quadrant by translating to the quadrant's origin
       // and scaling by 0.5.
       doc.translate(q.x, q.y).scale(0.5);
@@ -183,12 +201,12 @@ function drawHeader(doc: PDFKit.PDFDocument, data: W2PdfData): void {
     .fillColor('#444')
     .text(COPY_LABEL[variant], 36, 54, { width: 540 });
   doc.fillColor('#000');
-  // Department footer line at top — IRS substitute forms typically carry
+  // Department footer line at top â€” IRS substitute forms typically carry
   // this so a recipient can verify the form's source.
   doc
     .fontSize(7)
     .fillColor('#666')
-    .text('Department of the Treasury — Internal Revenue Service', 36, 66, {
+    .text('Department of the Treasury â€” Internal Revenue Service', 36, 66, {
       width: 540,
     });
   doc.fillColor('#000');
@@ -224,10 +242,10 @@ function drawIdBlock(doc: PDFKit.PDFDocument, data: W2PdfData): void {
       .join('\n'),
   );
 
-  // d Control number — single full-width row
+  // d Control number â€” single full-width row
   cell(doc, 36, 190, 540, 28, 'd  Control number', data.controlNumber);
 
-  // e Employee name + f Address — stacked rows
+  // e Employee name + f Address â€” stacked rows
   cell(
     doc,
     36,
@@ -274,7 +292,7 @@ function drawWageBoxes(doc: PDFKit.PDFDocument, boxes: W2Boxes): void {
 
   // Box 7 (SS tips), 8 (allocated tips), 9 (verification code), 10
   // (dependent care), 11 (nonqualified plans), 12a-d (codes), 13
-  // (checkboxes), 14 (other) — these are all out of scope for Phase 1-3.
+  // (checkboxes), 14 (other) â€” these are all out of scope for Phase 1-3.
   // Render empty placeholders so a finance reviewer can see the form's
   // shape and we don't surprise them when the additional boxes land.
   const skipTop = top + 3 * rowH + 8;
@@ -287,7 +305,7 @@ function drawWageBoxes(doc: PDFKit.PDFDocument, boxes: W2Boxes): void {
 }
 
 function drawStateLines(doc: PDFKit.PDFDocument, lines: W2StateLine[]): void {
-  // Box 15-17 — one row per state. Single-state is the common case;
+  // Box 15-17 â€” one row per state. Single-state is the common case;
   // multi-state employees get one row each (up to 2 fit cleanly here).
   const top = 510;
   const rowH = 28;
@@ -303,7 +321,7 @@ function drawStateLines(doc: PDFKit.PDFDocument, lines: W2StateLine[]): void {
   doc.font('Helvetica');
 
   if (lines.length === 0) {
-    cell(doc, 36, top, 540, rowH, '', '— No state withholding —');
+    cell(doc, 36, top, 540, rowH, '', 'â€” No state withholding â€”');
     return;
   }
 
@@ -319,7 +337,7 @@ function drawStateLines(doc: PDFKit.PDFDocument, lines: W2StateLine[]): void {
       .fontSize(11)
       .fillColor('#000')
       .text(line.state, 44, y + 8, { width: 50 })
-      .text('—', 100, y + 8, { width: 100 })
+      .text('â€”', 100, y + 8, { width: 100 })
       .text(usd(line.stateWages), 230, y + 8, { width: 130 })
       .text(usd(line.stateIncomeTax), 380, y + 8, { width: 130 });
     y += rowH;
@@ -333,7 +351,7 @@ function drawFooter(doc: PDFKit.PDFDocument, data: W2PdfData): void {
     .fontSize(7)
     .fillColor('#666')
     .text(
-      `Form W-2 (${data.taxYear})  ·  Copy ${variant}  ·  ID ${data.meta.formId.slice(0, 8)}  ·  ` +
+      `Form W-2 (${data.taxYear})  Â·  Copy ${variant}  Â·  ID ${data.meta.formId.slice(0, 8)}  Â·  ` +
         `Generated by Alto People at ${data.meta.generatedAt}`,
       36,
       702,
