@@ -120,7 +120,7 @@ export function BulkAssignScheduleDialog({ open, schedule, onOpenChange, onSaved
                   <span className="ml-2 text-xs text-silver/70">{p.email}</span>
                 </span>
                 {p.workplaceClientName && (
-                  <span className="text-[10px] uppercase tracking-wide text-silver/40">
+                  <span className="text-[10px] uppercase tracking-wide text-silver/70">
                     {p.workplaceClientName}
                   </span>
                 )}

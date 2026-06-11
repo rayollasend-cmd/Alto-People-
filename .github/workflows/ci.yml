@@ -35,6 +35,10 @@ jobs:
       - run: npm ci
       # Builds shared → web → api (the api build runs prisma generate).
       - run: npm run build
+      # Design-system guardrails: rules are warn-level on the existing
+      # debt (the warning count is the burndown metric) but any ERROR —
+      # including parse failures — fails the job.
+      - run: npm -w apps/web run lint
       - run: npm -w apps/web run test
 
   api-tests:
