@@ -61,11 +61,14 @@ import { hasCapability } from '@/lib/roles';
 import { nudgeApplicant } from '@/lib/onboardingApi';
 import {
   getAssociatePayoutMethod,
+  getAssociateSsn,
   listDepartments,
   patchAssociateProfile,
   revealAssociatePayoutMethod,
+  revealAssociateSsn,
   transferAssociate,
   type PayoutMethodReveal,
+  type SsnReveal,
 } from '@/lib/orgApi';
 import { listClientLocations } from '@/lib/clientsApi';
 import type { LocationSummary } from '@alto-people/shared';
@@ -1018,6 +1021,8 @@ function ProfileTab({
 
       <PayoutMethodSection associateId={a.id} />
 
+      <SsnSection associateId={a.id} />
+
       <Section title="On record">
         <InfoRow
           label="In Alto HR since"
@@ -1764,6 +1769,209 @@ function RevealPayoutDialog({
                   </div>
                 </>
               )}
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setRevealed(null)}>
+                <EyeOff className="mr-2 h-3.5 w-3.5" /> Hide now
+              </Button>
+              <Button onClick={onClose}>Done</Button>
+            </DialogFooter>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// SSN section + audited reveal — same posture as the bank-info reveal
+// above: masked last-4 for the process:payroll audience, full number
+// behind a written reason + AuditLog row, auto-mask after 30s. This is
+// the in-system answer to "the packet redacts the SSN": the packet stays
+// redacted, this is the deliberate, logged path.
+function SsnSection({ associateId }: { associateId: string }) {
+  const { user } = useAuth();
+  const canSee = user ? hasCapability(user.role, 'process:payroll') : false;
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['associate-ssn', associateId],
+    queryFn: () => getAssociateSsn(associateId),
+    enabled: canSee,
+    staleTime: 30_000,
+  });
+
+  const [revealOpen, setRevealOpen] = useState(false);
+
+  if (!canSee) return null;
+
+  return (
+    <>
+      <Section title="Tax identity">
+        {isLoading ? (
+          <div className="text-xs text-silver">Loading…</div>
+        ) : !data || !data.hasSsn ? (
+          <InfoRow
+            label={data?.source === 'TIN' ? 'TIN' : 'SSN'}
+            value={
+              <span className="text-silver">
+                Not on file — collected on the W-4 during onboarding
+              </span>
+            }
+          />
+        ) : (
+          <>
+            <InfoRow
+              label={data.source === 'TIN' ? 'TIN' : 'SSN'}
+              value={
+                <span className="font-mono text-xs">
+                  {data.ssnLast4 ? `•••-••-${data.ssnLast4}` : '•••-••-••••'}
+                </span>
+              }
+            />
+            <div className="pt-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setRevealOpen(true)}
+              >
+                <Eye className="mr-2 h-3.5 w-3.5" />
+                Reveal full {data.source === 'TIN' ? 'TIN' : 'SSN'}
+              </Button>
+            </div>
+          </>
+        )}
+      </Section>
+
+      {revealOpen && (
+        <RevealSsnDialog
+          associateId={associateId}
+          onClose={() => setRevealOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
+function RevealSsnDialog({
+  associateId,
+  onClose,
+}: {
+  associateId: string;
+  onClose: () => void;
+}) {
+  const [reason, setReason] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [revealed, setRevealed] = useState<SsnReveal | null>(null);
+  const [secondsLeft, setSecondsLeft] = useState(REVEAL_AUTO_HIDE_SECONDS);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Auto-mask, same as the bank reveal — an SSN must not sit on a
+  // left-open browser tab.
+  useEffect(() => {
+    if (!revealed) return;
+    setSecondsLeft(REVEAL_AUTO_HIDE_SECONDS);
+    const start = Date.now();
+    const tick = window.setInterval(() => {
+      const elapsed = Math.floor((Date.now() - start) / 1000);
+      const remaining = REVEAL_AUTO_HIDE_SECONDS - elapsed;
+      if (remaining <= 0) {
+        setRevealed(null);
+        window.clearInterval(tick);
+      } else {
+        setSecondsLeft(remaining);
+      }
+    }, 1000);
+    return () => window.clearInterval(tick);
+  }, [revealed]);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (reason.trim().length < 8) {
+      setErr('Reason must be at least 8 characters.');
+      return;
+    }
+    setErr(null);
+    setSubmitting(true);
+    try {
+      const r = await revealAssociateSsn(associateId, reason.trim());
+      setRevealed(r);
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : 'Reveal failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open={true} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Reveal full SSN</DialogTitle>
+          <DialogDescription>
+            This view is logged. Every reveal lands in the audit log with
+            your name, the reason you provide, and your IP.
+          </DialogDescription>
+        </DialogHeader>
+
+        {!revealed ? (
+          <form onSubmit={submit} className="space-y-4">
+            <div className="flex gap-2 items-start rounded-md border border-warning/40 bg-warning/10 p-3 text-warning text-xs">
+              <ShieldAlert className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
+              <div>
+                A Social Security number is the most sensitive field in the
+                system. Reveal it only for a legitimate need — an
+                I-9/E-Verify correction, a state filing, or a background-check
+                dispute — and never write it down outside the system.
+              </div>
+            </div>
+            <div>
+              <Label>Reason</Label>
+              <textarea
+                value={reason}
+                onChange={(e) => {
+                  setReason(e.target.value);
+                  if (err) setErr(null);
+                }}
+                rows={3}
+                maxLength={500}
+                className="mt-1 w-full px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
+                placeholder="e.g. E-Verify tentative nonconfirmation — verifying the SSN entered on the I-9 matches the W-4"
+                autoFocus
+              />
+              <div className="text-xs text-silver mt-1">
+                {reason.length}/500 — minimum 8 characters.
+              </div>
+            </div>
+            {err && <div className="text-sm text-alert">{err}</div>}
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={submitting || reason.trim().length < 8}
+              >
+                {submitting ? 'Revealing…' : 'Reveal'}
+              </Button>
+            </DialogFooter>
+          </form>
+        ) : (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between text-xs uppercase tracking-widest text-silver">
+              <span className="flex items-center gap-1.5">
+                <Eye className="h-3.5 w-3.5" /> Revealed
+              </span>
+              <span>Auto-hides in {secondsLeft}s</span>
+            </div>
+            <div className="rounded-md border border-navy-secondary bg-navy-secondary/40 p-4">
+              <div className="text-xs text-silver uppercase tracking-widest mb-1">
+                {revealed.kind === 'EIN' ? 'EIN' : 'Social Security number'}
+                <span className="ml-2 text-silver normal-case tracking-normal">
+                  (from {revealed.source === 'W4' ? 'the W-4' : 'the TIN on file'})
+                </span>
+              </div>
+              <div className="font-mono text-2xl text-white tracking-[0.2em]">
+                {revealed.number}
+              </div>
             </div>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setRevealed(null)}>

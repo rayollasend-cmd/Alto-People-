@@ -823,6 +823,134 @@ orgRouter.post(
   },
 );
 
+// ----- SSN / TIN reveal ---------------------------------------------------
+//
+// Mirrors the direct-deposit reveal above, byte for byte in posture:
+//
+//   GET  /associates/:id/ssn          → masked summary (last 4 only)
+//   POST /associates/:id/ssn/reveal   → full number, exactly once
+//
+// The onboarding packet deliberately redacts the SSN; this is the audited
+// path for the legitimate cases (I-9/E-Verify corrections, state filings,
+// background-check disputes). Same safeguards as banking: written reason,
+// critical audit row persisted BEFORE the plaintext leaves the server,
+// IP + UA recorded, no caching.
+//
+// Source order: a W-2 employee's SSN lives on their W-4 submission
+// (W4Submission.ssnEncrypted); a 1099 contractor's SSN/EIN lives on the
+// associate (tinEncrypted). Both decrypt with the same AES-GCM helper.
+
+async function loadSsnSource(associateId: string) {
+  const associate = await prisma.associate.findUnique({
+    where: { id: associateId },
+    select: {
+      id: true,
+      deletedAt: true,
+      firstName: true,
+      lastName: true,
+      ssnLast4: true,
+      employmentType: true,
+      tinEncrypted: true,
+      w4Submission: { select: { ssnEncrypted: true } },
+    },
+  });
+  if (!associate || associate.deletedAt) {
+    throw new HttpError(404, 'not_found', 'Associate not found.');
+  }
+  const cipher =
+    associate.w4Submission?.ssnEncrypted ?? associate.tinEncrypted ?? null;
+  const source: 'W4' | 'TIN' | null = associate.w4Submission?.ssnEncrypted
+    ? 'W4'
+    : associate.tinEncrypted
+      ? 'TIN'
+      : null;
+  return { associate, cipher, source };
+}
+
+function formatTaxId(digits: string, kind: 'SSN' | 'EIN'): string {
+  const d = digits.replace(/\D/g, '');
+  if (d.length !== 9) return digits; // unexpected shape — return as stored
+  return kind === 'EIN'
+    ? `${d.slice(0, 2)}-${d.slice(2)}`
+    : `${d.slice(0, 3)}-${d.slice(3, 5)}-${d.slice(5)}`;
+}
+
+orgRouter.get(
+  '/associates/:id/ssn',
+  PAYROLL_OR_HR,
+  async (req: Request, res: Response) => {
+    const { associate, cipher, source } = await loadSsnSource(req.params.id);
+    res.json({
+      hasSsn: cipher !== null,
+      ssnLast4: associate.ssnLast4,
+      source,
+    });
+  },
+);
+
+orgRouter.post(
+  '/associates/:id/ssn/reveal',
+  PAYROLL_OR_HR,
+  async (req: Request, res: Response) => {
+    // Same belt-and-braces double check as the payout reveal.
+    if (!hasCapability(req.user!.role, 'process:payroll')) {
+      throw new HttpError(403, 'forbidden', 'Missing capability: process:payroll');
+    }
+
+    const { reason } = RevealReasonSchema.parse(req.body);
+    const { associate, cipher, source } = await loadSsnSource(req.params.id);
+
+    if (!cipher) {
+      throw new HttpError(
+        404,
+        'no_ssn',
+        'This associate has no SSN/TIN on file — it is collected on the W-4 (W-2 employees) or as a TIN (1099 contractors) during onboarding.',
+      );
+    }
+
+    let plaintext: string;
+    try {
+      plaintext = decryptString(cipher);
+    } catch (err) {
+      throw new HttpError(
+        500,
+        'decrypt_failed',
+        'Could not decrypt the stored number — the encryption key may have rotated since it was saved. Have the associate resubmit their W-4.',
+        { cause: err instanceof Error ? err.message : String(err) },
+      );
+    }
+    const kind: 'SSN' | 'EIN' =
+      source === 'TIN' && associate.employmentType === 'CONTRACTOR_1099_BUSINESS'
+        ? 'EIN'
+        : 'SSN';
+
+    // Audit row MUST land before the plaintext leaves — a missing row is
+    // the difference between an audited disclosure and silent exfiltration.
+    await recordCriticalAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'associate.ssn_revealed',
+        entityType: 'Associate',
+        entityId: associate.id,
+        metadata: {
+          ip: req.ip ?? null,
+          userAgent: req.headers['user-agent'] ?? null,
+          source,
+          kind,
+          reason,
+        },
+      },
+      'org.associate.ssn_revealed',
+    );
+
+    res.json({
+      kind,
+      source,
+      number: formatTaxId(plaintext, kind),
+    });
+  },
+);
+
 // ----- Phase 131 — transfer to a new Location ----------------------------
 //
 // Closes the associate's open AssociateAssignment (sets endedAt = the
