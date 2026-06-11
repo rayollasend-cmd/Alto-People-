@@ -4128,6 +4128,14 @@ model KioskDevice {
   tokenExpiresAt DateTime? @db.Timestamptz(6)
   lastSeenAt     DateTime? @db.Timestamptz(6)
   isActive       Boolean   @default(true)
+  // Fleet-notice dedup (see sendKioskFleetNotices):
+  //  - expiryNoticeStage: 0 = none sent, 1 = 14-day warning sent,
+  //    2 = 3-day warning sent. Reset to 0 on token rotation.
+  //  - silentNoticeAt: when the "device gone quiet" notice was sent.
+  //    A device is re-noticed only after it comes back (lastSeenAt
+  //    moves past silentNoticeAt) and goes silent again.
+  expiryNoticeStage Int     @default(0)
+  silentNoticeAt    DateTime? @db.Timestamptz(6)
   createdById    String?   @db.Uuid
   createdAt      DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt      DateTime  @updatedAt @db.Timestamptz(6)

@@ -194,6 +194,8 @@ kiosk99Router.post('/kiosk-devices/:id/rotate', MANAGE, async (req, res) => {
       tokenHash,
       tokenPrefix: prefix,
       tokenExpiresAt: nextTokenExpiry(),
+      // Fresh 90-day clock → the expiry warnings start over.
+      expiryNoticeStage: 0,
     },
     select: { id: true, tokenExpiresAt: true },
   });
