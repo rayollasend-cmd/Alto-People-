@@ -273,7 +273,7 @@ export function UsersAdmin() {
           ) : rows.length === 0 ? (
             <div className="p-6 text-sm text-silver">No users match those filters.</div>
           ) : (
-            <Table>
+            <Table caption="User accounts">
               <TableHeader>
                 <TableRow>
                   <TableHead>User</TableHead>
