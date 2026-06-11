@@ -576,7 +576,7 @@ function DirectoryTable({
   if (rows.length <= VIRTUALIZE_THRESHOLD) {
     return (
       <Card className="overflow-hidden">
-        <Table>
+        <Table caption="Associate directory">
           <TableHeader>
             <DirectoryHeaderRow />
           </TableHeader>
@@ -637,7 +637,7 @@ function VirtualDirectoryTable({
   return (
     <Card className="overflow-hidden">
       <div ref={scrollRef} className={`overflow-y-auto ${VIRTUAL_CONTAINER_MAX_VH}`}>
-        <Table>
+        <Table caption="Associate directory">
           <TableHeader>
             <DirectoryHeaderRow />
           </TableHeader>
@@ -1299,7 +1299,7 @@ function CompensationTab({ associate: a }: { associate: DirectoryEntry }) {
           </div>
         )}
         {records && records.length > 0 && (
-          <Table>
+          <Table caption="Pay rate history">
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead>Effective</TableHead>
@@ -2327,7 +2327,7 @@ function DocumentsTab({ associateId }: { associateId: string }) {
         </div>
         {uploadButton}
       </div>
-      <Table>
+      <Table caption="Documents">
         <TableHeader>
           <TableRow className="hover:bg-transparent">
             <TableHead>Document</TableHead>

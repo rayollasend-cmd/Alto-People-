@@ -390,7 +390,7 @@ function DevicesTab({
               description="Register a tablet to enable PIN-based clock in/out."
             />
           ) : (
-            <Table>
+            <Table caption="Kiosk devices">
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
@@ -1271,7 +1271,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                 description="Every PIN-eligible associate at this client already has an employee number."
               />
             ) : (
-              <Table>
+              <Table caption="Associates missing employee numbers">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Associate</TableHead>
@@ -1318,7 +1318,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
               No associates match “{q}”.
             </div>
           ) : (
-            <Table>
+            <Table caption="Kiosk employee numbers">
               <TableHeader>
                 <TableRow>
                   <TableHead>Associate</TableHead>
@@ -2252,7 +2252,7 @@ function LogTab() {
               />
             )
           ) : (
-            <Table>
+            <Table caption="Kiosk punch log">
               <TableHeader>
                 <TableRow>
                   <TableHead>When</TableHead>
@@ -2363,7 +2363,7 @@ function FacesTab({ canManage }: { canManage: boolean }) {
             description="The first kiosk punch with face matching enabled enrolls each associate automatically."
           />
         ) : (
-          <Table>
+          <Table caption="Enrolled face templates">
             <TableHeader>
               <TableRow>
                 <TableHead>Associate</TableHead>
@@ -2596,7 +2596,7 @@ function ReviewTab({
                 </div>
               </div>
             )}
-            <Table>
+            <Table caption="Punches flagged for review">
               <TableHeader>
                 <TableRow>
                   {canManage && (

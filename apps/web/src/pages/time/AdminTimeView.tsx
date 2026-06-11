@@ -555,7 +555,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
               <>
                 {/* md+ : full columnar table. */}
                 <div className="hidden md:block">
-                  <Table>
+                  <Table caption="Currently clocked in">
                     <TableHeader>
                       <TableRow>
                         <TableHead>Associate</TableHead>
@@ -869,7 +869,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
               <>
                 {/* md+ : full sortable table. */}
                 <div className="hidden md:block">
-                  <Table>
+                  <Table caption="Time entries">
                     <TableHeader>
                       <TableRow>
                         {canManage && filter === 'COMPLETED' && (
