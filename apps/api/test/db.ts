@@ -203,6 +203,10 @@ export async function createGlobalPolicy(title = 'Code of Conduct (test)') {
       title,
       version: 'v1.0',
       requiredForOnboarding: true,
+      // The policy-ack completion check (and the GET list) skip policies
+      // with no body/bodyUrl — "un-acknowledgeable stubs". Tests that ack
+      // policies need them to count toward the required set.
+      body: 'Test policy body — read and acknowledge.',
     },
   });
 }

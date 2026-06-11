@@ -107,7 +107,22 @@ describe('Auto-fill candidate ranking', () => {
       },
     });
 
-    const aGood = await createAssociate({ firstName: 'Available', lastName: 'Free' });
+    // The candidate pool filter (ACTIVE_ASSOCIATE_FILTER) only surfaces
+    // associates with an ACTIVE linked user AND an open assignment (or an
+    // approved application) — bare Associate rows are invisible to auto-fill.
+    const location = await prisma.location.findFirstOrThrow({
+      where: { clientId: client.id },
+    });
+    const makeCandidate = async (firstName: string, lastName: string) => {
+      const assoc = await createAssociate({ firstName, lastName });
+      await createUser({ role: 'ASSOCIATE', email: assoc.email, associateId: assoc.id });
+      await prisma.associateAssignment.create({
+        data: { associateId: assoc.id, locationId: location.id, startedAt: new Date('2026-01-01') },
+      });
+      return assoc;
+    };
+
+    const aGood = await makeCandidate('Available', 'Free');
     await prisma.associateAvailability.create({
       data: {
         associateId: aGood.id,
@@ -117,7 +132,7 @@ describe('Auto-fill candidate ranking', () => {
       },
     });
 
-    const aBusy = await createAssociate({ firstName: 'Booked', lastName: 'Solid' });
+    const aBusy = await makeCandidate('Booked', 'Solid');
     await prisma.shift.create({
       data: {
         clientId: client.id,
