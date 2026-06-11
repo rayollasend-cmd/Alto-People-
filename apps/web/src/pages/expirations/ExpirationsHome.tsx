@@ -200,9 +200,9 @@ function Bucket({
             <TableHeader>
               <TableRow>
                 <TableHead>Associate</TableHead>
-                <TableHead>Email</TableHead>
+                <TableHead className="hidden md:table-cell">Email</TableHead>
                 <TableHead>Qualification</TableHead>
-                <TableHead>Code</TableHead>
+                <TableHead className="hidden lg:table-cell">Code</TableHead>
                 <TableHead>Expires</TableHead>
                 <TableHead>In</TableHead>
                 {canRenew && <TableHead className="text-right">Action</TableHead>}
@@ -217,15 +217,16 @@ function Bucket({
                 >
                   <TableCell className="font-medium text-white">
                     {i.associateName}
+                    <div className="text-[11px] text-silver/70 md:hidden">{i.associateEmail}</div>
                   </TableCell>
-                  <TableCell className="text-silver text-xs">{i.associateEmail}</TableCell>
+                  <TableCell className="text-silver text-xs hidden md:table-cell">{i.associateEmail}</TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
                       {i.qualificationName}
                       {i.isCert && <Badge variant="accent">cert</Badge>}
                     </div>
                   </TableCell>
-                  <TableCell className="font-mono text-xs">{i.qualificationCode}</TableCell>
+                  <TableCell className="font-mono text-xs hidden lg:table-cell">{i.qualificationCode}</TableCell>
                   <TableCell>{new Date(i.expiresAt).toLocaleDateString()}</TableCell>
                   <TableCell>
                     {i.daysUntilExpiry < 0 ? (

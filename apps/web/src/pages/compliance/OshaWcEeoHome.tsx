@@ -189,8 +189,8 @@ function OshaTab({ clientId }: { clientId: string }) {
                   <TableHead>Occurred</TableHead>
                   <TableHead>Associate</TableHead>
                   <TableHead>Severity</TableHead>
-                  <TableHead>Body part</TableHead>
-                  <TableHead>Days away</TableHead>
+                  <TableHead className="hidden md:table-cell">Body part</TableHead>
+                  <TableHead className="hidden md:table-cell">Days away</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
@@ -198,12 +198,17 @@ function OshaTab({ clientId }: { clientId: string }) {
                 {rows.map((i) => (
                   <TableRow key={i.id}>
                     <TableCell>{new Date(i.occurredAt).toLocaleDateString()}</TableCell>
-                    <TableCell>{i.associateName ?? '—'}</TableCell>
+                    <TableCell>
+                      {i.associateName ?? '—'}
+                      <div className="text-[11px] text-silver/70 md:hidden">
+                        {i.bodyPart ?? '—'}{i.daysAway ? ` · ${i.daysAway}d away` : ''}
+                      </div>
+                    </TableCell>
                     <TableCell>
                       <Badge variant={SEVERITY_COLOR[i.severity]}>{i.severity}</Badge>
                     </TableCell>
-                    <TableCell>{i.bodyPart ?? '—'}</TableCell>
-                    <TableCell>{i.daysAway}</TableCell>
+                    <TableCell className="hidden md:table-cell">{i.bodyPart ?? '—'}</TableCell>
+                    <TableCell className="hidden md:table-cell">{i.daysAway}</TableCell>
                     <TableCell>
                       <Badge variant={i.status === 'RESOLVED' ? 'success' : 'pending'}>
                         {i.status}
@@ -404,18 +409,24 @@ function WcTab() {
                   <TableHead>State</TableHead>
                   <TableHead>Code</TableHead>
                   <TableHead>Description</TableHead>
-                  <TableHead>Rate / $100</TableHead>
-                  <TableHead>Effective</TableHead>
+                  <TableHead className="hidden md:table-cell">Rate / $100</TableHead>
+                  <TableHead className="hidden lg:table-cell">Effective</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((c) => (
                   <TableRow key={c.id}>
                     <TableCell>{c.stateCode ?? 'FED'}</TableCell>
-                    <TableCell className="font-mono">{c.code}</TableCell>
+                    <TableCell className="font-mono">
+                      {c.code}
+                      <div className="text-[11px] text-silver/70 md:hidden">${c.ratePer100} / $100</div>
+                      <div className="text-[11px] text-silver/70 lg:hidden">
+                        {c.effectiveFrom}{c.effectiveTo ? ` – ${c.effectiveTo}` : ''}
+                      </div>
+                    </TableCell>
                     <TableCell>{c.description}</TableCell>
-                    <TableCell>${c.ratePer100}</TableCell>
-                    <TableCell>
+                    <TableCell className="hidden md:table-cell">${c.ratePer100}</TableCell>
+                    <TableCell className="hidden lg:table-cell">
                       {c.effectiveFrom}
                       {c.effectiveTo ? ` – ${c.effectiveTo}` : ''}
                     </TableCell>
@@ -563,7 +574,7 @@ function EeoTab({ clientId }: { clientId: string }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Category</TableHead>
-                  <TableHead>Race</TableHead>
+                  <TableHead className="hidden md:table-cell">Race</TableHead>
                   <TableHead>Gender</TableHead>
                   <TableHead className="text-right">Count</TableHead>
                 </TableRow>
@@ -571,8 +582,11 @@ function EeoTab({ clientId }: { clientId: string }) {
               <TableBody>
                 {data.buckets.map((b, i) => (
                   <TableRow key={i}>
-                    <TableCell>{b.category}</TableCell>
-                    <TableCell>{b.race}</TableCell>
+                    <TableCell>
+                      {b.category}
+                      <div className="text-[11px] text-silver/70 md:hidden">{b.race}</div>
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">{b.race}</TableCell>
                     <TableCell>{b.gender}</TableCell>
                     <TableCell className="text-right">{b.count}</TableCell>
                   </TableRow>

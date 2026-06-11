@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ArrowDown, ArrowUp, BarChart3, Play, Plus, Trash2, X } from 'lucide-react';
 import { ApiError } from '@/lib/api';
+import { fmtDate } from '@/lib/format';
 import { useConfirm } from '@/lib/confirm';
 import {
   createReport,
@@ -117,17 +118,21 @@ export function ReportsHome() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
-                  <TableHead>Entity</TableHead>
+                  <TableHead className="hidden md:table-cell">Entity</TableHead>
                   <TableHead>Visibility</TableHead>
-                  <TableHead>Created</TableHead>
+                  <TableHead className="hidden lg:table-cell">Created</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((r) => (
                   <TableRow key={r.id} className="group">
-                    <TableCell className="font-medium text-white">{r.name}</TableCell>
-                    <TableCell className="font-mono text-xs">{r.entity}</TableCell>
+                    <TableCell className="font-medium text-white">
+                      {r.name}
+                      <div className="text-[11px] text-silver/70 md:hidden font-mono font-normal">{r.entity}</div>
+                      <div className="text-[11px] text-silver/70 lg:hidden font-normal">{fmtDate(r.createdAt)}</div>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs hidden md:table-cell">{r.entity}</TableCell>
                     <TableCell>
                       {r.isPublic ? (
                         <Badge variant="success">Shared</Badge>
@@ -135,7 +140,7 @@ export function ReportsHome() {
                         <Badge variant="default">Private</Badge>
                       )}
                     </TableCell>
-                    <TableCell>{new Date(r.createdAt).toLocaleDateString()}</TableCell>
+                    <TableCell className="hidden lg:table-cell">{fmtDate(r.createdAt)}</TableCell>
                     <TableCell className="text-right space-x-2">
                       <Button size="sm" onClick={() => onRun(r)}>
                         <Play className="mr-1 h-3 w-3" /> Run

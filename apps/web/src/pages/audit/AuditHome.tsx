@@ -292,9 +292,9 @@ export function AuditHome() {
                           Time
                         </TableHead>
                         <TableHead>Action</TableHead>
-                        <TableHead>Actor</TableHead>
+                        <TableHead className="hidden md:table-cell">Actor</TableHead>
                         <TableHead>Entity</TableHead>
-                        <TableHead>Metadata</TableHead>
+                        <TableHead className="hidden lg:table-cell">Metadata</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -313,8 +313,11 @@ export function AuditHome() {
                             >
                               {e.action}
                             </Badge>
+                            <div className="text-[11px] text-silver/70 md:hidden truncate max-w-[20ch]">
+                              {e.actorEmail ?? 'system'}
+                            </div>
                           </TableCell>
-                          <TableCell className="text-silver text-xs truncate max-w-[16ch]">
+                          <TableCell className="text-silver text-xs truncate max-w-[16ch] hidden md:table-cell">
                             {e.actorEmail ?? (
                               <span className="text-silver/70">system</span>
                             )}
@@ -325,7 +328,7 @@ export function AuditHome() {
                               {e.entityId}
                             </div>
                           </TableCell>
-                          <TableCell className="text-silver text-xs font-mono truncate max-w-[44ch]">
+                          <TableCell className="text-silver text-xs font-mono truncate max-w-[44ch] hidden lg:table-cell">
                             {metaPreview(e.metadata)}
                           </TableCell>
                         </TableRow>

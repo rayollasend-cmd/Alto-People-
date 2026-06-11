@@ -215,11 +215,11 @@ export function HrCasesHome() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Subject</TableHead>
-                    <TableHead>Associate</TableHead>
-                    <TableHead>Category</TableHead>
+                    <TableHead className="hidden md:table-cell">Associate</TableHead>
+                    <TableHead className="hidden md:table-cell">Category</TableHead>
                     <TableHead>Priority</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Updated</TableHead>
+                    <TableHead className="hidden lg:table-cell">Updated</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -236,14 +236,17 @@ export function HrCasesHome() {
                             {c.commentCount} replies
                           </div>
                         )}
+                        <div className="text-[11px] text-silver/70 md:hidden">
+                          {c.associateName} · {CATEGORY_LABELS[c.category]}
+                        </div>
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="hidden md:table-cell">
                         <div className="text-sm">{c.associateName}</div>
                         <div className="text-xs text-silver">
                           {c.associateEmail}
                         </div>
                       </TableCell>
-                      <TableCell className="text-sm text-silver">
+                      <TableCell className="hidden md:table-cell text-sm text-silver">
                         {CATEGORY_LABELS[c.category]}
                       </TableCell>
                       <TableCell>
@@ -256,7 +259,7 @@ export function HrCasesHome() {
                           {STATUS_LABELS[c.status]}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-xs text-silver">
+                      <TableCell className="hidden lg:table-cell text-xs text-silver">
                         {new Date(c.updatedAt).toLocaleDateString()}
                       </TableCell>
                     </TableRow>
