@@ -12,6 +12,7 @@ import {
 import { listJobs } from '@/lib/jobsApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { timeAnomalyLabel } from '@/lib/timeLabels';
 import { Button } from '@/components/ui/Button';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SkeletonRows } from '@/components/ui/Skeleton';
@@ -37,16 +38,6 @@ function statusBadge(status: TimeEntry['status']): { label: string; cls: string 
       return { label: 'Rejected', cls: 'bg-alert/15 text-alert border-alert/30' };
   }
 }
-
-const ANOMALY_LABELS: Record<string, string> = {
-  GEOFENCE_VIOLATION_IN: 'Off-site clock-in',
-  GEOFENCE_VIOLATION_OUT: 'Off-site clock-out',
-  NO_BREAK: 'No break taken',
-  MEAL_BREAK_TOO_SHORT: 'Meal break < 30 min',
-  OVERTIME_UNAPPROVED: 'Overtime',
-  FORGOT_CLOCKOUT: 'Forgot clock-out',
-  OUTSIDE_SHIFT_WINDOW: 'Off-schedule',
-};
 
 function useTicker(active: boolean): number {
   const [, setTick] = useState(0);
@@ -124,15 +115,13 @@ export function AssociateTimeView() {
     refresh();
   }, [refresh]);
 
-  // Reflect break state — derived from the API's active entry; the dashboard
-  // model is "open break exists" but we don't have that on the entry shape,
-  // so we infer from a local flag we set on start/end.
+  // Break state comes from the server (TimeEntry.onBreak) so it survives a
+  // page refresh mid-break — the old client-local flag forgot the break on
+  // reload and the UI then offered "Start break" into a 409. Local sets on
+  // start/end keep the buttons instant; refresh() re-syncs from truth.
   const [onBreak, setOnBreak] = useState(false);
   useEffect(() => {
-    // When the active entry changes (e.g. via refresh), reset the local flag.
-    // The next render of either the start-break or end-break button will fix
-    // the state if our cache is wrong.
-    if (!active) setOnBreak(false);
+    setOnBreak(active?.onBreak ?? false);
   }, [active]);
 
   const handleClockIn = async () => {
@@ -465,7 +454,7 @@ export function AssociateTimeView() {
                             key={a}
                             className="text-[10px] uppercase tracking-widest px-2 py-0.5 rounded border border-alert/40 bg-alert/10 text-alert"
                           >
-                            {ANOMALY_LABELS[a] ?? a}
+                            {timeAnomalyLabel(a)}
                           </span>
                         ))}
                       </div>

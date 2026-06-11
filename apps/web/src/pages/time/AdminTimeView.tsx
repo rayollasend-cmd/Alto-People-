@@ -37,6 +37,7 @@ import { listClients, listClientLocations } from '@/lib/clientsApi';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { timeAnomalyLabel } from '@/lib/timeLabels';
 import {
   Avatar,
   Badge,
@@ -94,6 +95,25 @@ function statusVariant(s: TimeEntryStatus): 'success' | 'pending' | 'destructive
     case 'ACTIVE': return 'accent';
     default: return 'default';
   }
+}
+
+// Inline anomaly chips for queue rows. Reviewers used to see flags only
+// after opening each row's drawer — bulk-approving meant approving
+// anomalies sight-unseen.
+function AnomalyChips({ anomalies }: { anomalies?: string[] | null }) {
+  if (!anomalies || anomalies.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1 mt-1">
+      {anomalies.map((a) => (
+        <span
+          key={a}
+          className="text-[10px] uppercase tracking-widest px-1.5 py-0.5 rounded border border-warning/40 bg-warning/10 text-warning whitespace-nowrap"
+        >
+          {timeAnomalyLabel(a)}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 // YYYY-MM-DD in local time. Inputs and the API both treat dates as days,
@@ -177,6 +197,11 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
   const [appliedSearch, setAppliedSearch] = useState('');
   const [fromYmd, setFromYmd] = useState<string>(defaultFromYmd());
   const [toYmd, setToYmd] = useState<string>(defaultToYmd());
+  // Triage lens: show only flagged entries (client-side over the loaded
+  // window — same scope as everything else on this tab).
+  const [anomaliesOnly, setAnomaliesOnly] = useState(false);
+  // Server hit its row cap — the window has MORE rows than shown.
+  const [truncated, setTruncated] = useState(false);
   const [exportBusy, setExportBusy] = useState<null | 'csv' | 'pdf'>(null);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -197,6 +222,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
         ...(appliedSearch ? { search: appliedSearch } : {}),
       });
       setEntries(res.entries);
+      setTruncated(Boolean(res.truncated));
       // Selection only valid on the COMPLETED filter; clear when refreshing.
       setSelected(new Set());
     } catch (err) {
@@ -357,11 +383,19 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     );
   }, [active, liveSearch]);
 
+  // What the queue actually renders — the anomalies-only lens applies here
+  // so select-all and the empty state follow what's on screen.
+  const visibleEntries = useMemo(() => {
+    if (!entries) return null;
+    if (!anomaliesOnly) return entries;
+    return entries.filter((e) => (e.anomalies?.length ?? 0) > 0);
+  }, [entries, anomaliesOnly]);
+
   const selectableIds = useMemo(() => {
-    if (!entries) return [] as string[];
+    if (!visibleEntries) return [] as string[];
     // Only COMPLETED rows are bulk-actionable on the Pending review tab.
-    return entries.filter((e) => e.status === 'COMPLETED').map((e) => e.id);
-  }, [entries]);
+    return visibleEntries.filter((e) => e.status === 'COMPLETED').map((e) => e.id);
+  }, [visibleEntries]);
 
   const allSelected =
     selectableIds.length > 0 && selectableIds.every((id) => selected.has(id));
@@ -703,6 +737,19 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                 />
               </div>
 
+              <button
+                type="button"
+                onClick={() => setAnomaliesOnly((v) => !v)}
+                className={cn(
+                  'h-9 rounded-md border px-3 text-sm transition-colors self-end',
+                  anomaliesOnly
+                    ? 'border-warning/60 bg-warning/15 text-warning'
+                    : 'border-navy-secondary bg-navy-secondary/40 text-silver hover:text-white',
+                )}
+              >
+                <AlertTriangle className="mr-1 inline h-3.5 w-3.5" /> Anomalies only
+              </button>
+
               {canManage && (
                 <div className="flex gap-2">
                   <Button
@@ -781,14 +828,24 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
           )}
 
           <CardContent className="pt-0">
-            {!entries && <SkeletonRows count={6} rowHeight="h-12" />}
-            {entries && entries.length === 0 && (
+            {truncated && (
+              <div className="mb-3 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+                Showing the most recent 500 entries — this window has more.
+                Narrow the date range to see (and bulk-act on) everything.
+              </div>
+            )}
+            {!visibleEntries && <SkeletonRows count={6} rowHeight="h-12" />}
+            {visibleEntries && visibleEntries.length === 0 && (
               <EmptyState
-                title="Nothing to review"
-                description="No time entries match this filter."
+                title={anomaliesOnly ? 'No flagged entries' : 'Nothing to review'}
+                description={
+                  anomaliesOnly
+                    ? 'No entries in this window carry anomaly flags.'
+                    : 'No time entries match this filter.'
+                }
               />
             )}
-            {entries && entries.length > 0 && (
+            {visibleEntries && visibleEntries.length > 0 && (
               <>
                 {/* md+ : full sortable table. */}
                 <div className="hidden md:block">
@@ -819,7 +876,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {entries.map((e) => {
+                      {visibleEntries.map((e) => {
                         const isSelectable = canManage && filter === 'COMPLETED' && e.status === 'COMPLETED';
                         return (
                           <TableRow
@@ -866,6 +923,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                             </TableCell>
                             <TableCell>
                               <Badge variant={statusVariant(e.status)}>{e.status}</Badge>
+                              <AnomalyChips anomalies={e.anomalies} />
                               {e.rejectionReason && (
                                 <div className="text-alert text-[10px] mt-1">
                                   {e.rejectionReason}
@@ -913,7 +971,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                     + edits there). Selection checkbox top-left when
                     bulk-eligible. */}
                 <ul className="md:hidden space-y-2">
-                  {entries.map((e) => {
+                  {visibleEntries.map((e) => {
                     const isSelectable = canManage && filter === 'COMPLETED' && e.status === 'COMPLETED';
                     const showCheckbox = canManage && filter === 'COMPLETED';
                     return (
@@ -973,6 +1031,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                                     {formatHM(e.minutesElapsed)}
                                   </span>
                                 </div>
+                                <AnomalyChips anomalies={e.anomalies} />
                                 {e.rejectionReason && (
                                   <div className="text-alert text-[10px] mt-1">
                                     {e.rejectionReason}
@@ -1191,7 +1250,7 @@ function TimeEntryDetailPanel({
             </div>
             <ul className="list-disc list-inside text-warning/90 space-y-0.5">
               {entry.anomalies.map((a) => (
-                <li key={a}>{a}</li>
+                <li key={a}>{timeAnomalyLabel(a)}</li>
               ))}
             </ul>
           </div>

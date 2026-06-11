@@ -966,11 +966,18 @@ export const TimeEntrySchema = z.object({
   clockOutLat: z.number().nullable().optional(),
   clockOutLng: z.number().nullable().optional(),
   anomalies: z.array(z.string()).optional(),
+  /** True while the entry is ACTIVE and a break row is open. Server-derived;
+   *  lets the clock widget survive a page refresh mid-break instead of
+   *  guessing from client-local state. */
+  onBreak: z.boolean().optional(),
 });
 export type TimeEntry = z.infer<typeof TimeEntrySchema>;
 
 export const TimeEntryListResponseSchema = z.object({
   entries: z.array(TimeEntrySchema),
+  /** True when the server's row cap cut the result — the UI should say so
+   *  instead of letting a partial list masquerade as the whole window. */
+  truncated: z.boolean().optional(),
 });
 export type TimeEntryListResponse = z.infer<typeof TimeEntryListResponseSchema>;
 
