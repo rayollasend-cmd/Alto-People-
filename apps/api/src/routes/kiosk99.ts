@@ -18,6 +18,7 @@ import {
 import { enforcePunchRateLimit } from '../lib/kioskRateLimit.js';
 import { encryptString, decryptString } from '../lib/crypto.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
+import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
 import { send } from '../lib/notifications.js';
 
 /**
@@ -1381,7 +1382,14 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
   const pinRow = await prisma.kioskPin.findUnique({
     where: { pinHmac },
     include: {
-      associate: { select: { id: true, firstName: true, lastName: true } },
+      associate: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          faceConsentStatus: true,
+        },
+      },
     },
   });
   if (!pinRow || pinRow.clientId !== device.clientId) {
@@ -1437,7 +1445,73 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
     ok: true,
     associateFirstName: pinRow.associate.firstName,
     predictedAction,
+    // Drives the one-time consent screen: null = never asked (kiosk
+    // asks before the first selfie), DECLINED = PIN-only flow (camera
+    // never opens), GRANTED = selfie as usual.
+    faceConsent: pinRow.associate.faceConsentStatus,
   });
+});
+
+// One-time biometric consent, recorded from the kiosk after a valid
+// PIN entry. BIPA-style laws require affirmative consent BEFORE
+// collecting face geometry, so the tablet asks on the associate's
+// first punch (faceConsent === null) and never again. Declining is a
+// first-class path: PIN-only punches, no selfie, no descriptor — and
+// any biometrics collected under a PREVIOUS grant are scrubbed
+// immediately.
+const FaceConsentSchema = z.object({
+  deviceToken: z.string().min(10),
+  pin: z.string().regex(/^\d{4}$/, 'PIN must be 4 digits.'),
+  consent: z.boolean(),
+});
+
+kiosk99Router.post('/kiosk/face-consent', async (req, res) => {
+  const input = FaceConsentSchema.parse(req.body);
+
+  const device = await findDeviceByPlaintextToken(input.deviceToken);
+  if (!device) {
+    throw new HttpError(401, 'invalid_device', 'Device not registered.');
+  }
+  if (device.tokenExpiresAt && device.tokenExpiresAt.getTime() < Date.now()) {
+    throw new HttpError(
+      401,
+      'device_token_expired',
+      'This kiosk\'s device token expired. Re-pair from the admin page.',
+    );
+  }
+  const pinRow = await prisma.kioskPin.findUnique({
+    where: { pinHmac: hmacPin(input.pin) },
+    select: { id: true, clientId: true, associateId: true },
+  });
+  if (!pinRow || pinRow.clientId !== device.clientId) {
+    throw new HttpError(401, 'invalid_pin', 'Wrong PIN.');
+  }
+
+  const status = input.consent ? 'GRANTED' : 'DECLINED';
+  await prisma.associate.update({
+    where: { id: pinRow.associateId },
+    data: { faceConsentStatus: status, faceConsentAt: new Date() },
+  });
+  if (!input.consent) {
+    // Revocation path — drop anything collected under a prior grant.
+    await purgeAssociateBiometrics(prisma, pinRow.associateId);
+  }
+  // Legally significant record: who, when, from which device.
+  enqueueAudit(
+    {
+      actorUserId: null,
+      clientId: device.clientId,
+      action: input.consent
+        ? 'kiosk.face_consent_granted'
+        : 'kiosk.face_consent_declined',
+      entityType: 'Associate',
+      entityId: pinRow.associateId,
+      metadata: { kioskDeviceId: device.id },
+    },
+    input.consent ? 'kiosk.face_consent_granted' : 'kiosk.face_consent_declined',
+  );
+
+  res.json({ ok: true, status });
 });
 
 kiosk99Router.post('/kiosk/punch', async (req, res) => {
@@ -1572,7 +1646,14 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
   const pinRow = await prisma.kioskPin.findUnique({
     where: { pinHmac },
     include: {
-      associate: { select: { id: true, firstName: true, lastName: true } },
+      associate: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          faceConsentStatus: true,
+        },
+      },
     },
   });
 
@@ -1612,6 +1693,12 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     throw new HttpError(401, 'invalid_pin', 'Wrong PIN.');
   }
 
+  // DECLINED associates punch PIN-only — no photo stored either. (The
+  // rejected-PIN path above still keeps its selfie: identity unknown
+  // there, and the image is the fraud evidence.)
+  const storedSelfie =
+    pinRow.associate.faceConsentStatus === 'DECLINED' ? null : selfie;
+
   // 5 + 5b — the Phase 101 face-reference lookup and the Phase 104
   // impossible-travel lookback both key off this associateId and are
   // independent of each other, so fire them concurrently to save a Neon
@@ -1632,8 +1719,13 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
   const lookbackSince = new Date(
     Date.now() - TRAVEL_LOOKBACK_HOURS * 3_600_000,
   );
+  // Biometric gate: face geometry is only processed (matched OR
+  // enrolled) with explicit consent. Unasked (null) and DECLINED both
+  // skip — a queued offline punch recorded before consent existed must
+  // not enroll anyone.
+  const faceAllowed = pinRow.associate.faceConsentStatus === 'GRANTED';
   const [faceRef, prevPunch] = await Promise.all([
-    input.faceDescriptor
+    input.faceDescriptor && faceAllowed
       ? prisma.kioskFaceReference.findUnique({
           where: { associateId: pinRow.associateId },
           select: { descriptor: true },
@@ -1663,7 +1755,7 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
   let faceMismatch: boolean | null = null;
   let shouldEnrollFace = false;
   let faceReferenceUsed = false;
-  if (input.faceDescriptor) {
+  if (input.faceDescriptor && faceAllowed) {
     if (faceRef) {
       const refVec = bytesToDescriptor(faceRef.descriptor);
       faceDistance = euclideanDistance(refVec, input.faceDescriptor);
@@ -1834,12 +1926,14 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     // Phase 104 — pick a primary anomaly classification. Impossible-travel
     // is the strongest fraud signal (the user is provably elsewhere), so
     // it wins over face mismatch, which in turn beats the advisory
-    // geofence flag (weakest: coords are self-reported and a fence miss
-    // is usually GPS drift, not fraud).
+    // geofence flag (coords are self-reported and a fence miss is
+    // usually GPS drift, not fraud). First-enrollment review is the
+    // weakest of all — informational, not suspicion.
     let anomalyKind:
       | 'IMPOSSIBLE_TRAVEL'
       | 'FACE_MISMATCH'
       | 'GEOFENCE'
+      | 'FACE_ENROLLMENT'
       | null = null;
     let anomalyDetail: string | null = null;
     if (impossibleTravel) {
@@ -1851,6 +1945,13 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     } else if (geofenceOutside) {
       anomalyKind = 'GEOFENCE';
       anomalyDetail = `${dist}m from site center, fence radius ${fenceRadius}m`;
+    } else if (shouldEnrollFace && input.faceDescriptor) {
+      // Trust-on-first-use guard: this punch's descriptor BECOMES the
+      // associate's reference template, so an admin should eyeball the
+      // selfie once. A day-one buddy-punch otherwise poisons every
+      // future match (the imposter reads as "correct" forever).
+      anomalyKind = 'FACE_ENROLLMENT';
+      anomalyDetail = 'first face enrollment — confirm the selfie matches the associate';
     }
 
     const punch = await tx.kioskPunch.create({
@@ -1860,7 +1961,7 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
         associateId: pinRow.associateId,
         timeEntryId: timeEntry.id,
         action,
-        selfie,
+        selfie: storedSelfie,
         punchLat,
         punchLng,
         distanceMeters: dist,
@@ -1972,6 +2073,18 @@ kiosk99Router.post('/kiosk/punch/:id/face', async (req, res) => {
   }
   const associateId = punch.associateId;
 
+  // Biometric gate — same rule as the inline punch path. The tablet
+  // shouldn't even capture without GRANTED, but the server is the
+  // authority: no consent on record → store nothing, match nothing.
+  const associate = await prisma.associate.findUnique({
+    where: { id: associateId },
+    select: { faceConsentStatus: true },
+  });
+  if (associate?.faceConsentStatus !== 'GRANTED') {
+    res.json({ ok: true, skipped: true });
+    return;
+  }
+
   // Store the deferred selfie. Best-effort and independent of the face
   // descriptor: a malformed/oversize image is skipped without aborting the
   // face match below.
@@ -2012,6 +2125,20 @@ kiosk99Router.post('/kiosk/punch/:id/face', async (req, res) => {
       },
       update: { lastUsedAt: new Date() },
     });
+    // Trust-on-first-use guard (mirrors the inline enroll path): surface
+    // the enrolling punch for a one-time human look unless something
+    // stronger already flagged it.
+    if (punch.anomalyKind == null) {
+      await prisma.kioskPunch.update({
+        where: { id: punch.id },
+        data: {
+          anomalyKind: 'FACE_ENROLLMENT',
+          anomalyDetail:
+            'first face enrollment — confirm the selfie matches the associate',
+          reviewStatus: punch.reviewStatus ?? 'PENDING',
+        },
+      });
+    }
     res.json({ ok: true, enrolled: true });
     return;
   }

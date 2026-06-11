@@ -674,6 +674,13 @@ model Associate {
   // Avatar then falls back to initials.
   photoS3Key        String?
   photoUpdatedAt    DateTime?      @db.Timestamptz(6)
+  // Kiosk face-verification consent (BIPA-style biometric laws require
+  // affirmative consent BEFORE collecting face geometry). NULL = never
+  // asked — the kiosk shows a one-time consent screen after the first
+  // successful PIN entry. DECLINED associates punch PIN-only: no
+  // selfie, no descriptor, ever.
+  faceConsentStatus FaceConsentStatus?
+  faceConsentAt     DateTime?      @db.Timestamptz(6)
   createdAt         DateTime       @default(now()) @db.Timestamptz(6)
   updatedAt         DateTime       @updatedAt @db.Timestamptz(6)
   deletedAt         DateTime?      @db.Timestamptz(6)
@@ -4100,6 +4107,17 @@ enum KioskAnomalyKind {
   // hard block only ever locked out honest sites); flags for HR review
   // like the other kinds.
   GEOFENCE
+  // First face enrollment is trust-on-first-use: whoever punches first
+  // BECOMES the reference template, so a day-one buddy-punch poisons
+  // every future match. Enrollment punches land in the review queue so
+  // an admin eyeballs the selfie once against the associate.
+  FACE_ENROLLMENT
+}
+
+// Kiosk face-verification consent — see Associate.faceConsentStatus.
+enum FaceConsentStatus {
+  GRANTED
+  DECLINED
 }
 
 model KioskDevice {

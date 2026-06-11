@@ -179,6 +179,75 @@ describe('POST /kiosk/punch — advisory geofence', () => {
   });
 });
 
+describe('face consent + first-enrollment review', () => {
+  const DESCRIPTOR = Array.from({ length: 128 }, (_, i) => (i % 7) / 10);
+
+  it('asks once, records the decision, and gates descriptor processing on GRANTED', async () => {
+    const { deviceToken, pin, associate } = await setupKiosk();
+
+    // Never asked → preflight says so.
+    const before = await request(app())
+      .post('/kiosk/verify-pin')
+      .send({ deviceToken, pin, latitude: null, longitude: null });
+    expect(before.body.faceConsent).toBeNull();
+
+    // Punch WITH a descriptor while unasked → biometrics must NOT be
+    // processed (no reference enrolled), punch itself succeeds.
+    _resetKioskRateLimit();
+    const punch1 = await request(app())
+      .post('/kiosk/punch')
+      .send({ deviceToken, pin, faceDescriptor: DESCRIPTOR });
+    expect(punch1.status).toBe(200);
+    expect(
+      await prisma.kioskFaceReference.findUnique({
+        where: { associateId: associate.id },
+      }),
+    ).toBeNull();
+
+    // Grant consent.
+    const grant = await request(app())
+      .post('/kiosk/face-consent')
+      .send({ deviceToken, pin, consent: true });
+    expect(grant.status).toBe(200);
+    expect(grant.body.status).toBe('GRANTED');
+
+    // Now a descriptor punch enrolls — and the enrolling punch lands in
+    // the review queue as FACE_ENROLLMENT (trust-on-first-use guard).
+    _resetKioskRateLimit();
+    const punch2 = await request(app())
+      .post('/kiosk/punch')
+      .send({ deviceToken, pin, faceDescriptor: DESCRIPTOR });
+    expect(punch2.status).toBe(200);
+    expect(
+      await prisma.kioskFaceReference.findUnique({
+        where: { associateId: associate.id },
+      }),
+    ).not.toBeNull();
+    const enrolled = await prisma.kioskPunch.findUniqueOrThrow({
+      where: { id: punch2.body.punchId },
+    });
+    expect(enrolled.anomalyKind).toBe('FACE_ENROLLMENT');
+    expect(enrolled.reviewStatus).toBe('PENDING');
+
+    // Declining later scrubs the stored biometrics immediately.
+    const decline = await request(app())
+      .post('/kiosk/face-consent')
+      .send({ deviceToken, pin, consent: false });
+    expect(decline.body.status).toBe('DECLINED');
+    expect(
+      await prisma.kioskFaceReference.findUnique({
+        where: { associateId: associate.id },
+      }),
+    ).toBeNull();
+    const row = await prisma.associate.findUniqueOrThrow({
+      where: { id: associate.id },
+      select: { faceConsentStatus: true, faceConsentAt: true },
+    });
+    expect(row.faceConsentStatus).toBe('DECLINED');
+    expect(row.faceConsentAt).not.toBeNull();
+  });
+});
+
 describe('POST /kiosk/punch — inferred break-end', () => {
   it('a toggle-less punch during an open break ends the break instead of clocking out', async () => {
     const { deviceToken, pin } = await setupKiosk();
