@@ -40,8 +40,20 @@ export interface KioskPin {
   locationName: string | null;
   /** 4-digit number, decrypted server-side. Null on legacy pre-encryption rows. */
   employeeNumber: string | null;
+  /** Face-verification consent: null = the kiosk hasn't asked yet. */
+  faceConsentStatus: FaceConsentStatus | null;
   createdAt: string;
 }
+
+/** Admin consent actions. RESET clears the decision so the kiosk re-asks
+ *  at the next punch (the path back in for a changed mind); DECLINE
+ *  records a decline and scrubs stored biometrics. There is no admin
+ *  GRANT — affirmative consent must come from the associate at the kiosk. */
+export const setKioskPinFaceConsent = (id: string, action: 'RESET' | 'DECLINE') =>
+  apiFetch<{ ok: true; faceConsentStatus: FaceConsentStatus | null }>(
+    `/kiosk-pins/${id}/face-consent`,
+    { method: 'POST', body: { action } },
+  );
 
 export type KioskPunchReviewStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 

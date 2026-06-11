@@ -257,7 +257,14 @@ kiosk99Router.get('/kiosk-pins', MANAGE, async (req, res) => {
     take: 1000,
     where: { ...(clientId ? { clientId } : {}) },
     include: {
-      associate: { select: { firstName: true, lastName: true, email: true } },
+      associate: {
+        select: {
+          firstName: true,
+          lastName: true,
+          email: true,
+          faceConsentStatus: true,
+        },
+      },
       client: { select: { name: true } },
     },
     orderBy: clientId
@@ -303,9 +310,71 @@ kiosk99Router.get('/kiosk-pins', MANAGE, async (req, res) => {
         // recover the plaintext. safeDecrypt guarantees one bad row can't
         // sink the whole list.
         employeeNumber: safeDecrypt(p.pinEncrypted),
+        // Face-verification consent — surfaced so admins can answer
+        // "who declined?" and manage the re-ask flow the kiosk's consent
+        // screen promises ("change this later through your manager").
+        faceConsentStatus: p.associate.faceConsentStatus,
         createdAt: p.createdAt.toISOString(),
       };
     }),
+  });
+});
+
+// Admin side of the kiosk consent screen's promise ("you can change
+// this later through your manager"). Two actions only:
+//   RESET   → status back to null; the kiosk re-asks the associate at
+//             their next punch. The path back IN for someone who
+//             declined and changed their mind.
+//   DECLINE → record a decline on the associate's behalf (e.g. they
+//             told their manager verbally) and scrub stored biometrics.
+// There is deliberately NO admin "grant": affirmative biometric consent
+// must come from the associate themself at the kiosk.
+const FaceConsentAdminSchema = z.object({
+  action: z.enum(['RESET', 'DECLINE']),
+});
+
+kiosk99Router.post('/kiosk-pins/:id/face-consent', MANAGE, async (req, res) => {
+  const { action } = FaceConsentAdminSchema.parse(req.body);
+  const pin = await prisma.kioskPin.findUnique({
+    where: { id: req.params.id },
+    select: { id: true, clientId: true, associateId: true },
+  });
+  if (!pin) {
+    throw new HttpError(404, 'not_found', 'Employee number not found.');
+  }
+
+  if (action === 'RESET') {
+    await prisma.associate.update({
+      where: { id: pin.associateId },
+      data: { faceConsentStatus: null, faceConsentAt: null },
+    });
+  } else {
+    await prisma.associate.update({
+      where: { id: pin.associateId },
+      data: { faceConsentStatus: 'DECLINED', faceConsentAt: new Date() },
+    });
+    // Decline always scrubs — same rule as the kiosk's own decline path.
+    await purgeAssociateBiometrics(prisma, pin.associateId);
+  }
+  enqueueAudit(
+    {
+      actorUserId: req.user!.id,
+      clientId: pin.clientId,
+      action:
+        action === 'RESET'
+          ? 'kiosk.face_consent_reset_by_admin'
+          : 'kiosk.face_consent_declined_by_admin',
+      entityType: 'Associate',
+      entityId: pin.associateId,
+      metadata: { kioskPinId: pin.id },
+    },
+    action === 'RESET'
+      ? 'kiosk.face_consent_reset_by_admin'
+      : 'kiosk.face_consent_declined_by_admin',
+  );
+  res.json({
+    ok: true,
+    faceConsentStatus: action === 'RESET' ? null : 'DECLINED',
   });
 });
 
@@ -977,15 +1046,25 @@ kiosk99Router.post('/kiosk-punches/review', MANAGE, async (req, res) => {
           reviewNotes,
         },
       });
-      if (decision === 'REJECTED' && punch.timeEntryId) {
-        await tx.timeEntry.update({
-          where: { id: punch.timeEntryId },
-          data: {
-            status: 'REJECTED',
-            notes: notes
-              ? `[Voided by review: ${notes}]`
-              : '[Voided by kiosk review]',
-          },
+      if (decision === 'REJECTED') {
+        if (punch.timeEntryId) {
+          await tx.timeEntry.update({
+            where: { id: punch.timeEntryId },
+            data: {
+              status: 'REJECTED',
+              notes: notes
+                ? `[Voided by review: ${notes}]`
+                : '[Voided by kiosk review]',
+            },
+          });
+        }
+        // If THIS punch is the one that enrolled the associate's face
+        // reference (FACE_ENROLLMENT review), rejecting it means the
+        // reviewer believes the enrollment selfie wasn't the associate —
+        // so the template must die with the punch, or the imposter's
+        // face stays "correct" forever. No-op for ordinary punches.
+        await tx.kioskFaceReference.deleteMany({
+          where: { enrolledByPunchId: punch.id },
         });
       }
     });
@@ -1020,17 +1099,26 @@ kiosk99Router.post('/kiosk-punches/:id/review', MANAGE, async (req, res) => {
         reviewNotes: notes ?? null,
       },
     });
-    if (decision === 'REJECTED' && punch.timeEntryId) {
-      // Void the time entry — reviewer believes the punch was an
-      // impostor, so the time should not count for payroll. We mark it
-      // REJECTED (existing TimeEntryStatus value) — payroll skips
-      // non-APPROVED entries, and the audit trail remains intact.
-      await tx.timeEntry.update({
-        where: { id: punch.timeEntryId },
-        data: {
-          status: 'REJECTED',
-          notes: notes ? `[Voided by review: ${notes}]` : '[Voided by kiosk review]',
-        },
+    if (decision === 'REJECTED') {
+      if (punch.timeEntryId) {
+        // Void the time entry — reviewer believes the punch was an
+        // impostor, so the time should not count for payroll. We mark it
+        // REJECTED (existing TimeEntryStatus value) — payroll skips
+        // non-APPROVED entries, and the audit trail remains intact.
+        await tx.timeEntry.update({
+          where: { id: punch.timeEntryId },
+          data: {
+            status: 'REJECTED',
+            notes: notes ? `[Voided by review: ${notes}]` : '[Voided by kiosk review]',
+          },
+        });
+      }
+      // Disarm a poisoned enrollment: if this punch enrolled the face
+      // reference (FACE_ENROLLMENT review), the template dies with the
+      // rejection — the next legitimate punch re-enrolls. No-op for
+      // ordinary punches.
+      await tx.kioskFaceReference.deleteMany({
+        where: { enrolledByPunchId: punch.id },
       });
     }
   });
