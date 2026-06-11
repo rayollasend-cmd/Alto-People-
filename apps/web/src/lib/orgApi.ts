@@ -73,6 +73,35 @@ export function revealAssociatePayoutMethod(
   });
 }
 
+export interface SsnSummary {
+  hasSsn: boolean;
+  ssnLast4: string | null;
+  /** W4 = W-2 employee's W-4 submission; TIN = 1099 contractor's TIN. */
+  source: 'W4' | 'TIN' | null;
+}
+
+export interface SsnReveal {
+  kind: 'SSN' | 'EIN';
+  source: 'W4' | 'TIN';
+  number: string;
+}
+
+export function getAssociateSsn(associateId: string): Promise<SsnSummary> {
+  return apiFetch(`/org/associates/${associateId}/ssn`);
+}
+
+/** Audited full-number reveal — requires a written reason; every call
+ *  lands an AuditLog row before the number is returned. */
+export function revealAssociateSsn(
+  associateId: string,
+  reason: string,
+): Promise<SsnReveal> {
+  return apiFetch(`/org/associates/${associateId}/ssn/reveal`, {
+    method: 'POST',
+    body: { reason },
+  });
+}
+
 export function listDepartments(clientId?: string): Promise<DepartmentListResponse> {
   const q = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
   return apiFetch<DepartmentListResponse>(`/org/departments${q}`);
