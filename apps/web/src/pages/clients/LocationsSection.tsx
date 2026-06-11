@@ -366,7 +366,8 @@ function LocationDialog({ open, onOpenChange, clientId, existing, onSaved }: Dia
           <DialogTitle>{existing ? 'Edit location' : 'New location'}</DialogTitle>
           <DialogDescription>
             Geofence is optional. When set, kiosk punches and time-tracking
-            clock-ins at this site must be inside the radius.
+            clock-ins outside the radius are flagged for review — they
+            still go through.
           </DialogDescription>
         </DialogHeader>
 

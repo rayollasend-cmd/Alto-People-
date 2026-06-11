@@ -2345,7 +2345,9 @@ function ReviewTab({ canManage }: { canManage: boolean }) {
                           ? 'Impossible travel'
                           : p.anomalyKind === 'FACE_MISMATCH'
                             ? 'Face mismatch'
-                            : (p.rejectReason ?? 'Anomaly')}
+                            : p.anomalyKind === 'GEOFENCE'
+                              ? 'Outside geofence'
+                              : (p.rejectReason ?? 'Anomaly')}
                       </div>
                       {p.anomalyDetail && (
                         <div className="text-silver">{p.anomalyDetail}</div>

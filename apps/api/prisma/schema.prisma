@@ -4095,6 +4095,11 @@ enum KioskPunchReviewStatus {
 enum KioskAnomalyKind {
   FACE_MISMATCH
   IMPOSSIBLE_TRAVEL
+  // Advisory geofence — the punch landed outside the kiosk Location's
+  // fence. Never blocks (coords are client-reported and spoofable, so a
+  // hard block only ever locked out honest sites); flags for HR review
+  // like the other kinds.
+  GEOFENCE
 }
 
 model KioskDevice {

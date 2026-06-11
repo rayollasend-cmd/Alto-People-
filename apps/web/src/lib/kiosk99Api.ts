@@ -38,7 +38,7 @@ export interface KioskPin {
 
 export type KioskPunchReviewStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
-export type KioskAnomalyKind = 'FACE_MISMATCH' | 'IMPOSSIBLE_TRAVEL';
+export type KioskAnomalyKind = 'FACE_MISMATCH' | 'IMPOSSIBLE_TRAVEL' | 'GEOFENCE';
 
 export interface KioskPunchSummary {
   id: string;
@@ -97,8 +97,9 @@ export const rotateKioskDevice = (id: string) =>
 
 /** Per-device boot config. The tablet fetches this once when it has a
  *  token so it knows whether to bother spinning up geolocation at all —
- *  a kiosk with no geofence skips GPS entirely. The server still
- *  enforces the geofence on every punch regardless. */
+ *  a kiosk with no geofence skips GPS entirely. The geofence itself is
+ *  advisory: punches always succeed; out-of-fence ones are flagged for
+ *  admin review server-side. */
 export const kioskConfig = (deviceToken: string) =>
   apiFetch<{ geofenceRequired: boolean; tokenExpiresAt: string | null }>(
     '/kiosk/config',

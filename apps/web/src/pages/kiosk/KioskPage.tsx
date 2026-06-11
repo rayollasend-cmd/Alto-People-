@@ -69,11 +69,11 @@ export function KioskPage() {
   // Whether this device has a geofence — tri-state on purpose. Boot config
   // resolves it to 'yes'/'no'; until then (or if config failed, e.g. the
   // tablet booted offline) it stays 'unknown'. We only SKIP geolocation
-  // when we positively know it's 'no'. If we skipped on 'unknown' too, an
-  // offline-at-boot geofenced kiosk would queue punches with null coords
-  // that then get dropped on sync — so 'unknown' attempts a (coarse,
-  // best-effort) fix. The latency win still holds: config resolves on boot
-  // well before anyone walks up to punch.
+  // when we positively know it's 'no'. The fence is advisory server-side
+  // (missing/out-of-fence coords flag for review, never block), so coords
+  // are purely a fraud signal — 'unknown' still attempts a coarse,
+  // best-effort fix to keep that signal flowing. The latency win holds:
+  // config resolves on boot well before anyone walks up to punch.
   const geofenceModeRef = useRef<'unknown' | 'yes' | 'no'>('unknown');
   // Session-cached coarse location, shared by preflight + punch.
   const cachedLocationRef = useRef<{ lat: number; lng: number; at: number } | null>(
@@ -93,14 +93,15 @@ export function KioskPage() {
         setToken(stored);
         setStage('idle');
         // Learn whether this kiosk has a geofence so we can skip GPS
-        // entirely when it doesn't. Best-effort — a failure leaves the
-        // default (false) and the server still enforces on punch.
+        // entirely when it doesn't. Best-effort — on failure we keep
+        // attempting coarse fixes, and the server treats the fence as
+        // advisory regardless.
         void kioskConfig(stored)
           .then((c) => {
             geofenceModeRef.current = c.geofenceRequired ? 'yes' : 'no';
           })
           .catch(() => {
-            /* keep default; preflight self-heals on location_required */
+            /* keep 'unknown' — location stays best-effort either way */
           });
       } else {
         setStage('setup');
@@ -190,19 +191,18 @@ export function KioskPage() {
   //
   //  - Skipped entirely unless this kiosk actually has a geofence — most
   //    don't, and waking the GPS radio for coords the server ignores was
-  //    several wasted seconds per clock-in (`force` overrides this for the
-  //    location_required self-heal path).
+  //    several wasted seconds per clock-in.
   //  - `enableHighAccuracy: false` — coarse Wi-Fi/cell positioning is
   //    plenty for a geofence radius and resolves near-instantly instead of
   //    spinning up GPS hardware for a first fix.
   //  - Cached for the session and reused across the preflight and the
   //    punch, so a single clock-in never fetches twice.
   //
-  // On denial/timeout we resolve null and let the server decide.
-  const tryGetLocation = (
-    force = false,
-  ): Promise<{ lat: number; lng: number } | null> => {
-    if (!force && geofenceModeRef.current === 'no') return Promise.resolve(null);
+  // On denial/timeout we resolve null. The geofence is advisory
+  // server-side, so missing coords never block — the punch just carries
+  // no distance for the review queue.
+  const tryGetLocation = (): Promise<{ lat: number; lng: number } | null> => {
+    if (geofenceModeRef.current === 'no') return Promise.resolve(null);
     const cached = cachedLocationRef.current;
     if (cached && Date.now() - cached.at < LOCATION_TTL_MS) {
       return Promise.resolve({ lat: cached.lat, lng: cached.lng });
@@ -287,8 +287,17 @@ export function KioskPage() {
       if (selfieData) void attachSelfieAndFace(selfieData, r.punchId, token);
     } catch (err) {
       // Server rejected (4xx) → real error, show it. Network failure →
-      // queue and tell the user "saved offline".
-      if (err instanceof ApiError && err.status >= 400 && err.status < 500) {
+      // queue and tell the user "saved offline". 429 (throttle collision,
+      // e.g. an offline-queue drain stamped the bucket a beat before this
+      // live punch) is NOT fatal: fall through to the queue — the punch
+      // carries an idempotencyKey and clientPunchedAt, so the next drain
+      // records it with the original timestamp.
+      if (
+        err instanceof ApiError &&
+        err.status >= 400 &&
+        err.status < 500 &&
+        err.status !== 429
+      ) {
         // Device-token expired or revoked: self-heal by clearing the
         // local copy so the next render lands on the setup screen.
         // HR pastes a freshly-rotated token from the admin page.
@@ -414,22 +423,12 @@ export function KioskPage() {
                 longitude: loc?.lng ?? null,
               });
             try {
-              let loc = await tryGetLocation();
-              try {
-                await verify(loc);
-              } catch (err) {
-                // Self-heal: a geofenced kiosk whose config we never
-                // fetched (or that gained a geofence since boot) asks for
-                // location. Flip the flag, grab one coarse fix, and retry
-                // before surfacing anything to the user.
-                if (err instanceof ApiError && err.code === 'location_required') {
-                  geofenceModeRef.current = 'yes';
-                  loc = await tryGetLocation(true);
-                  await verify(loc);
-                } else {
-                  throw err;
-                }
-              }
+              // Coords are best-effort. The geofence is advisory
+              // server-side — out-of-fence (or coordinate-less) punches
+              // succeed and get flagged for HR review — so a denied
+              // location permission never blocks a clock-in.
+              const loc = await tryGetLocation();
+              await verify(loc);
               setStage('selfie');
             } catch (err) {
               if (err instanceof ApiError && err.status >= 400 && err.status < 500) {
@@ -446,6 +445,14 @@ export function KioskPage() {
                 if (err.code === 'invalid_pin') {
                   setPin('');
                   setPinError('Wrong PIN. Try again.');
+                  return;
+                }
+                // Throttle collision — e.g. the previous associate's
+                // preflight landed under a second ago, or a queue drain
+                // stamped the bucket. The typed PIN is fine; keep it and
+                // let them just tap submit again.
+                if (err.status === 429) {
+                  setPinError('One at a time — wait a second, then tap ✓ again.');
                   return;
                 }
                 setError(err.message);
