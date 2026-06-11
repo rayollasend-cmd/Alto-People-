@@ -35,6 +35,7 @@ import {
   reviewKioskPunchesBulk,
   revokeKioskDevice,
   rotateKioskDevice,
+  setKioskPinFaceConsent,
   type KioskDevice,
   type KioskFaceReferenceSummary,
   type KioskPin,
@@ -86,10 +87,13 @@ export function KioskAdmin() {
 
   // Lightweight counts for the tab badges so HR sees pending review work
   // and broken kiosks at a glance without opening each tab. Refetched on
-  // tab switch so the numbers stay roughly live after in-tab actions
-  // (reviewing a punch, revoking a device, …).
+  // tab switch AND whenever a tab reports it changed something
+  // (badgeBump) — approving 10 punches updates "Review (10)" right away
+  // instead of waiting for the next tab switch.
   const [pendingReview, setPendingReview] = useState<number | null>(null);
   const [offlineDevices, setOfflineDevices] = useState<number | null>(null);
+  const [badgeBump, setBadgeBump] = useState(0);
+  const bumpBadges = () => setBadgeBump((b) => b + 1);
   useEffect(() => {
     let cancelled = false;
     void listKioskPunches({ reviewStatus: 'PENDING' })
@@ -105,7 +109,7 @@ export function KioskAdmin() {
     return () => {
       cancelled = true;
     };
-  }, [tab]);
+  }, [tab, badgeBump]);
 
   const countLabel = (n: number) => (n > 99 ? '99+' : String(n));
 
@@ -145,9 +149,9 @@ export function KioskAdmin() {
             <ScanFace className="mr-2 h-4 w-4" /> Face refs
           </TabsTrigger>
         </TabsList>
-        <TabsContent value="devices"><DevicesTab canManage={canManage} /></TabsContent>
+        <TabsContent value="devices"><DevicesTab canManage={canManage} onChanged={bumpBadges} /></TabsContent>
         <TabsContent value="pins"><PinsTab canManage={canManage} /></TabsContent>
-        <TabsContent value="review"><ReviewTab canManage={canManage} /></TabsContent>
+        <TabsContent value="review"><ReviewTab canManage={canManage} onChanged={bumpBadges} /></TabsContent>
         <TabsContent value="log"><LogTab /></TabsContent>
         <TabsContent value="faces"><FacesTab canManage={canManage} /></TabsContent>
       </Tabs>
@@ -249,16 +253,26 @@ function renderTokenStatus(iso: string | null) {
 // as "offline" — battery dead, unplugged, network down, or stolen. HR
 // should be poked when this happens; payroll for that site is silently
 // broken until someone fixes the kiosk.
+//
+// Never-seen devices are NOT offline — a spare tablet awaiting
+// deployment isn't an outage. This matches the server's fleet-notice
+// emails exactly, so the on-screen count and the inbox never disagree.
+// Never-seen rows still show a "Never used" badge in the table.
 const OFFLINE_THRESHOLD_HOURS = 24;
 
 function isDeviceOffline(d: KioskDevice): boolean {
-  if (!d.isActive) return false;
-  if (!d.lastSeenAt) return true;
+  if (!d.isActive || !d.lastSeenAt) return false;
   const ageMs = Date.now() - new Date(d.lastSeenAt).getTime();
   return ageMs > OFFLINE_THRESHOLD_HOURS * 60 * 60 * 1000;
 }
 
-function DevicesTab({ canManage }: { canManage: boolean }) {
+function DevicesTab({
+  canManage,
+  onChanged,
+}: {
+  canManage: boolean;
+  onChanged?: () => void;
+}) {
   const confirm = useConfirm();
   const [rows, setRows] = useState<KioskDevice[] | null>(null);
   const [showNew, setShowNew] = useState(false);
@@ -269,6 +283,8 @@ function DevicesTab({ canManage }: { canManage: boolean }) {
     listKioskDevices()
       .then((r) => setRows(r.devices))
       .catch(() => setRows([]));
+    // Revoking/deleting/registering changes the offline tab badge too.
+    onChanged?.();
   };
   useEffect(() => {
     refresh();
@@ -413,8 +429,8 @@ function DevicesTab({ canManage }: { canManage: boolean }) {
                             </Badge>
                           )}
                         </span>
-                      ) : isDeviceOffline(d) ? (
-                        <Badge variant="pending">Never seen</Badge>
+                      ) : d.isActive ? (
+                        <Badge variant="outline">Never used</Badge>
                       ) : (
                         '—'
                       )}
@@ -734,6 +750,91 @@ function EmployeeNumberCell({ value }: { value: string | null }) {
   );
 }
 
+// Face-verification consent cell. Read-only badge plus the two admin
+// actions the kiosk consent screen promises ("change this later through
+// your manager"): RESET re-asks at the next punch — the only path back
+// in for someone who declined and changed their mind — and DECLINE
+// records an opt-out + scrubs biometrics. No admin GRANT on purpose.
+function FaceConsentCell({
+  pin,
+  canManage,
+  onChanged,
+}: {
+  pin: KioskPin;
+  canManage: boolean;
+  onChanged: () => void;
+}) {
+  const confirm = useConfirm();
+  const [busy, setBusy] = useState(false);
+  const status = pin.faceConsentStatus;
+
+  const act = async (action: 'RESET' | 'DECLINE') => {
+    const ok = await confirm(
+      action === 'RESET'
+        ? {
+            title: `Re-ask ${pin.associateName} for face consent?`,
+            description:
+              'Clears their current answer — the kiosk shows the consent question again at their next punch. Use this when someone who declined changes their mind.',
+          }
+        : {
+            title: `Mark ${pin.associateName} as declined?`,
+            description:
+              'Records that they opted out of face verification (e.g. they told you directly). Their stored selfies and face template are deleted immediately; they clock in PIN-only.',
+            destructive: true,
+          },
+    );
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await setKioskPinFaceConsent(pin.id, action);
+      toast.success(action === 'RESET' ? 'Will re-ask at next punch.' : 'Marked declined — biometrics scrubbed.');
+      onChanged();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      {status === 'GRANTED' ? (
+        <Badge variant="success">Granted</Badge>
+      ) : status === 'DECLINED' ? (
+        <Badge variant="outline">Declined</Badge>
+      ) : (
+        <Badge variant="pending">Not asked</Badge>
+      )}
+      {canManage && (
+        <span className="inline-flex gap-2 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+          {status !== null && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => act('RESET')}
+              className="text-xs text-silver hover:text-white transition"
+              title="Clear the answer — the kiosk asks again at their next punch"
+            >
+              Re-ask
+            </button>
+          )}
+          {status !== 'DECLINED' && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => act('DECLINE')}
+              className="text-xs text-silver hover:text-alert transition"
+              title="Record an opt-out and delete stored biometrics"
+            >
+              Decline
+            </button>
+          )}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function PinsTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
   const [clients, setClients] = useState<
@@ -994,7 +1095,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                   description:
                     `These codes can't be displayed (encrypted under a key prod no longer has), so they can only be fixed by re-issuing. ` +
                     `Each associate gets a NEW number and their current one stops working immediately. ` +
-                    `The new numbers will appear in this list — share them with each associate (email delivery isn't guaranteed yet).`,
+                    `You'll be offered to email everyone their new number right after.`,
                   destructive: true,
                 }))
               )
@@ -1002,12 +1103,16 @@ function PinsTab({ canManage }: { canManage: boolean }) {
               setRotatingAll(true);
               let ok = 0;
               let fail = 0;
+              // Collect the fresh pin row ids so the chained email step
+              // below targets exactly the numbers we just issued.
+              const newIds: string[] = [];
               for (const p of unreadableRows) {
                 try {
-                  await assignKioskPin({
+                  const r = await assignKioskPin({
                     clientId: p.clientId,
                     associateId: p.associateId,
                   });
+                  newIds.push(r.id);
                   ok++;
                 } catch {
                   fail++;
@@ -1020,6 +1125,29 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                 }`,
               );
               refresh();
+              // Chain the delivery step — a rotated number nobody knows
+              // about is tomorrow's "wrong PIN" support call.
+              if (
+                newIds.length > 0 &&
+                (await confirm({
+                  title: `Email the ${newIds.length} new number${newIds.length === 1 ? '' : 's'} now?`,
+                  description:
+                    'Each associate receives their own new 4-digit number at the email on file.',
+                }))
+              ) {
+                try {
+                  const r = await emailKioskPinsBulk(newIds);
+                  toast.success(
+                    `Queued ${r.queued} email${r.queued === 1 ? '' : 's'}${
+                      r.skipped ? ` · ${r.skipped} skipped (no address)` : ''
+                    }.`,
+                  );
+                } catch (err) {
+                  toast.error(
+                    err instanceof ApiError ? err.message : 'Emails failed — use Email all.',
+                  );
+                }
+              }
             }}
           >
             <RotateCw className="mr-2 h-4 w-4" />
@@ -1195,6 +1323,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                   <TableHead>Location</TableHead>
                   <TableHead>Email</TableHead>
                   <TableHead>Employee #</TableHead>
+                  <TableHead>Face consent</TableHead>
                   <TableHead>Issued</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -1214,6 +1343,9 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                     <TableCell className="text-silver">{p.associateEmail}</TableCell>
                     <TableCell>
                       <EmployeeNumberCell value={p.employeeNumber} />
+                    </TableCell>
+                    <TableCell>
+                      <FaceConsentCell pin={p} canManage={canManage} onChanged={refresh} />
                     </TableCell>
                     <TableCell>{new Date(p.createdAt).toLocaleDateString()}</TableCell>
                     <TableCell className="text-right">
@@ -2213,9 +2345,16 @@ function renderPendingBadge(createdAt: string): JSX.Element {
   );
 }
 
-function ReviewTab({ canManage }: { canManage: boolean }) {
+function ReviewTab({
+  canManage,
+  onChanged,
+}: {
+  canManage: boolean;
+  onChanged?: () => void;
+}) {
   const prompt = usePrompt();
   const [rows, setRows] = useState<KioskPunchSummary[] | null>(null);
+  const [truncated, setTruncated] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -2226,11 +2365,18 @@ function ReviewTab({ canManage }: { canManage: boolean }) {
     // Oldest first — HR works the back of the queue down, not the
     // freshest punch first.
     listKioskPunches({ reviewStatus: 'PENDING', sort: 'oldest' })
-      .then((r) => setRows(r.punches))
+      .then((r) => {
+        setRows(r.punches);
+        // The server pages at 500; without this flag a bigger backlog
+        // silently masquerades as "all of it".
+        setTruncated(Boolean(r.nextCursor));
+      })
       .catch(() => setRows([]));
+    onChanged?.();
   };
   useEffect(() => {
     refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const decide = async (
@@ -2328,7 +2474,7 @@ function ReviewTab({ canManage }: { canManage: boolean }) {
               <div className="flex items-center justify-between gap-3 p-3 border-b border-navy-secondary bg-navy-secondary/30">
                 <div className="text-sm text-silver">
                   {selected.size === 0
-                    ? `${rows.length} flagged`
+                    ? `${rows.length} flagged${truncated ? ' (oldest 500 — more behind)' : ''}`
                     : `${selected.size} selected`}
                 </div>
                 <div className="space-x-2">

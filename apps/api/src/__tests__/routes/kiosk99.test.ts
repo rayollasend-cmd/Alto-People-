@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../app.js';
+import { signSession } from '../../lib/jwt.js';
 import {
   generateDeviceToken,
   hashDeviceToken,
@@ -13,11 +14,22 @@ import {
 import {
   createAssociate,
   createClient,
+  createUser,
   prisma,
   truncateAll,
 } from '../../../test/db.js';
 
 const app = () => createApp();
+
+async function adminCookie(): Promise<string> {
+  const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
+  const token = signSession({
+    sub: user.id,
+    role: user.role,
+    ver: user.tokenVersion,
+  });
+  return `alto.session=${token}`;
+}
 
 // Fence center + radius shared by fixtures and requests.
 const FENCE = { lat: 40.7128, lng: -74.006, radius: 150 };
@@ -280,5 +292,97 @@ describe('POST /kiosk/punch — inferred break-end', () => {
     // The entry is still ACTIVE and a further punch clocks out normally.
     const out = await punchOnce(null);
     expect(out.body.action).toBe('CLOCK_OUT');
+  });
+});
+
+describe('admin face-consent + enrollment-rejection cleanup', () => {
+  const DESCRIPTOR = Array.from({ length: 128 }, (_, i) => (i % 7) / 10);
+
+  it('rejecting the enrolling punch deletes the face reference it created', async () => {
+    const { deviceToken, pin, associate } = await setupKiosk();
+    const cookie = await adminCookie();
+
+    await request(app())
+      .post('/kiosk/face-consent')
+      .send({ deviceToken, pin, consent: true });
+
+    _resetKioskRateLimit();
+    const punch = await request(app())
+      .post('/kiosk/punch')
+      .send({ deviceToken, pin, faceDescriptor: DESCRIPTOR });
+    expect(punch.status).toBe(200);
+    expect(
+      await prisma.kioskFaceReference.findUnique({
+        where: { associateId: associate.id },
+      }),
+    ).not.toBeNull();
+
+    // Admin rejects the FACE_ENROLLMENT punch → template must die with
+    // it (the reviewer just said "that selfie isn't this associate").
+    const review = await request(app())
+      .post(`/kiosk-punches/${punch.body.punchId}/review`)
+      .set('Cookie', [cookie])
+      .send({ decision: 'REJECTED', notes: 'not the associate' });
+    expect(review.status).toBe(200);
+    expect(
+      await prisma.kioskFaceReference.findUnique({
+        where: { associateId: associate.id },
+      }),
+    ).toBeNull();
+  });
+
+  it('admin RESET re-asks at next punch; DECLINE records opt-out and scrubs biometrics', async () => {
+    const { deviceToken, pin, associate } = await setupKiosk();
+    const cookie = await adminCookie();
+
+    // Associate grants at the kiosk and enrolls.
+    await request(app())
+      .post('/kiosk/face-consent')
+      .send({ deviceToken, pin, consent: true });
+    _resetKioskRateLimit();
+    await request(app())
+      .post('/kiosk/punch')
+      .send({ deviceToken, pin, faceDescriptor: DESCRIPTOR });
+
+    // Consent is visible on the pins list.
+    const pinRow = await prisma.kioskPin.findFirstOrThrow({
+      where: { associateId: associate.id },
+      select: { id: true },
+    });
+    const list = await request(app())
+      .get('/kiosk-pins')
+      .set('Cookie', [cookie]);
+    const listed = (list.body.pins as Array<{ id: string; faceConsentStatus: string | null }>).find(
+      (p) => p.id === pinRow.id,
+    );
+    expect(listed?.faceConsentStatus).toBe('GRANTED');
+
+    // RESET → null, so the kiosk asks again. Biometrics stay (they were
+    // collected under a valid grant; only DECLINE revokes).
+    const reset = await request(app())
+      .post(`/kiosk-pins/${pinRow.id}/face-consent`)
+      .set('Cookie', [cookie])
+      .send({ action: 'RESET' });
+    expect(reset.body.faceConsentStatus).toBeNull();
+    expect(
+      (
+        await prisma.associate.findUniqueOrThrow({
+          where: { id: associate.id },
+          select: { faceConsentStatus: true },
+        })
+      ).faceConsentStatus,
+    ).toBeNull();
+
+    // DECLINE → recorded + face reference scrubbed.
+    const decline = await request(app())
+      .post(`/kiosk-pins/${pinRow.id}/face-consent`)
+      .set('Cookie', [cookie])
+      .send({ action: 'DECLINE' });
+    expect(decline.body.faceConsentStatus).toBe('DECLINED');
+    expect(
+      await prisma.kioskFaceReference.findUnique({
+        where: { associateId: associate.id },
+      }),
+    ).toBeNull();
   });
 });
