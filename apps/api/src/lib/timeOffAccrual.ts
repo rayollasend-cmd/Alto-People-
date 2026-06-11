@@ -137,6 +137,51 @@ export async function accrueSickLeaveForEntry(
   }
 }
 
+/**
+ * Undo the sick-leave accrual for a TimeEntry — called when an APPROVED
+ * entry is rejected (the shift is voided, so the minutes it earned must
+ * leave the balance too).
+ *
+ * This DELETES the accrual ledger row rather than appending a negative
+ * adjustment. Deliberate: the (sourceTimeEntryId, category, reason)
+ * unique key means an appended reversal would block re-crediting on a
+ * later re-approval (approve → reject → approve would silently
+ * under-credit forever). With deletion the invariant stays simple —
+ * "an accrual row exists iff the entry is currently approved" — and
+ * approve/reject cycles stay correct indefinitely. The who/when/why
+ * history lives in the audit log the reject handler writes.
+ */
+export async function reverseSickLeaveForEntry(
+  client: PrismaClient,
+  timeEntryId: string,
+): Promise<{ reversed: boolean; minutes: number }> {
+  const row = await client.timeOffLedgerEntry.findFirst({
+    where: {
+      sourceTimeEntryId: timeEntryId,
+      category: 'SICK',
+      reason: 'ACCRUAL',
+    },
+    select: { id: true, associateId: true, deltaMinutes: true },
+  });
+  if (!row || row.deltaMinutes <= 0) {
+    return { reversed: false, minutes: 0 };
+  }
+  await client.$transaction(async (tx) => {
+    await tx.timeOffLedgerEntry.delete({ where: { id: row.id } });
+    // The balance row necessarily exists — the accrual upserted it.
+    await tx.timeOffBalance.update({
+      where: {
+        associateId_category: {
+          associateId: row.associateId,
+          category: 'SICK',
+        },
+      },
+      data: { balanceMinutes: { decrement: row.deltaMinutes } },
+    });
+  });
+  return { reversed: true, minutes: row.deltaMinutes };
+}
+
 function zeroResult(state: string | null, ratePerHour: number): AccrualResult {
   return { accrued: false, earnedMinutes: 0, workedMinutes: 0, state, ratePerHour };
 }

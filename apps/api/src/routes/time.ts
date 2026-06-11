@@ -35,7 +35,10 @@ import {
   netWorkedMinutes,
   startOfWeekUTC,
 } from '../lib/timeAnomalies.js';
-import { accrueSickLeaveForEntry } from '../lib/timeOffAccrual.js';
+import {
+  accrueSickLeaveForEntry,
+  reverseSickLeaveForEntry,
+} from '../lib/timeOffAccrual.js';
 import { renderTimeReportPdf } from '../lib/timeReport.js';
 
 export const timeRouter = Router();
@@ -118,13 +121,40 @@ async function loadClientName(clientId: string | null): Promise<string | null> {
   return c?.name ?? null;
 }
 
+// TimeEntry.clientId is denormalized without a Prisma relation, so client
+// names need their own lookup. For LISTS, do it once per request — toEntry
+// used to run loadClientName PER ROW, turning a 500-row admin list into
+// ~501 queries and a 5000-row export into ~5001.
+async function clientNameMap(
+  rows: Array<{ clientId: string | null }>,
+): Promise<Map<string, string>> {
+  const ids = [...new Set(rows.map((r) => r.clientId).filter((id): id is string => !!id))];
+  if (ids.length === 0) return new Map();
+  const clients = await prisma.client.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, name: true },
+  });
+  return new Map(clients.map((c) => [c.id, c.name]));
+}
+
+async function toEntries(rows: RawEntry[]): Promise<TimeEntry[]> {
+  const names = await clientNameMap(rows);
+  return rows.map((row) =>
+    buildEntry(row, row.clientId ? (names.get(row.clientId) ?? null) : null),
+  );
+}
+
 async function toEntry(row: RawEntry): Promise<TimeEntry> {
+  return buildEntry(row, await loadClientName(row.clientId));
+}
+
+function buildEntry(row: RawEntry, clientName: string | null): TimeEntry {
   return {
     id: row.id,
     associateId: row.associateId,
     associateName: `${row.associate.firstName} ${row.associate.lastName}`,
     clientId: row.clientId,
-    clientName: await loadClientName(row.clientId),
+    clientName,
     clockInAt: row.clockInAt.toISOString(),
     clockOutAt: row.clockOutAt ? row.clockOutAt.toISOString() : null,
     status: row.status,
@@ -142,6 +172,10 @@ async function toEntry(row: RawEntry): Promise<TimeEntry> {
     clockOutLat: row.clockOutLat ? Number(row.clockOutLat) : null,
     clockOutLng: row.clockOutLng ? Number(row.clockOutLng) : null,
     anomalies: Array.isArray(row.anomalies) ? (row.anomalies as string[]) : [],
+    // Server-derived so the clock widget survives a refresh mid-break
+    // (the UI used to track this in component state and forget it).
+    onBreak:
+      row.status === 'ACTIVE' && row.breaks.some((b) => b.endedAt === null),
   };
 }
 
@@ -202,7 +236,7 @@ timeRouter.get('/me/entries', async (req, res, next) => {
       take: 200,
       include: ENTRY_INCLUDE,
     });
-    const entries = await Promise.all(rows.map(toEntry));
+    const entries = await toEntries(rows);
     const payload = TimeEntryListResponseSchema.parse({ entries });
     res.json(payload);
   } catch (err) {
@@ -642,26 +676,35 @@ timeRouter.get('/admin/entries', MANAGE, async (req, res, next) => {
         : {}),
       ...(search
         ? {
-            associate: {
-              OR: [
-                { firstName: { contains: search, mode: 'insensitive' } },
-                { lastName: { contains: search, mode: 'insensitive' } },
-              ],
-            },
+            // Per-term AND across (first OR last) so a full-name search
+            // works: "Maria Lopez" → Maria must hit first/last AND Lopez
+            // must hit first/last. A single OR over the whole string
+            // matched neither field and returned nothing.
+            AND: search.split(/\s+/).map((term) => ({
+              associate: {
+                OR: [
+                  { firstName: { contains: term, mode: 'insensitive' as const } },
+                  { lastName: { contains: term, mode: 'insensitive' as const } },
+                ],
+              },
+            })),
           }
         : {}),
     };
 
+    // Fetch cap+1 so the response can SAY it was cut — a partial list that
+    // looks complete silently breaks "select all → bulk approve".
+    const PAGE_CAP = 500;
     const rows = await prisma.timeEntry.findMany({
       where,
       orderBy: { clockInAt: 'desc' },
-      // Bumped from 200 → 500 once filters can scope: a date-range query
-      // legitimately wants every row in that window, not just the latest 200.
-      take: 500,
+      take: PAGE_CAP + 1,
       include: ENTRY_INCLUDE,
     });
-    const entries = await Promise.all(rows.map(toEntry));
-    const payload = TimeEntryListResponseSchema.parse({ entries });
+    const truncated = rows.length > PAGE_CAP;
+    const page = truncated ? rows.slice(0, PAGE_CAP) : rows;
+    const entries = await toEntries(page);
+    const payload = TimeEntryListResponseSchema.parse({ entries, truncated });
     res.json(payload);
   } catch (err) {
     next(err);
@@ -751,6 +794,13 @@ timeRouter.post('/admin/entries/:id/reject', MANAGE, async (req, res, next) => {
       throw new HttpError(409, 'still_active', 'Cannot reject an entry that has not been clocked out');
     }
 
+    // Rejecting a previously-APPROVED entry voids a shift whose sick-leave
+    // accrual already posted — pull those minutes back out of the balance.
+    const reversal =
+      existing.status === 'APPROVED'
+        ? await reverseSickLeaveForEntry(prisma, existing.id)
+        : { reversed: false, minutes: 0 };
+
     const updated = await prisma.timeEntry.update({
       where: { id: existing.id },
       data: {
@@ -768,7 +818,12 @@ timeRouter.post('/admin/entries/:id/reject', MANAGE, async (req, res, next) => {
       timeEntryId: updated.id,
       associateId: updated.associateId,
       clientId: updated.clientId,
-      metadata: { reason: parsed.data.reason },
+      metadata: {
+        reason: parsed.data.reason,
+        ...(reversal.reversed
+          ? { sickAccrualReversedMinutes: reversal.minutes }
+          : {}),
+      },
       req,
     });
 
@@ -1100,6 +1155,13 @@ async function rejectOneEntry(
     return; // idempotent
   }
 
+  // Mirror the single-reject path: voiding an APPROVED shift pulls its
+  // posted sick-leave accrual back out of the balance.
+  const reversal =
+    existing.status === 'APPROVED'
+      ? await reverseSickLeaveForEntry(prisma, existing.id)
+      : { reversed: false, minutes: 0 };
+
   const updated = await prisma.timeEntry.update({
     where: { id: existing.id },
     data: {
@@ -1117,7 +1179,13 @@ async function rejectOneEntry(
     timeEntryId: updated.id,
     associateId: updated.associateId,
     clientId: updated.clientId,
-    metadata: { reason, bulk: true },
+    metadata: {
+      reason,
+      bulk: true,
+      ...(reversal.reversed
+        ? { sickAccrualReversedMinutes: reversal.minutes }
+        : {}),
+    },
     req,
   });
 }
