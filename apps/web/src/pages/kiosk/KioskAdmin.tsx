@@ -171,15 +171,27 @@ function PinHealthBanner({ onTab }: { onTab: () => void }) {
   }, []);
 
   if (!health) return null;
-  const { wontClockIn, unreadable, healthy, total } = health;
-  if (wontClockIn === 0 && unreadable === 0) return null;
+  const { wontClockIn, unreadable, legacy, healthy, total } = health;
+  if (wontClockIn === 0 && unreadable === 0 && legacy === 0) return null;
+
+  // Legacy-only is informational (those codes still clock in fine —
+  // they just can't be shown), so don't paint the page red for it.
+  const severe = wontClockIn > 0 || unreadable > 0;
 
   return (
-    <div className="rounded-md border border-alert/50 bg-alert/10 p-3 text-sm">
+    <div
+      className={`rounded-md border p-3 text-sm ${
+        severe ? 'border-alert/50 bg-alert/10' : 'border-warning/50 bg-warning/10'
+      }`}
+    >
       <div className="flex items-start gap-2">
-        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-alert" />
+        <AlertTriangle
+          className={`mt-0.5 h-4 w-4 shrink-0 ${severe ? 'text-alert' : 'text-warning'}`}
+        />
         <div className="min-w-0">
-          <div className="font-medium text-alert">Kiosk codes need attention</div>
+          <div className={`font-medium ${severe ? 'text-alert' : 'text-warning'}`}>
+            Kiosk codes need attention
+          </div>
           <ul className="mt-1 space-y-0.5 text-silver">
             {wontClockIn > 0 && (
               <li>
@@ -194,6 +206,16 @@ function PinHealthBanner({ onTab }: { onTab: () => void }) {
                 {unreadable === 1 ? '' : 's'} can&rsquo;t be displayed and likely
                 won&rsquo;t clock in — the encryption key
                 (<span className="font-mono text-xs">PAYOUT_ENCRYPTION_KEY</span>) changed.
+              </li>
+            )}
+            {legacy > 0 && (
+              <li>
+                <span className="font-medium text-warning">{legacy}</span> code
+                {legacy === 1 ? '' : 's'} show{legacy === 1 ? 's' : ''} a dash —
+                issued before number display existed, so only a one-way hash is
+                stored. They still clock in fine; rotate them to make the
+                numbers visible (rotation issues NEW numbers — tell the
+                associates).
               </li>
             )}
           </ul>
@@ -252,13 +274,31 @@ function DevicesTab({ canManage }: { canManage: boolean }) {
     refresh();
   }, []);
 
-  const offlineCount = rows ? rows.filter(isDeviceOffline).length : 0;
+  const offline = rows ? rows.filter(isDeviceOffline) : [];
+  // Active devices whose token dies within 14 days — the kiosk stops
+  // accepting punches the moment it lapses, so name them here (the
+  // hourly server job also emails admins at the 14- and 3-day marks).
+  const expiringSoon = rows
+    ? rows.filter((d) => {
+        if (!d.isActive || !d.tokenExpiresAt) return false;
+        const msLeft = new Date(d.tokenExpiresAt).getTime() - Date.now();
+        return msLeft > 0 && msLeft <= 14 * 24 * 60 * 60 * 1000;
+      })
+    : [];
+  // "Front Door (Walmart FB), Break Room (Acme)" — enough to act on
+  // without scanning the table; truncate past three.
+  const nameList = (ds: KioskDevice[]) => {
+    const names = ds.map((d) => d.name);
+    return names.length <= 3
+      ? names.join(', ')
+      : `${names.slice(0, 3).join(', ')} +${names.length - 3} more`;
+  };
 
   return (
     <div className="space-y-4">
       {rows && rows.length > 0 && (
-        <div className="flex gap-3">
-          <div className="flex-1 bg-navy-secondary/40 border border-navy-secondary rounded-lg px-4 py-3">
+        <div className="flex gap-3 flex-wrap">
+          <div className="flex-1 min-w-[180px] bg-navy-secondary/40 border border-navy-secondary rounded-lg px-4 py-3">
             <div className="text-xs uppercase tracking-widest text-silver">Kiosks</div>
             <div className="text-2xl font-medium text-white">
               {rows.filter((d) => d.isActive).length}
@@ -266,8 +306,8 @@ function DevicesTab({ canManage }: { canManage: boolean }) {
             <div className="text-xs text-silver">{rows.length} total</div>
           </div>
           <div
-            className={`flex-1 rounded-lg px-4 py-3 border ${
-              offlineCount > 0
+            className={`flex-1 min-w-[180px] rounded-lg px-4 py-3 border ${
+              offline.length > 0
                 ? 'bg-warning/10 border-warning/40'
                 : 'bg-navy-secondary/40 border-navy-secondary'
             }`}
@@ -277,15 +317,38 @@ function DevicesTab({ canManage }: { canManage: boolean }) {
             </div>
             <div
               className={`text-2xl font-medium ${
-                offlineCount > 0 ? 'text-warning' : 'text-white'
+                offline.length > 0 ? 'text-warning' : 'text-white'
               }`}
             >
-              {offlineCount}
+              {offline.length}
             </div>
             <div className="text-xs text-silver">
-              {offlineCount === 0
+              {offline.length === 0
                 ? 'All active kiosks reported in.'
-                : 'Battery, network, or unpaired — investigate.'}
+                : nameList(offline)}
+            </div>
+          </div>
+          <div
+            className={`flex-1 min-w-[180px] rounded-lg px-4 py-3 border ${
+              expiringSoon.length > 0
+                ? 'bg-warning/10 border-warning/40'
+                : 'bg-navy-secondary/40 border-navy-secondary'
+            }`}
+          >
+            <div className="text-xs uppercase tracking-widest text-silver">
+              Token expiring ≤ 14d
+            </div>
+            <div
+              className={`text-2xl font-medium ${
+                expiringSoon.length > 0 ? 'text-warning' : 'text-white'
+              }`}
+            >
+              {expiringSoon.length}
+            </div>
+            <div className="text-xs text-silver">
+              {expiringSoon.length === 0
+                ? 'No tokens lapsing soon.'
+                : `Rotate: ${nameList(expiringSoon)}`}
             </div>
           </div>
         </div>
