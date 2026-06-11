@@ -33,6 +33,9 @@
     "concurrently": "^8.2.2",
     "rimraf": "^5.0.10"
   },
+  "overrides": {
+    "node-fetch": "^2.7.0"
+  },
   "engines": {
     "node": ">=20"
   }
