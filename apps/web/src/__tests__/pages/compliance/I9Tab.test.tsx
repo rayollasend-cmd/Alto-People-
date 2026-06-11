@@ -66,6 +66,7 @@ describe('<I9Tab> Section 2 verifier card', () => {
           status: 'UPLOADED',
           side: 'FRONT',
           createdAt: '2026-04-25T18:01:00.000Z',
+          fileAvailable: true,
         },
         {
           id: DOC_BACK,
@@ -76,6 +77,7 @@ describe('<I9Tab> Section 2 verifier card', () => {
           status: 'UPLOADED',
           side: 'BACK',
           createdAt: '2026-04-25T18:02:00.000Z',
+          fileAvailable: true,
         },
       ],
     });
@@ -118,6 +120,7 @@ describe('<I9Tab> Section 2 verifier card', () => {
           status: 'UPLOADED',
           side: 'FRONT',
           createdAt: '2026-04-25T18:01:00.000Z',
+          fileAvailable: true,
         },
       ],
     });
@@ -145,6 +148,7 @@ describe('<I9Tab> Section 2 verifier card', () => {
           status: 'UPLOADED',
           side: 'FRONT',
           createdAt: '2026-04-25T18:01:00.000Z',
+          fileAvailable: true,
         },
         {
           id: DOC_BACK,
@@ -155,6 +159,7 @@ describe('<I9Tab> Section 2 verifier card', () => {
           status: 'UPLOADED',
           side: null,
           createdAt: '2026-04-25T18:02:00.000Z',
+          fileAvailable: true,
         },
       ],
     });
@@ -172,6 +177,39 @@ describe('<I9Tab> Section 2 verifier card', () => {
 
     await user.click(screen.getByLabelText(/ssn_card/i));
     expect(screen.getByRole('button', { name: /verify section 2 \(2 docs\)/i })).toBeEnabled();
+  });
+
+  it('a doc whose file is missing on the server cannot be picked', async () => {
+    vi.mocked(listI9s).mockResolvedValue({ i9s: [pendingRow()] });
+    vi.mocked(listI9Documents).mockResolvedValue({
+      documents: [
+        {
+          id: DOC_FRONT,
+          kind: 'ID',
+          filename: 'id-front.jpg',
+          mimeType: 'image/jpeg',
+          size: 100_000,
+          status: 'UPLOADED',
+          side: 'FRONT',
+          createdAt: '2026-04-25T18:01:00.000Z',
+          // Blob lost server-side (e.g. ephemeral disk wiped) — the tile
+          // must be disabled so HR can't "inspect" a document that
+          // doesn't exist.
+          fileAvailable: false,
+        },
+      ],
+    });
+
+    const user = userEvent.setup();
+    render(<I9Tab canManage={true} />);
+
+    await openRowDrawer(user);
+    const tile = await screen.findByLabelText(/id front/i);
+    expect(tile).toBeDisabled();
+    await user.click(tile);
+    expect(
+      screen.getByRole('button', { name: /verify section 2 \(0 docs\)/i }),
+    ).toBeDisabled();
   });
 
   it('shows the legacy edit form (not the verifier card) when section2 already complete', async () => {
