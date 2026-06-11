@@ -90,6 +90,19 @@ describe('POST /kiosk/verify-pin', () => {
       .send({ deviceToken, pin, latitude: null, longitude: null });
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
+    // Fresh associate, no open entry → the punch would clock them in.
+    expect(res.body.associateFirstName).toBe('Test');
+    expect(res.body.predictedAction).toBe('CLOCK_IN');
+  });
+
+  it('rejects a break toggle at the keypad when the associate is not clocked in', async () => {
+    const { deviceToken, pin } = await setupKiosk();
+
+    const res = await request(app())
+      .post('/kiosk/verify-pin')
+      .send({ deviceToken, pin, latitude: null, longitude: null, intent: 'BREAK' });
+    expect(res.status).toBe(409);
+    expect(res.body.error?.code).toBe('not_clocked_in');
   });
 
   // The throttle itself is exercised at the lib level (below) rather than
@@ -163,5 +176,40 @@ describe('POST /kiosk/punch — advisory geofence', () => {
     expect(punch.anomalyKind).toBeNull();
     expect(punch.distanceMeters).not.toBeNull();
     expect(Number(punch.distanceMeters)).toBeLessThanOrEqual(FENCE.radius);
+  });
+});
+
+describe('POST /kiosk/punch — inferred break-end', () => {
+  it('a toggle-less punch during an open break ends the break instead of clocking out', async () => {
+    const { deviceToken, pin } = await setupKiosk();
+    const punchOnce = (intent: 'BREAK' | null) => {
+      // The 1s/device throttle is real on this device; tests punch
+      // back-to-back, so clear it between punches.
+      _resetKioskRateLimit();
+      return request(app()).post('/kiosk/punch').send({ deviceToken, pin, intent });
+    };
+
+    const clockIn = await punchOnce(null);
+    expect(clockIn.body.action).toBe('CLOCK_IN');
+
+    const breakStart = await punchOnce('BREAK');
+    expect(breakStart.body.action).toBe('BREAK_START');
+
+    // Preflight now predicts the inferred break-end, so the camera
+    // screen says "Ending your break" before the punch happens.
+    _resetKioskRateLimit();
+    const preflight = await request(app())
+      .post('/kiosk/verify-pin')
+      .send({ deviceToken, pin, latitude: null, longitude: null });
+    expect(preflight.body.predictedAction).toBe('BREAK_END');
+
+    // The forgotten-toggle punch: used to silently CLOCK_OUT (rest of
+    // the shift unpaid); now reads as "I'm back from break".
+    const back = await punchOnce(null);
+    expect(back.body.action).toBe('BREAK_END');
+
+    // The entry is still ACTIVE and a further punch clocks out normally.
+    const out = await punchOnce(null);
+    expect(out.body.action).toBe('CLOCK_OUT');
   });
 });

@@ -1,5 +1,12 @@
 import { apiFetch } from './api';
 
+// Kiosk-specific request budget. apiFetch's default 90s ceiling exists for
+// admin pages that can afford to wait out a cold backend; a kiosk has a
+// line of associates behind it. Past ~8s we'd rather fail fast and let
+// the offline punch queue take over (idempotencyKey makes the eventual
+// replay safe) than freeze the keypad.
+const KIOSK_TIMEOUT_MS = 8_000;
+
 // ----- Admin ------------------------------------------------------------
 
 export interface KioskDevice {
@@ -128,20 +135,27 @@ export const kioskAttachFace = (payload: {
 
 /** Preflight PIN check. The tablet calls this right after the 4th
  *  digit is entered, BEFORE opening the camera. Throws on invalid
- *  device / token expiry / wrong PIN / outside-geofence so the kiosk
- *  doesn't waste the user's time (and doesn't show them themselves
- *  on camera) for a made-up code. Returns the associate's first name
- *  on success so the camera screen can greet them. */
+ *  device / token expiry / wrong PIN / break-without-clock-in so the
+ *  kiosk doesn't waste the user's time (and doesn't show them
+ *  themselves on camera) for a punch that can't succeed. Returns the
+ *  associate's first name and the action the punch is predicted to
+ *  take, so the camera screen can say "Clocking you in, Maria". */
 export const kioskVerifyPin = (payload: {
   deviceToken: string;
   pin: string;
   latitude: number | null;
   longitude: number | null;
+  intent?: 'BREAK' | null;
 }) =>
-  apiFetch<{ ok: true; associateFirstName: string }>(
-    '/kiosk/verify-pin',
-    { method: 'POST', body: payload },
-  );
+  apiFetch<{
+    ok: true;
+    associateFirstName: string;
+    predictedAction: 'CLOCK_IN' | 'CLOCK_OUT' | 'BREAK_START' | 'BREAK_END';
+  }>('/kiosk/verify-pin', {
+    method: 'POST',
+    body: payload,
+    timeoutMs: KIOSK_TIMEOUT_MS,
+  });
 
 export const revokeKioskDevice = (id: string) =>
   apiFetch<{ ok: true }>(`/kiosk-devices/${id}/revoke`, {
@@ -321,8 +335,14 @@ export const resetKioskFaceReference = (associateId: string) =>
 
 // ----- Public kiosk endpoint ---------------------------------------------
 
+export type KioskPunchAction =
+  | 'CLOCK_IN'
+  | 'CLOCK_OUT'
+  | 'BREAK_START'
+  | 'BREAK_END';
+
 export interface KioskPunchResult {
-  action: 'CLOCK_IN' | 'CLOCK_OUT' | 'BREAK_START' | 'BREAK_END';
+  action: KioskPunchAction;
   associateName: string;
   at: string;
   punchId: string;
@@ -342,6 +362,7 @@ export const kioskPunch = (input: {
   apiFetch<KioskPunchResult>('/kiosk/punch', {
     method: 'POST',
     body: input,
+    timeoutMs: KIOSK_TIMEOUT_MS,
     // The public kiosk endpoint doesn't need cookies and we don't want
     // to send any session that might be lurking on the kiosk's browser.
     // apiFetch's `credentials: 'include'` default is fine here — the
