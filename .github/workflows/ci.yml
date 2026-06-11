@@ -1,0 +1,79 @@
+# CI — every PR and every push to main builds all three packages and runs
+# both test suites. Railway auto-deploys main, so this check is the only
+# thing standing between a broken commit and the production workforce.
+#
+# The API suite runs against a THROWAWAY postgres service container using
+# the same alto/alto_dev/alto_people + schema=alto_test convention as
+# local dev (docker compose / native install). globalSetup applies all
+# migrations, takes its advisory lock (a no-op here — the container is
+# exclusive), and truncates between tests exactly as it does locally.
+# apps/api/.env.test is gitignored; CI supplies the same fixed test
+# secrets through job env instead (dotenv quietly no-ops on the missing
+# file and the process env wins).
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-web-tests:
+    name: Build + web tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # Builds shared → web → api (the api build runs prisma generate).
+      - run: npm run build
+      - run: npm -w apps/web run test
+
+  api-tests:
+    name: API tests (postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: alto
+          POSTGRES_PASSWORD: alto_dev
+          POSTGRES_DB: alto_people
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U alto -d alto_people"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://alto:alto_dev@localhost:5432/alto_people?schema=alto_test
+      DIRECT_URL: postgresql://alto:alto_dev@localhost:5432/alto_people?schema=alto_test
+      # Fixed test secrets — same values as .env.test.example; never used
+      # outside tests.
+      JWT_SECRET: test-jwt-secret-do-not-use-outside-tests-padding-pad-pad
+      JWT_TTL_SECONDS: '3600'
+      PAYOUT_ENCRYPTION_KEY: AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=
+      APP_BASE_URL: http://localhost:5173
+      # Explicit blanks keep the email layer in stub mode.
+      RESEND_API_KEY: ''
+      RESEND_FROM: ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm -w @alto-people/shared run build
+      - run: npm -w apps/api exec prisma generate
+      - run: npm -w apps/api run test
