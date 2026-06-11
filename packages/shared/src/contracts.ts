@@ -970,6 +970,24 @@ export const TimeEntrySchema = z.object({
    *  lets the clock widget survive a page refresh mid-break instead of
    *  guessing from client-local state. */
   onBreak: z.boolean().optional(),
+  /** Worked minutes NET of breaks — the figure payroll, OT detection, and
+   *  sick accrual actually use. minutesElapsed stays gross
+   *  (clock-in → clock-out); showing only gross made approvals disagree
+   *  with what payroll pays. */
+  netMinutes: z.number().int().nonnegative().optional(),
+  /** Break rows, so reviewers can SEE why net ≠ gross (and spot a bogus
+   *  3-hour "meal" before approving it). */
+  breaks: z
+    .array(
+      z.object({
+        id: UuidSchema,
+        type: z.string(),
+        startedAt: z.string().datetime(),
+        endedAt: z.string().datetime().nullable(),
+        minutes: z.number().int().nonnegative(),
+      }),
+    )
+    .optional(),
 });
 export type TimeEntry = z.infer<typeof TimeEntrySchema>;
 

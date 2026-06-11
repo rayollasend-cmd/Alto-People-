@@ -94,6 +94,15 @@ export function tryGetGeolocation(timeoutMs = 5_000): Promise<{ lat: number; lng
   });
 }
 
+/** Cheap server-side COUNT for KPI badges — the list endpoint caps at 500
+ *  rows, so counting its length both over-fetched and under-counted. */
+export function countAdminTimeEntries(
+  status?: TimeEntryStatus,
+): Promise<{ count: number }> {
+  const qs = status ? `?status=${status}` : '';
+  return apiFetch<{ count: number }>(`/time/admin/entries/count${qs}`);
+}
+
 export function listAdminTimeEntries(filters: {
   status?: TimeEntryStatus;
   associateId?: string;

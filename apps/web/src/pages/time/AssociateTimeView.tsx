@@ -438,7 +438,12 @@ export function AssociateTimeView() {
                         : '…'}
                     </div>
                     <div className="text-sm text-silver">
-                      {formatHM(e.minutesElapsed)}
+                      {formatHM(e.netMinutes ?? e.minutesElapsed)}
+                      {e.netMinutes != null && e.netMinutes < e.minutesElapsed && (
+                        <span className="ml-1 text-silver/70">
+                          ({formatHM(e.minutesElapsed - e.netMinutes)} break)
+                        </span>
+                      )}
                       {e.jobName && <span className="ml-2">· {e.jobName}</span>}
                       {e.payRate && (
                         <span className="ml-2">· ${e.payRate.toFixed(2)}/hr</span>

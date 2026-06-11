@@ -121,6 +121,82 @@ describe('time approval ↔ sick-leave accrual lifecycle', () => {
   });
 });
 
+describe('net-of-breaks visibility + provisional summary warning', () => {
+  it('serializes netMinutes and the break list (gross 480 − 60 break = 420 net)', async () => {
+    const { entry } = await setupCompletedShift();
+    const cookie = await adminCookie();
+    // One 60-minute meal break inside the 8h shift.
+    const breakStart = new Date(entry.clockInAt.getTime() + 3 * HOUR);
+    await prisma.breakEntry.create({
+      data: {
+        timeEntryId: entry.id,
+        type: 'MEAL',
+        startedAt: breakStart,
+        endedAt: new Date(breakStart.getTime() + HOUR),
+      },
+    });
+
+    const res = await request(app())
+      .get('/time/admin/entries')
+      .set('Cookie', [cookie]);
+    const row = (res.body.entries as Array<{
+      id: string;
+      minutesElapsed: number;
+      netMinutes: number;
+      breaks: Array<{ type: string; minutes: number }>;
+    }>).find((e) => e.id === entry.id);
+    expect(row).toBeDefined();
+    expect(row!.minutesElapsed).toBe(480);
+    expect(row!.netMinutes).toBe(420);
+    expect(row!.breaks).toHaveLength(1);
+    expect(row!.breaks[0]).toMatchObject({ type: 'MEAL', minutes: 60 });
+  });
+
+  it('summary export warns when entries in range are still pending review', async () => {
+    const { associate, entry } = await setupCompletedShift();
+    const cookie = await adminCookie();
+    // Approve the first shift; leave a second one COMPLETED (pending).
+    await request(app())
+      .post(`/time/admin/entries/${entry.id}/approve`)
+      .set('Cookie', [cookie])
+      .send({});
+    await prisma.timeEntry.create({
+      data: {
+        associateId: associate.id,
+        clientId: entry.clientId,
+        clockInAt: new Date(Date.now() - 30 * HOUR),
+        clockOutAt: new Date(Date.now() - 25 * HOUR),
+        status: 'COMPLETED',
+        anomalies: [],
+      },
+    });
+
+    const res = await request(app())
+      .post('/time/admin/export-summary.csv')
+      .set('Cookie', [cookie])
+      .send({
+        from: new Date(Date.now() - 60 * HOUR).toISOString(),
+        to: new Date().toISOString(),
+      });
+    expect(res.status).toBe(200);
+    expect(res.headers['x-pending']).toBe('1');
+    expect(res.text).toContain('PROVISIONAL');
+    expect(res.text).toContain('Current rate');
+  });
+
+  it('count endpoint returns the cheap KPI count', async () => {
+    const { entry } = await setupCompletedShift();
+    const cookie = await adminCookie();
+    const res = await request(app())
+      .get('/time/admin/entries/count')
+      .query({ status: 'COMPLETED' })
+      .set('Cookie', [cookie]);
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(1);
+    expect(entry.status).toBe('COMPLETED');
+  });
+});
+
 describe('GET /time/admin/entries — search', () => {
   it('matches a full "First Last" search (used to return nothing)', async () => {
     const { entry } = await setupCompletedShift();
