@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   Check,
   Copy,
+  Download,
   Eye,
   EyeOff,
   Key,
@@ -2058,6 +2059,92 @@ function LogTab() {
       .finally(() => setLoadingMore(false));
   };
 
+  // CSV export of the CURRENT filters — walks the cursor server-side so it
+  // covers all matching history, not just the rows loaded on screen. The
+  // payroll-dispute artifact: filter to an associate + date range, export,
+  // attach. Capped at 10k rows so a runaway all-history export can't hang
+  // the tab; the toast says when the cap was hit.
+  const [exporting, setExporting] = useState(false);
+  const EXPORT_CAP = 10_000;
+  const exportCsv = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const all: KioskPunchSummary[] = [];
+      let cursor: string | undefined;
+      do {
+        const r = await listKioskPunches(queryParams(cursor));
+        all.push(...r.punches);
+        cursor = r.nextCursor ?? undefined;
+      } while (cursor && all.length < EXPORT_CAP);
+
+      const esc = (v: unknown) => {
+        const s = v == null ? '' : String(v);
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const header = [
+        'When (ISO)',
+        'Device',
+        'Associate',
+        'Action',
+        'Distance (m)',
+        'Face distance',
+        'Face mismatch',
+        'Anomaly',
+        'Anomaly detail',
+        'Review status',
+        'Review notes',
+        'Reject reason',
+        'Punch ID',
+      ];
+      const lines = [header.join(',')];
+      for (const p of all) {
+        lines.push(
+          [
+            p.createdAt,
+            p.deviceName,
+            p.associateName ?? '',
+            p.action,
+            p.distanceMeters ?? '',
+            p.faceDistance ?? '',
+            p.faceMismatch ?? '',
+            p.anomalyKind ?? '',
+            p.anomalyDetail ?? '',
+            p.reviewStatus ?? '',
+            p.reviewNotes ?? '',
+            p.rejectReason ?? '',
+            p.id,
+          ]
+            .map(esc)
+            .join(','),
+        );
+      }
+      // BOM so Excel detects UTF-8 (associate names with accents).
+      const blob = new Blob(['﻿' + lines.join('\r\n')], {
+        type: 'text/csv;charset=utf-8',
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `kiosk-punches-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success(
+        `Exported ${all.length} punch${all.length === 1 ? '' : 'es'}${
+          cursor
+            ? ` (capped at ${EXPORT_CAP.toLocaleString()} — narrow the date range for the rest)`
+            : ''
+        }.`,
+      );
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Export failed.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const hasFilters =
     !!associate ||
     !!deviceId ||
@@ -2132,6 +2219,16 @@ function LogTab() {
             Clear
           </button>
         )}
+        <button
+          type="button"
+          onClick={() => void exportCsv()}
+          disabled={exporting || rows === null || rows.length === 0}
+          className="h-9 rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-silver hover:text-white transition-colors disabled:opacity-50"
+          title="Download everything matching the current filters as CSV"
+        >
+          <Download className="mr-1 inline h-3.5 w-3.5" />
+          {exporting ? 'Exporting…' : 'Export CSV'}
+        </button>
         <div className="ml-auto text-xs text-silver">
           {rows ? `${rows.length} loaded${nextCursor ? '+' : ''}` : ''}
         </div>
