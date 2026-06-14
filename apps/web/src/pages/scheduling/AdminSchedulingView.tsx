@@ -1059,6 +1059,17 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               {' – '}
               {new Date(weekEnd.getTime() - 1).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
             </span>
+            {/* Jump to any week: pick a date, snap to that week's Monday. */}
+            <input
+              type="date"
+              aria-label="Jump to the week containing this date"
+              title="Jump to a specific week"
+              value={ymd(weekStart)}
+              onChange={(e) => {
+                if (e.target.value) setWeekStart(startOfWeekMonday(fromYmd(e.target.value)));
+              }}
+              className="h-7 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs text-white [color-scheme:dark] focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+            />
             {canManage && (
               <Button
                 variant="ghost"
@@ -1144,6 +1155,17 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             <span className="text-sm text-silver tabular-nums ml-2">
               {dayAnchor.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' })}
             </span>
+            {/* Jump to any day. */}
+            <input
+              type="date"
+              aria-label="Jump to a specific day"
+              title="Jump to a specific day"
+              value={ymd(dayAnchor)}
+              onChange={(e) => {
+                if (e.target.value) setDayAnchor(fromYmd(e.target.value));
+              }}
+              className="h-7 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs text-white [color-scheme:dark] focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+            />
           </div>
         )}
 
@@ -1190,6 +1212,18 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             <span className="text-sm text-silver tabular-nums ml-2">
               {monthAnchor.toLocaleDateString([], { month: 'long', year: 'numeric' })}
             </span>
+            {/* Jump to any month. */}
+            <input
+              type="month"
+              aria-label="Jump to a specific month"
+              title="Jump to a specific month"
+              value={`${monthAnchor.getFullYear()}-${String(monthAnchor.getMonth() + 1).padStart(2, '0')}`}
+              onChange={(e) => {
+                const [y, m] = e.target.value.split('-').map(Number);
+                if (y && m) setMonthAnchor(new Date(y, m - 1, 1));
+              }}
+              className="h-7 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs text-white [color-scheme:dark] focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+            />
           </div>
         )}
 
