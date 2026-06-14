@@ -106,6 +106,11 @@ export function updateShift(id: string, body: ShiftUpdateInput): Promise<Shift> 
   return apiFetch<Shift>(`/scheduling/shifts/${id}`, { method: 'PATCH', body });
 }
 
+/** Hard-delete a shift (vs. cancelShift, which keeps a CANCELLED record). */
+export function deleteShift(id: string): Promise<void> {
+  return apiFetch<void>(`/scheduling/shifts/${id}`, { method: 'DELETE' });
+}
+
 export function assignShift(id: string, body: ShiftAssignInput): Promise<Shift> {
   return apiFetch<Shift>(`/scheduling/shifts/${id}/assign`, { method: 'POST', body });
 }

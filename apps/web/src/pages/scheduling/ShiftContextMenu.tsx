@@ -4,9 +4,13 @@ import {
   Copy as CopyIcon,
   Edit3,
   Trash2,
+  Trash,
   UserMinus,
   UserPlus,
+  UsersRound,
   CalendarPlus,
+  Send,
+  FileText,
 } from 'lucide-react';
 import type { Shift } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
@@ -121,6 +125,15 @@ export function ShiftContextMenu({ active, onClose, canManage, actions }: Props)
     });
     items.push({
       kind: 'item',
+      label: 'Duplicate to employee…',
+      icon: UsersRound,
+      onClick: () => {
+        actions.onDuplicateToEmployee(active.shift);
+        onClose();
+      },
+    });
+    items.push({
+      kind: 'item',
       label: 'Copy to next week',
       icon: CalendarPlus,
       onClick: async () => {
@@ -137,6 +150,32 @@ export function ShiftContextMenu({ active, onClose, canManage, actions }: Props)
         onClose();
       },
     });
+    // Publish / un-publish a single shift. DRAFT → publish; published →
+    // move back to draft. Not shown on COMPLETED/CANCELLED (terminal).
+    if (active.shift.status === 'DRAFT') {
+      items.push({
+        kind: 'item',
+        label: 'Publish shift',
+        icon: Send,
+        onClick: async () => {
+          await actions.onPublish(active.shift);
+          onClose();
+        },
+      });
+    } else if (
+      active.shift.status === 'OPEN' ||
+      active.shift.status === 'ASSIGNED'
+    ) {
+      items.push({
+        kind: 'item',
+        label: 'Move to draft',
+        icon: FileText,
+        onClick: async () => {
+          await actions.onUnpublish(active.shift);
+          onClose();
+        },
+      });
+    }
     items.push({ kind: 'sep' });
     if (active.shift.status !== 'CANCELLED' && active.shift.status !== 'COMPLETED') {
       items.push({
@@ -150,6 +189,16 @@ export function ShiftContextMenu({ active, onClose, canManage, actions }: Props)
         },
       });
     }
+    items.push({
+      kind: 'item',
+      label: 'Delete shift',
+      icon: Trash,
+      danger: true,
+      onClick: async () => {
+        await actions.onDelete(active.shift);
+        onClose();
+      },
+    });
   } else {
     items.push({
       kind: 'item',

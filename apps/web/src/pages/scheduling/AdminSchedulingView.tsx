@@ -53,6 +53,7 @@ import {
   managerApproveSwap,
   managerRejectSwap,
   autoScheduleWeek,
+  deleteShift,
   publishWeek,
   unassignShift,
   updateShift,
@@ -399,6 +400,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // Dialog state — replaces window.prompt + window.confirm.
   const [assignTarget, setAssignTarget] = useState<Shift | null>(null);
   const [cancelTarget, setCancelTarget] = useState<Shift | null>(null);
+  // Source shift for the "Duplicate to employee…" picker (null = closed).
+  const [duplicateSource, setDuplicateSource] = useState<Shift | null>(null);
   const [autoFillForShift, setAutoFillForShift] = useState<{
     shiftId: string;
     candidates: AutoFillCandidate[];
@@ -916,6 +919,59 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     }
   };
 
+  // Publish a single DRAFT shift (assigned → ASSIGNED, else OPEN). Surfaces
+  // the fair-workweek "needs a reason" error so HR knows to use Edit.
+  const onPublishShift = async (s: Shift) => {
+    try {
+      await updateShift(s.id, {
+        status: s.assignedAssociateId ? 'ASSIGNED' : 'OPEN',
+      });
+      toast.success('Shift published.');
+      await refresh();
+    } catch (err) {
+      const msg =
+        err instanceof ApiError && err.code === 'late_notice_reason_required'
+          ? 'Inside the 14-day notice window — open Edit and add a late-notice reason to publish.'
+          : err instanceof ApiError
+            ? err.message
+            : 'Publish failed.';
+      toast.error(msg);
+    }
+  };
+
+  // Un-publish back to a private DRAFT.
+  const onUnpublishShift = async (s: Shift) => {
+    try {
+      await updateShift(s.id, { status: 'DRAFT' });
+      toast.success('Moved to draft.');
+      await refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not un-publish.');
+    }
+  };
+
+  // Hard-delete (vs. cancel). Drafts delete with a light confirm; a
+  // published/assigned shift gets a sterner one since people may have seen it.
+  const onDeleteShift = async (s: Shift) => {
+    const published = s.status !== 'DRAFT';
+    const ok = await confirm({
+      title: published ? 'Delete this shift?' : 'Delete this draft?',
+      description: published
+        ? `Permanently delete ${s.position} on ${fmtDateTime(s.startsAt)}? This can't be undone${s.assignedAssociateId ? ' and removes it from the employee’s schedule' : ''}.`
+        : `Permanently delete this draft (${s.position} on ${fmtDateTime(s.startsAt)})?`,
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await deleteShift(s.id);
+      toast.success('Shift deleted.');
+      await refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Delete failed.');
+    }
+  };
+
   const quickActions = useMemo(
     () => ({
       onEdit: (s: Shift) => setAssignTarget(s),
@@ -923,6 +979,10 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       onUnassign,
       onCancel: onQuickCancel,
       onDuplicate: onQuickDuplicate,
+      onDuplicateToEmployee: (s: Shift) => setDuplicateSource(s),
+      onPublish: onPublishShift,
+      onUnpublish: onUnpublishShift,
+      onDelete: onDeleteShift,
     }),
     // refresh is the only thing onUnassign / onQuickCancel / onQuickDuplicate
     // close over indirectly — including it here would over-trigger re-renders.
@@ -1726,6 +1786,18 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         }}
       />
 
+      {/* Copy a shift onto another employee (as a draft) */}
+      {duplicateSource && (
+        <DuplicateToEmployeeDialog
+          source={duplicateSource}
+          onClose={() => setDuplicateSource(null)}
+          onDone={() => {
+            setDuplicateSource(null);
+            refresh();
+          }}
+        />
+      )}
+
       {/* Auto-fill candidates dialog */}
       <AutoFillDialog
         target={autoFillForShift}
@@ -2449,6 +2521,138 @@ function AdminSwapsPanel() {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/* ===== Duplicate-to-employee dialog ====================================== */
+
+function DuplicateToEmployeeDialog({
+  source,
+  onClose,
+  onDone,
+}: {
+  source: Shift;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [associates, setAssociates] = useState<AssociateLite[] | null>(null);
+  const [search, setSearch] = useState('');
+  const [pickedId, setPickedId] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Scope the picker to the source shift's client.
+  useEffect(() => {
+    let cancelled = false;
+    setAssociates(null);
+    listSchedulingAssociates({ clientId: source.clientId })
+      .then((r) => {
+        if (!cancelled) setAssociates(r.associates);
+      })
+      .catch(() => {
+        if (!cancelled) setAssociates([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [source.clientId]);
+
+  const filtered = (associates ?? []).filter((a) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return `${a.firstName} ${a.lastName} ${a.email}`.toLowerCase().includes(q);
+  });
+
+  const submit = async () => {
+    if (!pickedId || submitting) return;
+    setSubmitting(true);
+    try {
+      // Copy the shift definition onto the chosen employee as a DRAFT, so
+      // it's reviewable before publishing (and won't surprise-notify). The
+      // bulk endpoint skips the employee if they're already booked then.
+      const res = await bulkCreateShifts({
+        clientId: source.clientId,
+        ...(source.locationId ? { locationId: source.locationId } : {}),
+        position: source.position,
+        startsAt: source.startsAt,
+        endsAt: source.endsAt,
+        ...(source.location ? { location: source.location } : {}),
+        ...(source.hourlyRate != null ? { hourlyRate: source.hourlyRate } : {}),
+        ...(source.payRate != null ? { payRate: source.payRate } : {}),
+        ...(source.notes ? { notes: source.notes } : {}),
+        status: 'DRAFT',
+        associateIds: [pickedId],
+      });
+      if (res.created === 0) {
+        toast.error('That employee is already scheduled then.');
+      } else {
+        toast.success('Copied to employee as a draft.');
+        onDone();
+        return;
+      }
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Copy failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Copy shift to an employee</DialogTitle>
+          <DialogDescription>
+            {source.position} ·{' '}
+            {fmtDateTime(source.startsAt)} — creates a draft copy on the
+            employee you pick.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2">
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search employees…"
+            className="h-9 text-sm"
+            aria-label="Search employees"
+          />
+          <div className="max-h-64 overflow-y-auto rounded border border-navy-secondary/60 divide-y divide-navy-secondary/40">
+            {associates === null ? (
+              <div className="p-3 text-xs text-silver/70">Loading…</div>
+            ) : filtered.length === 0 ? (
+              <div className="p-3 text-xs text-silver/70">
+                No employees for this client.
+              </div>
+            ) : (
+              filtered.map((a) => (
+                <label
+                  key={a.id}
+                  className="flex items-center gap-2 px-2 py-2 text-xs text-silver hover:bg-navy-secondary/40 cursor-pointer"
+                >
+                  <input
+                    type="radio"
+                    name="dup-employee"
+                    className="accent-gold"
+                    checked={pickedId === a.id}
+                    onChange={() => setPickedId(a.id)}
+                  />
+                  <span className="truncate">
+                    {a.firstName} {a.lastName}
+                  </span>
+                </label>
+              ))
+            )}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={!pickedId} loading={submitting}>
+            Copy as draft
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

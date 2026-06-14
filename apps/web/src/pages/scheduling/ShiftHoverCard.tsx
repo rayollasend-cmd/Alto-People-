@@ -25,6 +25,14 @@ export interface QuickActions {
   onUnassign: (s: Shift) => Promise<void> | void;
   onCancel: (s: Shift) => Promise<void> | void;
   onDuplicate: (s: Shift) => Promise<void> | void;
+  /** Copy this shift onto a different employee (opens a picker). */
+  onDuplicateToEmployee: (s: Shift) => void;
+  /** Publish a single DRAFT shift (DRAFT → OPEN/ASSIGNED). */
+  onPublish: (s: Shift) => Promise<void> | void;
+  /** Un-publish back to a private DRAFT (OPEN/ASSIGNED → DRAFT). */
+  onUnpublish: (s: Shift) => Promise<void> | void;
+  /** Hard-delete the shift (vs. cancel). */
+  onDelete: (s: Shift) => Promise<void> | void;
 }
 
 interface Props {
@@ -35,7 +43,13 @@ interface Props {
   onPointerEnterCard: () => void;
   onPointerLeaveCard: () => void;
   canManage: boolean;
-  actions: QuickActions;
+  // The hover card surfaces the common quick actions; the fuller set
+  // (publish/un-publish, duplicate-to-employee, hard delete) lives in the
+  // right-click context menu, which receives the complete QuickActions.
+  actions: Pick<
+    QuickActions,
+    'onEdit' | 'onAssign' | 'onUnassign' | 'onCancel' | 'onDuplicate'
+  >;
 }
 
 function fmtTimeRange(s: Shift): string {
