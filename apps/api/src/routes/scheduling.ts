@@ -103,6 +103,32 @@ function scheduledMinutes(row: { startsAt: Date; endsAt: Date }): number {
   return Math.max(0, Math.floor((row.endsAt.getTime() - row.startsAt.getTime()) / 60_000));
 }
 
+/**
+ * True if `associateId` already has a non-cancelled shift overlapping
+ * [startsAt, endsAt), excluding `excludeShiftId`. The double-booking guard
+ * for /assign and swap approval — run inside the caller's transaction so
+ * the check + write are atomic against a concurrent assignment.
+ */
+async function associateHasOverlap(
+  tx: Prisma.TransactionClient,
+  associateId: string,
+  startsAt: Date,
+  endsAt: Date,
+  excludeShiftId: string,
+): Promise<boolean> {
+  const clash = await tx.shift.findFirst({
+    where: {
+      id: { not: excludeShiftId },
+      assignedAssociateId: associateId,
+      status: { notIn: ['CANCELLED'] },
+      startsAt: { lt: endsAt },
+      endsAt: { gt: startsAt },
+    },
+    select: { id: true },
+  });
+  return clash !== null;
+}
+
 function toShift(row: RawShift): Shift {
   return {
     id: row.id,
@@ -699,6 +725,28 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
       }
       data.publishedAt = now;
       data.lateNoticeReason = i.lateNoticeReason ?? null;
+    } else if (
+      i.startsAt !== undefined &&
+      i.status === undefined &&
+      existing.publishedAt &&
+      existing.status !== 'DRAFT'
+    ) {
+      // Already-published shift whose START is being moved (no status
+      // change). Pulling it earlier could drag it inside the 14-day notice
+      // window — re-evaluate so this path can't bypass fair-workweek.
+      const evaluation = evaluateShiftNotice({
+        state: existing.client.state,
+        startsAt: new Date(i.startsAt),
+        publishAt: new Date(),
+      });
+      if (evaluation.requiresReason && !i.lateNoticeReason) {
+        throw new HttpError(
+          400,
+          'late_notice_reason_required',
+          `Moving a published shift inside the 14-day notice window in ${evaluation.state} requires lateNoticeReason`,
+        );
+      }
+      if (i.lateNoticeReason) data.lateNoticeReason = i.lateNoticeReason;
     }
 
     // Un-publish: moving a published shift back to DRAFT makes it private
@@ -818,14 +866,33 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
     });
     if (!associate) throw new HttpError(404, 'associate_not_found', 'Associate not found');
 
-    const updated = await prisma.shift.update({
-      where: { id: shift.id },
-      data: {
-        assignedAssociateId: associate.id,
-        assignedAt: new Date(),
-        status: 'ASSIGNED',
-      },
-      include: SHIFT_INCLUDE,
+    // Conflict check + write in one transaction so two managers can't
+    // assign the same associate to overlapping shifts at the same instant.
+    const updated = await prisma.$transaction(async (tx) => {
+      if (
+        await associateHasOverlap(
+          tx,
+          associate.id,
+          shift.startsAt,
+          shift.endsAt,
+          shift.id,
+        )
+      ) {
+        throw new HttpError(
+          409,
+          'associate_double_booked',
+          `${associate.firstName} ${associate.lastName} already has an overlapping shift.`,
+        );
+      }
+      return tx.shift.update({
+        where: { id: shift.id },
+        data: {
+          assignedAssociateId: associate.id,
+          assignedAt: new Date(),
+          status: 'ASSIGNED',
+        },
+        include: SHIFT_INCLUDE,
+      });
     });
 
     await recordShiftEvent({
@@ -1462,9 +1529,17 @@ schedulingRouter.post('/swap-requests/:id/peer-accept', async (req, res, next) =
     if (swap.status !== 'PENDING_PEER') {
       throw new HttpError(409, 'invalid_state', `Swap is in ${swap.status}, cannot accept`);
     }
-    const updated = await prisma.shiftSwapRequest.update({
-      where: { id: swap.id },
+    // Atomic compare-and-set so a double-tap can't accept twice (which would
+    // fire the HR-approval notification twice and race the manager flow).
+    const cas = await prisma.shiftSwapRequest.updateMany({
+      where: { id: swap.id, status: 'PENDING_PEER' },
       data: { status: 'PEER_ACCEPTED' },
+    });
+    if (cas.count === 0) {
+      throw new HttpError(409, 'invalid_state', 'This swap was already resolved.');
+    }
+    const updated = await prisma.shiftSwapRequest.findUniqueOrThrow({
+      where: { id: swap.id },
       include: SWAP_INCLUDE,
     });
 
@@ -1557,6 +1632,10 @@ schedulingRouter.get('/swap-requests/admin', MANAGE, async (req, res, next) => {
   try {
     const status = req.query.status?.toString();
     const where: Prisma.ShiftSwapRequestWhereInput = {
+      // Scope to swaps for shifts the caller can see (a CLIENT_PORTAL admin
+      // must not read other clients' swap activity). scopeShifts is {} for
+      // full admins, so this is a no-op for them.
+      shift: { is: scopeShifts(req.user!) },
       ...(status ? { status: status as Prisma.ShiftSwapRequestWhereInput['status'] } : {}),
     };
     const rows = await prisma.shiftSwapRequest.findMany({
@@ -1591,20 +1670,41 @@ schedulingRouter.post('/swap-requests/:id/manager-approve', MANAGE, async (req, 
       );
     }
 
-    // Execute the swap atomically: shift assignment flips, status flips.
-    await prisma.$transaction([
-      prisma.shift.update({
+    // Execute the swap atomically: CAS the swap status, verify the
+    // counterparty isn't already booked over this shift's window (they
+    // could have picked up another shift between peer-accept and now), then
+    // flip the assignment. Any throw rolls the whole thing back.
+    await prisma.$transaction(async (tx) => {
+      const cas = await tx.shiftSwapRequest.updateMany({
+        where: { id: swap.id, status: 'PEER_ACCEPTED' },
+        data: { status: 'MANAGER_APPROVED', decidedById: user.id, decidedAt: new Date() },
+      });
+      if (cas.count === 0) {
+        throw new HttpError(409, 'invalid_state', 'This swap was already decided.');
+      }
+      if (
+        await associateHasOverlap(
+          tx,
+          swap.counterpartyAssociateId,
+          swap.shift.startsAt,
+          swap.shift.endsAt,
+          swap.shiftId,
+        )
+      ) {
+        throw new HttpError(
+          409,
+          'counterparty_double_booked',
+          'The counterparty now has another shift overlapping this one — they can’t take it.',
+        );
+      }
+      await tx.shift.update({
         where: { id: swap.shiftId },
         data: {
           assignedAssociateId: swap.counterpartyAssociateId,
           assignedAt: new Date(),
         },
-      }),
-      prisma.shiftSwapRequest.update({
-        where: { id: swap.id },
-        data: { status: 'MANAGER_APPROVED', decidedById: user.id, decidedAt: new Date() },
-      }),
-    ]);
+      });
+    });
 
     await recordShiftEvent({
       actorUserId: user.id,
@@ -2313,14 +2413,25 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
       scored.sort((a, b) => b.score - a.score);
       const winner = scored[0].state;
 
-      await prisma.shift.update({
-        where: { id: shift.id },
+      // Guarded claim: only assign if the shift is STILL open + unassigned.
+      // A concurrent manual assign/cancel between the initial fetch and now
+      // would otherwise be silently overwritten (TOCTOU).
+      const claim = await prisma.shift.updateMany({
+        where: { id: shift.id, status: 'OPEN', assignedAssociateId: null },
         data: {
           status: 'ASSIGNED',
           assignedAssociateId: winner.id,
           assignedAt: new Date(),
         },
       });
+      if (claim.count === 0) {
+        skipped.push({
+          shiftId: shift.id,
+          reason: 'no_eligible_candidate',
+          detail: 'Shift was changed by someone else during auto-schedule; left as-is.',
+        });
+        continue;
+      }
       await recordShiftEvent({
         actorUserId: req.user!.id,
         action: 'shift.updated',
