@@ -54,6 +54,37 @@ function fmtTime(iso: string, timeZone?: string | null): string {
   });
 }
 
+/**
+ * Ultra-compact time for the dense Sling-style bars: "10p", "9:30a". Built
+ * from Intl parts in the shift's timezone (so it respects the store zone).
+ * Minutes are dropped when :00 so "10:00 PM" → "10p".
+ */
+function compactClock(iso: string, timeZone?: string | null): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    ...(timeZone ? { timeZone } : {}),
+  }).formatToParts(new Date(iso));
+  const hour = parts.find((p) => p.type === 'hour')?.value ?? '12';
+  const minute = parts.find((p) => p.type === 'minute')?.value ?? '00';
+  const period = (parts.find((p) => p.type === 'dayPeriod')?.value ?? 'AM')
+    .toLowerCase()
+    .startsWith('p')
+    ? 'p'
+    : 'a';
+  return minute === '00' ? `${hour}${period}` : `${hour}:${minute}${period}`;
+}
+
+/** "10p–7a" — compact range for the dense week bars. */
+function compactRange(
+  startIso: string,
+  endIso: string,
+  timeZone?: string | null,
+): string {
+  return `${compactClock(startIso, timeZone)}–${compactClock(endIso, timeZone)}`;
+}
+
 function startOfDay(d: Date): Date {
   const x = new Date(d);
   x.setHours(0, 0, 0, 0);
@@ -850,20 +881,23 @@ function ShiftChip({
       <button
         type="button"
         onClick={onClick}
-        className="w-full text-left py-1 pl-5 pr-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
+        className="w-full text-left py-1 pl-5 pr-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
         title={`${fmtTime(shift.startsAt, shift.timezone)}–${fmtTime(previewEndsAt.toISOString(), shift.timezone)} · ${shift.position}${shift.clientName ? ` · ${shift.clientName}` : ''}`}
       >
         <div className="flex items-center gap-1.5 min-w-0">
           <span className="text-[10px] text-silver/90 tabular-nums shrink-0">
-            {fmtTime(shift.startsAt, shift.timezone)}–
-            {fmtTime(previewEndsAt.toISOString(), shift.timezone)}
+            {compactRange(
+              shift.startsAt,
+              previewEndsAt.toISOString(),
+              shift.timezone,
+            )}
           </span>
-          <span className="text-[11px] text-white font-medium truncate min-w-0">
+          <span className="flex-1 min-w-0 text-[11px] text-white font-medium truncate">
             {shift.position}
           </span>
           <Badge
             variant={STATUS_VARIANT[shift.status] ?? 'default'}
-            className="text-[9px] px-1 py-0 ml-auto shrink-0"
+            className="text-[9px] px-1 py-0 shrink-0"
             data-status={shift.status}
           >
             {shift.status === 'ASSIGNED'
@@ -877,12 +911,14 @@ function ShiftChip({
       {canManage && (
         <div
           onMouseDown={onResizeMouseDown}
-          className="absolute right-0 top-0 bottom-0 w-1.5 cursor-ew-resize hover:bg-gold/40 group no-print"
+          className="absolute right-0 top-0 bottom-0 w-1.5 flex items-center justify-center cursor-ew-resize hover:bg-gold/40 group no-print"
           aria-label="Drag to resize duration"
           role="slider"
           tabIndex={-1}
         >
-          <div className="my-auto w-0.5 h-8 ml-0.5 mt-2 rounded-full bg-silver/30 group-hover:bg-gold" />
+          {/* Grip line scales to the bar height (h-1/2) so it never
+              overflows the now-thin compact chip. */}
+          <div className="w-0.5 h-1/2 max-h-3 rounded-full bg-silver/30 group-hover:bg-gold" />
         </div>
       )}
     </div>
