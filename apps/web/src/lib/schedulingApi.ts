@@ -5,6 +5,8 @@ import type {
   AutoScheduleWeekResponse,
   AvailabilityListResponse,
   AvailabilityReplaceInput,
+  BulkCreateShiftsInput,
+  BulkCreateShiftsResponse,
   CalendarFeedUrlResponse,
   CopyWeekInput,
   CopyWeekResponse,
@@ -88,6 +90,16 @@ export function getMyCalendarUrl(): Promise<CalendarFeedUrlResponse> {
 
 export function createShift(body: ShiftCreateInput): Promise<Shift> {
   return apiFetch<Shift>('/scheduling/shifts', { method: 'POST', body });
+}
+
+/** Create one shift and assign a copy to each listed employee (+ open slots). */
+export function bulkCreateShifts(
+  body: BulkCreateShiftsInput,
+): Promise<BulkCreateShiftsResponse> {
+  return apiFetch<BulkCreateShiftsResponse>('/scheduling/shifts/bulk', {
+    method: 'POST',
+    body,
+  });
 }
 
 export function updateShift(id: string, body: ShiftUpdateInput): Promise<Shift> {

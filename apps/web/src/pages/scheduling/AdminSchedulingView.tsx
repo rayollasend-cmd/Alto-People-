@@ -36,6 +36,7 @@ import { listClientLocations } from '@/lib/clientsApi';
 import {
   applyShiftTemplate,
   assignShift,
+  bulkCreateShifts,
   cancelShift,
   copyWeek,
   createShift,
@@ -952,6 +953,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         <CreateShiftDialog
           open={showCreate}
           clients={clients}
+          associates={associates}
           initialDate={createInitialDate}
           initialAssociateId={createInitialAssociateId}
           onOpenChange={(o) => {
@@ -2333,6 +2335,7 @@ function AdminSwapsPanel() {
 function CreateShiftDialog({
   open,
   clients,
+  associates,
   initialDate,
   initialAssociateId,
   onOpenChange,
@@ -2340,6 +2343,8 @@ function CreateShiftDialog({
 }: {
   open: boolean;
   clients: ClientSummary[];
+  /** Schedulable employees, for the multi-assign picker. */
+  associates: AssociateLite[];
   initialDate?: Date | null;
   /** When set, the created shift is auto-assigned to this associate. */
   initialAssociateId?: string | null;
@@ -2371,6 +2376,11 @@ function CreateShiftDialog({
   // The manager can override per-shift via the "Publish immediately" toggle.
   const [publishImmediately, setPublishImmediately] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // Multi-assign: which employees get a copy of this shift, plus how many
+  // extra unassigned "open slots" to post.
+  const [assignIds, setAssignIds] = useState<Set<string>>(new Set());
+  const [openSlots, setOpenSlots] = useState('0');
+  const [empSearch, setEmpSearch] = useState('');
 
   // Phase 131 — load Locations under the selected client. Auto-picks
   // the first option so HR can hit Save in the single-site case
@@ -2438,8 +2448,12 @@ function CreateShiftDialog({
       setShowAdvanced(false);
       setPublishImmediately(false);
       setSubmitting(false);
+      // Pre-select the employee whose cell was clicked, if any.
+      setAssignIds(initialAssociateId ? new Set([initialAssociateId]) : new Set());
+      setOpenSlots('0');
+      setEmpSearch('');
     }
-  }, [open, clients, initialDate]);
+  }, [open, clients, initialDate, initialAssociateId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2463,35 +2477,43 @@ function CreateShiftDialog({
       startISO = new Date(startsAt).toISOString();
       endISO = new Date(endsAt).toISOString();
     }
+    const assignList = [...assignIds];
+    const open = Math.max(0, Math.trunc(Number(openSlots)) || 0);
+    const shared = {
+      clientId,
+      ...(locationId ? { locationId } : {}),
+      position,
+      startsAt: startISO,
+      endsAt: endISO,
+      location: location || undefined,
+      hourlyRate: hourlyRate ? Number(hourlyRate) : undefined,
+      payRate: payRate ? Number(payRate) : undefined,
+      notes: notes || undefined,
+      status: (publishImmediately ? 'OPEN' : 'DRAFT') as ShiftStatus,
+      lateNoticeReason: lateNoticeReason.trim() || undefined,
+    };
     setSubmitting(true);
     try {
-      const created = await createShift({
-        clientId,
-        ...(locationId ? { locationId } : {}),
-        position,
-        startsAt: startISO,
-        endsAt: endISO,
-        location: location || undefined,
-        hourlyRate: hourlyRate ? Number(hourlyRate) : undefined,
-        payRate: payRate ? Number(payRate) : undefined,
-        notes: notes || undefined,
-        status: publishImmediately ? 'OPEN' : 'DRAFT',
-        lateNoticeReason: lateNoticeReason.trim() || undefined,
-      });
-      // Phase 53.4 — when the dialog was opened by clicking an associate's
-      // cell, chain an assign so the new shift lands in the right row.
-      if (initialAssociateId) {
-        try {
-          await assignShift(created.id, { associateId: initialAssociateId });
-        } catch (err) {
-          // Non-fatal — the shift exists, just not assigned. Surface the
-          // reason so HR knows to re-assign manually.
-          toast.error(
-            err instanceof ApiError
-              ? `Created, but assign failed: ${err.message}`
-              : 'Created, but assign failed.'
+      if (assignList.length > 0 || open > 0) {
+        // Create one copy per selected employee (+ any open slots) in a
+        // single call; employees already scheduled at this time are skipped.
+        const res = await bulkCreateShifts({
+          ...shared,
+          associateIds: assignList,
+          openCount: open,
+        });
+        const made = `${res.created} shift${res.created === 1 ? '' : 's'}`;
+        if (res.skipped.length > 0) {
+          toast.success(
+            `Created ${made} · skipped ${res.skipped.length} already scheduled then`,
           );
+        } else {
+          toast.success(`Created ${made}.`);
         }
+      } else {
+        // No employees chosen → a single unassigned shift (open coverage).
+        await createShift(shared);
+        toast.success('Shift created.');
       }
       onCreated();
     } catch (err) {
@@ -2506,7 +2528,8 @@ function CreateShiftDialog({
         <DialogHeader>
           <DialogTitle>New shift</DialogTitle>
           <DialogDescription>
-            Open shifts publish immediately. Drafts stay private until you publish them.
+            Define the shift once and assign it to one or many employees —
+            each gets their own copy. Drafts stay private until you publish.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -2671,6 +2694,110 @@ function CreateShiftDialog({
                 />
               )}
             </Field>
+          </div>
+
+          {/* Multi-assign — drop a copy of this shift onto each chosen
+              employee (their own row), plus optional open slots. Leaving it
+              empty creates a single unassigned shift. */}
+          <div className="rounded-md border border-navy-secondary bg-navy-secondary/20 p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="text-xs font-medium text-white">
+                Assign to employees
+                {assignIds.size > 0 && (
+                  <span className="ml-2 text-gold tabular-nums">{assignIds.size} selected</span>
+                )}
+              </div>
+              {associates.length > 0 && (
+                <div className="flex items-center gap-2 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => setAssignIds(new Set(associates.map((a) => a.id)))}
+                    className="text-silver/70 hover:text-gold underline underline-offset-2"
+                  >
+                    Select all
+                  </button>
+                  {assignIds.size > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setAssignIds(new Set())}
+                      className="text-silver/70 hover:text-gold underline underline-offset-2"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+            {associates.length === 0 ? (
+              <div className="text-[11px] text-silver/70">
+                No schedulable employees loaded. The shift will be created unassigned.
+              </div>
+            ) : (
+              <>
+                <Input
+                  value={empSearch}
+                  onChange={(e) => setEmpSearch(e.target.value)}
+                  placeholder="Search employees…"
+                  className="h-8 text-xs"
+                  aria-label="Search employees"
+                />
+                <div className="max-h-44 overflow-y-auto rounded border border-navy-secondary/60 divide-y divide-navy-secondary/40">
+                  {associates
+                    .filter((a) => {
+                      const q = empSearch.trim().toLowerCase();
+                      if (!q) return true;
+                      return `${a.firstName} ${a.lastName} ${a.email}`
+                        .toLowerCase()
+                        .includes(q);
+                    })
+                    .map((a) => {
+                      const checked = assignIds.has(a.id);
+                      return (
+                        <label
+                          key={a.id}
+                          className="flex items-center gap-2 px-2 py-1.5 text-xs text-silver hover:bg-navy-secondary/40 cursor-pointer"
+                        >
+                          <input
+                            type="checkbox"
+                            className="accent-gold"
+                            checked={checked}
+                            onChange={() =>
+                              setAssignIds((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(a.id)) next.delete(a.id);
+                                else next.add(a.id);
+                                return next;
+                              })
+                            }
+                          />
+                          <span className="truncate">
+                            {a.firstName} {a.lastName}
+                          </span>
+                        </label>
+                      );
+                    })}
+                </div>
+              </>
+            )}
+            <div className="flex items-center gap-2 pt-1">
+              <label className="text-[11px] text-silver/70" htmlFor="open-slots">
+                Extra open (unassigned) slots
+              </label>
+              <Input
+                id="open-slots"
+                type="number"
+                min={0}
+                max={100}
+                value={openSlots}
+                onChange={(e) => setOpenSlots(e.target.value)}
+                className="h-8 w-20 text-xs"
+              />
+            </div>
+            <div className="text-[11px] text-silver/60">
+              {assignIds.size + (Math.max(0, Math.trunc(Number(openSlots)) || 0)) > 0
+                ? `Creates ${assignIds.size} assigned + ${Math.max(0, Math.trunc(Number(openSlots)) || 0)} open = ${assignIds.size + Math.max(0, Math.trunc(Number(openSlots)) || 0)} shift${assignIds.size + Math.max(0, Math.trunc(Number(openSlots)) || 0) === 1 ? '' : 's'}. Anyone already scheduled then is skipped.`
+                : 'No employees selected — creates one unassigned shift.'}
+            </div>
           </div>
 
           {/* Advanced — rates, late-notice. Hidden by default because

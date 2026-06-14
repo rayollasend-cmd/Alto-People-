@@ -1197,6 +1197,56 @@ export const ShiftCreateInputSchema = z
   });
 export type ShiftCreateInput = z.infer<typeof ShiftCreateInputSchema>;
 
+/**
+ * Bulk create-and-assign: define one shift (time + role + site) and stamp a
+ * copy of it onto many employees at once — each gets their own shift in
+ * their row, the way a retail week grid works ("F&D Overnight 10pm–7am"
+ * assigned to 20 people). `openCount` adds that many UNASSIGNED copies so a
+ * manager can post "need 3 more" open slots alongside the named ones.
+ * At least one assignee OR one open slot is required.
+ */
+export const BulkCreateShiftsInputSchema = z
+  .object({
+    clientId: UuidSchema,
+    locationId: UuidSchema.optional(),
+    position: z.string().min(1).max(120),
+    startsAt: z.string().datetime(),
+    endsAt: z.string().datetime(),
+    location: z.string().max(200).optional(),
+    hourlyRate: z.number().nonnegative().optional(),
+    payRate: z.number().nonnegative().optional(),
+    notes: z.string().max(1000).optional(),
+    status: ShiftStatusSchema.optional(),
+    lateNoticeReason: z.string().min(1).max(500).optional(),
+    /** Employees to assign — one shift instance created per id. */
+    associateIds: z.array(UuidSchema).max(200),
+    /** Extra unassigned copies (open slots) to create. */
+    openCount: z.number().int().min(0).max(100).optional(),
+  })
+  .refine((v) => new Date(v.endsAt) > new Date(v.startsAt), {
+    message: 'endsAt must be after startsAt',
+    path: ['endsAt'],
+  })
+  .refine((v) => v.associateIds.length + (v.openCount ?? 0) >= 1, {
+    message: 'Select at least one employee or add an open slot.',
+    path: ['associateIds'],
+  });
+export type BulkCreateShiftsInput = z.infer<typeof BulkCreateShiftsInputSchema>;
+
+export const BulkCreateShiftsResponseSchema = z.object({
+  /** Total shift rows created (assigned + open). */
+  created: z.number().int().nonnegative(),
+  /** Employees skipped because the shift overlaps one they already have. */
+  skipped: z.array(
+    z.object({
+      associateId: UuidSchema,
+      associateName: z.string(),
+      reason: z.string(),
+    }),
+  ),
+});
+export type BulkCreateShiftsResponse = z.infer<typeof BulkCreateShiftsResponseSchema>;
+
 export const ShiftUpdateInputSchema = z
   .object({
     position: z.string().min(1).max(120).optional(),
