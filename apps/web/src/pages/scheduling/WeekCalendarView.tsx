@@ -44,8 +44,6 @@ const STATUS_VARIANT: Record<
   CANCELLED: 'destructive',
 };
 
-const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
 const UNASSIGNED_ROW_ID = '__unassigned__';
 
 function fmtTime(iso: string, timeZone?: string | null): string {
@@ -94,7 +92,9 @@ function shiftMinutes(s: Shift): number {
 interface Props {
   shifts: Shift[];
   associates: AssociateLite[];
-  weekStart: Date; // Monday at 00:00 local
+  weekStart: Date; // first day shown, 00:00 local (any weekday)
+  /** Number of day columns to render (the start→end range). Default 7. */
+  dayCount?: number;
   canManage: boolean;
   /** Click on a chip. Parent inspects modifier keys to decide between
    *  selection-toggle and open-edit-dialog. */
@@ -143,6 +143,7 @@ export function WeekCalendarView({
   shifts,
   associates,
   weekStart,
+  dayCount = 7,
   canManage,
   onShiftClick,
   onCellCreate,
@@ -156,8 +157,8 @@ export function WeekCalendarView({
   const hover = useShiftHoverCard();
   const ctxMenu = useShiftContextMenu();
   const days = useMemo(
-    () => Array.from({ length: 7 }).map((_, i) => addDays(weekStart, i)),
-    [weekStart]
+    () => Array.from({ length: dayCount }).map((_, i) => addDays(weekStart, i)),
+    [weekStart, dayCount]
   );
 
   // Bucket shifts by associateId × local-day. Index by `${associateId|unassigned}_${dayMs}`.
@@ -184,14 +185,14 @@ export function WeekCalendarView({
   const dayTotals = useMemo(() => {
     const out = new Map<number, { count: number; minutes: number; cost: number }>();
     for (const d of [] as Date[]) void d; // (eslint scope)
-    const dayKeys = Array.from({ length: 7 }).map((_, i) =>
+    const dayKeys = Array.from({ length: dayCount }).map((_, i) =>
       addDays(weekStart, i).getTime(),
     );
     for (const k of dayKeys) {
       out.set(k, { count: 0, minutes: 0, cost: 0 });
     }
     const weekStartMs = weekStart.getTime();
-    const weekEndMs = addDays(weekStart, 7).getTime();
+    const weekEndMs = addDays(weekStart, dayCount).getTime();
     for (const s of shifts) {
       if (s.status === 'CANCELLED') continue;
       const t = new Date(s.startsAt).getTime();
@@ -207,12 +208,12 @@ export function WeekCalendarView({
       }
     }
     return out;
-  }, [shifts, weekStart]);
+  }, [shifts, weekStart, dayCount]);
 
-  // Per-associate weekly minutes (only counting shifts in the visible week).
+  // Per-associate weekly minutes (only counting shifts in the visible range).
   const weeklyMinutes = useMemo(() => {
     const out = new Map<string, number>();
-    const weekEnd = addDays(weekStart, 7).getTime();
+    const weekEnd = addDays(weekStart, dayCount).getTime();
     const weekStartMs = weekStart.getTime();
     for (const s of shifts) {
       if (!s.assignedAssociateId) continue;
@@ -224,7 +225,7 @@ export function WeekCalendarView({
       );
     }
     return out;
-  }, [shifts, weekStart]);
+  }, [shifts, weekStart, dayCount]);
 
   // Decide which associate rows to render.
   // Default = those with shifts in the week (compact view).
@@ -285,11 +286,12 @@ export function WeekCalendarView({
     }
   };
 
-  // 200px sticky rail + 7 day columns. min-w on the column lets the grid
-  // overflow into a horizontal scroller on narrow screens rather than
-  // crushing the chips.
+  // 200px sticky rail + N day columns. min-w on each column lets the grid
+  // overflow into a horizontal scroller on narrow screens (or a wide custom
+  // range) rather than crushing the chips.
   const gridStyle = {
-    gridTemplateColumns: `200px repeat(7, minmax(150px, 1fr))`,
+    gridTemplateColumns: `200px repeat(${dayCount}, minmax(150px, 1fr))`,
+    minWidth: `${200 + dayCount * 150}px`,
   };
 
   // Compute the set of (associateId|unassigned)_dayMs cells that would be
@@ -334,12 +336,12 @@ export function WeekCalendarView({
       onDragCancel={() => setActiveDragShift(null)}
     >
       <div className="rounded-md border border-navy-secondary bg-navy/40 overflow-x-auto">
-        <div className="grid min-w-[1200px]" style={gridStyle}>
+        <div className="grid" style={gridStyle}>
           {/* ===== Header row ===== */}
           <div className="sticky left-0 z-20 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-3 py-2 text-[10px] uppercase tracking-wider text-silver">
             Schedule
           </div>
-          {days.map((d, i) => {
+          {days.map((d) => {
             const isToday = sameDay(d, today);
             return (
               <div
@@ -355,7 +357,9 @@ export function WeekCalendarView({
                     isToday ? 'text-gold' : 'text-silver'
                   )}
                 >
-                  {DAY_LABELS[i]}
+                  {/* Derive the weekday from the date itself — the range can
+                      start on any day, so a fixed Mon-first list would mislabel. */}
+                  {d.toLocaleDateString([], { weekday: 'short' })}
                 </div>
                 <div
                   className={cn(
@@ -398,8 +402,11 @@ export function WeekCalendarView({
 
           {/* ===== Associate rows ===== */}
           {visibleAssociates.length === 0 && (
-            <div className="col-span-8 px-4 py-6 text-center text-sm text-silver/70">
-              No associates have shifts this week.
+            <div
+              className="px-4 py-6 text-center text-sm text-silver/70"
+              style={{ gridColumn: '1 / -1' }}
+            >
+              No associates have shifts in this range.
             </div>
           )}
           {visibleAssociates.map((a) => {
