@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { CheckCircle2, Copy as CopyIcon, Send, Trash2, X } from 'lucide-react';
+import { CheckCircle2, Copy as CopyIcon, Send, Trash, Trash2, X } from 'lucide-react';
 import type { Shift } from '@alto-people/shared';
 import { Button } from '@/components/ui/Button';
 import {
   cancelShift,
   createShift,
+  deleteShift,
   unassignShift,
   updateShift,
 } from '@/lib/schedulingApi';
@@ -32,7 +33,9 @@ interface Props {
 
 export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
   const confirm = useConfirm();
-  const [busy, setBusy] = useState<null | 'publish' | 'cancel' | 'unassign' | 'duplicate'>(null);
+  const [busy, setBusy] = useState<
+    null | 'publish' | 'cancel' | 'unassign' | 'duplicate' | 'delete'
+  >(null);
 
   if (selected.length === 0) return null;
 
@@ -130,6 +133,27 @@ export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
     }
   };
 
+  const onDelete = async () => {
+    const assignedNote = assignedCount > 0
+      ? ` ${assignedCount} ${assignedCount === 1 ? 'is' : 'are'} assigned and will be removed from employees’ schedules.`
+      : '';
+    const ok = await confirm({
+      title: `Delete ${selected.length} shift${selected.length === 1 ? '' : 's'}?`,
+      description: `Permanently delete the selected shift${selected.length === 1 ? '' : 's'}. This can’t be undone.${assignedNote}`,
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
+    setBusy('delete');
+    try {
+      await runBatch<void>(async (s) => {
+        await deleteShift(s.id);
+      }, 'Deleted');
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const onDuplicate = async () => {
     setBusy('duplicate');
     try {
@@ -192,9 +216,21 @@ export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
           loading={busy === 'cancel'}
           disabled={cancellableCount === 0 || busy !== null}
           className="text-alert hover:text-alert"
+          title="Cancel — keeps a CANCELLED record"
         >
           <Trash2 className="h-3.5 w-3.5" />
-          Cancel
+          Cancel ({cancellableCount})
+        </Button>
+        <Button
+          variant="ghost"
+          onClick={onDelete}
+          loading={busy === 'delete'}
+          disabled={busy !== null}
+          className="text-alert hover:text-alert"
+          title="Delete permanently — removes the shifts entirely"
+        >
+          <Trash className="h-3.5 w-3.5" />
+          Delete
         </Button>
         <span className="text-silver/70">·</span>
         <button
