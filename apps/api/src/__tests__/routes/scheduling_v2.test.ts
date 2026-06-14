@@ -94,7 +94,10 @@ describe('GET /scheduling/shifts/:id/conflicts', () => {
 describe('Auto-fill candidate ranking', () => {
   it('ranks an associate with availability + no conflict highest', async () => {
     const client = await createClient();
-    // Target shift: Wed 14:00-22:00 UTC
+    // Target shift: Wed 14:00-22:00 UTC. Availability now matches in the
+    // STORE's wall-clock (default America/New_York), so in April (EDT,
+    // UTC-4) this shift is Wednesday 10:00 AM – 6:00 PM local. The
+    // availability window below must cover THAT, not the UTC hours.
     const wedNoon = new Date('2026-04-15T14:00:00Z');
     const wedTen = new Date('2026-04-15T22:00:00Z');
     const target = await prisma.shift.create({
@@ -126,9 +129,9 @@ describe('Auto-fill candidate ranking', () => {
     await prisma.associateAvailability.create({
       data: {
         associateId: aGood.id,
-        dayOfWeek: 3,         // Wednesday
-        startMinute: 12 * 60, // 12:00
-        endMinute: 23 * 60,   // 23:00
+        dayOfWeek: 3,         // Wednesday (local)
+        startMinute: 9 * 60,  // 9:00 AM local — covers the 10 AM EDT start
+        endMinute: 19 * 60,   // 7:00 PM local — covers the 6 PM EDT end
       },
     });
 

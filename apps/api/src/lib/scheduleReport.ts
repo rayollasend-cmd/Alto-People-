@@ -1,4 +1,9 @@
 import PDFDocument from 'pdfkit';
+import {
+  formatDateInZone,
+  formatDateTimeInZone,
+  formatTimeInZone,
+} from './timezone.js';
 
 /**
  * Phase 54.4 — schedule PDF renderer.
@@ -7,6 +12,10 @@ import PDFDocument from 'pdfkit';
  * Buffer so the route can hash / log it before streaming. Uses pdfkit's
  * built-in Helvetica family (no font files in the repo). Page is letter
  * landscape so the wide table doesn't wrap nine columns into the gutter.
+ *
+ * Every shift time is rendered in its work-site timezone (`shift.timezone`)
+ * — the server runs in UTC, so the old bare toLocale* calls printed every
+ * shift 4–5h off for an Eastern store.
  */
 
 export interface ScheduleReportShift {
@@ -15,6 +24,8 @@ export interface ScheduleReportShift {
   position: string;
   clientName: string | null;
   location: string | null;
+  /** IANA timezone of the work site; the row's date/time render in it. */
+  timezone: string;
   assignedAssociateName: string | null;
   status: string;
   hourlyRate: number | null;
@@ -25,6 +36,9 @@ export interface ScheduleReportData {
   rangeFrom: Date;
   rangeTo: Date; // end-exclusive
   generatedAt: Date;
+  /** Report-level timezone for the header's "Generated …" stamp. Per-shift
+   *  rows use their own work-site timezone. */
+  timezone: string;
   filters: {
     clientName: string | null; // null = all
   };
@@ -69,7 +83,7 @@ export async function renderSchedulePdf(data: ScheduleReportData): Promise<Buffe
         .fontSize(8)
         .fillColor('#888')
         .text(
-          `Generated ${data.generatedAt.toLocaleString()} · Alto People`,
+          `Generated ${formatDateTimeInZone(data.generatedAt, data.timezone)} · Alto People`,
           PAGE_MARGIN,
           PAGE_MARGIN + (filterLine ? 50 : 36)
         );
@@ -135,7 +149,7 @@ export async function renderSchedulePdf(data: ScheduleReportData): Promise<Buffe
         doc.font('Helvetica').fontSize(ROW_PT).fillColor('#000');
       }
 
-      const dateStr = s.startsAt.toLocaleDateString();
+      const dateStr = formatDateInZone(s.startsAt, s.timezone);
       const showDate = dateStr !== prevDate;
       prevDate = dateStr;
 
@@ -151,7 +165,7 @@ export async function renderSchedulePdf(data: ScheduleReportData): Promise<Buffe
 
       const cells: Record<string, string> = {
         date: showDate ? dateStr : '',
-        time: `${fmtTime(s.startsAt)}–${fmtTime(s.endsAt)}`,
+        time: `${formatTimeInZone(s.startsAt, s.timezone)}–${formatTimeInZone(s.endsAt, s.timezone)}`,
         hours: (s.scheduledMinutes / 60).toFixed(2),
         position: s.position,
         client: s.clientName ?? '—',
@@ -210,10 +224,6 @@ export async function renderSchedulePdf(data: ScheduleReportData): Promise<Buffe
 
     doc.end();
   });
-}
-
-function fmtTime(d: Date): string {
-  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 
 function formatRange(from: Date, toExclusive: Date): string {
