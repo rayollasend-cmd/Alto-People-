@@ -46,8 +46,6 @@ import { TEMPLATE_MIME } from './TemplatesRail';
  *   - click empty space in a cell → create at clicked time, snapped
  */
 
-const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
 // Default visible window 6:00 → 24:00. Override via prop if a client runs
 // 24/7 shifts. Same hour density as DayCalendarView so muscle memory
 // transfers between the two views.
@@ -110,6 +108,8 @@ interface Props {
   shifts: Shift[];
   associates: AssociateLite[];
   weekStart: Date;
+  /** Number of day columns to render (the start→end range). Default 7. */
+  dayCount?: number;
   canManage: boolean;
   onShiftClick: (s: Shift, e: React.MouseEvent) => void;
   onCellCreate: (start: Date, associateId: string | null) => void;
@@ -129,6 +129,7 @@ export function TimeGridWeekView({
   shifts,
   associates,
   weekStart,
+  dayCount = 7,
   canManage,
   onShiftClick,
   onCellCreate,
@@ -142,8 +143,8 @@ export function TimeGridWeekView({
   const hover = useShiftHoverCard();
   const ctxMenu = useShiftContextMenu();
   const days = useMemo(
-    () => Array.from({ length: 7 }).map((_, i) => addDays(weekStart, i)),
-    [weekStart],
+    () => Array.from({ length: dayCount }).map((_, i) => addDays(weekStart, i)),
+    [weekStart, dayCount],
   );
 
   const byCell = useMemo(() => {
@@ -235,9 +236,10 @@ export function TimeGridWeekView({
     }
   };
 
-  // 200px sticky associate rail + 40px hour gutter + 7 day columns.
+  // 200px sticky associate rail + 40px hour gutter + dayCount day columns.
   const gridStyle = {
-    gridTemplateColumns: `200px 40px repeat(7, minmax(140px, 1fr))`,
+    gridTemplateColumns: `200px 40px repeat(${dayCount}, minmax(140px, 1fr))`,
+    minWidth: `${200 + 40 + dayCount * 140}px`,
   };
 
   return (
@@ -248,13 +250,13 @@ export function TimeGridWeekView({
       onDragCancel={() => setActiveDrag(null)}
     >
       <div className="rounded-md border border-navy-secondary bg-navy/40 overflow-x-auto overscroll-x-contain">
-        <div className="grid min-w-[1200px]" style={gridStyle}>
+        <div className="grid" style={gridStyle}>
           {/* Header */}
           <div className="sticky left-0 z-20 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-3 py-2 text-[10px] uppercase tracking-wider text-silver">
             Schedule
           </div>
           <div className="border-b border-r border-navy-secondary bg-navy/95" />
-          {days.map((d, i) => {
+          {days.map((d) => {
             const isToday = sameDay(d, today);
             return (
               <div
@@ -270,7 +272,9 @@ export function TimeGridWeekView({
                     isToday ? 'text-gold' : 'text-silver',
                   )}
                 >
-                  {DAY_LABELS[i]}
+                  {/* Derive the weekday from the date itself — the range can
+                      start on any day, so a fixed Mon-first list would mislabel. */}
+                  {d.toLocaleDateString([], { weekday: 'short' })}
                 </div>
                 <div
                   className={cn(
@@ -315,8 +319,11 @@ export function TimeGridWeekView({
 
           {/* Associate rows */}
           {visibleAssociates.length === 0 && (
-            <div className="col-span-9 px-4 py-6 text-center text-sm text-silver/70">
-              No associates have shifts this week.
+            <div
+              className="px-4 py-6 text-center text-sm text-silver/70"
+              style={{ gridColumn: '1 / -1' }}
+            >
+              No associates have shifts in this range.
             </div>
           )}
           {visibleAssociates.map((a) => {

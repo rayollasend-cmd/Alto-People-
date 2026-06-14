@@ -91,7 +91,6 @@ import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
 import {
   WeekCalendarView,
-  endOfWeekMonday,
   shiftWeek,
   startOfWeekMonday,
 } from './WeekCalendarView';
@@ -156,6 +155,19 @@ function ymd(d: Date): string {
 function fromYmd(s: string): Date {
   const [y, m, d] = s.split('-').map(Number);
   return new Date(y, (m ?? 1) - 1, d ?? 1);
+}
+
+/** Add n calendar days to a date (local time). */
+function addDaysLocal(d: Date, n: number): Date {
+  const x = new Date(d);
+  x.setDate(x.getDate() + n);
+  return x;
+}
+
+/** Whole calendar days from a → b (local midnight); negative if b precedes a. */
+function daysBetweenLocal(a: Date, b: Date): number {
+  const ms = fromYmd(ymd(b)).getTime() - fromYmd(ymd(a)).getTime();
+  return Math.round(ms / 86_400_000);
 }
 
 /* ----- CSV / file-download helpers (Phase 54.3) -------------------------- */
@@ -282,9 +294,21 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const [clientLocations, setClientLocations] = useState<LocationSummary[]>([]);
   const [showAllAssociates, setShowAllAssociates] = useState<boolean>(true);
 
-  // Week-view state. weekStart is always a Monday at 00:00 local.
+  // Week-view range. weekStart is the FIRST day shown (any day, not forced
+  // to Monday) and weekDayCount is how many days the grid spans — so the
+  // user picks an exact start and end. Defaults to the Mon–Sun week (7
+  // days) so existing behavior is unchanged until they widen/move it.
   const [weekStart, setWeekStart] = useState<Date>(() => startOfWeekMonday(new Date()));
-  const weekEnd = useMemo(() => endOfWeekMonday(weekStart), [weekStart]);
+  const [weekDayCount, setWeekDayCount] = useState<number>(7);
+  const weekEnd = useMemo(
+    () => addDaysLocal(weekStart, weekDayCount),
+    [weekStart, weekDayCount],
+  );
+  // Inclusive last day shown (for the end date-picker value).
+  const weekEndInclusive = useMemo(
+    () => addDaysLocal(weekStart, weekDayCount - 1),
+    [weekStart, weekDayCount],
+  );
 
   // Day-view anchor (defaults to today). Independent of weekStart so the
   // user can have a "calendar week" they're planning AND a "today" zoom.
@@ -1028,12 +1052,12 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         )}
 
         {view === 'week' && (
-          <div className="inline-flex items-center gap-1.5">
+          <div className="inline-flex flex-wrap items-center gap-1.5">
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setWeekStart((w) => shiftWeek(w, -1))}
-              aria-label="Previous week"
+              onClick={() => setWeekStart((w) => addDaysLocal(w, -weekDayCount))}
+              aria-label="Previous period"
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
@@ -1041,35 +1065,60 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               type="button"
               variant="outline"
               size="xs"
-              onClick={() => setWeekStart(startOfWeekMonday(new Date()))}
+              onClick={() => {
+                setWeekStart(startOfWeekMonday(new Date()));
+                setWeekDayCount(7);
+              }}
               className="uppercase tracking-wider"
             >
-              Today
+              This week
             </Button>
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setWeekStart((w) => shiftWeek(w, 1))}
-              aria-label="Next week"
+              onClick={() => setWeekStart((w) => addDaysLocal(w, weekDayCount))}
+              aria-label="Next period"
             >
               <ChevronRight className="h-4 w-4" />
             </Button>
-            <span className="text-sm text-silver tabular-nums ml-2">
-              {weekStart.toLocaleDateString([], { month: 'short', day: 'numeric' })}
-              {' – '}
-              {new Date(weekEnd.getTime() - 1).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+            {/* Pick the exact start and end of the range to schedule. */}
+            <label className="ml-2 inline-flex items-center gap-1 text-[11px] text-silver/70">
+              From
+              <input
+                type="date"
+                aria-label="Week start date"
+                value={ymd(weekStart)}
+                max={ymd(weekEndInclusive)}
+                onChange={(e) => {
+                  if (!e.target.value) return;
+                  const nextStart = fromYmd(e.target.value);
+                  // Keep the same end day; recompute the span (clamp 1..31).
+                  const span = Math.min(31, Math.max(1, daysBetweenLocal(nextStart, weekEndInclusive) + 1));
+                  setWeekStart(nextStart);
+                  setWeekDayCount(span);
+                }}
+                className="h-7 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs text-white [color-scheme:dark] focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+              />
+            </label>
+            <label className="inline-flex items-center gap-1 text-[11px] text-silver/70">
+              To
+              <input
+                type="date"
+                aria-label="Week end date"
+                value={ymd(weekEndInclusive)}
+                min={ymd(weekStart)}
+                onChange={(e) => {
+                  if (!e.target.value) return;
+                  const end = fromYmd(e.target.value);
+                  const span = Math.min(31, Math.max(1, daysBetweenLocal(weekStart, end) + 1));
+                  setWeekDayCount(span);
+                }}
+                className="h-7 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs text-white [color-scheme:dark] focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+              />
+            </label>
+            <span className="text-[11px] text-silver/60 tabular-nums">
+              {weekDayCount}d
             </span>
-            {/* Jump to any week: pick a date, snap to that week's Monday. */}
-            <input
-              type="date"
-              aria-label="Jump to the week containing this date"
-              title="Jump to a specific week"
-              value={ymd(weekStart)}
-              onChange={(e) => {
-                if (e.target.value) setWeekStart(startOfWeekMonday(fromYmd(e.target.value)));
-              }}
-              className="h-7 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs text-white [color-scheme:dark] focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
-            />
             {canManage && (
               <Button
                 variant="ghost"
@@ -1416,6 +1465,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           shifts={filteredShifts}
           associates={associates}
           weekStart={weekStart}
+          dayCount={weekDayCount}
           canManage={canManage}
           showAllAssociates={showAllAssociates}
           onShiftClick={(s, e) => {
@@ -1447,6 +1497,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           shifts={filteredShifts}
           associates={associates}
           weekStart={weekStart}
+          dayCount={weekDayCount}
           canManage={canManage}
           showAllAssociates={showAllAssociates}
           onShiftClick={(s, e) => {
