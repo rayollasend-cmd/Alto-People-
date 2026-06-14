@@ -261,14 +261,18 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
 
   // Week-view layout: time-grid (Sling/Outlook style) vs compact (text rows).
   // Persisted in localStorage so the manager's preference sticks across visits.
+  // Default to the dense compact (Sling-style) bars — single-line shift
+  // rectangles pack far more onto the screen than the time-grid's
+  // duration-proportional blocks. The toggle still offers time-grid. Key is
+  // versioned (.v2) so the new default takes effect once for everyone.
   const [weekLayout, setWeekLayout] = useState<'time-grid' | 'compact'>(() => {
-    if (typeof window === 'undefined') return 'time-grid';
-    const stored = window.localStorage.getItem('alto:scheduling.weekLayout');
-    return stored === 'compact' ? 'compact' : 'time-grid';
+    if (typeof window === 'undefined') return 'compact';
+    const stored = window.localStorage.getItem('alto:scheduling.weekLayout.v2');
+    return stored === 'time-grid' ? 'time-grid' : 'compact';
   });
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    window.localStorage.setItem('alto:scheduling.weekLayout', weekLayout);
+    window.localStorage.setItem('alto:scheduling.weekLayout.v2', weekLayout);
   }, [weekLayout]);
 
   const [filter, setFilter] = useState<ShiftStatus | 'ALL'>('OPEN');

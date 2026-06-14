@@ -337,7 +337,7 @@ function DayCell({
   return (
     <div
       className={cn(
-        'group relative min-h-[120px] p-1.5 border-r border-navy-secondary',
+        'group relative min-h-[92px] p-1 border-r border-navy-secondary',
         !isLastRow && 'border-b',
         'last:border-r-0',
         !inMonth && 'opacity-50',

@@ -653,8 +653,8 @@ function Cell({
       onDragLeave={onNativeDragLeave}
       onDrop={onNativeDrop}
       className={cn(
-        'group relative border-b border-r border-navy-secondary p-1.5 min-h-[88px]',
-        'flex flex-col gap-1.5',
+        'group relative border-b border-r border-navy-secondary p-1 min-h-[44px]',
+        'flex flex-col gap-1',
         isToday && 'bg-gold/[0.03]',
         // Conflict tint shows under the hover/drop highlight so the manager
         // can still see the gold "you're hovering here" outline on top.
@@ -839,24 +839,31 @@ function ShiftChip({
       <div
         {...listeners}
         {...attributes}
-        className="absolute left-1.5 top-1.5 text-silver/70 hover:text-gold cursor-grab active:cursor-grabbing no-print"
+        className="absolute left-0.5 top-1/2 -translate-y-1/2 text-silver/60 hover:text-gold cursor-grab active:cursor-grabbing no-print"
         aria-label={`Move ${shift.position}`}
       >
         <GripVertical className="h-3 w-3" />
       </div>
+      {/* Sling-style compact bar: time + position on a single line, a small
+          status dot pushed right. The client/sub-zone live in the hover
+          card so the row stays dense and rectangular. */}
       <button
         type="button"
         onClick={onClick}
-        className="w-full text-left p-1.5 pl-5 pr-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
+        className="w-full text-left py-1 pl-5 pr-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
+        title={`${fmtTime(shift.startsAt, shift.timezone)}–${fmtTime(previewEndsAt.toISOString(), shift.timezone)} · ${shift.position}${shift.clientName ? ` · ${shift.clientName}` : ''}`}
       >
-        <div className="flex items-center justify-between gap-1">
-          <div className="text-[11px] text-silver tabular-nums">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className="text-[10px] text-silver/90 tabular-nums shrink-0">
             {fmtTime(shift.startsAt, shift.timezone)}–
             {fmtTime(previewEndsAt.toISOString(), shift.timezone)}
-          </div>
+          </span>
+          <span className="text-[11px] text-white font-medium truncate min-w-0">
+            {shift.position}
+          </span>
           <Badge
             variant={STATUS_VARIANT[shift.status] ?? 'default'}
-            className="text-[9px] px-1 py-0"
+            className="text-[9px] px-1 py-0 ml-auto shrink-0"
             data-status={shift.status}
           >
             {shift.status === 'ASSIGNED'
@@ -866,14 +873,6 @@ function ShiftChip({
                 : shift.status[0]}
           </Badge>
         </div>
-        <div className="text-xs text-white font-medium truncate mt-0.5">
-          {shift.position}
-        </div>
-        {shift.clientName && (
-          <div className="text-[10px] text-silver/70 truncate">
-            {shift.clientName}
-          </div>
-        )}
       </button>
       {canManage && (
         <div
