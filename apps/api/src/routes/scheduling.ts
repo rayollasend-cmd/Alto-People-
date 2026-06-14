@@ -658,6 +658,17 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
     });
     if (!existing) throw new HttpError(404, 'shift_not_found', 'Shift not found');
 
+    // A finished or cancelled shift is a historical record — block edits so
+    // its times/status can't drift after the fact (an analytics query that
+    // re-derives hours from startsAt/endsAt would otherwise read wrong).
+    if (existing.status === 'COMPLETED' || existing.status === 'CANCELLED') {
+      throw new HttpError(
+        409,
+        'shift_not_editable',
+        `A ${existing.status.toLowerCase()} shift can't be edited. Delete it instead, or create a new one.`,
+      );
+    }
+
     const data: Prisma.ShiftUpdateInput = {};
     const i = parsed.data;
     if (i.position !== undefined) data.position = i.position;
@@ -688,6 +699,14 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
       }
       data.publishedAt = now;
       data.lateNoticeReason = i.lateNoticeReason ?? null;
+    }
+
+    // Un-publish: moving a published shift back to DRAFT makes it private
+    // again — clear the publish stamp + late-notice reason so a later
+    // re-publish re-evaluates the fair-workweek notice window fresh.
+    if (i.status === 'DRAFT' && existing.status !== 'DRAFT') {
+      data.publishedAt = null;
+      data.lateNoticeReason = null;
     }
 
     const updated = await prisma.shift.update({
@@ -729,6 +748,46 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
     }
 
     res.json(toShift(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Hard delete — removes the shift outright (vs. cancel, which keeps a
+// CANCELLED record). Intended for cleaning up drafts and mistaken shifts.
+// Cascades to the shift's swap requests, qualification requirements, and
+// open-shift claims (all onDelete: Cascade). The confirm lives client-side;
+// the audit log keeps the trail even though the row is gone.
+schedulingRouter.delete('/shifts/:id', MANAGE, async (req, res, next) => {
+  try {
+    const existing = await prisma.shift.findFirst({
+      where: { id: req.params.id, ...scopeShifts(req.user!) },
+      select: {
+        id: true,
+        clientId: true,
+        position: true,
+        status: true,
+        assignedAssociateId: true,
+      },
+    });
+    if (!existing) throw new HttpError(404, 'shift_not_found', 'Shift not found');
+
+    await prisma.shift.delete({ where: { id: existing.id } });
+
+    await recordShiftEvent({
+      actorUserId: req.user!.id,
+      action: 'shift.deleted',
+      shiftId: existing.id,
+      clientId: existing.clientId,
+      metadata: {
+        position: existing.position,
+        status: existing.status,
+        wasAssigned: existing.assignedAssociateId !== null,
+      },
+      req,
+    });
+
+    res.status(204).end();
   } catch (err) {
     next(err);
   }
