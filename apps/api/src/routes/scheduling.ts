@@ -295,10 +295,42 @@ schedulingRouter.get('/kpis', MANAGE, async (req, res, next) => {
  * for. Drives the row axis of the pivot week view (rows=people × cols=days).
  * Gated to manage:scheduling, so only HR/Ops reach this endpoint.
  */
-schedulingRouter.get('/associates', MANAGE, async (_req, res, next) => {
+schedulingRouter.get('/associates', MANAGE, async (req, res, next) => {
   try {
+    const clientId = req.query.clientId?.toString();
+    const locationId = req.query.locationId?.toString();
+
+    // Scope the roster to the selected work-site so the grid rows + the
+    // create-dialog picker show only people who actually work there. An
+    // associate "belongs" to a client/location via an APPROVED application
+    // or an open assignment there. Falls back to the org-wide schedulable
+    // set when nothing is selected.
+    const userActive = { is: { status: 'ACTIVE', role: 'ASSOCIATE' } } as const;
+    let where: Prisma.AssociateWhereInput;
+    if (locationId) {
+      where = {
+        deletedAt: null,
+        user: userActive,
+        OR: [
+          { applications: { some: { status: 'APPROVED', locationId } } },
+          { assignments: { some: { endedAt: null, locationId } } },
+        ],
+      };
+    } else if (clientId) {
+      where = {
+        deletedAt: null,
+        user: userActive,
+        OR: [
+          { applications: { some: { status: 'APPROVED', clientId } } },
+          { assignments: { some: { endedAt: null, location: { clientId } } } },
+        ],
+      };
+    } else {
+      where = ACTIVE_ASSOCIATE_FILTER;
+    }
+
     const rows = await prisma.associate.findMany({
-      where: ACTIVE_ASSOCIATE_FILTER,
+      where,
       orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
       select: { id: true, firstName: true, lastName: true, email: true },
       take: 500,

@@ -236,8 +236,16 @@ export function copyWeek(body: CopyWeekInput): Promise<CopyWeekResponse> {
 
 /* Phase 53 — pivot week view + publish-week ============================== */
 
-export function listSchedulingAssociates(): Promise<AssociateListResponse> {
-  return apiFetch<AssociateListResponse>('/scheduling/associates');
+export function listSchedulingAssociates(
+  filters: { clientId?: string; locationId?: string } = {},
+): Promise<AssociateListResponse> {
+  const p = new URLSearchParams();
+  if (filters.clientId) p.set('clientId', filters.clientId);
+  if (filters.locationId) p.set('locationId', filters.locationId);
+  const qs = p.toString();
+  return apiFetch<AssociateListResponse>(
+    `/scheduling/associates${qs ? `?${qs}` : ''}`,
+  );
 }
 
 export function publishWeek(body: PublishWeekInput): Promise<PublishWeekResponse> {
