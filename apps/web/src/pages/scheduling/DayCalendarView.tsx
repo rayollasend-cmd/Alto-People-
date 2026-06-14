@@ -47,8 +47,8 @@ const PX_PER_MIN = PX_PER_HOUR / 60;
 // rounding (and keeps the chip readable as it moves).
 const SNAP_MIN = 15;
 
-function fmtTime(d: Date): string {
-  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+function fmtTime(d: Date, timeZone?: string | null): string {
+  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', ...(timeZone ? { timeZone } : {}) });
 }
 
 function shiftMinutes(s: Shift): number {
@@ -510,7 +510,7 @@ function DayShiftChip({
       >
         <div className="flex items-center justify-between gap-1">
           <div className="text-[10px] text-silver tabular-nums truncate">
-            {fmtTime(startsAt)}–{fmtTime(previewEnds)}
+            {fmtTime(startsAt, shift.timezone)}–{fmtTime(previewEnds, shift.timezone)}
           </div>
           <Badge
             variant={STATUS_VARIANT[shift.status] ?? 'default'}

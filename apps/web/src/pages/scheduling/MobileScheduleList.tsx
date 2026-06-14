@@ -48,8 +48,8 @@ interface Props {
   onCreate: (dayStart: Date) => void;
 }
 
-function fmtTime(d: Date): string {
-  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+function fmtTime(d: Date, timeZone?: string | null): string {
+  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', ...(timeZone ? { timeZone } : {}) });
 }
 
 function fmtDateHeader(d: Date): string {
@@ -177,7 +177,7 @@ export function MobileScheduleList({
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2">
                         <div className="font-medium text-white tabular-nums text-sm">
-                          {fmtTime(start)} – {fmtTime(end)}
+                          {fmtTime(start, s.timezone)} – {fmtTime(end, s.timezone)}
                         </div>
                         <Badge variant={STATUS_VARIANT[s.status]}>
                           {s.status}

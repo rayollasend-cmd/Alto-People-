@@ -101,6 +101,65 @@ export function fmtTime(value: string | Date | null | undefined): string {
   });
 }
 
+/**
+ * Timezone-aware variants for the scheduling calendar. A shift is a UTC
+ * instant but belongs to a STORE — rendering it in the viewer's browser
+ * zone shows the wrong wall-clock for anyone not physically at the site
+ * (a CA manager viewing a FL store sees every shift 3h early). Pass the
+ * shift's `timezone` (an IANA name) so the grid shows store-local time.
+ * Falls back to the browser zone when no timezone is given.
+ */
+export function fmtTimeTz(
+  value: string | Date | null | undefined,
+  timeZone?: string | null,
+): string {
+  if (!value) return DASH;
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return DASH;
+  return d.toLocaleTimeString(EN_US, {
+    hour: 'numeric',
+    minute: '2-digit',
+    ...(timeZone ? { timeZone } : {}),
+  });
+}
+
+/** Store-local date, e.g. "May 13". For calendar day labels. */
+export function fmtDateTz(
+  value: string | Date | null | undefined,
+  timeZone?: string | null,
+): string {
+  if (!value) return DASH;
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return DASH;
+  return d.toLocaleDateString(EN_US, {
+    month: 'short',
+    day: 'numeric',
+    ...(timeZone ? { timeZone } : {}),
+  });
+}
+
+/** The viewer's own IANA timezone (e.g. "America/Los_Angeles"). */
+export function browserTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
+/**
+ * Short zone abbreviation for a timezone at a given instant ("EDT", "PST").
+ * Used to label the schedule "times shown in <zone>" when the viewer isn't
+ * in the store's timezone, so nobody misreads a shift.
+ */
+export function tzAbbrev(
+  timeZone: string,
+  at: string | Date = new Date(),
+): string {
+  const d = at instanceof Date ? at : new Date(at);
+  const parts = new Intl.DateTimeFormat(EN_US, {
+    timeZone,
+    timeZoneName: 'short',
+  }).formatToParts(d);
+  return parts.find((p) => p.type === 'timeZoneName')?.value ?? timeZone;
+}
+
 /** "2h ago", "yesterday", "Mar 4". For activity feeds. */
 export function fmtRelativeDate(
   value: string | Date | null | undefined,

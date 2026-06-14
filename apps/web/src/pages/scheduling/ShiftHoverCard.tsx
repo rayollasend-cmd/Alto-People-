@@ -41,13 +41,15 @@ interface Props {
 function fmtTimeRange(s: Shift): string {
   const a = new Date(s.startsAt);
   const b = new Date(s.endsAt);
+  const tzOpts = s.timezone ? { timeZone: s.timezone } : {};
   const date = a.toLocaleDateString(undefined, {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
+    ...tzOpts,
   });
-  const t1 = a.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  const t2 = b.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const t1 = a.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', ...tzOpts });
+  const t2 = b.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', ...tzOpts });
   return `${date} · ${t1} – ${t2}`;
 }
 

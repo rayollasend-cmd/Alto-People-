@@ -48,8 +48,12 @@ const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 const UNASSIGNED_ROW_ID = '__unassigned__';
 
-function fmtTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+function fmtTime(iso: string, timeZone?: string | null): string {
+  return new Date(iso).toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+    ...(timeZone ? { timeZone } : {}),
+  });
 }
 
 function startOfDay(d: Date): Date {
@@ -840,7 +844,8 @@ function ShiftChip({
       >
         <div className="flex items-center justify-between gap-1">
           <div className="text-[11px] text-silver tabular-nums">
-            {fmtTime(shift.startsAt)}–{fmtTime(previewEndsAt.toISOString())}
+            {fmtTime(shift.startsAt, shift.timezone)}–
+            {fmtTime(previewEndsAt.toISOString(), shift.timezone)}
           </div>
           <Badge
             variant={STATUS_VARIANT[shift.status] ?? 'default'}

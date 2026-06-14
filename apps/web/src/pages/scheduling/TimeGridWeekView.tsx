@@ -64,8 +64,8 @@ const SNAP_MIN = 15;
 const MIN_DURATION_MIN = 15;
 const UNASSIGNED_ROW_ID = '__unassigned__';
 
-function fmtTime(d: Date): string {
-  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+function fmtTime(d: Date, timeZone?: string | null): string {
+  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', ...(timeZone ? { timeZone } : {}) });
 }
 
 function startOfDay(d: Date): Date {
@@ -738,7 +738,7 @@ function TimeChip({
           className="w-full h-full text-left pl-2 pr-1 flex items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
         >
           <span className="text-[10px] text-silver tabular-nums truncate">
-            {fmtTime(startsAt)}
+            {fmtTime(startsAt, shift.timezone)}
           </span>
           <span className="text-[10px] text-white truncate">
             {shift.position}
@@ -751,7 +751,7 @@ function TimeChip({
           className="w-full h-full text-left pl-2 pr-4 pt-1 pb-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
         >
           <div className="text-[10px] text-silver tabular-nums">
-            {fmtTime(startsAt)}–{fmtTime(previewEndsAt)}
+            {fmtTime(startsAt, shift.timezone)}–{fmtTime(previewEndsAt, shift.timezone)}
           </div>
           <div className="text-[11px] text-white font-medium truncate leading-tight">
             {shift.position}

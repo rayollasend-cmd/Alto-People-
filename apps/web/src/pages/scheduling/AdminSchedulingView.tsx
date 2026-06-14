@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
   Calendar,
+  Clock,
   CalendarDays,
   CalendarRange,
   CheckCircle2,
@@ -62,7 +63,7 @@ import { useConfirm } from '@/lib/confirm';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-import { fmtDateTime } from '@/lib/format';
+import { fmtDateTime, browserTimeZone, tzAbbrev } from '@/lib/format';
 import {
   Dialog,
   DialogContent,
@@ -474,6 +475,26 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     if (!pos) return shifts;
     return shifts.filter((s) => s.position.toLowerCase().includes(pos));
   }, [shifts, posFilter]);
+
+  // Shift times render in the work-site's timezone. When the viewer isn't
+  // sitting in that zone (e.g. a remote/HQ manager), label it so nobody
+  // misreads a 10 PM shift as their own 7 PM. Only shown on a real mismatch.
+  const tzHint = useMemo(() => {
+    if (!filteredShifts || filteredShifts.length === 0) return null;
+    const zones = new Set(filteredShifts.map((s) => s.timezone).filter(Boolean));
+    if (zones.size === 0) return null;
+    const viewer = browserTimeZone();
+    if (zones.size === 1) {
+      const zone = [...zones][0]!;
+      if (zone === viewer) return null; // viewer is at the store — no note
+      return `Times shown in ${tzAbbrev(zone)} (store local time).`;
+    }
+    // Mixed locations (full-org schedule across timezones).
+    if (zones.size > 1) {
+      return 'Times shown in each location’s local time.';
+    }
+    return null;
+  }, [filteredShifts]);
 
   // Phase 53.6 — DRAFT count for the visible week (powers the publish ribbon).
   const draftsInWeek = useMemo(() => {
@@ -946,6 +967,13 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       {canManage && (
         <div className="no-print">
           <KpiStrip kpis={kpis} />
+        </div>
+      )}
+
+      {tzHint && (
+        <div className="no-print mb-2 text-[11px] text-silver/70 inline-flex items-center gap-1">
+          <Clock className="h-3 w-3" />
+          {tzHint}
         </div>
       )}
 
