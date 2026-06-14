@@ -1134,6 +1134,10 @@ export const ShiftSchema = z.object({
   startsAt: z.string().datetime(),
   endsAt: z.string().datetime(),
   location: z.string().nullable(),
+  // IANA timezone of the work site (from the shift's Location). The
+  // calendar renders startsAt/endsAt in THIS zone so a manager viewing the
+  // store from another timezone still sees the store's wall-clock times.
+  timezone: z.string(),
   hourlyRate: z.number().nullable(),
   /** Cost-side rate (associate is paid this) — drives projected labor cost. */
   payRate: z.number().nullable(),

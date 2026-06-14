@@ -1,4 +1,9 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
+import {
+  DEFAULT_TIMEZONE,
+  formatDateInZone,
+  formatTimeInZone,
+} from './timezone.js';
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
@@ -69,16 +74,21 @@ export function formatShiftLine(s: {
   clientName: string | null;
   startsAt: Date | string;
   endsAt: Date | string;
+  /**
+   * IANA timezone of the work site. Notifications go to associates who
+   * read them in store-local time — formatting in the server's UTC clock
+   * (the old behavior) showed every time 4–5h off. Defaults to the
+   * deployment timezone; callers with the shift's Location should pass its
+   * timezone for multi-site correctness.
+   */
+  timezone?: string | null;
 }): string {
   const start = new Date(s.startsAt);
   const end = new Date(s.endsAt);
-  const date = start.toLocaleDateString([], {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-  });
-  const startTime = start.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  const endTime = end.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const tz = s.timezone ?? DEFAULT_TIMEZONE;
+  const date = formatDateInZone(start, tz);
+  const startTime = formatTimeInZone(start, tz);
+  const endTime = formatTimeInZone(end, tz);
   const where = s.clientName ? ` at ${s.clientName}` : '';
   return `${s.position}${where} · ${date}, ${startTime}–${endTime}`;
 }

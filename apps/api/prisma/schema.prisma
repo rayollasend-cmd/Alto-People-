@@ -580,6 +580,13 @@ model Location {
   latitude             Decimal?  @db.Decimal(10, 7)
   longitude            Decimal?  @db.Decimal(10, 7)
   geofenceRadiusMeters Int?
+  // IANA timezone of the physical work site (e.g. "America/New_York").
+  // Shifts store UTC instants; this is what turns a UTC instant into the
+  // store's wall-clock time for availability matching, the schedule PDF,
+  // and shift notifications. Defaults to Eastern (the current deployment);
+  // admins set it per location. Validated against SUPPORTED_TIMEZONES on
+  // write.
+  timezone             String    @default("America/New_York")
   isActive             Boolean   @default(true)
   createdAt            DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt            DateTime  @updatedAt @db.Timestamptz(6)

@@ -48,6 +48,11 @@ import { notifyManager } from '../lib/notify.js';
 import { shiftSwapManagerTemplate } from '../lib/emailTemplates.js';
 import { netWorkedMinutes, startOfWeekUTC, endOfWeekUTC } from '../lib/timeAnomalies.js';
 import {
+  DEFAULT_TIMEZONE,
+  zonedDayOfWeek,
+  zonedMinutes,
+} from '../lib/timezone.js';
+import {
   evaluateShiftNotice,
   isPublishingTransition,
 } from '../lib/predictiveScheduling.js';
@@ -87,6 +92,7 @@ type RawShift = Prisma.ShiftGetPayload<{
   include: {
     client: { select: { name: true } };
     assignedAssociate: { select: { firstName: true; lastName: true } };
+    locationRel: { select: { timezone: true } };
   };
 }>;
 
@@ -107,6 +113,10 @@ function toShift(row: RawShift): Shift {
     payRate: row.payRate ? Number(row.payRate) : null,
     status: row.status,
     notes: row.notes,
+    // IANA timezone of the work site — lets the calendar render every shift
+    // in the STORE's wall-clock time, not the viewer's browser zone. Falls
+    // back to the deployment default for shifts without a Location yet.
+    timezone: row.locationRel?.timezone ?? DEFAULT_TIMEZONE,
     assignedAssociateId: row.assignedAssociateId,
     assignedAssociateName: row.assignedAssociate
       ? `${row.assignedAssociate.firstName} ${row.assignedAssociate.lastName}`
@@ -122,6 +132,7 @@ function toShift(row: RawShift): Shift {
 const SHIFT_INCLUDE = {
   client: { select: { name: true } },
   assignedAssociate: { select: { firstName: true, lastName: true } },
+  locationRel: { select: { timezone: true } },
 } as const;
 
 // Hard cap on the PDF export. Each row pulls a shift row + client name
@@ -802,8 +813,12 @@ schedulingRouter.get('/shifts/:id/auto-fill', MANAGE, async (req, res, next) => 
   try {
     const target = await prisma.shift.findFirst({
       where: { id: req.params.id, ...scopeShifts(req.user!) },
+      include: { locationRel: { select: { timezone: true } } },
     });
     if (!target) throw new HttpError(404, 'shift_not_found', 'Shift not found');
+    // Availability is wall-clock at the STORE, so convert the shift's UTC
+    // instant to the location's local day-of-week + minutes before matching.
+    const targetTz = target.locationRel?.timezone ?? DEFAULT_TIMEZONE;
 
     // Day-bound the target so we can match it against day-granular PTO rows.
     const targetDayStart = new Date(target.startsAt);
@@ -846,9 +861,9 @@ schedulingRouter.get('/shifts/:id/auto-fill', MANAGE, async (req, res, next) => 
 
     const ptoAssociateIds = new Set(ptoRows.map((r) => r.associateId));
 
-    const targetDOW = target.startsAt.getUTCDay();
-    const startMin = target.startsAt.getUTCHours() * 60 + target.startsAt.getUTCMinutes();
-    const endMin = target.endsAt.getUTCHours() * 60 + target.endsAt.getUTCMinutes();
+    const targetDOW = zonedDayOfWeek(target.startsAt, targetTz);
+    const startMin = zonedMinutes(target.startsAt, targetTz);
+    const endMin = zonedMinutes(target.endsAt, targetTz);
 
     const candidates: AutoFillCandidate[] = associates.map((a) => {
       const matchesAvailability = a.availability.some(
@@ -1676,6 +1691,7 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
       include: {
         client: { select: { state: true, name: true } },
         assignedAssociate: { select: { firstName: true, lastName: true } },
+        locationRel: { select: { timezone: true } },
       },
     });
 
@@ -1738,6 +1754,7 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
           clientName: s.client?.name ?? null,
           startsAt: s.startsAt,
           endsAt: s.endsAt,
+          timezone: s.locationRel?.timezone ?? null,
         }),
       );
       const subject =
@@ -1810,6 +1827,7 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
       where,
       orderBy: { startsAt: 'asc' },
       take: 2000,
+      include: { locationRel: { select: { timezone: true } } },
     });
 
     if (openShifts.length === 0) {
@@ -1908,9 +1926,11 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
     let assignedTotal = 0;
 
     for (const shift of openShifts) {
-      const dow = shift.startsAt.getUTCDay();
-      const startMin = shift.startsAt.getUTCHours() * 60 + shift.startsAt.getUTCMinutes();
-      const endMin = shift.endsAt.getUTCHours() * 60 + shift.endsAt.getUTCMinutes();
+      // Wall-clock at the store, matching how associates enter availability.
+      const shiftTz = shift.locationRel?.timezone ?? DEFAULT_TIMEZONE;
+      const dow = zonedDayOfWeek(shift.startsAt, shiftTz);
+      const startMin = zonedMinutes(shift.startsAt, shiftTz);
+      const endMin = zonedMinutes(shift.endsAt, shiftTz);
       const shiftMinutes = Math.floor(
         (shift.endsAt.getTime() - shift.startsAt.getTime()) / 60_000,
       );
@@ -2086,6 +2106,9 @@ schedulingRouter.post('/export.pdf', MANAGE, async (req, res, next) => {
       rangeFrom: from,
       rangeTo: to,
       generatedAt: new Date(),
+      // Header stamp timezone: the first shift's site, else the deployment
+      // default. Per-row times each use their own site timezone.
+      timezone: rows[0]?.locationRel?.timezone ?? DEFAULT_TIMEZONE,
       filters: { clientName },
       shifts: rows.map((r) => ({
         startsAt: r.startsAt,
@@ -2093,6 +2116,9 @@ schedulingRouter.post('/export.pdf', MANAGE, async (req, res, next) => {
         position: r.position,
         clientName: r.client?.name ?? null,
         location: r.location,
+        // Render each row's date/time in its own work-site timezone so the
+        // printed schedule shows store-local times, not the server's UTC.
+        timezone: r.locationRel?.timezone ?? DEFAULT_TIMEZONE,
         assignedAssociateName: r.assignedAssociate
           ? `${r.assignedAssociate.firstName} ${r.assignedAssociate.lastName}`
           : null,
