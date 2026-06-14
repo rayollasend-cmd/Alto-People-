@@ -50,8 +50,8 @@ function shiftMinutes(s: Shift): number {
   );
 }
 
-function fmtTime(d: Date): string {
-  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+function fmtTime(d: Date, timeZone?: string | null): string {
+  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', ...(timeZone ? { timeZone } : {}) });
 }
 
 function initialsOf(name: string | null): string {
@@ -439,7 +439,7 @@ function MonthShiftChip({
           )}
         >
           <span className={cn('text-[10px] tabular-nums shrink-0', tone.time)}>
-            {compactTime(start)}
+            {compactTime(start, shift.timezone)}
           </span>
           <span className={cn('text-[10px] truncate flex-1', tone.text)}>
             {shift.position}
@@ -453,7 +453,7 @@ function MonthShiftChip({
         <div className="space-y-0.5">
           <div className="font-medium text-white">{shift.position}</div>
           <div className="text-silver">
-            {fmtTime(start)} – {fmtTime(end)} ·{' '}
+            {fmtTime(start, shift.timezone)} – {fmtTime(end, shift.timezone)} ·{' '}
             <span className="tabular-nums">
               {(shift.scheduledMinutes / 60).toFixed(2)}h
             </span>
@@ -554,7 +554,7 @@ function DayDetailDialog({
                     </span>
                   </div>
                   <div className="text-xs text-silver mt-0.5 tabular-nums">
-                    {fmtTime(start)} – {fmtTime(end)}
+                    {fmtTime(start, s.timezone)} – {fmtTime(end, s.timezone)}
                     {s.clientName && (
                       <span className="ml-2">· {s.clientName}</span>
                     )}
@@ -692,10 +692,22 @@ function statusBadgeCx(s: ShiftStatus): string {
 }
 
 /** Compact time format ("9a", "9:30a", "5p", "5:30p") so chips fit narrow cells. */
-function compactTime(d: Date): string {
-  const h = d.getHours();
-  const m = d.getMinutes();
-  const period = h >= 12 ? 'p' : 'a';
-  const h12 = h % 12 === 0 ? 12 : h % 12;
-  return m === 0 ? `${h12}${period}` : `${h12}:${String(m).padStart(2, '0')}${period}`;
+function compactTime(d: Date, timeZone?: string | null): string {
+  // Extract h/m in the target timezone via Intl so we respect shift.timezone.
+  const parts = new Intl.DateTimeFormat('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    ...(timeZone ? { timeZone } : {}),
+  }).formatToParts(d);
+  const h12Raw = parts.find((p) => p.type === 'hour')?.value ?? '12';
+  const minRaw = parts.find((p) => p.type === 'minute')?.value ?? '00';
+  const period = (parts.find((p) => p.type === 'dayPeriod')?.value ?? 'AM')
+    .toLowerCase()
+    .startsWith('p')
+    ? 'p'
+    : 'a';
+  const h = Number(h12Raw);
+  const m = Number(minRaw);
+  return m === 0 ? `${h}${period}` : `${h}:${String(m).padStart(2, '0')}${period}`;
 }
