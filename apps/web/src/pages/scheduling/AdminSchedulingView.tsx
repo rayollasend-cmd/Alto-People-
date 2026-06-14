@@ -266,11 +266,18 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const [createInitialAssociateId, setCreateInitialAssociateId] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
-  // Phase 53 — calendar filter bar. Position is free text; client + location
-  // are dropdowns derived from the data. All three are AND-combined.
+  // Calendar filter bar — cascading "full schedule" narrowing.
+  //   clientFilter   '' = every client (the full org schedule, the default)
+  //   locationFilter '' = every location under the chosen client; otherwise a
+  //                  real Location id (only selectable once a client is set).
+  //   posFilter      free-text position match, AND-combined client-side.
+  // client + location are filtered server-side; position is client-side.
   const [posFilter, setPosFilter] = useState<string>('');
   const [clientFilter, setClientFilter] = useState<string>(''); // '' = all
   const [locationFilter, setLocationFilter] = useState<string>(''); // '' = all
+  // Locations belonging to the currently-selected client, for the cascade.
+  // null = loading; [] = client has none (or no client selected).
+  const [clientLocations, setClientLocations] = useState<LocationSummary[]>([]);
   const [showAllAssociates, setShowAllAssociates] = useState<boolean>(true);
 
   // Week-view state. weekStart is always a Monday at 00:00 local.
@@ -399,13 +406,17 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         }
       }
       if (clientFilter) args = { ...args, clientId: clientFilter };
+      // Location only narrows within a client (a Location belongs to one).
+      if (clientFilter && locationFilter) {
+        args = { ...args, locationId: locationFilter };
+      }
       const res = await listShifts(args);
       setShifts(res.shifts);
     } catch (err) {
       const msg = err instanceof ApiError ? err.message : 'Failed to load shifts.';
       toast.error(msg);
     }
-  }, [filter, view, weekStart, weekEnd, dayAnchor, monthAnchor, clientFilter, listFrom, listTo]);
+  }, [filter, view, weekStart, weekEnd, dayAnchor, monthAnchor, clientFilter, locationFilter, listFrom, listTo]);
 
   useEffect(() => {
     refresh();
@@ -431,32 +442,37 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       .catch(() => setAssociates([]));
   }, [canManage]);
 
-  // Filter the loaded shift set by the position / location filter (client
-  // is filtered server-side via clientId param).
+  // Cascade: when the client narrows, load THAT client's locations for the
+  // location dropdown and clear any stale location selection. Selecting
+  // "All clients" (the full schedule) empties the location list — a
+  // location only has meaning within one client.
+  useEffect(() => {
+    setLocationFilter('');
+    if (!clientFilter) {
+      setClientLocations([]);
+      return;
+    }
+    let cancelled = false;
+    listClientLocations(clientFilter)
+      .then((r) => {
+        if (!cancelled) setClientLocations(r.locations);
+      })
+      .catch(() => {
+        if (!cancelled) setClientLocations([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientFilter]);
+
+  // Position is the only client-side narrowing left — client and location
+  // are both filtered server-side (clientId + locationId params).
   const filteredShifts = useMemo(() => {
     if (!shifts) return shifts;
     const pos = posFilter.trim().toLowerCase();
-    const loc = locationFilter.trim().toLowerCase();
-    if (!pos && !loc) return shifts;
-    return shifts.filter((s) => {
-      if (pos && !s.position.toLowerCase().includes(pos)) return false;
-      if (loc) {
-        if (!s.location || !s.location.toLowerCase().includes(loc)) return false;
-      }
-      return true;
-    });
-  }, [shifts, posFilter, locationFilter]);
-
-  // Phase 53.5 — derive distinct location values from the loaded shifts so
-  // HR doesn't have to type. Falls back to free-text input above when empty.
-  const locationOptions = useMemo(() => {
-    if (!shifts) return [] as string[];
-    const set = new Set<string>();
-    for (const s of shifts) {
-      if (s.location && s.location.trim()) set.add(s.location.trim());
-    }
-    return Array.from(set).sort();
-  }, [shifts]);
+    if (!pos) return shifts;
+    return shifts.filter((s) => s.position.toLowerCase().includes(pos));
+  }, [shifts, posFilter]);
 
   // Phase 53.6 — DRAFT count for the visible week (powers the publish ribbon).
   const draftsInWeek = useMemo(() => {
@@ -870,8 +886,10 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           {clientFilter && clients.find((c) => c.id === clientFilter)
             ? ` · ${clients.find((c) => c.id === clientFilter)?.name}`
             : ''}
+          {locationFilter && clientLocations.find((l) => l.id === locationFilter)
+            ? ` › ${clientLocations.find((l) => l.id === locationFilter)?.name}`
+            : ''}
           {posFilter ? ` · position: ${posFilter}` : ''}
-          {locationFilter ? ` · location: ${locationFilter}` : ''}
         </div>
         <div className="text-[10px] text-gray-500 mt-1">
           Generated {fmtDateTime(new Date())}
@@ -1167,8 +1185,10 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         )}
       </div>
 
-      {/* Phase 53.5 — filter bar (calendar views only) */}
-      {canManage && view !== 'list' && (
+      {/* Full-schedule filter bar — shown in every view (incl. the list
+          "full schedule" table) so the cascade client → location → position
+          narrows the whole org schedule from one place. */}
+      {canManage && (
         <div className="no-print">
           <FilterBar
             posFilter={posFilter}
@@ -1177,7 +1197,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             setClientFilter={setClientFilter}
             locationFilter={locationFilter}
             setLocationFilter={setLocationFilter}
-            locationOptions={locationOptions}
+            clientLocations={clientLocations}
             clients={clients}
             showAllAssociates={showAllAssociates}
             setShowAllAssociates={setShowAllAssociates}
@@ -3115,7 +3135,7 @@ function FilterBar({
   setClientFilter,
   locationFilter,
   setLocationFilter,
-  locationOptions,
+  clientLocations,
   clients,
   showAllAssociates,
   setShowAllAssociates,
@@ -3127,7 +3147,7 @@ function FilterBar({
   setClientFilter: (v: string) => void;
   locationFilter: string;
   setLocationFilter: (v: string) => void;
-  locationOptions: string[];
+  clientLocations: LocationSummary[];
   clients: ClientSummary[];
   showAllAssociates: boolean;
   setShowAllAssociates: (v: boolean) => void;
@@ -3135,79 +3155,111 @@ function FilterBar({
 }) {
   const anyActive =
     posFilter.trim() !== '' || clientFilter !== '' || locationFilter !== '';
+  const clientName = clients.find((c) => c.id === clientFilter)?.name;
+  const locationName = clientLocations.find((l) => l.id === locationFilter)?.name;
+  // Location only makes sense once a client is chosen (a Location belongs to
+  // one client). With "All clients" selected this stays disabled.
+  const locationDisabled = !clientFilter;
   const inputCx =
     'h-8 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 py-1 text-xs text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold';
   return (
-    <div className="mb-3 flex flex-wrap items-center gap-2 px-3 py-2 rounded-md border border-navy-secondary bg-navy-secondary/20">
-      <div className="text-[10px] uppercase tracking-wider text-silver/70 inline-flex items-center gap-1">
-        <Filter className="h-3 w-3" />
-        Filter
+    <div className="mb-3 rounded-md border border-navy-secondary bg-navy-secondary/20 px-3 py-2">
+      {/* Scope line — tells the admin exactly what they're looking at. */}
+      <div className="mb-2 text-[11px] text-silver/80">
+        {!clientFilter ? (
+          <span>
+            <span className="font-medium text-white">Full schedule</span>
+            <span className="text-silver/60"> · every client &amp; location in the organization</span>
+          </span>
+        ) : (
+          <span className="inline-flex flex-wrap items-center gap-1">
+            <span className="font-medium text-white">{clientName ?? 'Client'}</span>
+            {locationName ? (
+              <>
+                <span className="text-silver/50">›</span>
+                <span className="font-medium text-white">{locationName}</span>
+              </>
+            ) : (
+              <span className="text-silver/60">· all locations</span>
+            )}
+          </span>
+        )}
       </div>
-      <input
-        type="text"
-        placeholder="Position…"
-        value={posFilter}
-        onChange={(e) => setPosFilter(e.target.value)}
-        className={cn(inputCx, 'w-32')}
-        aria-label="Filter by position"
-      />
-      <div className="min-w-[10rem]">
-        <Select
-          value={clientFilter}
-          onChange={(e) => setClientFilter(e.target.value)}
-          size="sm"
-          aria-label="Filter by client"
-        >
-          <option value="">All clients</option>
-          {clients.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="text-[10px] uppercase tracking-wider text-silver/70 inline-flex items-center gap-1">
+          <Filter className="h-3 w-3" />
+          Filter
+        </div>
+        <div className="min-w-[10rem]">
+          <Select
+            value={clientFilter}
+            onChange={(e) => setClientFilter(e.target.value)}
+            size="sm"
+            aria-label="Filter by client"
+          >
+            <option value="">All clients (full schedule)</option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </Select>
+        </div>
+        <div className="min-w-[11rem]">
+          <Select
+            value={locationFilter}
+            onChange={(e) => setLocationFilter(e.target.value)}
+            size="sm"
+            aria-label="Filter by location"
+            disabled={locationDisabled}
+          >
+            <option value="">
+              {locationDisabled
+                ? 'Select a client first'
+                : clientLocations.length === 0
+                  ? 'No locations for this client'
+                  : 'All locations'}
             </option>
-          ))}
-        </Select>
+            {clientLocations.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
+          </Select>
+        </div>
+        <input
+          type="text"
+          placeholder="Position…"
+          value={posFilter}
+          onChange={(e) => setPosFilter(e.target.value)}
+          className={cn(inputCx, 'w-32')}
+          aria-label="Filter by position"
+        />
+        {anyActive && (
+          <button
+            type="button"
+            onClick={() => {
+              setPosFilter('');
+              setClientFilter('');
+              setLocationFilter('');
+            }}
+            className="text-[10px] text-silver/70 hover:text-gold underline underline-offset-2 ml-1"
+          >
+            Clear
+          </button>
+        )}
+        {showAssociateToggle && (
+          <label className="ml-auto inline-flex items-center gap-1.5 text-[11px] text-silver cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showAllAssociates}
+              onChange={(e) => setShowAllAssociates(e.target.checked)}
+              className="accent-gold"
+            />
+            Show all associates
+          </label>
+        )}
       </div>
-      <div className="min-w-[10rem]">
-        <Select
-          value={locationFilter}
-          onChange={(e) => setLocationFilter(e.target.value)}
-          size="sm"
-          aria-label="Filter by location"
-          disabled={locationOptions.length === 0}
-        >
-          <option value="">
-            {locationOptions.length === 0 ? '— no locations —' : 'All locations'}
-          </option>
-          {locationOptions.map((l) => (
-            <option key={l} value={l}>
-              {l}
-            </option>
-          ))}
-        </Select>
-      </div>
-      {anyActive && (
-        <button
-          type="button"
-          onClick={() => {
-            setPosFilter('');
-            setClientFilter('');
-            setLocationFilter('');
-          }}
-          className="text-[10px] text-silver/70 hover:text-gold underline underline-offset-2 ml-1"
-        >
-          Clear
-        </button>
-      )}
-      {showAssociateToggle && (
-        <label className="ml-auto inline-flex items-center gap-1.5 text-[11px] text-silver cursor-pointer">
-          <input
-            type="checkbox"
-            checked={showAllAssociates}
-            onChange={(e) => setShowAllAssociates(e.target.checked)}
-            className="accent-gold"
-          />
-          Show all associates
-        </label>
-      )}
     </div>
   );
 }

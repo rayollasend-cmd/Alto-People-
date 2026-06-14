@@ -92,7 +92,7 @@ type RawShift = Prisma.ShiftGetPayload<{
   include: {
     client: { select: { name: true } };
     assignedAssociate: { select: { firstName: true; lastName: true } };
-    locationRel: { select: { timezone: true } };
+    locationRel: { select: { id: true; name: true; timezone: true } };
   };
 }>;
 
@@ -113,6 +113,10 @@ function toShift(row: RawShift): Shift {
     payRate: row.payRate ? Number(row.payRate) : null,
     status: row.status,
     notes: row.notes,
+    // Structured work-site (Phase 131) — powers the cascading
+    // client→location filter and per-shift location display.
+    locationId: row.locationId,
+    locationName: row.locationRel?.name ?? null,
     // IANA timezone of the work site — lets the calendar render every shift
     // in the STORE's wall-clock time, not the viewer's browser zone. Falls
     // back to the deployment default for shifts without a Location yet.
@@ -132,7 +136,7 @@ function toShift(row: RawShift): Shift {
 const SHIFT_INCLUDE = {
   client: { select: { name: true } },
   assignedAssociate: { select: { firstName: true, lastName: true } },
-  locationRel: { select: { timezone: true } },
+  locationRel: { select: { id: true, name: true, timezone: true } },
 } as const;
 
 // Hard cap on the PDF export. Each row pulls a shift row + client name
@@ -149,6 +153,7 @@ schedulingRouter.get('/shifts', MANAGE, async (req, res, next) => {
   try {
     const status = req.query.status?.toString();
     const clientId = req.query.clientId?.toString();
+    const locationId = req.query.locationId?.toString();
     const from = req.query.from?.toString();
     const to = req.query.to?.toString();
 
@@ -156,6 +161,8 @@ schedulingRouter.get('/shifts', MANAGE, async (req, res, next) => {
       ...scopeShifts(req.user!),
       ...(status ? { status: status as Prisma.ShiftWhereInput['status'] } : {}),
       ...(clientId ? { clientId } : {}),
+      // Narrow to one work-site within the client (cascading filter).
+      ...(locationId ? { locationId } : {}),
       ...(from || to
         ? {
             startsAt: {

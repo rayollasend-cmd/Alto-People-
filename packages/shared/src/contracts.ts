@@ -1134,6 +1134,12 @@ export const ShiftSchema = z.object({
   startsAt: z.string().datetime(),
   endsAt: z.string().datetime(),
   location: z.string().nullable(),
+  // Phase 131 — the structured work-site this shift belongs to. locationId
+  // is the FK; locationName is denormalized for display + the cascading
+  // client→location filter on the schedule page. Null until a shift is
+  // tied to a Location (legacy rows used the free-text `location` above).
+  locationId: UuidSchema.nullable(),
+  locationName: z.string().nullable(),
   // IANA timezone of the work site (from the shift's Location). The
   // calendar renders startsAt/endsAt in THIS zone so a manager viewing the
   // store from another timezone still sees the store's wall-clock times.
