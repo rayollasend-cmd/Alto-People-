@@ -7,6 +7,8 @@ import {
   AutoScheduleWeekResponseSchema,
   AvailabilityListResponseSchema,
   AvailabilityReplaceInputSchema,
+  BulkCreateShiftsInputSchema,
+  BulkCreateShiftsResponseSchema,
   CalendarFeedUrlResponseSchema,
   CopyWeekInputSchema,
   PublishWeekInputSchema,
@@ -27,6 +29,7 @@ import {
   type AutoFillCandidate,
   type AutoScheduleSkip,
   type AutoScheduleWeekResponse,
+  type BulkCreateShiftsResponse,
   type AvailabilityWindow,
   type CopyWeekResponse,
   type PublishWeekResponse,
@@ -397,6 +400,214 @@ schedulingRouter.post('/shifts', MANAGE, async (req, res, next) => {
     });
 
     res.status(201).json(toShift(created));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Bulk create-and-assign — define one shift and stamp a copy onto many
+// employees at once (each gets their own instance in their row), plus
+// optional unassigned "open slot" copies. One transaction; employees who
+// already have an overlapping shift are skipped and reported rather than
+// double-booked.
+schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = BulkCreateShiftsInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const input = parsed.data;
+
+    const client = await prisma.client.findFirst({
+      where: { id: input.clientId, deletedAt: null },
+    });
+    if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+
+    // Resolve the work-site (explicit pick or the client's first Location).
+    let location: { id: string; timezone: string };
+    if (input.locationId) {
+      const picked = await prisma.location.findFirst({
+        where: { id: input.locationId, clientId: client.id, deletedAt: null, isActive: true },
+        select: { id: true, timezone: true },
+      });
+      if (!picked) {
+        throw new HttpError(
+          400,
+          'location_mismatch',
+          'Location does not belong to the chosen client.',
+        );
+      }
+      location = picked;
+    } else {
+      const first = await firstLocationForClient(prisma, client.id);
+      const full = await prisma.location.findUniqueOrThrow({
+        where: { id: first.id },
+        select: { id: true, timezone: true },
+      });
+      location = full;
+    }
+
+    const startsAt = new Date(input.startsAt);
+    const endsAt = new Date(input.endsAt);
+    const status = input.status ?? 'OPEN';
+    const isPublishing = isPublishingTransition(undefined, status);
+    const now = new Date();
+    let lateNoticeReason: string | null = null;
+    let publishedAt: Date | null = null;
+    if (isPublishing) {
+      const evaluation = evaluateShiftNotice({
+        state: client.state,
+        startsAt,
+        publishAt: now,
+      });
+      if (evaluation.requiresReason && !input.lateNoticeReason) {
+        throw new HttpError(
+          400,
+          'late_notice_reason_required',
+          `Publishing a shift inside the 14-day notice window in ${evaluation.state} requires lateNoticeReason`,
+        );
+      }
+      lateNoticeReason = input.lateNoticeReason ?? null;
+      publishedAt = now;
+    }
+
+    const associateIds = [...new Set(input.associateIds)];
+    // Names for the skip report + notifications, and a validity check.
+    const associates = await prisma.associate.findMany({
+      where: { id: { in: associateIds }, deletedAt: null },
+      select: { id: true, firstName: true, lastName: true },
+    });
+    const nameById = new Map(
+      associates.map((a) => [a.id, `${a.firstName} ${a.lastName}`]),
+    );
+
+    // One query for every requested employee's overlapping shifts → bucket
+    // in memory. No per-associate round-trip.
+    const conflictRows =
+      associateIds.length > 0
+        ? await prisma.shift.findMany({
+            where: {
+              assignedAssociateId: { in: associateIds },
+              status: { notIn: ['CANCELLED'] },
+              startsAt: { lt: endsAt },
+              endsAt: { gt: startsAt },
+            },
+            select: { assignedAssociateId: true },
+          })
+        : [];
+    const conflicted = new Set(conflictRows.map((r) => r.assignedAssociateId));
+
+    const skipped: {
+      associateId: string;
+      associateName: string;
+      reason: string;
+    }[] = [];
+    const toAssign: string[] = [];
+    for (const id of associateIds) {
+      if (!nameById.has(id)) {
+        skipped.push({ associateId: id, associateName: 'Unknown', reason: 'not_found' });
+      } else if (conflicted.has(id)) {
+        skipped.push({
+          associateId: id,
+          associateName: nameById.get(id)!,
+          reason: 'already_scheduled',
+        });
+      } else {
+        toAssign.push(id);
+      }
+    }
+
+    const baseData = {
+      clientId: input.clientId,
+      locationId: location.id,
+      position: input.position,
+      startsAt,
+      endsAt,
+      location: input.location ?? null,
+      hourlyRate: input.hourlyRate ?? null,
+      payRate: input.payRate ?? null,
+      notes: input.notes ?? null,
+      status,
+      createdById: req.user!.id,
+      publishedAt,
+      lateNoticeReason,
+    };
+    const openCount = input.openCount ?? 0;
+
+    // Create everything atomically: one row per assigned employee + the
+    // open slots. createMany is a single INSERT.
+    const createdIds = await prisma.$transaction(async (tx) => {
+      if (toAssign.length > 0) {
+        await tx.shift.createMany({
+          data: toAssign.map((associateId) => ({
+            ...baseData,
+            assignedAssociateId: associateId,
+            assignedAt: now,
+          })),
+        });
+      }
+      if (openCount > 0) {
+        await tx.shift.createMany({
+          data: Array.from({ length: openCount }, () => ({ ...baseData })),
+        });
+      }
+      // Pull the ids we just made (this manager, this exact window + position)
+      // so the audit log references them.
+      const rows = await tx.shift.findMany({
+        where: {
+          createdById: req.user!.id,
+          clientId: input.clientId,
+          locationId: location.id,
+          position: input.position,
+          startsAt,
+          endsAt,
+          createdAt: { gte: now },
+        },
+        select: { id: true },
+      });
+      return rows.map((r) => r.id);
+    });
+
+    const createdCount = toAssign.length + openCount;
+    await recordShiftEvent({
+      actorUserId: req.user!.id,
+      action: 'shift.bulk_created',
+      shiftId: createdIds[0] ?? 'bulk',
+      clientId: input.clientId,
+      metadata: {
+        position: input.position,
+        status,
+        assigned: toAssign.length,
+        openSlots: openCount,
+        skipped: skipped.length,
+        ...(lateNoticeReason ? { lateNoticeReason, lateNotice: true } : {}),
+      },
+      req,
+    });
+
+    // Notify each assigned associate only if the shift is already published
+    // (drafts stay private until the week is published).
+    if (publishedAt) {
+      const line = formatShiftLine({
+        position: input.position,
+        clientName: client.name,
+        startsAt,
+        endsAt,
+        timezone: location.timezone,
+      });
+      for (const associateId of toAssign) {
+        await notifyShift(prisma, {
+          associateId,
+          subject: 'New shift',
+          body: `You've been assigned: ${line}`,
+          category: 'shift_assigned',
+          senderUserId: req.user!.id,
+        });
+      }
+    }
+
+    const payload: BulkCreateShiftsResponse = { created: createdCount, skipped };
+    res.status(201).json(BulkCreateShiftsResponseSchema.parse(payload));
   } catch (err) {
     next(err);
   }
