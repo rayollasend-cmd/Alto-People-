@@ -464,13 +464,18 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     })();
   }, [canManage]);
 
-  // Phase 53 — associate list for the pivot grid Y axis.
+  // Associate list for the pivot grid Y axis — scoped to the selected
+  // client/location so the rows match the filtered schedule (picking a
+  // client now narrows the people shown, not just the shifts).
   useEffect(() => {
     if (!canManage) return;
-    listSchedulingAssociates()
+    listSchedulingAssociates({
+      clientId: clientFilter || undefined,
+      locationId: (clientFilter && locationFilter) || undefined,
+    })
       .then((res) => setAssociates(res.associates))
       .catch(() => setAssociates([]));
-  }, [canManage]);
+  }, [canManage, clientFilter, locationFilter]);
 
   // Cascade: when the client narrows, load THAT client's locations for the
   // location dropdown and clear any stale location selection. Selecting
@@ -2471,6 +2476,10 @@ function CreateShiftDialog({
   const [clientId, setClientId] = useState(clients[0]?.id ?? '');
   const [locationId, setLocationId] = useState('');
   const [locations, setLocations] = useState<LocationSummary[] | null>(null);
+  // Employees scoped to the dialog's selected client — so the multi-assign
+  // picker only offers people who work for that client. Seeded from the
+  // page-level roster prop, then refined per client below.
+  const [scopedAssociates, setScopedAssociates] = useState<AssociateLite[]>(associates);
   const [position, setPosition] = useState('');
   // When opened from a calendar cell we know the day → switch to time-only
   // inputs (`HH:MM`) and show the date as a header label. When opened from
@@ -2523,6 +2532,29 @@ function CreateShiftDialog({
       cancelled = true;
     };
   }, [clientId]);
+
+  // Scope the multi-assign picker to the chosen client's employees. Without
+  // a client we fall back to the page roster prop. (Scoped by client, not
+  // the specific location, so you can still staff a new site with any of
+  // the client's people.)
+  useEffect(() => {
+    if (!open) return;
+    if (!clientId) {
+      setScopedAssociates(associates);
+      return;
+    }
+    let cancelled = false;
+    listSchedulingAssociates({ clientId })
+      .then((r) => {
+        if (!cancelled) setScopedAssociates(r.associates);
+      })
+      .catch(() => {
+        if (!cancelled) setScopedAssociates([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, clientId, associates]);
 
   useEffect(() => {
     if (open) {
@@ -2824,11 +2856,11 @@ function CreateShiftDialog({
                   <span className="ml-2 text-gold tabular-nums">{assignIds.size} selected</span>
                 )}
               </div>
-              {associates.length > 0 && (
+              {scopedAssociates.length > 0 && (
                 <div className="flex items-center gap-2 text-[11px]">
                   <button
                     type="button"
-                    onClick={() => setAssignIds(new Set(associates.map((a) => a.id)))}
+                    onClick={() => setAssignIds(new Set(scopedAssociates.map((a) => a.id)))}
                     className="text-silver/70 hover:text-gold underline underline-offset-2"
                   >
                     Select all
@@ -2845,9 +2877,9 @@ function CreateShiftDialog({
                 </div>
               )}
             </div>
-            {associates.length === 0 ? (
+            {scopedAssociates.length === 0 ? (
               <div className="text-[11px] text-silver/70">
-                No schedulable employees loaded. The shift will be created unassigned.
+                No schedulable employees for this client. The shift will be created unassigned.
               </div>
             ) : (
               <>
@@ -2859,7 +2891,7 @@ function CreateShiftDialog({
                   aria-label="Search employees"
                 />
                 <div className="max-h-44 overflow-y-auto rounded border border-navy-secondary/60 divide-y divide-navy-secondary/40">
-                  {associates
+                  {scopedAssociates
                     .filter((a) => {
                       const q = empSearch.trim().toLowerCase();
                       if (!q) return true;
