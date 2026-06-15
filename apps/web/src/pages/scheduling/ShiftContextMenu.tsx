@@ -233,7 +233,7 @@ export function ShiftContextMenu({ active, onClose, canManage, actions }: Props)
         width: MENU_WIDTH,
         zIndex: 110,
       }}
-      className="rounded-md border border-navy-secondary bg-navy elev-3 py-1"
+      className="rounded-md border border-navy-secondary bg-navy elev-3 py-1 animate-zoom-in"
       onContextMenu={(e) => e.preventDefault()}
     >
       {items.map((it, i) =>

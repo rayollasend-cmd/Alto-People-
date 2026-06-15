@@ -577,10 +577,25 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       setCopyingWeek(false);
     }
   };
+  // The KPI strip is always "this week" stats. `shifts` changing is a proxy for
+  // "something happened" — but it also fires on every week/day navigation
+  // (which doesn't change this-week data) and on every keystroke-free filter
+  // change, so naively it double-fetched on every action. Debounce so a burst
+  // (bulk action, rapid paging) collapses to one request, and guard with a
+  // sequence id so a slow earlier response can't overwrite a newer one.
+  const kpiSeq = useRef(0);
   useEffect(() => {
-    getSchedulingKpis().then(setKpis).catch(() => setKpis(null));
-    // shifts changing is a proxy for "something happened" — refresh KPIs
-    // after assigns / cancels / publishes so the strip doesn't go stale.
+    const seq = ++kpiSeq.current;
+    const t = window.setTimeout(() => {
+      getSchedulingKpis()
+        .then((k) => {
+          if (seq === kpiSeq.current) setKpis(k);
+        })
+        .catch(() => {
+          if (seq === kpiSeq.current) setKpis(null);
+        });
+    }, 300);
+    return () => window.clearTimeout(t);
   }, [shifts]);
 
   // Dialog state — replaces window.prompt + window.confirm.
@@ -1842,9 +1857,12 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         )}
 
       {!shifts && (
+        // Reserve roughly the real surface's height so the page doesn't lurch
+        // when data lands: the list is a few rows, but the calendar grids are
+        // tall. Sizing the placeholder per view keeps the layout stable.
         <Card>
           <div className="p-2 space-y-2">
-            {Array.from({ length: 4 }).map((_, i) => (
+            {Array.from({ length: view === 'list' ? 4 : 10 }).map((_, i) => (
               <Skeleton key={i} className="h-14" />
             ))}
           </div>
@@ -2231,9 +2249,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
 
 function KpiStrip({ kpis }: { kpis: SchedulingKpis | null }) {
   if (!kpis) {
+    // Match the resolved strip's height (px-4 py-3 + two text lines) so the
+    // skeleton→data swap doesn't nudge the grid down.
     return (
       <div className="mb-5">
-        <Skeleton className="h-14" />
+        <Skeleton className="h-[68px]" />
       </div>
     );
   }
