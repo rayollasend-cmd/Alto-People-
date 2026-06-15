@@ -399,6 +399,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
 
   // Dialog state — replaces window.prompt + window.confirm.
   const [assignTarget, setAssignTarget] = useState<Shift | null>(null);
+  // Shift being edited (date/time/position/rates) — null = closed.
+  const [editTarget, setEditTarget] = useState<Shift | null>(null);
   const [cancelTarget, setCancelTarget] = useState<Shift | null>(null);
   // Source shift for the "Duplicate to employee…" picker (null = closed).
   const [duplicateSource, setDuplicateSource] = useState<Shift | null>(null);
@@ -987,7 +989,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // old window and the in-flight (pendingId) guard never fired. The views
   // aren't React.memo'd, so a new object reference here costs nothing.
   const quickActions = {
-    onEdit: (s: Shift) => setAssignTarget(s),
+    onEdit: (s: Shift) => setEditTarget(s),
     onAssign: (s: Shift) => setAssignTarget(s),
     onUnassign,
     onCancel: onQuickCancel,
@@ -1778,6 +1780,16 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         onAssigned={() => {
           setAssignTarget(null);
           toast.success('Shift assigned.');
+          refresh();
+        }}
+      />
+
+      {/* Edit date/time/position/rates/notes */}
+      <EditShiftDialog
+        target={editTarget}
+        onClose={() => setEditTarget(null)}
+        onSaved={() => {
+          setEditTarget(null);
           refresh();
         }}
       />
@@ -2674,6 +2686,171 @@ function DuplicateToEmployeeDialog({
             Copy as draft
           </Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ===== Edit-shift dialog ================================================= */
+
+function EditShiftDialog({
+  target,
+  onClose,
+  onSaved,
+}: {
+  target: Shift | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [startsAt, setStartsAt] = useState('');
+  const [endsAt, setEndsAt] = useState('');
+  const [position, setPosition] = useState('');
+  const [subzone, setSubzone] = useState('');
+  const [hourlyRate, setHourlyRate] = useState('');
+  const [payRate, setPayRate] = useState('');
+  const [notes, setNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  // Pre-fill from the shift each time a new one is opened. Times show in the
+  // viewer's local zone (same as the create dialog's datetime inputs).
+  useEffect(() => {
+    if (!target) return;
+    setStartsAt(toLocalDatetimeInput(new Date(target.startsAt)));
+    setEndsAt(toLocalDatetimeInput(new Date(target.endsAt)));
+    setPosition(target.position);
+    setSubzone(target.location ?? '');
+    setHourlyRate(target.hourlyRate != null ? String(target.hourlyRate) : '');
+    setPayRate(target.payRate != null ? String(target.payRate) : '');
+    setNotes(target.notes ?? '');
+    setSubmitting(false);
+  }, [target]);
+
+  if (!target) return null;
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    const start = new Date(startsAt);
+    const end = new Date(endsAt);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      toast.error('Enter a valid start and end.');
+      return;
+    }
+    if (end <= start) {
+      toast.error('End time must be after the start time.');
+      return;
+    }
+    if (!position.trim()) {
+      toast.error('Position is required.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await updateShift(target.id, {
+        position: position.trim(),
+        startsAt: start.toISOString(),
+        endsAt: end.toISOString(),
+        location: subzone.trim() || null,
+        hourlyRate: hourlyRate ? Number(hourlyRate) : null,
+        payRate: payRate ? Number(payRate) : null,
+        notes: notes.trim() || null,
+      });
+      toast.success('Shift updated.');
+      onSaved();
+    } catch (err) {
+      const msg =
+        err instanceof ApiError && err.code === 'late_notice_reason_required'
+          ? 'This is a published shift moving inside the 14-day notice window — un-publish it (Move to draft) before re-timing, or keep it outside the window.'
+          : err instanceof ApiError && err.code === 'shift_not_editable'
+            ? 'A completed or cancelled shift can’t be edited.'
+            : err instanceof ApiError
+              ? err.message
+              : 'Update failed.';
+      toast.error(msg);
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open={!!target} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Edit shift</DialogTitle>
+          <DialogDescription>
+            {target.clientName ?? 'Shift'}
+            {target.assignedAssociateName ? ` · ${target.assignedAssociateName}` : ' · unassigned'}
+            {' '}— change the date, time, position, rates, or notes.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <Field label="Position" required>
+              {(p) => (
+                <Input value={position} onChange={(e) => setPosition(e.target.value)} {...p} />
+              )}
+            </Field>
+            <Field label="Sub-zone (optional)" hint='Label within the site (e.g. "Bar", "Floor 2").'>
+              {(p) => (
+                <Input value={subzone} onChange={(e) => setSubzone(e.target.value)} {...p} />
+              )}
+            </Field>
+            <Field label="Starts at" required>
+              {(p) => (
+                <Input
+                  type="datetime-local"
+                  value={startsAt}
+                  onChange={(e) => setStartsAt(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label="Ends at" required>
+              {(p) => (
+                <Input
+                  type="datetime-local"
+                  value={endsAt}
+                  onChange={(e) => setEndsAt(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label="Bill rate /hr (optional)">
+              {(p) => (
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={hourlyRate}
+                  onChange={(e) => setHourlyRate(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label="Pay rate /hr (optional)">
+              {(p) => (
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={payRate}
+                  onChange={(e) => setPayRate(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
+          </div>
+          <Field label="Notes (optional)">
+            {(p) => <Input value={notes} onChange={(e) => setNotes(e.target.value)} {...p} />}
+          </Field>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" loading={submitting}>
+              Save changes
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
