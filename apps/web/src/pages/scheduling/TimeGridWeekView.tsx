@@ -252,9 +252,13 @@ export function TimeGridWeekView({
   };
 
   // 200px sticky associate rail + 40px hour gutter + dayCount day columns.
+  // Day columns flex to fill the available width (minmax(0, 1fr)) so the whole
+  // selected range fits on screen without horizontal scrolling. minWidth only
+  // forces a scroller once columns would fall below a ~100px readable floor
+  // (very wide ranges or a small viewport) — a normal 7-day week always fits.
   const gridStyle = {
-    gridTemplateColumns: `200px 40px repeat(${dayCount}, minmax(140px, 1fr))`,
-    minWidth: `${200 + 40 + dayCount * 140}px`,
+    gridTemplateColumns: `200px 40px repeat(${dayCount}, minmax(0, 1fr))`,
+    minWidth: `${200 + 40 + dayCount * 100}px`,
   };
 
   return (
