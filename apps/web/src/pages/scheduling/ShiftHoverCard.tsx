@@ -158,7 +158,7 @@ export function ShiftHoverCard({
         maxHeight: CARD_MAX_HEIGHT,
         zIndex: 100,
       }}
-      className="rounded-lg border border-navy-secondary bg-navy elev-3 overflow-hidden flex flex-col"
+      className="rounded-lg border border-navy-secondary bg-navy elev-3 overflow-hidden flex flex-col animate-fade-in"
     >
       {/* Header — colored accent bar + position + status badge */}
       <div className="relative px-4 pt-3 pb-2 border-b border-navy-secondary">
