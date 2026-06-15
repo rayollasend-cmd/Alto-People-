@@ -137,14 +137,18 @@ export function ShiftContextMenu({ active, onClose, canManage, actions }: Props)
       label: 'Copy to next week',
       icon: CalendarPlus,
       onClick: async () => {
-        // Reuse Duplicate for now but offset by 7 days; SchedulingView's
-        // onDuplicate doesn't support offsetting yet, so we approximate
-        // here. A future tightening pass can plumb this through.
-        const offset = 7 * 24 * 60 * 60 * 1000;
+        // Same shift one week later. Add 7 CALENDAR days via setDate (not a
+        // raw +7×24h offset) so the wall-clock time is preserved across a
+        // DST boundary. onDuplicate only reads the data fields (clientId,
+        // position, times, rates) — the id on this copy is ignored.
+        const nextStart = new Date(active.shift.startsAt);
+        nextStart.setDate(nextStart.getDate() + 7);
+        const nextEnd = new Date(active.shift.endsAt);
+        nextEnd.setDate(nextEnd.getDate() + 7);
         const fakeShift: Shift = {
           ...active.shift,
-          startsAt: new Date(new Date(active.shift.startsAt).getTime() + offset).toISOString(),
-          endsAt: new Date(new Date(active.shift.endsAt).getTime() + offset).toISOString(),
+          startsAt: nextStart.toISOString(),
+          endsAt: nextEnd.toISOString(),
         };
         await actions.onDuplicate(fakeShift);
         onClose();

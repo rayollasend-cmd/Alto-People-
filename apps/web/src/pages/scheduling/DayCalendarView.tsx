@@ -43,6 +43,7 @@ const DAY_END_HOUR = 24;
 const HOURS_VISIBLE = DAY_END_HOUR - DAY_START_HOUR;
 const PX_PER_HOUR = 56; // tall enough to drop two ~30min chips legibly
 const PX_PER_MIN = PX_PER_HOUR / 60;
+const TOTAL_HEIGHT = HOURS_VISIBLE * PX_PER_HOUR;
 // Drag-to-resize snaps to 15-minute increments to match standard payroll
 // rounding (and keeps the chip readable as it moves).
 const SNAP_MIN = 15;
@@ -410,7 +411,11 @@ function DayShiftChip({
   const baseDuration = shiftMinutes(shift);
   const top = startMinFromGrid * PX_PER_MIN;
   const baseHeight = baseDuration * PX_PER_MIN;
-  const height = Math.max(20, baseHeight + (resizeDeltaPx ?? 0));
+  // Clip at the grid bottom so an overnight shift doesn't render a chip
+  // taller than the visible day.
+  const rawHeight = Math.max(20, baseHeight + (resizeDeltaPx ?? 0));
+  const clippedAtBottom = top + rawHeight > TOTAL_HEIGHT;
+  const height = Math.max(20, Math.min(rawHeight, TOTAL_HEIGHT - top));
 
   // Resize handler — manual mouse events (not dnd-kit) since this is an
   // axis-locked snap-to-grid edit, not a free drop target.
@@ -482,7 +487,7 @@ function DayShiftChip({
         ...dragStyle,
       }}
       className={cn(
-        'rounded border transition-colors hover:brightness-125',
+        'rounded border transition-colors hover:brightness-125 overflow-hidden',
         isDragging && 'elev-3 ring-2 ring-gold/60 opacity-90',
         resizeDeltaPx !== null && 'ring-2 ring-gold/70'
       )}
@@ -495,6 +500,15 @@ function DayShiftChip({
         className="absolute left-0 top-0 bottom-0 w-1 rounded-l"
         style={{ backgroundColor: color.accent }}
       />
+      {clippedAtBottom && (
+        <div
+          aria-hidden
+          className="absolute bottom-0 left-0 right-0 h-4 bg-gradient-to-t from-black/45 to-transparent flex items-end justify-center pointer-events-none"
+          title="Continues overnight"
+        >
+          <span className="text-[9px] leading-none text-white/80 mb-0.5">⌄ overnight</span>
+        </div>
+      )}
       <div
         {...listeners}
         {...attributes}
