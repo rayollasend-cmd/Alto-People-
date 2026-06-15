@@ -336,6 +336,7 @@ clientsRouter.post('/:id/locations', MANAGE, async (req, res, next) => {
         latitude: geo.latitude,
         longitude: geo.longitude,
         geofenceRadiusMeters: geo.radius,
+        ...(input.timezone ? { timezone: input.timezone } : {}),
       },
     });
     auditClient(req, 'location.create', client.id, { locationId: created.id });
@@ -373,6 +374,7 @@ clientsRouter.patch('/:id/locations/:lid', MANAGE, async (req, res, next) => {
         longitude: geo.longitude,
         geofenceRadiusMeters: geo.radius,
         ...(input.isActive === undefined ? {} : { isActive: input.isActive }),
+        ...(input.timezone ? { timezone: input.timezone } : {}),
       },
     });
     auditClient(req, 'location.update', client.id, { locationId: updated.id });
