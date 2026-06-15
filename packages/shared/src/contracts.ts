@@ -3585,6 +3585,11 @@ export const LocationSummarySchema = z.object({
   longitude: z.number().nullable(),
   geofenceRadiusMeters: z.number().int().nullable(),
   isActive: z.boolean(),
+  // IANA timezone of the work site. The scheduling grid renders every shift
+  // in this zone, so the create/edit dialogs must interpret the times an
+  // admin TYPES in this zone too (otherwise a CA admin entering "4am" for a
+  // FL store stores 4am Pacific = 7am Eastern, and everyone sees it 3h late).
+  timezone: z.string(),
 });
 export type LocationSummary = z.infer<typeof LocationSummarySchema>;
 
