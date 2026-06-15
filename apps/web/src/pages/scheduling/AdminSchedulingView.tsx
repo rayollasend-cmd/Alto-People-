@@ -64,7 +64,14 @@ import { useConfirm } from '@/lib/confirm';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-import { fmtDateTime, browserTimeZone, tzAbbrev } from '@/lib/format';
+import {
+  fmtDateTime,
+  browserTimeZone,
+  tzAbbrev,
+  zonedWallTimeToUtc,
+  localInputToUtcIso,
+  utcToZonedDatetimeInput,
+} from '@/lib/format';
 import {
   Dialog,
   DialogContent,
@@ -2712,11 +2719,12 @@ function EditShiftDialog({
   const [submitting, setSubmitting] = useState(false);
 
   // Pre-fill from the shift each time a new one is opened. Times show in the
-  // viewer's local zone (same as the create dialog's datetime inputs).
+  // WORK SITE's zone (same as the calendar grid), so editing a FL store from
+  // CA shows—and saves—the store's wall-clock, not the browser's.
   useEffect(() => {
     if (!target) return;
-    setStartsAt(toLocalDatetimeInput(new Date(target.startsAt)));
-    setEndsAt(toLocalDatetimeInput(new Date(target.endsAt)));
+    setStartsAt(utcToZonedDatetimeInput(target.startsAt, target.timezone));
+    setEndsAt(utcToZonedDatetimeInput(target.endsAt, target.timezone));
     setPosition(target.position);
     setSubzone(target.location ?? '');
     setHourlyRate(target.hourlyRate != null ? String(target.hourlyRate) : '');
@@ -2725,13 +2733,20 @@ function EditShiftDialog({
     setSubmitting(false);
   }, [target]);
 
+  const tzHint =
+    target && target.timezone && target.timezone !== browserTimeZone()
+      ? `Times are in the work site's zone (${tzAbbrev(target.timezone)}).`
+      : undefined;
+
   if (!target) return null;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
-    const start = new Date(startsAt);
-    const end = new Date(endsAt);
+    // Inputs are wall-clock at the work site → convert back through the
+    // shift's zone (symmetric with the pre-fill above).
+    const start = new Date(localInputToUtcIso(startsAt, target.timezone));
+    const end = new Date(localInputToUtcIso(endsAt, target.timezone));
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
       toast.error('Enter a valid start and end.');
       return;
@@ -2794,7 +2809,7 @@ function EditShiftDialog({
                 <Input value={subzone} onChange={(e) => setSubzone(e.target.value)} {...p} />
               )}
             </Field>
-            <Field label="Starts at" required>
+            <Field label="Starts at" required hint={tzHint}>
               {(p) => (
                 <Input
                   type="datetime-local"
@@ -3015,24 +3030,31 @@ function CreateShiftDialog({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
-    // Compose final ISO timestamps from whichever input mode is active.
+    // Compose final ISO timestamps from whichever input mode is active. The
+    // times the admin types are wall-clock at the WORK SITE — interpret them
+    // in the selected location's zone (the grid renders shifts in that zone
+    // too), not the admin's browser zone. siteTz null → browser-local, which
+    // matches the old behavior for location-less / full-org shifts.
+    const siteTz =
+      locations?.find((l) => l.id === locationId)?.timezone ?? null;
     let startISO: string;
     let endISO: string;
     if (anchorDay) {
       const [sh, sm] = startTime.split(':').map(Number);
       const [eh, em] = endTime.split(':').map(Number);
-      const start = new Date(anchorDay);
-      start.setHours(sh, sm, 0, 0);
-      const end = new Date(anchorDay);
-      end.setHours(eh, em, 0, 0);
-      // Overnight: end <= start rolls end to next day. Matches how
-      // template-apply handles overnight templates server-side.
-      if (end <= start) end.setDate(end.getDate() + 1);
+      const y = anchorDay.getFullYear();
+      const mo = anchorDay.getMonth() + 1;
+      const d = anchorDay.getDate();
+      const start = zonedWallTimeToUtc(y, mo, d, sh, sm, siteTz);
+      let end = zonedWallTimeToUtc(y, mo, d, eh, em, siteTz);
+      // Overnight: end <= start rolls end to the next site-local day (re-convert
+      // so a DST boundary that night is handled). Matches template-apply.
+      if (end <= start) end = zonedWallTimeToUtc(y, mo, d + 1, eh, em, siteTz);
       startISO = start.toISOString();
       endISO = end.toISOString();
     } else {
-      startISO = new Date(startsAt).toISOString();
-      endISO = new Date(endsAt).toISOString();
+      startISO = localInputToUtcIso(startsAt, siteTz);
+      endISO = localInputToUtcIso(endsAt, siteTz);
     }
     const assignList = [...assignIds];
     const open = Math.max(0, Math.trunc(Number(openSlots)) || 0);
@@ -3078,6 +3100,15 @@ function CreateShiftDialog({
       setSubmitting(false);
     }
   };
+
+  // Times are entered in the work-site's zone (we store/render shifts there).
+  // When the admin isn't in that zone, label it so "4am" isn't misread as
+  // the admin's local 4am.
+  const siteTz = locations?.find((l) => l.id === locationId)?.timezone ?? null;
+  const tzHint =
+    siteTz && siteTz !== browserTimeZone()
+      ? `Times are in the work site's zone (${tzAbbrev(siteTz)}).`
+      : undefined;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -3194,7 +3225,7 @@ function CreateShiftDialog({
                     </button>
                   </div>
                 </div>
-                <Field label="Start time" required>
+                <Field label="Start time" required hint={tzHint}>
                   {(p) => (
                     <Input
                       type="time"
@@ -3217,7 +3248,7 @@ function CreateShiftDialog({
               </>
             ) : (
               <>
-                <Field label="Starts at" required>
+                <Field label="Starts at" required hint={tzHint}>
                   {(p) => (
                     <Input
                       type="datetime-local"

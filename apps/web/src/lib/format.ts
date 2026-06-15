@@ -160,6 +160,88 @@ export function tzAbbrev(
   return parts.find((p) => p.type === 'timeZoneName')?.value ?? timeZone;
 }
 
+/**
+ * Convert a wall-clock time in a given IANA zone to the matching UTC Date.
+ *
+ * The scheduling grid renders every shift in its work-site's zone
+ * (`fmtTimeTz`), so the times an admin TYPES in the create/edit dialogs must
+ * be interpreted in that SAME zone — not the admin's browser zone. Without
+ * this, a CA admin entering "4am" for a FL store stores 4am Pacific (= 7am
+ * Eastern), and the admin's published view and the associate's app both show
+ * the shift 3h late.
+ *
+ * Single-pass offset correction: treat the wall-clock as UTC, measure how far
+ * that instant's wall-clock in `timeZone` differs, and subtract. Accurate
+ * except inside the ~1h DST-transition gap, which shifts almost never start in.
+ * Falls back to browser-local when `timeZone` is absent (location-less shift).
+ */
+export function zonedWallTimeToUtc(
+  year: number,
+  month: number, // 1-12
+  day: number,
+  hour: number,
+  minute: number,
+  timeZone?: string | null,
+): Date {
+  if (!timeZone) return new Date(year, month - 1, day, hour, minute, 0, 0);
+  const asUtc = Date.UTC(year, month - 1, day, hour, minute, 0, 0);
+  const dtf = new Intl.DateTimeFormat(EN_US, {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+  const p: Record<string, number> = {};
+  for (const part of dtf.formatToParts(new Date(asUtc))) {
+    if (part.type !== 'literal') p[part.type] = Number(part.value);
+  }
+  const zonedAsUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+  return new Date(asUtc - (zonedAsUtc - asUtc));
+}
+
+/** Parse a `datetime-local` value ("YYYY-MM-DDTHH:MM") as wall-clock in
+ *  `timeZone` and return the UTC ISO string. */
+export function localInputToUtcIso(value: string, timeZone?: string | null): string {
+  const [datePart, timePart] = value.split('T');
+  const [y, mo, d] = datePart.split('-').map(Number);
+  const [h, mi] = (timePart ?? '00:00').split(':').map(Number);
+  return zonedWallTimeToUtc(y, mo, d, h, mi, timeZone).toISOString();
+}
+
+/** Format a UTC instant as a `datetime-local` value ("YYYY-MM-DDTHH:MM")
+ *  showing the wall-clock in `timeZone` (so the editor matches the grid). */
+export function utcToZonedDatetimeInput(
+  value: string | Date,
+  timeZone?: string | null,
+): string {
+  const d = value instanceof Date ? value : new Date(value);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  if (!timeZone) {
+    return (
+      `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+      `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+    );
+  }
+  const dtf = new Intl.DateTimeFormat(EN_US, {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const p: Record<string, string> = {};
+  for (const part of dtf.formatToParts(d)) {
+    if (part.type !== 'literal') p[part.type] = part.value;
+  }
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
+}
+
 /** "2h ago", "yesterday", "Mar 4". For activity feeds. */
 export function fmtRelativeDate(
   value: string | Date | null | undefined,

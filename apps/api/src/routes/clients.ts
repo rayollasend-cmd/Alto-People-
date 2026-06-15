@@ -307,6 +307,7 @@ clientsRouter.get('/:id/locations', async (req, res, next) => {
       longitude: r.longitude === null ? null : Number(r.longitude),
       geofenceRadiusMeters: r.geofenceRadiusMeters,
       isActive: r.isActive,
+      timezone: r.timezone,
     }));
     res.json({ locations });
   } catch (err) {
@@ -441,6 +442,7 @@ function shapeLocation(row: {
   longitude: { toString(): string } | null;
   geofenceRadiusMeters: number | null;
   isActive: boolean;
+  timezone: string;
 }): LocationSummary {
   return {
     id: row.id,
@@ -455,6 +457,7 @@ function shapeLocation(row: {
     longitude: row.longitude === null ? null : Number(row.longitude.toString()),
     geofenceRadiusMeters: row.geofenceRadiusMeters,
     isActive: row.isActive,
+    timezone: row.timezone,
   };
 }
 
