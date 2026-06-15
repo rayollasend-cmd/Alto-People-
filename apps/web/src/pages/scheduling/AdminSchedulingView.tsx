@@ -1075,18 +1075,35 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     [clientFilter, locationFilter, clientLocations, refresh],
   );
 
+  // Optimistic local-state helpers — patch the one changed shift immediately so
+  // a drag/resize/reassign is reflected in the grid before the server round-trip
+  // lands, instead of snapping back and waiting on a full refetch. On error the
+  // handler calls refresh() to snap back to server truth.
+  const patchShift = useCallback((id: string, patch: Partial<Shift>) => {
+    setShifts((prev) =>
+      prev ? prev.map((s) => (s.id === id ? { ...s, ...patch } : s)) : prev,
+    );
+  }, []);
+  const replaceShift = useCallback((updated: Shift) => {
+    setShifts((prev) =>
+      prev ? prev.map((s) => (s.id === updated.id ? updated : s)) : prev,
+    );
+  }, []);
+
   const onShiftResize = useCallback(
     async (s: Shift, newEndsAt: Date) => {
+      const endsAt = newEndsAt.toISOString();
+      patchShift(s.id, { endsAt }); // optimistic — chip resizes instantly
       try {
-        await updateShift(s.id, { endsAt: newEndsAt.toISOString() });
+        const updated = await updateShift(s.id, { endsAt });
+        replaceShift(updated);
         toast.success('Shift duration updated.');
-        await refresh();
       } catch (err) {
         toast.error(err instanceof ApiError ? err.message : 'Resize failed.');
-        await refresh();
+        await refresh(); // roll back to server truth
       }
     },
-    [refresh],
+    [refresh, patchShift, replaceShift],
   );
 
   // Phase 53.7 — drag-end handler. Computes the right combination of
@@ -1094,68 +1111,96 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // with the same time-of-day it had before.
   const onShiftMove = useCallback(
     async (s: Shift, target: { associateId: string | null; dayStart: Date }) => {
-      try {
-        const origStart = new Date(s.startsAt);
-        const origEnd = new Date(s.endsAt);
-        // target.dayStart is the destination COLUMN's calendar date (local
-        // midnight). Compare it against the shift's current day IN THE GRID's
-        // zone so a remote admin's drag lands on the store-local day they
-        // dropped on, not their browser day.
-        const gz = gridTimeZone;
-        const targetKey = ymd(target.dayStart);
-        const origDayKey = zonedDayKey(origStart, gz);
-        const dateChanged = targetKey !== origDayKey;
+      const origStart = new Date(s.startsAt);
+      const origEnd = new Date(s.endsAt);
+      // target.dayStart is the destination COLUMN's calendar date (local
+      // midnight). Compare it against the shift's current day IN THE GRID's
+      // zone so a remote admin's drag lands on the store-local day they
+      // dropped on, not their browser day.
+      const gz = gridTimeZone;
+      const targetKey = ymd(target.dayStart);
+      const origDayKey = zonedDayKey(origStart, gz);
+      const dateChanged = targetKey !== origDayKey;
+      const currentAssignee = s.assignedAssociateId ?? null;
+      const assigneeChanged = currentAssignee !== target.associateId;
+      if (!dateChanged && !assigneeChanged) return;
 
+      // Compute the new start/end if the day changed.
+      let newStartISO = s.startsAt;
+      let newEndISO = s.endsAt;
+      if (dateChanged) {
+        let newStart: Date;
+        let newEnd: Date;
+        if (gz) {
+          // Re-stamp the shift's store-local time-of-day onto the target
+          // store-local date; preserve duration via elapsed ms.
+          const mins = zonedMinutesOfDay(origStart, gz);
+          const [ty, tm, td] = targetKey.split('-').map(Number);
+          newStart = zonedWallTimeToUtc(
+            ty, tm, td,
+            Math.floor(mins / 60), mins % 60,
+            gz,
+          );
+          newEnd = new Date(
+            newStart.getTime() + (origEnd.getTime() - origStart.getTime()),
+          );
+        } else {
+          // Browser-local: shift the date with setDate (absorbs 23h/25h DST
+          // days) so the wall-clock time of day is preserved on both ends.
+          const dayDelta = Math.round(
+            (target.dayStart.getTime() - fromYmd(origDayKey).getTime()) / 86_400_000,
+          );
+          newStart = new Date(origStart);
+          newStart.setDate(newStart.getDate() + dayDelta);
+          newEnd = new Date(origEnd);
+          newEnd.setDate(newEnd.getDate() + dayDelta);
+        }
+        newStartISO = newStart.toISOString();
+        newEndISO = newEnd.toISOString();
+      }
+
+      // Optimistic patch — move the chip to its new cell instantly. Status
+      // color (ASSIGNED/OPEN) is left to the authoritative response below since
+      // the grid buckets by associate+day, not status, so the chip already
+      // lands correctly.
+      const patch: Partial<Shift> = {};
+      if (dateChanged) {
+        patch.startsAt = newStartISO;
+        patch.endsAt = newEndISO;
+      }
+      if (assigneeChanged) {
+        patch.assignedAssociateId = target.associateId;
+        if (target.associateId) {
+          const a = associates.find((x) => x.id === target.associateId);
+          patch.assignedAssociateName = a ? `${a.firstName} ${a.lastName}` : null;
+        } else {
+          patch.assignedAssociateName = null;
+        }
+      }
+      patchShift(s.id, patch);
+
+      try {
+        let updated = s;
         if (dateChanged) {
-          let newStart: Date;
-          let newEnd: Date;
-          if (gz) {
-            // Re-stamp the shift's store-local time-of-day onto the target
-            // store-local date; preserve duration via elapsed ms.
-            const mins = zonedMinutesOfDay(origStart, gz);
-            const [ty, tm, td] = targetKey.split('-').map(Number);
-            newStart = zonedWallTimeToUtc(
-              ty, tm, td,
-              Math.floor(mins / 60), mins % 60,
-              gz,
-            );
-            newEnd = new Date(
-              newStart.getTime() + (origEnd.getTime() - origStart.getTime()),
-            );
-          } else {
-            // Browser-local: shift the date with setDate (absorbs 23h/25h DST
-            // days) so the wall-clock time of day is preserved on both ends.
-            const dayDelta = Math.round(
-              (target.dayStart.getTime() - fromYmd(origDayKey).getTime()) / 86_400_000,
-            );
-            newStart = new Date(origStart);
-            newStart.setDate(newStart.getDate() + dayDelta);
-            newEnd = new Date(origEnd);
-            newEnd.setDate(newEnd.getDate() + dayDelta);
-          }
-          await updateShift(s.id, {
-            startsAt: newStart.toISOString(),
-            endsAt: newEnd.toISOString(),
+          updated = await updateShift(s.id, {
+            startsAt: newStartISO,
+            endsAt: newEndISO,
           });
         }
-
-        const currentAssignee = s.assignedAssociateId ?? null;
-        if (currentAssignee !== target.associateId) {
-          if (target.associateId === null) {
-            await unassignShift(s.id);
-          } else {
-            await assignShift(s.id, { associateId: target.associateId });
-          }
+        if (assigneeChanged) {
+          updated =
+            target.associateId === null
+              ? await unassignShift(s.id)
+              : await assignShift(s.id, { associateId: target.associateId });
         }
+        replaceShift(updated); // reconcile with server truth
         toast.success('Shift moved.');
-        await refresh();
       } catch (err) {
         toast.error(err instanceof ApiError ? err.message : 'Move failed.');
-        // Refresh anyway — the partial state may have stuck.
-        await refresh();
+        await refresh(); // roll back — a partial write may have stuck
       }
     },
-    [refresh, gridTimeZone]
+    [refresh, gridTimeZone, associates, patchShift, replaceShift]
   );
 
   const onAutoFill = async (id: string) => {
