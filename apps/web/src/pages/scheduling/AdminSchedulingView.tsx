@@ -212,15 +212,53 @@ function readStoredWeekRange(): { start: Date; days: number } | null {
 // back). Persist them so the scope survives navigation, mirroring the week
 // range and layout preferences.
 const FILTERS_KEY = 'alto:scheduling.filters.v1';
-function readStoredFilters(): { client: string; location: string } | null {
+function readStoredFilters(): {
+  client: string;
+  location: string;
+  status: string;
+} | null {
   if (typeof window === 'undefined') return null;
   try {
     const raw = window.localStorage.getItem(FILTERS_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as { client?: string; location?: string };
+    const parsed = JSON.parse(raw) as {
+      client?: string;
+      location?: string;
+      status?: string;
+    };
     return {
       client: typeof parsed.client === 'string' ? parsed.client : '',
       location: typeof parsed.location === 'string' ? parsed.location : '',
+      status: typeof parsed.status === 'string' ? parsed.status : '',
+    };
+  } catch {
+    return null;
+  }
+}
+
+// The view anchors (day/month being viewed + the list-view date range). Like
+// the filters and week range, these were plain useState seeded from `new
+// Date()`, so any navigation away reset day/month/list views to "now". Persist
+// them so each view resumes where it was left. The Today/This-month buttons
+// still reset on demand.
+const ANCHORS_KEY = 'alto:scheduling.anchors.v1';
+function readStoredAnchors(): {
+  day?: string;
+  month?: string;
+  listFrom?: string;
+  listTo?: string;
+} | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(ANCHORS_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as Record<string, unknown>;
+    const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
+    return {
+      day: str(p.day),
+      month: str(p.month),
+      listFrom: str(p.listFrom),
+      listTo: str(p.listTo),
     };
   } catch {
     return null;
@@ -332,7 +370,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     window.localStorage.setItem('alto:scheduling.weekLayout.v2', weekLayout);
   }, [weekLayout]);
 
-  const [filter, setFilter] = useState<ShiftStatus | 'ALL'>('OPEN');
+  const [filter, setFilter] = useState<ShiftStatus | 'ALL'>(() => {
+    const s = readStoredFilters()?.status;
+    const valid = ['ALL', 'OPEN', 'ASSIGNED', 'DRAFT', 'COMPLETED', 'CANCELLED'];
+    return s && valid.includes(s) ? (s as ShiftStatus | 'ALL') : 'OPEN';
+  });
   const [shifts, setShifts] = useState<Shift[] | null>(null);
   const [clients, setClients] = useState<ClientSummary[]>([]);
   const [associates, setAssociates] = useState<AssociateLite[]>([]);
@@ -354,14 +396,18 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const [locationFilter, setLocationFilter] = useState<string>(
     () => readStoredFilters()?.location ?? '',
   ); // '' = all
-  // Persist the scope so it survives navigating away and back.
+  // Persist the scope + status chip so they survive navigating away and back.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     window.localStorage.setItem(
       FILTERS_KEY,
-      JSON.stringify({ client: clientFilter, location: locationFilter }),
+      JSON.stringify({
+        client: clientFilter,
+        location: locationFilter,
+        status: filter,
+      }),
     );
-  }, [clientFilter, locationFilter]);
+  }, [clientFilter, locationFilter, filter]);
   // Locations belonging to the currently-selected client, for the cascade.
   // null = loading; [] = client has none (or no client selected).
   const [clientLocations, setClientLocations] = useState<LocationSummary[]>([]);
@@ -395,35 +441,69 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     [weekStart, weekDayCount],
   );
 
-  // Day-view anchor (defaults to today). Independent of weekStart so the
-  // user can have a "calendar week" they're planning AND a "today" zoom.
+  // Day-view anchor (defaults to today, or the last day viewed). Independent
+  // of weekStart so the user can have a "calendar week" they're planning AND a
+  // "today" zoom.
   const [dayAnchor, setDayAnchor] = useState<Date>(() => {
+    const stored = readStoredAnchors()?.day;
+    if (stored) {
+      const d = fromYmd(stored);
+      if (!Number.isNaN(d.getTime())) return d;
+    }
     const d = new Date();
     d.setHours(0, 0, 0, 0);
     return d;
   });
 
-  // Month-view anchor (first of month).
+  // Month-view anchor (first of month, or the last month viewed).
   const [monthAnchor, setMonthAnchor] = useState<Date>(() => {
+    const stored = readStoredAnchors()?.month;
+    if (stored) {
+      const d = fromYmd(stored);
+      if (!Number.isNaN(d.getTime())) {
+        d.setDate(1);
+        d.setHours(0, 0, 0, 0);
+        return d;
+      }
+    }
     const d = new Date();
     d.setDate(1);
     d.setHours(0, 0, 0, 0);
     return d;
   });
 
-  // Phase 54.2 — list-view date range (defaults to the current month). When
-  // either bound is empty the field is treated as unbounded on that side.
+  // Phase 54.2 — list-view date range (defaults to the current month, or the
+  // last range used). When either bound is empty the field is treated as
+  // unbounded on that side.
   const [listFrom, setListFrom] = useState<string>(() => {
+    const stored = readStoredAnchors();
+    if (stored && stored.listFrom !== undefined) return stored.listFrom;
     const d = new Date();
     d.setDate(1);
     return ymd(d);
   });
   const [listTo, setListTo] = useState<string>(() => {
+    const stored = readStoredAnchors();
+    if (stored && stored.listTo !== undefined) return stored.listTo;
     const d = new Date();
     d.setMonth(d.getMonth() + 1);
     d.setDate(0); // last day of current month
     return ymd(d);
   });
+
+  // Persist the anchors + list range so each view resumes where it was left.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(
+      ANCHORS_KEY,
+      JSON.stringify({
+        day: ymd(dayAnchor),
+        month: ymd(monthAnchor),
+        listFrom,
+        listTo,
+      }),
+    );
+  }, [dayAnchor, monthAnchor, listFrom, listTo]);
 
   // Phase 54.4 — PDF export pending flag.
   const [exportingPdf, setExportingPdf] = useState(false);
