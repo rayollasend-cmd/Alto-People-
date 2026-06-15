@@ -83,6 +83,7 @@ import {
   DialogTitle,
 } from '@/components/ui/Dialog';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
@@ -376,6 +377,9 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     return s && valid.includes(s) ? (s as ShiftStatus | 'ALL') : 'OPEN';
   });
   const [shifts, setShifts] = useState<Shift[] | null>(null);
+  // True when the server capped the result — the visible list is a prefix, not
+  // the whole match set. Drives a "narrow your range" banner in list view.
+  const [listTruncated, setListTruncated] = useState(false);
   const [clients, setClients] = useState<ClientSummary[]>([]);
   const [associates, setAssociates] = useState<AssociateLite[]>([]);
   const [showCreate, setShowCreate] = useState(false);
@@ -602,8 +606,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           args = { ...args, from: fromYmd(listFrom).toISOString() };
         }
         if (listTo) {
-          // Inclusive end-of-day: bump 1 day forward and use < (server uses lte
-          // so we send the *next* day at 00:00 to capture the full last day).
+          // Inclusive end-of-day: send the *next* day at 00:00 as the exclusive
+          // upper bound (server uses `lt`), capturing the full last day.
           const end = fromYmd(listTo);
           end.setDate(end.getDate() + 1);
           args = { ...args, to: end.toISOString() };
@@ -618,6 +622,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       // A newer request started while we were awaiting → discard this result.
       if (seq !== reqSeq.current) return;
       setShifts(res.shifts);
+      setListTruncated(res.truncated ?? false);
     } catch (err) {
       if (seq !== reqSeq.current) return;
       const msg = err instanceof ApiError ? err.message : 'Failed to load shifts.';
@@ -1935,6 +1940,13 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             ) : undefined
           }
         />
+      )}
+
+      {view === 'list' && listTruncated && (
+        <ErrorBanner severity="warning" className="mb-3">
+          Showing the first 200 shifts — more match this filter than fit. Narrow
+          the date range, client, or status to see the rest.
+        </ErrorBanner>
       )}
 
       {shifts && view === 'list' && shifts.length > 0 && (
