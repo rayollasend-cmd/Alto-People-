@@ -388,7 +388,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   };
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="mx-auto">
       <PageHeader
         title="Document vault"
         subtitle={

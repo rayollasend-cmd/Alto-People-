@@ -115,7 +115,7 @@ export function AuditHome() {
   const csvHref = useMemo(() => auditCsvUrl(appliedFilters), [appliedFilters]);
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="mx-auto">
       <PageHeader
         title="Audit log"
         subtitle="Every authentication, onboarding, payroll, scheduling, and document event in one searchable feed. Used for SOC 2, compliance reviews, and incident forensics."

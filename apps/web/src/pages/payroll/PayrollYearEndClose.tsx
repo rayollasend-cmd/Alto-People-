@@ -48,7 +48,7 @@ export function PayrollYearEndClose() {
   const allReady = (data?.readyToClose ?? false) && distributedConfirmed;
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="mx-auto">
       <PageHeader
         title={`Year-end close — ${year}`}
         subtitle="Single checklist that confirms the tax year is fully wrapped: runs disbursed, forms generated, forms filed, recipient copies sent."

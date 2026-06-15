@@ -244,7 +244,7 @@ export function TemplateEditor() {
 
   if (!canManage) {
     return (
-      <div className="max-w-3xl mx-auto">
+      <div className="mx-auto">
         <ErrorBanner>
           You don't have permission to manage onboarding templates.
         </ErrorBanner>
@@ -254,7 +254,7 @@ export function TemplateEditor() {
 
   if (!isNew && !loadedTemplate && !error) {
     return (
-      <div className="max-w-3xl mx-auto space-y-4">
+      <div className="mx-auto space-y-4">
         <Skeleton className="h-10 w-64" />
         <Skeleton className="h-32" />
         <Skeleton className="h-64" />
@@ -263,7 +263,7 @@ export function TemplateEditor() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto">
+    <div className="mx-auto">
       <PageHeader
         title={isNew ? 'New onboarding template' : `Edit: ${loadedTemplate?.name ?? '…'}`}
         subtitle="The task list HR picks from when inviting an associate. Order here is the order the associate sees."

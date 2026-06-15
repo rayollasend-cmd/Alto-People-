@@ -375,7 +375,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     selected.items.length > 0;
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="mx-auto">
       <PageHeader
         title="Payroll"
         subtitle={

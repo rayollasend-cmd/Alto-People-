@@ -113,7 +113,7 @@ export function BenefitsHome() {
 
   if (!user?.associateId) {
     return (
-      <div className="max-w-3xl mx-auto">
+      <div className="mx-auto">
         <PageHeader
           title="Benefits"
           subtitle="Benefits enrollment is for associates. This account isn't linked to one."
@@ -123,7 +123,7 @@ export function BenefitsHome() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className="mx-auto space-y-6">
       <PageHeader
         title="Benefits"
         subtitle="Pre-tax elections come out of every paycheck before federal, FICA, Medicare, and state tax. Your take-home goes down by less than the elected amount."

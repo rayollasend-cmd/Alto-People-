@@ -18,7 +18,7 @@ export function TimeOffHome() {
     return <AssociateTimeOffView />;
   }
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="mx-auto">
       <PageHeader
         title="Time off"
         subtitle="Approve requests and manage entitlement balances by policy."

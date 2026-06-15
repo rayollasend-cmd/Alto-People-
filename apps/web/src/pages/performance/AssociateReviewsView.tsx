@@ -45,7 +45,7 @@ export function AssociateReviewsView() {
   };
 
   return (
-    <div className="max-w-3xl mx-auto">
+    <div className="mx-auto">
       <PageHeader
         title="My reviews"
         subtitle="Performance reviews from your manager."

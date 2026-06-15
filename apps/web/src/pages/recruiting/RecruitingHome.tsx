@@ -235,7 +235,7 @@ export function RecruitingHome() {
   }, [allCandidates]);
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="mx-auto">
       <PageHeader
         title="Recruiting"
         subtitle={

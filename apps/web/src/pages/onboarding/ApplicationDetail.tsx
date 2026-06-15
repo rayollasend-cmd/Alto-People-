@@ -94,7 +94,7 @@ const STUB_KINDS = new Set([
 export function ApplicationDetail() {
   const { id } = useParams<{ id: string }>();
   return (
-    <div className="max-w-5xl mx-auto">
+    <div className="mx-auto">
       <Breadcrumb
         className="mb-3"
         segments={[

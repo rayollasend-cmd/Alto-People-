@@ -40,7 +40,7 @@ export function AssociateInboxView() {
   const unreadCount = items?.filter((n) => !n.readAt).length ?? 0;
 
   return (
-    <div className="max-w-3xl mx-auto">
+    <div className="mx-auto">
       <PageHeader
         title={
           <>

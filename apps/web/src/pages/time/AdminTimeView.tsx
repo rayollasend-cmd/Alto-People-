@@ -436,7 +436,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
   };
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="mx-auto">
       <PageHeader
         title="Time & Attendance"
         subtitle={

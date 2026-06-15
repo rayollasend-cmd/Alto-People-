@@ -118,7 +118,7 @@ export function AssociateDocumentsView() {
     'w-full px-3 py-2 rounded bg-navy-secondary/60 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white';
 
   return (
-    <div className="max-w-3xl mx-auto">
+    <div className="mx-auto">
       <PageHeader
         title="My documents"
         subtitle="Upload identity, tax, and onboarding documents. HR will verify."

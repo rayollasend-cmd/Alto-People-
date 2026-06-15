@@ -54,7 +54,7 @@ export function PayrollConfigView() {
   }, []);
 
   return (
-    <div className="max-w-5xl mx-auto">
+    <div className="mx-auto">
       <PageHeader
         title="Payroll tax config"
         subtitle="Reference data driving the federal withholding engine. Read-only."

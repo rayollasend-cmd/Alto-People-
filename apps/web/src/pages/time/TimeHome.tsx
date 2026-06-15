@@ -44,7 +44,7 @@ export function TimeHome() {
 
 function AssociateKioskOnlyView() {
   return (
-    <div className="max-w-3xl mx-auto">
+    <div className="mx-auto">
       <PageHeader
         title="Time & Attendance"
         subtitle="Clock in at the worksite kiosk."

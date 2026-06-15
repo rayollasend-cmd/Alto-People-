@@ -102,7 +102,7 @@ export function TemplatesList() {
 
   if (!canManage) {
     return (
-      <div className="max-w-3xl mx-auto">
+      <div className="mx-auto">
         <ErrorBanner>
           You don't have permission to manage onboarding templates.
         </ErrorBanner>
@@ -111,7 +111,7 @@ export function TemplatesList() {
   }
 
   return (
-    <div className="max-w-5xl mx-auto">
+    <div className="mx-auto">
       <div className="mb-4">
         <Link
           to="/onboarding"

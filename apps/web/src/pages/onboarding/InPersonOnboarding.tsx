@@ -190,7 +190,7 @@ export function InPersonOnboarding() {
 
   if (error) {
     return (
-      <div className="max-w-3xl mx-auto">
+      <div className="mx-auto">
         <PageHeader
           title="In-person onboarding"
           breadcrumbs={[
@@ -205,7 +205,7 @@ export function InPersonOnboarding() {
 
   if (!detail || !applicationId) {
     return (
-      <div className="max-w-4xl mx-auto space-y-4">
+      <div className="mx-auto space-y-4">
         <Skeleton className="h-10 w-72" />
         <Skeleton className="h-32" />
         <Skeleton className="h-48" />
@@ -230,7 +230,7 @@ export function InPersonOnboarding() {
   const decided = detail.status === 'APPROVED' || detail.status === 'REJECTED';
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="mx-auto">
       <PageHeader
         title="In-person onboarding"
         subtitle={

@@ -125,7 +125,7 @@ export function ClientsHome() {
   }, [searchParams, setSearchParams]);
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="mx-auto">
       <PageHeader
         title="Clients"
         subtitle="Configure work-site state, geofence, and per-client jobs."

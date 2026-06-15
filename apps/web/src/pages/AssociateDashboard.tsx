@@ -103,7 +103,7 @@ export function AssociateDashboard() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="mx-auto">
       <PageHeader
         title={<>Hey {greetingName} 👋</>}
         subtitle="Here's what's on for today."

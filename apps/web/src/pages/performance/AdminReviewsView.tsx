@@ -97,7 +97,7 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
   };
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="mx-auto">
       <PageHeader
         title="Performance"
         subtitle={

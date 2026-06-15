@@ -107,7 +107,7 @@ export function AssociateChecklist() {
 
   if (error) {
     return (
-      <div className="max-w-3xl mx-auto">
+      <div className="mx-auto">
         <ErrorBanner>{error}</ErrorBanner>
       </div>
     );
@@ -115,7 +115,7 @@ export function AssociateChecklist() {
 
   if (!detail) {
     return (
-      <div className="max-w-3xl mx-auto space-y-4">
+      <div className="mx-auto space-y-4">
         <Skeleton className="h-10 w-72" />
         <Skeleton className="h-24" />
         {Array.from({ length: 5 }).map((_, i) => (
@@ -137,7 +137,7 @@ export function AssociateChecklist() {
   const statusBanner = STATUS_BANNER[detail.status] ?? null;
 
   return (
-    <div className="max-w-3xl mx-auto">
+    <div className="mx-auto">
       <header className="mb-6">
         <h1 className="font-display text-3xl md:text-4xl text-white mb-1.5 leading-tight">
           {allDone ? `You're all set, ${firstName}` : `Welcome, ${firstName}`}
