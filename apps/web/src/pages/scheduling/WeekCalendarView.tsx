@@ -324,12 +324,14 @@ export function WeekCalendarView({
     }
   };
 
-  // 200px sticky rail + N day columns. min-w on each column lets the grid
-  // overflow into a horizontal scroller on narrow screens (or a wide custom
-  // range) rather than crushing the chips.
+  // 200px sticky rail + N day columns. Columns flex to fill the available
+  // width (minmax(0, 1fr)) so the whole selected range fits on screen without
+  // horizontal scrolling; minWidth only forces a scroller once columns would
+  // drop below a ~100px readable floor (very wide ranges or a small viewport),
+  // so a normal 7-day week always fits.
   const gridStyle = {
-    gridTemplateColumns: `200px repeat(${dayCount}, minmax(150px, 1fr))`,
-    minWidth: `${200 + dayCount * 150}px`,
+    gridTemplateColumns: `200px repeat(${dayCount}, minmax(0, 1fr))`,
+    minWidth: `${200 + dayCount * 100}px`,
   };
 
   // Compute the set of (associateId|unassigned)_dayMs cells that would be
