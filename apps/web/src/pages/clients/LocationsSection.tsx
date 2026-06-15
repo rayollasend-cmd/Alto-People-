@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Crosshair, MapPin, Pencil, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { LocationSummary } from '@alto-people/shared';
+import {
+  type LocationSummary,
+  SUPPORTED_TIMEZONES,
+  TIMEZONE_LABELS,
+} from '@alto-people/shared';
 import {
   archiveLocation,
   createLocation,
@@ -30,6 +34,7 @@ import {
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Badge } from '@/components/ui/Badge';
 import {
@@ -151,6 +156,7 @@ export function LocationsSection({ clientId }: Props) {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>City / state</TableHead>
+                <TableHead>Time zone</TableHead>
                 <TableHead>Geofence</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -162,6 +168,11 @@ export function LocationsSection({ clientId }: Props) {
                   <TableCell className="text-white">{l.name}</TableCell>
                   <TableCell className="text-silver">
                     {[l.city, l.state].filter(Boolean).join(', ') || '—'}
+                  </TableCell>
+                  <TableCell className="text-silver">
+                    {TIMEZONE_LABELS[
+                      l.timezone as (typeof SUPPORTED_TIMEZONES)[number]
+                    ] ?? l.timezone}
                   </TableCell>
                   <TableCell className="text-silver tabular-nums">
                     {l.latitude !== null &&
@@ -280,6 +291,7 @@ function LocationDialog({ open, onOpenChange, clientId, existing, onSaved }: Dia
   const [latitude, setLatitude] = useState('');
   const [longitude, setLongitude] = useState('');
   const [radius, setRadius] = useState('');
+  const [timezone, setTimezone] = useState<string>('America/New_York');
   const [isActive, setIsActive] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
@@ -294,6 +306,7 @@ function LocationDialog({ open, onOpenChange, clientId, existing, onSaved }: Dia
     setLatitude(existing?.latitude?.toString() ?? '');
     setLongitude(existing?.longitude?.toString() ?? '');
     setRadius(existing?.geofenceRadiusMeters?.toString() ?? '');
+    setTimezone(existing?.timezone ?? 'America/New_York');
     setIsActive(existing?.isActive ?? true);
   }, [open, existing]);
 
@@ -341,6 +354,7 @@ function LocationDialog({ open, onOpenChange, clientId, existing, onSaved }: Dia
         latitude: allGeo ? latN : null,
         longitude: allGeo ? lngN : null,
         geofenceRadiusMeters: allGeo ? radN : null,
+        timezone: timezone as (typeof SUPPORTED_TIMEZONES)[number],
       };
       if (existing) {
         await updateLocation(clientId, existing.id, { ...payload, isActive });
@@ -426,6 +440,26 @@ function LocationDialog({ open, onOpenChange, clientId, existing, onSaved }: Dia
               )}
             </Field>
           </div>
+
+          <Field
+            label="Time zone"
+            required
+            hint="Shifts at this site are scheduled and shown in this zone. Florida's western Panhandle (Panama City Beach, Destin, Santa Rosa Beach) is Central — not Eastern."
+          >
+            {(p) => (
+              <Select
+                value={timezone}
+                onChange={(e) => setTimezone(e.target.value)}
+                {...p}
+              >
+                {SUPPORTED_TIMEZONES.map((tz) => (
+                  <option key={tz} value={tz}>
+                    {TIMEZONE_LABELS[tz]}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
 
           <div className="grid grid-cols-3 gap-3">
             <Field label="Latitude">

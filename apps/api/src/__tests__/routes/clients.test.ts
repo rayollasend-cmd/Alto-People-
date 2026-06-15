@@ -71,3 +71,55 @@ describe('GET /clients', () => {
     expect(res.body.error?.code).toBe('forbidden');
   });
 });
+
+describe('Location timezone', () => {
+  it('defaults to Eastern, accepts an explicit zone on create/update, rejects unknown', async () => {
+    const client = await createClient('Beachside Co');
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = request.agent(app());
+    await a
+      .post('/auth/login')
+      .send({ email: hr.email, password: DEFAULT_TEST_PASSWORD });
+
+    // Omitted → DB default (Eastern). This is exactly what left the Panhandle
+    // sites mis-zoned before the picker existed.
+    const def = await a.post(`/clients/${client.id}/locations`).send({ name: 'HQ' });
+    expect(def.status).toBe(201);
+    expect(def.body.timezone).toBe('America/New_York');
+
+    // Explicit Central (Panama City Beach et al. are Central, not Eastern).
+    const central = await a.post(`/clients/${client.id}/locations`).send({
+      name: 'Panama City Beach',
+      city: 'Panama City Beach',
+      state: 'FL',
+      timezone: 'America/Chicago',
+    });
+    expect(central.status).toBe(201);
+    expect(central.body.timezone).toBe('America/Chicago');
+
+    // Update can re-zone an existing (mis-defaulted) site.
+    const updated = await a
+      .patch(`/clients/${client.id}/locations/${def.body.id}`)
+      .send({ name: 'HQ', timezone: 'America/Chicago' });
+    expect(updated.status).toBe(200);
+    expect(updated.body.timezone).toBe('America/Chicago');
+
+    // List reflects the new zones (the client may also have an auto-created
+    // default location, so check our two by id rather than the whole set).
+    const list = await a.get(`/clients/${client.id}/locations`);
+    const byId: Record<string, string> = Object.fromEntries(
+      list.body.locations.map((l: { id: string; timezone: string }) => [
+        l.id,
+        l.timezone,
+      ]),
+    );
+    expect(byId[def.body.id]).toBe('America/Chicago');
+    expect(byId[central.body.id]).toBe('America/Chicago');
+
+    // Unknown zone is rejected by the enum.
+    const bad = await a
+      .post(`/clients/${client.id}/locations`)
+      .send({ name: 'Bad', timezone: 'Mars/Phobos' });
+    expect(bad.status).toBe(400);
+  });
+});

@@ -3619,6 +3619,11 @@ const LocationBaseFields = {
   latitude: z.number().min(-90).max(90).nullable().optional(),
   longitude: z.number().min(-180).max(180).nullable().optional(),
   geofenceRadiusMeters: z.number().int().min(1).max(50_000).nullable().optional(),
+  // IANA timezone of the work site — drives how the scheduling grid + dialogs
+  // render and interpret shift times. Optional on input; the DB column defaults
+  // to America/New_York, so omitted-field creates and existing rows are
+  // unchanged. Validated against the supported list (Central, Pacific, etc.).
+  timezone: z.enum(SUPPORTED_TIMEZONES).optional(),
 };
 
 export const LocationCreateInputSchema = z.object(LocationBaseFields);
