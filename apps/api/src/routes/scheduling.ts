@@ -196,19 +196,30 @@ schedulingRouter.get('/shifts', MANAGE, async (req, res, next) => {
         ? {
             startsAt: {
               ...(from ? { gte: new Date(from) } : {}),
-              ...(to ? { lte: new Date(to) } : {}),
+              // Exclusive upper bound: the client sends the next period's start
+              // (next midnight) as `to`. Using `lt` (not `lte`) keeps a shift
+              // that starts exactly at that boundary in the NEXT period only,
+              // instead of double-counting it in both adjacent windows.
+              ...(to ? { lt: new Date(to) } : {}),
             },
           }
         : {}),
     };
 
+    // Fetch one past the cap so we can tell the client the list was truncated
+    // (more shifts match than we returned) without an extra count query.
+    const SHIFT_PAGE_CAP = 200;
     const rows = await prisma.shift.findMany({
       where,
       orderBy: { startsAt: 'asc' },
-      take: 200,
+      take: SHIFT_PAGE_CAP + 1,
       include: SHIFT_INCLUDE,
     });
-    const payload = ShiftListResponseSchema.parse({ shifts: rows.map(toShift) });
+    const truncated = rows.length > SHIFT_PAGE_CAP;
+    const payload = ShiftListResponseSchema.parse({
+      shifts: rows.slice(0, SHIFT_PAGE_CAP).map(toShift),
+      truncated,
+    });
     res.json(payload);
   } catch (err) {
     next(err);
@@ -258,26 +269,38 @@ schedulingRouter.get('/kpis', MANAGE, async (req, res, next) => {
 
     // For total scheduled minutes + projected labor cost we need the rows
     // (no SQL helper for computed durations in Prisma). Pull duration + the
-    // two rate columns and roll up.
-    const rows = await prisma.shift.findMany({
-      take: 100,
-      where,
-      select: { startsAt: true, endsAt: true, payRate: true },
-    });
+    // two rate columns and roll up. Page through ALL matching rows in batches
+    // — the old `take: 100` silently UNDER-reported minutes/cost for any week
+    // with >100 shifts. Bounded by a batch backstop so a pathologically wide
+    // window can't run unbounded.
+    const ROLLUP_BATCH = 1000;
+    const ROLLUP_MAX_BATCHES = 50; // 50k shifts — far beyond a real window
     let totalScheduledMinutes = 0;
     let projectedLaborCost = 0;
     let shiftsWithoutRate = 0;
-    for (const r of rows) {
-      const minutes = Math.max(
-        0,
-        Math.round((r.endsAt.getTime() - r.startsAt.getTime()) / 60_000),
-      );
-      totalScheduledMinutes += minutes;
-      if (r.payRate === null) {
-        shiftsWithoutRate += 1;
-      } else {
-        projectedLaborCost += (Number(r.payRate) * minutes) / 60;
+    let cursor: string | undefined;
+    for (let batchNo = 0; batchNo < ROLLUP_MAX_BATCHES; batchNo++) {
+      const rows = await prisma.shift.findMany({
+        where,
+        select: { id: true, startsAt: true, endsAt: true, payRate: true },
+        orderBy: { id: 'asc' },
+        take: ROLLUP_BATCH,
+        ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+      });
+      for (const r of rows) {
+        const minutes = Math.max(
+          0,
+          Math.round((r.endsAt.getTime() - r.startsAt.getTime()) / 60_000),
+        );
+        totalScheduledMinutes += minutes;
+        if (r.payRate === null) {
+          shiftsWithoutRate += 1;
+        } else {
+          projectedLaborCost += (Number(r.payRate) * minutes) / 60;
+        }
       }
+      if (rows.length < ROLLUP_BATCH) break;
+      cursor = rows[rows.length - 1]!.id;
     }
     // Round to cents — JSON floats survive 2dp safely; the UI formats as $.
     projectedLaborCost = Math.round(projectedLaborCost * 100) / 100;

@@ -1166,6 +1166,10 @@ export type Shift = z.infer<typeof ShiftSchema>;
 
 export const ShiftListResponseSchema = z.object({
   shifts: z.array(ShiftSchema),
+  // True when the result hit the server's row cap and more shifts match the
+  // filter than were returned. The UI surfaces a "narrow your range" banner so
+  // a truncated list never silently reads as complete. Optional for back-compat.
+  truncated: z.boolean().optional(),
 });
 export type ShiftListResponse = z.infer<typeof ShiftListResponseSchema>;
 
