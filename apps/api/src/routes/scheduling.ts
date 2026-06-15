@@ -539,41 +539,14 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
       associates.map((a) => [a.id, `${a.firstName} ${a.lastName}`]),
     );
 
-    // One query for every requested employee's overlapping shifts → bucket
-    // in memory. No per-associate round-trip.
-    const conflictRows =
-      associateIds.length > 0
-        ? await prisma.shift.findMany({
-            where: {
-              assignedAssociateId: { in: associateIds },
-              status: { notIn: ['CANCELLED'] },
-              startsAt: { lt: endsAt },
-              endsAt: { gt: startsAt },
-            },
-            select: { assignedAssociateId: true },
-          })
-        : [];
-    const conflicted = new Set(conflictRows.map((r) => r.assignedAssociateId));
-
-    const skipped: {
-      associateId: string;
-      associateName: string;
-      reason: string;
-    }[] = [];
-    const toAssign: string[] = [];
-    for (const id of associateIds) {
-      if (!nameById.has(id)) {
-        skipped.push({ associateId: id, associateName: 'Unknown', reason: 'not_found' });
-      } else if (conflicted.has(id)) {
-        skipped.push({
-          associateId: id,
-          associateName: nameById.get(id)!,
-          reason: 'already_scheduled',
-        });
-      } else {
-        toAssign.push(id);
-      }
-    }
+    // Employees that don't resolve to a real associate are skipped up front;
+    // the overlap conflict check happens INSIDE the transaction (below) so it
+    // and the createMany are atomic — otherwise a concurrent assign between a
+    // pre-check and the insert could slip a double-booking through.
+    const candidateIds = associateIds.filter((id) => nameById.has(id));
+    const notFoundSkips = associateIds
+      .filter((id) => !nameById.has(id))
+      .map((id) => ({ associateId: id, associateName: 'Unknown', reason: 'not_found' }));
 
     const baseData = {
       clientId: input.clientId,
@@ -592,40 +565,68 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
     };
     const openCount = input.openCount ?? 0;
 
-    // Create everything atomically: one row per assigned employee + the
-    // open slots. createMany is a single INSERT.
-    const createdIds = await prisma.$transaction(async (tx) => {
-      if (toAssign.length > 0) {
-        await tx.shift.createMany({
-          data: toAssign.map((associateId) => ({
-            ...baseData,
-            assignedAssociateId: associateId,
-            assignedAt: now,
-          })),
-        });
-      }
-      if (openCount > 0) {
-        await tx.shift.createMany({
-          data: Array.from({ length: openCount }, () => ({ ...baseData })),
-        });
-      }
-      // Pull the ids we just made (this manager, this exact window + position)
-      // so the audit log references them.
-      const rows = await tx.shift.findMany({
-        where: {
-          createdById: req.user!.id,
-          clientId: input.clientId,
-          locationId: location.id,
-          position: input.position,
-          startsAt,
-          endsAt,
-          createdAt: { gte: now },
-        },
-        select: { id: true },
-      });
-      return rows.map((r) => r.id);
-    });
+    // Conflict-check + create everything atomically.
+    const { createdIds, toAssign, conflictedSkips } = await prisma.$transaction(
+      async (tx) => {
+        const conflictRows =
+          candidateIds.length > 0
+            ? await tx.shift.findMany({
+                where: {
+                  assignedAssociateId: { in: candidateIds },
+                  status: { notIn: ['CANCELLED'] },
+                  startsAt: { lt: endsAt },
+                  endsAt: { gt: startsAt },
+                },
+                select: { assignedAssociateId: true },
+              })
+            : [];
+        const conflicted = new Set(conflictRows.map((r) => r.assignedAssociateId));
+        const toAssign = candidateIds.filter((id) => !conflicted.has(id));
+        const conflictedSkips = candidateIds
+          .filter((id) => conflicted.has(id))
+          .map((id) => ({
+            associateId: id,
+            associateName: nameById.get(id)!,
+            reason: 'already_scheduled',
+          }));
 
+        if (toAssign.length > 0) {
+          await tx.shift.createMany({
+            data: toAssign.map((associateId) => ({
+              ...baseData,
+              assignedAssociateId: associateId,
+              assignedAt: now,
+            })),
+          });
+        }
+        if (openCount > 0) {
+          await tx.shift.createMany({
+            data: Array.from({ length: openCount }, () => ({ ...baseData })),
+          });
+        }
+        // Pull the ids we just made (this manager, this exact window +
+        // position) so the audit log references them.
+        const rows = await tx.shift.findMany({
+          where: {
+            createdById: req.user!.id,
+            clientId: input.clientId,
+            locationId: location.id,
+            position: input.position,
+            startsAt,
+            endsAt,
+            createdAt: { gte: now },
+          },
+          select: { id: true },
+        });
+        return { createdIds: rows.map((r) => r.id), toAssign, conflictedSkips };
+      },
+      // This transaction does a conflict scan + up to two createMany + an id
+      // fetch; the default 5s interactive-transaction window is tight for a
+      // large bulk on a cold pool, so give it room.
+      { timeout: 20_000 },
+    );
+
+    const skipped = [...notFoundSkips, ...conflictedSkips];
     const createdCount = toAssign.length + openCount;
     await recordShiftEvent({
       actorUserId: req.user!.id,
@@ -789,6 +790,7 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
           clientName: updated.client?.name ?? null,
           startsAt: updated.startsAt,
           endsAt: updated.endsAt,
+          timezone: updated.locationRel?.timezone ?? null,
         })}`,
         category: 'shift_published',
         senderUserId: req.user!.id,
@@ -917,6 +919,7 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
           clientName: updated.client?.name ?? null,
           startsAt: updated.startsAt,
           endsAt: updated.endsAt,
+          timezone: updated.locationRel?.timezone ?? null,
         })}`,
         category: 'shift_assigned',
         senderUserId: req.user!.id,
@@ -971,6 +974,7 @@ schedulingRouter.post('/shifts/:id/unassign', MANAGE, async (req, res, next) => 
           clientName: updated.client?.name ?? null,
           startsAt: updated.startsAt,
           endsAt: updated.endsAt,
+          timezone: updated.locationRel?.timezone ?? null,
         })}`,
         category: 'shift_unassigned',
         senderUserId: req.user!.id,
@@ -1016,6 +1020,49 @@ schedulingRouter.post('/shifts/:id/cancel', MANAGE, async (req, res, next) => {
       req,
     });
 
+    // Cancel any in-flight swap requests for this shift — there's nothing
+    // left to swap. Otherwise a PENDING_PEER/PEER_ACCEPTED swap sits in the
+    // queue forever and the counterparty could still "accept" a dead shift.
+    const liveSwaps = await prisma.shiftSwapRequest.findMany({
+      where: {
+        shiftId: shift.id,
+        status: { in: ['PENDING_PEER', 'PEER_ACCEPTED'] },
+      },
+      select: {
+        id: true,
+        requesterAssociateId: true,
+        counterpartyAssociateId: true,
+      },
+    });
+    if (liveSwaps.length > 0) {
+      await prisma.shiftSwapRequest.updateMany({
+        where: { id: { in: liveSwaps.map((s) => s.id) } },
+        data: { status: 'CANCELLED' },
+      });
+      const swapLine = formatShiftLine({
+        position: updated.position,
+        clientName: updated.client?.name ?? null,
+        startsAt: updated.startsAt,
+        endsAt: updated.endsAt,
+        timezone: updated.locationRel?.timezone ?? null,
+      });
+      const notified = new Set<string>();
+      for (const sw of liveSwaps) {
+        for (const aid of [sw.requesterAssociateId, sw.counterpartyAssociateId]) {
+          if (aid && !notified.has(aid)) {
+            notified.add(aid);
+            await notifyShift(prisma, {
+              associateId: aid,
+              subject: 'Swap cancelled',
+              body: `A swap you were part of is off — the shift was cancelled. ${swapLine}`,
+              category: 'swap_manager_rejected',
+              senderUserId: req.user!.id,
+            });
+          }
+        }
+      }
+    }
+
     // Same draft rule as unassign — cancelling a never-published shift
     // is invisible to the associate, so no notification.
     if (shift.assignedAssociateId && shift.publishedAt) {
@@ -1027,6 +1074,7 @@ schedulingRouter.post('/shifts/:id/cancel', MANAGE, async (req, res, next) => {
           clientName: updated.client?.name ?? null,
           startsAt: updated.startsAt,
           endsAt: updated.endsAt,
+          timezone: updated.locationRel?.timezone ?? null,
         })}\nReason: ${parsed.data.reason}`,
         category: 'shift_cancelled',
         senderUserId: req.user!.id,
@@ -1373,7 +1421,12 @@ type RawSwap = Prisma.ShiftSwapRequestGetPayload<{
 }>;
 
 const SWAP_INCLUDE = {
-  shift: { include: { client: { select: { name: true } } } },
+  shift: {
+    include: {
+      client: { select: { name: true } },
+      locationRel: { select: { timezone: true } },
+    },
+  },
   requester: { select: { firstName: true, lastName: true } },
   counterparty: { select: { firstName: true, lastName: true } },
 } as const;
@@ -1552,6 +1605,7 @@ schedulingRouter.post('/swap-requests/:id/peer-accept', async (req, res, next) =
           clientName: updated.shift.client?.name ?? null,
           startsAt: updated.shift.startsAt,
           endsAt: updated.shift.endsAt,
+          timezone: updated.shift.locationRel?.timezone ?? null,
         }
       )}`,
       category: 'swap_peer_accepted',
@@ -1592,6 +1646,7 @@ schedulingRouter.post('/swap-requests/:id/peer-decline', async (req, res, next) 
           clientName: updated.shift.client?.name ?? null,
           startsAt: updated.shift.startsAt,
           endsAt: updated.shift.endsAt,
+          timezone: updated.shift.locationRel?.timezone ?? null,
         }
       )}`,
       category: 'swap_peer_declined',
@@ -1657,8 +1712,10 @@ schedulingRouter.post('/swap-requests/:id/manager-approve', MANAGE, async (req, 
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
-    const swap = await prisma.shiftSwapRequest.findUnique({
-      where: { id: req.params.id },
+    // Scope to a swap whose shift the caller can manage — a CLIENT_PORTAL
+    // admin must not approve another client's swap by guessing the id.
+    const swap = await prisma.shiftSwapRequest.findFirst({
+      where: { id: req.params.id, shift: { is: scopeShifts(req.user!) } },
       include: { shift: true },
     });
     if (!swap) throw new HttpError(404, 'swap_not_found', 'Swap request not found');
@@ -1731,6 +1788,7 @@ schedulingRouter.post('/swap-requests/:id/manager-approve', MANAGE, async (req, 
       clientName: updated.shift.client?.name ?? null,
       startsAt: updated.shift.startsAt,
       endsAt: updated.shift.endsAt,
+      timezone: updated.shift.locationRel?.timezone ?? null,
     });
     await notifyShift(prisma, {
       associateId: updated.counterpartyAssociateId,
@@ -1760,7 +1818,9 @@ schedulingRouter.post('/swap-requests/:id/manager-reject', MANAGE, async (req, r
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
-    const swap = await prisma.shiftSwapRequest.findUnique({ where: { id: req.params.id } });
+    const swap = await prisma.shiftSwapRequest.findFirst({
+      where: { id: req.params.id, shift: { is: scopeShifts(req.user!) } },
+    });
     if (!swap) throw new HttpError(404, 'swap_not_found', 'Swap request not found');
     if (swap.status === 'MANAGER_APPROVED' || swap.status === 'MANAGER_REJECTED' || swap.status === 'CANCELLED') {
       throw new HttpError(409, 'invalid_state', `Swap is in ${swap.status}, cannot reject`);
@@ -1778,6 +1838,7 @@ schedulingRouter.post('/swap-requests/:id/manager-reject', MANAGE, async (req, r
       clientName: updated.shift.client?.name ?? null,
       startsAt: updated.shift.startsAt,
       endsAt: updated.shift.endsAt,
+      timezone: updated.shift.locationRel?.timezone ?? null,
     });
     await notifyShift(prisma, {
       associateId: updated.requesterAssociateId,
@@ -2129,28 +2190,59 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
     // notification per associate at the end. Without this, a person with
     // five shifts in the published week would get five push pings — fine
     // for a single change, spammy on a batch publish.
+    // Bucket by assignee (for the per-associate digests below) and split by
+    // target status — assigned shifts publish to ASSIGNED, unassigned to OPEN.
     const perAssociate = new Map<string, typeof publishable>();
-    let publishedCount = 0;
+    const assignedIds: string[] = [];
+    const openIds: string[] = [];
     for (const s of publishable) {
-      const nextStatus = s.assignedAssociateId ? 'ASSIGNED' : 'OPEN';
-      await prisma.shift.update({
-        where: { id: s.id },
-        data: { status: nextStatus, publishedAt: now },
-      });
-      await recordShiftEvent({
-        actorUserId: req.user!.id,
-        action: 'shift.updated',
-        shiftId: s.id,
-        clientId: s.clientId,
-        metadata: { fields: ['status', 'publishedAt'], publish: 'week' },
-        req,
-      });
       if (s.assignedAssociateId) {
+        assignedIds.push(s.id);
         const bucket = perAssociate.get(s.assignedAssociateId) ?? [];
         bucket.push(s);
         perAssociate.set(s.assignedAssociateId, bucket);
+      } else {
+        openIds.push(s.id);
       }
-      publishedCount += 1;
+    }
+    const publishedCount = publishable.length;
+
+    // Two bulk writes instead of one update per shift (a big week was 100+
+    // serial round-trips that could brush the request timeout).
+    await prisma.$transaction([
+      ...(assignedIds.length > 0
+        ? [
+            prisma.shift.updateMany({
+              where: { id: { in: assignedIds } },
+              data: { status: 'ASSIGNED', publishedAt: now },
+            }),
+          ]
+        : []),
+      ...(openIds.length > 0
+        ? [
+            prisma.shift.updateMany({
+              where: { id: { in: openIds } },
+              data: { status: 'OPEN', publishedAt: now },
+            }),
+          ]
+        : []),
+    ]);
+
+    // One audit event for the whole batch (per-shift events were the other
+    // half of the N+1).
+    if (publishedCount > 0) {
+      await recordShiftEvent({
+        actorUserId: req.user!.id,
+        action: 'shift.updated',
+        shiftId: publishable[0]!.id,
+        clientId: publishable[0]!.clientId,
+        metadata: {
+          fields: ['status', 'publishedAt'],
+          publish: 'week',
+          count: publishedCount,
+        },
+        req,
+      });
     }
 
     // One digest per associate, ordered chronologically. Subject scales

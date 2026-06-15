@@ -813,13 +813,22 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         const origEnd = new Date(s.endsAt);
         const origDay = new Date(origStart);
         origDay.setHours(0, 0, 0, 0);
-        const dayDeltaMs = target.dayStart.getTime() - origDay.getTime();
-        const dateChanged = dayDeltaMs !== 0;
+        // Whole-day delta from local midnights; rounding absorbs the 23h/25h
+        // DST days. Apply it with setDate (not raw ms) so the wall-clock
+        // time of day is preserved when the move crosses a DST boundary.
+        const dayDelta = Math.round(
+          (target.dayStart.getTime() - origDay.getTime()) / 86_400_000,
+        );
+        const dateChanged = dayDelta !== 0;
 
         if (dateChanged) {
+          const newStart = new Date(origStart);
+          newStart.setDate(newStart.getDate() + dayDelta);
+          const newEnd = new Date(origEnd);
+          newEnd.setDate(newEnd.getDate() + dayDelta);
           await updateShift(s.id, {
-            startsAt: new Date(origStart.getTime() + dayDeltaMs).toISOString(),
-            endsAt: new Date(origEnd.getTime() + dayDeltaMs).toISOString(),
+            startsAt: newStart.toISOString(),
+            endsAt: newEnd.toISOString(),
           });
         }
 
@@ -972,24 +981,22 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     }
   };
 
-  const quickActions = useMemo(
-    () => ({
-      onEdit: (s: Shift) => setAssignTarget(s),
-      onAssign: (s: Shift) => setAssignTarget(s),
-      onUnassign,
-      onCancel: onQuickCancel,
-      onDuplicate: onQuickDuplicate,
-      onDuplicateToEmployee: (s: Shift) => setDuplicateSource(s),
-      onPublish: onPublishShift,
-      onUnpublish: onUnpublishShift,
-      onDelete: onDeleteShift,
-    }),
-    // refresh is the only thing onUnassign / onQuickCancel / onQuickDuplicate
-    // close over indirectly — including it here would over-trigger re-renders.
-    // The handlers are stable enough for the hover-card use case.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
-  );
+  // Built fresh each render (not memoized) so the handlers always close over
+  // the CURRENT refresh + pendingId. A previous useMemo([]) froze them at
+  // mount, so after navigating weeks the hover-card actions refetched the
+  // old window and the in-flight (pendingId) guard never fired. The views
+  // aren't React.memo'd, so a new object reference here costs nothing.
+  const quickActions = {
+    onEdit: (s: Shift) => setAssignTarget(s),
+    onAssign: (s: Shift) => setAssignTarget(s),
+    onUnassign,
+    onCancel: onQuickCancel,
+    onDuplicate: onQuickDuplicate,
+    onDuplicateToEmployee: (s: Shift) => setDuplicateSource(s),
+    onPublish: onPublishShift,
+    onUnpublish: onUnpublishShift,
+    onDelete: onDeleteShift,
+  };
 
   return (
     <div className="max-w-6xl mx-auto print-area">
@@ -1789,6 +1796,9 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       {/* Copy a shift onto another employee (as a draft) */}
       {duplicateSource && (
         <DuplicateToEmployeeDialog
+          // Remount per source shift so the picked employee / search reset
+          // instead of carrying over from the previous shift.
+          key={duplicateSource.id}
           source={duplicateSource}
           onClose={() => setDuplicateSource(null)}
           onDone={() => {
@@ -1938,6 +1948,9 @@ function AssignDialog({
   const [conflicts, setConflicts] = useState<ConflictRow[] | null>(null);
   const [timeOff, setTimeOff] = useState<TimeOffRow[] | null>(null);
   const [checking, setChecking] = useState(false);
+  // Set when the conflict check itself FAILS (network/500) — distinct from
+  // "checked, no conflicts" so the admin isn't misled into assigning blind.
+  const [checkError, setCheckError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   // Keyboard navigation index in the suggestion list.
   const [highlight, setHighlight] = useState(0);
@@ -1949,6 +1962,7 @@ function AssignDialog({
       setQuery('');
       setConflicts(null);
       setTimeOff(null);
+      setCheckError(null);
       setSubmitting(false);
       setChecking(false);
       setHighlight(0);
@@ -1960,6 +1974,7 @@ function AssignDialog({
     if (!target || !picked) {
       setConflicts(null);
       setTimeOff(null);
+      setCheckError(null);
       return;
     }
     let cancelled = false;
@@ -1968,6 +1983,7 @@ function AssignDialog({
       try {
         const c = await getShiftConflicts(target.id, picked.id);
         if (cancelled) return;
+        setCheckError(null);
         setConflicts(
           c.conflicts.map((cf) => ({
             position: cf.conflictingPosition,
@@ -1986,6 +2002,7 @@ function AssignDialog({
         if (!cancelled) {
           setConflicts(null);
           setTimeOff(null);
+          setCheckError('Couldn’t check for conflicts — verify manually before assigning.');
         }
       } finally {
         if (!cancelled) setChecking(false);
@@ -2170,7 +2187,13 @@ function AssignDialog({
             {checking && (
               <div className="text-[11px] text-silver/70 mt-1">Checking conflicts…</div>
             )}
-            {isClean && (
+            {!checking && checkError && (
+              <div className="text-[11px] text-warning mt-1 inline-flex items-center gap-1">
+                <AlertTriangle className="h-3 w-3" />
+                {checkError}
+              </div>
+            )}
+            {isClean && !checkError && (
               <div className="text-[11px] text-success mt-1 inline-flex items-center gap-1">
                 <CheckCircle2 className="h-3 w-3" />
                 No conflicts
@@ -2714,8 +2737,12 @@ function CreateShiftDialog({
 
   // Phase 131 — load Locations under the selected client. Auto-picks
   // the first option so HR can hit Save in the single-site case
-  // without an extra click. Resets when the client switches.
+  // without an extra click. Re-runs on every OPEN (not just client change)
+  // so reopening for the same client re-fetches and re-auto-picks — the
+  // open-reset effect clears locationId, and without this the Location
+  // field would be blank (and Save blocked) on reopen.
   useEffect(() => {
+    if (!open) return;
     setLocationId('');
     if (!clientId) {
       setLocations(null);
@@ -2735,7 +2762,7 @@ function CreateShiftDialog({
     return () => {
       cancelled = true;
     };
-  }, [clientId]);
+  }, [clientId, open]);
 
   // Scope the multi-assign picker to the chosen client's employees. Without
   // a client we fall back to the page roster prop. (Scoped by client, not

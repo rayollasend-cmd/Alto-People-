@@ -673,9 +673,16 @@ function TimeChip({
     setResizeDeltaPx(0);
   };
 
-  const height = Math.max(
+  // Clip at the grid bottom so an overnight shift (e.g. 10pm–7am) doesn't
+  // render a chip taller than the visible day and spill into the rows below.
+  const rawHeight = Math.max(
     MIN_DURATION_MIN * PX_PER_MIN,
     baseHeight + (resizeDeltaPx ?? 0),
+  );
+  const clippedAtBottom = top + rawHeight > TOTAL_HEIGHT;
+  const height = Math.max(
+    MIN_DURATION_MIN * PX_PER_MIN,
+    Math.min(rawHeight, TOTAL_HEIGHT - top),
   );
 
   const dragStyle: React.CSSProperties = transform
@@ -726,6 +733,15 @@ function TimeChip({
         className="absolute left-0 top-0 bottom-0 w-1"
         style={{ backgroundColor: color.accent }}
       />
+      {clippedAtBottom && (
+        <div
+          aria-hidden
+          className="absolute bottom-0 left-0 right-0 h-3.5 bg-gradient-to-t from-black/45 to-transparent flex items-end justify-center pointer-events-none"
+          title="Continues overnight"
+        >
+          <span className="text-[8px] leading-none text-white/80 mb-0.5">⌄ overnight</span>
+        </div>
+      )}
       {!compact && (
         <div
           {...listeners}
