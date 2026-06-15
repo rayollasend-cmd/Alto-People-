@@ -341,6 +341,7 @@ interface AdminSchedulingViewProps {
 type ViewMode = 'list' | 'day' | 'week' | 'month';
 
 const VIEWS: ViewMode[] = ['list', 'day', 'week', 'month'];
+const VIEW_KEY = 'alto:scheduling.view.v1';
 
 function parseView(raw: string | null): ViewMode {
   return (VIEWS as string[]).includes(raw ?? '') ? (raw as ViewMode) : 'list';
@@ -356,7 +357,21 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     if (v === 'list') next.delete('view');
     else next.set('view', v);
     setSearchParams(next, { replace: true });
+    if (typeof window !== 'undefined') window.localStorage.setItem(VIEW_KEY, v);
   };
+  // The view lives in the URL for deep-linking, but returning to /scheduling
+  // via a fresh nav link carries no ?view= and would snap back to the default
+  // (list) even if the manager was on week. Restore the last-used view from
+  // localStorage when the URL doesn't specify one, so week/day/month survive
+  // navigation like the other filters. Runs once on mount; the URL still wins
+  // for an explicit deep link or back-button.
+  useEffect(() => {
+    if (searchParams.get('view')) return;
+    if (typeof window === 'undefined') return;
+    const stored = parseView(window.localStorage.getItem(VIEW_KEY));
+    if (stored !== 'list') setView(stored);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Week-view layout: time-grid (Sling/Outlook style) vs compact (text rows).
   // Persisted in localStorage so the manager's preference sticks across visits.
