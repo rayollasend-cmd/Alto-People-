@@ -3,6 +3,8 @@ import {
   zonedWallTimeToUtc,
   localInputToUtcIso,
   utcToZonedDatetimeInput,
+  zonedDayKey,
+  zonedMinutesOfDay,
 } from '@/lib/format';
 
 /**
@@ -57,5 +59,33 @@ describe('zone-aware shift time entry', () => {
     // must be stable.
     const iso = localInputToUtcIso('2026-06-13T04:00', null);
     expect(utcToZonedDatetimeInput(iso, null)).toBe('2026-06-13T04:00');
+  });
+});
+
+/**
+ * Regression for the grid "wrong day column / wrong vertical position" class:
+ * a shift near midnight buckets and positions by the STORE zone, not the
+ * browser zone, so it lands in its real column at its real hour.
+ */
+describe('zone-aware grid bucketing & placement', () => {
+  it('buckets a late-night shift into its store-local day, not the browser day', () => {
+    // 11:30pm Eastern on Jun 12 = 03:30 UTC Jun 13. In Pacific that instant is
+    // 8:30pm Jun 12. The grid must file it under the STORE day (Jun 12 ET).
+    const instant = '2026-06-13T03:30:00.000Z';
+    expect(zonedDayKey(instant, 'America/New_York')).toBe('2026-06-12');
+    // And a just-after-midnight Eastern shift lands on the NEXT store day even
+    // though it's still "yesterday" for a Pacific viewer.
+    const past = '2026-06-13T04:15:00.000Z'; // 12:15am ET Jun 13 (= 9:15pm PT Jun 12)
+    expect(zonedDayKey(past, 'America/New_York')).toBe('2026-06-13');
+    expect(zonedDayKey(past, 'America/Los_Angeles')).toBe('2026-06-12');
+  });
+
+  it('positions a chip by its store-local minutes-from-midnight', () => {
+    // 12:15am ET → 15 minutes past midnight in the Eastern grid.
+    expect(zonedMinutesOfDay('2026-06-13T04:15:00.000Z', 'America/New_York')).toBe(15);
+    // Same instant in Pacific → 21:15 = 1275 minutes.
+    expect(zonedMinutesOfDay('2026-06-13T04:15:00.000Z', 'America/Los_Angeles')).toBe(
+      21 * 60 + 15,
+    );
   });
 });

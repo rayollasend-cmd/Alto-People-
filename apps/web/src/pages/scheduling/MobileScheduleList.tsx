@@ -5,6 +5,13 @@ import { Button } from '@/components/ui/Button';
 import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
+import { zonedDayKey } from '@/lib/format';
+
+/** Local calendar-date key ("YYYY-MM-DD") of the anchored day. */
+function ymd(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
 
 /**
  * Phone-first scheduling view.
@@ -41,6 +48,8 @@ interface Props {
   shifts: Shift[];
   associates: AssociateLite[];
   dayAnchor: Date;
+  /** Work-site zone to pick the day's shifts in. null = browser-local. */
+  displayTimeZone?: string | null;
   canManage: boolean;
   onShiftClick: (s: Shift) => void;
   onPrevDay: () => void;
@@ -64,6 +73,7 @@ export function MobileScheduleList({
   shifts,
   associates,
   dayAnchor,
+  displayTimeZone = null,
   canManage,
   onShiftClick,
   onPrevDay,
@@ -77,18 +87,16 @@ export function MobileScheduleList({
   }, [associates]);
 
   const todayShifts = useMemo(() => {
-    const start = dayAnchor.getTime();
-    const end = new Date(dayAnchor.getTime() + 24 * 60 * 60 * 1000).getTime();
+    // Pick the shifts on the anchored day IN THE STORE's zone (null →
+    // browser-local, unchanged) so a late-night shift shows on its real day.
+    const key = ymd(dayAnchor);
     return shifts
-      .filter((s) => {
-        const t = new Date(s.startsAt).getTime();
-        return t >= start && t < end;
-      })
+      .filter((s) => zonedDayKey(s.startsAt, displayTimeZone) === key)
       .sort(
         (a, b) =>
           new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
       );
-  }, [shifts, dayAnchor]);
+  }, [shifts, dayAnchor, displayTimeZone]);
 
   const openCount = todayShifts.filter((s) => s.status === 'OPEN').length;
 

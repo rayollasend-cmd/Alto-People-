@@ -71,6 +71,8 @@ import {
   zonedWallTimeToUtc,
   localInputToUtcIso,
   utcToZonedDatetimeInput,
+  zonedDayKey,
+  zonedMinutesOfDay,
 } from '@/lib/format';
 import {
   Dialog,
@@ -634,6 +636,21 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     return null;
   }, [filteredShifts]);
 
+  // The zone the calendar grid should bucket day-columns and position chips in.
+  // Only meaningful when the visible schedule resolves to ONE work-site zone
+  // (a location filter, or a single-site client). Returns null — meaning
+  // "use the browser zone, unchanged behavior" — when the schedule is empty,
+  // spans MULTIPLE zones (full-org view, no single right answer), or the one
+  // zone IS the viewer's. So the grid only switches to store-zone math for a
+  // remote admin viewing a single other-zone site; everyone else is untouched.
+  const gridTimeZone = useMemo(() => {
+    if (!filteredShifts || filteredShifts.length === 0) return null;
+    const zones = new Set(filteredShifts.map((s) => s.timezone).filter(Boolean));
+    if (zones.size !== 1) return null;
+    const zone = [...zones][0]!;
+    return zone === browserTimeZone() ? null : zone;
+  }, [filteredShifts]);
+
   // Phase 53.6 — DRAFT count for the visible week (powers the publish ribbon).
   const draftsInWeek = useMemo(() => {
     if (!shifts || view === 'list') return 0;
@@ -954,21 +971,42 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       try {
         const origStart = new Date(s.startsAt);
         const origEnd = new Date(s.endsAt);
-        const origDay = new Date(origStart);
-        origDay.setHours(0, 0, 0, 0);
-        // Whole-day delta from local midnights; rounding absorbs the 23h/25h
-        // DST days. Apply it with setDate (not raw ms) so the wall-clock
-        // time of day is preserved when the move crosses a DST boundary.
-        const dayDelta = Math.round(
-          (target.dayStart.getTime() - origDay.getTime()) / 86_400_000,
-        );
-        const dateChanged = dayDelta !== 0;
+        // target.dayStart is the destination COLUMN's calendar date (local
+        // midnight). Compare it against the shift's current day IN THE GRID's
+        // zone so a remote admin's drag lands on the store-local day they
+        // dropped on, not their browser day.
+        const gz = gridTimeZone;
+        const targetKey = ymd(target.dayStart);
+        const origDayKey = zonedDayKey(origStart, gz);
+        const dateChanged = targetKey !== origDayKey;
 
         if (dateChanged) {
-          const newStart = new Date(origStart);
-          newStart.setDate(newStart.getDate() + dayDelta);
-          const newEnd = new Date(origEnd);
-          newEnd.setDate(newEnd.getDate() + dayDelta);
+          let newStart: Date;
+          let newEnd: Date;
+          if (gz) {
+            // Re-stamp the shift's store-local time-of-day onto the target
+            // store-local date; preserve duration via elapsed ms.
+            const mins = zonedMinutesOfDay(origStart, gz);
+            const [ty, tm, td] = targetKey.split('-').map(Number);
+            newStart = zonedWallTimeToUtc(
+              ty, tm, td,
+              Math.floor(mins / 60), mins % 60,
+              gz,
+            );
+            newEnd = new Date(
+              newStart.getTime() + (origEnd.getTime() - origStart.getTime()),
+            );
+          } else {
+            // Browser-local: shift the date with setDate (absorbs 23h/25h DST
+            // days) so the wall-clock time of day is preserved on both ends.
+            const dayDelta = Math.round(
+              (target.dayStart.getTime() - fromYmd(origDayKey).getTime()) / 86_400_000,
+            );
+            newStart = new Date(origStart);
+            newStart.setDate(newStart.getDate() + dayDelta);
+            newEnd = new Date(origEnd);
+            newEnd.setDate(newEnd.getDate() + dayDelta);
+          }
           await updateShift(s.id, {
             startsAt: newStart.toISOString(),
             endsAt: newEnd.toISOString(),
@@ -991,7 +1029,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         await refresh();
       }
     },
-    [refresh]
+    [refresh, gridTimeZone]
   );
 
   const onAutoFill = async (id: string) => {
@@ -1656,6 +1694,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             shifts={filteredShifts}
             associates={associates}
             dayAnchor={dayAnchor}
+            displayTimeZone={gridTimeZone}
             canManage={canManage}
             onShiftClick={(s) => {
               if (s.status === 'OPEN' || s.status === 'DRAFT' || s.status === 'ASSIGNED') {
@@ -1685,6 +1724,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           associates={associates}
           weekStart={weekStart}
           dayCount={weekDayCount}
+          displayTimeZone={gridTimeZone}
           canManage={canManage}
           showAllAssociates={showAllAssociates}
           onShiftClick={(s, e) => {
@@ -1717,6 +1757,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           associates={associates}
           weekStart={weekStart}
           dayCount={weekDayCount}
+          displayTimeZone={gridTimeZone}
           canManage={canManage}
           showAllAssociates={showAllAssociates}
           onShiftClick={(s, e) => {
@@ -1749,6 +1790,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           shifts={filteredShifts}
           associates={associates}
           dayAnchor={dayAnchor}
+          displayTimeZone={gridTimeZone}
           canManage={canManage}
           showAllAssociates={showAllAssociates}
           onShiftClick={(s) => {
@@ -1774,6 +1816,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         <MonthCalendarView
           shifts={filteredShifts}
           monthAnchor={monthAnchor}
+          displayTimeZone={gridTimeZone}
           canManage={canManage}
           onDayClick={(d) => {
             setDayAnchor(d);

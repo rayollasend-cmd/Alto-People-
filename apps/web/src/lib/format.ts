@@ -242,6 +242,64 @@ export function utcToZonedDatetimeInput(
   return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
 }
 
+/**
+ * Calendar-day key ("YYYY-MM-DD") of an instant AS SEEN in `timeZone`.
+ *
+ * The calendar grid buckets shifts into day columns. A shift is a UTC instant
+ * but belongs to a STORE, and the grid labels its time in the store's zone —
+ * so it must be bucketed by the store-local calendar day, not the browser's.
+ * Otherwise an 11pm-Eastern shift viewed from Pacific files under the previous
+ * day (8pm browser-local) and vanishes from its real column.
+ *
+ * Returns the browser-local calendar date when `timeZone` is absent (so the
+ * same-zone case is byte-for-byte the previous behavior).
+ */
+export function zonedDayKey(
+  value: string | Date,
+  timeZone?: string | null,
+): string {
+  const d = value instanceof Date ? value : new Date(value);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  if (!timeZone) {
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+  const dtf = new Intl.DateTimeFormat(EN_US, {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  const p: Record<string, string> = {};
+  for (const part of dtf.formatToParts(d)) {
+    if (part.type !== 'literal') p[part.type] = part.value;
+  }
+  return `${p.year}-${p.month}-${p.day}`;
+}
+
+/**
+ * Minutes-from-midnight (0–1439) of an instant AS SEEN in `timeZone`. Used to
+ * position a chip on the vertical hour axis so it lands at its store-local
+ * time, matching its label. Browser-local when `timeZone` is absent.
+ */
+export function zonedMinutesOfDay(
+  value: string | Date,
+  timeZone?: string | null,
+): number {
+  const d = value instanceof Date ? value : new Date(value);
+  if (!timeZone) return d.getHours() * 60 + d.getMinutes();
+  const dtf = new Intl.DateTimeFormat(EN_US, {
+    timeZone,
+    hourCycle: 'h23',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const p: Record<string, number> = {};
+  for (const part of dtf.formatToParts(d)) {
+    if (part.type !== 'literal') p[part.type] = Number(part.value);
+  }
+  return p.hour * 60 + p.minute;
+}
+
 /** "2h ago", "yesterday", "Mar 4". For activity feeds. */
 export function fmtRelativeDate(
   value: string | Date | null | undefined,
