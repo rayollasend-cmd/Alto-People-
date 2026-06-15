@@ -14,6 +14,7 @@ import type { AssociateLite, Shift, ShiftStatus } from '@alto-people/shared';
 import { Badge } from '@/components/ui/Badge';
 import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
+import { zonedDayKey, zonedMinutesOfDay, zonedWallTimeToUtc } from '@/lib/format';
 import {
   ShiftHoverCard,
   useShiftHoverCard,
@@ -91,6 +92,12 @@ function startOfDay(d: Date): Date {
   return x;
 }
 
+/** Local calendar-date key ("YYYY-MM-DD") of a column day — its stable label. */
+function ymd(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 function addDays(d: Date, n: number): Date {
   const x = new Date(d);
   x.setDate(x.getDate() + n);
@@ -126,6 +133,8 @@ interface Props {
   weekStart: Date; // first day shown, 00:00 local (any weekday)
   /** Number of day columns to render (the start→end range). Default 7. */
   dayCount?: number;
+  /** Work-site zone to bucket shifts in. null = browser-local (unchanged). */
+  displayTimeZone?: string | null;
   canManage: boolean;
   /** Click on a chip. Parent inspects modifier keys to decide between
    *  selection-toggle and open-edit-dialog. */
@@ -175,6 +184,7 @@ export function WeekCalendarView({
   associates,
   weekStart,
   dayCount = 7,
+  displayTimeZone = null,
   canManage,
   onShiftClick,
   onCellCreate,
@@ -192,11 +202,12 @@ export function WeekCalendarView({
     [weekStart, dayCount]
   );
 
-  // Bucket shifts by associateId × local-day. Index by `${associateId|unassigned}_${dayMs}`.
+  // Bucket shifts by associateId × store-local day. Index by
+  // `${associateId|unassigned}_${YYYY-MM-DD}` (null zone → browser-local).
   const byCell = useMemo(() => {
     const map = new Map<string, Shift[]>();
     for (const s of shifts) {
-      const day = startOfDay(new Date(s.startsAt)).getTime();
+      const day = zonedDayKey(s.startsAt, displayTimeZone);
       const key = `${s.assignedAssociateId ?? UNASSIGNED_ROW_ID}_${day}`;
       const list = map.get(key) ?? [];
       list.push(s);
@@ -209,26 +220,23 @@ export function WeekCalendarView({
       );
     }
     return map;
-  }, [shifts]);
+  }, [shifts, displayTimeZone]);
 
   // Per-day totals: shift count + scheduled minutes + projected cost.
   // Powers the footer row under each day column.
   const dayTotals = useMemo(() => {
-    const out = new Map<number, { count: number; minutes: number; cost: number }>();
-    for (const d of [] as Date[]) void d; // (eslint scope)
+    const out = new Map<string, { count: number; minutes: number; cost: number }>();
     const dayKeys = Array.from({ length: dayCount }).map((_, i) =>
-      addDays(weekStart, i).getTime(),
+      ymd(addDays(weekStart, i)),
     );
     for (const k of dayKeys) {
       out.set(k, { count: 0, minutes: 0, cost: 0 });
     }
-    const weekStartMs = weekStart.getTime();
-    const weekEndMs = addDays(weekStart, dayCount).getTime();
     for (const s of shifts) {
       if (s.status === 'CANCELLED') continue;
-      const t = new Date(s.startsAt).getTime();
-      if (t < weekStartMs || t >= weekEndMs) continue;
-      const day = startOfDay(new Date(s.startsAt)).getTime();
+      // Bucket by store-local day and let the grid's own day-set decide
+      // membership (entry is undefined for days outside the visible range).
+      const day = zonedDayKey(s.startsAt, displayTimeZone);
       const entry = out.get(day);
       if (!entry) continue;
       const mins = shiftMinutes(s);
@@ -239,7 +247,7 @@ export function WeekCalendarView({
       }
     }
     return out;
-  }, [shifts, weekStart, dayCount]);
+  }, [shifts, weekStart, dayCount, displayTimeZone]);
 
   // Per-associate weekly minutes (only counting shifts in the visible range).
   const weeklyMinutes = useMemo(() => {
@@ -301,11 +309,10 @@ export function WeekCalendarView({
     const shift = shifts.find((s) => s.id === shiftId);
     if (!shift) return;
 
-    // No-op if dropped on the cell it already lived in.
-    const currentDay = startOfDay(new Date(shift.startsAt)).getTime();
+    // No-op if dropped on the cell it already lived in (compare in grid zone).
     if (
       (shift.assignedAssociateId ?? null) === associateId &&
-      currentDay === dayStart.getTime()
+      zonedDayKey(shift.startsAt, displayTimeZone) === ymd(dayStart)
     ) {
       return;
     }
@@ -333,31 +340,35 @@ export function WeekCalendarView({
     const out = new Set<string>();
     const dragStart = new Date(activeDragShift.startsAt);
     const dragEnd = new Date(activeDragShift.endsAt);
-    const dayMinutes = dragStart.getHours() * 60 + dragStart.getMinutes();
+    const dayMinutes = zonedMinutesOfDay(dragStart, displayTimeZone);
     const durationMs = dragEnd.getTime() - dragStart.getTime();
 
     // For each visible associate × day, simulate the drop and check for
     // overlap with that associate's other shifts on that same day. The
     // dragged shift itself is excluded so dropping it back onto its own
-    // cell never lights up red.
+    // cell never lights up red. Predict the drop in the grid's zone (null →
+    // browser-local, identical to the old setHours math).
     for (const a of visibleAssociates) {
       for (const d of days) {
-        const target = new Date(d);
-        target.setHours(0, 0, 0, 0);
-        target.setMinutes(target.getMinutes() + dayMinutes);
+        const [yy, mm, dd] = ymd(d).split('-').map(Number);
+        const target = zonedWallTimeToUtc(
+          yy, mm, dd,
+          Math.floor(dayMinutes / 60), dayMinutes % 60,
+          displayTimeZone,
+        );
         const targetEnd = new Date(target.getTime() + durationMs);
-        const cellShifts = byCell.get(`${a.id}_${d.getTime()}`) ?? [];
+        const cellShifts = byCell.get(`${a.id}_${ymd(d)}`) ?? [];
         const conflict = cellShifts.some((s) => {
           if (s.id === activeDragShift.id) return false;
           const sStart = new Date(s.startsAt);
           const sEnd = new Date(s.endsAt);
           return sStart < targetEnd && sEnd > target;
         });
-        if (conflict) out.add(`${a.id}_${d.getTime()}`);
+        if (conflict) out.add(`${a.id}_${ymd(d)}`);
       }
     }
     return out;
-  }, [activeDragShift, visibleAssociates, days, byCell]);
+  }, [activeDragShift, visibleAssociates, days, byCell, displayTimeZone]);
 
   return (
     <DndContext
@@ -414,7 +425,7 @@ export function WeekCalendarView({
             <Cell
               key={`u_${d.getTime()}`}
               cellId={`cell:${UNASSIGNED_ROW_ID}:${d.getTime()}`}
-              shifts={byCell.get(`${UNASSIGNED_ROW_ID}_${d.getTime()}`) ?? []}
+              shifts={byCell.get(`${UNASSIGNED_ROW_ID}_${ymd(d)}`) ?? []}
               dayStart={d}
               isToday={sameDay(d, today)}
               canManage={canManage}
@@ -449,7 +460,7 @@ export function WeekCalendarView({
                   <Cell
                     key={`${a.id}_${d.getTime()}`}
                     cellId={`cell:${a.id}:${d.getTime()}`}
-                    shifts={byCell.get(`${a.id}_${d.getTime()}`) ?? []}
+                    shifts={byCell.get(`${a.id}_${ymd(d)}`) ?? []}
                     dayStart={d}
                     isToday={sameDay(d, today)}
                     canManage={canManage}
@@ -460,7 +471,7 @@ export function WeekCalendarView({
                     onContextMenu={ctxMenu.openFor}
                     movingShiftId={movingShiftId}
                     selectedIds={selectedIds}
-                    isConflictTarget={conflictCellKeys.has(`${a.id}_${d.getTime()}`)}
+                    isConflictTarget={conflictCellKeys.has(`${a.id}_${ymd(d)}`)}
                     variant="default"
                     onTemplateDrop={(tplId) => onTemplateDrop(tplId, d, a.id)}
                   />
@@ -474,7 +485,7 @@ export function WeekCalendarView({
             Daily total
           </div>
           {days.map((d) => {
-            const t = dayTotals.get(d.getTime());
+            const t = dayTotals.get(ymd(d));
             const count = t?.count ?? 0;
             const hrs = (t?.minutes ?? 0) / 60;
             const cost = t?.cost ?? 0;

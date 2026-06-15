@@ -15,8 +15,15 @@ import {
 } from '@/components/ui/Dialog';
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/cn';
+import { zonedDayKey } from '@/lib/format';
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+/** Local calendar-date key ("YYYY-MM-DD") of a grid cell — its stable label. */
+function ymd(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
 
 /** Up to this many chips render directly in the cell; the rest go behind "+N more". */
 const VISIBLE_CHIPS_PER_CELL = 3;
@@ -63,6 +70,8 @@ function initialsOf(name: string | null): string {
 interface Props {
   shifts: Shift[];
   monthAnchor: Date; // first of month at 00:00 local
+  /** Work-site zone to bucket shifts in. null = browser-local (unchanged). */
+  displayTimeZone?: string | null;
   canManage: boolean;
   onDayClick: (d: Date) => void;
   onShiftClick: (s: Shift) => void;
@@ -95,6 +104,7 @@ interface DayBucket {
 export function MonthCalendarView({
   shifts,
   monthAnchor,
+  displayTimeZone = null,
   canManage,
   onDayClick,
   onShiftClick,
@@ -114,9 +124,11 @@ export function MonthCalendarView({
   );
 
   const buckets = useMemo(() => {
-    const map = new Map<number, DayBucket>();
+    const map = new Map<string, DayBucket>();
     for (const s of shifts) {
-      const t = startOfDay(new Date(s.startsAt)).getTime();
+      // Bucket by store-local day (null zone → browser-local, unchanged) so a
+      // late-night shift files into its real calendar cell.
+      const t = zonedDayKey(s.startsAt, displayTimeZone);
       const b = map.get(t) ?? { shifts: [], totalMinutes: 0, open: 0, draft: 0 };
       b.shifts.push(s);
       b.totalMinutes += shiftMinutes(s);
@@ -131,14 +143,14 @@ export function MonthCalendarView({
       );
     }
     return map;
-  }, [shifts]);
+  }, [shifts, displayTimeZone]);
 
   const today = startOfDay(new Date());
 
   const [overflowDay, setOverflowDay] = useState<Date | null>(null);
   const overflowShifts = useMemo(() => {
     if (!overflowDay) return [];
-    return buckets.get(overflowDay.getTime())?.shifts ?? [];
+    return buckets.get(ymd(overflowDay))?.shifts ?? [];
   }, [overflowDay, buckets]);
 
   // Roll-up across the visible month (NOT the visible 6 weeks — only
@@ -183,7 +195,7 @@ export function MonthCalendarView({
             const isToday = sameDay(d, today);
             const dow = (d.getDay() + 6) % 7;
             const isWeekend = dow >= 5;
-            const b = buckets.get(d.getTime());
+            const b = buckets.get(ymd(d));
             const isLastRow = idx >= 35;
             return (
               <DayCell

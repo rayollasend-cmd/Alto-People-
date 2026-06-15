@@ -13,6 +13,7 @@ import type { AssociateLite, Shift, ShiftStatus } from '@alto-people/shared';
 import { Badge } from '@/components/ui/Badge';
 import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
+import { zonedDayKey, zonedMinutesOfDay } from '@/lib/format';
 import {
   ShiftHoverCard,
   useShiftHoverCard,
@@ -61,11 +62,10 @@ function shiftMinutes(s: Shift): number {
   );
 }
 
-/** Minutes from DAY_START_HOUR to the given Date (clamped at zero). */
-function minutesFromGridStart(d: Date, dayAnchor: Date): number {
-  const ms = d.getTime() - dayAnchor.getTime();
-  const min = Math.round(ms / 60_000);
-  return min - DAY_START_HOUR * 60;
+/** Local calendar-date key ("YYYY-MM-DD") of the anchored day. */
+function ymd(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 function snap(min: number): number {
@@ -76,6 +76,8 @@ interface Props {
   shifts: Shift[];
   associates: AssociateLite[];
   dayAnchor: Date; // 00:00 local of the day we're viewing
+  /** Work-site zone to pick/position the day's shifts in. null = browser-local. */
+  displayTimeZone?: string | null;
   canManage: boolean;
   showAllAssociates: boolean;
   onShiftClick: (s: Shift) => void;
@@ -102,6 +104,7 @@ export function DayCalendarView({
   shifts,
   associates,
   dayAnchor,
+  displayTimeZone = null,
   canManage,
   showAllAssociates,
   onShiftClick,
@@ -112,16 +115,12 @@ export function DayCalendarView({
 }: Props) {
   const hover = useShiftHoverCard();
   const ctxMenu = useShiftContextMenu();
-  // Filter to shifts that actually fall on `dayAnchor`. The parent already
-  // requested ≤24h of data, but cross-day overlap can leak in.
+  // Filter to shifts that fall on `dayAnchor` IN THE STORE's zone (null →
+  // browser-local, unchanged) so a late-night shift shows on its real day.
   const todayShifts = useMemo(() => {
-    const start = dayAnchor.getTime();
-    const end = new Date(dayAnchor.getTime() + 24 * 60 * 60 * 1000).getTime();
-    return shifts.filter((s) => {
-      const t = new Date(s.startsAt).getTime();
-      return t >= start && t < end;
-    });
-  }, [shifts, dayAnchor]);
+    const key = ymd(dayAnchor);
+    return shifts.filter((s) => zonedDayKey(s.startsAt, displayTimeZone) === key);
+  }, [shifts, dayAnchor, displayTimeZone]);
 
   // Bucket by associate id (or 'unassigned').
   const byAssociate = useMemo(() => {
@@ -199,7 +198,7 @@ export function DayCalendarView({
               </div>
             }
             shifts={byAssociate.get(UNASSIGNED_ROW_ID) ?? []}
-            dayAnchor={dayAnchor}
+            displayTimeZone={displayTimeZone}
             canManage={canManage}
             onShiftClick={onShiftClick}
             onCreate={(t) => {
@@ -235,7 +234,7 @@ export function DayCalendarView({
                   </div>
                 }
                 shifts={byAssociate.get(a.id) ?? []}
-                dayAnchor={dayAnchor}
+                displayTimeZone={displayTimeZone}
                 canManage={canManage}
                 onShiftClick={onShiftClick}
                 onCreate={(t) => {
@@ -299,7 +298,7 @@ function DayColumn({
   colId,
   header,
   shifts,
-  dayAnchor,
+  displayTimeZone,
   canManage,
   onShiftClick,
   onCreate,
@@ -311,7 +310,7 @@ function DayColumn({
   colId: string;
   header: React.ReactNode;
   shifts: Shift[];
-  dayAnchor: Date;
+  displayTimeZone: string | null;
   canManage: boolean;
   onShiftClick: (s: Shift) => void;
   onCreate: (gridMinutes: number) => void;
@@ -358,7 +357,7 @@ function DayColumn({
           <DayShiftChip
             key={s.id}
             shift={s}
-            dayAnchor={dayAnchor}
+            displayTimeZone={displayTimeZone}
             onClick={() => onShiftClick(s)}
             onContextMenu={(e) => onContextMenu(s, e)}
             onResize={onShiftResize}
@@ -378,7 +377,7 @@ function DayColumn({
 
 function DayShiftChip({
   shift,
-  dayAnchor,
+  displayTimeZone,
   onClick,
   onContextMenu,
   onResize,
@@ -386,7 +385,7 @@ function DayShiftChip({
   hoverHandlers,
 }: {
   shift: Shift;
-  dayAnchor: Date;
+  displayTimeZone: string | null;
   onClick: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
   onResize: (s: Shift, newEndsAt: Date) => Promise<void>;
@@ -407,7 +406,12 @@ function DayShiftChip({
 
   const startsAt = new Date(shift.startsAt);
   const endsAt = new Date(shift.endsAt);
-  const startMinFromGrid = Math.max(0, minutesFromGridStart(startsAt, dayAnchor));
+  // Position by store-local minutes (null zone → browser-local, unchanged) so
+  // the chip lands on the hour gridline its label reads.
+  const startMinFromGrid = Math.max(
+    0,
+    zonedMinutesOfDay(startsAt, displayTimeZone) - DAY_START_HOUR * 60,
+  );
   const baseDuration = shiftMinutes(shift);
   const top = startMinFromGrid * PX_PER_MIN;
   const baseHeight = baseDuration * PX_PER_MIN;

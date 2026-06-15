@@ -13,6 +13,7 @@ import { GripVertical } from 'lucide-react';
 import type { AssociateLite, Shift } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
+import { zonedDayKey, zonedMinutesOfDay, zonedWallTimeToUtc } from '@/lib/format';
 import {
   ShiftHoverCard,
   useShiftHoverCard,
@@ -72,6 +73,13 @@ function startOfDay(d: Date): Date {
   return x;
 }
 
+/** Local calendar-date key ("YYYY-MM-DD") of a column day. Columns are always
+ *  browser-local-derived dates; this is just their stable label/lookup key. */
+function ymd(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 function addDays(d: Date, n: number): Date {
   const x = new Date(d);
   x.setDate(x.getDate() + n);
@@ -95,11 +103,6 @@ function shiftMinutes(s: Shift): number {
   );
 }
 
-/** Minutes from DAY_START_HOUR (in local time) to the given Date. */
-function minutesFromGridStart(d: Date): number {
-  return d.getHours() * 60 + d.getMinutes() - DAY_START_HOUR * 60;
-}
-
 function snap(min: number): number {
   return Math.round(min / SNAP_MIN) * SNAP_MIN;
 }
@@ -110,6 +113,9 @@ interface Props {
   weekStart: Date;
   /** Number of day columns to render (the start→end range). Default 7. */
   dayCount?: number;
+  /** Work-site zone to bucket/position shifts in. null = browser-local
+   *  (mixed/same-zone schedules, unchanged behavior). */
+  displayTimeZone?: string | null;
   canManage: boolean;
   onShiftClick: (s: Shift, e: React.MouseEvent) => void;
   onCellCreate: (start: Date, associateId: string | null) => void;
@@ -130,6 +136,7 @@ export function TimeGridWeekView({
   associates,
   weekStart,
   dayCount = 7,
+  displayTimeZone = null,
   canManage,
   onShiftClick,
   onCellCreate,
@@ -150,14 +157,17 @@ export function TimeGridWeekView({
   const byCell = useMemo(() => {
     const map = new Map<string, Shift[]>();
     for (const s of shifts) {
-      const day = startOfDay(new Date(s.startsAt)).getTime();
+      // Bucket by the shift's day IN THE GRID's zone so a late-night shift
+      // files under its store-local column, not the viewer's. zonedDayKey
+      // with a null zone === the browser-local calendar date (unchanged).
+      const day = zonedDayKey(s.startsAt, displayTimeZone);
       const key = `${s.assignedAssociateId ?? UNASSIGNED_ROW_ID}_${day}`;
       const list = map.get(key) ?? [];
       list.push(s);
       map.set(key, list);
     }
     return map;
-  }, [shifts]);
+  }, [shifts, displayTimeZone]);
 
   const visibleAssociates = useMemo(() => {
     if (showAllAssociates) return associates;
@@ -185,26 +195,31 @@ export function TimeGridWeekView({
     const out = new Set<string>();
     const dragStart = new Date(activeDrag.startsAt);
     const dragEnd = new Date(activeDrag.endsAt);
-    const dayMinutes = dragStart.getHours() * 60 + dragStart.getMinutes();
+    const dayMinutes = zonedMinutesOfDay(dragStart, displayTimeZone);
     const durationMs = dragEnd.getTime() - dragStart.getTime();
     for (const a of visibleAssociates) {
       for (const d of days) {
-        const target = new Date(d);
-        target.setHours(0, 0, 0, 0);
-        target.setMinutes(target.getMinutes() + dayMinutes);
+        // Predict the dropped instant in the grid's zone (null zone →
+        // browser-local, identical to the old setHours math).
+        const [yy, mm, dd] = ymd(d).split('-').map(Number);
+        const target = zonedWallTimeToUtc(
+          yy, mm, dd,
+          Math.floor(dayMinutes / 60), dayMinutes % 60,
+          displayTimeZone,
+        );
         const targetEnd = new Date(target.getTime() + durationMs);
-        const cell = byCell.get(`${a.id}_${d.getTime()}`) ?? [];
+        const cell = byCell.get(`${a.id}_${ymd(d)}`) ?? [];
         const conflict = cell.some((s) => {
           if (s.id === activeDrag.id) return false;
           return (
             new Date(s.startsAt) < targetEnd && new Date(s.endsAt) > target
           );
         });
-        if (conflict) out.add(`${a.id}_${d.getTime()}`);
+        if (conflict) out.add(`${a.id}_${ymd(d)}`);
       }
     }
     return out;
-  }, [activeDrag, visibleAssociates, days, byCell]);
+  }, [activeDrag, visibleAssociates, days, byCell, displayTimeZone]);
 
   const onDragStart = (e: DragStartEvent) => {
     const id = String(e.active.id);
@@ -221,10 +236,10 @@ export function TimeGridWeekView({
     const shiftId = String(e.active.id);
     const shift = shifts.find((s) => s.id === shiftId);
     if (!shift) return;
-    const currentDay = startOfDay(new Date(shift.startsAt)).getTime();
+    // Compare days in the grid's zone (null → browser-local, unchanged).
     if (
       (shift.assignedAssociateId ?? null) === associateId &&
-      currentDay === dayStart.getTime()
+      zonedDayKey(shift.startsAt, displayTimeZone) === ymd(dayStart)
     ) {
       return;
     }
@@ -299,8 +314,9 @@ export function TimeGridWeekView({
             <TimeCell
               key={`u_${d.getTime()}`}
               cellId={`tg-cell:${UNASSIGNED_ROW_ID}:${d.getTime()}`}
-              shifts={byCell.get(`${UNASSIGNED_ROW_ID}_${d.getTime()}`) ?? []}
+              shifts={byCell.get(`${UNASSIGNED_ROW_ID}_${ymd(d)}`) ?? []}
               dayStart={d}
+              displayTimeZone={displayTimeZone}
               isToday={sameDay(d, today)}
               canManage={canManage}
               onShiftClick={onShiftClick}
@@ -335,8 +351,9 @@ export function TimeGridWeekView({
                   <TimeCell
                     key={`${a.id}_${d.getTime()}`}
                     cellId={`tg-cell:${a.id}:${d.getTime()}`}
-                    shifts={byCell.get(`${a.id}_${d.getTime()}`) ?? []}
+                    shifts={byCell.get(`${a.id}_${ymd(d)}`) ?? []}
                     dayStart={d}
+                    displayTimeZone={displayTimeZone}
                     isToday={sameDay(d, today)}
                     canManage={canManage}
                     onShiftClick={onShiftClick}
@@ -346,7 +363,7 @@ export function TimeGridWeekView({
                     onContextMenu={ctxMenu.openFor}
                     movingShiftId={movingShiftId}
                     selectedIds={selectedIds}
-                    isConflictTarget={conflictCellKeys.has(`${a.id}_${d.getTime()}`)}
+                    isConflictTarget={conflictCellKeys.has(`${a.id}_${ymd(d)}`)}
                     variant="default"
                     associateId={a.id}
                     onTemplateDrop={(tplId) => onTemplateDrop(tplId, d, a.id)}
@@ -490,6 +507,7 @@ function TimeCell({
   cellId,
   shifts,
   dayStart,
+  displayTimeZone,
   isToday,
   canManage,
   onShiftClick,
@@ -507,6 +525,7 @@ function TimeCell({
   cellId: string;
   shifts: Shift[];
   dayStart: Date;
+  displayTimeZone: string | null;
   isToday: boolean;
   canManage: boolean;
   onShiftClick: (s: Shift, e: React.MouseEvent) => void;
@@ -581,6 +600,7 @@ function TimeCell({
         <TimeChip
           key={s.id}
           shift={s}
+          displayTimeZone={displayTimeZone}
           onClick={(e) => onShiftClick(s, e)}
           onContextMenu={(e) => onContextMenu(s, e)}
           onResize={onShiftResize}
@@ -596,6 +616,7 @@ function TimeCell({
 
 function TimeChip({
   shift,
+  displayTimeZone,
   onClick,
   onContextMenu,
   onResize,
@@ -605,6 +626,7 @@ function TimeChip({
   hoverHandlers,
 }: {
   shift: Shift;
+  displayTimeZone: string | null;
   onClick: (e: React.MouseEvent) => void;
   onContextMenu: (e: React.MouseEvent) => void;
   onResize: (s: Shift, newEndsAt: Date) => Promise<void>;
@@ -623,7 +645,12 @@ function TimeChip({
   const startsAt = new Date(shift.startsAt);
   const endsAt = new Date(shift.endsAt);
   const baseDuration = shiftMinutes(shift);
-  const startMin = Math.max(0, minutesFromGridStart(startsAt));
+  // Position by the shift's store-local minutes so the chip lands on the hour
+  // gridline its label reads (null zone → browser-local, unchanged).
+  const startMin = Math.max(
+    0,
+    zonedMinutesOfDay(startsAt, displayTimeZone) - DAY_START_HOUR * 60,
+  );
   const top = startMin * PX_PER_MIN;
   const baseHeight = baseDuration * PX_PER_MIN;
 
