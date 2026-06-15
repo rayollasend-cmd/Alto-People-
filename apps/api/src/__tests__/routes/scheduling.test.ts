@@ -312,3 +312,34 @@ describe('CLIENT_PORTAL access', () => {
     expect(cancel.status).toBe(403);
   });
 });
+
+describe('GET /scheduling/shifts — range boundary + truncation', () => {
+  it('excludes a shift starting exactly at the exclusive `to` (no double-count)', async () => {
+    const client = await createClient();
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const startsAt = new Date(Date.now() + 60 * 60_000);
+    const endsAt = new Date(startsAt.getTime() + 4 * 60 * 60_000);
+    await a.post('/scheduling/shifts').send({
+      clientId: client.id,
+      position: 'Server',
+      startsAt: startsAt.toISOString(),
+      endsAt: endsAt.toISOString(),
+    });
+
+    const from = new Date(startsAt.getTime() - 60 * 60_000).toISOString();
+    const q = (to: string) =>
+      `/scheduling/shifts?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+
+    // `to` == the shift's start instant → excluded (belongs to the next window).
+    const excluded = await a.get(q(startsAt.toISOString()));
+    expect(excluded.status).toBe(200);
+    expect(excluded.body.shifts).toHaveLength(0);
+    expect(excluded.body.truncated).toBe(false);
+
+    // `to` one minute later → the same shift now falls inside the window.
+    const included = await a.get(q(new Date(startsAt.getTime() + 60_000).toISOString()));
+    expect(included.body.shifts).toHaveLength(1);
+  });
+});
