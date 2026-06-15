@@ -217,6 +217,7 @@ function readStoredFilters(): {
   client: string;
   location: string;
   status: string;
+  position: string;
 } | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -226,11 +227,13 @@ function readStoredFilters(): {
       client?: string;
       location?: string;
       status?: string;
+      position?: string;
     };
     return {
       client: typeof parsed.client === 'string' ? parsed.client : '',
       location: typeof parsed.location === 'string' ? parsed.location : '',
       status: typeof parsed.status === 'string' ? parsed.status : '',
+      position: typeof parsed.position === 'string' ? parsed.position : '',
     };
   } catch {
     return null;
@@ -391,9 +394,12 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   //   clientFilter   '' = every client (the full org schedule, the default)
   //   locationFilter '' = every location under the chosen client; otherwise a
   //                  real Location id (only selectable once a client is set).
-  //   posFilter      free-text position match, AND-combined client-side.
+  //   posFilter      exact position match (picked from a dropdown of the
+  //                  positions in the schedule), AND-combined client-side.
   // client + location are filtered server-side; position is client-side.
-  const [posFilter, setPosFilter] = useState<string>('');
+  const [posFilter, setPosFilter] = useState<string>(
+    () => readStoredFilters()?.position ?? '',
+  );
   const [clientFilter, setClientFilter] = useState<string>(
     () => readStoredFilters()?.client ?? '',
   ); // '' = all
@@ -409,9 +415,10 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         client: clientFilter,
         location: locationFilter,
         status: filter,
+        position: posFilter,
       }),
     );
-  }, [clientFilter, locationFilter, filter]);
+  }, [clientFilter, locationFilter, filter, posFilter]);
   // Locations belonging to the currently-selected client, for the cascade.
   // null = loading; [] = client has none (or no client selected).
   const [clientLocations, setClientLocations] = useState<LocationSummary[]>([]);
@@ -693,12 +700,31 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   }, [clientFilter]);
 
   // Position is the only client-side narrowing left — client and location
-  // are both filtered server-side (clientId + locationId params).
+  // are both filtered server-side (clientId + locationId params). Exact
+  // (case/space-insensitive) match against the picked dropdown value.
   const filteredShifts = useMemo(() => {
     if (!shifts) return shifts;
     const pos = posFilter.trim().toLowerCase();
     if (!pos) return shifts;
-    return shifts.filter((s) => s.position.toLowerCase().includes(pos));
+    return shifts.filter((s) => s.position.trim().toLowerCase() === pos);
+  }, [shifts, posFilter]);
+
+  // The distinct positions actually used in the loaded schedule — drives the
+  // position filter dropdown (Sling-style: pick from what you've scheduled
+  // instead of retyping free text). Deduped case-insensitively, keeping the
+  // first-seen casing. The active selection is kept in the list even if its
+  // shifts scrolled out of the loaded window, so the dropdown stays valid.
+  const knownPositions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const s of shifts ?? []) {
+      const p = s.position.trim();
+      if (!p) continue;
+      const k = p.toLowerCase();
+      if (!seen.has(k)) seen.set(k, p);
+    }
+    const cur = posFilter.trim();
+    if (cur && !seen.has(cur.toLowerCase())) seen.set(cur.toLowerCase(), cur);
+    return [...seen.values()].sort((a, b) => a.localeCompare(b));
   }, [shifts, posFilter]);
 
   // Shift times render in the work-site's timezone. When the viewer isn't
@@ -1648,6 +1674,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           <FilterBar
             posFilter={posFilter}
             setPosFilter={setPosFilter}
+            positions={knownPositions}
             clientFilter={clientFilter}
             setClientFilter={setClientFilter}
             locationFilter={locationFilter}
@@ -4115,6 +4142,7 @@ function ViewTab({
 function FilterBar({
   posFilter,
   setPosFilter,
+  positions,
   clientFilter,
   setClientFilter,
   locationFilter,
@@ -4127,6 +4155,7 @@ function FilterBar({
 }: {
   posFilter: string;
   setPosFilter: (v: string) => void;
+  positions: string[];
   clientFilter: string;
   setClientFilter: (v: string) => void;
   locationFilter: string;
@@ -4144,8 +4173,6 @@ function FilterBar({
   // Location only makes sense once a client is chosen (a Location belongs to
   // one client). With "All clients" selected this stays disabled.
   const locationDisabled = !clientFilter;
-  const inputCx =
-    'h-8 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 py-1 text-xs text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold';
   return (
     <div className="mb-3 rounded-md border border-navy-secondary bg-navy-secondary/20 px-3 py-2">
       {/* Scope line — tells the admin exactly what they're looking at. */}
@@ -4211,14 +4238,24 @@ function FilterBar({
             ))}
           </Select>
         </div>
-        <input
-          type="text"
-          placeholder="Position…"
-          value={posFilter}
-          onChange={(e) => setPosFilter(e.target.value)}
-          className={cn(inputCx, 'w-32')}
-          aria-label="Filter by position"
-        />
+        <div className="min-w-[10rem]">
+          <Select
+            value={posFilter}
+            onChange={(e) => setPosFilter(e.target.value)}
+            size="sm"
+            aria-label="Filter by position"
+            disabled={positions.length === 0}
+          >
+            <option value="">
+              {positions.length === 0 ? 'No positions yet' : 'All positions'}
+            </option>
+            {positions.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </Select>
+        </div>
         {anyActive && (
           <button
             type="button"
