@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -205,6 +205,26 @@ function readStoredWeekRange(): { start: Date; days: number } | null {
   }
 }
 
+// The client/location the manager narrowed the schedule to. Plain useState
+// reset these to "whole org" on every remount (leave /scheduling and come
+// back). Persist them so the scope survives navigation, mirroring the week
+// range and layout preferences.
+const FILTERS_KEY = 'alto:scheduling.filters.v1';
+function readStoredFilters(): { client: string; location: string } | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(FILTERS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { client?: string; location?: string };
+    return {
+      client: typeof parsed.client === 'string' ? parsed.client : '',
+      location: typeof parsed.location === 'string' ? parsed.location : '',
+    };
+  } catch {
+    return null;
+  }
+}
+
 /* ----- CSV / file-download helpers (Phase 54.3) -------------------------- */
 
 function csvCell(v: string | number | null | undefined): string {
@@ -326,8 +346,20 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   //   posFilter      free-text position match, AND-combined client-side.
   // client + location are filtered server-side; position is client-side.
   const [posFilter, setPosFilter] = useState<string>('');
-  const [clientFilter, setClientFilter] = useState<string>(''); // '' = all
-  const [locationFilter, setLocationFilter] = useState<string>(''); // '' = all
+  const [clientFilter, setClientFilter] = useState<string>(
+    () => readStoredFilters()?.client ?? '',
+  ); // '' = all
+  const [locationFilter, setLocationFilter] = useState<string>(
+    () => readStoredFilters()?.location ?? '',
+  ); // '' = all
+  // Persist the scope so it survives navigating away and back.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(
+      FILTERS_KEY,
+      JSON.stringify({ client: clientFilter, location: locationFilter }),
+    );
+  }, [clientFilter, locationFilter]);
   // Locations belonging to the currently-selected client, for the cascade.
   // null = loading; [] = client has none (or no client selected).
   const [clientLocations, setClientLocations] = useState<LocationSummary[]>([]);
@@ -455,7 +487,12 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     candidates: AutoFillCandidate[];
   } | null>(null);
 
+  // Monotonic request id: a newer refresh() supersedes any in-flight one, so
+  // a slow earlier response can't land last and repaint stale shifts (rapid
+  // week paging, or a mutation's refresh racing a navigation's).
+  const reqSeq = useRef(0);
   const refresh = useCallback(async () => {
+    const seq = ++reqSeq.current;
     try {
       // Calendar views load the visible window; list view honors the status
       // filter chips. Position/client/location filters apply client-side
@@ -468,9 +505,13 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         dayEnd.setDate(dayEnd.getDate() + 1);
         args = { from: dayAnchor.toISOString(), to: dayEnd.toISOString() };
       } else if (view === 'month') {
-        const monthEnd = new Date(monthAnchor);
-        monthEnd.setMonth(monthEnd.getMonth() + 1);
-        args = { from: monthAnchor.toISOString(), to: monthEnd.toISOString() };
+        // The month grid renders a full 6-week window (the Monday on/before
+        // the 1st through 42 days), so it shows trailing days of the prev/next
+        // month. Fetch that whole VISIBLE range — not just [1st, 1st-of-next)
+        // — or shifts on those adjacent-month cells render blank.
+        const gridStart = startOfWeekMonday(monthAnchor);
+        const gridEnd = addDaysLocal(gridStart, 42);
+        args = { from: gridStart.toISOString(), to: gridEnd.toISOString() };
       } else {
         args = filter === 'ALL' ? {} : { status: filter };
         // Phase 54.2 — list view honors a date range alongside the status
@@ -492,8 +533,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         args = { ...args, locationId: locationFilter };
       }
       const res = await listShifts(args);
+      // A newer request started while we were awaiting → discard this result.
+      if (seq !== reqSeq.current) return;
       setShifts(res.shifts);
     } catch (err) {
+      if (seq !== reqSeq.current) return;
       const msg = err instanceof ApiError ? err.message : 'Failed to load shifts.';
       toast.error(msg);
     }
@@ -532,8 +576,18 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // location dropdown and clear any stale location selection. Selecting
   // "All clients" (the full schedule) empties the location list — a
   // location only has meaning within one client.
+  //
+  // The clear must NOT run on the initial mount: we restore client+location
+  // from localStorage, and an unconditional reset here would wipe the
+  // restored location before the user ever touches the filter. Skip the
+  // first run; only clear when the user actually switches clients afterward.
+  const cascadeMounted = useRef(false);
   useEffect(() => {
-    setLocationFilter('');
+    if (cascadeMounted.current) {
+      setLocationFilter('');
+    } else {
+      cascadeMounted.current = true;
+    }
     if (!clientFilter) {
       setClientLocations([]);
       return;
@@ -809,14 +863,55 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           toast.error('Pick a client filter first — global templates need a target.');
           return;
         }
-        const startsAt = new Date(dayStart);
-        startsAt.setHours(0, tpl.startMinute, 0, 0);
-        const endsAt = new Date(dayStart);
-        endsAt.setHours(0, tpl.endMinute, 0, 0);
-        if (endsAt <= startsAt) endsAt.setDate(endsAt.getDate() + 1);
+        // Resolve the WORK SITE so we can stamp the template's start/end
+        // minutes (which are site-local minutes-from-midnight) in the site's
+        // zone — not the admin's browser zone (else every templated shift is
+        // off by the browser↔site offset, the same bug the create dialog had).
+        // Prefer the location the admin filtered to; else the client's first
+        // site. We PIN the location id so the shift lands in the same zone we
+        // composed its times in (the server would otherwise auto-pick, possibly
+        // a different-zone site, and re-introduce the skew).
+        let site: { id: string; timezone: string } | null = null;
+        if (locationFilter) {
+          site = clientLocations.find((l) => l.id === locationFilter) ?? null;
+        }
+        if (!site) {
+          try {
+            const locs = await listClientLocations(targetClientId);
+            const pick =
+              locs.locations.find((l) => l.isActive) ?? locs.locations[0] ?? null;
+            site = pick ? { id: pick.id, timezone: pick.timezone } : null;
+          } catch {
+            site = null; // fall back to browser-local below
+          }
+        }
+        const siteTz = site?.timezone ?? null;
+        const y = dayStart.getFullYear();
+        const mo = dayStart.getMonth() + 1;
+        const d = dayStart.getDate();
+        const startsAt = zonedWallTimeToUtc(
+          y, mo, d,
+          Math.floor(tpl.startMinute / 60), tpl.startMinute % 60,
+          siteTz,
+        );
+        let endsAt = zonedWallTimeToUtc(
+          y, mo, d,
+          Math.floor(tpl.endMinute / 60), tpl.endMinute % 60,
+          siteTz,
+        );
+        // Overnight: end <= start rolls to the next site-local day (re-convert
+        // so a DST boundary that night is handled).
+        if (endsAt <= startsAt) {
+          endsAt = zonedWallTimeToUtc(
+            y, mo, d + 1,
+            Math.floor(tpl.endMinute / 60), tpl.endMinute % 60,
+            siteTz,
+          );
+        }
 
         const created = await createShift({
           clientId: targetClientId,
+          ...(site ? { locationId: site.id } : {}),
           position: tpl.position,
           startsAt: startsAt.toISOString(),
           endsAt: endsAt.toISOString(),
@@ -834,7 +929,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         toast.error(err instanceof ApiError ? err.message : 'Apply failed.');
       }
     },
-    [clientFilter, refresh],
+    [clientFilter, locationFilter, clientLocations, refresh],
   );
 
   const onShiftResize = useCallback(
