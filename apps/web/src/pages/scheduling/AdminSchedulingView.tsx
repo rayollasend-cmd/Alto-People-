@@ -178,6 +178,33 @@ function daysBetweenLocal(a: Date, b: Date): number {
   return Math.round(ms / 86_400_000);
 }
 
+// The week-view range (start day + how many days it spans) the manager picked.
+// Persisted so leaving /scheduling and coming back resumes the SAME week they
+// were planning, instead of snapping to the current Mon–Sun. The "This week"
+// button still resets it on demand.
+const WEEK_RANGE_KEY = 'alto:scheduling.weekRange.v1';
+function readStoredWeekRange(): { start: Date; days: number } | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(WEEK_RANGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { start?: string; days?: number };
+    if (!parsed.start) return null;
+    const start = fromYmd(parsed.start);
+    if (Number.isNaN(start.getTime())) return null;
+    const days =
+      typeof parsed.days === 'number' &&
+      Number.isInteger(parsed.days) &&
+      parsed.days >= 1 &&
+      parsed.days <= 31
+        ? parsed.days
+        : 7;
+    return { start, days };
+  } catch {
+    return null;
+  }
+}
+
 /* ----- CSV / file-download helpers (Phase 54.3) -------------------------- */
 
 function csvCell(v: string | number | null | undefined): string {
@@ -310,8 +337,20 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // to Monday) and weekDayCount is how many days the grid spans — so the
   // user picks an exact start and end. Defaults to the Mon–Sun week (7
   // days) so existing behavior is unchanged until they widen/move it.
-  const [weekStart, setWeekStart] = useState<Date>(() => startOfWeekMonday(new Date()));
-  const [weekDayCount, setWeekDayCount] = useState<number>(7);
+  const [weekStart, setWeekStart] = useState<Date>(
+    () => readStoredWeekRange()?.start ?? startOfWeekMonday(new Date()),
+  );
+  const [weekDayCount, setWeekDayCount] = useState<number>(
+    () => readStoredWeekRange()?.days ?? 7,
+  );
+  // Persist the picked range so it survives navigating away and back.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(
+      WEEK_RANGE_KEY,
+      JSON.stringify({ start: ymd(weekStart), days: weekDayCount }),
+    );
+  }, [weekStart, weekDayCount]);
   const weekEnd = useMemo(
     () => addDaysLocal(weekStart, weekDayCount),
     [weekStart, weekDayCount],
