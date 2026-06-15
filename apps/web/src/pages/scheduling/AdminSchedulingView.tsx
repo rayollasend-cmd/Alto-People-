@@ -1366,7 +1366,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   };
 
   return (
-    <div className="max-w-6xl mx-auto print-area">
+    <div className="mx-auto print-area">
       {/* Print-only header — appears on paper above the schedule, hidden on screen. */}
       <div className="print-only mb-3">
         <div className="text-xl font-semibold">Schedule</div>

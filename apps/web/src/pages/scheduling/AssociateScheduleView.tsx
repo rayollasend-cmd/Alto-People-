@@ -48,7 +48,7 @@ export function AssociateScheduleView() {
   }, []);
 
   return (
-    <div className="max-w-3xl mx-auto">
+    <div className="mx-auto">
       <PageHeader
         title="My schedule"
         subtitle="Upcoming shifts assigned to you."

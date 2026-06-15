@@ -69,7 +69,7 @@ export function OnboardingAnalytics() {
 
   if (!canView) {
     return (
-      <div className="max-w-3xl mx-auto">
+      <div className="mx-auto">
         <ErrorBanner>
           You don't have permission to view onboarding analytics.
         </ErrorBanner>
@@ -78,7 +78,7 @@ export function OnboardingAnalytics() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="mx-auto">
       <div className="mb-4">
         <Link
           to="/onboarding"

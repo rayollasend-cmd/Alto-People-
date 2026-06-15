@@ -75,7 +75,7 @@ export function AssociatePayrollView() {
   };
 
   return (
-    <div className="max-w-3xl mx-auto">
+    <div className="mx-auto">
       <PageHeader
         title="My pay"
         subtitle="Recent paystubs with year-to-date totals."

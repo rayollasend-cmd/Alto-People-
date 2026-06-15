@@ -85,7 +85,7 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
   }, [refresh]);
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="mx-auto">
       <PageHeader
         title="Communications"
         subtitle={

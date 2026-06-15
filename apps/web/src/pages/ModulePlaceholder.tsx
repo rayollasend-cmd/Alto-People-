@@ -19,7 +19,7 @@ export function ModulePlaceholder({
   // center against; flex justify-center pushes the card to the middle.
   return (
     <div className="min-h-[70vh] flex flex-col justify-center">
-      <div className="max-w-4xl w-full mx-auto">
+      <div className="w-full mx-auto">
         <PageHeader title={title} subtitle={description} />
 
         <div className="bg-navy border border-navy-secondary rounded-lg p-8 text-center">

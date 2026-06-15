@@ -17,7 +17,7 @@ export function ComplianceHome() {
   const [tab, setTab] = useState<Tab>('scorecard');
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="mx-auto">
       <PageHeader
         title="Compliance"
         subtitle="Track I-9, background-check, and J-1 obligations across every active associate."

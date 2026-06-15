@@ -174,7 +174,7 @@ export function AdminDashboard() {
   });
 
   return (
-    <div className="max-w-7xl mx-auto space-y-8">
+    <div className="mx-auto space-y-8">
       {/* Greeting strip — calm, generous typography, time + role context. */}
       <header>
         <div className="flex items-center gap-2 flex-wrap">

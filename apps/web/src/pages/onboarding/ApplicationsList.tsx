@@ -412,7 +412,7 @@ export function ApplicationsList() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="mx-auto">
       <PageHeader
         title="Onboarding"
         subtitle="Active applications and their checklist progress."

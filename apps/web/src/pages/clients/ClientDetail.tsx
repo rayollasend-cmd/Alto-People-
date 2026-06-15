@@ -83,14 +83,14 @@ export function ClientDetail() {
 
   if (error) {
     return (
-      <div className="max-w-3xl mx-auto">
+      <div className="mx-auto">
         <ErrorBanner>{error}</ErrorBanner>
       </div>
     );
   }
   if (!client) {
     return (
-      <div className="max-w-3xl mx-auto space-y-3">
+      <div className="mx-auto space-y-3">
         <Skeleton className="h-8 w-1/3" />
         <Skeleton className="h-32" />
         <Skeleton className="h-48" />
@@ -99,7 +99,7 @@ export function ClientDetail() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className="mx-auto space-y-6">
       <Breadcrumb segments={[{ label: 'Clients', to: '/clients' }, { label: client.name }]} />
 
       <header className="flex items-start justify-between gap-4 flex-wrap">

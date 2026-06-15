@@ -226,7 +226,7 @@ export function AssociateTimeView() {
         : null;
 
   return (
-    <div className="max-w-3xl mx-auto">
+    <div className="mx-auto">
       <PageHeader
         title="Time & Attendance"
         subtitle="Clock in when you start. Clock out when you stop."

@@ -56,7 +56,7 @@ export function PayrollYtd() {
   }, [data, q]);
 
   return (
-    <div className="max-w-7xl mx-auto print:max-w-none">
+    <div className="mx-auto print:max-w-none">
       <PageHeader
         title={`Year-to-date payroll report — ${year}`}
         subtitle="Per-associate gross, withholding, and net pay aggregated across all disbursed runs in the tax year."

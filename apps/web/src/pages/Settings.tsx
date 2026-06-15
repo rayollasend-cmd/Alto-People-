@@ -67,7 +67,7 @@ export function Settings() {
   const { user } = useAuth();
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
+    <div className="mx-auto space-y-6">
       <PageHeader
         title="Account settings"
         subtitle={

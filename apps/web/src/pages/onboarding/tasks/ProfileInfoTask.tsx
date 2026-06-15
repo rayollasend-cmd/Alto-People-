@@ -232,7 +232,7 @@ export function TaskShell({
   backTo: string;
 }) {
   return (
-    <div className="max-w-2xl mx-auto">
+    <div className="mx-auto">
       <Link
         to={backTo}
         className="text-sm text-silver hover:text-gold inline-block mb-3"

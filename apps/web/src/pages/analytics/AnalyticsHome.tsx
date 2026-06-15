@@ -122,7 +122,7 @@ export function AnalyticsHome() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="mx-auto">
       <PageHeader
         title="Analytics"
         subtitle="Live operational and financial KPIs across all clients."
