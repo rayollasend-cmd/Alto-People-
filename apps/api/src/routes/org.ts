@@ -10,11 +10,14 @@ import {
   DepartmentListResponseSchema,
   JobProfileInputSchema,
   JobProfileListResponseSchema,
+  ShiftPositionInputSchema,
+  ShiftPositionListResponseSchema,
   type AssociateOrgListResponse,
   type AssociateTransferResponse,
   type CostCenter,
   type Department,
   type JobProfile,
+  type ShiftPosition,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
@@ -429,6 +432,120 @@ orgRouter.delete(
       data: { jobProfileId: null },
     });
     await audit(req, 'job_profile.delete', 'JobProfile', id, {});
+    res.status(204).end();
+  },
+);
+
+// ----- Shift positions ----------------------------------------------------
+// Per-client catalog that constrains the free-text Shift.position field to
+// an admin-curated dropdown. Mirrors the cost-center CRUD pattern. Unlike
+// the org-structure lookups there's no associate FK to detach on delete —
+// shifts keep the position name as plain text, so deleting a position just
+// removes it from the dropdown for future shifts.
+
+orgRouter.get('/shift-positions', VIEW, async (req: Request, res: Response) => {
+  const clientId =
+    typeof req.query.clientId === 'string' ? req.query.clientId : undefined;
+  const rows = await prisma.shiftPosition.findMany({
+    take: 1000,
+    where: {
+      deletedAt: null,
+      ...(clientId ? { clientId } : {}),
+    },
+    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+  });
+  const shiftPositions: ShiftPosition[] = rows.map((r) => ({
+    id: r.id,
+    clientId: r.clientId,
+    name: r.name,
+    sortOrder: r.sortOrder,
+  }));
+  const body = ShiftPositionListResponseSchema.parse({ shiftPositions });
+  res.json(body);
+});
+
+orgRouter.post('/shift-positions', MANAGE, async (req: Request, res: Response) => {
+  const input = ShiftPositionInputSchema.parse(req.body);
+  const name = input.name.trim();
+  const dup = await prisma.shiftPosition.findFirst({
+    where: { clientId: input.clientId, name, deletedAt: null },
+  });
+  if (dup) {
+    throw new HttpError(409, 'duplicate_name', 'Shift position already exists.');
+  }
+  // New rows default to the end of the list unless an explicit order is given.
+  let sortOrder = input.sortOrder;
+  if (sortOrder === undefined) {
+    const last = await prisma.shiftPosition.findFirst({
+      where: { clientId: input.clientId, deletedAt: null },
+      orderBy: { sortOrder: 'desc' },
+      select: { sortOrder: true },
+    });
+    sortOrder = (last?.sortOrder ?? -1) + 1;
+  }
+  const created = await prisma.shiftPosition.create({
+    data: { clientId: input.clientId, name, sortOrder },
+  });
+  await audit(req, 'shift_position.create', 'ShiftPosition', created.id, {});
+  res.status(201).json({
+    id: created.id,
+    clientId: created.clientId,
+    name: created.name,
+    sortOrder: created.sortOrder,
+  });
+});
+
+orgRouter.put('/shift-positions/:id', MANAGE, async (req: Request, res: Response) => {
+  const id = req.params.id;
+  const input = ShiftPositionInputSchema.partial({ clientId: true }).parse(req.body);
+  const existing = await prisma.shiftPosition.findUnique({ where: { id } });
+  if (!existing || existing.deletedAt) {
+    throw new HttpError(404, 'not_found', 'Shift position not found.');
+  }
+  const name = input.name?.trim();
+  if (name && name !== existing.name) {
+    const dup = await prisma.shiftPosition.findFirst({
+      where: {
+        clientId: existing.clientId,
+        name,
+        deletedAt: null,
+        id: { not: id },
+      },
+    });
+    if (dup) {
+      throw new HttpError(409, 'duplicate_name', 'Shift position already exists.');
+    }
+  }
+  const updated = await prisma.shiftPosition.update({
+    where: { id },
+    data: {
+      name: name ?? undefined,
+      sortOrder: input.sortOrder ?? undefined,
+    },
+  });
+  await audit(req, 'shift_position.update', 'ShiftPosition', id, {});
+  res.json({
+    id: updated.id,
+    clientId: updated.clientId,
+    name: updated.name,
+    sortOrder: updated.sortOrder,
+  });
+});
+
+orgRouter.delete(
+  '/shift-positions/:id',
+  MANAGE,
+  async (req: Request, res: Response) => {
+    const id = req.params.id;
+    const existing = await prisma.shiftPosition.findUnique({ where: { id } });
+    if (!existing || existing.deletedAt) {
+      throw new HttpError(404, 'not_found', 'Shift position not found.');
+    }
+    await prisma.shiftPosition.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
+    await audit(req, 'shift_position.delete', 'ShiftPosition', id, {});
     res.status(204).end();
   },
 );

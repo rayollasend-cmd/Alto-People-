@@ -2981,6 +2981,31 @@ export const JobProfileInputSchema = z.object({
 });
 export type JobProfileInput = z.infer<typeof JobProfileInputSchema>;
 
+// ----- Shift positions ----------------------------------------------------
+// Per-client catalog that constrains the free-text Shift.position field to
+// an admin-curated dropdown ("F&D Morning Shift", etc.).
+export const ShiftPositionSchema = z.object({
+  id: UuidSchema,
+  clientId: UuidSchema,
+  name: z.string(),
+  sortOrder: z.number().int(),
+});
+export type ShiftPosition = z.infer<typeof ShiftPositionSchema>;
+
+export const ShiftPositionListResponseSchema = z.object({
+  shiftPositions: z.array(ShiftPositionSchema),
+});
+export type ShiftPositionListResponse = z.infer<
+  typeof ShiftPositionListResponseSchema
+>;
+
+export const ShiftPositionInputSchema = z.object({
+  clientId: UuidSchema,
+  name: z.string().min(1).max(120),
+  sortOrder: z.number().int().min(0).max(9999).optional(),
+});
+export type ShiftPositionInput = z.infer<typeof ShiftPositionInputSchema>;
+
 // Associate-side org assignment. Used by PUT /associates/:id/org.
 export const AssociateOrgAssignmentInputSchema = z.object({
   managerId: UuidSchema.nullable().optional(),

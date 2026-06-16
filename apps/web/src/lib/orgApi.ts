@@ -13,6 +13,9 @@ import type {
   JobProfile,
   JobProfileInput,
   JobProfileListResponse,
+  ShiftPosition,
+  ShiftPositionInput,
+  ShiftPositionListResponse,
 } from '@alto-people/shared';
 import { apiFetch } from './api';
 
@@ -151,6 +154,33 @@ export function updateJobProfile(
 }
 export function deleteJobProfile(id: string): Promise<void> {
   return apiFetch<void>(`/org/job-profiles/${id}`, { method: 'DELETE' });
+}
+
+export function listShiftPositions(
+  clientId?: string,
+): Promise<ShiftPositionListResponse> {
+  const q = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
+  return apiFetch<ShiftPositionListResponse>(`/org/shift-positions${q}`);
+}
+export function createShiftPosition(
+  input: ShiftPositionInput,
+): Promise<ShiftPosition> {
+  return apiFetch<ShiftPosition>('/org/shift-positions', {
+    method: 'POST',
+    body: input,
+  });
+}
+export function updateShiftPosition(
+  id: string,
+  input: Partial<ShiftPositionInput>,
+): Promise<ShiftPosition> {
+  return apiFetch<ShiftPosition>(`/org/shift-positions/${id}`, {
+    method: 'PUT',
+    body: input,
+  });
+}
+export function deleteShiftPosition(id: string): Promise<void> {
+  return apiFetch<void>(`/org/shift-positions/${id}`, { method: 'DELETE' });
 }
 
 export function listOrgAssociates(clientId?: string): Promise<AssociateOrgListResponse> {

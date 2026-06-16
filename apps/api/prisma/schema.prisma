@@ -507,6 +507,8 @@ model Client {
   departments            Department[]
   costCenters            CostCenter[]
   jobProfiles            JobProfile[]
+  // Per-client catalog that constrains Shift.position to a curated list.
+  shiftPositions         ShiftPosition[]
   // Phase 78 — positions / seats.
   positions              Position[]
   // Phase 80 — workflow definitions can be client-scoped.
@@ -2172,6 +2174,27 @@ model CostCenter {
   positions  Position[]
   // Phase 87 — broadcast targeting.
   broadcasts Broadcast[]
+
+  @@index([clientId, deletedAt])
+}
+
+// Per-client catalog of shift positions ("F&D Morning Shift", etc.).
+// Constrains the free-text Shift.position field to an admin-curated list
+// so scheduling stays consistent and groupable in reports. The chosen
+// name is still stored as a string on Shift.position (no FK) — this table
+// only governs the dropdown of allowed values. New clients are auto-seeded
+// with a default set; admins edit the list under Org → Shift positions.
+model ShiftPosition {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId  String    @db.Uuid
+  name      String
+  // Controls dropdown order so it isn't alphabetical chaos.
+  sortOrder Int       @default(0)
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
   @@index([clientId, deletedAt])
 }
