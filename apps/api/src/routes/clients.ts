@@ -18,6 +18,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopeClients } from '../lib/scope.js';
 import { enqueueAudit } from '../lib/audit.js';
+import { seedDefaultShiftPositions } from '../lib/shiftPositions.js';
 
 export const clientsRouter = Router();
 
@@ -179,6 +180,14 @@ clientsRouter.post('/', MANAGE, async (req, res, next) => {
         state: parsed.data.state ? parsed.data.state.toUpperCase() : null,
       },
     });
+    // Seed the default shift-position catalog so the scheduling dropdown
+    // isn't empty for a brand-new client. Best-effort: a seeding hiccup
+    // must not fail client creation — the admin can add positions manually.
+    try {
+      await seedDefaultShiftPositions(created.id);
+    } catch {
+      // non-fatal
+    }
     await auditClient(req, 'client.created', created.id, {
       name: created.name,
       status: created.status,

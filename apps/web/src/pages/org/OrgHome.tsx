@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Briefcase, Building2, FolderTree, Hash, Plus, Sparkles, Trash2, Users } from 'lucide-react';
+import { Briefcase, Building2, CalendarClock, FolderTree, Hash, Plus, Sparkles, Trash2, Users } from 'lucide-react';
 import { PositionsTab } from './PositionsTab';
 import { CustomFieldsTab } from './CustomFieldsTab';
 import type {
   CostCenter,
   Department,
   JobProfile,
+  ShiftPosition,
   AssociateOrgSummary,
 } from '@alto-people/shared';
 import { listClients } from '@/lib/clientsApi';
@@ -15,17 +16,21 @@ import {
   createCostCenter,
   createDepartment,
   createJobProfile,
+  createShiftPosition,
   deleteCostCenter,
   deleteDepartment,
   deleteJobProfile,
+  deleteShiftPosition,
   listAssociateHistory,
   listCostCenters,
   listDepartments,
   listJobProfiles,
   listOrgAssociates,
+  listShiftPositions,
   updateCostCenter,
   updateDepartment,
   updateJobProfile,
+  updateShiftPosition,
   type AssociateHistoryEntry,
 } from '@/lib/orgApi';
 import { useAuth } from '@/lib/auth';
@@ -65,7 +70,7 @@ import {
 import { Skeleton } from '@/components/ui/Skeleton';
 import { toast } from 'sonner';
 
-type Tab = 'departments' | 'cost-centers' | 'job-profiles' | 'positions' | 'people' | 'custom-fields';
+type Tab = 'departments' | 'cost-centers' | 'job-profiles' | 'positions' | 'shift-positions' | 'people' | 'custom-fields';
 
 export function OrgHome() {
   const { user } = useAuth();
@@ -134,6 +139,10 @@ export function OrgHome() {
             <Briefcase className="h-3.5 w-3.5" />
             Positions
           </TabsTrigger>
+          <TabsTrigger value="shift-positions">
+            <CalendarClock className="h-3.5 w-3.5" />
+            Shift positions
+          </TabsTrigger>
           <TabsTrigger value="people">
             <Users className="h-3.5 w-3.5" />
             People
@@ -154,6 +163,9 @@ export function OrgHome() {
         </TabsContent>
         <TabsContent value="positions">
           <PositionsTab clientId={clientId} canManage={canManage} />
+        </TabsContent>
+        <TabsContent value="shift-positions">
+          <ShiftPositionsTab clientId={clientId} canManage={canManage} />
         </TabsContent>
         <TabsContent value="people">
           <PeopleTab clientId={clientId} canManage={canManage} clients={clients} />
@@ -708,6 +720,254 @@ function CostCenterDrawer({
               loading={submitting}
               disabled={!code.trim() || !name.trim()}
             >
+              {isNew ? 'Create' : 'Save'}
+            </Button>
+          )}
+        </div>
+      </DrawerFooter>
+    </>
+  );
+}
+
+// ----- Shift positions tab ------------------------------------------------
+// The curated dropdown that constrains Shift.position on the scheduling
+// page, so admins stop typing divergent free-text for the same role.
+
+function ShiftPositionsTab({
+  clientId,
+  canManage,
+}: {
+  clientId: string;
+  canManage: boolean;
+}) {
+  const [rows, setRows] = useState<ShiftPosition[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [drawerTarget, setDrawerTarget] = useState<ShiftPosition | 'new' | null>(null);
+
+  const refresh = async () => {
+    try {
+      setError(null);
+      const res = await listShiftPositions(clientId || undefined);
+      setRows(res.shiftPositions);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to load.');
+    }
+  };
+
+  useEffect(() => {
+    setRows(null);
+    refresh();
+  }, [clientId]);
+
+  return (
+    <section>
+      <div className="flex items-center justify-between gap-3 mb-4">
+        <h2 className="text-base font-medium text-white">Shift positions</h2>
+        {canManage && clientId && (
+          <Button onClick={() => setDrawerTarget('new')} size="sm">
+            <Plus className="h-4 w-4" />
+            New position
+          </Button>
+        )}
+      </div>
+      <p className="text-sm text-silver/80 mb-4 max-w-2xl">
+        The list of positions admins can pick from when creating a shift. Keeping
+        it curated stops the same role being typed a dozen different ways and
+        keeps scheduling reports clean.
+      </p>
+      {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
+      {!rows && <SkeletonRows count={4} rowHeight="h-12" />}
+      {rows && rows.length === 0 && (
+        <EmptyState
+          icon={CalendarClock}
+          title="No shift positions yet"
+          description={
+            clientId
+              ? 'Add the positions schedulers should choose from (e.g. "F&D Morning Shift").'
+              : 'Pick a client to manage its shift positions.'
+          }
+          action={
+            canManage && clientId ? (
+              <Button onClick={() => setDrawerTarget('new')} size="sm">
+                <Plus className="h-4 w-4" />
+                New position
+              </Button>
+            ) : undefined
+          }
+        />
+      )}
+      {rows && rows.length > 0 && (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-16">Order</TableHead>
+              <TableHead>Name</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((p) => (
+              <TableRow
+                key={p.id}
+                className="group cursor-pointer"
+                onClick={(e) => {
+                  const t = e.target as HTMLElement;
+                  if (t.closest('button, a, input, [data-no-row-click]')) return;
+                  setDrawerTarget(p);
+                }}
+              >
+                <TableCell className="tabular-nums text-silver">{p.sortOrder}</TableCell>
+                <TableCell className="font-medium">{p.name}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+
+      <Drawer
+        open={drawerTarget !== null}
+        onOpenChange={(o) => !o && setDrawerTarget(null)}
+        width="max-w-md"
+      >
+        {drawerTarget && (
+          <ShiftPositionDrawer
+            target={drawerTarget}
+            clientId={clientId}
+            canManage={canManage}
+            onClose={() => setDrawerTarget(null)}
+            onSaved={() => {
+              setDrawerTarget(null);
+              refresh();
+            }}
+          />
+        )}
+      </Drawer>
+    </section>
+  );
+}
+
+function ShiftPositionDrawer({
+  target,
+  clientId,
+  canManage,
+  onClose,
+  onSaved,
+}: {
+  target: ShiftPosition | 'new';
+  clientId: string;
+  canManage: boolean;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const confirm = useConfirm();
+  const isNew = target === 'new';
+  const initial = isNew ? null : target;
+  const [name, setName] = useState(initial?.name ?? '');
+  const [sortOrder, setSortOrder] = useState(String(initial?.sortOrder ?? ''));
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    if (!name.trim()) return;
+    setError(null);
+    setSubmitting(true);
+    const order = sortOrder.trim() === '' ? undefined : Number(sortOrder);
+    try {
+      if (isNew) {
+        await createShiftPosition({
+          clientId,
+          name: name.trim(),
+          ...(order !== undefined && Number.isFinite(order) ? { sortOrder: order } : {}),
+        });
+        toast.success('Shift position created');
+      } else {
+        await updateShiftPosition(initial!.id, {
+          name: name.trim(),
+          ...(order !== undefined && Number.isFinite(order) ? { sortOrder: order } : {}),
+        });
+        toast.success('Shift position updated');
+      }
+      onSaved();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Save failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const remove = async () => {
+    if (isNew) return;
+    if (!(await confirm({ title: `Delete "${initial!.name}"?`, destructive: true }))) return;
+    setSubmitting(true);
+    try {
+      await deleteShiftPosition(initial!.id);
+      toast.success('Shift position deleted');
+      onSaved();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Delete failed.');
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <>
+      <DrawerHeader>
+        <DrawerTitle>{isNew ? 'New shift position' : initial!.name}</DrawerTitle>
+        <DrawerDescription>
+          {isNew
+            ? 'This name appears in the position dropdown when scheduling a shift.'
+            : 'Renaming only affects future shifts; past shifts keep the name they were saved with.'}
+        </DrawerDescription>
+      </DrawerHeader>
+      <DrawerBody>
+        <div className="space-y-3">
+          <Field label="Name" required>
+            {(p) => (
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                maxLength={120}
+                placeholder="F&D Morning Shift"
+                disabled={!canManage}
+                {...p}
+              />
+            )}
+          </Field>
+          <Field label="Sort order" hint="Lower numbers appear first in the dropdown.">
+            {(p) => (
+              <Input
+                type="number"
+                value={sortOrder}
+                onChange={(e) => setSortOrder(e.target.value)}
+                min={0}
+                placeholder="Auto"
+                disabled={!canManage}
+                {...p}
+              />
+            )}
+          </Field>
+          {error && <ErrorBanner>{error}</ErrorBanner>}
+        </div>
+      </DrawerBody>
+      <DrawerFooter className="justify-between">
+        {!isNew && canManage ? (
+          <Button
+            variant="ghost"
+            onClick={remove}
+            disabled={submitting}
+            className="text-alert hover:text-alert"
+          >
+            <Trash2 className="h-4 w-4" />
+            Delete
+          </Button>
+        ) : (
+          <span />
+        )}
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" onClick={onClose} disabled={submitting}>
+            Cancel
+          </Button>
+          {canManage && (
+            <Button onClick={submit} disabled={submitting || !name.trim()}>
               {isNew ? 'Create' : 'Save'}
             </Button>
           )}

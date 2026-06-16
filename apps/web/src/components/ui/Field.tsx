@@ -2,7 +2,7 @@ import * as React from 'react';
 import { cn } from '@/lib/cn';
 import { FormHint, Label } from './Label';
 
-interface FieldRenderArgs {
+export interface FieldRenderArgs {
   /** Auto-generated id; spread onto the input/select/textarea. */
   id: string;
   /** Mirrors the Field's `required` prop so native browser validation fires. */

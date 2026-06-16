@@ -34,6 +34,7 @@ import type {
   ShiftTemplate,
 } from '@alto-people/shared';
 import { listClientLocations } from '@/lib/clientsApi';
+import { listShiftPositions } from '@/lib/orgApi';
 import {
   applyShiftTemplate,
   assignShift,
@@ -84,7 +85,7 @@ import {
 } from '@/components/ui/Dialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
-import { Field } from '@/components/ui/Field';
+import { Field, type FieldRenderArgs } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
 import { Select } from '@/components/ui/Select';
@@ -112,6 +113,77 @@ import { TemplatesRail } from './TemplatesRail';
 import { MonthCalendarView } from './MonthCalendarView';
 import { MobileScheduleList } from './MobileScheduleList';
 import type { LucideIcon } from 'lucide-react';
+
+// Loads the curated shift-position names for a client (Org → Shift positions).
+// null = still loading / no client picked. The dropdown in the shift dialogs
+// is sourced from this; admins manage the list in org settings.
+function useShiftPositionNames(clientId: string | null | undefined): string[] | null {
+  const [names, setNames] = useState<string[] | null>(null);
+  useEffect(() => {
+    if (!clientId) {
+      setNames([]);
+      return;
+    }
+    let cancelled = false;
+    setNames(null);
+    listShiftPositions(clientId)
+      .then((res) => {
+        if (!cancelled) setNames(res.shiftPositions.map((p) => p.name));
+      })
+      .catch(() => {
+        // Non-fatal: fall back to an empty list (the field still preserves
+        // any current value and shows a "manage positions" hint).
+        if (!cancelled) setNames([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId]);
+  return names;
+}
+
+// Shared position dropdown for the shift create/edit/template dialogs. Sources
+// options from the client's curated list, but always keeps the current value
+// selectable so editing a legacy free-text shift never silently drops it.
+function PositionSelect({
+  value,
+  onChange,
+  options,
+  fieldProps,
+  disabled,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: string[] | null;
+  fieldProps: FieldRenderArgs;
+  disabled?: boolean;
+}) {
+  const loading = options === null;
+  const list = options ?? [];
+  // Preserve a current value that isn't in the catalog (legacy / renamed).
+  const merged = value && !list.includes(value) ? [value, ...list] : list;
+  return (
+    <Select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      disabled={disabled || loading}
+      {...fieldProps}
+    >
+      <option value="">
+        {loading
+          ? 'Loading…'
+          : merged.length === 0
+            ? 'No positions — add them in Org → Shift positions'
+            : 'Select a position'}
+      </option>
+      {merged.map((name) => (
+        <option key={name} value={name}>
+          {name}
+        </option>
+      ))}
+    </Select>
+  );
+}
 
 const STATUS_FILTERS: Array<{ value: ShiftStatus | 'ALL'; label: string }> = [
   { value: 'OPEN', label: 'Open' },
@@ -3088,6 +3160,7 @@ function EditShiftDialog({
   const [startsAt, setStartsAt] = useState('');
   const [endsAt, setEndsAt] = useState('');
   const [position, setPosition] = useState('');
+  const positionOptions = useShiftPositionNames(target?.clientId);
   const [subzone, setSubzone] = useState('');
   const [hourlyRate, setHourlyRate] = useState('');
   const [payRate, setPayRate] = useState('');
@@ -3177,7 +3250,12 @@ function EditShiftDialog({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <Field label="Position" required>
               {(p) => (
-                <Input value={position} onChange={(e) => setPosition(e.target.value)} {...p} />
+                <PositionSelect
+                  value={position}
+                  onChange={setPosition}
+                  options={positionOptions}
+                  fieldProps={p}
+                />
               )}
             </Field>
             <Field label="Sub-zone (optional)" hint='Label within the site (e.g. "Bar", "Floor 2").'>
@@ -3276,6 +3354,7 @@ function CreateShiftDialog({
   // page-level roster prop, then refined per client below.
   const [scopedAssociates, setScopedAssociates] = useState<AssociateLite[]>(associates);
   const [position, setPosition] = useState('');
+  const positionOptions = useShiftPositionNames(clientId);
   // When opened from a calendar cell we know the day → switch to time-only
   // inputs (`HH:MM`) and show the date as a header label. When opened from
   // the toolbar the day is unknown, so fall back to full datetime-local.
@@ -3554,11 +3633,12 @@ function CreateShiftDialog({
             </Field>
             <Field label="Position" required>
               {(p) => (
-                <Input
+                <PositionSelect
                   value={position}
-                  onChange={(e) => setPosition(e.target.value)}
-                  placeholder="e.g. Server"
-                  {...p}
+                  onChange={setPosition}
+                  options={positionOptions}
+                  disabled={!clientId}
+                  fieldProps={p}
                 />
               )}
             </Field>
@@ -4042,6 +4122,9 @@ function CreateTemplateDialog({
   const [name, setName] = useState('');
   const [position, setPosition] = useState('');
   const [clientId, setClientId] = useState<string>('');
+  // Global templates (no client) have no per-client catalog to source from,
+  // so the position field stays free-text in that case (handled below).
+  const positionOptions = useShiftPositionNames(clientId);
   const [dayOfWeek, setDayOfWeek] = useState(1); // Monday
   const [startTime, setStartTime] = useState('09:00');
   const [endTime, setEndTime] = useState('17:00');
@@ -4107,15 +4190,28 @@ function CreateTemplateDialog({
                 />
               )}
             </Field>
-            <Field label="Position" required>
-              {(p) => (
-                <Input
-                  value={position}
-                  onChange={(e) => setPosition(e.target.value)}
-                  maxLength={120}
-                  {...p}
-                />
-              )}
+            <Field
+              label="Position"
+              required
+              hint={!clientId ? 'Global template — type any position name.' : undefined}
+            >
+              {(p) =>
+                clientId ? (
+                  <PositionSelect
+                    value={position}
+                    onChange={setPosition}
+                    options={positionOptions}
+                    fieldProps={p}
+                  />
+                ) : (
+                  <Input
+                    value={position}
+                    onChange={(e) => setPosition(e.target.value)}
+                    maxLength={120}
+                    {...p}
+                  />
+                )
+              }
             </Field>
             <Field label="Client (or global)">
               {(p) => (
