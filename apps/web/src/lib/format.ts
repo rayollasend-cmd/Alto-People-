@@ -138,6 +138,21 @@ export function fmtDateTz(
   });
 }
 
+/** Store-local short weekday, e.g. "Mon". For schedule day headers. Browser
+ *  zone when `timeZone` is absent. */
+export function fmtWeekdayTz(
+  value: string | Date | null | undefined,
+  timeZone?: string | null,
+): string {
+  if (!value) return DASH;
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return DASH;
+  return d.toLocaleDateString(EN_US, {
+    weekday: 'short',
+    ...(timeZone ? { timeZone } : {}),
+  });
+}
+
 /** The viewer's own IANA timezone (e.g. "America/Los_Angeles"). */
 export function browserTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone;
