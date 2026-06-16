@@ -1,19 +1,23 @@
 import PDFDocument from 'pdfkit';
-import type { PayrollSheet } from './payrollSheet.js';
 import { minutesToHours } from './payrollSheet.js';
+import type { PayrollSheetPaid } from './payrollSheetPay.js';
 
 /**
  * Payroll-ready time sheet PDF.
  *
- * Formatted like a payroll register a processor would actually accept:
- * a letterhead, an employer / pay-period metadata block, a bordered table
- * per associate (dates worked + daily duration) with a regular / overtime /
- * total subtotal, a grand-total band, a sign-off line, and "Page X of Y"
- * footers. Letter portrait, Helvetica.
+ * Formatted like a payroll register a processor would accept: a letterhead,
+ * an employer / pay-period metadata block, a bordered table per associate
+ * (dates worked + daily duration) with a regular / overtime / total subtotal
+ * and an earnings line (rate, gross, taxes, net), a grand-total band, a
+ * sign-off line, and "Page X of Y" footers. Letter portrait, Helvetica.
+ *
+ * Gross is driven by each associate's compensation-record wage; net is the
+ * full payroll-engine figure (W-4, pre-tax benefits, garnishments, YTD caps),
+ * with Florida resolving to $0 state income tax.
  */
 
 export interface PayrollSheetReportData {
-  sheet: PayrollSheet;
+  sheet: PayrollSheetPaid;
   clientName: string | null;
   rangeFrom: Date;
   rangeTo: Date; // end-exclusive
@@ -36,6 +40,10 @@ const HEADER_ROW_H = 18;
 
 function hrs(min: number): string {
   return minutesToHours(min);
+}
+
+function usd(n: number): string {
+  return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function fmtDay(ymd: string): { date: string; weekday: string } {
@@ -100,15 +108,9 @@ export async function renderPayrollSheetPdf(
         .text('Payroll Time Sheet', left, MARGIN + 12);
 
       let y = MARGIN + 40;
-      doc
-        .moveTo(left, y)
-        .lineTo(right, y)
-        .lineWidth(1)
-        .strokeColor(BAND)
-        .stroke();
+      doc.moveTo(left, y).lineTo(right, y).lineWidth(1).strokeColor(BAND).stroke();
       y += 12;
 
-      // Two-column metadata grid.
       const colW = contentWidth / 2;
       const meta: Array<[string, string]> = [
         ['Employer', data.clientName ?? 'All clients'],
@@ -142,7 +144,7 @@ export async function renderPayrollSheetPdf(
           .fontSize(8.5)
           .fillColor(WARN)
           .text(
-            `PROVISIONAL — ${data.pendingCount} entr${data.pendingCount === 1 ? 'y is' : 'ies are'} still pending review in this period. Hours and the regular/overtime split are not final until the approval queue is cleared.`,
+            `PROVISIONAL — ${data.pendingCount} entr${data.pendingCount === 1 ? 'y is' : 'ies are'} still pending review in this period. Hours, gross, and net are not final until the approval queue is cleared.`,
             left + 8,
             y + 5,
             { width: contentWidth - 16 },
@@ -154,7 +156,6 @@ export async function renderPayrollSheetPdf(
     };
 
     const drawDetailHeader = (y: number, associate: string): number => {
-      // Associate name band.
       doc.save().fillColor(BAND).rect(left, y, contentWidth, HEADER_ROW_H).fill().restore();
       doc
         .font('Helvetica-Bold')
@@ -162,18 +163,12 @@ export async function renderPayrollSheetPdf(
         .fillColor('#FFFFFF')
         .text(associate, left + 8, y + 4, { width: contentWidth - 16, ellipsis: true });
       y += HEADER_ROW_H;
-      // Column header row.
       doc.save().fillColor('#FFFFFF').rect(left, y, contentWidth, ROW_H).fill().restore();
       doc.font('Helvetica-Bold').fontSize(8).fillColor(MUTED);
       doc.text('DATE', xDate + 6, y + 4);
       doc.text('DAY', xDay + 6, y + 4);
       doc.text('HOURS', xHrs, y + 4, { width: wHrs - 6, align: 'right' });
-      doc
-        .moveTo(left, y + ROW_H)
-        .lineTo(right, y + ROW_H)
-        .lineWidth(0.75)
-        .strokeColor(RULE)
-        .stroke();
+      doc.moveTo(left, y + ROW_H).lineTo(right, y + ROW_H).lineWidth(0.75).strokeColor(RULE).stroke();
       return y + ROW_H;
     };
 
@@ -190,9 +185,15 @@ export async function renderPayrollSheetPdf(
       return;
     }
 
+    const ensure = (needed: number) => {
+      if (y + needed > pageBottom) {
+        doc.addPage();
+        y = MARGIN;
+      }
+    };
+
     // ---- Per-associate tables -------------------------------------------
     for (const assoc of data.sheet.associates) {
-      // Keep the name band + header + at least one row together.
       if (y + HEADER_ROW_H + ROW_H * 2 > pageBottom) {
         doc.addPage();
         y = MARGIN;
@@ -221,18 +222,10 @@ export async function renderPayrollSheetPdf(
         y += ROW_H;
       }
 
-      // Subtotal row.
-      if (y + ROW_H + 2 > pageBottom) {
-        doc.addPage();
-        y = MARGIN;
-      }
+      // Hours subtotal row.
+      ensure(ROW_H + 2);
       doc.save().fillColor(SUBTOTAL_BG).rect(left, y, contentWidth, ROW_H + 2).fill().restore();
-      doc
-        .moveTo(left, y)
-        .lineTo(right, y)
-        .lineWidth(0.75)
-        .strokeColor(RULE)
-        .stroke();
+      doc.moveTo(left, y).lineTo(right, y).lineWidth(0.75).strokeColor(RULE).stroke();
       doc
         .font('Helvetica-Bold')
         .fontSize(9)
@@ -243,49 +236,109 @@ export async function renderPayrollSheetPdf(
           y + 5,
           { width: wDate + wDay - 8 },
         );
-      doc.text(`Total ${hrs(assoc.totalMinutes)}`, xHrs, y + 5, {
+      doc.text(`Total ${hrs(assoc.totalMinutes)} h`, xHrs, y + 5, {
         width: wHrs - 6,
         align: 'right',
       });
-      y += ROW_H + 2 + 10; // gap before next associate
+      y += ROW_H + 2;
+
+      // Earnings line(s).
+      ensure(30);
+      const pay = assoc.pay;
+      if (pay.hasRate) {
+        doc
+          .font('Helvetica-Bold')
+          .fontSize(9)
+          .fillColor(INK)
+          .text(
+            `Pay rate ${usd(pay.hourlyRate)}/hr        Gross ${usd(pay.grossPay)}`,
+            xDate + 6,
+            y + 3,
+            { width: contentWidth - 120 },
+          );
+        doc.text(`Net ${usd(pay.netPay)}`, xHrs, y + 3, { width: wHrs - 6, align: 'right' });
+        y += 14;
+        doc
+          .font('Helvetica')
+          .fontSize(7.5)
+          .fillColor(MUTED)
+          .text(
+            `Taxes — Federal ${usd(pay.federalIncomeTax)} · Social Security ${usd(pay.socialSecurity)} · Medicare ${usd(pay.medicare)} · State ${usd(pay.stateIncomeTax)}`,
+            xDate + 6,
+            y + 1,
+            { width: contentWidth - 12 },
+          );
+        y += 12;
+      } else {
+        doc
+          .font('Helvetica-Oblique')
+          .fontSize(8)
+          .fillColor(MUTED)
+          .text(
+            'No hourly wage on file — gross / net not calculated.',
+            xDate + 6,
+            y + 3,
+            { width: contentWidth - 12 },
+          );
+        y += 14;
+      }
+      y += 10; // gap before next associate
     }
 
-    // ---- Grand total -----------------------------------------------------
-    const gtH = 24;
-    if (y + gtH > pageBottom) {
-      doc.addPage();
-      y = MARGIN;
-    }
+    // ---- Grand totals ----------------------------------------------------
+    const gtH = 22;
+    ensure(gtH * 2 + 6);
     doc.save().fillColor(BAND).rect(left, y, contentWidth, gtH).fill().restore();
     doc
       .font('Helvetica-Bold')
-      .fontSize(10.5)
+      .fontSize(10)
       .fillColor('#FFFFFF')
       .text(
-        `GRAND TOTAL — Regular ${hrs(data.sheet.totalRegularMinutes)}    Overtime ${hrs(data.sheet.totalOvertimeMinutes)}`,
+        `HOURS — Regular ${hrs(data.sheet.totalRegularMinutes)}    Overtime ${hrs(data.sheet.totalOvertimeMinutes)}`,
         left + 8,
-        y + 7,
-        { width: contentWidth - 120 },
+        y + 6,
+        { width: contentWidth - 130 },
       );
-    doc.text(`${hrs(data.sheet.totalMinutes)} hrs`, right - 130, y + 7, {
+    doc.text(`${hrs(data.sheet.totalMinutes)} h`, right - 130, y + 6, {
       width: 122,
       align: 'right',
     });
-    y += gtH + 28;
+    y += gtH + 4;
 
-    // ---- Sign-off --------------------------------------------------------
-    if (y + 50 > pageBottom) {
-      doc.addPage();
-      y = MARGIN;
-    }
+    doc.save().fillColor(BAND).rect(left, y, contentWidth, gtH).fill().restore();
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(9.5)
+      .fillColor('#FFFFFF')
+      .text(
+        `PAY — Gross ${usd(data.sheet.totalGross)} · Fed ${usd(data.sheet.totalFederalIncomeTax)} · SS ${usd(data.sheet.totalSocialSecurity)} · Medicare ${usd(data.sheet.totalMedicare)} · State ${usd(data.sheet.totalStateIncomeTax)}`,
+        left + 8,
+        y + 6,
+        { width: contentWidth - 150 },
+      );
+    doc.text(`Net ${usd(data.sheet.totalNet)}`, right - 150, y + 6, {
+      width: 142,
+      align: 'right',
+    });
+    y += gtH + 16;
+
+    // ---- Disclaimer + sign-off ------------------------------------------
+    ensure(64);
+    doc
+      .font('Helvetica')
+      .fontSize(7.5)
+      .fillColor(MUTED)
+      .text(
+        'Net pay is estimated federal tax withholding for W-2 employees (using each employee’s W-4; defaults to Single if none on file) plus pre-tax benefits and garnishments. Florida has no state income tax. 1099 contractors show gross = net. Figures are an estimate for payroll preparation, not a pay statement.',
+        left,
+        y,
+        { width: contentWidth },
+      );
+    y += 26;
+
     const sigW = (contentWidth - 40) / 2;
     const drawSig = (x: number, label: string) => {
-      doc
-        .moveTo(x, y + 16)
-        .lineTo(x + sigW, y + 16)
-        .lineWidth(0.75)
-        .strokeColor('#9CA3AF')
-        .stroke();
+      doc.moveTo(x, y + 16).lineTo(x + sigW, y + 16).lineWidth(0.75).strokeColor('#9CA3AF').stroke();
       doc.font('Helvetica').fontSize(8).fillColor(MUTED).text(label, x, y + 20);
     };
     drawSig(left, 'Prepared by (name / signature / date)');
@@ -307,12 +360,7 @@ function finishWithFooters(
   for (let i = 0; i < total; i += 1) {
     doc.switchToPage(range.start + i);
     const y = doc.page.height - MARGIN + 12;
-    doc
-      .moveTo(left, y - 4)
-      .lineTo(right, y - 4)
-      .lineWidth(0.5)
-      .strokeColor(RULE)
-      .stroke();
+    doc.moveTo(left, y - 4).lineTo(right, y - 4).lineWidth(0.5).strokeColor(RULE).stroke();
     doc
       .font('Helvetica')
       .fontSize(7.5)
