@@ -40,6 +40,12 @@ import {
   reverseSickLeaveForEntry,
 } from '../lib/timeOffAccrual.js';
 import { renderTimeReportPdf } from '../lib/timeReport.js';
+import {
+  buildPayrollSheet,
+  type PayrollSheetInputRow,
+} from '../lib/payrollSheet.js';
+import { renderPayrollSheetPdf } from '../lib/payrollSheetPdf.js';
+import { renderPayrollSheetXlsx } from '../lib/payrollSheetXlsx.js';
 
 export const timeRouter = Router();
 
@@ -1629,6 +1635,129 @@ timeRouter.post('/admin/export.pdf', MANAGE, async (req, res, next) => {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
     res.send(pdf);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Payroll-ready sheet (PDF + XLSX) ================================== */
+
+// Shared loader for the payroll sheet: APPROVED time only (that's what
+// payroll pays), scoped to the caller + an optional client, aggregated into
+// per-associate dates-worked + regular/overtime totals. Also counts entries
+// still pending review so the renderers can flag provisional totals.
+async function loadPayrollSheet(
+  user: TimeUser,
+  input: import('@alto-people/shared').TimeExportInput,
+) {
+  const from = new Date(input.from);
+  const to = new Date(input.to);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || to <= from) {
+    throw new HttpError(400, 'invalid_range', 'from / to must be valid, to after from');
+  }
+  const where: Prisma.TimeEntryWhereInput = {
+    ...scopeTimeEntries(user),
+    status: 'APPROVED',
+    clockInAt: { gte: from, lt: to },
+    ...(input.clientId ? { clientId: input.clientId } : {}),
+    ...(input.locationId ? { locationId: input.locationId } : {}),
+    ...(input.associateId ? { associateId: input.associateId } : {}),
+  };
+  const [rows, pendingCount] = await Promise.all([
+    prisma.timeEntry.findMany({
+      where,
+      orderBy: { clockInAt: 'asc' },
+      include: {
+        associate: { select: { firstName: true, lastName: true } },
+        breaks: true,
+      },
+      take: TIME_SUMMARY_MAX_ROWS,
+    }),
+    prisma.timeEntry.count({ where: { ...where, status: 'COMPLETED' } }),
+  ]);
+
+  const inputRows: PayrollSheetInputRow[] = rows.map((r) => ({
+    associateId: r.associateId,
+    associateName: `${r.associate.firstName} ${r.associate.lastName}`,
+    clockInAt: r.clockInAt,
+    clockOutAt: r.clockOutAt,
+    breaks: r.breaks,
+  }));
+  const sheet = buildPayrollSheet(inputRows);
+  const clientName = input.clientId ? await loadClientName(input.clientId) : null;
+  return {
+    sheet,
+    clientName,
+    from,
+    to,
+    pendingCount,
+    truncated: rows.length === TIME_SUMMARY_MAX_ROWS,
+  };
+}
+
+function payrollSheetFilename(from: Date, to: Date, ext: string): string {
+  const dayStr = (d: Date) => d.toISOString().slice(0, 10);
+  return `payroll-sheet-${dayStr(from)}-to-${dayStr(new Date(to.getTime() - 1))}.${ext}`;
+}
+
+timeRouter.post('/admin/payroll-sheet.pdf', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = TimeExportInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const { sheet, clientName, from, to, pendingCount, truncated } =
+      await loadPayrollSheet(req.user!, parsed.data);
+    if (truncated) res.setHeader('X-Truncated', 'true');
+    if (pendingCount > 0) res.setHeader('X-Pending', String(pendingCount));
+
+    const pdf = await renderPayrollSheetPdf({
+      sheet,
+      clientName,
+      rangeFrom: from,
+      rangeTo: to,
+      generatedAt: new Date(),
+      pendingCount,
+    });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${payrollSheetFilename(from, to, 'pdf')}"`,
+    );
+    res.send(pdf);
+  } catch (err) {
+    next(err);
+  }
+});
+
+timeRouter.post('/admin/payroll-sheet.xlsx', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = TimeExportInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const { sheet, clientName, from, to, pendingCount, truncated } =
+      await loadPayrollSheet(req.user!, parsed.data);
+    if (truncated) res.setHeader('X-Truncated', 'true');
+    if (pendingCount > 0) res.setHeader('X-Pending', String(pendingCount));
+
+    const xlsx = await renderPayrollSheetXlsx({
+      sheet,
+      clientName,
+      rangeFrom: from,
+      rangeTo: to,
+      generatedAt: new Date(),
+      pendingCount,
+    });
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${payrollSheetFilename(from, to, 'xlsx')}"`,
+    );
+    res.send(xlsx);
   } catch (err) {
     next(err);
   }

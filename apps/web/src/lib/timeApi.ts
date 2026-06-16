@@ -244,3 +244,16 @@ export function exportTimeSummary(body: TimeExportInput): Promise<void> {
     'time-summary.csv'
   );
 }
+
+/** Payroll-ready sheet: per-associate dates worked + duration + regular/OT
+ *  totals for a client and date range, APPROVED time only. PDF or .xlsx. */
+export function exportPayrollSheet(
+  format: 'pdf' | 'xlsx',
+  body: TimeExportInput
+): Promise<void> {
+  return downloadExportPost(
+    `/api/time/admin/payroll-sheet.${format}`,
+    body,
+    `payroll-sheet.${format}`
+  );
+}
