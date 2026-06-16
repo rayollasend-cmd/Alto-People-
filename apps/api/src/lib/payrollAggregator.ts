@@ -56,6 +56,23 @@ export interface AggregatorInput {
   clientId: string | null;
   /** Default hourly rate when no shift in the period has one. */
   defaultRate: number;
+  /**
+   * Optional per-associate hourly-rate override. When an associate id is
+   * present here, this rate is used instead of the shift-derived rate (and
+   * the shift lookup is skipped). Lets callers drive gross from a different
+   * rate source — e.g. the payroll-ready sheet uses each associate's current
+   * compensation-record wage. Real payroll runs omit this and keep using
+   * shift rates.
+   */
+  hourlyRateOverride?: Map<string, number>;
+  /**
+   * Optional state override for the state-income-tax calc. When set (incl.
+   * an explicit value), it replaces each associate's stored state — used by
+   * the payroll sheet to apply the selected client's work-site state (e.g.
+   * a Florida client → no state income tax) rather than a possibly-unset
+   * per-associate state, which would otherwise hit the 4% fallback.
+   */
+  stateOverride?: string | null;
 }
 
 export interface ProjectedEarning {
@@ -194,14 +211,20 @@ export async function aggregatePayrollProjection(
     const hoursWorked = sumApprovedHours(group);
     if (hoursWorked === 0) continue;
 
-    const shifts = await tx.shift.findMany({
-      where: {
-        assignedAssociateId: associateId,
-        startsAt: { gte: periodStart, lt: periodEndExclusive },
-      },
-      select: { hourlyRate: true },
-    });
-    const hourlyRate = pickHourlyRate(shifts, defaultRate);
+    const overrideRate = input.hourlyRateOverride?.get(associateId);
+    let hourlyRate: number;
+    if (overrideRate !== undefined) {
+      hourlyRate = overrideRate;
+    } else {
+      const shifts = await tx.shift.findMany({
+        where: {
+          assignedAssociateId: associateId,
+          startsAt: { gte: periodStart, lt: periodEndExclusive },
+        },
+        select: { hourlyRate: true },
+      });
+      hourlyRate = pickHourlyRate(shifts, defaultRate);
+    }
 
     const otSplit = splitWeeklyOvertime(group);
     const regularPay = round2(otSplit.regularHours * hourlyRate);
@@ -215,7 +238,10 @@ export async function aggregatePayrollProjection(
     const ytdMedicareWages = await computeYtdMedicareWages(tx, associateId, yearStart, periodStart);
 
     const w4 = group[0].associate.w4Submission;
-    const associateState = group[0].associate.state ?? null;
+    const associateState =
+      input.stateOverride !== undefined
+        ? input.stateOverride
+        : group[0].associate.state ?? null;
     const employmentType = group[0].associate.employmentType;
     const payFrequency: PayFrequency =
       group[0].associate.payrollSchedule?.frequency ?? 'BIWEEKLY';

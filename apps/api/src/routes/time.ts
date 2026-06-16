@@ -44,6 +44,11 @@ import {
   buildPayrollSheet,
   type PayrollSheetInputRow,
 } from '../lib/payrollSheet.js';
+import {
+  attachEarnings,
+  type AssociatePayInfo,
+} from '../lib/payrollSheetPay.js';
+import { aggregatePayrollProjection } from '../lib/payrollAggregator.js';
 import { renderPayrollSheetPdf } from '../lib/payrollSheetPdf.js';
 import { renderPayrollSheetXlsx } from '../lib/payrollSheetXlsx.js';
 
@@ -1683,8 +1688,53 @@ async function loadPayrollSheet(
     clockOutAt: r.clockOutAt,
     breaks: r.breaks,
   }));
-  const sheet = buildPayrollSheet(inputRows);
-  const clientName = input.clientId ? await loadClientName(input.clientId) : null;
+  const hoursSheet = buildPayrollSheet(inputRows);
+
+  // ---- Earnings (rate / gross / taxes / net) --------------------------------
+  // Gross is driven by each associate's current compensation-record wage; net
+  // comes from the same engine real payroll runs use, with state income tax
+  // resolved from the client's work-site state (Florida → $0).
+  const associateIds = hoursSheet.associates.map((a) => a.associateId);
+  const [client, comps] = await Promise.all([
+    input.clientId
+      ? prisma.client.findUnique({
+          where: { id: input.clientId },
+          select: { name: true, state: true },
+        })
+      : Promise.resolve(null),
+    associateIds.length
+      ? prisma.compensationRecord.findMany({
+          where: { associateId: { in: associateIds }, effectiveTo: null },
+          orderBy: { effectiveFrom: 'desc' },
+          select: { associateId: true, amount: true, payType: true },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const rateOverride = new Map<string, number>();
+  const payInfoById = new Map<string, AssociatePayInfo>();
+  for (const c of comps) {
+    if (payInfoById.has(c.associateId)) continue; // keep most-recent only
+    payInfoById.set(c.associateId, { payType: c.payType });
+    if (c.payType === 'HOURLY') {
+      rateOverride.set(c.associateId, Number(c.amount));
+    }
+  }
+
+  const projection = await aggregatePayrollProjection(prisma, {
+    periodStart: from,
+    periodEndExclusive: to,
+    clientId: input.clientId ?? null,
+    defaultRate: 0,
+    hourlyRateOverride: rateOverride,
+    // Apply the client's work-site state to everyone on the sheet so Florida
+    // resolves to $0 SIT even when a per-associate state is unset.
+    ...(client?.state ? { stateOverride: client.state } : {}),
+  });
+  const itemById = new Map(projection.items.map((it) => [it.associateId, it]));
+
+  const sheet = attachEarnings(hoursSheet, itemById, payInfoById);
+  const clientName = client?.name ?? null;
   return {
     sheet,
     clientName,
