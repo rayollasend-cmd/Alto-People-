@@ -3,13 +3,29 @@ import type { PayrollSheet } from './payrollSheet.js';
 import type { PayrollSheetReportData } from './payrollSheetPdf.js';
 
 /**
- * Payroll-ready sheet as a real .xlsx workbook with two tabs:
- *   - "Summary": one row per associate (regular / OT / total hours) + a TOTAL
- *     row. This is the payroll-ready figure a processor keys off.
- *   - "Detail": one row per associate per date worked, with that day's
- *     duration — the supporting "dates worked" breakdown.
- * Hours are real numbers (2-decimal format) so Excel can SUM/pivot them.
+ * Payroll-ready time sheet as a formatted .xlsx workbook a processor would
+ * accept: a titled letterhead, an employer / pay-period metadata block, a
+ * bordered table with frozen headers + autofilter, per-associate subtotals,
+ * a grand-total row, and print setup (fit-to-width, repeating headers,
+ * page-number footer). Two tabs:
+ *   - "Summary": one row per associate (regular / OT / total) + TOTAL.
+ *   - "Detail": dates worked + daily duration, grouped per associate.
+ * Hours are real numbers (0.00 format) so Excel can SUM / pivot.
  */
+
+const BAND = 'FF1F2A37';
+const SUBTOTAL = 'FFEAEDF1';
+const MUTED = 'FF6B7280';
+const INK = 'FF111827';
+const WARN = 'FFB5360F';
+const HOURS_FMT = '0.00';
+
+const THIN: Partial<ExcelJS.Borders> = {
+  top: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+  left: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+  bottom: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+  right: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+};
 
 function hours(min: number): number {
   return Math.round((min / 60) * 100) / 100;
@@ -23,26 +39,17 @@ function fmtRange(from: Date, toExclusive: Date): string {
     year: 'numeric',
     timeZone: 'UTC',
   };
-  return `${from.toLocaleDateString([], opts)} – ${last.toLocaleDateString([], opts)}`;
+  return `${from.toLocaleDateString('en-US', opts)} – ${last.toLocaleDateString('en-US', opts)}`;
 }
 
-function dayLabel(ymd: string): string {
+function dayParts(ymd: string): { date: Date; weekday: string } {
   const [y, m, d] = ymd.split('-').map(Number);
-  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString([], {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    timeZone: 'UTC',
-  });
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return {
+    date,
+    weekday: date.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' }),
+  };
 }
-
-const HEADER_FILL: ExcelJS.Fill = {
-  type: 'pattern',
-  pattern: 'solid',
-  fgColor: { argb: 'FF1F2A37' },
-};
-const HOURS_FMT = '0.00';
 
 export async function renderPayrollSheetXlsx(
   data: PayrollSheetReportData,
@@ -52,92 +59,203 @@ export async function renderPayrollSheetXlsx(
   wb.created = data.generatedAt;
 
   buildSummarySheet(wb, data);
-  buildDetailSheet(wb, data.sheet);
+  buildDetailSheet(wb, data);
 
   const buf = await wb.xlsx.writeBuffer();
   return Buffer.from(buf);
 }
 
+/** Writes the title + metadata header block; returns the next free row. */
+function writeLetterhead(
+  ws: ExcelJS.Worksheet,
+  data: PayrollSheetReportData,
+  lastCol: string,
+): number {
+  ws.mergeCells(`A1:${lastCol}1`);
+  const title = ws.getCell('A1');
+  title.value = 'Payroll Time Sheet';
+  title.font = { bold: true, size: 18, color: { argb: INK } };
+  ws.getRow(1).height = 24;
+
+  ws.mergeCells(`A2:${lastCol}2`);
+  const brand = ws.getCell('A2');
+  brand.value = 'ALTO PEOPLE';
+  brand.font = { bold: true, size: 9, color: { argb: MUTED } };
+
+  const meta: Array<[string, string]> = [
+    ['Employer', data.clientName ?? 'All clients'],
+    ['Pay period', fmtRange(data.rangeFrom, data.rangeTo)],
+    ['Status', 'Approved time only'],
+    ['Generated', data.generatedAt.toLocaleString('en-US')],
+  ];
+  let row = 4;
+  for (const [label, value] of meta) {
+    ws.getCell(`A${row}`).value = label.toUpperCase();
+    ws.getCell(`A${row}`).font = { size: 8, color: { argb: MUTED } };
+    ws.mergeCells(`B${row}:${lastCol}${row}`);
+    ws.getCell(`B${row}`).value = value;
+    ws.getCell(`B${row}`).font = { bold: true, size: 10, color: { argb: INK } };
+    row += 1;
+  }
+  if (data.pendingCount > 0) {
+    ws.mergeCells(`A${row}:${lastCol}${row}`);
+    const warn = ws.getCell(`A${row}`);
+    warn.value = `PROVISIONAL — ${data.pendingCount} entr${data.pendingCount === 1 ? 'y is' : 'ies are'} still pending review; totals are not final.`;
+    warn.font = { bold: true, size: 9, color: { argb: WARN } };
+    row += 1;
+  }
+  return row + 1; // blank spacer row
+}
+
+function styleHeaderRow(row: ExcelJS.Row): void {
+  row.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+  row.height = 18;
+  row.eachCell((cell) => {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BAND } };
+    cell.alignment = { vertical: 'middle' };
+    cell.border = THIN;
+  });
+}
+
 function buildSummarySheet(wb: ExcelJS.Workbook, data: PayrollSheetReportData) {
-  const ws = wb.addWorksheet('Summary');
+  const ws = wb.addWorksheet('Summary', {
+    pageSetup: {
+      orientation: 'portrait',
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 0,
+      margins: { left: 0.5, right: 0.5, top: 0.6, bottom: 0.6, header: 0.3, footer: 0.3 },
+    },
+    headerFooter: {
+      oddFooter: '&LConfidential · Generated by Alto People&RPage &P of &N',
+    },
+  });
   ws.columns = [
-    { key: 'associate', width: 32 },
+    { key: 'associate', width: 34 },
     { key: 'regular', width: 14 },
     { key: 'overtime', width: 14 },
     { key: 'total', width: 14 },
-    { key: 'days', width: 12 },
+    { key: 'days', width: 10 },
   ];
 
-  ws.addRow(['Payroll sheet']).getCell(1).font = { bold: true, size: 16 };
-  ws.addRow([data.clientName ?? 'All clients']);
-  ws.addRow([fmtRange(data.rangeFrom, data.rangeTo)]);
-  ws.addRow(['APPROVED time only · Overtime = over 40 hours per week (federal)']).getCell(
-    1,
-  ).font = { italic: true, color: { argb: 'FF666666' } };
-  if (data.pendingCount > 0) {
-    const warn = ws.addRow([
-      `WARNING: ${data.pendingCount} entr${data.pendingCount === 1 ? 'y' : 'ies'} still pending review — totals are PROVISIONAL.`,
-    ]);
-    warn.getCell(1).font = { bold: true, color: { argb: 'FFB5360F' } };
-  }
-  ws.addRow([]);
+  const headerRowNum = writeLetterhead(ws, data, 'E');
 
-  const header = ws.addRow([
-    'Associate',
-    'Regular (h)',
-    'Overtime (h)',
-    'Total (h)',
-    'Days',
-  ]);
-  header.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-  header.eachCell((cell) => {
-    cell.fill = HEADER_FILL;
-  });
+  const header = ws.getRow(headerRowNum);
+  header.values = ['Associate', 'Regular (h)', 'Overtime (h)', 'Total (h)', 'Days'];
+  styleHeaderRow(header);
 
+  let r = headerRowNum + 1;
   for (const a of data.sheet.associates) {
-    const row = ws.addRow([
+    const row = ws.getRow(r);
+    row.values = [
       a.name,
       hours(a.regularMinutes),
       hours(a.overtimeMinutes),
       hours(a.totalMinutes),
       a.days.length,
-    ]);
-    row.getCell(2).numFmt = HOURS_FMT;
-    row.getCell(3).numFmt = HOURS_FMT;
-    row.getCell(4).numFmt = HOURS_FMT;
+    ];
+    row.eachCell((cell, col) => {
+      cell.border = THIN;
+      if (col >= 2 && col <= 4) {
+        cell.numFmt = HOURS_FMT;
+        cell.alignment = { horizontal: 'right' };
+      }
+      if (col === 5) cell.alignment = { horizontal: 'center' };
+    });
+    if ((r - headerRowNum) % 2 === 0) {
+      row.eachCell((cell) => {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF4F6F8' } };
+      });
+    }
+    r += 1;
   }
 
-  const totalRow = ws.addRow([
+  const totalRow = ws.getRow(r);
+  totalRow.values = [
     'TOTAL',
     hours(data.sheet.totalRegularMinutes),
     hours(data.sheet.totalOvertimeMinutes),
     hours(data.sheet.totalMinutes),
-    '',
-  ]);
-  totalRow.font = { bold: true };
-  totalRow.getCell(2).numFmt = HOURS_FMT;
-  totalRow.getCell(3).numFmt = HOURS_FMT;
-  totalRow.getCell(4).numFmt = HOURS_FMT;
-}
-
-function buildDetailSheet(wb: ExcelJS.Workbook, sheet: PayrollSheet) {
-  const ws = wb.addWorksheet('Detail');
-  ws.columns = [
-    { key: 'associate', width: 32 },
-    { key: 'date', width: 22 },
-    { key: 'duration', width: 14 },
+    null,
   ];
-
-  const header = ws.addRow(['Associate', 'Date worked', 'Duration (h)']);
-  header.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-  header.eachCell((cell) => {
-    cell.fill = HEADER_FILL;
+  totalRow.font = { bold: true, color: { argb: INK } };
+  totalRow.eachCell((cell, col) => {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SUBTOTAL } };
+    cell.border = { ...THIN, top: { style: 'medium', color: { argb: BAND } } };
+    if (col >= 2 && col <= 4) {
+      cell.numFmt = HOURS_FMT;
+      cell.alignment = { horizontal: 'right' };
+    }
   });
 
+  // Freeze the header row, filter the table, repeat headers when printed.
+  ws.views = [{ state: 'frozen', ySplit: headerRowNum }];
+  ws.autoFilter = { from: { row: headerRowNum, column: 1 }, to: { row: r, column: 5 } };
+  ws.pageSetup.printTitlesRow = `${headerRowNum}:${headerRowNum}`;
+}
+
+function buildDetailSheet(wb: ExcelJS.Workbook, data: PayrollSheetReportData) {
+  const sheet: PayrollSheet = data.sheet;
+  const ws = wb.addWorksheet('Detail', {
+    pageSetup: {
+      orientation: 'portrait',
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 0,
+      margins: { left: 0.5, right: 0.5, top: 0.6, bottom: 0.6, header: 0.3, footer: 0.3 },
+    },
+    headerFooter: {
+      oddFooter: '&LConfidential · Generated by Alto People&RPage &P of &N',
+    },
+  });
+  ws.columns = [
+    { key: 'associate', width: 32 },
+    { key: 'date', width: 16 },
+    { key: 'weekday', width: 16 },
+    { key: 'hours', width: 14 },
+  ];
+
+  const headerRowNum = writeLetterhead(ws, data, 'D');
+  const header = ws.getRow(headerRowNum);
+  header.values = ['Associate', 'Date worked', 'Day', 'Duration (h)'];
+  styleHeaderRow(header);
+
+  let r = headerRowNum + 1;
   for (const a of sheet.associates) {
-    for (const d of a.days) {
-      const row = ws.addRow([a.name, dayLabel(d.date), hours(d.minutes)]);
-      row.getCell(3).numFmt = HOURS_FMT;
+    for (let i = 0; i < a.days.length; i += 1) {
+      const d = a.days[i];
+      const { date, weekday } = dayParts(d.date);
+      const row = ws.getRow(r);
+      row.values = [i === 0 ? a.name : '', date, weekday, hours(d.minutes)];
+      row.getCell(1).font = { bold: i === 0 };
+      row.getCell(2).numFmt = 'mm/dd/yyyy';
+      row.getCell(2).alignment = { horizontal: 'left' };
+      row.getCell(4).numFmt = HOURS_FMT;
+      row.getCell(4).alignment = { horizontal: 'right' };
+      row.eachCell((cell) => {
+        cell.border = THIN;
+      });
+      r += 1;
     }
+    // Per-associate subtotal row.
+    const sub = ws.getRow(r);
+    sub.values = [
+      `${a.name} — subtotal`,
+      `Regular ${hours(a.regularMinutes).toFixed(2)}  ·  OT ${hours(a.overtimeMinutes).toFixed(2)}`,
+      '',
+      hours(a.totalMinutes),
+    ];
+    ws.mergeCells(`B${r}:C${r}`);
+    sub.font = { bold: true, color: { argb: INK } };
+    sub.getCell(4).numFmt = HOURS_FMT;
+    sub.getCell(4).alignment = { horizontal: 'right' };
+    sub.eachCell((cell) => {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SUBTOTAL } };
+      cell.border = THIN;
+    });
+    r += 1;
   }
+
+  ws.views = [{ state: 'frozen', ySplit: headerRowNum }];
+  ws.pageSetup.printTitlesRow = `${headerRowNum}:${headerRowNum}`;
 }
