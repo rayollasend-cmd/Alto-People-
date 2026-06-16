@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Coffee,
   Download,
+  FileSpreadsheet,
   FileText,
   ListChecks,
   MapPinOff,
@@ -27,6 +28,7 @@ import {
   bulkApproveTimeEntries,
   bulkRejectTimeEntries,
   countAdminTimeEntries,
+  exportPayrollSheet,
   exportTimeEntries,
   exportTimeSummary,
   getActiveDashboard,
@@ -224,6 +226,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
   const [truncated, setTruncated] = useState(false);
   const [exportBusy, setExportBusy] = useState<null | 'csv' | 'pdf'>(null);
   const [summaryOpen, setSummaryOpen] = useState(false);
+  const [payrollOpen, setPayrollOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [rejectOpen, setRejectOpen] = useState<null | { mode: 'one'; id: string } | { mode: 'bulk' }>(null);
@@ -804,6 +807,16 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                     <ListChecks className="h-4 w-4" />
                     Summary
                   </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPayrollOpen(true)}
+                    disabled={exportBusy !== null}
+                  >
+                    <FileSpreadsheet className="h-4 w-4" />
+                    Payroll sheet
+                  </Button>
                 </div>
               )}
             </div>
@@ -1150,6 +1163,13 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
         onOpenChange={setSummaryOpen}
         fromIso={ymdToIsoStart(fromYmd)}
         toIso={ymdToIsoEndExclusive(toYmd)}
+      />
+
+      <PayrollSheetDialog
+        open={payrollOpen}
+        onOpenChange={setPayrollOpen}
+        defaultFromYmd={fromYmd}
+        defaultToYmd={toYmd}
       />
 
       {createOpen && (
@@ -1782,6 +1802,150 @@ function SummaryExportDialog({
           <Button onClick={download} loading={busy} disabled={busy}>
             <Download className="mr-2 h-4 w-4" />
             Download CSV
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Payroll-ready sheet export: pick a client + a date range (pay period), then
+// download a PDF or .xlsx listing each associate's dates worked, daily
+// duration, and regular/overtime totals. APPROVED time only.
+function PayrollSheetDialog({
+  open,
+  onOpenChange,
+  defaultFromYmd,
+  defaultToYmd,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  defaultFromYmd: string;
+  defaultToYmd: string;
+}) {
+  const [clients, setClients] = useState<Array<{ id: string; name: string }>>([]);
+  const [clientId, setClientId] = useState('');
+  const [fromYmd, setFromYmd] = useState(defaultFromYmd);
+  const [toYmd, setToYmd] = useState(defaultToYmd);
+  const [busy, setBusy] = useState<'pdf' | 'xlsx' | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setFromYmd(defaultFromYmd);
+    setToYmd(defaultToYmd);
+    setErr(null);
+    listClients()
+      .then((r) => setClients(r.clients.map((c) => ({ id: c.id, name: c.name }))))
+      .catch(() => setClients([]));
+  }, [open, defaultFromYmd, defaultToYmd]);
+
+  const selectClass =
+    'mt-1 h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white';
+
+  const download = async (format: 'pdf' | 'xlsx') => {
+    if (!clientId) {
+      setErr('Pick a client first.');
+      return;
+    }
+    if (!fromYmd || !toYmd || toYmd < fromYmd) {
+      setErr('Pick a valid pay period (end on or after start).');
+      return;
+    }
+    setBusy(format);
+    setErr(null);
+    try {
+      await exportPayrollSheet(format, {
+        from: ymdToIsoStart(fromYmd),
+        to: ymdToIsoEndExclusive(toYmd),
+        clientId,
+      });
+      onOpenChange(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Export failed.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Payroll sheet</DialogTitle>
+          <DialogDescription>
+            Pick a client and a pay period — download a payroll-ready sheet of
+            each associate&apos;s dates worked, daily duration, and regular &amp;
+            overtime totals. APPROVED time only.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          {err && (
+            <div className="rounded-md border border-alert/40 bg-alert/10 p-2 text-sm text-alert">
+              {err}
+            </div>
+          )}
+          <div>
+            <FieldLabel>Client</FieldLabel>
+            <select
+              className={selectClass}
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+            >
+              <option value="">Select a client…</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <FieldLabel>Pay period start</FieldLabel>
+              <Input
+                type="date"
+                value={fromYmd}
+                max={toYmd}
+                onChange={(e) => setFromYmd(e.target.value)}
+                className="mt-1 h-10 text-sm"
+              />
+            </div>
+            <div>
+              <FieldLabel>Pay period end</FieldLabel>
+              <Input
+                type="date"
+                value={toYmd}
+                min={fromYmd}
+                onChange={(e) => setToYmd(e.target.value)}
+                className="mt-1 h-10 text-sm"
+              />
+            </div>
+          </div>
+          <p className="text-xs text-silver">
+            Overtime = hours over 40 per week (federal), matching payroll.
+          </p>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy !== null}>
+            Cancel
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => download('pdf')}
+            loading={busy === 'pdf'}
+            disabled={busy !== null || !clientId}
+          >
+            <FileText className="mr-2 h-4 w-4" />
+            PDF
+          </Button>
+          <Button
+            onClick={() => download('xlsx')}
+            loading={busy === 'xlsx'}
+            disabled={busy !== null || !clientId}
+          >
+            <FileSpreadsheet className="mr-2 h-4 w-4" />
+            Excel
           </Button>
         </DialogFooter>
       </DialogContent>
