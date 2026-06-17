@@ -273,6 +273,48 @@ describe('GET /scheduling/me/shifts', () => {
     expect(res.body.shifts).toHaveLength(1);
     expect(res.body.shifts[0].id).toBe(mine.body.id);
   });
+
+  it('returns recent-past and future shifts but drops shifts older than 30 days', async () => {
+    const client = await createClient();
+    const me = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    const { user: meUser } = await createUser({
+      role: 'ASSOCIATE',
+      email: me.email,
+      associateId: me.id,
+    });
+    const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000);
+
+    // Published + assigned shifts created directly so we control startsAt.
+    const recent = await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        assignedAssociateId: me.id,
+        position: 'Server',
+        startsAt: daysAgo(5),
+        endsAt: new Date(daysAgo(5).getTime() + 8 * 3600 * 1000),
+        status: 'COMPLETED',
+        publishedAt: new Date(),
+      },
+    });
+    const old = await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        assignedAssociateId: me.id,
+        position: 'Server',
+        startsAt: daysAgo(40),
+        endsAt: new Date(daysAgo(40).getTime() + 8 * 3600 * 1000),
+        status: 'COMPLETED',
+        publishedAt: new Date(),
+      },
+    });
+
+    const meAgent = await loginAs(meUser.email);
+    const res = await meAgent.get('/scheduling/me/shifts');
+    expect(res.status).toBe(200);
+    const ids = res.body.shifts.map((s: { id: string }) => s.id);
+    expect(ids).toContain(recent.id);
+    expect(ids).not.toContain(old.id);
+  });
 });
 
 describe('CLIENT_PORTAL access', () => {

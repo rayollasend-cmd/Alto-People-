@@ -1120,6 +1120,12 @@ schedulingRouter.get('/me/shifts', async (req, res, next) => {
       res.json(empty);
       return;
     }
+    // Bound the past so the `take` cap can't be exhausted by months of
+    // history and push a long-tenured associate's UPCOMING shifts off the
+    // end. 30 days back keeps recent worked shifts visible (the app's "My
+    // schedule" splits these into a Recent section) while guaranteeing all
+    // future shifts fit; the calendar feed has its own wider window.
+    const pastHorizon = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const rows = await prisma.shift.findMany({
       where: {
         assignedAssociateId: user.associateId,
@@ -1130,6 +1136,7 @@ schedulingRouter.get('/me/shifts', async (req, res, next) => {
         // schedule editable in draft form without leaking to associates.
         publishedAt: { not: null },
         status: { notIn: ['CANCELLED'] },
+        startsAt: { gte: pastHorizon },
       },
       orderBy: { startsAt: 'asc' },
       take: 100,

@@ -22,6 +22,7 @@ import { useAuth } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
 import { clockIn, clockOut, getActiveTimeEntry, tryGetGeolocation } from '@/lib/timeApi';
 import { listMyShifts } from '@/lib/schedulingApi';
+import { fmtDateTz, fmtTimeTz, fmtWeekdayTz, zonedDayKey } from '@/lib/format';
 import { listMyPayrollItems } from '@/lib/payrollApi';
 import { getMyBalance } from '@/lib/timeOffApi';
 import { Button } from '@/components/ui/Button';
@@ -147,17 +148,15 @@ function fmtTime(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
-function fmtRelativeDay(iso: string): string {
-  const d = new Date(iso);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const target = new Date(d);
-  target.setHours(0, 0, 0, 0);
-  const diffDays = Math.round((target.getTime() - today.getTime()) / (24 * 60 * 60 * 1000));
-  if (diffDays === 0) return 'Today';
-  if (diffDays === 1) return 'Tomorrow';
-  if (diffDays < 7) return d.toLocaleDateString('en-US', { weekday: 'long' });
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+// Relative day in the SHIFT'S work-site timezone, so a store in another zone
+// doesn't flip "Today/Tomorrow" or the weekday for the viewer.
+function fmtRelativeDay(iso: string, tz?: string | null): string {
+  const now = Date.now();
+  const key = zonedDayKey(iso, tz);
+  if (key === zonedDayKey(new Date(now), tz)) return 'Today';
+  if (key === zonedDayKey(new Date(now + 86_400_000), tz)) return 'Tomorrow';
+  const within7 = new Date(iso).getTime() - now < 7 * 86_400_000;
+  return within7 ? fmtWeekdayTz(iso, tz) : fmtDateTz(iso, tz);
 }
 
 function fmtElapsed(sinceIso: string): string {
@@ -268,10 +267,11 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
         </div>
         <div className="flex items-baseline gap-2 mt-2 flex-wrap">
           <div className="font-display text-2xl text-white leading-tight">
-            {fmtRelativeDay(nextShift.startsAt)}
+            {fmtRelativeDay(nextShift.startsAt, nextShift.timezone)}
           </div>
           <div className="text-lg text-gold tabular-nums">
-            {fmtTime(nextShift.startsAt)} – {fmtTime(nextShift.endsAt)}
+            {fmtTimeTz(nextShift.startsAt, nextShift.timezone)} –{' '}
+            {fmtTimeTz(nextShift.endsAt, nextShift.timezone)}
           </div>
         </div>
         <div className="text-sm text-silver mt-1">
