@@ -18,13 +18,15 @@
 // activate handler evicts the previous cache instead of leaving stale
 // entries (e.g. an old index.html with chunk hashes from a prior
 // deploy that no longer exist on the server) lying around.
-const CACHE_NAME = 'alto-shell-v11';
+const CACHE_NAME = 'alto-shell-v12';
 const SHELL = [
   '/',
   '/index.html',
   '/manifest.webmanifest',
-  // Kiosk installs as its own home-screen app (start_url /kiosk); cache its
-  // manifest + badged icons so a re-launch works offline.
+  // Kiosk installs as its own home-screen app (start_url /kiosk) from a
+  // dedicated HTML shell; cache it + its manifest + badged icons so a
+  // re-launch works offline.
+  '/kiosk.html',
   '/kiosk.webmanifest',
   '/kiosk-icon-192.png',
   '/kiosk-icon-512.png',
@@ -139,9 +141,18 @@ self.addEventListener('fetch', (event) => {
           }
           return res;
         })
-        .catch(() =>
-          caches.match(req).then((cached) => cached || caches.match('/') || Response.error()),
-        ),
+        .catch(() => {
+          // Offline: serve the matching cached shell. The kiosk has its own
+          // HTML entry (with the kiosk manifest in its head), so /kiosk
+          // navigations fall back to it rather than the main index.html.
+          const fallback =
+            url.pathname === '/kiosk' || url.pathname.startsWith('/kiosk/')
+              ? '/kiosk.html'
+              : '/';
+          return caches
+            .match(req)
+            .then((cached) => cached || caches.match(fallback) || Response.error());
+        }),
     );
     return;
   }

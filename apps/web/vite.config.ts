@@ -73,6 +73,15 @@ export default defineConfig({
     // @dnd-kit/core for the template editor) intentionally fall through
     // into their own caller's chunk via the route's lazy() boundary.
     rollupOptions: {
+      // Two HTML entries: the main SPA (index.html) and a dedicated kiosk
+      // shell (kiosk.html) that statically links the kiosk manifest so the
+      // kiosk installs as its own home-screen app. Both load the same
+      // /src/main.tsx — the router renders KioskPage at /kiosk — so they
+      // share the entry + vendor chunks.
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        kiosk: path.resolve(__dirname, 'kiosk.html'),
+      },
       output: {
         manualChunks(id) {
           if (!id.includes('node_modules')) return undefined;
