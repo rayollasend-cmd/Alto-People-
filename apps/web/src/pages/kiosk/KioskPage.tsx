@@ -24,6 +24,8 @@ import {
   newIdempotencyKey,
   queueSize,
 } from '@/lib/kioskQueue';
+import { useKioskAppManifest } from '@/lib/kioskInstall';
+import { KioskInstallButton } from './KioskInstallButton';
 
 /**
  * Phase 99 — Public kiosk page. No auth, no Layout — full-screen UI a
@@ -240,6 +242,9 @@ function readStoredLang(): Lang {
 }
 
 export function KioskPage() {
+  // Swap in the kiosk web-app manifest so "Add to Home Screen" installs a
+  // standalone kiosk app (launches at /kiosk), distinct from the main app.
+  useKioskAppManifest();
   const [stage, setStage] = useState<Stage>('idle');
   const [token, setToken] = useState<string | null>(null);
   const [pin, setPin] = useState('');
@@ -978,6 +983,7 @@ function SetupScreen({ onSaved }: { onSaved: (token: string) => void }) {
         >
           Pair device
         </button>
+        <KioskInstallButton />
       </div>
     </div>
   );
