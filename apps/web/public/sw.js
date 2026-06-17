@@ -18,14 +18,17 @@
 // activate handler evicts the previous cache instead of leaving stale
 // entries (e.g. an old index.html with chunk hashes from a prior
 // deploy that no longer exist on the server) lying around.
-const CACHE_NAME = 'alto-shell-v10';
+const CACHE_NAME = 'alto-shell-v11';
 const SHELL = [
   '/',
   '/index.html',
   '/manifest.webmanifest',
   // Kiosk installs as its own home-screen app (start_url /kiosk); cache its
-  // manifest so a re-launch works offline.
+  // manifest + badged icons so a re-launch works offline.
   '/kiosk.webmanifest',
+  '/kiosk-icon-192.png',
+  '/kiosk-icon-512.png',
+  '/kiosk-apple-touch-icon.png',
   '/favicon.svg',
   '/favicon-32.png',
   '/icon-192.png',

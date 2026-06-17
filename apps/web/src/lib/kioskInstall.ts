@@ -17,18 +17,26 @@ export function useKioskAppManifest(): void {
     const appleTitle = document.querySelector<HTMLMetaElement>(
       'meta[name="apple-mobile-web-app-title"]',
     );
+    const appleIcon = document.querySelector<HTMLLinkElement>(
+      'link[rel="apple-touch-icon"]',
+    );
 
     const prevManifest = link?.getAttribute('href') ?? null;
     const prevAppleTitle = appleTitle?.getAttribute('content') ?? null;
+    const prevAppleIcon = appleIcon?.getAttribute('href') ?? null;
     const prevDocTitle = document.title;
 
     link?.setAttribute('href', '/kiosk.webmanifest');
     appleTitle?.setAttribute('content', 'Alto Kiosk');
+    // iOS home-screen icon comes from the apple-touch-icon link — point it at
+    // the badged kiosk icon so the installed app is visually distinct.
+    appleIcon?.setAttribute('href', '/kiosk-apple-touch-icon.png');
     document.title = 'Alto Kiosk';
 
     return () => {
       if (link && prevManifest) link.setAttribute('href', prevManifest);
       if (appleTitle && prevAppleTitle) appleTitle.setAttribute('content', prevAppleTitle);
+      if (appleIcon && prevAppleIcon) appleIcon.setAttribute('href', prevAppleIcon);
       document.title = prevDocTitle;
     };
   }, []);
