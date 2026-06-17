@@ -383,10 +383,17 @@ export function createApp() {
       // stripApiPrefix. Skip the SPA fallback so unmatched API endpoints
       // return JSON 404 (via notFoundHandler) instead of HTML 200.
       if ((req as Request & { isApiCall?: boolean }).isApiCall) return next();
+      // The kiosk is a second HTML entry whose <head> statically links the
+      // kiosk web-app manifest, so "Add to Home Screen" installs the
+      // standalone kiosk app rather than the main SPA. Serve it for /kiosk
+      // (and any /kiosk/* deep link). Everything else gets the main SPA.
+      const isKiosk =
+        req.path === '/kiosk' || req.path.startsWith('/kiosk/');
+      const file = isKiosk ? 'kiosk.html' : 'index.html';
       // no-cache (revalidate, not "don't store") so every navigation checks
-      // for a new deploy's index.html — the asset URLs inside are what
-      // actually bust the immutable cache above.
-      res.sendFile(path.join(WEB_DIST, 'index.html'), {
+      // for a new deploy's HTML — the asset URLs inside are what actually
+      // bust the immutable /assets cache above.
+      res.sendFile(path.join(WEB_DIST, file), {
         headers: { 'Cache-Control': 'no-cache' },
       });
     });

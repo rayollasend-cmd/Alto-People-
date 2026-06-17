@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0B1832" />
+    <meta name="description" content="Alto Kiosk — time clock" />
+    <!-- Dedicated kiosk manifest so "Add to Home Screen" installs a
+         standalone kiosk app (start_url /kiosk), distinct from the main
+         Alto People app. This is a STATIC entry — the manifest + Apple meta
+         live in the head at load, which iOS Safari requires (it reads these
+         from the initial HTML, not a JS-mutated DOM). -->
+    <link rel="manifest" href="/kiosk.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/kiosk-icon-192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/kiosk-icon-512.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/kiosk-apple-touch-icon.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Alto Kiosk" />
+    <title>Alto Kiosk</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
