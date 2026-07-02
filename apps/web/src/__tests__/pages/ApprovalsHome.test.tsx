@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { TimeOffRequest } from '@alto-people/shared';
 
 // The scheduling panels are integration-tested with the scheduling page;
@@ -46,10 +47,20 @@ const requestFixture: TimeOffRequest = {
 } as TimeOffRequest;
 
 function renderPage() {
+  // Fresh client per render so cached lists never leak between tests;
+  // retry off so mocked failures surface immediately.
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
   return render(
-    <MemoryRouter>
-      <ApprovalsHome />
-    </MemoryRouter>
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <ApprovalsHome />
+      </MemoryRouter>
+    </QueryClientProvider>
   );
 }
 

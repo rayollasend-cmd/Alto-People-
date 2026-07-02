@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarCheck, Check, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { TimeOffRequest } from '@alto-people/shared';
@@ -45,35 +46,44 @@ import {
  * they all stack on a single URL that can be checked (or deep-linked)
  * in one pass.
  */
+const TIME_OFF_KEY = ['approvals', 'timeOff'] as const;
+
 export function ApprovalsHome() {
-  const [timesheetCount, setTimesheetCount] = useState<number | null>(null);
-  const [timeOff, setTimeOff] = useState<TimeOffRequest[] | null>(null);
+  // KPI is best-effort — the panels below are the real content. A failure
+  // just leaves the tile at "—" (data stays undefined).
+  const timesheetQuery = useQuery({
+    queryKey: ['approvals', 'timesheetCount'],
+    queryFn: () => countAdminTimeEntries('COMPLETED'),
+  });
 
-  useEffect(() => {
-    // KPI is best-effort — the panels below are the real content.
-    countAdminTimeEntries('COMPLETED')
-      .then((r) => setTimesheetCount(r.count))
-      .catch(() => setTimesheetCount(null));
-  }, []);
-
-  const refreshTimeOff = useCallback(async () => {
-    try {
-      const res = await listAdminRequests('PENDING');
-      setTimeOff(res.requests);
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 403) {
-        setTimeOff([]);
-        return;
+  const timeOffQuery = useQuery({
+    queryKey: TIME_OFF_KEY,
+    queryFn: async () => {
+      try {
+        return (await listAdminRequests('PENDING')).requests;
+      } catch (err) {
+        // 403 = not permitted to see the admin queue — an honest empty
+        // list, not an error.
+        if (err instanceof ApiError && err.status === 403) return [];
+        throw err;
       }
+    },
+  });
+
+  const timeOffError = timeOffQuery.error;
+  useEffect(() => {
+    if (timeOffError) {
       toast.error('Could not load time-off requests', {
-        description: err instanceof Error ? err.message : String(err),
+        description:
+          timeOffError instanceof Error
+            ? timeOffError.message
+            : String(timeOffError),
       });
     }
-  }, []);
+  }, [timeOffError]);
 
-  useEffect(() => {
-    refreshTimeOff();
-  }, [refreshTimeOff]);
+  const timesheetCount = timesheetQuery.data?.count ?? null;
+  const timeOff = timeOffQuery.data ?? null;
 
   return (
     <div>
@@ -97,7 +107,7 @@ export function ApprovalsHome() {
         />
       </div>
 
-      <PendingTimeOffPanel items={timeOff} onChanged={refreshTimeOff} />
+      <PendingTimeOffPanel items={timeOff} />
       <AdminSwapsPanel />
       <AdminPickupPanel />
       <AdminUnconfirmedPanel />
@@ -115,23 +125,33 @@ function fmtDate(iso: string): string {
   return `${m}/${d}/${y.slice(2)}`;
 }
 
-function PendingTimeOffPanel({
-  items,
-  onChanged,
-}: {
-  items: TimeOffRequest[] | null;
-  onChanged: () => void;
-}) {
+function PendingTimeOffPanel({ items }: { items: TimeOffRequest[] | null }) {
+  const queryClient = useQueryClient();
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [denyTarget, setDenyTarget] = useState<TimeOffRequest | null>(null);
 
-  const onApprove = async (r: TimeOffRequest) => {
-    setPendingId(r.id);
-    try {
-      await approveAdminRequest(r.id);
-      toast.success(`Approved ${r.associateName ?? 'request'}`);
-      onChanged();
-    } catch (err) {
+  // Optimistically drop the row from the cached list the moment a
+  // decision is submitted; snapshot the previous list so onError can
+  // roll it back, and let onSettled re-sync with the server.
+  const removeOptimistically = async (id: string) => {
+    await queryClient.cancelQueries({ queryKey: TIME_OFF_KEY });
+    const previous = queryClient.getQueryData<TimeOffRequest[]>(TIME_OFF_KEY);
+    queryClient.setQueryData<TimeOffRequest[]>(TIME_OFF_KEY, (old) =>
+      old?.filter((r) => r.id !== id),
+    );
+    return { previous };
+  };
+  const rollback = (ctx: { previous?: TimeOffRequest[] } | undefined) => {
+    if (ctx?.previous !== undefined) {
+      queryClient.setQueryData(TIME_OFF_KEY, ctx.previous);
+    }
+  };
+
+  const approveMutation = useMutation({
+    mutationFn: (r: TimeOffRequest) => approveAdminRequest(r.id),
+    onMutate: (r) => removeOptimistically(r.id),
+    onError: (err, _r, ctx) => {
+      rollback(ctx);
       if (err instanceof ApiError && err.code === 'insufficient_balance') {
         const d = err.details as { currentMinutes: number; requestedMinutes: number };
         toast.error('Insufficient balance', {
@@ -142,9 +162,32 @@ function PendingTimeOffPanel({
       toast.error('Could not approve', {
         description: err instanceof Error ? err.message : String(err),
       });
-    } finally {
-      setPendingId(null);
-    }
+    },
+    onSuccess: (_res, r) => {
+      toast.success(`Approved ${r.associateName ?? 'request'}`);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: TIME_OFF_KEY }),
+  });
+
+  const denyMutation = useMutation({
+    mutationFn: ({ target, note }: { target: TimeOffRequest; note: string }) =>
+      denyAdminRequest(target.id, { note }),
+    onMutate: ({ target }) => removeOptimistically(target.id),
+    onError: (err, _vars, ctx) => {
+      rollback(ctx);
+      toast.error('Could not deny', {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    },
+    onSuccess: () => {
+      toast.success('Denied');
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: TIME_OFF_KEY }),
+  });
+
+  const onApprove = (r: TimeOffRequest) => {
+    setPendingId(r.id);
+    approveMutation.mutate(r, { onSettled: () => setPendingId(null) });
   };
 
   return (
@@ -210,10 +253,8 @@ function PendingTimeOffPanel({
 
       <DenyDialog
         target={denyTarget}
-        onClose={(refreshed) => {
-          setDenyTarget(null);
-          if (refreshed) onChanged();
-        }}
+        onSubmit={(target, note) => denyMutation.mutate({ target, note })}
+        onClose={() => setDenyTarget(null)}
       />
     </Card>
   );
@@ -221,41 +262,35 @@ function PendingTimeOffPanel({
 
 function DenyDialog({
   target,
+  onSubmit,
   onClose,
 }: {
   target: TimeOffRequest | null;
-  onClose: (refreshed: boolean) => void;
+  onSubmit: (target: TimeOffRequest, note: string) => void;
+  onClose: () => void;
 }) {
   const [note, setNote] = useState('');
-  const [submitting, setSubmitting] = useState(false);
   const open = target !== null;
 
   useEffect(() => {
     if (open) setNote('');
   }, [open]);
 
-  const submit = async () => {
+  const submit = () => {
     if (!target) return;
-    if (note.trim().length === 0) {
+    const trimmed = note.trim();
+    if (trimmed.length === 0) {
       toast.error('A note is required when denying');
       return;
     }
-    setSubmitting(true);
-    try {
-      await denyAdminRequest(target.id, { note: note.trim() });
-      toast.success('Denied');
-      onClose(true);
-    } catch (err) {
-      toast.error('Could not deny', {
-        description: err instanceof Error ? err.message : String(err),
-      });
-    } finally {
-      setSubmitting(false);
-    }
+    // Optimistic: the row disappears the moment the deny is submitted;
+    // the mutation rolls it back (with a toast) if the server rejects.
+    onSubmit(target, trimmed);
+    onClose();
   };
 
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose(false)}>
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Deny request</DialogTitle>
@@ -275,10 +310,10 @@ function DenyDialog({
           )}
         </Field>
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onClose(false)}>
+          <Button variant="ghost" onClick={() => onClose()}>
             Cancel
           </Button>
-          <Button onClick={submit} loading={submitting} variant="destructive">
+          <Button onClick={submit} variant="destructive">
             Deny
           </Button>
         </DialogFooter>

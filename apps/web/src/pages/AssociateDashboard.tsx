@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
   ArrowRight,
   CalendarOff,
@@ -40,61 +41,85 @@ import { cn } from '@/lib/cn';
 const fmtMoney = (n: number) =>
   n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
 
+/**
+ * 403/404 are fully expected for accounts without the linked records
+ * (non-associate roles hitting this view, no payroll yet) and render as
+ * genuine empty states (null data). Anything else — network down, 500 —
+ * must NOT masquerade as "Nothing scheduled": it rethrows so the query
+ * errors and the card shows a retry instead.
+ */
+async function emptyOnExpectedDenial<T>(p: Promise<T>): Promise<T | null> {
+  try {
+    return await p;
+  } catch (err) {
+    if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
+      return null;
+    }
+    throw err;
+  }
+}
+
 export function AssociateDashboard() {
   const { user } = useAuth();
   const { t } = useI18n();
   const navigate = useNavigate();
 
-  const [active, setActive] = useState<ActiveTimeEntryResponse | null | undefined>(undefined);
-  const [nextShift, setNextShift] = useState<Shift | null | undefined>(undefined);
-  const [latestPaystub, setLatestPaystub] = useState<PayrollItem | null | undefined>(undefined);
-  const [balances, setBalances] = useState<TimeOffBalance[] | null | undefined>(undefined);
-  const [failed, setFailed] = useState({
-    clock: false,
-    shift: false,
-    pay: false,
-    timeOff: false,
-  });
-
   const greetingName =
     user?.email ? user.email.split('@')[0].split('.')[0].replace(/^\w/, (c) => c.toUpperCase()) : 'there';
 
+  // Each fetch is an independent query; one failing shouldn't blank out
+  // the others. Cached results render instantly on revisit and refresh
+  // in the background once stale.
+  const activeQuery = useQuery({
+    queryKey: ['me', 'activeEntry'],
+    queryFn: () => emptyOnExpectedDenial(getActiveTimeEntry()),
+  });
+  const shiftsQuery = useQuery({
+    queryKey: ['me', 'shifts'],
+    queryFn: () => emptyOnExpectedDenial(listMyShifts()),
+  });
+  const payQuery = useQuery({
+    queryKey: ['me', 'payrollItems'],
+    queryFn: () => emptyOnExpectedDenial(listMyPayrollItems()),
+  });
+  const balanceQuery = useQuery({
+    queryKey: ['me', 'timeOffBalance'],
+    queryFn: () => emptyOnExpectedDenial(getMyBalance()),
+  });
+
+  // undefined → still loading (skeleton); null/[] → honest empty state.
+  const active: ActiveTimeEntryResponse | null | undefined = activeQuery.data;
+  const nextShift: Shift | null | undefined =
+    shiftsQuery.data === undefined
+      ? undefined
+      : pickNextShift(shiftsQuery.data?.shifts ?? []);
+  const latestPaystub: PayrollItem | null | undefined =
+    payQuery.data === undefined
+      ? undefined
+      : ((payQuery.data?.items ?? [])[0] ?? null);
+  const balances: TimeOffBalance[] | null | undefined =
+    balanceQuery.data === undefined
+      ? undefined
+      : (balanceQuery.data?.balances ?? []);
+  const failed = {
+    clock: activeQuery.isError,
+    shift: shiftsQuery.isError,
+    pay: payQuery.isError,
+    timeOff: balanceQuery.isError,
+  };
+
+  const { refetch: refetchActive } = activeQuery;
+  const { refetch: refetchShifts } = shiftsQuery;
+  const { refetch: refetchPay } = payQuery;
+  const { refetch: refetchBalance } = balanceQuery;
   const refreshAll = useCallback(async () => {
-    // Each fetch is independent; one failing shouldn't blank out the others.
-    // 403/404 are fully expected for accounts without the linked records
-    // (non-associate roles hitting this view, no payroll yet) and render as
-    // genuine empty states. Anything else — network down, 500 — must NOT
-    // masquerade as "Nothing scheduled": the card shows a retry instead.
-    const settle = <T,>(p: Promise<T>): Promise<{ value: T | null; failed: boolean }> =>
-      p.then(
-        (value) => ({ value, failed: false }),
-        (err) => ({
-          value: null,
-          failed: !(err instanceof ApiError && (err.status === 403 || err.status === 404)),
-        }),
-      );
-
-    const [a, shifts, pay, bal] = await Promise.all([
-      settle(getActiveTimeEntry()),
-      settle(listMyShifts()),
-      settle(listMyPayrollItems()),
-      settle(getMyBalance()),
+    await Promise.all([
+      refetchActive(),
+      refetchShifts(),
+      refetchPay(),
+      refetchBalance(),
     ]);
-    setActive(a.value ?? null);
-    setNextShift(pickNextShift(shifts.value?.shifts ?? []));
-    setLatestPaystub((pay.value?.items ?? [])[0] ?? null);
-    setBalances(bal.value?.balances ?? []);
-    setFailed({
-      clock: a.failed,
-      shift: shifts.failed,
-      pay: pay.failed,
-      timeOff: bal.failed,
-    });
-  }, []);
-
-  useEffect(() => {
-    refreshAll();
-  }, [refreshAll]);
+  }, [refetchActive, refetchShifts, refetchPay, refetchBalance]);
 
   const pullState = usePullToRefresh(refreshAll);
   const isClockedIn = !!active?.active;

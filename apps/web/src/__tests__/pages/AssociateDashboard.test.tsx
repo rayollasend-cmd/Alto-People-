@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Capability } from '@alto-people/shared';
 import { AuthContext } from '@/lib/auth';
 
@@ -63,6 +64,15 @@ const shiftFixture = (startsAt: Date, endsAt: Date) =>
   }) as never;
 
 function renderDashboard() {
+  // Fresh client per render so cached data never leaks between tests;
+  // retry off so a mocked one-shot failure surfaces immediately (the
+  // app-level client retries once, but that's a prod resilience knob).
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
   const value = {
     isInitializing: false,
     isOffline: false,
@@ -81,11 +91,13 @@ function renderDashboard() {
     can: () => false,
   };
   return render(
-    <AuthContext.Provider value={value}>
-      <MemoryRouter>
-        <AssociateDashboard />
-      </MemoryRouter>
-    </AuthContext.Provider>
+    <QueryClientProvider client={queryClient}>
+      <AuthContext.Provider value={value}>
+        <MemoryRouter>
+          <AssociateDashboard />
+        </MemoryRouter>
+      </AuthContext.Provider>
+    </QueryClientProvider>
   );
 }
 
