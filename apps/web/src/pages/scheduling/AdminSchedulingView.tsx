@@ -2968,7 +2968,9 @@ const SWAP_STATUS_VARIANT: Record<
   CANCELLED: 'default',
 };
 
-function AdminSwapsPanel() {
+// Exported for the /approvals inbox, which aggregates every queue a
+// manager has to clear (swaps, pickups, unconfirmed, time off, timesheets).
+export function AdminSwapsPanel() {
   const [items, setItems] = useState<ShiftSwapRequest[] | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
@@ -3077,7 +3079,7 @@ function AdminSwapsPanel() {
 
 /* ===== Open-shift pickup requests panel ================================== */
 
-function AdminPickupPanel() {
+export function AdminPickupPanel() {
   const [items, setItems] = useState<AdminOpenShiftClaim[] | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
@@ -3216,7 +3218,7 @@ async function assignWithOverridePrompt(
  * NOT tapped "I'll be there". Hidden entirely when everyone confirmed —
  * this panel exists to chase silence, not to celebrate compliance.
  */
-function AdminUnconfirmedPanel() {
+export function AdminUnconfirmedPanel() {
   const [items, setItems] = useState<Shift[] | null>(null);
 
   useEffect(() => {

@@ -67,6 +67,7 @@ const StubTask = lazyNamed(() => import('@/pages/onboarding/tasks/StubTask'), 'S
 const TimeHome = lazyNamed(() => import('@/pages/time/TimeHome'), 'TimeHome');
 const TimeOffHome = lazyNamed(() => import('@/pages/timeoff/TimeOffHome'), 'TimeOffHome');
 const SchedulingHome = lazyNamed(() => import('@/pages/scheduling/SchedulingHome'), 'SchedulingHome');
+const ApprovalsHome = lazyNamed(() => import('@/pages/approvals/ApprovalsHome'), 'ApprovalsHome');
 const PayrollHome = lazyNamed(() => import('@/pages/payroll/PayrollHome'), 'PayrollHome');
 const PayrollConfigView = lazyNamed(
   () => import('@/pages/payroll/PayrollConfigView'),
@@ -171,6 +172,7 @@ registerPrefetch('/clients', () => import('@/pages/clients/ClientsHome'));
 registerPrefetch('/time', () => import('@/pages/time/TimeHome'));
 registerPrefetch('/time-off', () => import('@/pages/timeoff/TimeOffHome'));
 registerPrefetch('/scheduling', () => import('@/pages/scheduling/SchedulingHome'));
+registerPrefetch('/approvals', () => import('@/pages/approvals/ApprovalsHome'));
 registerPrefetch('/payroll', () => import('@/pages/payroll/PayrollHome'));
 registerPrefetch('/documents', () => import('@/pages/documents/DocumentsHome'));
 registerPrefetch('/communications', () => import('@/pages/communications/CommunicationsHome'));
@@ -311,6 +313,7 @@ const LAYOUT_ROUTES = [
   { path: 'clients', element: <ClientsHome /> },
   { path: 'clients/:id', element: <ClientDetail /> },
   { path: 'scheduling', element: <SchedulingHome /> },
+  { path: 'approvals', element: <RequireCapability cap="manage:scheduling"><ApprovalsHome /></RequireCapability> },
   { path: 'payroll', element: <PayrollHome /> },
   { path: 'documents', element: <DocumentsHome /> },
   { path: 'compliance', element: <ComplianceHome /> },

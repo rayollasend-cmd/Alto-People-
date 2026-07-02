@@ -26,6 +26,7 @@ export type ModuleKey =
   | 'kiosk'
   | 'time-off'
   | 'scheduling'
+  | 'approvals'
   | 'payroll'
   | 'documents'
   | 'communications'
@@ -127,7 +128,7 @@ export {
   UserPlus,
 };
 
-import { Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon, LogOut as SeparationIcon, Briefcase as InternalJobsIcon, Syringe as VaccinationsIcon, FileSignature as AgreementsIcon, MessageCircle as HrCasesIcon, BookOpen as KbIcon, Target as RampIcon, TrendingUp as CareerIcon, GraduationCap as TuitionIcon, Siren as HotlineIcon, Coins as EquityIcon, Heart as VolunteerIcon, Plug as IntegrationsIcon, Palette as BrandingIcon, CreditCard as BillingIcon, FileBarChart as ReportsIcon } from 'lucide-react';
+import { Inbox as ApprovalsIcon, Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon, LogOut as SeparationIcon, Briefcase as InternalJobsIcon, Syringe as VaccinationsIcon, FileSignature as AgreementsIcon, MessageCircle as HrCasesIcon, BookOpen as KbIcon, Target as RampIcon, TrendingUp as CareerIcon, GraduationCap as TuitionIcon, Siren as HotlineIcon, Coins as EquityIcon, Heart as VolunteerIcon, Plug as IntegrationsIcon, Palette as BrandingIcon, CreditCard as BillingIcon, FileBarChart as ReportsIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -508,6 +509,16 @@ export const MODULES: ModuleNav[] = [
       'Shift planning, fill rate tracking, and assignment management.',
     requires: 'view:scheduling',
     icon: Calendar,
+    group: 'time-and-pay',
+  },
+  {
+    key: 'approvals',
+    path: '/approvals',
+    label: 'Approvals',
+    description:
+      'One inbox for every decision waiting on you — swap requests, open-shift pickups, unconfirmed shifts, time-off requests, and timesheets to review.',
+    requires: 'manage:scheduling',
+    icon: ApprovalsIcon,
     group: 'time-and-pay',
   },
   {
