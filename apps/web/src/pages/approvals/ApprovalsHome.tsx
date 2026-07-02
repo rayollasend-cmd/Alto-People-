@@ -35,7 +35,7 @@ import {
   AdminPickupPanel,
   AdminSwapsPanel,
   AdminUnconfirmedPanel,
-} from '@/pages/scheduling/AdminSchedulingView';
+} from '@/pages/scheduling/AdminApprovalPanels';
 
 /**
  * One inbox for everything waiting on a manager's decision. Before this

@@ -26,6 +26,7 @@ import {
   type ModuleNav,
 } from '@/lib/modules';
 import { useAuth } from '@/lib/auth';
+import { useApprovalsCount } from '@/lib/useApprovalsCount';
 import { useTheme } from '@/lib/theme';
 import { useDensity } from '@/lib/density';
 import { ROLE_LABELS } from '@/lib/roles';
@@ -100,6 +101,7 @@ export function Sidebar() {
   const { can } = useAuth();
   const visible = MODULES.filter((m) => can(m.requires));
   const activePath = useActiveNavPath();
+  const approvalsCount = useApprovalsCount();
 
   const grouped: Partial<Record<ModuleGroup, ModuleNav[]>> = {};
   for (const m of visible) {
@@ -185,6 +187,7 @@ export function Sidebar() {
                   label={m.label}
                   icon={m.icon}
                   railCollapsed={railCollapsed}
+                  badge={m.key === 'approvals' ? approvalsCount : null}
                 />
               ))}
             </SidebarSection>
@@ -301,9 +304,12 @@ interface SidebarLinkProps {
    *  Attendance" and "Kiosk & PINs" on /time-attendance/kiosk. */
   active: boolean;
   railCollapsed: boolean;
+  /** Pending count shown as a gold pill (dot when the rail is collapsed).
+   *  null/0 renders nothing. */
+  badge?: number | null;
 }
 
-function SidebarLink({ to, label, icon: Icon, active, railCollapsed }: SidebarLinkProps) {
+function SidebarLink({ to, label, icon: Icon, active, railCollapsed, badge }: SidebarLinkProps) {
   // Hover + focus prefetch — by the time the user actually clicks, the
   // page's lazy chunk is already warm. onTouchStart covers touch, which
   // fires before the synthetic click.
@@ -333,6 +339,20 @@ function SidebarLink({ to, label, icon: Icon, active, railCollapsed }: SidebarLi
     >
       <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
       {!railCollapsed && <span className="truncate">{label}</span>}
+      {!!badge && !railCollapsed && (
+        <span
+          className="ml-auto shrink-0 min-w-[1.25rem] h-5 px-1.5 grid place-items-center rounded-full bg-gold/15 border border-gold/40 text-gold text-[10px] font-semibold tabular-nums"
+          aria-label={`${badge} pending`}
+        >
+          {badge > 99 ? '99+' : badge}
+        </span>
+      )}
+      {!!badge && railCollapsed && (
+        <span
+          className="absolute top-1 right-1 h-2 w-2 rounded-full bg-gold"
+          aria-label={`${badge} pending`}
+        />
+      )}
     </Link>
   );
 

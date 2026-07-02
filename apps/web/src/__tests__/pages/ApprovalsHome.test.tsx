@@ -6,7 +6,7 @@ import type { TimeOffRequest } from '@alto-people/shared';
 
 // The scheduling panels are integration-tested with the scheduling page;
 // here they'd drag in the whole admin scheduling API surface, so stub them.
-vi.mock('@/pages/scheduling/AdminSchedulingView', () => ({
+vi.mock('@/pages/scheduling/AdminApprovalPanels', () => ({
   AdminSwapsPanel: () => <div data-testid="swaps-panel" />,
   AdminPickupPanel: () => <div data-testid="pickup-panel" />,
   AdminUnconfirmedPanel: () => null,

@@ -10,6 +10,7 @@ import {
   type ModuleNav,
 } from '@/lib/modules';
 import { useAuth } from '@/lib/auth';
+import { useApprovalsCount } from '@/lib/useApprovalsCount';
 import { useI18n, type Lang } from '@/lib/i18n';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { cn } from '@/lib/cn';
@@ -32,6 +33,7 @@ interface MobileNavProps {
 export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProps) {
   const { can } = useAuth();
   const { lang, setLang, t } = useI18n();
+  const approvalsCount = useApprovalsCount();
   const visible = MODULES.filter((m) => can(m.requires));
   const activePath = useActiveNavPath();
   const panelRef = useRef<HTMLElement>(null);
@@ -161,6 +163,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
                     active={activePath === m.path}
                     label={m.label}
                     icon={m.icon}
+                    badge={m.key === 'approvals' ? approvalsCount : null}
                   />
                 ))}
               </div>
@@ -201,9 +204,11 @@ interface MobileLinkProps {
   /** Computed by the parent via useActiveNavPath (longest-prefix wins) —
    *  see SidebarLink for why NavLink's own prefix matching is wrong here. */
   active: boolean;
+  /** Pending count shown as a gold pill. null/0 renders nothing. */
+  badge?: number | null;
 }
 
-function MobileLink({ to, label, icon: Icon, active }: MobileLinkProps) {
+function MobileLink({ to, label, icon: Icon, active, badge }: MobileLinkProps) {
   return (
     <Link
       to={to}
@@ -218,6 +223,14 @@ function MobileLink({ to, label, icon: Icon, active }: MobileLinkProps) {
     >
       <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
       <span className="truncate">{label}</span>
+      {!!badge && (
+        <span
+          className="ml-auto shrink-0 min-w-[1.25rem] h-5 px-1.5 grid place-items-center rounded-full bg-gold/15 border border-gold/40 text-gold text-[10px] font-semibold tabular-nums"
+          aria-label={`${badge} pending`}
+        >
+          {badge > 99 ? '99+' : badge}
+        </span>
+      )}
     </Link>
   );
 }

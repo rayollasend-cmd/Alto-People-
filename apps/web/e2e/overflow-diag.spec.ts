@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 
 /**
  * Horizontal-overflow guard. The shell clips page-level x-overflow (so
@@ -7,23 +7,40 @@ import { test, expect } from '@playwright/test';
  * inside <main> may extend past the viewport unless it lives inside an
  * intentional overflow-x-auto scroller (admin grids, paystub tables).
  *
- * Run per persona: DIAG_USER/DIAG_PASS override the default associate.
+ * Runs per persona: personas see entirely different pages (the original
+ * "swing" bug was admin-only while every associate page was clean), so
+ * a Maria-only guard would let an admin regression ship. DIAG_USER /
+ * DIAG_PASS still override for ad-hoc local runs against other accounts.
  */
 
 test.skip(!process.env.E2E_FULLSTACK, 'needs the API dev server');
 
-const ROUTES = ['/', '/scheduling', '/time-attendance', '/time-off', '/payroll'];
+const PERSONAS = [
+  {
+    name: 'associate',
+    email: process.env.DIAG_USER ?? 'maria.lopez@example.com',
+    pass: process.env.DIAG_PASS ?? 'maria-dev-2026!',
+    routes: ['/', '/scheduling', '/time-attendance', '/time-off', '/payroll'],
+  },
+  {
+    name: 'admin',
+    email: 'admin@altohr.com',
+    pass: 'alto-admin-dev',
+    routes: [
+      '/',
+      '/scheduling',
+      '/time-attendance',
+      '/time-off',
+      '/people',
+      '/payroll',
+      '/approvals',
+    ],
+  },
+];
 
-test('no element escapes the viewport horizontally', async ({ page }) => {
-  await page.goto('/login');
-  const email = process.env.DIAG_USER ?? 'maria.lopez@example.com';
-  const pass = process.env.DIAG_PASS ?? 'maria-dev-2026!';
-  await page.getByLabel(/email/i).fill(email);
-  await page.getByLabel(/password/i).fill(pass);
-  await page.getByRole('button', { name: /sign in/i }).click();
-  await page.waitForTimeout(3000);
-
-  for (const route of ROUTES) {
+async function collectOffenders(page: Page, routes: string[]): Promise<string[]> {
+  const all: string[] = [];
+  for (const route of routes) {
     await page.goto(route);
     await page.waitForTimeout(2000);
     const offenders = await page.evaluate(() => {
@@ -46,6 +63,20 @@ test('no element escapes the viewport horizontally', async ({ page }) => {
       });
       return out.slice(0, 8);
     });
-    expect(offenders, `overflow on ${route}`).toEqual([]);
+    all.push(...offenders.map((o) => `[${route}] ${o}`));
   }
-});
+  return all;
+}
+
+for (const persona of PERSONAS) {
+  test(`no element escapes the viewport horizontally (${persona.name})`, async ({ page }) => {
+    await page.goto('/login');
+    await page.getByLabel(/email/i).fill(persona.email);
+    await page.getByLabel(/password/i).fill(persona.pass);
+    await page.getByRole('button', { name: /sign in/i }).click();
+    await page.waitForTimeout(3000);
+
+    const offenders = await collectOffenders(page, persona.routes);
+    expect(offenders, `overflow as ${persona.name}`).toEqual([]);
+  });
+}
