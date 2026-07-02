@@ -126,7 +126,7 @@ jobs:
       - run: npm -w apps/api exec prisma generate
       # Dev seed (maria.lopez + admin accounts) + a realistic schedule so
       # the associate specs see real content instead of empty states.
-      - run: npm -w apps/api run seed
+      - run: npm -w apps/api run db:seed
       - run: npm -w apps/api exec tsx scripts/seed-demo-shifts.ts
       - run: npm -w apps/web exec playwright install --with-deps chromium
       - name: Start API + web dev servers

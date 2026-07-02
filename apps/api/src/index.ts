@@ -15,6 +15,7 @@ import { startKioskMaintenanceCron } from './lib/kioskMaintenance.js';
 import { startDocumentMaintenanceCron } from './lib/documentMaintenance.js';
 import { startUploadsBackupCron } from './lib/uploadsBackup.js';
 import { startShiftReminderCron } from './lib/shiftReminder.js';
+import { startScheduleDigestCron } from './lib/scheduleDigest.js';
 import { ensureBrandingLoaded } from './lib/branding.js';
 import { preloadPayrollTaxConfig } from './lib/payrollTax.js';
 import { flushPendingAudits } from './lib/audit.js';
@@ -52,6 +53,7 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startDocumentMaintenanceCron();
   startUploadsBackupCron();
   startShiftReminderCron();
+  startScheduleDigestCron();
 
   // Multi-replica safety check. Three independent per-process subsystems
   // assume a single container today: the kiosk PIN rate limiter (brute-

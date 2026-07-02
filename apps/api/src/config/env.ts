@@ -121,6 +121,16 @@ const EnvSchema = z.object({
   // 24h is reminded exactly once — Shift.reminderSentAt is claimed with a
   // guarded update, so overlapping sweeps/replicas can't double-send.
   SHIFT_REMINDER_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(0),
+  // Daily schedule digest to admins (Sling-style morning summary: every
+  // shift today, who's on it, fill/unconfirmed counts). The sweep runs
+  // every N seconds but sends at most once per local day, after
+  // SCHEDULE_DIGEST_HOUR in the deployment timezone. 0 (default)
+  // disables; production should set 900 so the digest lands within
+  // ~15 min of the hour.
+  SCHEDULE_DIGEST_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(0),
+  // Local hour (0-23, deployment timezone) after which the daily digest
+  // may send. Default 6 → admins have it before the first shift.
+  SCHEDULE_DIGEST_HOUR: z.coerce.number().int().min(0).max(23).default(6),
   // Kiosk maintenance cron: auto-closes forgotten clock-outs and purges
   // selfies past their retention window. 0 (default) disables; production
   // should set 3600 (hourly). Thresholds (18h forgotten-shift, 90d selfie
