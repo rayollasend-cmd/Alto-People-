@@ -67,6 +67,9 @@ const shift = (over: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
+  // The view toggle persists to localStorage; clear so every test starts
+  // in the default list view.
+  localStorage.clear();
   vi.mocked(listMyShifts).mockResolvedValue({ shifts: [shift()] as never });
   vi.mocked(getMyCalendarUrl).mockResolvedValue({
     url: 'https://x.test/api/calendar/v1/a/tok.ics',
@@ -217,6 +220,57 @@ describe('<AssociateScheduleView> shift detail', () => {
     await waitFor(() => expect(claimOpenShift).toHaveBeenCalledWith('os1'));
     expect(await screen.findByText('Requested')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /withdraw/i })).toBeInTheDocument();
+  });
+
+  it('week view lists all seven days, flags today, and places the shift', async () => {
+    // In progress (started a minute ago) so it's "upcoming" in every view
+    // no matter what time of day the suite runs.
+    vi.mocked(listMyShifts).mockResolvedValue({
+      shifts: [
+        shift({
+          startsAt: new Date(Date.now() - 60_000).toISOString(),
+          endsAt: new Date(Date.now() + 3 * 3_600_000).toISOString(),
+        }),
+      ] as never,
+    });
+    const user = userEvent.setup();
+    renderView();
+    await screen.findByRole('button', { name: /F&D Morning Shift/ });
+
+    await user.click(screen.getByRole('radio', { name: 'Week' }));
+
+    // Six empty days + the shift on today's row, which carries the marker.
+    expect(screen.getAllByText('No shifts')).toHaveLength(6);
+    expect(screen.getByText(/· Today/)).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /F&D Morning Shift/ }),
+    ).toBeInTheDocument();
+  });
+
+  it('month view opens on the current month with today preselected', async () => {
+    vi.mocked(listMyShifts).mockResolvedValue({
+      shifts: [
+        shift({
+          startsAt: new Date(Date.now() - 60_000).toISOString(),
+          endsAt: new Date(Date.now() + 3 * 3_600_000).toISOString(),
+        }),
+      ] as never,
+    });
+    const user = userEvent.setup();
+    renderView();
+    await screen.findByRole('button', { name: /F&D Morning Shift/ });
+
+    await user.click(screen.getByRole('radio', { name: 'Month' }));
+
+    // Today's cell advertises its shift count and is selected by default,
+    // so the shift card is already visible below the grid.
+    expect(screen.getByRole('button', { name: /1 shift$/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(
+      screen.getByRole('button', { name: /F&D Morning Shift/ }),
+    ).toBeInTheDocument();
   });
 
   it('past shifts do not offer a swap', async () => {
