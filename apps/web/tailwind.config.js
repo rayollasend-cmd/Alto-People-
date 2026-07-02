@@ -101,5 +101,17 @@ export default {
       },
     },
   },
-  plugins: [require('tailwindcss-animate')],
+  plugins: [
+    require('tailwindcss-animate'),
+    // Pointer-type variants. Touch affordances (44px targets, 16px form
+    // text) must key on the INPUT DEVICE, not viewport width — an iPad is
+    // 768-1194px wide (desktop breakpoints) but every tap is a finger.
+    // Pattern: compact base + `coarse:` up-size. Never use `md:`/`sm:` to
+    // shrink a touch concession.
+    require('tailwindcss/plugin')(({ addVariant }) => {
+      addVariant('coarse', '@media (pointer: coarse)');
+      addVariant('fine', '@media (pointer: fine)');
+      addVariant('can-hover', '@media (hover: hover)');
+    }),
+  ],
 };

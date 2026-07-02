@@ -78,7 +78,7 @@ export function SwapMarketplace({
             aria-selected={tab === t}
             onClick={() => setTab(t)}
             className={cn(
-              'px-3 py-2 min-h-11 md:min-h-0 text-sm border-b-2 -mb-px transition capitalize',
+              'px-3 py-2 coarse:min-h-11 text-sm border-b-2 -mb-px transition capitalize',
               tab === t
                 ? 'border-gold text-gold'
                 : 'border-transparent text-silver hover:text-white active:text-white'

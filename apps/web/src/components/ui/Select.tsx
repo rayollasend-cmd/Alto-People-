@@ -32,10 +32,11 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
             'disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-navy-secondary text-white',
             // Touch: 44px tall and 16px text regardless of size — a 32px
             // select with 12px text is both hard to hit and triggers the
-            // iOS focus-zoom. Desktop keeps the compact variants.
+            // iOS focus-zoom. Pointer-keyed so iPads qualify; precise
+            // pointers keep the compact variants.
             sm
-              ? 'h-11 md:h-8 pl-2.5 pr-7 text-base md:text-xs'
-              : 'h-11 md:h-10 pl-3 pr-9 text-base md:text-sm',
+              ? 'h-8 coarse:h-11 pl-2.5 pr-7 text-xs coarse:text-base'
+              : 'h-10 coarse:h-11 pl-3 pr-9 text-sm coarse:text-base',
             invalid && 'border-alert hover:border-alert focus:border-alert focus:ring-alert/40',
             className,
           )}

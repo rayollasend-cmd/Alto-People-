@@ -393,7 +393,7 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
           </p>
           <Link
             to="/scheduling"
-            className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 min-h-11 md:min-h-0"
+            className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 coarse:min-h-11"
           >
             View schedule
             <ArrowRight className="h-3.5 w-3.5" />
@@ -429,7 +429,7 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
         )}
         <Link
           to="/scheduling"
-          className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 min-h-11 md:min-h-0"
+          className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 coarse:min-h-11"
         >
           See full schedule
           <ArrowRight className="h-3.5 w-3.5" />
@@ -493,7 +493,7 @@ function PaystubCard({
         <button
           type="button"
           onClick={onView}
-          className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 min-h-11 md:min-h-0"
+          className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 coarse:min-h-11"
         >
           View pay history
           <ArrowRight className="h-3.5 w-3.5" />
@@ -545,7 +545,7 @@ function TimeOffCard({
           <button
             type="button"
             onClick={onView}
-            className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 min-h-11 md:min-h-0"
+            className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 coarse:min-h-11"
           >
             Open time off
             <ArrowRight className="h-3.5 w-3.5" />
@@ -586,7 +586,7 @@ function TimeOffCard({
         <button
           type="button"
           onClick={onView}
-          className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 min-h-11 md:min-h-0"
+          className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 coarse:min-h-11"
         >
           Request or view balance
           <ArrowRight className="h-3.5 w-3.5" />

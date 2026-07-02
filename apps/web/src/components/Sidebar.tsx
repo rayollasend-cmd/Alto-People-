@@ -322,9 +322,10 @@ function SidebarLink({ to, label, icon: Icon, active, railCollapsed }: SidebarLi
         // F500 cue: thin gold bar on the left of the active item.
         // Pseudo-element sits inside the link so it doesn't shift sibling layout.
         'before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-0.5 before:rounded-r before:bg-gold before:opacity-0 before:transition-opacity',
+        // coarse: taller rows — the sidebar IS the primary nav on iPads.
         railCollapsed
-          ? 'mx-2 h-9 w-9 justify-center'
-          : 'mx-2 gap-2.5 px-3 py-2',
+          ? 'mx-2 h-9 w-9 coarse:h-11 coarse:w-11 justify-center'
+          : 'mx-2 gap-2.5 px-3 py-2 coarse:py-2.5',
         active
           ? 'bg-navy-secondary text-white before:opacity-100'
           : 'text-silver hover:text-white hover:bg-navy-secondary/50',

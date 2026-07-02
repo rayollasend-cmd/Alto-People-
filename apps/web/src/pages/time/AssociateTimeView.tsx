@@ -389,7 +389,7 @@ export function AssociateTimeView() {
                 onChange={(e) =>
                   setHistoryFromYmd(e.target.value || defaultHistoryFromYmd())
                 }
-                className="h-11 md:h-9 text-base md:text-sm rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold w-full sm:w-40"
+                className="h-9 coarse:h-11 text-sm coarse:text-base rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold w-full sm:w-40"
               />
             </div>
             <div>
@@ -403,7 +403,7 @@ export function AssociateTimeView() {
                 onChange={(e) =>
                   setHistoryToYmd(e.target.value || defaultHistoryToYmd())
                 }
-                className="h-11 md:h-9 text-base md:text-sm rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold w-full sm:w-40"
+                className="h-9 coarse:h-11 text-sm coarse:text-base rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold w-full sm:w-40"
               />
             </div>
           </div>

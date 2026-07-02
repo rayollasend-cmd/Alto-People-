@@ -52,7 +52,11 @@ export function PageHeader({
         <Breadcrumb segments={breadcrumbs} />
       )}
       <div className="flex items-end justify-between gap-4 flex-wrap">
-        <div className="min-w-0 flex-1">
+        {/* min-w-[16rem] (not min-w-0): with a long action row, flex-1 +
+            min-w-0 let this block collapse to a sliver — on tablets the
+            subtitle rendered one word per line. Guaranteeing a readable
+            minimum makes the WRAP happen instead (actions drop below). */}
+        <div className="min-w-[16rem] flex-1">
           {/* Editorial serif at hero scale. text-4xl on desktop (was 3xl)
               + the relaxed leading lets Cormorant Garamond's descenders
               breathe; tracking-tight + the brand serif together carry

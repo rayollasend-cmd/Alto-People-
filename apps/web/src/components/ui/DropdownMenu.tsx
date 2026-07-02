@@ -41,7 +41,7 @@ export const DropdownMenuItem = React.forwardRef<
     className={cn(
       // py-1.5 = ~24px tall; fine for mouse but missed on touch. Bump to
       // py-2.5 on touch (no hover capability) so the row clears 44px.
-      'relative flex cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-2.5 md:py-1.5 text-sm outline-none transition-colors',
+      'relative flex cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-1.5 coarse:py-2.5 text-sm outline-none transition-colors',
       'focus:bg-navy-secondary focus:text-white',
       'focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gold-bright',
       'data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
@@ -89,7 +89,7 @@ export const DropdownMenuCheckboxItem = React.forwardRef<
     ref={ref}
     checked={checked}
     className={cn(
-      'relative flex cursor-pointer select-none items-center rounded-sm py-2.5 md:py-1.5 pl-8 pr-2 text-sm outline-none transition-colors',
+      'relative flex cursor-pointer select-none items-center rounded-sm py-1.5 coarse:py-2.5 pl-8 pr-2 text-sm outline-none transition-colors',
       'focus:bg-navy-secondary focus:text-white',
       'data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
       className
