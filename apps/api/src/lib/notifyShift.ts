@@ -42,6 +42,9 @@ export interface NotifyShiftParams {
     | 'swap_manager_rejected';
   /** HR user who triggered the action (null when system-triggered). */
   senderUserId?: string | null;
+  /** In-app deeplink the bell row and push notification open. Defaults
+   *  to /scheduling — every notifyShift event is schedule-related. */
+  linkUrl?: string;
 }
 
 export async function notifyShift(
@@ -56,6 +59,7 @@ export async function notifyShift(
   // their invite, was disabled, or never linked a User.
   if (!user || user.status !== 'ACTIVE') return;
 
+  const linkUrl = params.linkUrl ?? '/scheduling';
   await tx.notification.create({
     data: {
       channel: 'IN_APP',
@@ -66,16 +70,20 @@ export async function notifyShift(
       body: params.body,
       category: params.category,
       senderUserId: params.senderUserId ?? null,
+      linkUrl,
     },
   });
 
   // Email rides the shared pipeline (mute prefs, EMAIL Notification row,
   // Resend). Fire-and-forget: the email must never fail — or wait on —
-  // the scheduling mutation that triggered it.
+  // the scheduling mutation that triggered it. linkUrl flows through to
+  // the push payload so tapping the lock-screen notification lands on
+  // the schedule.
   void emailUserForCategory(user.id, user.email, {
     subject: params.subject,
     body: params.body,
     category: params.category,
+    linkUrl,
   });
 }
 

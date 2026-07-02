@@ -7,8 +7,6 @@ import {
   DollarSign,
   FileText,
   MapPin,
-  Play,
-  Square,
   Timer,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -20,7 +18,7 @@ import type {
 } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
-import { clockIn, clockOut, getActiveTimeEntry, tryGetGeolocation } from '@/lib/timeApi';
+import { getActiveTimeEntry } from '@/lib/timeApi';
 import { listMyShifts } from '@/lib/schedulingApi';
 import { fmtDate, fmtRelativeDayTz, fmtShiftRangeTz, fmtTime } from '@/lib/format';
 import { listMyPayrollItems } from '@/lib/payrollApi';
@@ -32,7 +30,7 @@ import {
   PullToRefreshIndicator,
   usePullToRefresh,
 } from '@/lib/usePullToRefresh';
-import { hapticSuccess, hapticConfirm } from '@/lib/haptics';
+import { hapticConfirm } from '@/lib/haptics';
 import { getPushStatus, subscribeToPush } from '@/lib/push';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { OnboardingBanner } from '@/components/OnboardingBanner';
@@ -55,7 +53,6 @@ export function AssociateDashboard() {
     pay: false,
     timeOff: false,
   });
-  const [clocking, setClocking] = useState(false);
 
   const greetingName =
     user?.email ? user.email.split('@')[0].split('.')[0].replace(/^\w/, (c) => c.toUpperCase()) : 'there';
@@ -100,33 +97,6 @@ export function AssociateDashboard() {
   const pullState = usePullToRefresh(refreshAll);
   const isClockedIn = !!active?.active;
 
-  const handleClockToggle = async () => {
-    if (clocking) return;
-    setClocking(true);
-    try {
-      // Best-effort geo; clock-in/out work without it (geofence on the
-      // server is what enforces presence when configured).
-      const geo = await tryGetGeolocation(3_000);
-      const body = geo ? { geo } : {};
-      if (isClockedIn) {
-        await clockOut(body);
-        hapticSuccess();
-        toast.success('Clocked out.');
-      } else {
-        await clockIn(body);
-        hapticSuccess();
-        toast.success('Clocked in.');
-      }
-      await refreshAll();
-    } catch (err) {
-      toast.error(isClockedIn ? 'Could not clock out.' : 'Could not clock in.', {
-        description: err instanceof Error ? err.message : String(err),
-      });
-    } finally {
-      setClocking(false);
-    }
-  };
-
   return (
     <div className="mx-auto">
       <PullToRefreshIndicator state={pullState} />
@@ -148,12 +118,7 @@ export function AssociateDashboard() {
             className="md:col-span-1"
           />
         ) : (
-          <ClockCard
-            active={active}
-            isClockedIn={isClockedIn}
-            clocking={clocking}
-            onToggle={handleClockToggle}
-          />
+          <ClockCard active={active} isClockedIn={isClockedIn} />
         )}
         {failed.shift ? (
           <LoadFailedCard
@@ -315,11 +280,16 @@ function LoadFailedCard({
 interface ClockCardProps {
   active: ActiveTimeEntryResponse | null | undefined;
   isClockedIn: boolean;
-  clocking: boolean;
-  onToggle: () => void;
 }
 
-function ClockCard({ active, isClockedIn, clocking, onToggle }: ClockCardProps) {
+/**
+ * Live clock STATUS only — associates punch at the worksite kiosk
+ * (company policy, and the API rejects phone punches for the ASSOCIATE
+ * role). This card used to offer a Clock in button that contradicted
+ * the Time page's kiosk-only explainer and could never succeed; now it
+ * mirrors the kiosk state and points at the tablet.
+ */
+function ClockCard({ active, isClockedIn }: ClockCardProps) {
   if (active === undefined) {
     return (
       <Card className="md:col-span-1">
@@ -346,20 +316,15 @@ function ClockCard({ active, isClockedIn, clocking, onToggle }: ClockCardProps) 
         <div className="font-display text-2xl text-white mt-2 leading-tight">
           {isClockedIn ? 'On the clock' : 'Off the clock'}
         </div>
-        {isClockedIn && active?.active && (
+        {isClockedIn && active?.active ? (
           <div className="text-xs text-silver mt-1 tabular-nums">
             Started {fmtTime(active.active.clockInAt)} · {fmtElapsed(active.active.clockInAt)} in
           </div>
+        ) : (
+          <p className="text-xs text-silver/70 mt-1">
+            Punch in with your PIN at the worksite kiosk tablet.
+          </p>
         )}
-        <Button
-          onClick={onToggle}
-          loading={clocking}
-          className="w-full mt-4"
-          variant={isClockedIn ? 'destructive' : 'primary'}
-        >
-          {isClockedIn ? <Square className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-          {isClockedIn ? 'Clock out' : 'Clock in'}
-        </Button>
       </CardContent>
     </Card>
   );

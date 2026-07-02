@@ -104,20 +104,21 @@ describe('<AssociateDashboard>', () => {
     });
   });
 
-  it('shows "Clock in" when not on the clock and calls clockIn on tap', async () => {
-    const user = userEvent.setup();
+  it('shows "Off the clock" with a kiosk hint and no clock button', async () => {
     renderDashboard();
     await waitFor(() => expect(getActiveTimeEntry).toHaveBeenCalled());
 
-    const btn = await screen.findByRole('button', { name: /clock in/i });
-    await user.click(btn);
-
-    await waitFor(() => {
-      expect(clockIn).toHaveBeenCalledTimes(1);
-    });
+    expect(await screen.findByText(/Off the clock/)).toBeInTheDocument();
+    expect(screen.getByText(/worksite kiosk/i)).toBeInTheDocument();
+    // Associates punch at the kiosk only — the dashboard must not offer
+    // an in-app clock button (the API would 403 it anyway).
+    expect(
+      screen.queryByRole('button', { name: /clock (in|out)/i })
+    ).not.toBeInTheDocument();
+    expect(clockIn).not.toHaveBeenCalled();
   });
 
-  it('shows "Clock out" when on the clock and calls clockOut on tap', async () => {
+  it('shows "On the clock" with the kiosk start time when clocked in', async () => {
     vi.mocked(getActiveTimeEntry).mockResolvedValue({
       active: {
         id: 't1',
@@ -141,15 +142,15 @@ describe('<AssociateDashboard>', () => {
         breaks: [],
       } as never,
     });
-    const user = userEvent.setup();
     renderDashboard();
     await waitFor(() => expect(getActiveTimeEntry).toHaveBeenCalled());
 
     expect(await screen.findByText(/On the clock/)).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /clock out/i }));
-    await waitFor(() => {
-      expect(clockOut).toHaveBeenCalledTimes(1);
-    });
+    expect(screen.getByText(/Started/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /clock (in|out)/i })
+    ).not.toBeInTheDocument();
+    expect(clockOut).not.toHaveBeenCalled();
   });
 
   it('renders "Nothing scheduled" when there are no upcoming shifts', async () => {
