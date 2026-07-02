@@ -127,7 +127,13 @@ export function Layout() {
             // scroller. With body locked above, there's no parent to
             // chain to anyway — this is defence in depth and also
             // kills iOS rubber-band on the inner scroller.
-            className="flex-1 overflow-y-auto overscroll-contain p-4 md:p-6 lg:p-8 focus:outline-none pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] md:pl-[max(1.5rem,env(safe-area-inset-left))] md:pr-[max(1.5rem,env(safe-area-inset-right))] lg:pl-[max(2rem,env(safe-area-inset-left))] lg:pr-[max(2rem,env(safe-area-inset-right))]"
+            // overflow-x-clip: overflow-y:auto silently computes
+            // overflow-x to auto, so ANY child 1px wider than the screen
+            // made the whole page pan sideways ("the swing"). Clip forbids
+            // horizontal panning at the page level; legitimately-wide
+            // content (admin grids, paystub tables) lives inside its own
+            // overflow-x-auto wrappers, which still scroll.
+            className="flex-1 overflow-y-auto overflow-x-clip overscroll-contain p-4 md:p-6 lg:p-8 focus:outline-none pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] md:pl-[max(1.5rem,env(safe-area-inset-left))] md:pr-[max(1.5rem,env(safe-area-inset-right))] lg:pl-[max(2rem,env(safe-area-inset-left))] lg:pr-[max(2rem,env(safe-area-inset-right))]"
           >
             <AnimatePresence mode="wait" initial={false}>
               <motion.div

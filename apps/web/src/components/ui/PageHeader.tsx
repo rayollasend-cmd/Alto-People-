@@ -75,7 +75,11 @@ export function PageHeader({
           )}
         </div>
         {(primaryAction || secondaryActions) && (
-          <div className="flex flex-wrap gap-2 items-center shrink-0">
+          // max-w-full (NOT shrink-0): as an unshrinkable flex item this
+          // row sat at its one-line max-content width — wider than a
+          // phone — and made the whole page pannable sideways. Constrained
+          // to the container, the internal flex-wrap actually wraps.
+          <div className="flex flex-wrap gap-2 items-center min-w-0 max-w-full">
             {secondaryActions}
             {primaryAction}
           </div>
