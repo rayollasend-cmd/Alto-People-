@@ -354,6 +354,7 @@ model User {
   inviteTokens                      InviteToken[]
   passwordResetTokens               PasswordResetToken[]
   mfaRecoveryCodes                  MfaRecoveryCode[]
+  pushSubscriptions                 PushSubscription[]
   notificationPreferences           NotificationPreference[]
   emailChangeRequests               EmailChangeRequest[]
   createdEsignAgreements            EsignAgreement[]              @relation("EsignAgreementCreator")
@@ -1482,6 +1483,23 @@ model AssociateAvailability {
   updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
 
   @@index([associateId, dayOfWeek])
+}
+
+// Web-push subscription — one row per (user, browser/device). The endpoint
+// is the delivery address minted by the browser's push service; p256dh/auth
+// encrypt each payload to exactly this device. Dead endpoints (404/410 on
+// send) are pruned by the sender. Cascade with the user account.
+model PushSubscription {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @db.Uuid
+  endpoint  String   @unique @db.VarChar(1000)
+  p256dh    String   @db.VarChar(300)
+  auth      String   @db.VarChar(100)
+  userAgent String?  @db.VarChar(300)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 // One-off "can't work this day" exception, layered over the weekly
