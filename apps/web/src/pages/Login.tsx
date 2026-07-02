@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Lock, Mail, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
+import { useI18n } from '@/lib/i18n';
 import { ApiError, NetworkError } from '@/lib/api';
 import { useFocusFirstError } from '@/lib/useFocusFirstError';
 import { Button } from '@/components/ui/Button';
@@ -19,6 +20,7 @@ const DEFAULT_DEV_EMAIL = import.meta.env.DEV ? 'admin@altohr.com' : '';
 type Step = 'password' | 'mfa';
 
 export function Login() {
+  const { t } = useI18n();
   const { signIn, submitMfaChallenge } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -53,16 +55,16 @@ export function Login() {
       navigate(from, { replace: true });
     } catch (err) {
       if (err instanceof NetworkError) {
-        setError('Network error — check your connection and try again.');
+        setError(t('login.errNetwork'));
       } else if (err instanceof ApiError && err.status === 429) {
-        setError('Too many login attempts. Please wait a minute and try again.');
+        setError(t('login.errRateLimited'));
       } else if (err instanceof ApiError && err.status >= 500) {
         // Don't blame the user's credentials for a server-side fault — most
         // commonly a transient DB cold-start from Neon. Telling them their
         // password is wrong sends them to the reset flow for no reason.
-        setError("We're having trouble signing you in. Please try again in a moment.");
+        setError(t('login.errServer'));
       } else {
-        setError('Invalid email or password.');
+        setError(t('login.errInvalid'));
       }
     } finally {
       setSubmitting(false);
@@ -119,14 +121,14 @@ export function Login() {
             noValidate
           >
             <h2 className="font-display text-2xl md:text-3xl text-white mb-1">
-              Sign in
+              {t('login.title')}
             </h2>
             <p className="text-silver text-sm mb-6">
-              Use your Alto HR credentials.
+              {t('login.subtitle')}
             </p>
 
             <div className="space-y-4">
-              <Field label="Email" required>
+              <Field label={t('login.email')} required>
                 {(p) => (
                   <div className="relative">
                     <Mail
@@ -148,13 +150,13 @@ export function Login() {
               <div>
                 <div className="flex items-baseline justify-between gap-2">
                   <Label htmlFor="login-password" required>
-                    Password
+                    {t('login.password')}
                   </Label>
                   <Link
                     to="/forgot-password"
                     className="text-xs text-silver hover:text-gold-bright transition-colors"
                   >
-                    Forgot password?
+                    {t('login.forgot')}
                   </Link>
                 </div>
                 <div className="relative">
@@ -170,7 +172,7 @@ export function Login() {
                     className="pl-9"
                   />
                 </div>
-                <FormHint>Minimum 12 characters.</FormHint>
+                <FormHint>{t('login.minChars')}</FormHint>
               </div>
             </div>
 
@@ -183,12 +185,12 @@ export function Login() {
               loading={submitting}
               className="w-full mt-6"
             >
-              {submitting ? 'Signing in…' : 'Sign in'}
+              {submitting ? t('login.signingIn') : t('login.signIn')}
             </Button>
 
             <div className="mt-6 flex items-center justify-center gap-1.5 text-[10px] uppercase tracking-widest text-silver/70">
               <ShieldCheck className="h-3 w-3" aria-hidden="true" />
-              Secured by Alto HR
+              {t('login.securedBy')}
             </div>
 
             {import.meta.env.DEV && (
@@ -276,7 +278,7 @@ export function Login() {
 
             <div className="mt-6 flex items-center justify-center gap-1.5 text-[10px] uppercase tracking-widest text-silver/70">
               <ShieldCheck className="h-3 w-3" aria-hidden="true" />
-              Secured by Alto HR
+              {t('login.securedBy')}
             </div>
           </form>
         )}

@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 import type { PayrollItem, PayrollItemEarning } from '@alto-people/shared';
 import { downloadMyPaystub, listMyPayrollItems } from '@/lib/payrollApi';
 import { ApiError } from '@/lib/api';
+import { useI18n, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import { dayHeading, groupByDayBy } from '@/lib/dayGroup';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -21,35 +22,36 @@ import { ChevronDown, ChevronRight, Download, Wallet } from 'lucide-react';
 const fmtMoney = (n: number) =>
   n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 
-const KIND_LABEL: Record<PayrollItemEarning['kind'], string> = {
-  REGULAR: 'Regular',
-  OVERTIME: 'Overtime',
-  DOUBLE_TIME: 'Double time',
-  HOLIDAY: 'Holiday',
-  SICK: 'Sick',
-  VACATION: 'Vacation',
-  BONUS: 'Bonus',
-  COMMISSION: 'Commission',
-  TIPS: 'Tips',
-  REIMBURSEMENT: 'Reimbursement (non-taxable)',
+const KIND_KEY: Record<PayrollItemEarning['kind'], MessageKey> = {
+  REGULAR: 'pay.kind.REGULAR',
+  OVERTIME: 'pay.kind.OVERTIME',
+  DOUBLE_TIME: 'pay.kind.DOUBLE_TIME',
+  HOLIDAY: 'pay.kind.HOLIDAY',
+  SICK: 'pay.kind.SICK',
+  VACATION: 'pay.kind.VACATION',
+  BONUS: 'pay.kind.BONUS',
+  COMMISSION: 'pay.kind.COMMISSION',
+  TIPS: 'pay.kind.TIPS',
+  REIMBURSEMENT: 'pay.kind.REIMBURSEMENT',
 };
 
-function statusBadge(status: PayrollItem['status']): { label: string; cls: string } {
+function statusBadge(status: PayrollItem['status']): { labelKey: MessageKey; cls: string } {
   switch (status) {
     case 'PENDING':
-      return { label: 'Pending', cls: 'bg-silver/10 text-silver border-silver/30' };
+      return { labelKey: 'pay.status.PENDING', cls: 'bg-silver/10 text-silver border-silver/30' };
     case 'DISBURSED':
-      return { label: 'Paid', cls: 'bg-success/15 text-success border-success/30' };
+      return { labelKey: 'pay.status.DISBURSED', cls: 'bg-success/15 text-success border-success/30' };
     case 'FAILED':
-      return { label: 'Failed', cls: 'bg-alert/15 text-alert border-alert/30' };
+      return { labelKey: 'pay.status.FAILED', cls: 'bg-alert/15 text-alert border-alert/30' };
     case 'HELD':
-      return { label: 'Held', cls: 'bg-gold/20 text-gold border-gold/40' };
+      return { labelKey: 'pay.status.HELD', cls: 'bg-gold/20 text-gold border-gold/40' };
     case 'VOIDED':
-      return { label: 'Voided', cls: 'bg-alert/10 text-alert/80 border-alert/20' };
+      return { labelKey: 'pay.status.VOIDED', cls: 'bg-alert/10 text-alert/80 border-alert/20' };
   }
 }
 
 export function AssociatePayrollView() {
+  const { t } = useI18n();
   const [items, setItems] = useState<PayrollItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -60,10 +62,10 @@ export function AssociatePayrollView() {
         const res = await listMyPayrollItems();
         setItems(res.items);
       } catch (err) {
-        setError(err instanceof ApiError ? err.message : 'Failed to load.');
+        setError(err instanceof ApiError ? err.message : t('pay.loadFailed'));
       }
     })();
-  }, []);
+  }, [t]);
 
   const toggle = (id: string) => {
     setExpanded((prev) => {
@@ -77,8 +79,8 @@ export function AssociatePayrollView() {
   return (
     <div className="mx-auto">
       <PageHeader
-        title="My pay"
-        subtitle="Recent paystubs with year-to-date totals."
+        title={t('pay.title')}
+        subtitle={t('pay.subtitle')}
       />
 
       {error && (
@@ -90,8 +92,8 @@ export function AssociatePayrollView() {
       {items && items.length === 0 && (
         <EmptyState
           icon={Wallet}
-          title="No paystubs yet"
-          description="Your first paystub will appear here after payroll runs for a period you worked."
+          title={t('pay.noPaystubs')}
+          description={t('pay.noPaystubsDesc')}
         />
       )}
 
@@ -106,7 +108,7 @@ export function AssociatePayrollView() {
           <div className="space-y-3">
             {pending.length > 0 && (
               <PaystubGroup
-                heading={`Pending (${pending.length})`}
+                heading={t('pay.pendingCount', { count: pending.length })}
                 items={pending}
                 allItems={items}
                 expanded={expanded}
@@ -147,6 +149,7 @@ function PaystubGroup({
   onToggle: (id: string) => void;
   defaultOpen?: boolean;
 }) {
+  const { t } = useI18n();
   return (
     <details
       open={defaultOpen}
@@ -156,7 +159,9 @@ function PaystubGroup({
         <ChevronRight className="chev h-4 w-4 text-silver/70 transition-transform" />
         <span className="font-medium text-white">{heading}</span>
         <span className="ml-auto text-silver/70">
-          {items.length} paystub{items.length === 1 ? '' : 's'}
+          {items.length === 1
+            ? t('pay.paystubWord', { count: items.length })
+            : t('pay.paystubWordPlural', { count: items.length })}
         </span>
       </summary>
       <ul className="space-y-3 p-3 pt-0">
@@ -185,6 +190,7 @@ function PaystubCard({
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useI18n();
   const badge = statusBadge(item.status);
   const ytd = useMemo(() => computeYtd(item, allItems), [item, allItems]);
   const [downloading, setDownloading] = useState(false);
@@ -195,7 +201,7 @@ function PaystubCard({
     try {
       await downloadMyPaystub(item.id);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Download failed.');
+      toast.error(err instanceof Error ? err.message : t('pay.downloadFailed'));
     } finally {
       setDownloading(false);
     }
@@ -215,7 +221,10 @@ function PaystubCard({
             <ChevronRight className="h-4 w-4 text-silver/70 shrink-0" />
           )}
           <div className="flex-1 text-sm text-silver">
-            {item.hoursWorked.toFixed(2)} hrs · {fmtMoney(item.hourlyRate)}/hr
+            {t('pay.hrsAtRate', {
+              hours: item.hoursWorked.toFixed(2),
+              rate: fmtMoney(item.hourlyRate),
+            })}
           </div>
           <span
             className={cn(
@@ -223,24 +232,24 @@ function PaystubCard({
               badge.cls
             )}
           >
-            {badge.label}
+            {t(badge.labelKey)}
           </span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm pl-7">
           <div>
-            <div className="text-xs uppercase tracking-widest text-silver/70">Gross</div>
+            <div className="text-xs uppercase tracking-widest text-silver/70">{t('pay.gross')}</div>
             <div className="text-white tabular-nums">{fmtMoney(item.grossPay)}</div>
           </div>
           <div>
             <div className="text-xs uppercase tracking-widest text-silver/70">
-              {item.postTaxDeductions > 0 ? 'Tax + post-tax' : 'Taxes'}
+              {item.postTaxDeductions > 0 ? t('pay.taxPlusPostTax') : t('pay.taxes')}
             </div>
             <div className="text-white tabular-nums">
               −{fmtMoney(item.federalWithholding + item.fica + item.medicare + item.stateWithholding + item.postTaxDeductions)}
             </div>
           </div>
           <div>
-            <div className="text-xs uppercase tracking-widest text-gold">Net</div>
+            <div className="text-xs uppercase tracking-widest text-gold">{t('pay.net')}</div>
             <div className="font-display text-xl text-gold tabular-nums">
               {fmtMoney(item.netPay)}
             </div>
@@ -250,9 +259,9 @@ function PaystubCard({
 
       {expanded && (
         <div className="border-t border-navy-secondary p-4 space-y-5 text-xs">
-          <Section title="Earnings">
+          <Section title={t('pay.earnings')}>
             <PaystubTable
-              headers={['', 'Hours', 'Rate', 'Current', 'YTD']}
+              headers={['', t('pay.colHours'), t('pay.colRate'), t('pay.colCurrent'), t('pay.colYtd')]}
               rows={(item.earnings.length > 0
                 ? item.earnings
                 : [
@@ -269,37 +278,37 @@ function PaystubCard({
               ).map((e) => ({
                 key: e.id,
                 cells: [
-                  KIND_LABEL[e.kind],
+                  t(KIND_KEY[e.kind]),
                   e.hours == null ? '—' : e.hours.toFixed(2),
                   e.rate == null ? '—' : fmtMoney(e.rate),
                   fmtMoney(e.amount),
                   fmtMoney(ytd.byKind.get(e.kind) ?? e.amount),
                 ],
               }))}
-              footer={['Gross pay', '', '', fmtMoney(item.grossPay), fmtMoney(ytd.gross)]}
+              footer={[t('pay.grossPay'), '', '', fmtMoney(item.grossPay), fmtMoney(ytd.gross)]}
             />
           </Section>
 
-          <Section title="Deductions">
+          <Section title={t('pay.deductions')}>
             <PaystubTable
-              headers={['', '', '', 'Current', 'YTD']}
+              headers={['', '', '', t('pay.colCurrent'), t('pay.colYtd')]}
               rows={[
                 {
                   key: 'fit',
-                  cells: ['Federal income tax', '', '', `−${fmtMoney(item.federalWithholding)}`, `−${fmtMoney(ytd.fit)}`],
+                  cells: [t('pay.fedIncomeTax'), '', '', `−${fmtMoney(item.federalWithholding)}`, `−${fmtMoney(ytd.fit)}`],
                 },
                 {
                   key: 'fica',
-                  cells: ['Social Security (FICA)', '', '', `−${fmtMoney(item.fica)}`, `−${fmtMoney(ytd.fica)}`],
+                  cells: [t('pay.socialSecurity'), '', '', `−${fmtMoney(item.fica)}`, `−${fmtMoney(ytd.fica)}`],
                 },
                 {
                   key: 'medicare',
-                  cells: ['Medicare', '', '', `−${fmtMoney(item.medicare)}`, `−${fmtMoney(ytd.medicare)}`],
+                  cells: [t('pay.medicare'), '', '', `−${fmtMoney(item.medicare)}`, `−${fmtMoney(ytd.medicare)}`],
                 },
                 {
                   key: 'sit',
                   cells: [
-                    `State income tax${item.taxState ? ` (${item.taxState})` : ''}`,
+                    `${t('pay.stateIncomeTax')}${item.taxState ? ` (${item.taxState})` : ''}`,
                     '',
                     '',
                     `−${fmtMoney(item.stateWithholding)}`,
@@ -311,7 +320,7 @@ function PaystubCard({
                       {
                         key: 'posttax',
                         cells: [
-                          'Garnishments / post-tax',
+                          t('pay.garnishments'),
                           '',
                           '',
                           `−${fmtMoney(item.postTaxDeductions)}`,
@@ -322,7 +331,7 @@ function PaystubCard({
                   : []),
               ]}
               footer={[
-                'Total deductions',
+                t('pay.totalDeductions'),
                 '',
                 '',
                 `−${fmtMoney(item.federalWithholding + item.fica + item.medicare + item.stateWithholding + item.postTaxDeductions)}`,
@@ -331,44 +340,46 @@ function PaystubCard({
             />
           </Section>
 
-          <Section title="Employer contributions (informational)">
+          <Section title={t('pay.employerContrib')}>
             <PaystubTable
-              headers={['', '', '', 'Current', 'YTD']}
+              headers={['', '', '', t('pay.colCurrent'), t('pay.colYtd')]}
               rows={[
                 {
                   key: 'efica',
-                  cells: ['Employer FICA match', '', '', fmtMoney(item.employerFica), fmtMoney(ytd.empFica)],
+                  cells: [t('pay.employerFica'), '', '', fmtMoney(item.employerFica), fmtMoney(ytd.empFica)],
                 },
                 {
                   key: 'emed',
-                  cells: ['Employer Medicare match', '', '', fmtMoney(item.employerMedicare), fmtMoney(ytd.empMed)],
+                  cells: [t('pay.employerMedicare'), '', '', fmtMoney(item.employerMedicare), fmtMoney(ytd.empMed)],
                 },
                 {
                   key: 'futa',
-                  cells: ['Federal unemployment (FUTA)', '', '', fmtMoney(item.employerFuta), fmtMoney(ytd.futa)],
+                  cells: [t('pay.futa'), '', '', fmtMoney(item.employerFuta), fmtMoney(ytd.futa)],
                 },
                 {
                   key: 'suta',
-                  cells: ['State unemployment (SUTA)', '', '', fmtMoney(item.employerSuta), fmtMoney(ytd.suta)],
+                  cells: [t('pay.suta'), '', '', fmtMoney(item.employerSuta), fmtMoney(ytd.suta)],
                 },
               ]}
             />
           </Section>
 
           <div className="flex items-center justify-between rounded border border-gold/30 bg-gold/5 p-3">
-            <span className="text-xs uppercase tracking-widest text-gold">Net pay</span>
+            <span className="text-xs uppercase tracking-widest text-gold">{t('pay.netPay')}</span>
             <div className="text-right">
               <div className="font-display text-2xl text-gold tabular-nums">
                 {fmtMoney(item.netPay)}
               </div>
               <div className="text-[10px] uppercase tracking-wide text-silver/70">
-                YTD net {fmtMoney(ytd.net)}
+                {t('pay.ytdNet', { amount: fmtMoney(ytd.net) })}
               </div>
             </div>
           </div>
 
           {item.disbursementRef && (
-            <div className="text-xs text-silver/70">Disbursement ref: {item.disbursementRef}</div>
+            <div className="text-xs text-silver/70">
+              {t('pay.disbursementRef', { ref: item.disbursementRef })}
+            </div>
           )}
           {item.failureReason && (
             <div className="text-xs text-alert">{item.failureReason}</div>
@@ -382,7 +393,7 @@ function PaystubCard({
               loading={downloading}
             >
               <Download className="h-3.5 w-3.5" />
-              Download PDF
+              {t('pay.downloadPdf')}
             </Button>
           </div>
         </div>

@@ -1,5 +1,6 @@
 import { ScanLine } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
+import { useI18n } from '@/lib/i18n';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { AssociateTimeView } from './AssociateTimeView';
 import { AdminTimeView } from './AdminTimeView';
@@ -43,22 +44,20 @@ export function TimeHome() {
 }
 
 function AssociateKioskOnlyView() {
+  const { t } = useI18n();
   return (
     <div className="mx-auto">
       <PageHeader
-        title="Time & Attendance"
-        subtitle="Clock in at the worksite kiosk."
+        title={t('time.title')}
+        subtitle={t('time.subtitle')}
       />
       <div className="rounded-lg border border-navy-secondary bg-navy/40 p-8 text-center">
         <ScanLine className="mx-auto h-10 w-10 text-gold mb-4" />
         <h2 className="text-white text-lg font-medium mb-2">
-          Use the time-clock tablet at your worksite
+          {t('time.kioskHeading')}
         </h2>
         <p className="text-silver text-sm leading-relaxed max-w-md mx-auto">
-          Hourly associates clock in and out using the kiosk tablet
-          installed at your site, not from a personal phone. Tap your
-          4-digit PIN, take the selfie, and you're punched in. Ask your
-          manager if you don't know your PIN yet.
+          {t('time.kioskBody')}
         </p>
       </div>
     </div>

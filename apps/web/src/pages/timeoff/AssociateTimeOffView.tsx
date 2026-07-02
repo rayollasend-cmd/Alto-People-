@@ -13,6 +13,7 @@ import {
   listMyRequests,
 } from '@/lib/timeOffApi';
 import { ApiError } from '@/lib/api';
+import { useI18n, type MessageKey } from '@/lib/i18n';
 import { Button } from '@/components/ui/Button';
 import { PageHeader } from '@/components/ui/PageHeader';
 import {
@@ -39,13 +40,13 @@ import { Badge } from '@/components/ui/Badge';
 
 type Category = TimeOffCategory;
 
-const CATEGORY_LABELS: Record<Category, string> = {
-  SICK: 'Sick',
-  VACATION: 'Vacation',
-  PTO: 'PTO',
-  BEREAVEMENT: 'Bereavement',
-  JURY_DUTY: 'Jury duty',
-  OTHER: 'Other',
+const CATEGORY_KEYS: Record<Category, MessageKey> = {
+  SICK: 'timeoff.cat.SICK',
+  VACATION: 'timeoff.cat.VACATION',
+  PTO: 'timeoff.cat.PTO',
+  BEREAVEMENT: 'timeoff.cat.BEREAVEMENT',
+  JURY_DUTY: 'timeoff.cat.JURY_DUTY',
+  OTHER: 'timeoff.cat.OTHER',
 };
 
 function fmtHours(minutes: number): string {
@@ -59,6 +60,7 @@ function fmtDate(iso: string): string {
 }
 
 export function AssociateTimeOffView() {
+  const { t } = useI18n();
   const [balances, setBalances] = useState<TimeOffBalance[] | null>(null);
   const [requests, setRequests] = useState<TimeOffRequest[] | null>(null);
   const [openCreate, setOpenCreate] = useState(false);
@@ -75,11 +77,11 @@ export function AssociateTimeOffView() {
         setRequests([]);
         return;
       }
-      toast.error('Could not load time-off data', {
+      toast.error(t('timeoff.loadFailed'), {
         description: err instanceof Error ? err.message : String(err),
       });
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     refresh();
@@ -88,10 +90,10 @@ export function AssociateTimeOffView() {
   const onCancel = async (id: string) => {
     try {
       await cancelMyRequest(id);
-      toast.success('Request withdrawn');
+      toast.success(t('timeoff.withdrawnToast'));
       refresh();
     } catch (err) {
-      toast.error('Could not cancel', {
+      toast.error(t('timeoff.cancelFailed'), {
         description: err instanceof Error ? err.message : String(err),
       });
     }
@@ -100,12 +102,12 @@ export function AssociateTimeOffView() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Time off"
-        subtitle="Submit a request, see your balance, track approvals."
+        title={t('timeoff.title')}
+        subtitle={t('timeoff.subtitle')}
         primaryAction={
           <Button onClick={() => setOpenCreate(true)}>
             <Plus className="h-4 w-4" />
-            Request time off
+            {t('timeoff.request')}
           </Button>
         }
       />
@@ -114,16 +116,16 @@ export function AssociateTimeOffView() {
 
       <Card>
         <CardHeader>
-          <CardTitle>My requests</CardTitle>
-          <CardDescription>Most recent first</CardDescription>
+          <CardTitle>{t('timeoff.myRequests')}</CardTitle>
+          <CardDescription>{t('timeoff.mostRecentFirst')}</CardDescription>
         </CardHeader>
         <CardContent>
           {!requests && <SkeletonRows count={3} />}
           {requests && requests.length === 0 && (
             <EmptyState
               icon={CalendarOff}
-              title="No requests yet"
-              description="Submit one with the button above. HR will be notified."
+              title={t('timeoff.noRequests')}
+              description={t('timeoff.noRequestsDesc')}
             />
           )}
           {requests && requests.length > 0 && (
@@ -136,7 +138,7 @@ export function AssociateTimeOffView() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-white font-medium">
-                        {CATEGORY_LABELS[r.category]} · {fmtHours(r.requestedMinutes)}
+                        {t(CATEGORY_KEYS[r.category])} · {fmtHours(r.requestedMinutes)}
                       </span>
                       <StatusBadge status={r.status} />
                     </div>
@@ -151,7 +153,11 @@ export function AssociateTimeOffView() {
                     )}
                     {r.reviewerNote && (
                       <div className="text-xs text-silver mt-1">
-                        <span className="text-silver/70">Note from {r.reviewerEmail ?? 'HR'}:</span>{' '}
+                        <span className="text-silver/70">
+                          {t('timeoff.noteFrom', {
+                            who: r.reviewerEmail ?? t('timeoff.hr'),
+                          })}
+                        </span>{' '}
                         {r.reviewerNote}
                       </div>
                     )}
@@ -162,7 +168,7 @@ export function AssociateTimeOffView() {
                       variant="ghost"
                       onClick={() => onCancel(r.id)}
                     >
-                      Withdraw
+                      {t('timeoff.withdraw')}
                     </Button>
                   )}
                 </li>
@@ -185,6 +191,7 @@ export function AssociateTimeOffView() {
 }
 
 function BalanceGrid({ balances }: { balances: TimeOffBalance[] | null }) {
+  const { t } = useI18n();
   if (!balances) {
     return (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -200,8 +207,8 @@ function BalanceGrid({ balances }: { balances: TimeOffBalance[] | null }) {
         <CardContent className="py-6">
           <EmptyState
             icon={Wallet}
-            title="No accrued balance yet"
-            description="Sick-leave hours accrue automatically as you work. Other categories start at 0 and are added by HR."
+            title={t('timeoff.noBalance')}
+            description={t('timeoff.noBalanceDesc')}
           />
         </CardContent>
       </Card>
@@ -213,12 +220,12 @@ function BalanceGrid({ balances }: { balances: TimeOffBalance[] | null }) {
         <Card key={b.category}>
           <CardContent className="py-4">
             <div className="text-[10px] uppercase tracking-widest text-silver">
-              {CATEGORY_LABELS[b.category]}
+              {t(CATEGORY_KEYS[b.category])}
             </div>
             <div className="text-2xl text-white font-display mt-1 tabular-nums">
               {fmtHours(b.balanceMinutes)}
             </div>
-            <div className="text-xs text-silver/70 mt-0.5">available</div>
+            <div className="text-xs text-silver/70 mt-0.5">{t('timeoff.available')}</div>
           </CardContent>
         </Card>
       ))}
@@ -227,10 +234,14 @@ function BalanceGrid({ balances }: { balances: TimeOffBalance[] | null }) {
 }
 
 function StatusBadge({ status }: { status: TimeOffRequest['status'] }) {
-  if (status === 'APPROVED') return <Badge variant="success">Approved</Badge>;
-  if (status === 'DENIED') return <Badge variant="destructive">Denied</Badge>;
-  if (status === 'CANCELLED') return <Badge variant="outline">Withdrawn</Badge>;
-  return <Badge variant="pending">Pending</Badge>;
+  const { t } = useI18n();
+  if (status === 'APPROVED')
+    return <Badge variant="success">{t('timeoff.status.APPROVED')}</Badge>;
+  if (status === 'DENIED')
+    return <Badge variant="destructive">{t('timeoff.status.DENIED')}</Badge>;
+  if (status === 'CANCELLED')
+    return <Badge variant="outline">{t('timeoff.status.CANCELLED')}</Badge>;
+  return <Badge variant="pending">{t('timeoff.status.PENDING')}</Badge>;
 }
 
 interface CreateProps {
@@ -240,6 +251,7 @@ interface CreateProps {
 }
 
 function CreateRequestDialog({ open, onOpenChange, onCreated }: CreateProps) {
+  const { t } = useI18n();
   const [category, setCategory] = useState<Category>('VACATION');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -257,12 +269,12 @@ function CreateRequestDialog({ open, onOpenChange, onCreated }: CreateProps) {
 
   const submit = async () => {
     if (!startDate || !endDate) {
-      toast.error('Pick a start and end date');
+      toast.error(t('timeoff.pickDates'));
       return;
     }
     const h = Number(hours);
     if (!Number.isFinite(h) || h <= 0) {
-      toast.error('Hours must be greater than 0');
+      toast.error(t('timeoff.hoursPositive'));
       return;
     }
     setSubmitting(true);
@@ -274,11 +286,11 @@ function CreateRequestDialog({ open, onOpenChange, onCreated }: CreateProps) {
         hours: h,
         reason: reason.trim() || undefined,
       });
-      toast.success('Request submitted');
+      toast.success(t('timeoff.submittedToast'));
       reset();
       onCreated();
     } catch (err) {
-      toast.error('Could not submit', {
+      toast.error(t('timeoff.submitFailed'), {
         description: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -290,23 +302,23 @@ function CreateRequestDialog({ open, onOpenChange, onCreated }: CreateProps) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Request time off</DialogTitle>
+          <DialogTitle>{t('timeoff.request')}</DialogTitle>
           <DialogDescription>
-            HR will see your request immediately. You'll be notified when it's reviewed.
+            {t('timeoff.dialogDesc')}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
-          <Field label="Category">
+          <Field label={t('timeoff.category')}>
             {(p) => (
               <Select
                 value={category}
                 onChange={(e) => setCategory(e.target.value as Category)}
                 {...p}
               >
-                {(Object.keys(CATEGORY_LABELS) as Category[]).map((c) => (
+                {(Object.keys(CATEGORY_KEYS) as Category[]).map((c) => (
                   <option key={c} value={c}>
-                    {CATEGORY_LABELS[c]}
+                    {t(CATEGORY_KEYS[c])}
                   </option>
                 ))}
               </Select>
@@ -316,7 +328,7 @@ function CreateRequestDialog({ open, onOpenChange, onCreated }: CreateProps) {
           {/* Stack the date pair on phones — two native date inputs
               side-by-side don't fit inside the 360px bottom sheet. */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Field label="Start date" required>
+            <Field label={t('timeoff.startDate')} required>
               {(p) => (
                 <Input
                   type="date"
@@ -326,7 +338,7 @@ function CreateRequestDialog({ open, onOpenChange, onCreated }: CreateProps) {
                 />
               )}
             </Field>
-            <Field label="End date" required>
+            <Field label={t('timeoff.endDate')} required>
               {(p) => (
                 <Input
                   type="date"
@@ -340,9 +352,9 @@ function CreateRequestDialog({ open, onOpenChange, onCreated }: CreateProps) {
           </div>
 
           <Field
-            label="Total hours"
+            label={t('timeoff.totalHours')}
             required
-            hint="Half-hour granularity. 8 = a full work day."
+            hint={t('timeoff.totalHoursHint')}
           >
             {(p) => (
               <Input
@@ -356,14 +368,14 @@ function CreateRequestDialog({ open, onOpenChange, onCreated }: CreateProps) {
             )}
           </Field>
 
-          <Field label="Reason (optional)">
+          <Field label={t('timeoff.reasonOptional')}>
             {(p) => (
               <Input
                 type="text"
                 maxLength={500}
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
-                placeholder="Family event, doctor visit, etc."
+                placeholder={t('timeoff.reasonPlaceholder')}
                 {...p}
               />
             )}
@@ -372,10 +384,10 @@ function CreateRequestDialog({ open, onOpenChange, onCreated }: CreateProps) {
 
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button onClick={submit} loading={submitting}>
-            Submit
+            {t('timeoff.submit')}
           </Button>
         </DialogFooter>
       </DialogContent>
