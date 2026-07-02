@@ -65,7 +65,12 @@ export function Avatar({
   return (
     <span
       className={cn(
-        'inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full font-medium text-white select-none',
+        // text-[#fff], not text-white: the PALETTE fills are fixed dark
+        // tints in BOTH themes, and the global light-mode remap flips
+        // `.text-white` to a dark foreground — which would render the
+        // initials near-invisible on these dark fills. The arbitrary
+        // value escapes the remap so initials stay white in both themes.
+        'inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full font-medium text-[#fff] select-none',
         SIZE_CLASS[size],
         ringed && 'ring-2 ring-navy ring-offset-0',
         // Background only shown when the image isn't covering it.

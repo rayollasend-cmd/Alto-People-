@@ -774,10 +774,10 @@ function TimeChip({
       {clippedAtBottom && (
         <div
           aria-hidden
-          className="absolute bottom-0 left-0 right-0 h-3.5 bg-gradient-to-t from-black/45 to-transparent flex items-end justify-center pointer-events-none"
+          className="absolute bottom-0 left-0 right-0 h-3.5 bg-gradient-to-t from-navy/80 to-transparent flex items-end justify-center pointer-events-none"
           title="Continues overnight"
         >
-          <span className="text-[8px] leading-none text-white/80 mb-0.5">⌄ overnight</span>
+          <span className="text-[8px] leading-none text-white mb-0.5">⌄ overnight</span>
         </div>
       )}
       {!compact && (

@@ -1428,7 +1428,7 @@ function RunStatusStepper({
               <span
                 className={cn(
                   'inline-flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-medium transition-colors',
-                  reached ? 'bg-gold text-black' : 'bg-silver/10 text-silver/70',
+                  reached ? 'bg-gold text-navy' : 'bg-silver/10 text-silver/70',
                   current && 'ring-2 ring-gold/30 ring-offset-2 ring-offset-navy'
                 )}
               >

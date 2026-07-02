@@ -1113,7 +1113,7 @@ function Step4({
       </div>
 
       {preview && taxBreakdown && (
-        <div className="rounded border border-silver/20 bg-black/20 p-3 text-xs">
+        <div className="rounded border border-silver/20 bg-black/30 p-3 text-xs">
           <div className="font-medium uppercase tracking-wide text-silver/80 mb-2">
             Withholding breakdown (employee side)
           </div>

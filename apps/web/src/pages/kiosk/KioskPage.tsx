@@ -1390,13 +1390,21 @@ function SelfieCapture({
             the oval does the positioning work — associates learn where to
             stand after a punch or two, which keeps face-match quality up
             (and the admin review queue quiet) without slowing the line. */}
+        {/* bg-[rgba(...)] (not bg-black/30) on the vignette: it dims the
+            LIVE CAMERA FEED, so it must stay dark in both themes — index.css
+            remaps `.bg-black/30` to a 4% slate tint in light mode, which
+            would erase the dimming. The arbitrary value escapes the remap. */}
         {countdown !== null && countdown > 0 && (
-          <div className="absolute inset-0 rounded-2xl bg-black/30">
+          <div className="absolute inset-0 rounded-2xl bg-[rgba(0,0,0,0.3)]">
             <div
               aria-hidden="true"
               className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-40 h-52 rounded-[50%] border-2 border-dashed border-white/70"
             />
-            <div className="absolute top-2 right-2 w-14 h-14 rounded-full border-2 border-gold/80 bg-black/50 flex items-center justify-center text-3xl font-bold text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">
+            {/* text-[#fff], not text-white: the countdown sits on an
+                always-dark scrim over the camera feed, and light mode remaps
+                `.text-white` to a dark foreground — dark-on-dark. The
+                arbitrary value keeps the digit white in both themes. */}
+            <div className="absolute top-2 right-2 w-14 h-14 rounded-full border-2 border-gold/80 bg-black/50 flex items-center justify-center text-3xl font-bold text-[#fff] drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">
               {countdown}
             </div>
             <div className="absolute bottom-2 inset-x-0 text-center text-sm text-white/90 drop-shadow">

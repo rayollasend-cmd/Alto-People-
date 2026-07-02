@@ -12,7 +12,10 @@ export function Skeleton({ className, ...props }: React.HTMLAttributes<HTMLDivEl
         'relative overflow-hidden rounded-md bg-navy-secondary/60',
         // Subtle shimmer sweep — runs forever; cheap because it's transform-only.
         'before:absolute before:inset-0 before:-translate-x-full before:animate-shimmer',
-        'before:bg-gradient-to-r before:from-transparent before:via-white/5 before:to-transparent',
+        // via-silver (not via-white) so the sweep stays visible in light
+        // mode too: silver flips to a dark slate there, giving a faint dark
+        // sweep over the light placeholder instead of white-on-white.
+        'before:bg-gradient-to-r before:from-transparent before:via-silver/10 before:to-transparent',
         className
       )}
       aria-busy="true"

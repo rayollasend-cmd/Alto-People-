@@ -95,7 +95,7 @@ export function BulkAssignScheduleDialog({ open, schedule, onOpenChange, onSaved
               className="pl-8"
             />
           </div>
-          <div className="max-h-72 overflow-y-auto rounded border border-silver/20 bg-black/20">
+          <div className="max-h-72 overflow-y-auto rounded border border-silver/20 bg-black/30">
             {!people && (
               <div className="p-4 text-sm text-silver/70">Loading directory…</div>
             )}
