@@ -22,21 +22,23 @@ import { toast } from '@/components/ui/Toaster';
 import { fmtDateTz, fmtShiftRangeTz, fmtWeekdayTz } from '@/lib/format';
 import { ArrowLeftRight, Check, ChevronDown, MapPin, Users } from 'lucide-react';
 import { hapticConfirm } from '@/lib/haptics';
+import { useI18n, type Translate } from '@/lib/i18n';
 
 export function statusBadge(
   status: Shift['status'],
+  t?: Translate,
 ): { label: string; variant: 'accent' | 'default' | 'success' | 'destructive' } {
   switch (status) {
     case 'ASSIGNED':
-      return { label: 'Confirmed', variant: 'accent' };
+      return { label: t ? t('shift.confirmed') : 'Confirmed', variant: 'accent' };
     case 'OPEN':
-      return { label: 'Open', variant: 'default' };
+      return { label: t ? t('shift.open') : 'Open', variant: 'default' };
     case 'COMPLETED':
-      return { label: 'Worked', variant: 'success' };
+      return { label: t ? t('shift.worked') : 'Worked', variant: 'success' };
     case 'DRAFT':
-      return { label: 'Draft', variant: 'default' };
+      return { label: t ? t('shift.draft') : 'Draft', variant: 'default' };
     case 'CANCELLED':
-      return { label: 'Cancelled', variant: 'destructive' };
+      return { label: t ? t('shift.cancelled') : 'Cancelled', variant: 'destructive' };
   }
 }
 
@@ -69,6 +71,7 @@ export function ShiftCard({
   muted?: boolean;
   onSwapCreated?: () => void;
 }) {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const [teammates, setTeammates] = useState<ShiftTeammate[] | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -91,7 +94,7 @@ export function ShiftCard({
     if (next && teammates === null) loadDetail();
   };
 
-  const badge = statusBadge(shift.status);
+  const badge = statusBadge(shift.status, t);
   const detailId = `shift-detail-${shift.id}`;
   return (
     <li
@@ -136,7 +139,7 @@ export function ShiftCard({
           <div className="flex flex-col items-end gap-1">
             {isNext && (
               <Badge variant="accent" className="bg-gold/15 text-gold border-gold/40">
-                Next
+                {t('shift.next')}
               </Badge>
             )}
             <Badge variant={badge.variant}>{badge.label}</Badge>
@@ -157,7 +160,7 @@ export function ShiftCard({
           <div className="mt-3">
             <div className="text-[11px] uppercase tracking-wider text-silver/80 mb-1.5 flex items-center gap-1.5">
               <Users className="h-3.5 w-3.5" aria-hidden="true" />
-              Working with you
+              {t('shift.workingWithYou')}
               {teammates && teammates.length > 0 && ` (${teammates.length})`}
             </div>
             {teammates === null && !detailError && (
@@ -171,14 +174,12 @@ export function ShiftCard({
                   onClick={loadDetail}
                   className="underline underline-offset-2 hover:text-white"
                 >
-                  Retry
+                  {t('common.retry')}
                 </button>
               </p>
             )}
             {teammates && teammates.length === 0 && (
-              <p className="text-xs text-silver/70">
-                No one else is scheduled alongside this shift yet.
-              </p>
+              <p className="text-xs text-silver/70">{t('shift.noTeammates')}</p>
             )}
             {teammates && teammates.length > 0 && (
               <ul className="space-y-1.5">
@@ -218,6 +219,7 @@ function ShiftDetail({
   muted: boolean;
   onSwapCreated?: () => void;
 }) {
+  const { t } = useI18n();
   const [ackAt, setAckAt] = useState(shift.acknowledgedAt);
   const [acking, setAcking] = useState(false);
   const site = [shift.locationName, shift.location].filter(Boolean).join(' · ');
@@ -232,7 +234,7 @@ function ShiftDetail({
       const updated = await acknowledgeMyShift(shift.id);
       setAckAt(updated.acknowledgedAt ?? new Date().toISOString());
       hapticConfirm();
-      toast.success('Confirmed — your manager can see you acknowledged it.');
+      toast.success(t('shift.confirmedToast'));
     } catch (err) {
       toast.error(
         err instanceof ApiError ? err.message : 'Could not confirm the shift.',
@@ -260,7 +262,7 @@ function ShiftDetail({
       )}
       {shift.notes && (
         <p className="text-xs text-silver bg-navy-secondary/30 border border-navy-secondary rounded px-2.5 py-1.5">
-          <span className="text-silver/70">Note from your manager: </span>
+          <span className="text-silver/70">{t('shift.managerNote')}</span>
           {shift.notes}
         </p>
       )}
@@ -269,12 +271,12 @@ function ShiftDetail({
           {ackAt ? (
             <span className="inline-flex items-center gap-1 text-xs text-success">
               <Check className="h-3.5 w-3.5" aria-hidden="true" />
-              You confirmed this shift
+              {t('shift.youConfirmed')}
             </span>
           ) : (
             <Button size="sm" onClick={acknowledge} loading={acking} disabled={acking}>
               <Check className="h-3.5 w-3.5" />
-              I'll be there
+              {t('shift.illBeThere')}
             </Button>
           )}
           <SwapOfferForm shiftId={shift.id} onCreated={onSwapCreated} />
@@ -298,6 +300,7 @@ function SwapOfferForm({
   shiftId: string;
   onCreated?: () => void;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [candidates, setCandidates] = useState<SwapCandidate[] | null>(null);
   const [candError, setCandError] = useState<string | null>(null);
@@ -349,7 +352,7 @@ function SwapOfferForm({
     return (
       <Button variant="outline" size="sm" onClick={openForm}>
         <ArrowLeftRight className="h-3.5 w-3.5" />
-        Offer this shift to a teammate
+        {t('shift.offerToTeammate')}
       </Button>
     );
   }
@@ -394,7 +397,7 @@ function SwapOfferForm({
       )}
       <label className="block">
         <span className="text-[11px] uppercase tracking-wider text-silver">
-          Offer to
+          {t('shift.offerTo')}
         </span>
         <Select
           size="sm"
@@ -405,12 +408,12 @@ function SwapOfferForm({
           className="mt-1"
         >
           <option value="" disabled>
-            {candidates === null ? 'Loading teammates…' : 'Pick a teammate'}
+            {candidates === null ? t('shift.loadingTeammates') : t('shift.pickTeammate')}
           </option>
           {(candidates ?? []).map((c) => (
             <option key={c.associateId} value={c.associateId} disabled={c.busy}>
               {c.name}
-              {c.busy ? ' — busy during this shift' : ''}
+              {c.busy ? t('shift.busyDuring') : ''}
             </option>
           ))}
         </Select>
@@ -418,7 +421,7 @@ function SwapOfferForm({
       {counterpartyId && (tradeOptions?.length ?? 0) > 0 && (
         <label className="block">
           <span className="text-[11px] uppercase tracking-wider text-silver">
-            Take one of their shifts in exchange (optional)
+            {t('shift.tradeLabel')}
           </span>
           <Select
             size="sm"
@@ -426,7 +429,7 @@ function SwapOfferForm({
             onChange={(e) => setCounterpartShiftId(e.target.value)}
             className="mt-1"
           >
-            <option value="">Nothing — just hand mine off</option>
+            <option value="">{t('shift.justHandOff')}</option>
             {(tradeOptions ?? []).map((o) => (
               <option key={o.shiftId} value={o.shiftId}>
                 {o.position} · {fmtDateTz(o.startsAt, o.timezone)} ·{' '}
@@ -438,20 +441,20 @@ function SwapOfferForm({
       )}
       <label className="block">
         <span className="text-[11px] uppercase tracking-wider text-silver">
-          Note (optional)
+          {t('shift.noteOptional')}
         </span>
         <Textarea
           value={note}
           onChange={(e) => setNote(e.target.value)}
           rows={2}
           maxLength={500}
-          placeholder="e.g. Doctor's appointment that morning"
+          placeholder={t('shift.notePlaceholder')}
           className="mt-1"
         />
       </label>
       <div className="flex gap-2">
         <Button type="submit" size="sm" loading={submitting} disabled={!counterpartyId}>
-          Send request
+          {t('shift.sendRequest')}
         </Button>
         <Button
           type="button"
@@ -460,7 +463,7 @@ function SwapOfferForm({
           onClick={() => setOpen(false)}
           disabled={submitting}
         >
-          Cancel
+          {t('common.cancel')}
         </Button>
       </div>
     </form>

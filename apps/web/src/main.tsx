@@ -10,6 +10,7 @@ initSentry();
 
 import { router } from './App';
 import { AuthProvider } from '@/lib/auth';
+import { I18nProvider } from '@/lib/i18n';
 import { ThemeProvider } from '@/lib/theme';
 import { DensityProvider } from '@/lib/density';
 import { PageTitleProvider } from '@/lib/pageTitle';
@@ -91,18 +92,20 @@ ReactDOM.createRoot(rootEl).render(
   <React.StrictMode>
     <GlobalErrorBoundary>
       <QueryClientProvider client={queryClient}>
-        <ThemeProvider>
-          <DensityProvider>
-            <AuthProvider>
-              <PageTitleProvider>
-                <ConfirmProvider>
-                  <RouterProvider router={router} />
-                  <Toaster />
-                </ConfirmProvider>
-              </PageTitleProvider>
-            </AuthProvider>
-          </DensityProvider>
-        </ThemeProvider>
+        <I18nProvider>
+          <ThemeProvider>
+            <DensityProvider>
+              <AuthProvider>
+                <PageTitleProvider>
+                  <ConfirmProvider>
+                    <RouterProvider router={router} />
+                    <Toaster />
+                  </ConfirmProvider>
+                </PageTitleProvider>
+              </AuthProvider>
+            </DensityProvider>
+          </ThemeProvider>
+        </I18nProvider>
       </QueryClientProvider>
     </GlobalErrorBoundary>
   </React.StrictMode>

@@ -10,6 +10,8 @@ import {
   type ModuleNav,
 } from '@/lib/modules';
 import { useAuth } from '@/lib/auth';
+import { useI18n, type Lang } from '@/lib/i18n';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { cn } from '@/lib/cn';
 
 const GROUP_ORDER: Array<Exclude<ModuleGroup, 'core'>> = [
@@ -29,6 +31,7 @@ interface MobileNavProps {
 
 export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProps) {
   const { can } = useAuth();
+  const { lang, setLang, t } = useI18n();
   const visible = MODULES.filter((m) => can(m.requires));
   const activePath = useActiveNavPath();
   const panelRef = useRef<HTMLElement>(null);
@@ -134,7 +137,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
               className="mx-2 my-0.5 flex w-[calc(100%-1rem)] items-center gap-2.5 rounded-md px-3 py-2.5 min-h-11 text-sm text-silver hover:text-white hover:bg-navy-secondary/50 active:bg-navy-secondary/60 transition-colors"
             >
               <Search className="h-4 w-4 shrink-0" aria-hidden="true" />
-              <span className="truncate">Search…</span>
+              <span className="truncate">{t('common.search')}</span>
             </button>
           )}
           <MobileLink
@@ -164,6 +167,28 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
             );
           })}
         </nav>
+
+        {/* Language switcher — the drawer is the one nav surface every
+            phone user opens, so the toggle lives here instead of buried
+            in Settings. stopPropagation: the nav's onClick closes the
+            drawer, and switching language shouldn't. */}
+        <div
+          className="px-4 py-3 border-t border-navy-secondary flex items-center justify-between gap-3"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <span className="text-[10px] font-semibold uppercase tracking-widest text-silver/80">
+            {t('common.language')}
+          </span>
+          <SegmentedControl<Lang>
+            ariaLabel={t('common.language')}
+            options={[
+              { value: 'en', label: 'English' },
+              { value: 'es', label: 'Español' },
+            ]}
+            value={lang}
+            onChange={setLang}
+          />
+        </div>
       </aside>
     </div>
   );

@@ -17,6 +17,7 @@ import type {
   TimeOffBalance,
 } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
+import { useI18n, type MessageKey } from '@/lib/i18n';
 import { ApiError } from '@/lib/api';
 import { getActiveTimeEntry } from '@/lib/timeApi';
 import { listMyShifts } from '@/lib/schedulingApi';
@@ -41,6 +42,7 @@ const fmtMoney = (n: number) =>
 
 export function AssociateDashboard() {
   const { user } = useAuth();
+  const { t } = useI18n();
   const navigate = useNavigate();
 
   const [active, setActive] = useState<ActiveTimeEntryResponse | null | undefined>(undefined);
@@ -101,8 +103,8 @@ export function AssociateDashboard() {
     <div className="mx-auto">
       <PullToRefreshIndicator state={pullState} />
       <PageHeader
-        title={<>Hey {greetingName} 👋</>}
-        subtitle="Here's what's on for today."
+        title={t('dash.greeting', { name: greetingName })}
+        subtitle={t('dash.subtitle')}
       />
 
       <OnboardingBanner />
@@ -112,7 +114,7 @@ export function AssociateDashboard() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4 mb-4">
         {failed.clock ? (
           <LoadFailedCard
-            label="Clock"
+            label={t('dash.clock')}
             icon={Clock}
             onRetry={refreshAll}
             className="md:col-span-1"
@@ -122,7 +124,7 @@ export function AssociateDashboard() {
         )}
         {failed.shift ? (
           <LoadFailedCard
-            label="Next shift"
+            label={t('dash.nextShift')}
             icon={Timer}
             onRetry={refreshAll}
             className="md:col-span-2"
@@ -135,12 +137,12 @@ export function AssociateDashboard() {
       {/* Second row — pay + time-off balance. Quieter, but still front-page. */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 mb-6">
         {failed.pay ? (
-          <LoadFailedCard label="Last paystub" icon={DollarSign} onRetry={refreshAll} />
+          <LoadFailedCard label={t('dash.lastPaystub')} icon={DollarSign} onRetry={refreshAll} />
         ) : (
           <PaystubCard item={latestPaystub} onView={() => navigate('/payroll')} />
         )}
         {failed.timeOff ? (
-          <LoadFailedCard label="Time off" icon={CalendarOff} onRetry={refreshAll} />
+          <LoadFailedCard label={t('dash.timeOff')} icon={CalendarOff} onRetry={refreshAll} />
         ) : (
           <TimeOffCard balances={balances} onView={() => navigate('/time-off')} />
         )}
@@ -162,6 +164,7 @@ const PUSH_DISMISS_KEY = 'alto:pushCard.dismissed.v1';
  * never see it. The permission prompt fires from the tap, as required.
  */
 function EnablePushCard() {
+  const { t } = useI18n();
   const [status, setStatus] = useState<'hidden' | 'ready' | 'working'>('hidden');
 
   useEffect(() => {
@@ -201,17 +204,15 @@ function EnablePushCard() {
   return (
     <div className="mb-4 p-4 rounded-lg border border-gold/40 bg-gold/5 flex items-center justify-between gap-3 flex-wrap">
       <div className="min-w-0">
-        <div className="text-white font-medium">Get shift alerts on your lock screen</div>
-        <p className="text-xs text-silver mt-0.5">
-          New shifts, swaps, and reminders — even when the app is closed.
-        </p>
+        <div className="text-white font-medium">{t('dash.pushTitle')}</div>
+        <p className="text-xs text-silver mt-0.5">{t('dash.pushBody')}</p>
       </div>
       <div className="flex items-center gap-2 shrink-0">
         <Button size="sm" onClick={enable} loading={status === 'working'}>
-          Turn on
+          {t('dash.pushOn')}
         </Button>
         <Button variant="ghost" size="sm" onClick={dismiss}>
-          Not now
+          {t('dash.pushLater')}
         </Button>
       </div>
     </div>
@@ -256,6 +257,7 @@ function LoadFailedCard({
   onRetry: () => void;
   className?: string;
 }) {
+  const { t } = useI18n();
   return (
     <Card className={className}>
       <CardContent className="pt-5">
@@ -264,13 +266,11 @@ function LoadFailedCard({
           {label}
         </div>
         <div role="alert" className="font-display text-xl text-white mt-2">
-          Couldn't load this
+          {t('dash.loadFailed')}
         </div>
-        <p className="text-sm text-silver mt-1">
-          Check your connection and try again.
-        </p>
+        <p className="text-sm text-silver mt-1">{t('dash.checkConnection')}</p>
         <Button variant="secondary" size="sm" className="mt-3" onClick={onRetry}>
-          Retry
+          {t('common.retry')}
         </Button>
       </CardContent>
     </Card>
@@ -290,6 +290,7 @@ interface ClockCardProps {
  * mirrors the kiosk state and points at the tablet.
  */
 function ClockCard({ active, isClockedIn }: ClockCardProps) {
+  const { t } = useI18n();
   if (active === undefined) {
     return (
       <Card className="md:col-span-1">
@@ -311,19 +312,20 @@ function ClockCard({ active, isClockedIn }: ClockCardProps) {
       <CardContent className="pt-5">
         <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
           <Clock className="h-3 w-3" aria-hidden="true" />
-          Clock
+          {t('dash.clock')}
         </div>
         <div className="font-display text-2xl text-white mt-2 leading-tight">
-          {isClockedIn ? 'On the clock' : 'Off the clock'}
+          {isClockedIn ? t('dash.onClock') : t('dash.offClock')}
         </div>
         {isClockedIn && active?.active ? (
           <div className="text-xs text-silver mt-1 tabular-nums">
-            Started {fmtTime(active.active.clockInAt)} · {fmtElapsed(active.active.clockInAt)} in
+            {t('dash.startedIn', {
+              time: fmtTime(active.active.clockInAt),
+              elapsed: fmtElapsed(active.active.clockInAt),
+            })}
           </div>
         ) : (
-          <p className="text-xs text-silver/70 mt-1">
-            Punch in with your PIN at the worksite kiosk tablet.
-          </p>
+          <p className="text-xs text-silver/70 mt-1">{t('dash.kioskHint')}</p>
         )}
       </CardContent>
     </Card>
@@ -331,6 +333,7 @@ function ClockCard({ active, isClockedIn }: ClockCardProps) {
 }
 
 function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
+  const { t } = useI18n();
   if (nextShift === undefined) {
     return (
       <Card className="md:col-span-2">
@@ -348,19 +351,17 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
         <CardContent className="pt-5">
           <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
             <Timer className="h-3 w-3" aria-hidden="true" />
-            Next shift
+            {t('dash.nextShift')}
           </div>
           <div className="font-display text-xl text-white mt-2">
-            Nothing scheduled
+            {t('dash.nothingScheduled')}
           </div>
-          <p className="text-sm text-silver mt-1">
-            Your manager will publish shifts ahead of the week. Check back soon.
-          </p>
+          <p className="text-sm text-silver mt-1">{t('dash.managerWillPublish')}</p>
           <Link
             to="/scheduling"
             className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 coarse:min-h-11"
           >
-            View schedule
+            {t('dash.viewSchedule')}
             <ArrowRight className="h-3.5 w-3.5" />
           </Link>
         </CardContent>
@@ -372,7 +373,7 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
       <CardContent className="pt-5">
         <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
           <Timer className="h-3 w-3" aria-hidden="true" />
-          Next shift
+          {t('dash.nextShift')}
         </div>
         <div className="flex items-baseline gap-2 mt-2 flex-wrap">
           <div className="font-display text-2xl text-white leading-tight">
@@ -399,7 +400,7 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
           to="/scheduling"
           className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 coarse:min-h-11"
         >
-          See full schedule
+          {t('dash.seeFullSchedule')}
           <ArrowRight className="h-3.5 w-3.5" />
         </Link>
       </CardContent>
@@ -414,6 +415,7 @@ function PaystubCard({
   item: PayrollItem | null | undefined;
   onView: () => void;
 }) {
+  const { t } = useI18n();
   if (item === undefined) {
     return (
       <Card>
@@ -431,12 +433,10 @@ function PaystubCard({
         <CardContent className="pt-5">
           <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
             <DollarSign className="h-3 w-3" aria-hidden="true" />
-            Last paystub
+            {t('dash.lastPaystub')}
           </div>
-          <div className="font-display text-xl text-white mt-2">No paystubs yet</div>
-          <p className="text-sm text-silver mt-1">
-            Your first one will show up here once your manager runs payroll.
-          </p>
+          <div className="font-display text-xl text-white mt-2">{t('dash.noPaystubs')}</div>
+          <p className="text-sm text-silver mt-1">{t('dash.firstPaystub')}</p>
         </CardContent>
       </Card>
     );
@@ -447,15 +447,15 @@ function PaystubCard({
       <CardContent className="pt-5">
         <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
           <DollarSign className="h-3 w-3" aria-hidden="true" />
-          Last paystub
+          {t('dash.lastPaystub')}
         </div>
         <div className="font-display text-3xl text-gold mt-2 tabular-nums">
           {fmtMoney(item.netPay)}
         </div>
         <div className="text-xs text-silver mt-1 tabular-nums">
-          Net · {item.hoursWorked.toFixed(2)}h worked
+          {t('dash.netWorked', { hours: item.hoursWorked.toFixed(2) })}
           {showDisbursed && item.disbursedAt && (
-            <> · paid {fmtDate(item.disbursedAt)}</>
+            <> · {t('dash.paidOn', { date: fmtDate(item.disbursedAt) })}</>
           )}
         </div>
         <button
@@ -463,7 +463,7 @@ function PaystubCard({
           onClick={onView}
           className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 coarse:min-h-11"
         >
-          View pay history
+          {t('dash.viewPayHistory')}
           <ArrowRight className="h-3.5 w-3.5" />
         </button>
       </CardContent>
@@ -487,6 +487,7 @@ function TimeOffCard({
   balances: TimeOffBalance[] | null | undefined;
   onView: () => void;
 }) {
+  const { t } = useI18n();
   if (balances === undefined) {
     return (
       <Card>
@@ -504,18 +505,16 @@ function TimeOffCard({
         <CardContent className="pt-5">
           <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
             <CalendarOff className="h-3 w-3" aria-hidden="true" />
-            Time off
+            {t('dash.timeOff')}
           </div>
-          <div className="font-display text-xl text-white mt-2">No balance yet</div>
-          <p className="text-sm text-silver mt-1">
-            Sick-leave hours accrue automatically as you work.
-          </p>
+          <div className="font-display text-xl text-white mt-2">{t('dash.noBalance')}</div>
+          <p className="text-sm text-silver mt-1">{t('dash.sickAccrues')}</p>
           <button
             type="button"
             onClick={onView}
             className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 coarse:min-h-11"
           >
-            Open time off
+            {t('dash.openTimeOff')}
             <ArrowRight className="h-3.5 w-3.5" />
           </button>
         </CardContent>
@@ -531,7 +530,7 @@ function TimeOffCard({
       <CardContent className="pt-5">
         <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
           <CalendarOff className="h-3 w-3" aria-hidden="true" />
-          Time off
+          {t('dash.timeOff')}
         </div>
         <div className="flex items-baseline gap-2 mt-2 flex-wrap">
           <div className="font-display text-3xl text-gold tabular-nums">
@@ -556,7 +555,7 @@ function TimeOffCard({
           onClick={onView}
           className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 coarse:min-h-11"
         >
-          Request or view balance
+          {t('dash.requestOrView')}
           <ArrowRight className="h-3.5 w-3.5" />
         </button>
       </CardContent>
@@ -564,26 +563,27 @@ function TimeOffCard({
   );
 }
 
-const QUICK_LINKS: { to: string; label: string; icon: typeof Clock }[] = [
-  { to: '/time-attendance', label: 'My timesheet', icon: Clock },
-  { to: '/scheduling', label: 'Schedule & swaps', icon: Timer },
-  { to: '/documents', label: 'Documents', icon: FileText },
-  { to: '/time-off', label: 'Request time off', icon: CalendarOff },
+const QUICK_LINKS: { to: string; labelKey: MessageKey; icon: typeof Clock }[] = [
+  { to: '/time-attendance', labelKey: 'dash.myTimesheet', icon: Clock },
+  { to: '/scheduling', labelKey: 'dash.scheduleSwaps', icon: Timer },
+  { to: '/documents', labelKey: 'dash.documents', icon: FileText },
+  { to: '/time-off', labelKey: 'dash.requestTimeOff', icon: CalendarOff },
 ];
 
 function QuickActions() {
+  const { t } = useI18n();
   return (
     <section>
-      <h2 className="font-display text-xl text-white mb-3">Quick links</h2>
+      <h2 className="font-display text-xl text-white mb-3">{t('dash.quickLinks')}</h2>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3">
-        {QUICK_LINKS.map(({ to, label, icon: Icon }) => (
+        {QUICK_LINKS.map(({ to, labelKey, icon: Icon }) => (
           <Link
             key={to}
             to={to}
             className="group flex items-center gap-2 px-3 py-3 min-h-12 rounded-md border border-navy-secondary bg-navy hover:border-gold/50 hover:bg-navy/80 active:bg-navy-secondary/60 active:border-gold/50 transition-colors text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
           >
             <Icon className="h-4 w-4 text-silver group-hover:text-gold transition-colors" aria-hidden="true" />
-            <span className="flex-1 truncate">{label}</span>
+            <span className="flex-1 truncate">{t(labelKey)}</span>
             <ArrowRight className="h-3.5 w-3.5 text-silver/70 group-hover:text-gold transition-colors" />
           </Link>
         ))}

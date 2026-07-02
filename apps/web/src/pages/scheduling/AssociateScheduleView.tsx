@@ -39,6 +39,7 @@ import {
   usePullToRefresh,
 } from '@/lib/usePullToRefresh';
 import { hapticConfirm } from '@/lib/haptics';
+import { useI18n } from '@/lib/i18n';
 import { AvailabilityEditor } from './AvailabilityEditor';
 import { SwapMarketplace } from './SwapMarketplace';
 import { ShiftCard, shiftMinutes } from './ShiftCard';
@@ -62,6 +63,7 @@ function initialViewMode(): ScheduleViewMode {
 
 
 export function AssociateScheduleView() {
+  const { t } = useI18n();
   const [shifts, setShifts] = useState<Shift[] | null>(null);
   const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -256,13 +258,13 @@ export function AssociateScheduleView() {
   return (
     <div className="mx-auto">
       <PullToRefreshIndicator state={pullState} />
-      <PageHeader title="My schedule" subtitle="Your published shifts." />
+      <PageHeader title={t('sched.title')} subtitle={t('sched.subtitle')} />
 
       {loaded && !isEmpty && (
         <div className="mb-4 flex items-center justify-between gap-3">
           <p className="text-sm text-silver">
             {upcomingCount === 0 ? (
-              'No upcoming shifts.'
+              t('sched.noUpcoming')
             ) : (
               <>
                 <span className="text-white font-medium">{upcomingCount}</span>{' '}
@@ -278,9 +280,9 @@ export function AssociateScheduleView() {
             <SegmentedControl<ScheduleViewMode>
               ariaLabel="Schedule view"
               options={[
-                { value: 'list', label: 'List' },
-                { value: 'week', label: 'Week' },
-                { value: 'month', label: 'Month' },
+                { value: 'list', label: t('sched.list') },
+                { value: 'week', label: t('sched.week') },
+                { value: 'month', label: t('sched.month') },
               ]}
               value={view}
               onChange={changeView}
@@ -338,7 +340,7 @@ export function AssociateScheduleView() {
       {isEmpty && (
         <EmptyState
           icon={CalendarDays}
-          title="No shifts yet"
+          title={t('sched.noShifts')}
           description="When a manager publishes a shift for you, it'll show up here. Post your availability below to make scheduling easier."
         />
       )}
@@ -397,7 +399,9 @@ export function AssociateScheduleView() {
             onClick={() => setShowPast((v) => !v)}
             className="inline-flex items-center coarse:min-h-11 text-xs uppercase tracking-wider text-silver/80 hover:text-white active:text-white transition-colors"
           >
-            {showPast ? 'Hide' : 'Show'} recent shifts ({past.length + (history?.length ?? 0)})
+            {t(showPast ? 'sched.hideRecent' : 'sched.showRecent', {
+              count: past.length + (history?.length ?? 0),
+            })}
           </button>
           {showPast && (
             <>
