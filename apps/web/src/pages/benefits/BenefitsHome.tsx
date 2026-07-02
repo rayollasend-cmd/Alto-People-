@@ -36,6 +36,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
+import { fmtDate } from '@/lib/format';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { listClients } from '@/lib/onboardingApi';
@@ -265,11 +266,11 @@ function EnrollmentRow({
         <div className="text-white font-medium">{enrollment.planName}</div>
         <div className="text-xs text-silver mt-0.5">
           {fmtMoney(enrollment.electedAmountCentsPerPeriod)}/period · effective{' '}
-          {new Date(enrollment.effectiveDate).toLocaleDateString()}
+          {fmtDate(enrollment.effectiveDate)}
           {enrollment.terminationDate && (
             <>
               {' · ended '}
-              {new Date(enrollment.terminationDate).toLocaleDateString()}
+              {fmtDate(enrollment.terminationDate)}
             </>
           )}
         </div>

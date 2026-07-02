@@ -31,6 +31,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -38,6 +39,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
 
@@ -344,8 +346,8 @@ function CandidateRow({
         )}
       </div>
       {canManage ? (
-        <select
-          className="text-xs bg-midnight border border-navy-secondary rounded p-1 text-white"
+        <Select
+          size="sm"
           value={candidate.readiness}
           onChange={async (e) => {
             try {
@@ -363,7 +365,7 @@ function CandidateRow({
               {READINESS_LABELS[k]}
             </option>
           ))}
-        </select>
+        </Select>
       ) : (
         <Badge variant={READINESS_VARIANT[candidate.readiness]}>
           {READINESS_LABELS[candidate.readiness]}
@@ -441,8 +443,8 @@ function AddCandidateDrawer({
         </div>
         <div>
           <Label>Readiness</Label>
-          <select
-            className="mt-1 w-full bg-midnight border border-navy-secondary rounded p-2 text-white text-sm"
+          <Select
+            className="mt-1"
             value={readiness}
             onChange={(e) => setReadiness(e.target.value as SuccessionReadiness)}
           >
@@ -451,12 +453,12 @@ function AddCandidateDrawer({
                 {READINESS_LABELS[k]}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div>
           <Label>Notes (optional)</Label>
-          <textarea
-            className="mt-1 w-full h-24 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+          <Textarea
+            className="mt-1 h-24"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             placeholder="Why this person, gaps to close…"

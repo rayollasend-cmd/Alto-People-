@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
+import { fmtDateTz } from '@/lib/format';
 import {
   getTeamDashboard,
   listReports,
@@ -41,10 +42,9 @@ const fmtRelative = (iso: string): string => {
   if (hrs < 24) return `${hrs}h ago`;
   const days = Math.floor(hrs / 24);
   if (days < 7) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-  });
+  // fmtDateTz without a zone renders "May 13" in the browser zone —
+  // byte-for-byte the previous inline toLocaleDateString options.
+  return fmtDateTz(iso);
 };
 
 const fmtHM = (mins: number): string => {
@@ -59,10 +59,7 @@ const fmtDateRange = (start: string, end: string): string => {
   const a = new Date(start);
   const b = new Date(end);
   const sameDay = a.toDateString() === b.toDateString();
-  const opt: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
-  return sameDay
-    ? a.toLocaleDateString('en-US', opt)
-    : `${a.toLocaleDateString('en-US', opt)} – ${b.toLocaleDateString('en-US', opt)}`;
+  return sameDay ? fmtDateTz(a) : `${fmtDateTz(a)} – ${fmtDateTz(b)}`;
 };
 
 const greetingFor = (hour: number): string => {

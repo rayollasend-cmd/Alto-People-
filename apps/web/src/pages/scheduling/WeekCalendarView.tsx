@@ -14,7 +14,14 @@ import type { AssociateLite, Shift, ShiftStatus } from '@alto-people/shared';
 import { Badge } from '@/components/ui/Badge';
 import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
-import { zonedDayKey, zonedMinutesOfDay, zonedWallTimeToUtc } from '@/lib/format';
+import {
+  fmtDateTz,
+  fmtTimeTz,
+  fmtWeekdayTz,
+  zonedDayKey,
+  zonedMinutesOfDay,
+  zonedWallTimeToUtc,
+} from '@/lib/format';
 import {
   ShiftHoverCard,
   useShiftHoverCard,
@@ -48,11 +55,7 @@ const STATUS_VARIANT: Record<
 const UNASSIGNED_ROW_ID = '__unassigned__';
 
 function fmtTime(iso: string, timeZone?: string | null): string {
-  return new Date(iso).toLocaleTimeString([], {
-    hour: 'numeric',
-    minute: '2-digit',
-    ...(timeZone ? { timeZone } : {}),
-  });
+  return fmtTimeTz(iso, timeZone);
 }
 
 /**
@@ -403,7 +406,7 @@ export function WeekCalendarView({
                 >
                   {/* Derive the weekday from the date itself — the range can
                       start on any day, so a fixed Mon-first list would mislabel. */}
-                  {d.toLocaleDateString([], { weekday: 'short' })}
+                  {fmtWeekdayTz(d)}
                 </div>
                 <div
                   className={cn(
@@ -411,7 +414,7 @@ export function WeekCalendarView({
                     isToday ? 'text-white font-medium' : 'text-silver'
                   )}
                 >
-                  {d.toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                  {fmtDateTz(d)}
                 </div>
               </div>
             );

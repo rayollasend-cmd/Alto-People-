@@ -36,6 +36,7 @@ import {
   DrawerTitle,
   EmptyState,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -44,7 +45,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui';
-import { Input } from '@/components/ui/Input';
+import { Input, Textarea } from '@/components/ui/Input';
+import { fmtDate } from '@/lib/format';
 import { Label } from '@/components/ui/Label';
 
 export function LearningPathsHome() {
@@ -245,8 +247,8 @@ function NewPathDrawer({
         </div>
         <div>
           <Label>Description</Label>
-          <textarea
-            className="mt-1 w-full h-24 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+          <Textarea
+            className="mt-1 h-24"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
           />
@@ -361,8 +363,8 @@ function PathDetailDrawer({
                 {data.status}
               </Badge>
               {canManage && (
-                <select
-                  className="text-xs bg-midnight border border-navy-secondary rounded p-1 text-white"
+                <Select
+                  size="sm"
                   value={data.status}
                   onChange={async (e) => {
                     try {
@@ -378,7 +380,7 @@ function PathDetailDrawer({
                   <option value="DRAFT">DRAFT</option>
                   <option value="PUBLISHED">PUBLISHED</option>
                   <option value="ARCHIVED">ARCHIVED</option>
-                </select>
+                </Select>
               )}
             </div>
             {data.description && <div className="text-sm text-silver">{data.description}</div>}
@@ -443,25 +445,27 @@ function PathDetailDrawer({
               )}
               {canManage && (
                 <div className="flex gap-2 pt-2">
-                  <select
-                    className="flex-1 h-9 rounded-md border border-navy-secondary bg-midnight px-2 text-sm text-white"
-                    value={courseId}
-                    onChange={(e) => setCourseId(e.target.value)}
-                    disabled={courses === null}
-                  >
-                    <option value="">
-                      {courses === null
-                        ? 'Loading courses…'
-                        : availableCourses.length === 0
-                          ? 'All published courses already added'
-                          : 'Select a course…'}
-                    </option>
-                    {availableCourses.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.title}
+                  <div className="flex-1">
+                    <Select
+                      size="sm"
+                      value={courseId}
+                      onChange={(e) => setCourseId(e.target.value)}
+                      disabled={courses === null}
+                    >
+                      <option value="">
+                        {courses === null
+                          ? 'Loading courses…'
+                          : availableCourses.length === 0
+                            ? 'All published courses already added'
+                            : 'Select a course…'}
                       </option>
-                    ))}
-                  </select>
+                      {availableCourses.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.title}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
                   <Button
                     size="sm"
                     disabled={!courseId}
@@ -527,7 +531,7 @@ function PathDetailDrawer({
                             </Badge>
                           </TableCell>
                           <TableCell className="text-xs text-silver">
-                            {new Date(e.assignedAt).toLocaleDateString()}
+                            {fmtDate(e.assignedAt)}
                           </TableCell>
                           {canManage && (
                             <TableCell className="text-right">
@@ -559,25 +563,27 @@ function PathDetailDrawer({
               )}
               {canManage && (
                 <div className="flex gap-2 pt-2">
-                  <select
-                    className="flex-1 h-9 rounded-md border border-navy-secondary bg-midnight px-2 text-sm text-white"
-                    value={associateId}
-                    onChange={(e) => setAssociateId(e.target.value)}
-                    disabled={associates === null}
-                  >
-                    <option value="">
-                      {associates === null
-                        ? 'Loading associates…'
-                        : availableAssociates.length === 0
-                          ? 'Everyone is already enrolled'
-                          : 'Select an associate…'}
-                    </option>
-                    {availableAssociates.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.firstName} {a.lastName}
+                  <div className="flex-1">
+                    <Select
+                      size="sm"
+                      value={associateId}
+                      onChange={(e) => setAssociateId(e.target.value)}
+                      disabled={associates === null}
+                    >
+                      <option value="">
+                        {associates === null
+                          ? 'Loading associates…'
+                          : availableAssociates.length === 0
+                            ? 'Everyone is already enrolled'
+                            : 'Select an associate…'}
                       </option>
-                    ))}
-                  </select>
+                      {availableAssociates.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.firstName} {a.lastName}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
                   <Button
                     size="sm"
                     disabled={!associateId}

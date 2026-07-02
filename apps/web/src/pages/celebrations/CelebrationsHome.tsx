@@ -20,6 +20,7 @@ import {
   EmptyState,
   PageHeader,
   SkeletonRows,
+  Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
 
@@ -171,8 +172,8 @@ function HighFiveDrawer({
         </div>
         <div>
           <Label>Message</Label>
-          <textarea
-            className="mt-1 w-full h-32 rounded-md border border-navy-secondary bg-midnight p-3 text-white text-sm"
+          <Textarea
+            className="mt-1 h-32"
             value={msg}
             onChange={(e) => setMsg(e.target.value)}
             maxLength={500}

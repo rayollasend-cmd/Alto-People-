@@ -43,8 +43,10 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import { fmtDate } from '@/lib/format';
 
 const STATUS_VARIANT: Record<
   CaseStatus,
@@ -184,7 +186,7 @@ export function HrCasesHome() {
                       </div>
                       <div className="text-xs text-silver mt-0.5">
                         {CATEGORY_LABELS[c.category]} ·{' '}
-                        {new Date(c.updatedAt).toLocaleDateString()}
+                        {fmtDate(c.updatedAt)}
                         {c.commentCount > 0 && ` · ${c.commentCount} replies`}
                       </div>
                     </div>
@@ -260,7 +262,7 @@ export function HrCasesHome() {
                         </Badge>
                       </TableCell>
                       <TableCell className="hidden lg:table-cell text-xs text-silver">
-                        {new Date(c.updatedAt).toLocaleDateString()}
+                        {fmtDate(c.updatedAt)}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -338,8 +340,8 @@ function NewCaseDrawer({
       <DrawerBody className="space-y-4">
         <div>
           <Label>Category</Label>
-          <select
-            className="mt-1 w-full bg-midnight border border-navy-secondary rounded p-2 text-white text-sm"
+          <Select
+            className="mt-1"
             value={category}
             onChange={(e) => setCategory(e.target.value as CaseCategory)}
           >
@@ -348,7 +350,7 @@ function NewCaseDrawer({
                 {CATEGORY_LABELS[k]}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div>
           <Label>Subject</Label>
@@ -361,8 +363,8 @@ function NewCaseDrawer({
         </div>
         <div>
           <Label>Description</Label>
-          <textarea
-            className="mt-1 w-full h-40 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+          <Textarea
+            className="mt-1 h-40"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="What's going on, when did it happen, what would resolution look like…"
@@ -370,8 +372,8 @@ function NewCaseDrawer({
         </div>
         <div>
           <Label>Priority</Label>
-          <select
-            className="mt-1 w-full bg-midnight border border-navy-secondary rounded p-2 text-white text-sm"
+          <Select
+            className="mt-1"
             value={priority}
             onChange={(e) => setPriority(e.target.value as CasePriority)}
           >
@@ -379,7 +381,7 @@ function NewCaseDrawer({
             <option value="MEDIUM">Medium</option>
             <option value="HIGH">High</option>
             <option value="URGENT">Urgent</option>
-          </select>
+          </Select>
         </div>
       </DrawerBody>
       <DrawerFooter>
@@ -508,8 +510,8 @@ function CaseDetailDrawer({
             {data.status !== 'CLOSED' && (
               <div className="space-y-2 pt-2 border-t border-navy-secondary">
                 <Label>Reply</Label>
-                <textarea
-                  className="w-full h-24 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+                <Textarea
+                  className="h-24"
                   value={reply}
                   onChange={(e) => setReply(e.target.value)}
                 />
@@ -555,8 +557,8 @@ function TriageBlock({
     <div className="space-y-2 p-3 rounded border border-navy-secondary">
       <div className="text-xs uppercase tracking-wider text-silver">Triage</div>
       <div className="flex gap-2 flex-wrap">
-        <select
-          className="text-xs bg-midnight border border-navy-secondary rounded p-1.5 text-white"
+        <Select
+          size="sm"
           value={detail.status}
           onChange={async (e) => {
             try {
@@ -577,9 +579,9 @@ function TriageBlock({
               {STATUS_LABELS[s]}
             </option>
           ))}
-        </select>
-        <select
-          className="text-xs bg-midnight border border-navy-secondary rounded p-1.5 text-white"
+        </Select>
+        <Select
+          size="sm"
           value={detail.priority}
           onChange={async (e) => {
             try {
@@ -596,7 +598,7 @@ function TriageBlock({
           <option value="MEDIUM">Medium</option>
           <option value="HIGH">High</option>
           <option value="URGENT">Urgent</option>
-        </select>
+        </Select>
       </div>
       {detail.status === 'RESOLVED' && (
         <Input

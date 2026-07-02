@@ -129,20 +129,20 @@ export function GarnishmentsView({ canProcess }: Props) {
       <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
         <div className="flex flex-wrap gap-2">
           {STATUS_FILTERS.map((f) => (
-            <button
+            <Button
               key={f.value}
               type="button"
+              size="sm"
+              variant="outline"
               onClick={() => setFilter(f.value)}
               className={cn(
-                'px-3 py-1.5 rounded-md text-sm border transition-colors',
-                'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
-                filter === f.value
-                  ? 'border-gold text-gold bg-gold/10'
-                  : 'border-navy-secondary text-silver hover:text-white hover:border-silver/40'
+                'text-sm',
+                filter === f.value &&
+                  'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold'
               )}
             >
               {f.label}
-            </button>
+            </Button>
           ))}
         </div>
         {canProcess && (
@@ -495,30 +495,30 @@ function CreateGarnishmentDialog({
           <div>
             <Label>Deduction amount</Label>
             <div className="flex flex-wrap gap-2 mt-1">
-              <button
+              <Button
                 type="button"
+                size="xs"
+                variant="outline"
                 onClick={() => setAmountMode('flat')}
                 className={cn(
-                  'px-3 py-1 text-xs rounded border',
-                  amountMode === 'flat'
-                    ? 'border-gold text-gold bg-gold/10'
-                    : 'border-silver/30 text-silver/70'
+                  amountMode === 'flat' &&
+                    'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold'
                 )}
               >
                 Flat amount
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                size="xs"
+                variant="outline"
                 onClick={() => setAmountMode('percent')}
                 className={cn(
-                  'px-3 py-1 text-xs rounded border',
-                  amountMode === 'percent'
-                    ? 'border-gold text-gold bg-gold/10'
-                    : 'border-silver/30 text-silver/70'
+                  amountMode === 'percent' &&
+                    'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold'
                 )}
               >
                 % of disposable
-              </button>
+              </Button>
             </div>
             <div className="mt-2">
               {amountMode === 'flat' ? (

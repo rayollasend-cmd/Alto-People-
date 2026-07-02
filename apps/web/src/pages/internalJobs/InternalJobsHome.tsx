@@ -30,9 +30,12 @@ import {
   DrawerTitle,
   EmptyState,
   PageHeader,
+  Select,
   SkeletonRows,
+  Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import { fmtDate } from '@/lib/format';
 
 const STATUS_VARIANT: Record<
   InternalApplicationStatus,
@@ -225,7 +228,7 @@ export function InternalJobsHome() {
                     {a.posting.title}
                   </div>
                   <div className="text-xs text-silver">
-                    Applied {new Date(a.createdAt).toLocaleDateString()}
+                    Applied {fmtDate(a.createdAt)}
                     {a.posting.location && ` · ${a.posting.location}`}
                   </div>
                 </div>
@@ -326,8 +329,8 @@ function ApplyDrawer({
         </div>
         <div>
           <Label>Cover letter (optional)</Label>
-          <textarea
-            className="mt-1 w-full h-32 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+          <Textarea
+            className="mt-1 h-32"
             value={coverLetter}
             onChange={(e) => setCoverLetter(e.target.value)}
             placeholder="Why this role, what you bring…"
@@ -401,8 +404,8 @@ function ReviewDrawer({
                       {a.currentDepartment && ` · ${a.currentDepartment}`}
                     </div>
                   </div>
-                  <select
-                    className="text-xs bg-midnight border border-navy-secondary rounded p-1 text-white"
+                  <Select
+                    size="sm"
                     value={a.status}
                     onChange={async (e) => {
                       try {
@@ -425,7 +428,7 @@ function ReviewDrawer({
                         </option>
                       ),
                     )}
-                  </select>
+                  </Select>
                 </div>
                 {a.coverLetter && (
                   <div className="text-xs text-silver italic line-clamp-3">

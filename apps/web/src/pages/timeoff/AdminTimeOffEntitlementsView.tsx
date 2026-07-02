@@ -10,6 +10,7 @@ import {
   upsertAdminEntitlement,
 } from '@/lib/timeOffApi';
 import { ApiError } from '@/lib/api';
+import { fmtDate } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import {
@@ -146,9 +147,7 @@ export function AdminTimeOffEntitlementsView({ canManage }: Props) {
                     {String(e.policyAnchorDay).padStart(2, '0')}
                   </TableCell>
                   <TableCell className="hidden lg:table-cell text-silver text-xs">
-                    {e.lastGrantedAt
-                      ? new Date(e.lastGrantedAt).toLocaleDateString()
-                      : '—'}
+                    {fmtDate(e.lastGrantedAt)}
                   </TableCell>
                   <TableCell className="text-right">
                     {canManage && (

@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
-import { zonedDayKey } from '@/lib/format';
+import { fmtTimeTz, zonedDayKey } from '@/lib/format';
 
 /** Local calendar-date key ("YYYY-MM-DD") of the anchored day. */
 function ymd(d: Date): string {
@@ -58,7 +58,7 @@ interface Props {
 }
 
 function fmtTime(d: Date, timeZone?: string | null): string {
-  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', ...(timeZone ? { timeZone } : {}) });
+  return fmtTimeTz(d, timeZone);
 }
 
 function fmtDateHeader(d: Date): string {

@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/Dialog';
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/cn';
-import { zonedDayKey } from '@/lib/format';
+import { fmtDate, fmtTimeTz, zonedDayKey } from '@/lib/format';
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -58,7 +58,7 @@ function shiftMinutes(s: Shift): number {
 }
 
 function fmtTime(d: Date, timeZone?: string | null): string {
-  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', ...(timeZone ? { timeZone } : {}) });
+  return fmtTimeTz(d, timeZone);
 }
 
 function initialsOf(name: string | null): string {
@@ -384,7 +384,7 @@ function DayCell({
               type="button"
               onClick={() => onCellCreate(date)}
               className="text-silver/30 hover:text-gold transition-colors opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 no-print"
-              aria-label={`Add shift on ${date.toLocaleDateString()}`}
+              aria-label={`Add shift on ${fmtDate(date)}`}
               title="Add shift"
             >
               <Plus className="h-3 w-3" />

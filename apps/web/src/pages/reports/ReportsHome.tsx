@@ -27,6 +27,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -350,8 +351,8 @@ function ReportBuilder({
         </div>
         <div>
           <Label>Entity</Label>
-          <select
-            className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+          <Select
+            className="mt-1"
             value={entity}
             onChange={(e) => setEntity(e.target.value as ReportEntity)}
           >
@@ -360,7 +361,7 @@ function ReportBuilder({
                 {e}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div>
           <Label>Columns ({columns.length} selected)</Label>
@@ -405,21 +406,24 @@ function ReportBuilder({
             <div className="mt-2 space-y-2">
               {filters.map((f, i) => (
                 <div key={i} className="flex gap-2 items-center">
-                  <select
-                    className="flex-1 h-8 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs font-mono text-white"
-                    value={f.column}
-                    onChange={(e) =>
-                      updateFilter(i, { column: e.target.value })
-                    }
-                  >
-                    {allColumns.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    className="h-8 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs text-white"
+                  <div className="flex-1">
+                    <Select
+                      size="sm"
+                      className="font-mono"
+                      value={f.column}
+                      onChange={(e) =>
+                        updateFilter(i, { column: e.target.value })
+                      }
+                    >
+                      {allColumns.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                  <Select
+                    size="sm"
                     value={f.op}
                     onChange={(e) =>
                       updateFilter(i, { op: e.target.value as FilterOp })
@@ -430,7 +434,7 @@ function ReportBuilder({
                         {o.label}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                   <Input
                     className="flex-1 h-8 text-xs"
                     value={f.value}
@@ -476,19 +480,22 @@ function ReportBuilder({
             <div className="mt-2 space-y-2">
               {sorts.map((s, i) => (
                 <div key={i} className="flex gap-2 items-center">
-                  <select
-                    className="flex-1 h-8 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs font-mono text-white"
-                    value={s.column}
-                    onChange={(e) =>
-                      updateSort(i, { column: e.target.value })
-                    }
-                  >
-                    {allColumns.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="flex-1">
+                    <Select
+                      size="sm"
+                      className="font-mono"
+                      value={s.column}
+                      onChange={(e) =>
+                        updateSort(i, { column: e.target.value })
+                      }
+                    >
+                      {allColumns.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
                   <button
                     type="button"
                     onClick={() =>

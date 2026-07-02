@@ -41,7 +41,7 @@ import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { timeAnomalyLabel } from '@/lib/timeLabels';
-import { fmtTime } from '@/lib/format';
+import { fmtDateTime, fmtTime } from '@/lib/format';
 import {
   Avatar,
   Badge,
@@ -65,6 +65,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   Skeleton,
   SkeletonRows,
   Table,
@@ -607,7 +608,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                           <TableCell className="text-silver">{e.clientName ?? '—'}</TableCell>
                           <TableCell className="text-silver">{e.jobName ?? '—'}</TableCell>
                           <TableCell className="tabular-nums text-silver">
-                            {new Date(e.clockInAt).toLocaleTimeString()}
+                            {fmtTime(e.clockInAt)}
                           </TableCell>
                           <TableCell className="tabular-nums">
                             {formatHM(e.minutesElapsed)}
@@ -682,7 +683,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                       </div>
                       <div className="mt-2 flex items-end justify-between gap-3 text-[11px] text-silver">
                         <span className="tabular-nums">
-                          Since {new Date(e.clockInAt).toLocaleTimeString()}
+                          Since {fmtTime(e.clockInAt)}
                         </span>
                         <span className="tabular-nums text-white">
                           {formatHM(e.minutesElapsed)}
@@ -723,19 +724,21 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
               <CardTitle className="text-base">Time entries</CardTitle>
               <div className="flex flex-wrap gap-2">
                 {STATUS_FILTERS.map((f) => (
-                  <button
+                  <Button
                     key={f.value}
                     type="button"
+                    variant="outline"
+                    size="sm"
                     onClick={() => setFilter(f.value)}
                     className={cn(
-                      'px-3 py-1.5 rounded text-xs uppercase tracking-wider border transition-colors',
+                      'uppercase tracking-wider font-normal',
                       filter === f.value
-                        ? 'border-gold text-gold bg-gold/10'
-                        : 'border-navy-secondary text-silver hover:text-white'
+                        ? 'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold'
+                        : 'border-navy-secondary'
                     )}
                   >
                     {f.label}
-                  </button>
+                  </Button>
                 ))}
               </div>
             </div>
@@ -966,12 +969,10 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                             </TableCell>
                             <TableCell className="text-silver">{e.clientName ?? '—'}</TableCell>
                             <TableCell className="tabular-nums">
-                              {new Date(e.clockInAt).toLocaleString()}
+                              {fmtDateTime(e.clockInAt)}
                             </TableCell>
                             <TableCell className="tabular-nums">
-                              {e.clockOutAt
-                                ? new Date(e.clockOutAt).toLocaleTimeString()
-                                : '—'}
+                              {e.clockOutAt ? fmtTime(e.clockOutAt) : '—'}
                             </TableCell>
                             <TableCell>
                               <DurationCell entry={e} />
@@ -1080,9 +1081,9 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                                 </div>
                                 <div className="mt-1.5 flex items-end justify-between gap-3 text-[11px] text-silver">
                                   <span className="tabular-nums">
-                                    {new Date(e.clockInAt).toLocaleString()}
+                                    {fmtDateTime(e.clockInAt)}
                                     {e.clockOutAt
-                                      ? ` → ${new Date(e.clockOutAt).toLocaleTimeString()}`
+                                      ? ` → ${fmtTime(e.clockOutAt)}`
                                       : ' → —'}
                                   </span>
                                   <span className="tabular-nums text-white">
@@ -1319,7 +1320,7 @@ function TimeEntryDetailPanel({
           )}
           {entry.approvedAt && (
             <DetailRow label="Approved at">
-              {new Date(entry.approvedAt).toLocaleString()}
+              {fmtDateTime(entry.approvedAt)}
             </DetailRow>
           )}
         </dl>
@@ -1335,10 +1336,8 @@ function TimeEntryDetailPanel({
                   <span>
                     {b.type === 'MEAL' ? 'Meal' : 'Rest'}{' '}
                     <span className="tabular-nums">
-                      {new Date(b.startedAt).toLocaleTimeString()} –{' '}
-                      {b.endedAt
-                        ? new Date(b.endedAt).toLocaleTimeString()
-                        : 'still open'}
+                      {fmtTime(b.startedAt)} –{' '}
+                      {b.endedAt ? fmtTime(b.endedAt) : 'still open'}
                     </span>
                   </span>
                   <span className="tabular-nums text-white">{formatHM(b.minutes)}</span>
@@ -1759,9 +1758,6 @@ function SummaryExportDialog({
       .catch(() => setLocations([]));
   }, [clientId]);
 
-  const selectClass =
-    'mt-1 h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white';
-
   const download = async () => {
     setBusy(true);
     setErr(null);
@@ -1798,8 +1794,8 @@ function SummaryExportDialog({
           )}
           <div>
             <FieldLabel>Client</FieldLabel>
-            <select
-              className={selectClass}
+            <Select
+              className="mt-1"
               value={clientId}
               onChange={(e) => setClientId(e.target.value)}
             >
@@ -1809,12 +1805,12 @@ function SummaryExportDialog({
                   {c.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
           <div>
             <FieldLabel>Facility (location)</FieldLabel>
-            <select
-              className={selectClass}
+            <Select
+              className="mt-1"
               value={locationId}
               onChange={(e) => setLocationId(e.target.value)}
               disabled={!clientId}
@@ -1827,7 +1823,7 @@ function SummaryExportDialog({
                   {l.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
           <p className="text-xs text-silver">
             Overtime = hours over 40 per week (federal), matching payroll.
@@ -1878,9 +1874,6 @@ function PayrollSheetDialog({
       .catch(() => setClients([]));
   }, [open, defaultFromYmd, defaultToYmd]);
 
-  const selectClass =
-    'mt-1 h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white';
-
   const download = async (format: 'pdf' | 'xlsx') => {
     if (!clientId) {
       setErr('Pick a client first.');
@@ -1925,8 +1918,8 @@ function PayrollSheetDialog({
           )}
           <div>
             <FieldLabel>Client</FieldLabel>
-            <select
-              className={selectClass}
+            <Select
+              className="mt-1"
               value={clientId}
               onChange={(e) => setClientId(e.target.value)}
             >
@@ -1936,7 +1929,7 @@ function PayrollSheetDialog({
                   {c.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>

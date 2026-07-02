@@ -20,6 +20,7 @@ import {
   DialogTitle,
 } from '@/components/ui/Dialog';
 import { Field } from '@/components/ui/Field';
+import { Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { cn } from '@/lib/cn';
 
@@ -28,10 +29,6 @@ const TRACK_LABEL: Record<string, string> = {
   J1: 'J-1',
   CLIENT_SPECIFIC: 'Client-specific',
 };
-
-const TEXTAREA_CX =
-  'w-full rounded-md border border-navy-secondary bg-navy-secondary/40 text-white px-3 py-2 text-sm font-mono ' +
-  'focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold';
 
 interface ParsedRow {
   raw: string;
@@ -331,7 +328,7 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
               }
             >
               {(p) => (
-                <textarea
+                <Textarea
                   value={paste}
                   onChange={(e) => setPaste(e.target.value)}
                   rows={8}
@@ -340,7 +337,7 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
                     'bob@example.com,Bob,Smith',
                     'Carol Diaz <carol@example.com>',
                   ].join('\n')}
-                  className={TEXTAREA_CX}
+                  className="font-mono"
                   {...p}
                 />
               )}

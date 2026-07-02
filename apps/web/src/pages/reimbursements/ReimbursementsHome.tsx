@@ -34,6 +34,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -637,8 +638,8 @@ function AddLineDrawer({
       <DrawerBody className="space-y-4">
         <div>
           <Label>Kind</Label>
-          <select
-            className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+          <Select
+            className="mt-1"
             value={kind}
             onChange={(e) => setKind(e.target.value as ExpenseLineKind)}
           >
@@ -647,7 +648,7 @@ function AddLineDrawer({
                 {KIND_LABEL[k]}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div>
           <Label>Description</Label>

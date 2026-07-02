@@ -62,6 +62,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -76,6 +77,7 @@ import {
   Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import { fmtDate } from '@/lib/format';
 import { toast } from 'sonner';
 
 type Tab = 'garnishments' | 'taxforms';
@@ -239,15 +241,15 @@ function GarnishmentsTab({ canManage }: { canManage: boolean }) {
                           </Button>
                         )}
                         {canManage && (g.status === 'ACTIVE' || g.status === 'SUSPENDED') && (
-                          <select
-                            className="bg-navy-secondary/40 border border-navy-secondary text-xs rounded px-2 py-1 text-white"
+                          <Select
+                            size="sm"
                             value={g.status}
                             onChange={(e) => onStatus(g.id, e.target.value as GarnishmentStatus)}
                           >
                             <option value="ACTIVE">ACTIVE</option>
                             <option value="SUSPENDED">SUSPENDED</option>
                             <option value="TERMINATED">TERMINATED</option>
-                          </select>
+                          </Select>
                         )}
                       </div>
                     </TableCell>
@@ -356,8 +358,8 @@ function NewGarnishmentDrawer({
         </div>
         <div>
           <Label>Kind</Label>
-          <select
-            className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+          <Select
+            className="mt-1"
             value={kind}
             onChange={(e) => setKind(e.target.value as GarnishmentKind)}
           >
@@ -366,7 +368,7 @@ function NewGarnishmentDrawer({
                 {GARN_KIND_LABEL[k]}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -832,7 +834,7 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
                       <Badge variant={FORM_STATUS_BADGE[f.status]}>{f.status}</Badge>
                     </TableCell>
                     <TableCell>
-                      {f.filedAt ? new Date(f.filedAt).toLocaleDateString() : '—'}
+                      {fmtDate(f.filedAt)}
                     </TableCell>
                     <TableCell className="text-right space-x-2">
                       {(f.kind === 'W2' || f.kind === 'W2C') && f.status !== 'VOIDED' && (
@@ -1563,8 +1565,8 @@ function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
       <DrawerBody className="space-y-4">
         <div>
           <Label>Kind</Label>
-          <select
-            className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+          <Select
+            className="mt-1"
             value={kind}
             onChange={(e) => setKind(e.target.value as TaxFormKind)}
           >
@@ -1573,7 +1575,7 @@ function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
                 {FORM_KIND_LABEL[k]}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -1588,8 +1590,8 @@ function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
           {needsQuarter && (
             <div>
               <Label>Quarter</Label>
-              <select
-                className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+              <Select
+                className="mt-1"
                 value={quarter}
                 onChange={(e) => setQuarter(e.target.value)}
               >
@@ -1597,7 +1599,7 @@ function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
                 <option value="2">Q2</option>
                 <option value="3">Q3</option>
                 <option value="4">Q4</option>
-              </select>
+              </Select>
             </div>
           )}
         </div>
@@ -1683,8 +1685,8 @@ function Form941BuilderDrawer({ onClose }: { onClose: () => void }) {
           </div>
           <div>
             <Label>Quarter</Label>
-            <select
-              className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+            <Select
+              className="mt-1"
               value={quarter}
               onChange={(e) => setQuarter(e.target.value)}
             >
@@ -1692,7 +1694,7 @@ function Form941BuilderDrawer({ onClose }: { onClose: () => void }) {
               <option value="2">Q2</option>
               <option value="3">Q3</option>
               <option value="4">Q4</option>
-            </select>
+            </Select>
           </div>
         </div>
         <Button onClick={onBuild} disabled={loading}>

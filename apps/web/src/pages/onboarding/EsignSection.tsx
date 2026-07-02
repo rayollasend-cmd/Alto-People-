@@ -8,6 +8,7 @@ import {
   type EsignAgreement,
 } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
+import { fmtDate } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
 import {
   Card,
@@ -111,14 +112,14 @@ export function EsignSection({ applicationId, canManage, esignTasks }: Props) {
                       {a.title}
                     </div>
                     <div className="text-xs text-silver/70 mt-0.5">
-                      Drafted {new Date(a.createdAt).toLocaleDateString()}
+                      Drafted {fmtDate(a.createdAt)}
                       {a.taskId && ' · linked to a checklist task'}
                     </div>
                   </div>
                   {a.signedAt ? (
                     <span className="inline-flex items-center gap-1 text-xs text-success">
                       <CheckCircle2 className="h-3 w-3" />
-                      Signed {new Date(a.signedAt).toLocaleDateString()}
+                      Signed {fmtDate(a.signedAt)}
                     </span>
                   ) : (
                     <span className="text-xs text-silver/70">Awaiting signature</span>

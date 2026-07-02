@@ -30,7 +30,9 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
+  Textarea,
   Table,
   TableBody,
   TableCell,
@@ -120,8 +122,8 @@ export function TuitionHome() {
         </div>
         <div className="flex gap-2">
           {canProcessPayroll && tab === 'queue' && (
-            <select
-              className="text-xs bg-midnight border border-navy-secondary rounded p-1.5 text-white"
+            <Select
+              size="sm"
               value={statusFilter}
               onChange={(e) =>
                 setStatusFilter(e.target.value as TuitionStatus | 'ALL')
@@ -132,7 +134,7 @@ export function TuitionHome() {
               <option value="APPROVED">Approved</option>
               <option value="REJECTED">Rejected</option>
               <option value="PAID">Paid</option>
-            </select>
+            </Select>
           )}
           {tab === 'mine' && (
             <Button onClick={() => setShowNew(true)}>
@@ -606,8 +608,8 @@ function QueueDetailDrawer({
         {row.status === 'SUBMITTED' && (
           <div className="space-y-2 pt-2 border-t border-navy-secondary">
             <Label>Reviewer notes</Label>
-            <textarea
-              className="w-full h-24 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+            <Textarea
+              className="h-24"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
             />

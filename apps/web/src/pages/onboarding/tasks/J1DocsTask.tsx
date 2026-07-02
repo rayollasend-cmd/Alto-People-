@@ -15,6 +15,7 @@ import { TaskShell, inputCls, Field } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 
 const J1_KIND_OPTIONS: Array<{ value: DocumentKind; label: string }> = [
@@ -316,10 +317,9 @@ export function J1DocsTask() {
         </div>
 
         <Field label="Document type">
-          <select
+          <Select
             value={kind}
             onChange={(e) => setKind(e.target.value as DocumentKind)}
-            className={inputCls}
             disabled={uploading}
           >
             {J1_KIND_OPTIONS.map((o) => (
@@ -327,7 +327,7 @@ export function J1DocsTask() {
                 {o.label}
               </option>
             ))}
-          </select>
+          </Select>
         </Field>
 
         <input

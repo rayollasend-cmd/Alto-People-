@@ -34,6 +34,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
 
@@ -427,8 +428,8 @@ function DecideDrawer({
         </div>
         <div>
           <Label>Notes</Label>
-          <textarea
-            className="mt-1 w-full h-32 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+          <Textarea
+            className="mt-1 h-32"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             placeholder="Why this decision — performance highlights, concerns, etc."
@@ -497,8 +498,8 @@ function ExtendDrawer({
         </div>
         <div>
           <Label>Reason</Label>
-          <textarea
-            className="mt-1 w-full h-24 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+          <Textarea
+            className="mt-1 h-24"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             placeholder="Why extend — what needs to improve…"

@@ -15,6 +15,7 @@ import {
 import { Field, TaskShell, inputCls } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
+import { Select } from '@/components/ui/Select';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 
@@ -226,8 +227,7 @@ function Section1Card({
       ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
           <Field label="I attest, under penalty of perjury, that I am:">
-            <select
-              className={inputCls}
+            <Select
               value={citizenshipStatus}
               onChange={(e) => setCitizenshipStatus(e.target.value as CitizenshipStatus)}
             >
@@ -236,7 +236,7 @@ function Section1Card({
                   {o.label}
                 </option>
               ))}
-            </select>
+            </Select>
           </Field>
 
           {needsANumber && (
@@ -394,8 +394,7 @@ function DocumentsCard({
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
             <Field label="Document type">
-              <select
-                className={inputCls}
+              <Select
                 value={docKind}
                 onChange={(e) => setDocKind(e.target.value as I9DocumentKind)}
                 disabled={uploading}
@@ -405,11 +404,10 @@ function DocumentsCard({
                     {o.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Field>
             <Field label="Side (for cards/IDs)" hint="Leave blank for single-page documents like a passport.">
-              <select
-                className={inputCls}
+              <Select
                 value={docSide}
                 onChange={(e) => setDocSide(e.target.value as I9DocumentSide | '')}
                 disabled={uploading}
@@ -417,7 +415,7 @@ function DocumentsCard({
                 <option value="">— Not applicable —</option>
                 <option value="FRONT">Front</option>
                 <option value="BACK">Back</option>
-              </select>
+              </Select>
             </Field>
           </div>
           <div className="mb-4">

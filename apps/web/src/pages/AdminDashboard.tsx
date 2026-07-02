@@ -29,6 +29,7 @@ import { ROLE_LABELS, type Role } from '@/lib/roles';
 import { getDashboardKPIs } from '@/lib/analyticsApi';
 import { searchAuditLogs } from '@/lib/auditApi';
 import { ApiError } from '@/lib/api';
+import { fmtDateTz } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -74,10 +75,9 @@ const fmtRelative = (iso: string): string => {
   if (hrs < 24) return `${hrs}h ago`;
   const days = Math.floor(hrs / 24);
   if (days < 7) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-  });
+  // fmtDateTz without a zone renders "May 13" in the browser zone —
+  // byte-for-byte the previous inline toLocaleDateString options.
+  return fmtDateTz(iso);
 };
 
 const greetingFor = (hour: number): string => {

@@ -290,19 +290,20 @@ export function RecruitingHome() {
             {view === 'list' && (
               <div className="flex flex-wrap gap-2">
                 {(['ALL', ...STAGES] as Array<CandidateStage | 'ALL'>).map((s) => (
-                  <button
+                  <Button
                     key={s}
                     type="button"
+                    size="xs"
+                    variant="outline"
                     onClick={() => setFilter(s)}
                     className={cn(
-                      'px-3 py-1.5 rounded text-xs uppercase tracking-wider border transition-colors',
-                      filter === s
-                        ? 'border-gold text-gold bg-gold/10'
-                        : 'border-navy-secondary text-silver hover:text-white',
+                      'uppercase tracking-wider',
+                      filter === s &&
+                        'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold',
                     )}
                   >
                     {s}
-                  </button>
+                  </Button>
                 ))}
               </div>
             )}
@@ -861,19 +862,23 @@ function ToggleButton({
   icon: React.ComponentType<{ className?: string }>;
 }) {
   return (
-    <button
+    <Button
       type="button"
+      size="xs"
+      variant="ghost"
       role="radio"
       aria-checked={active}
       aria-label={label}
       onClick={onClick}
       className={cn(
-        'inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] uppercase tracking-wider transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
-        active ? 'bg-gold/15 text-gold' : 'text-silver/70 hover:text-white',
+        'gap-1.5 rounded text-[11px] uppercase tracking-wider',
+        active
+          ? 'bg-gold/15 text-gold hover:bg-gold/15 hover:text-gold'
+          : 'text-silver/70',
       )}
     >
       <Icon className="h-3.5 w-3.5" />
       {label}
-    </button>
+    </Button>
   );
 }

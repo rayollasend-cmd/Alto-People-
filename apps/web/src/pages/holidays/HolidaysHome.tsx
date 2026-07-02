@@ -26,7 +26,9 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
+  Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
 
@@ -308,9 +310,9 @@ function NewHolidayDrawer({
           </div>
           <div>
             <Label htmlFor="holiday-type">Type</Label>
-            <select
+            <Select
               id="holiday-type"
-              className="mt-1 w-full bg-midnight border border-navy-secondary rounded p-2 text-white text-sm"
+              className="mt-1"
               value={type}
               onChange={(e) => setType(e.target.value as HolidayType)}
             >
@@ -318,7 +320,7 @@ function NewHolidayDrawer({
               <option value="FEDERAL">Federal</option>
               <option value="STATE">State</option>
               <option value="CLIENT_SPECIFIC">Client-specific</option>
-            </select>
+            </Select>
           </div>
         </div>
         {type === 'STATE' && (
@@ -353,8 +355,8 @@ function NewHolidayDrawer({
         </div>
         <div>
           <Label>Notes</Label>
-          <textarea
-            className="mt-1 w-full h-20 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+          <Textarea
+            className="mt-1 h-20"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
           />

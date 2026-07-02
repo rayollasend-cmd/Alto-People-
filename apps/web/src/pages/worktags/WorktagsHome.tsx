@@ -26,6 +26,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -280,8 +281,8 @@ function ValuesTab({ canManage }: { canManage: boolean }) {
       <div className="flex items-end justify-between gap-3">
         <div>
           <Label>Category</Label>
-          <select
-            className="mt-1 flex h-10 w-72 rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+          <Select
+            className="mt-1 w-72"
             value={categoryId}
             onChange={(e) => setCategoryId(e.target.value)}
           >
@@ -290,7 +291,7 @@ function ValuesTab({ canManage }: { canManage: boolean }) {
                 {c.label}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         {canManage && categoryId && (
           <Button onClick={() => setShowNew(true)}>

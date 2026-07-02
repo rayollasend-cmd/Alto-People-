@@ -308,29 +308,29 @@ export function UsersAdmin() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        <select
+                        <Select
+                          size="sm"
                           value={u.role}
                           onChange={(e) => onChangeRole(u, e.target.value as Role)}
                           disabled={isMe || busy}
-                          className="h-8 rounded-md border border-navy-secondary bg-navy-secondary/50 px-2 text-xs text-white disabled:opacity-50"
                         >
                           {ROLE_OPTIONS.map((r) => (
                             <option key={r} value={r}>
                               {ROLE_LABELS[r]}
                             </option>
                           ))}
-                        </select>
+                        </Select>
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <Badge variant={statusVariant(u.status)}>{u.status}</Badge>
-                          <select
+                          <Select
+                            size="sm"
                             value={u.status}
                             onChange={(e) =>
                               onChangeStatus(u, e.target.value as UserStatus)
                             }
                             disabled={isMe || busy}
-                            className="h-7 rounded-md border border-navy-secondary bg-navy-secondary/50 px-2 text-xs text-white disabled:opacity-50"
                             aria-label="Change status"
                           >
                             {STATUS_OPTIONS.map((s) => (
@@ -338,7 +338,7 @@ export function UsersAdmin() {
                                 {s}
                               </option>
                             ))}
-                          </select>
+                          </Select>
                         </div>
                       </TableCell>
                       <TableCell className="text-silver text-xs hidden md:table-cell">

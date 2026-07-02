@@ -34,6 +34,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -444,16 +445,15 @@ function ComposeDialog({ open, onOpenChange, onSent }: ComposeDialogProps) {
         <form onSubmit={handleSubmit} className="grid gap-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <Field label="Channel">
-              <select
+              <Select
                 value={channel}
                 onChange={(e) => setChannel(e.target.value as NotificationChannel)}
-                className="w-full h-10 px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
               >
                 <option value="IN_APP">In-app inbox</option>
                 <option value="EMAIL">Email (stub)</option>
                 <option value="SMS">SMS (stub)</option>
                 <option value="PUSH">Push (stub)</option>
-              </select>
+              </Select>
             </Field>
             <Field label="Recipient User ID (in-app / push)">
               <Input
@@ -575,16 +575,15 @@ function BroadcastDialog({
         </DialogHeader>
         <form onSubmit={handleSubmit} className="grid gap-4">
           <Field label="Audience">
-            <select
+            <Select
               value={audience}
               onChange={(e) =>
                 setAudience(e.target.value as 'ALL_ASSOCIATES' | 'ALL_HR')
               }
-              className="w-full h-10 px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
             >
               <option value="ALL_ASSOCIATES">All active associates</option>
               <option value="ALL_HR">All HR administrators</option>
-            </select>
+            </Select>
           </Field>
           <Field label="Subject">
             <Input value={subject} onChange={(e) => setSubject(e.target.value)} />

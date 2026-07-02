@@ -466,20 +466,20 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
           edge — feels like a deliberate rail instead of a free scroller. */}
       <div className="-mx-2 mb-5 flex gap-2 overflow-x-auto snap-x snap-mandatory px-2 pb-1 sm:mx-0 sm:flex-wrap sm:px-0 sm:pb-0 sm:snap-none">
         {STATUS_FILTERS.map((f) => (
-          <button
+          <Button
             key={f.value}
             type="button"
+            size="xs"
+            variant="outline"
             onClick={() => setFilter(f.value)}
             className={cn(
-              'shrink-0 snap-start rounded-md border px-2.5 py-1.5 text-xs transition-colors sm:px-3 sm:text-sm',
-              'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
-              filter === f.value
-                ? 'border-gold text-gold bg-gold/10'
-                : 'border-navy-secondary text-silver hover:text-white hover:border-silver/40'
+              'shrink-0 snap-start sm:px-3 sm:text-sm',
+              filter === f.value &&
+                'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold'
             )}
           >
             {f.label}
-          </button>
+          </Button>
         ))}
       </div>
 

@@ -117,19 +117,20 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
 
       <div className="flex flex-wrap gap-2 mb-5">
         {STATUS_FILTERS.map((f) => (
-          <button
+          <Button
             key={f.value}
             type="button"
+            size="xs"
+            variant="outline"
             onClick={() => setFilter(f.value)}
             className={cn(
-              'px-3 py-1.5 rounded text-xs uppercase tracking-wider border transition-colors',
-              filter === f.value
-                ? 'border-gold text-gold bg-gold/10'
-                : 'border-navy-secondary text-silver hover:text-white',
+              'uppercase tracking-wider',
+              filter === f.value &&
+                'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold',
             )}
           >
             {f.label}
-          </button>
+          </Button>
         ))}
       </div>
 

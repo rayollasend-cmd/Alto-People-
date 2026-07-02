@@ -145,18 +145,15 @@ export function ClientsHome() {
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-1 rounded-md border border-navy-secondary p-0.5 bg-navy-secondary/30">
           {STATUS_FILTERS.map((f) => (
-            <button
+            <Button
               key={f.value}
+              size="sm"
+              variant={statusFilter === f.value ? 'primary' : 'ghost'}
               onClick={() => setStatusFilter(f.value)}
-              className={cn(
-                'px-3 h-9 inline-flex items-center text-xs uppercase tracking-wider rounded-sm transition-colors',
-                statusFilter === f.value
-                  ? 'bg-gold text-navy'
-                  : 'text-silver hover:text-white'
-              )}
+              className="h-9 uppercase tracking-wider rounded-sm"
             >
               {f.label}
-            </button>
+            </Button>
           ))}
         </div>
         <div className="relative flex-1 min-w-[14rem] max-w-md">

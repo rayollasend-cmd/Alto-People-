@@ -4,6 +4,7 @@ import { useAuth } from '@/lib/auth';
 import { submitProfile } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
+import { Select } from '@/components/ui/Select';
 
 const STATES = [
   'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
@@ -137,18 +138,17 @@ export function ProfileInfoTask() {
             </Field>
           </div>
           <Field label="State">
-            <select
+            <Select
               autoComplete="address-level1"
               value={state}
               onChange={(e) => setState(e.target.value)}
-              className={inputCls}
             >
               {STATES.map((s) => (
                 <option key={s} value={s}>
                   {s}
                 </option>
               ))}
-            </select>
+            </Select>
           </Field>
           <Field label="ZIP">
             <input

@@ -4,6 +4,7 @@ import { CheckCircle2 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { getW4, submitW4, type W4Status } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
+import { Select } from '@/components/ui/Select';
 import { Field, SubmitRow, TaskShell, inputCls } from './ProfileInfoTask';
 
 const SSN_PATTERN = /^\d{3}-?\d{2}-?\d{4}$/;
@@ -98,7 +99,7 @@ export function W4Task() {
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <Field label="Filing status">
-          <select
+          <Select
             value={filingStatus}
             onChange={(e) =>
               setFilingStatus(
@@ -108,12 +109,11 @@ export function W4Task() {
                   | 'HEAD_OF_HOUSEHOLD'
               )
             }
-            className={inputCls}
           >
             <option value="SINGLE">Single or married filing separately</option>
             <option value="MARRIED_FILING_JOINTLY">Married filing jointly</option>
             <option value="HEAD_OF_HOUSEHOLD">Head of household</option>
-          </select>
+          </Select>
         </Field>
 
         <label className="flex items-center gap-2 text-sm text-white">

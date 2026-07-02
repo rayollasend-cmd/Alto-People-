@@ -34,6 +34,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -45,6 +46,7 @@ import {
   TabsContent,
   TabsList,
   TabsTrigger,
+  Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
 
@@ -196,8 +198,8 @@ function RespondCard({
         )}
         <div>
           <Label>Comment (optional)</Label>
-          <textarea
-            className="mt-1 w-full h-20 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+          <Textarea
+            className="mt-1 h-20"
             value={comment}
             onChange={(e) => setComment(e.target.value)}
             maxLength={2000}
@@ -447,8 +449,8 @@ function NewSurveyDrawer({
       <DrawerBody className="space-y-4">
         <div>
           <Label>Question</Label>
-          <textarea
-            className="mt-1 w-full h-20 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+          <Textarea
+            className="mt-1 h-20"
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
             placeholder="How are you feeling about your work this week?"
@@ -456,32 +458,32 @@ function NewSurveyDrawer({
         </div>
         <div>
           <Label>Scale</Label>
-          <select
-            className="mt-1 w-full bg-midnight border border-navy-secondary rounded-md p-2 text-white"
+          <Select
+            className="mt-1"
             value={scale}
             onChange={(e) => setScale(e.target.value as PulseScale)}
           >
             <option value="SCORE_1_5">1-5 score</option>
             <option value="YES_NO">Yes / No</option>
-          </select>
+          </Select>
         </div>
         <div>
           <Label>Audience</Label>
-          <select
-            className="mt-1 w-full bg-midnight border border-navy-secondary rounded-md p-2 text-white"
+          <Select
+            className="mt-1"
             value={audience}
             onChange={(e) => setAudience(e.target.value as PulseAudience)}
           >
             <option value="ALL">Everyone</option>
             <option value="BY_DEPARTMENT">By department</option>
             <option value="BY_CLIENT">By client</option>
-          </select>
+          </Select>
         </div>
         {audience === 'BY_DEPARTMENT' && (
           <div>
             <Label>Department</Label>
-            <select
-              className="mt-1 w-full bg-midnight border border-navy-secondary rounded-md p-2 text-white"
+            <Select
+              className="mt-1"
               value={audienceId}
               onChange={(e) => setAudienceId(e.target.value)}
               disabled={departments === null}
@@ -494,7 +496,7 @@ function NewSurveyDrawer({
                   {d.name}
                 </option>
               ))}
-            </select>
+            </Select>
             {departments !== null && departments.length === 0 && (
               <div className="text-xs text-silver mt-1">
                 No departments defined yet.
@@ -505,8 +507,8 @@ function NewSurveyDrawer({
         {audience === 'BY_CLIENT' && (
           <div>
             <Label>Client</Label>
-            <select
-              className="mt-1 w-full bg-midnight border border-navy-secondary rounded-md p-2 text-white"
+            <Select
+              className="mt-1"
               value={audienceId}
               onChange={(e) => setAudienceId(e.target.value)}
               disabled={clients === null}
@@ -519,7 +521,7 @@ function NewSurveyDrawer({
                   {c.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
         )}
         <div>

@@ -18,6 +18,8 @@ import {
   type FaceModelsState,
 } from '@/lib/faceMatch';
 import { Logo } from '@/components/Logo';
+import { Button } from '@/components/ui/Button';
+import { Textarea } from '@/components/ui/Input';
 import {
   drainQueue,
   enqueuePunch,
@@ -959,8 +961,8 @@ function SetupScreen({ onSaved }: { onSaved: (token: string) => void }) {
           Paste the device token from HR's kiosk admin page. The token
           starts with <code className="font-mono">altokiosk_</code>.
         </p>
-        <textarea
-          className="w-full h-32 bg-midnight border border-navy-secondary rounded-md p-3 font-mono text-xs text-white"
+        <Textarea
+          className="h-32 font-mono text-xs"
           value={val}
           onChange={(e) => {
             setVal(e.target.value);
@@ -977,12 +979,9 @@ function SetupScreen({ onSaved }: { onSaved: (token: string) => void }) {
             {error}
           </p>
         )}
-        <button
-          onClick={onSave}
-          className="mt-4 w-full bg-gold hover:bg-gold-bright text-navy transition-colors rounded-md py-3 font-medium"
-        >
+        <Button onClick={onSave} size="lg" className="mt-4 w-full">
           Pair device
-        </button>
+        </Button>
         <KioskInstallButton />
       </div>
     </div>
@@ -1168,12 +1167,9 @@ function PinPad({
             once per PIN on purpose, and there's no other submit
             affordance on the pad. */}
         {error && pin.length === 4 && !submitting ? (
-          <button
-            onClick={onSubmit}
-            className="min-h-[44px] px-6 py-2 bg-gold hover:bg-gold-bright text-navy rounded-full text-base font-medium transition-colors"
-          >
+          <Button onClick={onSubmit} size="lg" className="rounded-full">
             {t.tryAgain}
-          </button>
+          </Button>
         ) : null}
       </div>
       <div
@@ -1353,18 +1349,12 @@ function SelfieCapture({
         <div className="text-2xl mb-4">{t.cameraUnavailable}</div>
         <div className="text-silver text-sm mb-6">{streamErr}</div>
         <div className="flex gap-3 justify-center">
-          <button
-            onClick={onSkip}
-            className="px-6 py-3 bg-gold hover:bg-gold-bright text-navy rounded-md font-medium transition-colors"
-          >
+          <Button onClick={onSkip} size="lg">
             {t.continueWithoutSelfie}
-          </button>
-          <button
-            onClick={onCancel}
-            className="px-6 py-3 bg-navy-secondary rounded-md text-silver transition"
-          >
+          </Button>
+          <Button onClick={onCancel} size="lg" variant="secondary">
             {t.cancel}
-          </button>
+          </Button>
         </div>
       </div>
     );

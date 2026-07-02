@@ -39,6 +39,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -209,19 +210,21 @@ function GoalsTab() {
                       {g.periodStart} – {g.periodEnd}
                     </TableCell>
                     <TableCell>
-                      <select
-                        className="h-8 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs text-white"
-                        value={g.status}
-                        onChange={(e) => onStatus(g, e.target.value as GoalStatus)}
-                      >
-                        {(['DRAFT', 'ACTIVE', 'AT_RISK', 'COMPLETED', 'CANCELLED'] as const).map(
-                          (s) => (
-                            <option key={s} value={s}>
-                              {s}
-                            </option>
-                          ),
-                        )}
-                      </select>
+                      <div className="inline-block">
+                        <Select
+                          size="sm"
+                          value={g.status}
+                          onChange={(e) => onStatus(g, e.target.value as GoalStatus)}
+                        >
+                          {(['DRAFT', 'ACTIVE', 'AT_RISK', 'COMPLETED', 'CANCELLED'] as const).map(
+                            (s) => (
+                              <option key={s} value={s}>
+                                {s}
+                              </option>
+                            ),
+                          )}
+                        </Select>
+                      </div>
                     </TableCell>
                     <TableCell>
                       <Input
@@ -370,14 +373,14 @@ function GoalDrawer({
         </div>
         <div>
           <Label>Kind</Label>
-          <select
-            className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+          <Select
+            className="mt-1"
             value={draft.kind}
             onChange={(e) => setDraft({ ...draft, kind: e.target.value as 'GOAL' | 'OBJECTIVE' })}
           >
             <option value="GOAL">Personal goal</option>
             <option value="OBJECTIVE">OKR / objective</option>
-          </select>
+          </Select>
         </div>
         <div>
           <Label>Title</Label>

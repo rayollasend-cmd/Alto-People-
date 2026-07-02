@@ -27,6 +27,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -110,14 +111,14 @@ function SearchTab() {
             </div>
             <div>
               <Label>Min level</Label>
-              <select
-                className="mt-1 bg-midnight border border-navy-secondary rounded-md p-2 text-white"
+              <Select
+                className="mt-1"
                 value={minLevel}
                 onChange={(e) => setMinLevel(e.target.value as SkillLevel | '')}
               >
                 <option value="">Any</option>
                 {LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
-              </select>
+              </Select>
             </div>
             <Button onClick={submit} disabled={loading}>
               {loading ? 'Searching…' : 'Search'}

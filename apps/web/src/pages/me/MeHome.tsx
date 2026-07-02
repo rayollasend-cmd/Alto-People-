@@ -45,6 +45,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -56,8 +57,10 @@ import {
   TabsContent,
   TabsList,
   TabsTrigger,
+  Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import { fmtDate } from '@/lib/format';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { toast } from 'sonner';
 
@@ -461,9 +464,7 @@ function EmployeeNumberRow({
           </div>
           <div className="mt-1 text-xs text-silver">
             Use this number to clock in and out at the kiosk. Issued{' '}
-            {employeeNumber.issuedAt
-              ? new Date(employeeNumber.issuedAt).toLocaleDateString()
-              : '—'}
+            {fmtDate(employeeNumber.issuedAt)}
             .
           </div>
         </>
@@ -682,8 +683,8 @@ function ContactDrawer({
         </div>
         <div>
           <Label>Relation</Label>
-          <select
-            className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+          <Select
+            className="mt-1"
             value={draft.relation}
             onChange={(e) =>
               setDraft({ ...draft, relation: e.target.value as ContactDraft['relation'] })
@@ -694,7 +695,7 @@ function ContactDrawer({
                 {RELATION_LABEL[r]}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div>
           <Label>Phone</Label>
@@ -929,8 +930,8 @@ function DependentDrawer({
         </div>
         <div>
           <Label>Relation</Label>
-          <select
-            className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+          <Select
+            className="mt-1"
             value={draft.relation}
             onChange={(e) =>
               setDraft({ ...draft, relation: e.target.value as DependentDraft['relation'] })
@@ -941,7 +942,7 @@ function DependentDrawer({
                 {RELATION_LABEL[r]}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div>
           <Label>Date of birth (YYYY-MM-DD)</Label>
@@ -1177,8 +1178,8 @@ function BeneficiaryDrawer({
         </div>
         <div>
           <Label>Relation</Label>
-          <select
-            className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+          <Select
+            className="mt-1"
             value={draft.relation}
             onChange={(e) =>
               setDraft({ ...draft, relation: e.target.value as BeneficiaryDraft['relation'] })
@@ -1189,12 +1190,12 @@ function BeneficiaryDrawer({
                 {RELATION_LABEL[r]}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div>
           <Label>Kind</Label>
-          <select
-            className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+          <Select
+            className="mt-1"
             value={draft.kind}
             onChange={(e) =>
               setDraft({ ...draft, kind: e.target.value as BeneficiaryDraft['kind'] })
@@ -1202,7 +1203,7 @@ function BeneficiaryDrawer({
           >
             <option value="PRIMARY">Primary</option>
             <option value="CONTINGENT">Contingent</option>
-          </select>
+          </Select>
         </div>
         <div>
           <Label>Percentage</Label>
@@ -1314,7 +1315,7 @@ function LifeEventsPanel({
                         {row.status.replace(/_/g, ' ')}
                       </Badge>
                     </TableCell>
-                    <TableCell>{new Date(row.createdAt).toLocaleDateString()}</TableCell>
+                    <TableCell>{fmtDate(row.createdAt)}</TableCell>
                     <TableCell className="max-w-xs truncate">{row.notes ?? '—'}</TableCell>
                   </TableRow>
                 ))}
@@ -1330,8 +1331,8 @@ function LifeEventsPanel({
         <DrawerBody className="space-y-4">
           <div>
             <Label>Event</Label>
-            <select
-              className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+            <Select
+              className="mt-1"
               value={kind}
               onChange={(e) => setKind(e.target.value as typeof LIFE_EVENT_KINDS[number])}
             >
@@ -1340,7 +1341,7 @@ function LifeEventsPanel({
                   {k.replace(/_/g, ' ')}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
           <div>
             <Label>Event date (YYYY-MM-DD)</Label>
@@ -1353,8 +1354,8 @@ function LifeEventsPanel({
           </div>
           <div>
             <Label>Notes</Label>
-            <textarea
-              className="mt-1 flex min-h-[80px] w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 py-2 text-sm text-white"
+            <Textarea
+              className="mt-1"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
             />
@@ -1404,7 +1405,7 @@ function TaxDocsPanel({ rows }: { rows: TaxDoc[] | null }) {
                     {TAX_DOC_LABEL[row.kind] ?? row.kind}
                   </TableCell>
                   <TableCell>{row.taxYear}</TableCell>
-                  <TableCell>{new Date(row.issuedAt).toLocaleDateString()}</TableCell>
+                  <TableCell>{fmtDate(row.issuedAt)}</TableCell>
                   <TableCell>
                     {row.fileSize ? `${Math.round(row.fileSize / 1024)} KB` : '—'}
                   </TableCell>

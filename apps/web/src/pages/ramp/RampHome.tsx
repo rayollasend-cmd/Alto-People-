@@ -31,8 +31,11 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
+  Textarea,
 } from '@/components/ui';
+import { fmtDate } from '@/lib/format';
 import { Label } from '@/components/ui/Label';
 
 const STATUS_VARIANT: Record<
@@ -223,8 +226,8 @@ function NewPlanDrawer({
         </div>
         <div>
           <Label>Notes (optional)</Label>
-          <textarea
-            className="mt-1 w-full h-24 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+          <Textarea
+            className="mt-1 h-24"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
           />
@@ -316,8 +319,8 @@ function PlanDetailDrawer({
                         )}
                       </div>
                       {canManage ? (
-                        <select
-                          className="text-xs bg-midnight border border-navy-secondary rounded p-1 text-white"
+                        <Select
+                          size="sm"
                           value={m.status}
                           onChange={async (e) => {
                             try {
@@ -341,7 +344,7 @@ function PlanDetailDrawer({
                               </option>
                             ),
                           )}
-                        </select>
+                        </Select>
                       ) : (
                         <Badge variant={STATUS_VARIANT[m.status]}>
                           {STATUS_LABELS[m.status]}
@@ -371,7 +374,7 @@ function PlanDetailDrawer({
                     {m.achievedAt && (
                       <div className="text-xs text-success mt-1 flex items-center gap-1">
                         <CheckCircle2 className="h-3 w-3" /> Achieved{' '}
-                        {new Date(m.achievedAt).toLocaleDateString()}
+                        {fmtDate(m.achievedAt)}
                       </div>
                     )}
                     {m.status === 'MISSED' && (
@@ -491,8 +494,8 @@ function AddMilestoneDrawer({
         </div>
         <div>
           <Label>Description (optional)</Label>
-          <textarea
-            className="mt-1 w-full h-24 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+          <Textarea
+            className="mt-1 h-24"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
           />

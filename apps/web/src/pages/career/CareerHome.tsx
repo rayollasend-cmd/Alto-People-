@@ -33,7 +33,9 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
+  Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
 
@@ -218,8 +220,8 @@ function NewLadderDrawer({
         </div>
         <div>
           <Label>Description</Label>
-          <textarea
-            className="mt-1 w-full h-24 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+          <Textarea
+            className="mt-1 h-24"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
           />
@@ -518,8 +520,8 @@ function AddLevelDrawer({
         </div>
         <div>
           <Label>Description / expectations</Label>
-          <textarea
-            className="mt-1 w-full h-32 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+          <Textarea
+            className="mt-1 h-32"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
           />
@@ -585,9 +587,9 @@ function AddSkillDrawer({
         </div>
         <div>
           <Label htmlFor="career-min-level">Minimum level</Label>
-          <select
+          <Select
             id="career-min-level"
-            className="mt-1 w-full bg-midnight border border-navy-secondary rounded p-2 text-white text-sm"
+            className="mt-1"
             value={minLevel}
             onChange={(e) => setMinLevel(e.target.value as SkillLevel)}
           >
@@ -596,7 +598,7 @@ function AddSkillDrawer({
                 {SKILL_LEVEL_LABELS[l]}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
       </DrawerBody>
       <DrawerFooter>

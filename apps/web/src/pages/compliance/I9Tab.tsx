@@ -22,6 +22,7 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  Select,
   SkeletonRows,
 } from '@/components/ui';
 
@@ -507,17 +508,18 @@ function I9EditForm({
           <span className="block text-[11px] uppercase tracking-wider text-silver mb-1">
             Document list
           </span>
-          <select
-            value={documentList}
-            onChange={(e) =>
-              setDocumentList(e.target.value as I9DocumentList | '')
-            }
-            className="w-48 h-10 px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
-          >
-            <option value="">—</option>
-            <option value="LIST_A">List A</option>
-            <option value="LIST_B_AND_C">Lists B + C</option>
-          </select>
+          <div className="w-48">
+            <Select
+              value={documentList}
+              onChange={(e) =>
+                setDocumentList(e.target.value as I9DocumentList | '')
+              }
+            >
+              <option value="">—</option>
+              <option value="LIST_A">List A</option>
+              <option value="LIST_B_AND_C">Lists B + C</option>
+            </Select>
+          </div>
         </label>
       </div>
       {error && (

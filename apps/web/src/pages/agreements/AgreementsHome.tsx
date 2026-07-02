@@ -33,6 +33,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -40,6 +41,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  Textarea,
 } from '@/components/ui';
 import { FormHint, Label } from '@/components/ui/Label';
 
@@ -117,8 +119,8 @@ export function AgreementsHome() {
         </div>
         {canManage && tab === 'all' && (
           <div className="flex gap-2">
-            <select
-              className="text-xs bg-midnight border border-navy-secondary rounded p-1.5 text-white"
+            <Select
+              size="sm"
               value={statusFilter}
               onChange={(e) =>
                 setStatusFilter(e.target.value as AgreementStatus | 'ALL')
@@ -130,7 +132,7 @@ export function AgreementsHome() {
                   {STATUS_LABELS[s]}
                 </option>
               ))}
-            </select>
+            </Select>
             <Button onClick={() => setShowNew(true)}>
               <Plus className="mr-2 h-4 w-4" /> Issue
             </Button>
@@ -419,9 +421,9 @@ function NewAgreementDrawer({
         </div>
         <div>
           <Label htmlFor="issue-agreement-kind">Kind</Label>
-          <select
+          <Select
             id="issue-agreement-kind"
-            className="mt-1 w-full bg-midnight border border-navy-secondary rounded p-2 text-white text-sm"
+            className="mt-1"
             value={kind}
             onChange={(e) => setKind(e.target.value as AgreementKind)}
           >
@@ -430,7 +432,7 @@ function NewAgreementDrawer({
                 {KIND_LABELS[k]}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         {kind === 'OTHER' && (
           <div>
@@ -485,9 +487,9 @@ function NewAgreementDrawer({
         </div>
         <div>
           <Label htmlFor="issue-agreement-notes">Notes</Label>
-          <textarea
+          <Textarea
             id="issue-agreement-notes"
-            className="mt-1 w-full h-20 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+            className="mt-1 h-20"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
           />

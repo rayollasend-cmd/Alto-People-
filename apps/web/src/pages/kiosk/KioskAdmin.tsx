@@ -1208,28 +1208,32 @@ function PinsTab({ canManage }: { canManage: boolean }) {
         <div className="flex flex-wrap items-center gap-3">
           {clientId !== ALL_CLIENTS && (
             <div className="inline-flex overflow-hidden rounded-md border border-navy-secondary text-sm">
-              <button
+              <Button
                 type="button"
+                size="sm"
+                variant="ghost"
                 onClick={() => setView('with')}
-                className={`px-3 py-1.5 transition-colors ${
+                className={`rounded-none text-sm ${
                   effectiveView === 'with'
-                    ? 'bg-gold/15 text-white'
-                    : 'bg-navy-secondary/40 text-silver hover:text-white'
+                    ? 'bg-gold/15 text-white hover:bg-gold/15'
+                    : 'bg-navy-secondary/40'
                 }`}
               >
                 With codes{rows ? ` (${rows.length})` : ''}
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                size="sm"
+                variant="ghost"
                 onClick={() => setView('missing')}
-                className={`border-l border-navy-secondary px-3 py-1.5 transition-colors ${
+                className={`rounded-none border-l border-navy-secondary text-sm ${
                   effectiveView === 'missing'
-                    ? 'bg-gold/15 text-white'
-                    : 'bg-navy-secondary/40 text-silver hover:text-white'
+                    ? 'bg-gold/15 text-white hover:bg-gold/15'
+                    : 'bg-navy-secondary/40'
                 }`}
               >
                 Missing{eligible ? ` (${missing.length})` : ''}
-              </button>
+              </Button>
             </div>
           )}
           {effectiveView === 'with' && (
@@ -1549,36 +1553,40 @@ function DiagnoseDrawer({ onClose }: { onClose: () => void }) {
           if the number isn't known.
         </p>
         <div className="flex gap-2">
-          <button
+          <Button
             type="button"
+            size="sm"
+            variant="secondary"
             onClick={() => {
               setMode('number');
               setErr(null);
               setResult(null);
             }}
-            className={`flex-1 px-3 py-1.5 rounded-md text-sm border transition-colors ${
+            className={`flex-1 text-sm ${
               mode === 'number'
-                ? 'bg-gold/15 border-gold/60 text-white'
-                : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
+                ? 'bg-gold/15 border-gold/60 text-white hover:bg-gold/15 hover:border-gold/60'
+                : 'text-silver hover:text-white'
             }`}
           >
             By employee number
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            size="sm"
+            variant="secondary"
             onClick={() => {
               setMode('name');
               setErr(null);
               setResult(null);
             }}
-            className={`flex-1 px-3 py-1.5 rounded-md text-sm border transition-colors ${
+            className={`flex-1 text-sm ${
               mode === 'name'
-                ? 'bg-gold/15 border-gold/60 text-white'
-                : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
+                ? 'bg-gold/15 border-gold/60 text-white hover:bg-gold/15 hover:border-gold/60'
+                : 'text-silver hover:text-white'
             }`}
           >
             By associate name
-          </button>
+          </Button>
         </div>
         {mode === 'number' ? (
           <div>

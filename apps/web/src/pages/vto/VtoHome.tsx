@@ -38,6 +38,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
 
@@ -456,8 +457,8 @@ function NewEntryDrawer({
         </div>
         <div>
           <Label>What did you do?</Label>
-          <textarea
-            className="w-full mt-1 h-24 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+          <Textarea
+            className="mt-1 h-24"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Brief description of the activity"
@@ -619,8 +620,8 @@ function QueueDetailDrawer({
         {row.status === 'PENDING' && (
           <div className="space-y-2 pt-2 border-t border-navy-secondary">
             <Label>Reviewer notes</Label>
-            <textarea
-              className="w-full h-20 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+            <Textarea
+              className="h-20"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
             />

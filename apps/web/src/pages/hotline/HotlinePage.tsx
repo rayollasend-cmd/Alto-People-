@@ -9,6 +9,7 @@ import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Badge } from '@/components/ui/Badge';
 import { cn } from '@/lib/cn';
+import { fmtDate } from '@/lib/format';
 import {
   fileAnonymousReport,
   lookupReportByCode,
@@ -360,7 +361,7 @@ function LookupForm() {
         </div>
         <div className="text-xs text-silver">
           {CATEGORY_LABELS[report.category]} · Filed{' '}
-          {new Date(report.createdAt).toLocaleDateString()}
+          {fmtDate(report.createdAt)}
         </div>
         <div className="text-sm text-white whitespace-pre-wrap pt-2 border-t border-navy-secondary">
           {report.description}

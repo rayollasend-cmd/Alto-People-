@@ -10,6 +10,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
+import { Select } from '@/components/ui/Select';
 import { Field, SubmitRow, TaskShell, inputCls } from './ProfileInfoTask';
 
 // ABA mod-10 checksum — same one the API enforces. Keeping client-side too
@@ -179,16 +180,15 @@ export function DirectDepositTask() {
                   />
                 </Field>
                 <Field label="Account type">
-                  <select
+                  <Select
                     value={accountType}
                     onChange={(e) =>
                       setAccountType(e.target.value as 'CHECKING' | 'SAVINGS')
                     }
-                    className={inputCls}
                   >
                     <option value="CHECKING">Checking</option>
                     <option value="SAVINGS">Savings</option>
-                  </select>
+                  </Select>
                 </Field>
               </>
             ) : (

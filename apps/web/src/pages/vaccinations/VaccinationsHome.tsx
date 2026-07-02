@@ -30,6 +30,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -37,6 +38,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
 
@@ -125,8 +127,8 @@ export function VaccinationsHome() {
         </div>
         {canManage && tab === 'all' && (
           <div className="flex gap-2">
-            <select
-              className="text-xs bg-midnight border border-navy-secondary rounded p-1.5 text-white"
+            <Select
+              size="sm"
               value={filterKind}
               onChange={(e) =>
                 setFilterKind(e.target.value as VaccinationKind | 'ALL')
@@ -138,7 +140,7 @@ export function VaccinationsHome() {
                   {KIND_LABELS[k]}
                 </option>
               ))}
-            </select>
+            </Select>
             <Button onClick={() => setShowNew(true)}>
               <Plus className="mr-2 h-4 w-4" /> Record
             </Button>
@@ -388,8 +390,8 @@ function NewRecordDrawer({
         </div>
         <div>
           <Label>Kind</Label>
-          <select
-            className="mt-1 w-full bg-midnight border border-navy-secondary rounded p-2 text-white text-sm"
+          <Select
+            className="mt-1"
             value={kind}
             onChange={(e) => setKind(e.target.value as VaccinationKind)}
           >
@@ -398,7 +400,7 @@ function NewRecordDrawer({
                 {KIND_LABELS[k]}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         {kind === 'OTHER' && (
           <div>
@@ -496,8 +498,8 @@ function NewRecordDrawer({
         </div>
         <div>
           <Label>Notes</Label>
-          <textarea
-            className="mt-1 w-full h-20 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+          <Textarea
+            className="mt-1 h-20"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
           />

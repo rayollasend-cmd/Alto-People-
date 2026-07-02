@@ -11,6 +11,7 @@ import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { DocumentPreview } from '@/components/DocumentPreview';
@@ -135,17 +136,16 @@ export function AssociateDocumentsView() {
             <span className="block text-xs uppercase tracking-widest text-silver mb-1">
               Kind
             </span>
-            <select
+            <Select
               value={kind}
               onChange={(e) => setKind(e.target.value as DocumentKind)}
-              className={inputCls}
             >
               {KIND_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <label className="block">
             <span className="block text-xs uppercase tracking-widest text-silver mb-1">

@@ -15,6 +15,7 @@ import {
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip';
 import { cn } from '@/lib/cn';
+import { fmtDate } from '@/lib/format';
 
 const POLL_MS = 30_000;
 
@@ -280,5 +281,5 @@ function fmt(iso: string): string {
   if (diff < hr) return `${Math.floor(diff / min)}m ago`;
   if (diff < day) return `${Math.floor(diff / hr)}h ago`;
   if (diff < 7 * day) return `${Math.floor(diff / day)}d ago`;
-  return d.toLocaleDateString();
+  return fmtDate(d);
 }

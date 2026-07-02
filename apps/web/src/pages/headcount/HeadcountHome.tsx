@@ -19,6 +19,7 @@ import {
   DrawerHeader,
   DrawerTitle,
   PageHeader,
+  SegmentedControl,
   SkeletonRows,
   Table,
   TableBody,
@@ -94,19 +95,12 @@ export function HeadcountHome() {
 
       <div className="flex items-center gap-2 text-sm">
         <span className="text-silver">Window:</span>
-        {[30, 90, 365].map((d) => (
-          <button
-            key={d}
-            onClick={() => setDays(d as 30 | 90 | 365)}
-            className={`px-3 py-1 rounded-full border transition-colors ${
-              days === d
-                ? 'bg-gold border-gold text-navy'
-                : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
-            }`}
-          >
-            {d}d
-          </button>
-        ))}
+        <SegmentedControl
+          ariaLabel="Turnover window"
+          options={([30, 90, 365] as const).map((d) => ({ value: d, label: `${d}d` }))}
+          value={days}
+          onChange={(d) => setDays(d)}
+        />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

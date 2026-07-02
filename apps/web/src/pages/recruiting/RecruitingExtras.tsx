@@ -42,6 +42,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -56,6 +57,7 @@ import {
   Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import { fmtDate } from '@/lib/format';
 import { toast } from 'sonner';
 
 type Tab = 'kits' | 'offers' | 'referrals' | 'postings';
@@ -158,7 +160,7 @@ function KitsTab({ canManage }: { canManage: boolean }) {
                   <TableRow key={k.id} className="group">
                     <TableCell className="font-medium text-white">{k.name}</TableCell>
                     <TableCell>{k.questions.length}</TableCell>
-                    <TableCell>{new Date(k.updatedAt).toLocaleDateString()}</TableCell>
+                    <TableCell>{fmtDate(k.updatedAt)}</TableCell>
                     <TableCell className="text-right space-x-3">
                       {canManage && (
                         <button
@@ -709,16 +711,18 @@ function ReferralsTab({ canManage }: { canManage: boolean }) {
                     </TableCell>
                     <TableCell className="text-right space-x-2">
                       {canManage && r.status !== 'HIRED' && r.status !== 'REJECTED' && (
-                        <select
-                          className="bg-navy-secondary/40 border border-navy-secondary text-xs rounded px-2 py-1 text-white"
-                          value={r.status}
-                          onChange={(e) => onStatus(r.id, e.target.value as ReferralStatus)}
-                        >
-                          <option value="OPEN">OPEN</option>
-                          <option value="INTERVIEWING">INTERVIEWING</option>
-                          <option value="HIRED">HIRED</option>
-                          <option value="REJECTED">REJECTED</option>
-                        </select>
+                        <div className="inline-block">
+                          <Select
+                            size="sm"
+                            value={r.status}
+                            onChange={(e) => onStatus(r.id, e.target.value as ReferralStatus)}
+                          >
+                            <option value="OPEN">OPEN</option>
+                            <option value="INTERVIEWING">INTERVIEWING</option>
+                            <option value="HIRED">HIRED</option>
+                            <option value="REJECTED">REJECTED</option>
+                          </Select>
+                        </div>
                       )}
                       {canManage &&
                         r.status === 'HIRED' &&

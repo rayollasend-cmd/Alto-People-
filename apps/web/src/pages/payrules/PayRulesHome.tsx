@@ -36,6 +36,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -77,8 +78,8 @@ export function PayRulesHome() {
       <Card>
         <CardContent className="p-4 flex items-center gap-3 flex-wrap">
           <span className="text-[11px] uppercase tracking-wider text-silver">Client</span>
-          <select
-            className="flex h-9 rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+          <Select
+            size="sm"
             value={clientId}
             onChange={(e) => setClientId(e.target.value)}
           >
@@ -88,7 +89,7 @@ export function PayRulesHome() {
                 {c.name}
               </option>
             ))}
-          </select>
+          </Select>
         </CardContent>
       </Card>
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
@@ -400,8 +401,8 @@ function PremiumDrawer({
         </div>
         <div>
           <Label>Kind</Label>
-          <select
-            className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+          <Select
+            className="mt-1"
             value={kind}
             onChange={(e) => setKind(e.target.value as PremiumPayKind)}
           >
@@ -410,7 +411,7 @@ function PremiumDrawer({
                 {KIND_LABEL[k]}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>

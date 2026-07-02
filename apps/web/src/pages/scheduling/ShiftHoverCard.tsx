@@ -4,6 +4,7 @@ import { Calendar, Clock, MapPin, StickyNote, User, X } from 'lucide-react';
 import type { Shift } from '@alto-people/shared';
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/cn';
+import { fmtDateTz, fmtTimeTz, fmtWeekdayTz } from '@/lib/format';
 import { colorForPosition } from '@/lib/positionColor';
 
 /**
@@ -53,17 +54,9 @@ interface Props {
 }
 
 function fmtTimeRange(s: Shift): string {
-  const a = new Date(s.startsAt);
-  const b = new Date(s.endsAt);
-  const tzOpts = s.timezone ? { timeZone: s.timezone } : {};
-  const date = a.toLocaleDateString(undefined, {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    ...tzOpts,
-  });
-  const t1 = a.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', ...tzOpts });
-  const t2 = b.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', ...tzOpts });
+  const date = `${fmtWeekdayTz(s.startsAt, s.timezone)}, ${fmtDateTz(s.startsAt, s.timezone)}`;
+  const t1 = fmtTimeTz(s.startsAt, s.timezone);
+  const t2 = fmtTimeTz(s.endsAt, s.timezone);
   return `${date} · ${t1} – ${t2}`;
 }
 

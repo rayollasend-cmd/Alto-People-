@@ -13,11 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/Dialog';
 import { Field } from '@/components/ui/Field';
-import { Input } from '@/components/ui/Input';
-
-const TEXTAREA_CX =
-  'w-full rounded-md border border-navy-secondary bg-navy-secondary/40 text-white px-3 py-2 text-sm ' +
-  'focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold';
+import { Input, Textarea } from '@/components/ui/Input';
 
 interface Props {
   open: boolean;
@@ -131,12 +127,11 @@ export function NudgeDialog({
             hint="Plain text. Logged to the application audit and the associate's notification inbox."
           >
             {(p) => (
-              <textarea
+              <Textarea
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
                 rows={9}
                 maxLength={4000}
-                className={TEXTAREA_CX}
                 {...p}
               />
             )}

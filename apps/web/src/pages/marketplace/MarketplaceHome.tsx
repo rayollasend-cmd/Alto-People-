@@ -43,6 +43,7 @@ import {
   TabsTrigger,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import { fmtDateTime, fmtTime } from '@/lib/format';
 import { toast } from 'sonner';
 
 type Tab = 'open' | 'claims' | 'catalog';
@@ -127,8 +128,8 @@ function AvailableTab() {
                 <div className="text-white font-medium">{s.position}</div>
                 <div className="text-sm text-silver mt-0.5">{s.clientName}</div>
                 <div className="text-sm text-silver mt-0.5">
-                  {new Date(s.startsAt).toLocaleString()} –{' '}
-                  {new Date(s.endsAt).toLocaleTimeString()}
+                  {fmtDateTime(s.startsAt)} –{' '}
+                  {fmtTime(s.endsAt)}
                 </div>
                 {s.location && (
                   <div className="text-sm text-silver mt-0.5">{s.location}</div>
@@ -222,8 +223,8 @@ function ClaimsTab() {
                   <TableCell>{c.position}</TableCell>
                   <TableCell>{c.clientName}</TableCell>
                   <TableCell>
-                    {new Date(c.startsAt).toLocaleString()} –{' '}
-                    {new Date(c.endsAt).toLocaleTimeString()}
+                    {fmtDateTime(c.startsAt)} –{' '}
+                    {fmtTime(c.endsAt)}
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="inline-flex gap-1">

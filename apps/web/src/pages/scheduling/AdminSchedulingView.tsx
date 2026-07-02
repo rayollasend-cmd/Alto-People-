@@ -70,7 +70,10 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import {
+  fmtDate,
   fmtDateTime,
+  fmtDateTz,
+  fmtTime,
   browserTimeZone,
   tzAbbrev,
   zonedWallTimeToUtc,
@@ -360,9 +363,9 @@ function csvRow(s: Shift): Array<string | number | null> {
   const end = new Date(s.endsAt);
   const hours = (s.scheduledMinutes / 60).toFixed(2);
   return [
-    start.toLocaleDateString(),
-    start.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-    end.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+    fmtDate(start),
+    fmtTime(start),
+    fmtTime(end),
     hours,
     s.position,
     s.clientName ?? '',
@@ -405,8 +408,10 @@ function fmtPrintRange(from: string, to: string): string {
     }
   }
   const sameYear = f.getFullYear() === t.getFullYear();
-  const left = f.toLocaleDateString([], { month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) });
-  const right = t.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+  // fmtDateTz without a zone = browser-local "Apr 1" (no year) — matches the
+  // old same-year left side; cross-year falls back to the full "Apr 1, 2025".
+  const left = sameYear ? fmtDateTz(f) : fmtDate(f);
+  const right = fmtDate(t);
   return `${left} – ${right}`;
 }
 
@@ -1657,32 +1662,34 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               </Button>
             )}
             <div className="ml-auto inline-flex rounded-md border border-navy-secondary p-0.5 bg-navy-secondary/30">
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="xs"
                 onClick={() => setWeekLayout('time-grid')}
                 className={cn(
-                  'px-2.5 py-1 text-[11px] uppercase tracking-wider rounded',
-                  weekLayout === 'time-grid'
-                    ? 'bg-gold/15 text-gold'
-                    : 'text-silver hover:text-white',
+                  'uppercase tracking-wider',
+                  weekLayout === 'time-grid' &&
+                    'bg-gold/15 text-gold hover:bg-gold/15 hover:text-gold',
                 )}
                 title="Time-grid layout — shifts proportional to duration"
               >
                 Time grid
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant="ghost"
+                size="xs"
                 onClick={() => setWeekLayout('compact')}
                 className={cn(
-                  'px-2.5 py-1 text-[11px] uppercase tracking-wider rounded',
-                  weekLayout === 'compact'
-                    ? 'bg-gold/15 text-gold'
-                    : 'text-silver hover:text-white',
+                  'uppercase tracking-wider',
+                  weekLayout === 'compact' &&
+                    'bg-gold/15 text-gold hover:bg-gold/15 hover:text-gold',
                 )}
                 title="Compact layout — text rows, denser overview"
               >
                 Compact
-              </button>
+              </Button>
             </div>
           </div>
         )}
@@ -1804,20 +1811,21 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         {view === 'list' && (
           <div className="flex flex-wrap gap-2">
             {STATUS_FILTERS.map((f) => (
-              <button
+              <Button
                 key={f.value}
                 type="button"
+                variant="outline"
+                size="sm"
                 onClick={() => setFilter(f.value)}
                 className={cn(
-                  'px-3 py-1.5 rounded-md text-sm border transition-colors',
-                  'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                  'text-sm font-normal',
                   filter === f.value
-                    ? 'border-gold text-gold bg-gold/10'
-                    : 'border-navy-secondary text-silver hover:text-white hover:border-silver/40'
+                    ? 'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold'
+                    : 'border-navy-secondary hover:border-silver/40'
                 )}
               >
                 {f.label}
-              </button>
+              </Button>
             ))}
           </div>
         )}

@@ -29,6 +29,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -36,6 +37,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  Textarea,
 } from '@/components/ui';
 import { FormHint, Label } from '@/components/ui/Label';
 
@@ -315,9 +317,9 @@ function NewAssetDrawer({
       <DrawerBody className="space-y-4">
         <div>
           <Label htmlFor="new-asset-kind">Kind</Label>
-          <select
+          <Select
             id="new-asset-kind"
-            className="mt-1 w-full bg-midnight border border-navy-secondary rounded-md p-2 text-white"
+            className="mt-1"
             value={kind}
             onChange={(e) => setKind(e.target.value as AssetKind)}
           >
@@ -326,7 +328,7 @@ function NewAssetDrawer({
                 {k}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div>
           <Label htmlFor="new-asset-label">Label</Label>
@@ -417,9 +419,9 @@ function EditAssetDrawer({
       <DrawerBody className="space-y-4">
         <div>
           <Label htmlFor="edit-asset-kind">Kind</Label>
-          <select
+          <Select
             id="edit-asset-kind"
-            className="mt-1 w-full bg-midnight border border-navy-secondary rounded-md p-2 text-white"
+            className="mt-1"
             value={kind}
             onChange={(e) => setKind(e.target.value as AssetKind)}
           >
@@ -428,7 +430,7 @@ function EditAssetDrawer({
                 {k}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div>
           <Label htmlFor="edit-asset-label">Label</Label>
@@ -463,13 +465,13 @@ function EditAssetDrawer({
         </div>
         <div>
           <Label htmlFor="edit-asset-notes">Notes</Label>
-          <textarea
+          <Textarea
             id="edit-asset-notes"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             rows={3}
             maxLength={2000}
-            className="mt-1 w-full px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
+            className="mt-1"
             aria-describedby="edit-asset-notes-hint"
           />
           <FormHint id="edit-asset-notes-hint">

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle, BookOpen, GraduationCap, Plus } from 'lucide-react';
 import { ApiError } from '@/lib/api';
+import { fmtDate } from '@/lib/format';
 import {
   archiveCourse,
   completeEnrollment,
@@ -436,14 +437,8 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
                   <TableCell>
                     <Badge variant={ENROLL_BADGE[e.status]}>{e.status}</Badge>
                   </TableCell>
-                  <TableCell>
-                    {e.completedAt
-                      ? new Date(e.completedAt).toLocaleDateString()
-                      : '—'}
-                  </TableCell>
-                  <TableCell>
-                    {e.expiresAt ? new Date(e.expiresAt).toLocaleDateString() : '—'}
-                  </TableCell>
+                  <TableCell>{fmtDate(e.completedAt)}</TableCell>
+                  <TableCell>{fmtDate(e.expiresAt)}</TableCell>
                   <TableCell>{e.score ?? '—'}</TableCell>
                   <TableCell className="text-right space-x-2">
                     {(e.status === 'ASSIGNED' || e.status === 'IN_PROGRESS') && (
@@ -584,7 +579,7 @@ function ExpiringTab() {
                     <TableCell>
                       {e.isRequired ? <Badge variant="destructive">Required</Badge> : '—'}
                     </TableCell>
-                    <TableCell>{new Date(e.expiresAt).toLocaleDateString()}</TableCell>
+                    <TableCell>{fmtDate(e.expiresAt)}</TableCell>
                     <TableCell>
                       <Badge variant={e.daysLeft <= 7 ? 'destructive' : 'pending'}>
                         {e.daysLeft}d

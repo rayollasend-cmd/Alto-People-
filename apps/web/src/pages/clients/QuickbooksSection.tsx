@@ -298,19 +298,20 @@ function ModeButton({
   onClick: () => void;
 }) {
   return (
-    <button
+    <Button
       type="button"
+      size="sm"
+      variant="outline"
       disabled={disabled}
       onClick={onClick}
       className={
-        'px-3 py-1.5 text-xs rounded border transition-colors disabled:opacity-50 ' +
-        (active
-          ? 'border-gold text-gold bg-gold/10'
-          : 'border-silver/30 text-silver/70 hover:border-silver/60 hover:text-silver')
+        active
+          ? 'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold'
+          : undefined
       }
     >
       {label}
-    </button>
+    </Button>
   );
 }
 

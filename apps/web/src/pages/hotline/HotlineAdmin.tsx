@@ -25,6 +25,7 @@ import {
   DrawerTitle,
   EmptyState,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -32,8 +33,10 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import { fmtDate } from '@/lib/format';
 
 const CATEGORY_LABELS: Record<ReportCategory, string> = {
   HARASSMENT: 'Harassment',
@@ -126,8 +129,8 @@ export function HotlineAdmin() {
       )}
 
       <div className="flex justify-end">
-        <select
-          className="text-xs bg-midnight border border-navy-secondary rounded p-1.5 text-white"
+        <Select
+          size="sm"
           value={statusFilter}
           onChange={(e) =>
             setStatusFilter(e.target.value as ReportStatus | 'ALL')
@@ -139,7 +142,7 @@ export function HotlineAdmin() {
           <option value="INVESTIGATING">Investigating</option>
           <option value="RESOLVED">Resolved</option>
           <option value="CLOSED">Closed</option>
-        </select>
+        </Select>
       </div>
 
       <Card>
@@ -186,7 +189,7 @@ export function HotlineAdmin() {
                         {CATEGORY_LABELS[r.category]}
                       </div>
                       <div className="text-[11px] text-silver/70 lg:hidden">
-                        {new Date(r.createdAt).toLocaleDateString()}
+                        {fmtDate(r.createdAt)}
                         {r.updateCount > 0 ? ` · ${r.updateCount} repl.` : ''}
                       </div>
                     </TableCell>
@@ -199,7 +202,7 @@ export function HotlineAdmin() {
                       <SlaChip sla={r.sla} />
                     </TableCell>
                     <TableCell className="text-xs text-silver hidden lg:table-cell">
-                      {new Date(r.createdAt).toLocaleDateString()}
+                      {fmtDate(r.createdAt)}
                     </TableCell>
                     <TableCell className="text-sm hidden lg:table-cell">{r.updateCount}</TableCell>
                   </TableRow>
@@ -438,8 +441,8 @@ function ReportDrawer({
 
             <div>
               <Label>Resolution summary</Label>
-              <textarea
-                className="w-full mt-1 h-20 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+              <Textarea
+                className="mt-1 h-20"
                 value={resolution ?? ''}
                 onChange={(e) => setResolution(e.target.value)}
                 placeholder="Saved when status moves to RESOLVED. Visible to the reporter."
@@ -489,8 +492,8 @@ function ReportDrawer({
 
             <div className="space-y-2 pt-3 border-t border-navy-secondary">
               <Label>Add message</Label>
-              <textarea
-                className="w-full h-24 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+              <Textarea
+                className="h-24"
                 value={reply}
                 onChange={(e) => setReply(e.target.value)}
                 placeholder={

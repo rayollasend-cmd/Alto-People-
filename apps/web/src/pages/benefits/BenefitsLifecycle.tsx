@@ -35,6 +35,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -477,9 +478,9 @@ function NewQleDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =
         </div>
         <div>
           <Label htmlFor="bl-event-kind">Event kind</Label>
-          <select
+          <Select
             id="bl-event-kind"
-            className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+            className="mt-1"
             value={kind}
             onChange={(e) => setKind(e.target.value as QleKind)}
           >
@@ -488,7 +489,7 @@ function NewQleDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =
                 {QLE_KIND_LABEL[k]}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div>
           <Label>Event date</Label>
@@ -704,9 +705,9 @@ function NewCobraDrawer({
         </div>
         <div>
           <Label htmlFor="bl-qualifying-event">Qualifying event</Label>
-          <select
+          <Select
             id="bl-qualifying-event"
-            className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+            className="mt-1"
             value={qualifyingEvent}
             onChange={(e) => setQualifyingEvent(e.target.value)}
           >
@@ -715,7 +716,7 @@ function NewCobraDrawer({
             <option value="DEATH">Death</option>
             <option value="DIVORCE">Divorce</option>
             <option value="MEDICARE">Medicare entitlement</option>
-          </select>
+          </Select>
         </div>
         <div>
           <Label>QE date</Label>

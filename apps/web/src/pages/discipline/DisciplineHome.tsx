@@ -27,6 +27,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -34,6 +35,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
 
@@ -272,9 +274,9 @@ function NewActionDrawer({
         </div>
         <div>
           <Label htmlFor="discipline-kind">Kind</Label>
-          <select
+          <Select
             id="discipline-kind"
-            className="mt-1 w-full bg-midnight border border-navy-secondary rounded p-2 text-white text-sm"
+            className="mt-1"
             value={kind}
             onChange={(e) => setKind(e.target.value as DisciplineKind)}
           >
@@ -283,7 +285,7 @@ function NewActionDrawer({
                 {KIND_LABELS[k]}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         {kind === 'SUSPENSION' && (
           <div>
@@ -320,8 +322,8 @@ function NewActionDrawer({
         </div>
         <div>
           <Label>What happened</Label>
-          <textarea
-            className="mt-1 w-full h-32 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+          <Textarea
+            className="mt-1 h-32"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Factual description of the incident…"
@@ -329,8 +331,8 @@ function NewActionDrawer({
         </div>
         <div>
           <Label>Expected change</Label>
-          <textarea
-            className="mt-1 w-full h-20 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+          <Textarea
+            className="mt-1 h-20"
             value={expected}
             onChange={(e) => setExpected(e.target.value)}
             placeholder="Behavior we expect going forward…"
@@ -460,8 +462,8 @@ function DetailDrawer({
         {row.status !== 'RESCINDED' && canManage && (
           <div className="space-y-2 pt-3 border-t border-navy-secondary">
             <Label>Rescind reason</Label>
-            <textarea
-              className="w-full h-20 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+            <Textarea
+              className="h-20"
               value={rescindReason}
               onChange={(e) => setRescindReason(e.target.value)}
               placeholder="Why this is being rescinded…"

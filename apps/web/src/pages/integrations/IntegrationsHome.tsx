@@ -32,6 +32,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -45,6 +46,7 @@ import {
   TabsTrigger,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import { fmtDate } from '@/lib/format';
 import { toast } from 'sonner';
 
 type Tab = 'keys' | 'webhooks';
@@ -158,7 +160,7 @@ function KeysTab({ canManage }: { canManage: boolean }) {
                         : '(inherits creator)'}
                     </TableCell>
                     <TableCell>
-                      {k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleDateString() : '—'}
+                      {fmtDate(k.lastUsedAt)}
                     </TableCell>
                     <TableCell>
                       {k.revokedAt ? (
@@ -404,8 +406,8 @@ function NewKeyDrawer({
           <>
             <div>
               <Label>Role</Label>
-              <select
-                className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 py-2 text-sm text-white"
+              <Select
+                className="mt-1"
                 value={presetId}
                 onChange={(e) =>
                   setPresetId(e.target.value as AsnPreset['id'])
@@ -416,15 +418,15 @@ function NewKeyDrawer({
                     {p.label}
                   </option>
                 ))}
-              </select>
+              </Select>
               <div className="text-xs text-silver mt-1">{preset.description}</div>
             </div>
 
             {preset.storeScoped && (
               <div>
                 <Label required>Store</Label>
-                <select
-                  className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 py-2 text-sm text-white"
+                <Select
+                  className="mt-1"
                   value={storeId}
                   onChange={(e) => setStoreId(e.target.value)}
                   disabled={stores === null}
@@ -438,7 +440,7 @@ function NewKeyDrawer({
                       {s.state ? ` (${s.state})` : ''}
                     </option>
                   ))}
-                </select>
+                </Select>
                 <div className="text-xs text-silver mt-1">
                   This key will only see data for the selected store.
                 </div>

@@ -43,6 +43,7 @@ import {
   TabsContent,
   TabsList,
   TabsTrigger,
+  Textarea,
 } from '@/components/ui';
 import { toast } from 'sonner';
 
@@ -437,12 +438,12 @@ function DefinitionDrawer({
 
           <Field label="Conditions (JSON)">
             {(p) => (
-              <textarea
+              <Textarea
                 value={conditionsJson}
                 onChange={(e) => setConditionsJson(e.target.value)}
                 disabled={!canManage}
                 rows={4}
-                className="w-full px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-xs font-mono"
+                className="text-xs font-mono"
                 placeholder='{ "and": [{ "field": "associate.state", "op": "eq", "value": "CA" }] }'
                 {...p}
               />
@@ -474,18 +475,18 @@ function DefinitionDrawer({
                       <span className="text-[10px] tabular-nums text-silver">
                         #{idx + 1}
                       </span>
-                      <select
+                      <Select
+                        size="sm"
                         value={a.kind}
                         onChange={(e) =>
                           updateAction(idx, { ...a, kind: e.target.value as WorkflowActionKind })
                         }
                         disabled={!canManage}
-                        className="h-8 px-2 rounded bg-navy-secondary/40 border border-navy-secondary text-xs text-white"
                       >
                         {ACTION_KINDS.map((k) => (
                           <option key={k} value={k}>{k}</option>
                         ))}
-                      </select>
+                      </Select>
                       {canManage && (
                         <Button
                           size="sm"
@@ -497,7 +498,7 @@ function DefinitionDrawer({
                         </Button>
                       )}
                     </div>
-                    <textarea
+                    <Textarea
                       value={JSON.stringify(a.params, null, 2)}
                       onChange={(e) => {
                         try {
@@ -508,7 +509,7 @@ function DefinitionDrawer({
                       }}
                       disabled={!canManage}
                       rows={4}
-                      className="w-full px-2 py-1 rounded bg-navy-secondary/40 border border-navy-secondary text-white text-xs font-mono"
+                      className="text-xs font-mono"
                     />
                   </li>
                 ))}

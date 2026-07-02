@@ -7,6 +7,7 @@ import {
   updateBackgroundCheck,
 } from '@/lib/complianceApi';
 import { ApiError } from '@/lib/api';
+import { fmtDate } from '@/lib/format';
 import {
   Avatar,
   Badge,
@@ -167,7 +168,7 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
                       <div className="truncate">{c.associateName}</div>
                       {/* Phone-only secondary line replacing the hidden cells. */}
                       <div className="sm:hidden text-[11px] text-silver/70 truncate">
-                        {c.provider} · initiated {new Date(c.initiatedAt).toLocaleDateString()}
+                        {c.provider} · initiated {fmtDate(c.initiatedAt)}
                       </div>
                     </div>
                   </div>
@@ -177,10 +178,10 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
                   <Badge variant={statusVariant(c.status)}>{c.status}</Badge>
                 </TableCell>
                 <TableCell className="hidden md:table-cell text-silver tabular-nums">
-                  {new Date(c.initiatedAt).toLocaleDateString()}
+                  {fmtDate(c.initiatedAt)}
                 </TableCell>
                 <TableCell className="hidden lg:table-cell text-silver tabular-nums">
-                  {c.completedAt ? new Date(c.completedAt).toLocaleDateString() : '—'}
+                  {fmtDate(c.completedAt)}
                 </TableCell>
               </TableRow>
             ))}

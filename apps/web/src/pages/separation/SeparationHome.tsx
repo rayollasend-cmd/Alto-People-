@@ -29,6 +29,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -36,6 +37,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
 
@@ -288,8 +290,8 @@ function NewSeparationDrawer({
         </div>
         <div>
           <Label>Reason</Label>
-          <select
-            className="mt-1 w-full bg-midnight border border-navy-secondary rounded p-2 text-white text-sm"
+          <Select
+            className="mt-1"
             value={reason}
             onChange={(e) => setReason(e.target.value as SeparationReason)}
           >
@@ -298,7 +300,7 @@ function NewSeparationDrawer({
                 {REASON_LABELS[k]}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -413,24 +415,24 @@ function DetailDrawer({
             </div>
             <div>
               <Label>Reason in their words</Label>
-              <textarea
-                className="mt-1 w-full h-20 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+              <Textarea
+                className="mt-1 h-20"
                 value={reasonNotes}
                 onChange={(e) => setReasonNotes(e.target.value)}
               />
             </div>
             <div>
               <Label>What worked well</Label>
-              <textarea
-                className="mt-1 w-full h-20 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+              <Textarea
+                className="mt-1 h-20"
                 value={positive}
                 onChange={(e) => setPositive(e.target.value)}
               />
             </div>
             <div>
               <Label>What we should change</Label>
-              <textarea
-                className="mt-1 w-full h-20 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+              <Textarea
+                className="mt-1 h-20"
                 value={improvement}
                 onChange={(e) => setImprovement(e.target.value)}
               />
@@ -438,8 +440,8 @@ function DetailDrawer({
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label>Would recommend us?</Label>
-                <select
-                  className="mt-1 w-full bg-midnight border border-navy-secondary rounded p-2 text-white text-sm"
+                <Select
+                  className="mt-1"
                   value={wouldRecommend}
                   onChange={(e) =>
                     setWouldRecommend(e.target.value as '' | 'yes' | 'no')
@@ -448,12 +450,12 @@ function DetailDrawer({
                   <option value="">—</option>
                   <option value="yes">Yes</option>
                   <option value="no">No</option>
-                </select>
+                </Select>
               </div>
               <div>
                 <Label>Would return?</Label>
-                <select
-                  className="mt-1 w-full bg-midnight border border-navy-secondary rounded p-2 text-white text-sm"
+                <Select
+                  className="mt-1"
                   value={wouldReturn}
                   onChange={(e) =>
                     setWouldReturn(e.target.value as '' | 'yes' | 'no')
@@ -462,7 +464,7 @@ function DetailDrawer({
                   <option value="">—</option>
                   <option value="yes">Yes</option>
                   <option value="no">No</option>
-                </select>
+                </Select>
               </div>
             </div>
             <Button

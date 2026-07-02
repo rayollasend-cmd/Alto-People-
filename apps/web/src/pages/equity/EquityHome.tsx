@@ -33,7 +33,9 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
+  Textarea,
   Table,
   TableBody,
   TableCell,
@@ -130,8 +132,8 @@ export function EquityHome() {
         </div>
         <div className="flex gap-2">
           {canManageComp && tab === 'admin' && (
-            <select
-              className="text-xs bg-midnight border border-navy-secondary rounded p-1.5 text-white"
+            <Select
+              size="sm"
               value={statusFilter}
               onChange={(e) =>
                 setStatusFilter(e.target.value as EquityGrantStatus | 'ALL')
@@ -143,7 +145,7 @@ export function EquityHome() {
               <option value="CANCELLED">Cancelled</option>
               <option value="EXERCISED">Exercised</option>
               <option value="EXPIRED">Expired</option>
-            </select>
+            </Select>
           )}
           {canManageComp && (
             <Button onClick={() => setShowNew(true)}>
@@ -406,9 +408,9 @@ function NewGrantDrawer({
         </div>
         <div>
           <Label htmlFor="equity-grant-type">Type</Label>
-          <select
+          <Select
             id="equity-grant-type"
-            className="w-full mt-1 bg-midnight border border-navy-secondary rounded p-2 text-white"
+            className="mt-1"
             value={grantType}
             onChange={(e) => setGrantType(e.target.value as EquityGrantType)}
           >
@@ -417,7 +419,7 @@ function NewGrantDrawer({
                 {GRANT_TYPE_LABELS[k]}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div>
           <Label>Total shares</Label>
@@ -488,8 +490,8 @@ function NewGrantDrawer({
         </div>
         <div>
           <Label>Notes</Label>
-          <textarea
-            className="w-full mt-1 h-20 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+          <Textarea
+            className="mt-1 h-20"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             placeholder="Internal context — board approval ref, retention rationale, etc."

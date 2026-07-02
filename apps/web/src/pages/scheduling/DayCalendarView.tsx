@@ -13,7 +13,7 @@ import type { AssociateLite, Shift, ShiftStatus } from '@alto-people/shared';
 import { Badge } from '@/components/ui/Badge';
 import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
-import { zonedDayKey, zonedMinutesOfDay } from '@/lib/format';
+import { fmtTimeTz, zonedDayKey, zonedMinutesOfDay } from '@/lib/format';
 import {
   ShiftHoverCard,
   useShiftHoverCard,
@@ -50,7 +50,7 @@ const TOTAL_HEIGHT = HOURS_VISIBLE * PX_PER_HOUR;
 const SNAP_MIN = 15;
 
 function fmtTime(d: Date, timeZone?: string | null): string {
-  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', ...(timeZone ? { timeZone } : {}) });
+  return fmtTimeTz(d, timeZone);
 }
 
 function shiftMinutes(s: Shift): number {

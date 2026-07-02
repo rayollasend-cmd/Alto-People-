@@ -27,6 +27,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -204,8 +205,8 @@ function NewTemplateDrawer({
         </div>
         <div>
           <Label>Kind</Label>
-          <select
-            className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+          <Select
+            className="mt-1"
             value={kind}
             onChange={(e) => setKind(e.target.value as DocumentTemplateKind)}
           >
@@ -214,7 +215,7 @@ function NewTemplateDrawer({
                 {KIND_LABEL[k]}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
       </DrawerBody>
       <DrawerFooter>

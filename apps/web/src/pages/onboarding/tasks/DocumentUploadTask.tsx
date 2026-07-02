@@ -11,10 +11,11 @@ import {
 import { finishDocumentUpload } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { TaskShell, inputCls, Field } from './ProfileInfoTask';
+import { TaskShell, Field } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 
 const ID_KIND_OPTIONS: Array<{ value: DocumentKind; label: string }> = [
@@ -178,10 +179,9 @@ export function DocumentUploadTask() {
 
       <div className="space-y-4">
         <Field label="Document type">
-          <select
+          <Select
             value={kind}
             onChange={(e) => setKind(e.target.value as DocumentKind)}
-            className={inputCls}
             disabled={uploading}
           >
             {ID_KIND_OPTIONS.map((o) => (
@@ -189,7 +189,7 @@ export function DocumentUploadTask() {
                 {o.label}
               </option>
             ))}
-          </select>
+          </Select>
         </Field>
 
         <input

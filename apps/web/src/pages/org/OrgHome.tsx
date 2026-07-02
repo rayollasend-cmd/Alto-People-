@@ -106,10 +106,10 @@ export function OrgHome() {
           <span className="text-[11px] uppercase tracking-wider text-silver">
             Client
           </span>
-          <select
+          <Select
+            size="sm"
             value={clientId}
             onChange={(e) => setClientId(e.target.value)}
-            className="h-9 px-2 rounded bg-navy-secondary/40 border border-navy-secondary text-sm text-white"
           >
             <option value="">All clients</option>
             {clients.map((c) => (
@@ -117,7 +117,7 @@ export function OrgHome() {
                 {c.name}
               </option>
             ))}
-          </select>
+          </Select>
         </CardContent>
       </Card>
 

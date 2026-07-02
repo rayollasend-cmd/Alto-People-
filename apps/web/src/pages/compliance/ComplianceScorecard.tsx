@@ -55,6 +55,7 @@ import type {
   ManualAttestationSignal,
 } from '@alto-people/shared';
 import { Input, Textarea, Label } from '@/components/ui';
+import { fmtDate } from '@/lib/format';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { ApiError } from '@/lib/api';
@@ -660,7 +661,7 @@ function AttestationRow({
   const statusText = (() => {
     if (status === 'attested' && signal.current) {
       const at = signal.current.actionTakenAt
-        ? new Date(signal.current.actionTakenAt).toLocaleDateString()
+        ? fmtDate(signal.current.actionTakenAt)
         : 'date not recorded';
       return `Done ${at} by ${signal.current.attestedByEmail}`;
     }
@@ -795,7 +796,7 @@ function AttestationDrawer({
                 <>
                   {' '}
                   · action taken{' '}
-                  {new Date(signal.previous.actionTakenAt).toLocaleDateString()}
+                  {fmtDate(signal.previous.actionTakenAt)}
                 </>
               )}
             </div>

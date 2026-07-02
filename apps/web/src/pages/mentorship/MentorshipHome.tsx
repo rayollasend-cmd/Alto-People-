@@ -33,8 +33,10 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import { fmtDate } from '@/lib/format';
 
 export function MentorshipHome() {
   const { user } = useAuth();
@@ -116,7 +118,7 @@ export function MentorshipHome() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-xs">
-                      {m.startedAt ? new Date(m.startedAt).toLocaleDateString() : '—'}
+                      {fmtDate(m.startedAt)}
                     </TableCell>
                     <TableCell className="text-right space-x-2">
                       {canManage && m.status === 'PROPOSED' && (
@@ -267,8 +269,8 @@ function NewPairingDrawer({
         </div>
         <div>
           <Label>Goals (optional)</Label>
-          <textarea
-            className="mt-1 w-full h-24 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm"
+          <Textarea
+            className="mt-1 h-24"
             value={goals}
             onChange={(e) => setGoals(e.target.value)}
           />

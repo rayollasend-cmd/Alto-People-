@@ -51,6 +51,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
 
@@ -548,8 +549,8 @@ function EditDrawer({
         </div>
         <div>
           <Label>Body (markdown)</Label>
-          <textarea
-            className="mt-1 w-full h-72 rounded-md border border-navy-secondary bg-midnight p-2 text-white text-sm font-mono"
+          <Textarea
+            className="mt-1 h-72 font-mono"
             value={body}
             onChange={(e) => setBody(e.target.value)}
           />

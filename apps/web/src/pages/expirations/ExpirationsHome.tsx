@@ -32,6 +32,7 @@ import {
   TableRow,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import { fmtDate } from '@/lib/format';
 
 /**
  * Phase 113 — Expiration dashboard.
@@ -78,39 +79,39 @@ export function ExpirationsHome() {
       <div className="flex flex-wrap items-center gap-3 text-sm">
         <span className="text-silver">Within:</span>
         {[30, 60, 90].map((d) => (
-          <button
+          <Button
             key={d}
+            type="button"
+            size="xs"
+            variant={days === d ? 'primary' : 'secondary'}
+            className="rounded-full"
+            aria-pressed={days === d}
             onClick={() => setDays(d as 30 | 60 | 90)}
-            className={`px-3 py-1 rounded-full border transition-colors ${
-              days === d
-                ? 'bg-gold border-gold text-navy'
-                : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
-            }`}
           >
             {d}d
-          </button>
+          </Button>
         ))}
         <span className="ml-4 text-silver">Type:</span>
-        <button
+        <Button
+          type="button"
+          size="xs"
+          variant={filter === 'all' ? 'primary' : 'secondary'}
+          className="rounded-full"
+          aria-pressed={filter === 'all'}
           onClick={() => setFilter('all')}
-          className={`px-3 py-1 rounded-full border transition-colors ${
-            filter === 'all'
-              ? 'bg-gold border-gold text-navy'
-              : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
-          }`}
         >
           All
-        </button>
-        <button
+        </Button>
+        <Button
+          type="button"
+          size="xs"
+          variant={filter === 'cert' ? 'primary' : 'secondary'}
+          className="rounded-full"
+          aria-pressed={filter === 'cert'}
           onClick={() => setFilter('cert')}
-          className={`px-3 py-1 rounded-full border transition-colors ${
-            filter === 'cert'
-              ? 'bg-gold border-gold text-navy'
-              : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
-          }`}
         >
           Certs only
-        </button>
+        </Button>
       </div>
 
       {data === null ? (
@@ -227,7 +228,7 @@ function Bucket({
                     </div>
                   </TableCell>
                   <TableCell className="font-mono text-xs hidden lg:table-cell">{i.qualificationCode}</TableCell>
-                  <TableCell>{new Date(i.expiresAt).toLocaleDateString()}</TableCell>
+                  <TableCell>{fmtDate(i.expiresAt)}</TableCell>
                   <TableCell>
                     {i.daysUntilExpiry < 0 ? (
                       <span className="text-alert">{-i.daysUntilExpiry}d ago</span>
@@ -322,7 +323,7 @@ function RenewDrawer({
         <div className="text-sm border-t border-navy-secondary pt-3">
           <div className="text-silver">Currently expires</div>
           <div className="text-white">
-            {new Date(item.expiresAt).toLocaleDateString()}
+            {fmtDate(item.expiresAt)}
             {item.daysUntilExpiry < 0 ? (
               <span className="text-alert ml-2">
                 ({-item.daysUntilExpiry}d ago)

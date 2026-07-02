@@ -13,7 +13,14 @@ import { GripVertical } from 'lucide-react';
 import type { AssociateLite, Shift } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
-import { zonedDayKey, zonedMinutesOfDay, zonedWallTimeToUtc } from '@/lib/format';
+import {
+  fmtDateTz,
+  fmtTimeTz,
+  fmtWeekdayTz,
+  zonedDayKey,
+  zonedMinutesOfDay,
+  zonedWallTimeToUtc,
+} from '@/lib/format';
 import {
   ShiftHoverCard,
   useShiftHoverCard,
@@ -64,7 +71,7 @@ const MIN_DURATION_MIN = 15;
 const UNASSIGNED_ROW_ID = '__unassigned__';
 
 function fmtTime(d: Date, timeZone?: string | null): string {
-  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', ...(timeZone ? { timeZone } : {}) });
+  return fmtTimeTz(d, timeZone);
 }
 
 function startOfDay(d: Date): Date {
@@ -293,7 +300,7 @@ export function TimeGridWeekView({
                 >
                   {/* Derive the weekday from the date itself — the range can
                       start on any day, so a fixed Mon-first list would mislabel. */}
-                  {d.toLocaleDateString([], { weekday: 'short' })}
+                  {fmtWeekdayTz(d)}
                 </div>
                 <div
                   className={cn(
@@ -301,7 +308,7 @@ export function TimeGridWeekView({
                     isToday ? 'text-white font-medium' : 'text-silver',
                   )}
                 >
-                  {d.toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                  {fmtDateTz(d)}
                 </div>
               </div>
             );

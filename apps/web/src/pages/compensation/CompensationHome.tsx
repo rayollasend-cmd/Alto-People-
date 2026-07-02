@@ -37,6 +37,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -86,8 +87,8 @@ export function CompensationHome() {
           <span className="text-[11px] uppercase tracking-wider text-silver">
             Client
           </span>
-          <select
-            className="flex h-9 rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+          <Select
+            size="sm"
             value={clientId}
             onChange={(e) => setClientId(e.target.value)}
           >
@@ -97,7 +98,7 @@ export function CompensationHome() {
                 {c.name}
               </option>
             ))}
-          </select>
+          </Select>
         </CardContent>
       </Card>
 
@@ -357,9 +358,9 @@ function BandDrawer({
         </div>
         <div>
           <Label htmlFor="comp-pay-type">Pay type</Label>
-          <select
+          <Select
             id="comp-pay-type"
-            className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+            className="mt-1"
             value={draft.payType}
             onChange={(e) =>
               setDraft({ ...draft, payType: e.target.value as PayType })
@@ -367,7 +368,7 @@ function BandDrawer({
           >
             <option value="HOURLY">Hourly</option>
             <option value="SALARY">Salary</option>
-          </select>
+          </Select>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>

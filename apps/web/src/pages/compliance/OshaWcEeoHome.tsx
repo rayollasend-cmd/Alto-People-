@@ -27,6 +27,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -41,6 +42,7 @@ import {
   Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import { fmtDate } from '@/lib/format';
 import { toast } from 'sonner';
 
 type Tab = 'osha' | 'wc' | 'eeo';
@@ -69,8 +71,8 @@ export function OshaWcEeoHome() {
       <Card>
         <CardContent className="p-4 flex items-center gap-3">
           <span className="text-[11px] uppercase tracking-wider text-silver">Client</span>
-          <select
-            className="flex h-9 rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+          <Select
+            size="sm"
             value={clientId}
             onChange={(e) => setClientId(e.target.value)}
           >
@@ -80,7 +82,7 @@ export function OshaWcEeoHome() {
                 {c.name}
               </option>
             ))}
-          </select>
+          </Select>
         </CardContent>
       </Card>
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
@@ -197,7 +199,7 @@ function OshaTab({ clientId }: { clientId: string }) {
               <TableBody>
                 {rows.map((i) => (
                   <TableRow key={i.id}>
-                    <TableCell>{new Date(i.occurredAt).toLocaleDateString()}</TableCell>
+                    <TableCell>{fmtDate(i.occurredAt)}</TableCell>
                     <TableCell>
                       {i.associateName ?? '—'}
                       <div className="text-[11px] text-silver/70 md:hidden">
@@ -332,9 +334,9 @@ function NewIncidentDrawer({
         </div>
         <div>
           <Label htmlFor="osha-severity">Severity</Label>
-          <select
+          <Select
             id="osha-severity"
-            className="mt-1 flex h-10 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-white"
+            className="mt-1"
             value={severity}
             onChange={(e) => setSeverity(e.target.value as OshaSeverity)}
           >
@@ -345,7 +347,7 @@ function NewIncidentDrawer({
                 </option>
               ),
             )}
-          </select>
+          </Select>
         </div>
         <div>
           <Label>Days away from work</Label>

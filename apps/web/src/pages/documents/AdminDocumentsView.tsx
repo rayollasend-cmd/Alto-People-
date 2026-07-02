@@ -47,7 +47,7 @@ import {
 } from '@/components/ui/Drawer';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
-import { Input } from '@/components/ui/Input';
+import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Field } from '@/components/ui/Field';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -90,10 +90,6 @@ const STATUS_VARIANT: Record<
   REJECTED: 'destructive',
   EXPIRED: 'destructive',
 };
-
-const TEXTAREA_CX =
-  'mt-1 w-full rounded-md border border-navy-secondary bg-navy-secondary/40 text-white px-3 py-2 text-sm ' +
-  'focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold';
 
 const fmtSize = (b: number): string => {
   if (b < 1024) return `${b} B`;
@@ -523,16 +519,16 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                     : (stats.byStatus[f.value] ?? 0);
               const active = filter === f.value;
               return (
-                <button
+                <Button
                   key={f.value}
                   type="button"
+                  size="xs"
+                  variant="outline"
                   onClick={() => setFilter(f.value)}
                   className={cn(
-                    'px-2.5 py-1 rounded-md text-xs border transition-colors inline-flex items-center gap-1.5',
-                    'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
-                    active
-                      ? 'border-gold text-gold bg-gold/10'
-                      : 'border-navy-secondary text-silver hover:text-white hover:border-silver/40'
+                    'gap-1.5 rounded-md',
+                    active &&
+                      'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold'
                   )}
                 >
                   {f.label}
@@ -541,7 +537,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                       {count}
                     </span>
                   )}
-                </button>
+                </Button>
               );
             })}
           </div>
@@ -1116,13 +1112,13 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
               </div>
               <Field label="Reason" required>
                 {(p) => (
-                  <textarea
+                  <Textarea
                     value={rejectReason}
                     onChange={(e) => setRejectReason(e.target.value)}
                     rows={4}
                     maxLength={500}
                     placeholder="e.g. Document is blurry — please re-upload a clearer scan."
-                    className={TEXTAREA_CX}
+                    className="mt-1"
                     autoFocus
                     {...p}
                   />

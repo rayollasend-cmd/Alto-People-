@@ -109,6 +109,7 @@ import {
   TabsContent,
   TabsList,
   TabsTrigger,
+  Textarea,
 } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
@@ -1480,12 +1481,11 @@ function TransferDialog({
 
           <Field label="Notes (optional)">
             {(p) => (
-              <textarea
+              <Textarea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 rows={3}
                 maxLength={2000}
-                className="w-full px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
                 placeholder="Context for the change (visible in history)"
                 {...p}
               />
@@ -1698,7 +1698,7 @@ function RevealPayoutDialog({
             </div>
             <div>
               <Label>Reason</Label>
-              <textarea
+              <Textarea
                 value={reason}
                 onChange={(e) => {
                   setReason(e.target.value);
@@ -1706,7 +1706,7 @@ function RevealPayoutDialog({
                 }}
                 rows={3}
                 maxLength={500}
-                className="mt-1 w-full px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
+                className="mt-1"
                 placeholder="e.g. ACH return R03 on payroll run 2026-05-10 — verify routing matches associate's bank record"
                 autoFocus
               />
@@ -1926,7 +1926,7 @@ function RevealSsnDialog({
             </div>
             <div>
               <Label>Reason</Label>
-              <textarea
+              <Textarea
                 value={reason}
                 onChange={(e) => {
                   setReason(e.target.value);
@@ -1934,7 +1934,7 @@ function RevealSsnDialog({
                 }}
                 rows={3}
                 maxLength={500}
-                className="mt-1 w-full px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
+                className="mt-1"
                 placeholder="e.g. E-Verify tentative nonconfirmation — verifying the SSN entered on the I-9 matches the W-4"
                 autoFocus
               />
@@ -2128,12 +2128,11 @@ function NewRateDialog({
 
           <Field label="Notes (optional)">
             {(p) => (
-              <textarea
+              <Textarea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 rows={3}
                 maxLength={500}
-                className="w-full px-3 py-2 rounded-md bg-navy-secondary/40 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white text-sm"
                 placeholder="Context for the change (visible in history)"
                 {...p}
               />
