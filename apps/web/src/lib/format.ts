@@ -269,6 +269,11 @@ export function utcToZonedDatetimeInput(
  * Returns the browser-local calendar date when `timeZone` is absent (so the
  * same-zone case is byte-for-byte the previous behavior).
  */
+// Intl.DateTimeFormat construction is expensive (locale + tz data
+// resolution); zonedDayKey runs per shift in the calendar bucketing hot
+// path, so cache one formatter per zone.
+const DAY_KEY_FMT_CACHE = new Map<string, Intl.DateTimeFormat>();
+
 export function zonedDayKey(
   value: string | Date,
   timeZone?: string | null,
@@ -278,12 +283,16 @@ export function zonedDayKey(
   if (!timeZone) {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   }
-  const dtf = new Intl.DateTimeFormat(EN_US, {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  });
+  let dtf = DAY_KEY_FMT_CACHE.get(timeZone);
+  if (!dtf) {
+    dtf = new Intl.DateTimeFormat(EN_US, {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    DAY_KEY_FMT_CACHE.set(timeZone, dtf);
+  }
   const p: Record<string, string> = {};
   for (const part of dtf.formatToParts(d)) {
     if (part.type !== 'literal') p[part.type] = part.value;

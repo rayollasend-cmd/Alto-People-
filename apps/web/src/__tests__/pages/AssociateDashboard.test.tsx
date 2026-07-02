@@ -171,7 +171,10 @@ describe('<AssociateDashboard>', () => {
     });
     renderDashboard();
     await waitFor(() => expect(listMyShifts).toHaveBeenCalled());
-    expect(await screen.findByText('Today')).toBeInTheDocument();
+    // Assert on the shift itself, not the "Today" label — a suite run just
+    // after midnight makes a started-2h-ago shift correctly label as
+    // yesterday, and this test is about the picker, not the label.
+    expect(await screen.findByText(/F&D Morning Shift/)).toBeInTheDocument();
     expect(screen.queryByText(/Nothing scheduled/)).not.toBeInTheDocument();
   });
 

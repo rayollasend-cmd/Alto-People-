@@ -207,12 +207,15 @@ async function blockedForWindow(
   startsAt: Date,
   endsAt: Date,
   tz: string,
+  // Pass the transaction client to make check+write atomic (assignment
+  // paths); defaults to the pool for advisory reads.
+  db: Prisma.TransactionClient | typeof prisma = prisma,
 ): Promise<Set<string>> {
   if (associateIds.length === 0) return new Set();
   const startDay = new Date(`${dayKeyInZone(startsAt, tz)}T00:00:00Z`);
   const endDay = new Date(`${dayKeyInZone(endsAt, tz)}T00:00:00Z`);
   const [pto, exceptions] = await Promise.all([
-    prisma.timeOffRequest.findMany({
+    db.timeOffRequest.findMany({
       where: {
         associateId: { in: associateIds },
         status: 'APPROVED',
@@ -221,7 +224,7 @@ async function blockedForWindow(
       },
       select: { associateId: true },
     }),
-    prisma.availabilityException.findMany({
+    db.availabilityException.findMany({
       where: {
         associateId: { in: associateIds },
         date: { gte: startDay, lte: endDay },
@@ -938,6 +941,17 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
         : null;
     const newStarts = i.startsAt ? new Date(i.startsAt) : existing.startsAt;
     const newEnds = i.endsAt ? new Date(i.endsAt) : existing.endsAt;
+    // The schema's endsAt>startsAt refine only fires when BOTH are in the
+    // body — a startsAt-only patch could invert the window against the
+    // EXISTING end (July review): overlap checks then match nothing and a
+    // negative-duration shift gets written. Validate the effective pair.
+    if (timesChanged && newEnds <= newStarts) {
+      throw new HttpError(
+        400,
+        'invalid_range',
+        'endsAt must be after startsAt (check the field you did not change).',
+      );
+    }
 
     const updated = await prisma.$transaction(async (tx) => {
       if (assigneeAfter && (timesChanged || i.status === 'ASSIGNED')) {
@@ -1063,29 +1077,32 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
     });
     if (!associate) throw new HttpError(404, 'associate_not_found', 'Associate not found');
 
-    // Approved time off and one-off days off BLOCK assignment by default —
-    // an associate declaring a day unavailable means exactly that. Admins
-    // can still push through with overrideUnavailability (audited below);
-    // it's an explicit, per-assignment decision, never silent.
-    if (!parsed.data.overrideUnavailability) {
-      const blocked = await blockedForWindow(
-        [associate.id],
-        shift.startsAt,
-        shift.endsAt,
-        shift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
-      );
-      if (blocked.size > 0) {
-        throw new HttpError(
-          409,
-          'associate_unavailable',
-          `${associate.firstName} ${associate.lastName} has approved time off or a declared day off covering this shift.`,
-        );
-      }
-    }
-
-    // Conflict check + write in one transaction so two managers can't
-    // assign the same associate to overlapping shifts at the same instant.
+    // Conflict + unavailability checks + write in one transaction so two
+    // managers can't assign the same associate to overlapping shifts at
+    // the same instant, and a day-off/PTO approved between check and write
+    // can't be steamrolled (July review: the unavailability check used to
+    // run outside the transaction).
     const updated = await prisma.$transaction(async (tx) => {
+      // Approved time off and one-off days off BLOCK assignment by
+      // default — an associate declaring a day unavailable means exactly
+      // that. Admins can push through with overrideUnavailability
+      // (audited below); an explicit per-assignment decision, never silent.
+      if (!parsed.data.overrideUnavailability) {
+        const blocked = await blockedForWindow(
+          [associate.id],
+          shift.startsAt,
+          shift.endsAt,
+          shift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+          tx,
+        );
+        if (blocked.size > 0) {
+          throw new HttpError(
+            409,
+            'associate_unavailable',
+            `${associate.firstName} ${associate.lastName} has approved time off or a declared day off covering this shift.`,
+          );
+        }
+      }
       if (
         await associateHasOverlap(
           tx,
@@ -1772,32 +1789,60 @@ schedulingRouter.get('/me/open-shifts', async (req, res, next) => {
     });
 
     // Hide shifts the associate couldn't actually take: overlapping their
-    // own schedule, or on a day they're off (PTO / exception). Cheaper to
-    // over-fetch 50 and filter than to hide the section's real emptiness.
-    const mine = await prisma.shift.findMany({
-      where: {
-        assignedAssociateId: user.associateId,
-        status: { notIn: ['CANCELLED'] },
-        endsAt: { gt: new Date() },
-      },
-      select: { startsAt: true, endsAt: true },
-    });
-    const eligible: typeof rows = [];
-    for (const s of rows) {
+    // own schedule, or on a day they're off (PTO / exception). One batched
+    // fetch of their schedule + blocking rows, then in-memory filtering —
+    // the per-shift blockedForWindow loop here was a 100-query N+1 (July
+    // review).
+    const horizon = rows.length
+      ? new Date(Math.max(...rows.map((s) => s.endsAt.getTime())))
+      : new Date();
+    const [mine, ptoRows, exceptionRows] = await Promise.all([
+      prisma.shift.findMany({
+        where: {
+          assignedAssociateId: user.associateId,
+          status: { notIn: ['CANCELLED'] },
+          endsAt: { gt: new Date() },
+        },
+        select: { startsAt: true, endsAt: true },
+      }),
+      prisma.timeOffRequest.findMany({
+        where: {
+          associateId: user.associateId,
+          status: 'APPROVED',
+          startDate: { lte: horizon },
+          endDate: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+        },
+        select: { startDate: true, endDate: true },
+      }),
+      prisma.availabilityException.findMany({
+        where: {
+          associateId: user.associateId,
+          date: {
+            gte: new Date(Date.now() - 24 * 60 * 60 * 1000),
+            lte: horizon,
+          },
+        },
+        select: { date: true },
+      }),
+    ]);
+    const dayOfRow = (d: Date) => d.toISOString().slice(0, 10);
+    const eligible = rows.filter((s) => {
       const overlaps = mine.some(
         (m) => m.startsAt < s.endsAt && m.endsAt > s.startsAt,
       );
-      if (overlaps) continue;
+      if (overlaps) return false;
       const tz = s.locationRel?.timezone ?? DEFAULT_TIMEZONE;
-      const blocked = await blockedForWindow(
-        [user.associateId],
-        s.startsAt,
-        s.endsAt,
-        tz,
+      const startKey = dayKeyInZone(s.startsAt, tz);
+      const endKey = dayKeyInZone(s.endsAt, tz);
+      const ptoBlocked = ptoRows.some(
+        (r) => dayOfRow(r.startDate) <= endKey && dayOfRow(r.endDate) >= startKey,
       );
-      if (blocked.size > 0) continue;
-      eligible.push(s);
-    }
+      if (ptoBlocked) return false;
+      return !exceptionRows.some((x) => {
+        const k = dayOfRow(x.date);
+        return k >= startKey && k <= endKey;
+      });
+    });
 
     const claims = await prisma.openShiftClaim.findMany({
       where: {
@@ -2020,6 +2065,22 @@ schedulingRouter.post('/open-shift-claims/:id/approve', MANAGE, async (req, res,
           409,
           'associate_double_booked',
           'They picked up another overlapping shift in the meantime',
+        );
+      }
+      // Day off / PTO approved AFTER they requested the pickup wins —
+      // same re-check the swap approval does.
+      const nowBlocked = await blockedForWindow(
+        [claim.associateId],
+        claim.shift.startsAt,
+        claim.shift.endsAt,
+        claim.shift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+        tx,
+      );
+      if (nowBlocked.size > 0) {
+        throw new HttpError(
+          409,
+          'associate_unavailable',
+          'They now have time off or a day off covering this shift.',
         );
       }
       const took = await tx.shift.updateMany({
@@ -2957,13 +3018,24 @@ schedulingRouter.post('/swap-requests/:id/manager-approve', MANAGE, async (req, 
 
     // Declared unavailability blocks the receiving side of each leg — PTO
     // approved (or a day off added) AFTER the peer accepted must not get
-    // steamrolled by the approval.
-    const cptBlocked = await blockedForWindow(
-      [swap.counterpartyAssociateId],
-      swap.shift.startsAt,
-      swap.shift.endsAt,
-      swap.shift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
-    );
+    // steamrolled by the approval. Independent reads, so both legs check
+    // in parallel.
+    const [cptBlocked, reqBlocked] = await Promise.all([
+      blockedForWindow(
+        [swap.counterpartyAssociateId],
+        swap.shift.startsAt,
+        swap.shift.endsAt,
+        swap.shift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+      ),
+      swap.counterpartShift
+        ? blockedForWindow(
+            [swap.requesterAssociateId],
+            swap.counterpartShift.startsAt,
+            swap.counterpartShift.endsAt,
+            swap.counterpartShift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+          )
+        : Promise.resolve(new Set<string>()),
+    ]);
     if (cptBlocked.size > 0) {
       throw new HttpError(
         409,
@@ -2971,20 +3043,12 @@ schedulingRouter.post('/swap-requests/:id/manager-approve', MANAGE, async (req, 
         'The counterparty now has time off or a day off covering this shift.',
       );
     }
-    if (swap.counterpartShift) {
-      const reqBlocked = await blockedForWindow(
-        [swap.requesterAssociateId],
-        swap.counterpartShift.startsAt,
-        swap.counterpartShift.endsAt,
-        swap.counterpartShift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+    if (reqBlocked.size > 0) {
+      throw new HttpError(
+        409,
+        'requester_unavailable',
+        'The requester now has time off or a day off covering the exchange shift.',
       );
-      if (reqBlocked.size > 0) {
-        throw new HttpError(
-          409,
-          'requester_unavailable',
-          'The requester now has time off or a day off covering the exchange shift.',
-        );
-      }
     }
 
     // Execute atomically: CAS the swap status, verify neither party is
@@ -3530,6 +3594,34 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
     // (June audit P0 — publish-week had no double-booking guard).
     const admittedByAssociate = new Map<string, { startsAt: Date; endsAt: Date }[]>();
 
+    // One batched fetch of every assigned draft's LIVE shifts (per-draft
+    // findFirst here was an up-to-100-query loop — July review). Window is
+    // overlap-based, not week-bounded, so an overnight shift from the
+    // previous Sunday still counts.
+    const assignedDraftIds = drafts
+      .map((s) => s.assignedAssociateId)
+      .filter((id): id is string => !!id);
+    const liveByAssociate = new Map<string, { startsAt: Date; endsAt: Date }[]>();
+    if (assignedDraftIds.length > 0) {
+      const minStart = new Date(Math.min(...drafts.map((s) => s.startsAt.getTime())));
+      const maxEnd = new Date(Math.max(...drafts.map((s) => s.endsAt.getTime())));
+      const live = await prisma.shift.findMany({
+        where: {
+          assignedAssociateId: { in: [...new Set(assignedDraftIds)] },
+          status: { notIn: ['CANCELLED', 'DRAFT'] },
+          startsAt: { lt: maxEnd },
+          endsAt: { gt: minStart },
+        },
+        select: { assignedAssociateId: true, startsAt: true, endsAt: true },
+        take: 2000,
+      });
+      for (const r of live) {
+        const list = liveByAssociate.get(r.assignedAssociateId!) ?? [];
+        list.push({ startsAt: r.startsAt, endsAt: r.endsAt });
+        liveByAssociate.set(r.assignedAssociateId!, list);
+      }
+    }
+
     for (const s of drafts) {
       const evaluation = evaluateShiftNotice({
         state: s.client.state,
@@ -3549,19 +3641,12 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
         const clashesInBatch = inBatch.some(
           (w) => w.startsAt < s.endsAt && w.endsAt > s.startsAt,
         );
-        // DB check counts only LIVE shifts — other drafts are handled by
-        // the in-batch tracker above (they'd otherwise veto each other and
-        // publish nothing).
-        const liveClash = await prisma.shift.findFirst({
-          where: {
-            id: { not: s.id },
-            assignedAssociateId: s.assignedAssociateId,
-            status: { notIn: ['CANCELLED', 'DRAFT'] },
-            startsAt: { lt: s.endsAt },
-            endsAt: { gt: s.startsAt },
-          },
-          select: { id: true },
-        });
+        // LIVE-shift check from the batched prefetch — other drafts are
+        // handled by the in-batch tracker above (they'd otherwise veto
+        // each other and publish nothing).
+        const liveClash = (liveByAssociate.get(s.assignedAssociateId) ?? []).some(
+          (w) => w.startsAt < s.endsAt && w.endsAt > s.startsAt,
+        );
         if (clashesInBatch || liveClash) {
           skipped.push({
             shiftId: s.id,

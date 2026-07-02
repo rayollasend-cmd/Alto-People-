@@ -41,9 +41,13 @@ export function verifyCalendarToken(
   candidate: string,
   version = 1,
 ): boolean {
-  const expected = mintCalendarToken(associateId, version);
-  if (expected.length !== candidate.length) return false;
-  return timingSafeEqual(Buffer.from(expected), Buffer.from(candidate));
+  const expected = Buffer.from(mintCalendarToken(associateId, version));
+  const got = Buffer.from(candidate);
+  // Compare BYTE lengths, not string lengths — a multibyte char can match
+  // the string length while producing a longer buffer, and timingSafeEqual
+  // throws (→ 500) on length mismatch instead of denying (July review).
+  if (expected.length !== got.length) return false;
+  return timingSafeEqual(expected, got);
 }
 
 /* ===== iCal serializer ================================================== */

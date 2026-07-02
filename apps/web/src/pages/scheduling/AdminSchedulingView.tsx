@@ -65,7 +65,7 @@ import {
   type SchedulingKpis,
 } from '@/lib/schedulingApi';
 import { apiFetch, ApiError } from '@/lib/api';
-import { useConfirm } from '@/lib/confirm';
+import { useConfirm, type ConfirmOptions } from '@/lib/confirm';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -1311,35 +1311,18 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     if (!autoFillForShift) return;
     setPendingId(autoFillForShift.shiftId);
     try {
-      await assignShift(autoFillForShift.shiftId, { associateId });
-      setAutoFillForShift(null);
-      toast.success('Shift assigned.');
-      await refresh();
-    } catch (err) {
-      if (err instanceof ApiError && err.code === 'associate_unavailable') {
-        const ok = await confirm({
-          title: 'Assign on their day off?',
-          description:
-            'This associate has approved time off or a declared day off covering the shift. Assigning anyway overrides that.',
-          confirmLabel: 'Assign anyway',
-          destructive: true,
-        });
-        if (ok) {
-          try {
-            await assignShift(autoFillForShift.shiftId, {
-              associateId,
-              overrideUnavailability: true,
-            });
-            setAutoFillForShift(null);
-            toast.success('Shift assigned (override).');
-            await refresh();
-          } catch (err2) {
-            toast.error(err2 instanceof ApiError ? err2.message : 'Assign failed.');
-          }
-        }
-      } else {
-        toast.error(err instanceof ApiError ? err.message : 'Assign failed.');
+      const assigned = await assignWithOverridePrompt(
+        autoFillForShift.shiftId,
+        associateId,
+        confirm,
+      );
+      if (assigned) {
+        setAutoFillForShift(null);
+        toast.success('Shift assigned.');
+        await refresh();
       }
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Assign failed.');
     } finally {
       setPendingId(null);
     }
@@ -2522,33 +2505,18 @@ function AssignDialog({
     if (!target || !picked) return;
     setSubmitting(true);
     try {
-      await assignShift(target.id, { associateId: picked.id });
-      onAssigned();
-    } catch (err) {
-      // Declared unavailability hard-blocks the assign; overriding is an
-      // explicit second decision, never a silent retry.
-      if (err instanceof ApiError && err.code === 'associate_unavailable') {
-        const ok = await confirmOverride({
-          title: 'Assign on their day off?',
-          description: `${picked.firstName} ${picked.lastName} has approved time off or a declared day off covering this shift. Assigning anyway overrides that — they'll be notified.`,
-          confirmLabel: 'Assign anyway',
-          destructive: true,
-        });
-        if (ok) {
-          try {
-            await assignShift(target.id, {
-              associateId: picked.id,
-              overrideUnavailability: true,
-            });
-            onAssigned();
-            return;
-          } catch (err2) {
-            toast.error(err2 instanceof ApiError ? err2.message : 'Assign failed.');
-          }
-        }
-        setSubmitting(false);
+      const assigned = await assignWithOverridePrompt(
+        target.id,
+        picked.id,
+        confirmOverride,
+        `${picked.firstName} ${picked.lastName}`,
+      );
+      if (assigned) {
+        onAssigned();
         return;
       }
+      setSubmitting(false);
+    } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Assign failed.');
       setSubmitting(false);
     }
@@ -3205,6 +3173,39 @@ function AdminPickupPanel() {
       </CardContent>
     </Card>
   );
+}
+
+/**
+ * Assign with the day-off/PTO override flow: a plain assign that, on the
+ * server's `associate_unavailable` hard block, asks for an explicit
+ * destructive confirmation and retries with overrideUnavailability. One
+ * implementation for every assign entry point (dialog, auto-fill) so the
+ * override UX can't drift. Returns true when an assignment landed; false
+ * when the admin declined the override. Non-unavailability errors throw.
+ */
+async function assignWithOverridePrompt(
+  shiftId: string,
+  associateId: string,
+  confirm: (opts: ConfirmOptions) => Promise<boolean>,
+  who = 'This associate',
+): Promise<boolean> {
+  try {
+    await assignShift(shiftId, { associateId });
+    return true;
+  } catch (err) {
+    if (!(err instanceof ApiError) || err.code !== 'associate_unavailable') {
+      throw err;
+    }
+    const ok = await confirm({
+      title: 'Assign on their day off?',
+      description: `${who} has approved time off or a declared day off covering this shift. Assigning anyway overrides that — they'll be notified.`,
+      confirmLabel: 'Assign anyway',
+      destructive: true,
+    });
+    if (!ok) return false;
+    await assignShift(shiftId, { associateId, overrideUnavailability: true });
+    return true;
+  }
 }
 
 /* ===== Unconfirmed shifts panel ========================================== */

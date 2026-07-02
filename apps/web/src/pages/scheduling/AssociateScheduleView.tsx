@@ -402,7 +402,7 @@ export function AssociateScheduleView() {
                   <ShiftCard key={s.id} shift={s} isNext={false} muted />
                 ))}
               </ul>
-              {(history === null || historyNextBefore !== null) && (
+              {hasOlder && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -414,7 +414,7 @@ export function AssociateScheduleView() {
                   Load older shifts
                 </Button>
               )}
-              {history !== null && historyNextBefore === null && (
+              {!hasOlder && (
                 <p className="mt-3 text-xs text-silver/60">
                   That's your full shift history.
                 </p>

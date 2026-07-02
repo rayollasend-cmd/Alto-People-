@@ -436,6 +436,23 @@ describe('double-booking guards (June audit P0s)', () => {
     expect(statuses.filter((s) => s.status === 'DRAFT')).toHaveLength(1);
   });
 
+  it('PATCH rejects a startsAt-only change that inverts the window', async () => {
+    const client = await createClient();
+    const { associate: me } = await mkPlaced(client.id, 'Maria', 'Lopez');
+    const s = await mkShift({ clientId: client.id, assignedAssociateId: me.id });
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+    // Move the start AFTER the existing end without touching endsAt — the
+    // schema-level refine can't see this; the route guard must.
+    const res = await hrAgent.patch(`/scheduling/shifts/${s.id}`).send({
+      startsAt: new Date(s.endsAt.getTime() + 3_600_000).toISOString(),
+    });
+    expect(res.status).toBe(400);
+    const after = await prisma.shift.findUniqueOrThrow({ where: { id: s.id } });
+    expect(after.startsAt.getTime()).toBe(s.startsAt.getTime());
+  });
+
   it('PATCH rejects a time change that overlaps another of the assignee’s shifts', async () => {
     const client = await createClient();
     const { associate: me } = await mkPlaced(client.id, 'Maria', 'Lopez');

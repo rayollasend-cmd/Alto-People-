@@ -122,13 +122,18 @@ export function ScheduleWeekView({
   const [offset, setOffset] = useState(0);
   const byDay = useMemo(() => bucketByDay(shifts), [shifts]);
 
-  const weekStart = new Date(startOfWeek(now).getTime() + offset * 7 * DAY_MS);
+  // Calendar-day arithmetic (setDate), NOT raw ms offsets — adding
+  // 86.4M-ms increments drifts an hour across a DST transition and can
+  // mislabel a day (July review).
+  const weekStart = startOfWeek(now);
+  weekStart.setDate(weekStart.getDate() + offset * 7);
   const todayKey = localKey(new Date(now));
   const days = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(weekStart.getTime() + i * DAY_MS);
+    const d = new Date(weekStart);
+    d.setDate(d.getDate() + i);
     return { date: d, key: localKey(d) };
   });
-  const weekEnd = new Date(weekStart.getTime() + 6 * DAY_MS);
+  const weekEnd = days[6]!.date;
   const weekMinutes = days.reduce(
     (sum, d) => sum + (byDay.get(d.key) ?? []).reduce((m, s) => m + shiftMinutes(s), 0),
     0,

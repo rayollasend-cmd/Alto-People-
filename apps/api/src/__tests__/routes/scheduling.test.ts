@@ -416,6 +416,26 @@ describe('calendar feed URL rotation', () => {
     expect(res.status).toBe(404);
   });
 
+  it('feed 404s (not 500s) on a token with multibyte chars of equal string length', async () => {
+    const me = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    const { user: meUser } = await createUser({
+      role: 'ASSOCIATE',
+      email: me.email,
+      associateId: me.id,
+    });
+    const meAgent = await loginAs(meUser.email);
+    const urlRes = await meAgent.get('/scheduling/me/calendar-url');
+    const goodPath = feedPath(urlRes.body.url);
+    // Same string length as the real token, but a 2-byte char makes the
+    // UTF-8 buffer longer — timingSafeEqual would throw on raw buffers.
+    const evilPath = goodPath.replace(/\/([^/]+)\.ics$/, (_m, tok: string) => {
+      const evil = 'é' + tok.slice(1);
+      return `/${encodeURIComponent(evil)}.ics`;
+    });
+    const res = await request(app()).get(evilPath);
+    expect(res.status).toBe(404);
+  });
+
   it('feed events carry the site name, not just the sub-zone label', async () => {
     const client = await createClient();
     const me = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
