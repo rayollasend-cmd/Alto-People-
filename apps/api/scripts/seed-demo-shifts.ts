@@ -19,8 +19,14 @@ async function main() {
     where: { deletedAt: null },
     include: { locations: { where: { deletedAt: null }, take: 1 } },
   });
-  const location = client?.locations[0];
-  if (!client || !location) throw new Error('Seed a client with a location first.');
+  if (!client) throw new Error('Run prisma/seed.ts first (no client).');
+  // Fresh databases (CI, new dev clones) have clients but no Locations —
+  // create one instead of demanding manual setup.
+  const location =
+    client.locations[0] ??
+    (await prisma.location.create({
+      data: { clientId: client.id, name: 'Demo Store', city: 'Miami', state: 'FL' },
+    }));
 
   // Teammate for the "Working with you" panel.
   const teammate = await prisma.associate.upsert({
