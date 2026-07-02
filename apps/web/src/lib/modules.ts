@@ -637,7 +637,10 @@ export const MODULES: ModuleNav[] = [
     label: 'Directory & comms',
     description:
       'Search the people directory, send broadcasts, and run pulse / eNPS / open-ended surveys.',
-    requires: 'view:dashboard',
+    // Staff tool: the directory tab exposes every associate's email +
+    // phone, so it's gated like the People directory (view:org) — NOT
+    // view:dashboard, which every associate has.
+    requires: 'view:org',
     icon: MegaphoneIcon,
     group: 'insights',
   },

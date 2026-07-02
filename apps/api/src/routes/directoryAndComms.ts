@@ -23,15 +23,18 @@ import { requireCapability } from '../middleware/auth.js';
 
 export const directoryAndCommsRouter = Router();
 
-const VIEW_DASH = requireCapability('view:dashboard');
+// Staff-only search. This endpoint returns every associate's email and
+// phone — view:dashboard (which EVERY role has, including ASSOCIATE)
+// made the whole company's contact list one authenticated GET away from
+// any hourly associate. view:org matches the People directory's gate.
+const VIEW_ORG = requireCapability('view:org');
 const MANAGE_COMMS = requireCapability('manage:communications');
-const VIEW_COMMS = requireCapability('view:communications');
 
 // ----- Directory --------------------------------------------------------
 
 directoryAndCommsRouter.get(
   '/directory',
-  VIEW_DASH,
+  VIEW_ORG,
   async (req, res) => {
     const q = z.string().max(120).optional().parse(req.query.q);
     const where: Prisma.AssociateWhereInput = { deletedAt: null };
@@ -87,9 +90,12 @@ const BroadcastInputSchema = z.object({
   scheduledFor: z.string().datetime().nullable().optional(),
 });
 
+// Admin list (drafts, targeting, receipt counts). Associates read their
+// own broadcasts via /broadcasts/me below — view:communications (which
+// associates hold for their inbox) must NOT open this one.
 directoryAndCommsRouter.get(
   '/broadcasts',
-  VIEW_COMMS,
+  MANAGE_COMMS,
   async (_req, res) => {
     const rows = await prisma.broadcast.findMany({
       orderBy: { createdAt: 'desc' },
@@ -295,7 +301,7 @@ const QuestionInputSchema = z.object({
 
 directoryAndCommsRouter.get(
   '/surveys',
-  VIEW_COMMS,
+  MANAGE_COMMS,
   async (_req, res) => {
     const rows = await prisma.survey.findMany({
       orderBy: { createdAt: 'desc' },
@@ -339,7 +345,7 @@ directoryAndCommsRouter.post(
 
 directoryAndCommsRouter.get(
   '/surveys/:id/questions',
-  VIEW_COMMS,
+  MANAGE_COMMS,
   async (req, res) => {
     const surveyId = req.params.id;
     const rows = await prisma.surveyQuestion.findMany({
@@ -447,9 +453,11 @@ directoryAndCommsRouter.post(
  * counts per choice index. For text: count only (raw text gated on
  * manage:communications).
  */
+// Aggregated results are admin analytics; the respond POST above stays
+// open to any authenticated user so recipients can answer.
 directoryAndCommsRouter.get(
   '/surveys/:id/responses',
-  VIEW_COMMS,
+  MANAGE_COMMS,
   async (req, res) => {
     const surveyId = req.params.id;
     const survey = await prisma.survey.findUnique({ where: { id: surveyId } });

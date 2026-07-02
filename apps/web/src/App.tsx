@@ -363,7 +363,7 @@ const LAYOUT_ROUTES = [
   { path: 'performance/extras', element: <RequireCapability cap="view:performance"><PerformanceExtras /></RequireCapability> },
   { path: 'marketplace', element: <MarketplaceHome /> },
   { path: 'payrules', element: <PayRulesHome /> },
-  { path: 'directory', element: <DirCommsHome /> },
+  { path: 'directory', element: <RequireCapability cap="view:org"><DirCommsHome /></RequireCapability> },
   { path: 'compliance/osha', element: <RequireCapability cap="view:compliance"><OshaWcEeoHome /></RequireCapability> },
   { path: 'templates', element: <RequireCapability cap="view:hr-admin"><TemplatesHome /></RequireCapability> },
   { path: 'recruiting/extras', element: <RequireCapability cap="view:recruiting"><RecruitingExtras /></RequireCapability> },
