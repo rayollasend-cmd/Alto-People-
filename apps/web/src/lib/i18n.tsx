@@ -103,6 +103,7 @@ const en = {
   'sched.hideRecent': 'Hide recent shifts ({count})',
   'sched.loadOlder': 'Load older shifts',
   'sched.fullHistory': "That's your full shift history.",
+  'sched.offline': "You're offline — showing your schedule from {time}.",
 
   // Shift card
   'shift.next': 'Next',
@@ -207,6 +208,7 @@ const es: Record<MessageKey, string> = {
   'sched.hideRecent': 'Ocultar turnos recientes ({count})',
   'sched.loadOlder': 'Cargar turnos anteriores',
   'sched.fullHistory': 'Ese es todo tu historial de turnos.',
+  'sched.offline': 'Sin conexión — mostrando tu horario de {time}.',
 
   'shift.next': 'Próximo',
   'shift.confirmed': 'Confirmado',

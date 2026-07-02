@@ -23,7 +23,7 @@ import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { toast } from '@/components/ui/Toaster';
-import { fmtRelativeDayTz, fmtShiftRangeTz, zonedDayKey } from '@/lib/format';
+import { fmtDateTime, fmtRelativeDayTz, fmtShiftRangeTz, zonedDayKey } from '@/lib/format';
 import {
   CalendarDays,
   Check,
@@ -32,6 +32,7 @@ import {
   HandHelping,
   RefreshCw,
   RotateCcw,
+  WifiOff,
 } from 'lucide-react';
 import { listMyRequests } from '@/lib/timeOffApi';
 import {
@@ -50,6 +51,9 @@ import {
 
 type ScheduleViewMode = 'list' | 'week' | 'month';
 const VIEW_STORAGE_KEY = 'alto:mySchedule.view.v1';
+// Last successfully-loaded schedule, for offline fallback. An associate
+// opening the app in a dead-signal stockroom should still see their week.
+const CACHE_KEY = 'alto:mySchedule.cache.v1';
 
 function initialViewMode(): ScheduleViewMode {
   try {
@@ -67,6 +71,9 @@ export function AssociateScheduleView() {
   const [shifts, setShifts] = useState<Shift[] | null>(null);
   const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Set when rendering the cached copy because the network is down —
+   *  the timestamp of that copy, shown in the offline banner. */
+  const [offlineAt, setOfflineAt] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [showPast, setShowPast] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -113,7 +120,34 @@ export function AssociateScheduleView() {
       const res = await listMyShifts();
       setShifts(res.shifts);
       setTruncated(res.truncated === true);
+      setOfflineAt(null);
+      try {
+        localStorage.setItem(
+          CACHE_KEY,
+          JSON.stringify({ shifts: res.shifts, at: Date.now() }),
+        );
+      } catch {
+        // Quota/private mode — offline fallback just won't be available.
+      }
     } catch (err) {
+      // An ApiError means the server ANSWERED (auth expired, 500…) — show
+      // it. Anything else is the network being down: serve the cached copy
+      // read-only with an offline banner instead of an error screen.
+      if (!(err instanceof ApiError)) {
+        try {
+          const raw = localStorage.getItem(CACHE_KEY);
+          if (raw) {
+            const cached = JSON.parse(raw) as { shifts: Shift[]; at: number };
+            if (Array.isArray(cached.shifts) && typeof cached.at === 'number') {
+              setShifts(cached.shifts);
+              setOfflineAt(cached.at);
+              return;
+            }
+          }
+        } catch {
+          // Corrupt cache — fall through to the plain error state.
+        }
+      }
       setError(err instanceof ApiError ? err.message : 'Failed to load.');
     }
   };
@@ -267,6 +301,16 @@ export function AssociateScheduleView() {
     <div className="mx-auto">
       <PullToRefreshIndicator state={pullState} />
       <PageHeader title={t('sched.title')} subtitle={t('sched.subtitle')} />
+
+      {offlineAt !== null && (
+        <div
+          role="status"
+          className="mb-4 flex items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning"
+        >
+          <WifiOff className="h-4 w-4 shrink-0" aria-hidden="true" />
+          {t('sched.offline', { time: fmtDateTime(new Date(offlineAt)) })}
+        </div>
+      )}
 
       {loaded && !isEmpty && (
         <div className="mb-4 space-y-3">
