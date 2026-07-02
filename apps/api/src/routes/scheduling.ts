@@ -11,6 +11,7 @@ import {
   BulkCreateShiftsResponseSchema,
   CalendarFeedUrlResponseSchema,
   CopyWeekInputSchema,
+  MyShiftDetailResponseSchema,
   PublishWeekInputSchema,
   PublishWeekResponseSchema,
   ScheduleExportInputSchema,
@@ -24,6 +25,7 @@ import {
   ShiftTemplateCreateInputSchema,
   ShiftTemplateListResponseSchema,
   ShiftUpdateInputSchema,
+  SwapCandidateListResponseSchema,
   SwapCreateInputSchema,
   SwapDecideInputSchema,
   type AutoFillCandidate,
@@ -1162,6 +1164,144 @@ schedulingRouter.get('/me/shifts', async (req, res, next) => {
       shifts: rows.slice(0, MY_SHIFTS_CAP).map(toAssociateShift),
       truncated,
     } satisfies ShiftListResponse);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /scheduling/me/shifts/:id
+ *
+ * Detail for ONE of the caller's own published shifts, plus everyone whose
+ * published shift overlaps it at the same work site — the "who am I working
+ * with" panel (Sling-style). Teammates scope to the same location when the
+ * shift has one, otherwise the same client, and expose only name/position/
+ * times/sub-zone (names are already associate-visible via /directory).
+ */
+schedulingRouter.get('/me/shifts/:id', async (req, res, next) => {
+  try {
+    const user = req.user!;
+    if (!user.associateId) {
+      throw new HttpError(404, 'shift_not_found', 'Shift not found');
+    }
+    const shift = await prisma.shift.findFirst({
+      where: {
+        id: req.params.id,
+        assignedAssociateId: user.associateId,
+        publishedAt: { not: null },
+        status: { notIn: ['CANCELLED'] },
+      },
+      include: SHIFT_INCLUDE,
+    });
+    // Same 404 whether the shift doesn't exist or belongs to someone else —
+    // don't confirm foreign shift ids to a probing client.
+    if (!shift) {
+      throw new HttpError(404, 'shift_not_found', 'Shift not found');
+    }
+
+    const overlapping = await prisma.shift.findMany({
+      where: {
+        id: { not: shift.id },
+        clientId: shift.clientId,
+        ...(shift.locationId ? { locationId: shift.locationId } : {}),
+        publishedAt: { not: null },
+        status: { notIn: ['CANCELLED'] },
+        AND: [
+          { assignedAssociateId: { not: null } },
+          { assignedAssociateId: { not: user.associateId } },
+        ],
+        startsAt: { lt: shift.endsAt },
+        endsAt: { gt: shift.startsAt },
+      },
+      orderBy: { startsAt: 'asc' },
+      take: 50,
+      include: { assignedAssociate: { select: { firstName: true, lastName: true } } },
+    });
+    // One row per person — back-to-back split shifts would otherwise list
+    // the same teammate twice.
+    const seen = new Set<string>();
+    const teammates = overlapping.flatMap((s) => {
+      if (!s.assignedAssociateId || !s.assignedAssociate || seen.has(s.assignedAssociateId)) {
+        return [];
+      }
+      seen.add(s.assignedAssociateId);
+      return [
+        {
+          associateId: s.assignedAssociateId,
+          name: `${s.assignedAssociate.firstName} ${s.assignedAssociate.lastName}`,
+          position: s.position,
+          startsAt: s.startsAt.toISOString(),
+          endsAt: s.endsAt.toISOString(),
+          location: s.location,
+        },
+      ];
+    });
+
+    res.json(
+      MyShiftDetailResponseSchema.parse({
+        shift: toAssociateShift(shift),
+        teammates,
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /scheduling/me/shifts/:id/swap-candidates
+ *
+ * Who the caller can offer this shift to: the schedulable pool (ACTIVE
+ * ASSOCIATE-role, onboarded) minus themselves, each flagged `busy` when
+ * they already have a shift overlapping this one. Advisory — the swap
+ * POST and manager approval remain the enforcement points.
+ */
+schedulingRouter.get('/me/shifts/:id/swap-candidates', async (req, res, next) => {
+  try {
+    const user = req.user!;
+    if (!user.associateId) {
+      throw new HttpError(404, 'shift_not_found', 'Shift not found');
+    }
+    const shift = await prisma.shift.findFirst({
+      where: {
+        id: req.params.id,
+        assignedAssociateId: user.associateId,
+        publishedAt: { not: null },
+        status: { notIn: ['CANCELLED'] },
+      },
+      select: { id: true, startsAt: true, endsAt: true },
+    });
+    if (!shift) {
+      throw new HttpError(404, 'shift_not_found', 'Shift not found');
+    }
+
+    const pool = await prisma.associate.findMany({
+      where: { ...ACTIVE_ASSOCIATE_FILTER, id: { not: user.associateId } },
+      select: { id: true, firstName: true, lastName: true },
+      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+      take: 200,
+    });
+    const clashes = await prisma.shift.findMany({
+      where: {
+        id: { not: shift.id },
+        assignedAssociateId: { in: pool.map((a) => a.id) },
+        status: { notIn: ['CANCELLED'] },
+        startsAt: { lt: shift.endsAt },
+        endsAt: { gt: shift.startsAt },
+      },
+      select: { assignedAssociateId: true },
+    });
+    const busyIds = new Set(clashes.map((c) => c.assignedAssociateId));
+
+    res.json(
+      SwapCandidateListResponseSchema.parse({
+        candidates: pool.map((a) => ({
+          associateId: a.id,
+          name: `${a.firstName} ${a.lastName}`,
+          busy: busyIds.has(a.id),
+        })),
+      }),
+    );
   } catch (err) {
     next(err);
   }

@@ -10,6 +10,7 @@ import type {
   CalendarFeedUrlResponse,
   CopyWeekInput,
   CopyWeekResponse,
+  MyShiftDetailResponse,
   PublishWeekInput,
   PublishWeekResponse,
   Shift,
@@ -27,6 +28,7 @@ import type {
   ShiftTemplateCreateInput,
   ShiftTemplateListResponse,
   ShiftUpdateInput,
+  SwapCandidateListResponse,
   SwapCreateInput,
   SwapDecideInput,
 } from '@alto-people/shared';
@@ -82,6 +84,18 @@ export function getSchedulingKpis(
 
 export function listMyShifts(): Promise<ShiftListResponse> {
   return apiFetch<ShiftListResponse>('/scheduling/me/shifts');
+}
+
+/** One of my shifts + the teammates working alongside it. */
+export function getMyShiftDetail(id: string): Promise<MyShiftDetailResponse> {
+  return apiFetch<MyShiftDetailResponse>(`/scheduling/me/shifts/${id}`);
+}
+
+/** Who I can offer this shift to (busy = they're already booked then). */
+export function listSwapCandidates(shiftId: string): Promise<SwapCandidateListResponse> {
+  return apiFetch<SwapCandidateListResponse>(
+    `/scheduling/me/shifts/${shiftId}/swap-candidates`,
+  );
 }
 
 export function getMyCalendarUrl(): Promise<CalendarFeedUrlResponse> {

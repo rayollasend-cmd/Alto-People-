@@ -26,7 +26,13 @@ const STATUS_CLS: Record<ShiftSwapStatus, string> = {
   CANCELLED: 'text-silver/70',
 };
 
-export function SwapMarketplace() {
+export function SwapMarketplace({
+  // Parent bumps this when a swap is created elsewhere on the page (the
+  // shift-card offer flow) so the list refetches without a manual reload.
+  refreshToken = 0,
+}: {
+  refreshToken?: number;
+}) {
   const [tab, setTab] = useState<Tab>('incoming');
   const [items, setItems] = useState<ShiftSwapRequest[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +50,7 @@ export function SwapMarketplace() {
 
   useEffect(() => {
     refresh();
-  }, [refresh]);
+  }, [refresh, refreshToken]);
 
   const wrap = async (id: string, fn: () => Promise<unknown>) => {
     setPendingId(id);

@@ -449,6 +449,174 @@ describe('calendar feed URL rotation', () => {
   });
 });
 
+describe('GET /scheduling/me/shifts/:id — detail + teammates', () => {
+  it('returns overlapping published teammates at the same site only', async () => {
+    const client = await createClient();
+    const loc = await prisma.location.findFirstOrThrow({
+      where: { clientId: client.id },
+    });
+    const otherLoc = await prisma.location.create({
+      data: { clientId: client.id, name: 'Annex' },
+    });
+    const me = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    const { user: meUser } = await createUser({
+      role: 'ASSOCIATE',
+      email: me.email,
+      associateId: me.id,
+    });
+    const buddy = await createAssociate({ firstName: 'Pat', lastName: 'Nguyen' });
+    const elsewhere = await createAssociate({ firstName: 'Sam', lastName: 'Faraway' });
+    const later = await createAssociate({ firstName: 'Lea', lastName: 'Later' });
+    const ghost = await createAssociate({ firstName: 'Gus', lastName: 'Draft' });
+
+    const t0 = Date.now() + 24 * 3_600_000;
+    const at = (h: number) => new Date(t0 + h * 3_600_000);
+    const mk = (data: Record<string, unknown>) =>
+      prisma.shift.create({
+        data: {
+          clientId: client.id,
+          position: 'Server',
+          publishedAt: new Date(),
+          status: 'ASSIGNED',
+          startsAt: at(0),
+          endsAt: at(8),
+          ...data,
+        } as never,
+      });
+
+    const mine = await mk({
+      locationId: loc.id,
+      assignedAssociateId: me.id,
+      hourlyRate: 40,
+      payRate: 17,
+    });
+    await mk({
+      locationId: loc.id,
+      assignedAssociateId: buddy.id,
+      position: 'Cashier',
+      location: 'Front end',
+      startsAt: at(2),
+      endsAt: at(10),
+    });
+    // Excluded: same client but different site.
+    await mk({ locationId: otherLoc.id, assignedAssociateId: elsewhere.id });
+    // Excluded: same site, no time overlap.
+    await mk({
+      locationId: loc.id,
+      assignedAssociateId: later.id,
+      startsAt: at(9),
+      endsAt: at(17),
+    });
+    // Excluded: overlapping but never published.
+    await mk({
+      locationId: loc.id,
+      assignedAssociateId: ghost.id,
+      publishedAt: null,
+      status: 'DRAFT',
+    });
+
+    const meAgent = await loginAs(meUser.email);
+    const res = await meAgent.get(`/scheduling/me/shifts/${mine.id}`);
+    expect(res.status).toBe(200);
+    expect(res.body.shift.id).toBe(mine.id);
+    // Detail goes through the associate serializer too — no money fields.
+    expect(res.body.shift.hourlyRate).toBeNull();
+    expect(res.body.shift.payRate).toBeNull();
+    expect(res.body.teammates).toHaveLength(1);
+    expect(res.body.teammates[0]).toMatchObject({
+      name: 'Pat Nguyen',
+      position: 'Cashier',
+      location: 'Front end',
+    });
+  });
+
+  it("404s for another associate's shift", async () => {
+    const client = await createClient();
+    const me = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    const other = await createAssociate({ firstName: 'Pat', lastName: 'Other' });
+    const { user: meUser } = await createUser({
+      role: 'ASSOCIATE',
+      email: me.email,
+      associateId: me.id,
+    });
+    const notMine = await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        assignedAssociateId: other.id,
+        position: 'Server',
+        startsAt: new Date(Date.now() + 3_600_000),
+        endsAt: new Date(Date.now() + 8 * 3_600_000),
+        status: 'ASSIGNED',
+        publishedAt: new Date(),
+      },
+    });
+
+    const meAgent = await loginAs(meUser.email);
+    const res = await meAgent.get(`/scheduling/me/shifts/${notMine.id}`);
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('GET /scheduling/me/shifts/:id/swap-candidates', () => {
+  it('lists the schedulable pool minus me, flagging overlaps as busy', async () => {
+    const client = await createClient();
+    const loc = await prisma.location.findFirstOrThrow({
+      where: { clientId: client.id },
+    });
+    const mkQualified = async (firstName: string, lastName: string) => {
+      const a = await createAssociate({ firstName, lastName });
+      await createUser({ role: 'ASSOCIATE', email: a.email, associateId: a.id });
+      // Open assignment = schedulable (Phase 131 gate).
+      await prisma.associateAssignment.create({
+        data: { associateId: a.id, locationId: loc.id, startedAt: new Date() },
+      });
+      return a;
+    };
+
+    const me = await mkQualified('Maria', 'Lopez');
+    const free = await mkQualified('Fay', 'Free');
+    const busy = await mkQualified('Bob', 'Busy');
+    // No user account → not schedulable → must not appear at all.
+    await createAssociate({ firstName: 'Nou', lastName: 'Ser' });
+
+    const startsAt = new Date(Date.now() + 24 * 3_600_000);
+    const endsAt = new Date(startsAt.getTime() + 8 * 3_600_000);
+    const mine = await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        assignedAssociateId: me.id,
+        position: 'Server',
+        startsAt,
+        endsAt,
+        status: 'ASSIGNED',
+        publishedAt: new Date(),
+      },
+    });
+    await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        assignedAssociateId: busy.id,
+        position: 'Cook',
+        startsAt: new Date(startsAt.getTime() + 3_600_000),
+        endsAt: new Date(endsAt.getTime() + 3_600_000),
+        status: 'ASSIGNED',
+        publishedAt: new Date(),
+      },
+    });
+
+    const meAgent = await loginAs(`${me.email}`);
+    const res = await meAgent.get(`/scheduling/me/shifts/${mine.id}/swap-candidates`);
+    expect(res.status).toBe(200);
+    const byName = Object.fromEntries(
+      res.body.candidates.map((c: { name: string; busy: boolean }) => [c.name, c.busy]),
+    );
+    expect(byName['Fay Free']).toBe(false);
+    expect(byName['Bob Busy']).toBe(true);
+    expect(byName['Maria Lopez']).toBeUndefined();
+    expect(byName['Nou Ser']).toBeUndefined();
+  });
+});
+
 describe('CLIENT_PORTAL access', () => {
   it('CLIENT_PORTAL can view but cannot manage', async () => {
     const client = await createClient();

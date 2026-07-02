@@ -1173,6 +1173,44 @@ export const ShiftListResponseSchema = z.object({
 });
 export type ShiftListResponse = z.infer<typeof ShiftListResponseSchema>;
 
+/* Associate-facing shift detail — the tap-to-expand card on My Schedule. */
+
+/** A coworker whose published shift overlaps yours at the same work site.
+ *  Names are already associate-visible via /directory; times/position let
+ *  the associate see who they're working with, Sling-style. Deliberately
+ *  NO rates, contact info, or notes — those stay on each person's own shift. */
+export const ShiftTeammateSchema = z.object({
+  associateId: UuidSchema,
+  name: z.string(),
+  position: z.string(),
+  startsAt: z.string().datetime(),
+  endsAt: z.string().datetime(),
+  /** Their shift's free-text sub-zone ("Bar", "Produce"), if any. */
+  location: z.string().nullable(),
+});
+export type ShiftTeammate = z.infer<typeof ShiftTeammateSchema>;
+
+export const MyShiftDetailResponseSchema = z.object({
+  shift: ShiftSchema,
+  teammates: z.array(ShiftTeammateSchema),
+});
+export type MyShiftDetailResponse = z.infer<typeof MyShiftDetailResponseSchema>;
+
+/** Someone the associate can offer a shift to. `busy` flags an overlapping
+ *  assignment so the picker can steer away from people who can't take it —
+ *  advisory only; the swap POST and manager approval stay the real gates. */
+export const SwapCandidateSchema = z.object({
+  associateId: UuidSchema,
+  name: z.string(),
+  busy: z.boolean(),
+});
+export type SwapCandidate = z.infer<typeof SwapCandidateSchema>;
+
+export const SwapCandidateListResponseSchema = z.object({
+  candidates: z.array(SwapCandidateSchema),
+});
+export type SwapCandidateListResponse = z.infer<typeof SwapCandidateListResponseSchema>;
+
 export const ShiftCreateInputSchema = z
   .object({
     clientId: UuidSchema,
