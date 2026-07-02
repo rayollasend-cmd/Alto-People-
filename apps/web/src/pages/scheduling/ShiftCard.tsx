@@ -183,12 +183,16 @@ export function ShiftCard({
             {teammates && teammates.length > 0 && (
               <ul className="space-y-1.5">
                 {teammates.map((t) => (
+                  // Stacked on phones — the one-line layout crushed the
+                  // NAME ("Pat Ng…") to make room for position·time·zone
+                  // (caught by the visual walk). Single line returns at sm+
+                  // where there's room for both.
                   <li
                     key={t.associateId}
-                    className="flex items-baseline justify-between gap-3 text-sm"
+                    className="text-sm sm:flex sm:items-baseline sm:justify-between sm:gap-3"
                   >
-                    <span className="text-white truncate">{t.name}</span>
-                    <span className="text-xs text-silver tabular-nums text-right shrink-0">
+                    <span className="block text-white sm:truncate">{t.name}</span>
+                    <span className="block text-xs text-silver tabular-nums sm:text-right sm:shrink-0">
                       {t.position} ·{' '}
                       {fmtShiftRangeTz(t.startsAt, t.endsAt, shift.timezone)}
                       {t.location ? ` · ${t.location}` : ''}

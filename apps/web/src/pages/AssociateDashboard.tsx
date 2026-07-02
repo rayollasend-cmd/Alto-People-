@@ -422,7 +422,10 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
           {nextShift.clientName && ` · ${nextShift.clientName}`}
         </div>
         {nextShift.location && (
-          <div className="text-xs text-silver/70 mt-1 inline-flex items-center gap-1">
+          // flex (not inline-flex): as an inline box this sat on the SAME
+          // line as the "See full schedule" link below with no separator —
+          // "Front endSee full schedule" (caught by the visual walk).
+          <div className="text-xs text-silver/70 mt-1 flex items-center gap-1">
             <MapPin className="h-3 w-3" aria-hidden="true" />
             {nextShift.location}
           </div>
