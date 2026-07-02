@@ -8,31 +8,40 @@ import { env } from '../config/env.js';
  * with no credentials, so the token in the URL IS the authorization. We
  * mint a deterministic HMAC of the associate id with a server secret —
  * stable across requests so subscriptions keep working, but un-guessable
- * without the secret. Rotating CALENDAR_FEED_SECRET invalidates every
- * outstanding subscription in one move.
+ * without the secret.
+ *
+ * Revocation is per associate: the HMAC preimage includes the associate's
+ * `calendarFeedVersion`, so bumping that column invalidates one leaked URL
+ * without touching anyone else's subscription. Version 1 keeps the original
+ * preimage (bare associateId) so every URL minted before versioning existed
+ * still verifies. Rotating CALENDAR_FEED_SECRET remains the break-glass
+ * move that invalidates every outstanding subscription at once.
  */
 
 function feedSecret(): string {
   return env.CALENDAR_FEED_SECRET ?? env.JWT_SECRET;
 }
 
-export function mintCalendarToken(associateId: string): string {
+export function mintCalendarToken(associateId: string, version = 1): string {
+  const preimage = version <= 1 ? associateId : `${associateId}:v${version}`;
   return createHmac('sha256', feedSecret())
-    .update(associateId, 'utf8')
+    .update(preimage, 'utf8')
     .digest('base64url');
 }
 
 /**
- * Returns the associateId if the token matches one. We HMAC the candidate
- * associateId rather than reversing the token (HMAC isn't reversible), so
- * the caller passes both in. Used by the route to confirm the path's
- * associateId+token pair are consistent before responding.
+ * Returns true when the token matches the associate at their CURRENT feed
+ * version. We HMAC the candidate associateId rather than reversing the
+ * token (HMAC isn't reversible), so the caller passes both in — plus the
+ * version from the Associate row, which is why the route must load the
+ * associate before verifying.
  */
 export function verifyCalendarToken(
   associateId: string,
   candidate: string,
+  version = 1,
 ): boolean {
-  const expected = mintCalendarToken(associateId);
+  const expected = mintCalendarToken(associateId, version);
   if (expected.length !== candidate.length) return false;
   return timingSafeEqual(Buffer.from(expected), Buffer.from(candidate));
 }

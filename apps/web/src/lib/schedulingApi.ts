@@ -88,6 +88,13 @@ export function getMyCalendarUrl(): Promise<CalendarFeedUrlResponse> {
   return apiFetch<CalendarFeedUrlResponse>('/scheduling/me/calendar-url');
 }
 
+/** Invalidates the current feed URL (per-associate) and returns a fresh one. */
+export function rotateMyCalendarUrl(): Promise<CalendarFeedUrlResponse> {
+  return apiFetch<CalendarFeedUrlResponse>('/scheduling/me/calendar-url/rotate', {
+    method: 'POST',
+  });
+}
+
 export function createShift(body: ShiftCreateInput): Promise<Shift> {
   return apiFetch<Shift>('/scheduling/shifts', { method: 'POST', body });
 }

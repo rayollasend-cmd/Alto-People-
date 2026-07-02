@@ -315,6 +315,106 @@ describe('GET /scheduling/me/shifts', () => {
     expect(ids).toContain(recent.id);
     expect(ids).not.toContain(old.id);
   });
+
+  it('nulls the bill and pay rates in the associate payload', async () => {
+    const client = await createClient();
+    const me = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    const { user: meUser } = await createUser({
+      role: 'ASSOCIATE',
+      email: me.email,
+      associateId: me.id,
+    });
+    await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        assignedAssociateId: me.id,
+        position: 'Server',
+        startsAt: new Date(Date.now() + 3_600_000),
+        endsAt: new Date(Date.now() + 8 * 3_600_000),
+        status: 'ASSIGNED',
+        publishedAt: new Date(),
+        hourlyRate: 42.5, // client bill rate — must never reach an associate
+        payRate: 18.25,
+      },
+    });
+
+    const meAgent = await loginAs(meUser.email);
+    const res = await meAgent.get('/scheduling/me/shifts');
+    expect(res.status).toBe(200);
+    expect(res.body.shifts).toHaveLength(1);
+    expect(res.body.shifts[0].hourlyRate).toBeNull();
+    expect(res.body.shifts[0].payRate).toBeNull();
+  });
+
+  it('sets truncated=true when more shifts match than the cap returns', async () => {
+    const client = await createClient();
+    const me = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    const { user: meUser } = await createUser({
+      role: 'ASSOCIATE',
+      email: me.email,
+      associateId: me.id,
+    });
+    const base = Date.now() + 86_400_000;
+    await prisma.shift.createMany({
+      data: Array.from({ length: 101 }, (_, i) => ({
+        clientId: client.id,
+        assignedAssociateId: me.id,
+        position: 'Server',
+        startsAt: new Date(base + i * 3_600_000),
+        endsAt: new Date(base + i * 3_600_000 + 1_800_000),
+        status: 'ASSIGNED' as const,
+        publishedAt: new Date(),
+      })),
+    });
+
+    const meAgent = await loginAs(meUser.email);
+    const res = await meAgent.get('/scheduling/me/shifts');
+    expect(res.status).toBe(200);
+    expect(res.body.shifts).toHaveLength(100);
+    expect(res.body.truncated).toBe(true);
+  });
+});
+
+describe('calendar feed URL rotation', () => {
+  // The response URL is absolute and carries the prod-proxy /api prefix;
+  // the express app itself mounts the feed at /calendar.
+  const feedPath = (u: string) => new URL(u).pathname.replace(/^\/api/, '');
+
+  it('rotate invalidates the old feed URL and the new one serves iCal', async () => {
+    const me = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    const { user: meUser } = await createUser({
+      role: 'ASSOCIATE',
+      email: me.email,
+      associateId: me.id,
+    });
+    const meAgent = await loginAs(meUser.email);
+
+    const before = await meAgent.get('/scheduling/me/calendar-url');
+    expect(before.status).toBe(200);
+
+    const okBefore = await request(app()).get(feedPath(before.body.url));
+    expect(okBefore.status).toBe(200);
+    expect(okBefore.text).toContain('BEGIN:VCALENDAR');
+
+    const rotated = await meAgent.post('/scheduling/me/calendar-url/rotate');
+    expect(rotated.status).toBe(200);
+    expect(rotated.body.url).not.toBe(before.body.url);
+
+    const oldAfter = await request(app()).get(feedPath(before.body.url));
+    expect(oldAfter.status).toBe(404);
+    const newAfter = await request(app()).get(feedPath(rotated.body.url));
+    expect(newAfter.status).toBe(200);
+    expect(newAfter.text).toContain('BEGIN:VCALENDAR');
+
+    // GET hands out the rotated URL from now on.
+    const again = await meAgent.get('/scheduling/me/calendar-url');
+    expect(again.body.url).toBe(rotated.body.url);
+  });
+
+  it('feed 404s on malformed associate ids instead of erroring', async () => {
+    const res = await request(app()).get('/calendar/v1/not-a-uuid/whatever.ics');
+    expect(res.status).toBe(404);
+  });
 });
 
 describe('CLIENT_PORTAL access', () => {

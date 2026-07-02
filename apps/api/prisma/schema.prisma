@@ -690,6 +690,13 @@ model Associate {
   // selfie, no descriptor, ever.
   faceConsentStatus FaceConsentStatus?
   faceConsentAt     DateTime?      @db.Timestamptz(6)
+  // iCal feed revocation. The feed token is HMAC(secret, associateId
+  // [+ ":v" + version]), so bumping this number invalidates ONE
+  // associate's leaked calendar URL without rotating the global
+  // CALENDAR_FEED_SECRET (which would break every subscription).
+  // 1 = the original pre-version token format, so URLs minted before
+  // this column existed keep verifying.
+  calendarFeedVersion Int          @default(1)
   createdAt         DateTime       @default(now()) @db.Timestamptz(6)
   updatedAt         DateTime       @updatedAt @db.Timestamptz(6)
   deletedAt         DateTime?      @db.Timestamptz(6)

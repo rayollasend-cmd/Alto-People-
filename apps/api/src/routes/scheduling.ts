@@ -1112,6 +1112,18 @@ schedulingRouter.post('/shifts/:id/cancel', MANAGE, async (req, res, next) => {
 
 /* ===== Associate-facing /me ============================================ */
 
+const MY_SHIFTS_CAP = 100;
+
+/**
+ * The admin `toShift` payload minus the money fields. `hourlyRate` is the
+ * CLIENT BILL rate (revenue side) — paired with `payRate` it exposes the
+ * staffing margin, so neither belongs in an associate-facing response.
+ * Nulled rather than omitted so the shared ShiftSchema still parses.
+ */
+function toAssociateShift(row: Parameters<typeof toShift>[0]): Shift {
+  return { ...toShift(row), hourlyRate: null, payRate: null };
+}
+
 schedulingRouter.get('/me/shifts', async (req, res, next) => {
   try {
     const user = req.user!;
@@ -1139,10 +1151,17 @@ schedulingRouter.get('/me/shifts', async (req, res, next) => {
         startsAt: { gte: pastHorizon },
       },
       orderBy: { startsAt: 'asc' },
-      take: 100,
+      // Over-fetch one row so truncation is detectable — ascending order
+      // means the FURTHEST-FUTURE shifts are the ones that fall off, which
+      // must never read as "no more shifts".
+      take: MY_SHIFTS_CAP + 1,
       include: SHIFT_INCLUDE,
     });
-    res.json({ shifts: rows.map(toShift) } satisfies ShiftListResponse);
+    const truncated = rows.length > MY_SHIFTS_CAP;
+    res.json({
+      shifts: rows.slice(0, MY_SHIFTS_CAP).map(toAssociateShift),
+      truncated,
+    } satisfies ShiftListResponse);
   } catch (err) {
     next(err);
   }
@@ -1160,23 +1179,75 @@ schedulingRouter.get('/me/shifts', async (req, res, next) => {
  * macOS/iOS without an extra step; the https:// URL works for Google
  * Calendar's "Add by URL" flow and Outlook.
  */
+function buildCalendarFeedUrls(associateId: string, version: number) {
+  const token = mintCalendarToken(associateId, version);
+  // APP_BASE_URL is the web app origin in dev; in prod the API and SPA
+  // share an origin (Railway single-service setup), so this works for
+  // both. The `/api/calendar/v1/...` prefix matches the prod proxy path
+  // — in dev the SPA proxies `/api/*` to the API.
+  const base = env.APP_BASE_URL.replace(/\/$/, '');
+  const url = `${base}/api/calendar/v1/${associateId}/${token}.ics`;
+  const webcalUrl = url.replace(/^https?:\/\//, 'webcal://');
+  return CalendarFeedUrlResponseSchema.parse({ url, webcalUrl });
+}
+
 schedulingRouter.get('/me/calendar-url', async (req, res, next) => {
   try {
     const user = req.user!;
     if (!user.associateId) {
       throw new HttpError(404, 'no_associate', 'No associate profile linked');
     }
-    const token = mintCalendarToken(user.associateId);
-    // APP_BASE_URL is the web app origin in dev; in prod the API and SPA
-    // share an origin (Railway single-service setup), so this works for
-    // both. The `/api/calendar/v1/...` prefix matches the prod proxy path
-    // — in dev the SPA proxies `/api/*` to the API.
-    const base = env.APP_BASE_URL.replace(/\/$/, '');
-    const path = `/api/calendar/v1/${user.associateId}/${token}.ics`;
-    const url = `${base}${path}`;
-    const webcalUrl = url.replace(/^https?:\/\//, 'webcal://');
+    const associate = await prisma.associate.findUnique({
+      where: { id: user.associateId },
+      select: { calendarFeedVersion: true },
+    });
+    if (!associate) {
+      throw new HttpError(404, 'no_associate', 'No associate profile linked');
+    }
     res.json(
-      CalendarFeedUrlResponseSchema.parse({ url, webcalUrl }),
+      buildCalendarFeedUrls(user.associateId, associate.calendarFeedVersion),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /scheduling/me/calendar-url/rotate
+ *
+ * Invalidates the caller's current iCal URL (leaked link, ex-roommate's
+ * laptop, ...) by bumping their calendarFeedVersion, and returns the new
+ * URL. Only affects THIS associate — everyone else's subscriptions keep
+ * working. Every calendar app subscribed to the old URL goes dark until
+ * the new one is added, so the UI confirms before calling.
+ */
+schedulingRouter.post('/me/calendar-url/rotate', async (req, res, next) => {
+  try {
+    const user = req.user!;
+    if (!user.associateId) {
+      throw new HttpError(404, 'no_associate', 'No associate profile linked');
+    }
+    const associate = await prisma.associate.update({
+      where: { id: user.associateId },
+      data: { calendarFeedVersion: { increment: 1 } },
+      select: { calendarFeedVersion: true },
+    });
+    enqueueAudit(
+      {
+        actorUserId: user.id,
+        action: 'scheduling.calendar_feed_rotated',
+        entityType: 'Associate',
+        entityId: user.associateId,
+        metadata: {
+          ip: req.ip ?? null,
+          userAgent: req.headers['user-agent'] ?? null,
+          version: associate.calendarFeedVersion,
+        },
+      },
+      'scheduling.calendar_feed_rotated'
+    );
+    res.json(
+      buildCalendarFeedUrls(user.associateId, associate.calendarFeedVersion),
     );
   } catch (err) {
     next(err);

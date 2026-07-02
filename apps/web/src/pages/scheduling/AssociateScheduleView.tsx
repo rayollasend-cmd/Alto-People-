@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { CalendarFeedUrlResponse, Shift } from '@alto-people/shared';
-import { getMyCalendarUrl, listMyShifts } from '@/lib/schedulingApi';
+import { getMyCalendarUrl, listMyShifts, rotateMyCalendarUrl } from '@/lib/schedulingApi';
 import { ApiError } from '@/lib/api';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { toast } from '@/components/ui/Toaster';
 import {
   browserTimeZone,
@@ -16,7 +17,14 @@ import {
   tzAbbrev,
   zonedDayKey,
 } from '@/lib/format';
-import { CalendarDays, Check, Copy, ExternalLink, RefreshCw } from 'lucide-react';
+import {
+  CalendarDays,
+  Check,
+  Copy,
+  ExternalLink,
+  RefreshCw,
+  RotateCcw,
+} from 'lucide-react';
 import { AvailabilityEditor } from './AvailabilityEditor';
 import { SwapMarketplace } from './SwapMarketplace';
 
@@ -70,15 +78,18 @@ function dayHeading(s: Shift, now: number): string {
 
 export function AssociateScheduleView() {
   const [shifts, setShifts] = useState<Shift[] | null>(null);
+  const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [showPast, setShowPast] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
 
   const load = async () => {
     try {
       setError(null);
       const res = await listMyShifts();
       setShifts(res.shifts);
+      setTruncated(res.truncated === true);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load.');
     }
@@ -88,16 +99,24 @@ export function AssociateScheduleView() {
     load();
   }, []);
 
+  // Tick "now" each minute so the upcoming/past divide and the
+  // Today/Tomorrow headings don't go stale while the tab sits open —
+  // without it, yesterday's shift still reads "Today" after midnight
+  // until the user manually refreshes.
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+
   const onRefresh = async () => {
     setRefreshing(true);
     await load();
     setRefreshing(false);
   };
 
-  // Split at "now" (stable per data load) into upcoming (ascending) and past
+  // Split at "now" (ticks once a minute) into upcoming (ascending) and past
   // (descending), then group the upcoming list by store-local day.
   const { upcomingDays, past, nextId, upcomingCount, upcomingHours } = useMemo(() => {
-    const now = Date.now();
     const all = shifts ?? [];
     const up = all
       .filter((s) => new Date(s.endsAt).getTime() >= now)
@@ -106,12 +125,27 @@ export function AssociateScheduleView() {
       .filter((s) => new Date(s.endsAt).getTime() < now)
       .sort((a, b) => new Date(b.startsAt).getTime() - new Date(a.startsAt).getTime());
 
-    const groups: Array<{ key: string; heading: string; items: Shift[] }> = [];
+    const groups: Array<{
+      dayKey: string;
+      reactKey: string;
+      heading: string;
+      items: Shift[];
+    }> = [];
     for (const s of up) {
       const key = zonedDayKey(s.startsAt, s.timezone);
       const last = groups[groups.length - 1];
-      if (last && last.key === key) last.items.push(s);
-      else groups.push({ key, heading: dayHeading(s, now), items: [s] });
+      if (last && last.dayKey === key) last.items.push(s);
+      else {
+        groups.push({
+          dayKey: key,
+          // Shifts at sites in different timezones can interleave local-day
+          // keys in this UTC-sorted list, yielding two runs with the same
+          // day — suffix with the run index so sibling keys stay unique.
+          reactKey: `${key}#${groups.length}`,
+          heading: dayHeading(s, now),
+          items: [s],
+        });
+      }
     }
     const minutes = up.reduce((sum, s) => sum + shiftMinutes(s), 0);
     return {
@@ -121,7 +155,7 @@ export function AssociateScheduleView() {
       upcomingCount: up.length,
       upcomingHours: minutes / 60,
     };
-  }, [shifts]);
+  }, [shifts, now]);
 
   const loaded = shifts !== null;
   const isEmpty = loaded && upcomingCount === 0 && past.length === 0;
@@ -160,11 +194,24 @@ export function AssociateScheduleView() {
       )}
 
       {error && (
-        <p role="alert" className="text-sm text-alert mb-4">
-          {error}
+        <div role="alert" className="mb-4 flex items-center gap-3">
+          <p className="text-sm text-alert">{error}</p>
+          {!loaded && (
+            <Button variant="secondary" size="sm" onClick={load}>
+              <RefreshCw className="h-4 w-4" />
+              Retry
+            </Button>
+          )}
+        </div>
+      )}
+      {!shifts && !error && <SkeletonRows count={4} rowHeight="h-20" />}
+
+      {loaded && truncated && (
+        <p className="mb-4 text-xs text-silver/70">
+          Showing your next 100 shifts — anything scheduled beyond them will
+          appear here as earlier shifts pass.
         </p>
       )}
-      {!shifts && <SkeletonRows count={4} rowHeight="h-20" />}
 
       {isEmpty && (
         <EmptyState
@@ -177,7 +224,7 @@ export function AssociateScheduleView() {
       {loaded && upcomingCount > 0 && (
         <div className="space-y-5">
           {upcomingDays.map((group) => (
-            <section key={group.key}>
+            <section key={group.reactKey}>
               <h2 className="text-[11px] uppercase tracking-wider text-silver/80 mb-2">
                 {group.heading}
               </h2>
@@ -267,6 +314,8 @@ function CalendarSubscribeCard() {
   const [feed, setFeed] = useState<CalendarFeedUrlResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -314,6 +363,24 @@ function CalendarSubscribeCard() {
     }
   };
 
+  const onReset = async () => {
+    setResetting(true);
+    try {
+      const res = await rotateMyCalendarUrl();
+      setFeed(res);
+      setConfirmReset(false);
+      toast.success(
+        'New link created. Re-subscribe in your calendar app — the old link no longer works.',
+      );
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError ? err.message : 'Could not reset the link.',
+      );
+    } finally {
+      setResetting(false);
+    }
+  };
+
   return (
     <div className="mb-6 p-4 bg-navy border border-navy-secondary rounded-lg">
       <div className="flex items-start gap-3">
@@ -349,9 +416,27 @@ function CalendarSubscribeCard() {
               <ExternalLink className="h-3 w-3" />
               Open in Apple Calendar
             </a>
+            <button
+              type="button"
+              onClick={() => setConfirmReset(true)}
+              className="inline-flex items-center gap-1 text-xs text-silver/70 hover:text-white underline underline-offset-2 transition-colors"
+            >
+              <RotateCcw className="h-3 w-3" />
+              Reset link
+            </button>
           </div>
         </div>
       </div>
+      <ConfirmDialog
+        open={confirmReset}
+        onOpenChange={setConfirmReset}
+        title="Reset your calendar link?"
+        description="If this link got shared, resetting it locks the old one out immediately. Any calendar subscribed with the current link stops updating — you'll need to re-subscribe with the new one."
+        confirmLabel="Reset link"
+        destructive
+        busy={resetting}
+        onConfirm={onReset}
+      />
     </div>
   );
 }
