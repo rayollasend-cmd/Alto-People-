@@ -130,6 +130,11 @@ export function ShiftCard({
               </>
             )}
             {fmtShiftRangeTz(shift.startsAt, shift.endsAt, shift.timezone)}
+            {/* Shift length at a glance — associates plan their day around
+                it, and it used to hide behind the expand tap. */}
+            <span className="text-silver/60">
+              {' '}· {fmtDuration(shift.scheduledMinutes)}
+            </span>
           </div>
           {shift.location && (
             <div className="text-xs text-silver/70">{shift.location}</div>

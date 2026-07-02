@@ -213,13 +213,19 @@ export function AssociateScheduleView() {
       dayKey: string;
       reactKey: string;
       heading: string;
+      /** The group's day IS the viewer's today (store-local) — headed in gold. */
+      isToday: boolean;
+      /** Total scheduled minutes across the day's shifts — heading badge. */
+      minutes: number;
       items: Shift[];
     }> = [];
     for (const s of up) {
       const key = zonedDayKey(s.startsAt, s.timezone);
       const last = groups[groups.length - 1];
-      if (last && last.dayKey === key) last.items.push(s);
-      else {
+      if (last && last.dayKey === key) {
+        last.items.push(s);
+        last.minutes += shiftMinutes(s);
+      } else {
         groups.push({
           dayKey: key,
           // Shifts at sites in different timezones can interleave local-day
@@ -227,6 +233,8 @@ export function AssociateScheduleView() {
           // day — suffix with the run index so sibling keys stay unique.
           reactKey: `${key}#${groups.length}`,
           heading: fmtRelativeDayTz(s.startsAt, s.timezone, now),
+          isToday: key === zonedDayKey(new Date(now), s.timezone),
+          minutes: shiftMinutes(s),
           items: [s],
         });
       }
@@ -261,43 +269,61 @@ export function AssociateScheduleView() {
       <PageHeader title={t('sched.title')} subtitle={t('sched.subtitle')} />
 
       {loaded && !isEmpty && (
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <p className="text-sm text-silver">
+        <div className="mb-4 space-y-3">
+          {/* Summary strip: the three numbers an associate actually checks —
+              what's coming, and whether either week is creeping past 40h.
+              One bordered strip instead of two loose text lines. */}
+          <div className="flex items-center justify-between gap-3 flex-wrap">
             {upcomingCount === 0 ? (
-              t('sched.noUpcoming')
+              <p className="text-sm text-silver">{t('sched.noUpcoming')}</p>
             ) : (
-              <>
-                <span className="text-white font-medium">{upcomingCount}</span>{' '}
-                upcoming {upcomingCount === 1 ? 'shift' : 'shifts'} ·{' '}
-                <span className="text-white font-medium tabular-nums">
-                  {upcomingHours.toFixed(1)}
-                </span>{' '}
-                hrs scheduled
-              </>
+              <div className="flex items-stretch rounded-lg border border-navy-secondary bg-navy divide-x divide-navy-secondary">
+                <ScheduleStat
+                  label={t('sched.upcoming')}
+                  value={String(upcomingCount)}
+                  sub={`${upcomingHours.toFixed(1)}h`}
+                />
+                <ScheduleStat
+                  label={t('sched.thisWeek')}
+                  value={`${(thisWeekMinutes / 60).toFixed(1)}h`}
+                  alert={thisWeekMinutes > 40 * 60}
+                />
+                <ScheduleStat
+                  label={t('sched.nextWeek')}
+                  value={`${(nextWeekMinutes / 60).toFixed(1)}h`}
+                  alert={nextWeekMinutes > 40 * 60}
+                />
+              </div>
             )}
-          </p>
-          <div className="flex items-center gap-2 flex-wrap justify-end">
-            <SegmentedControl<ScheduleViewMode>
-              ariaLabel="Schedule view"
-              options={[
-                { value: 'list', label: t('sched.list') },
-                { value: 'week', label: t('sched.week') },
-                { value: 'month', label: t('sched.month') },
-              ]}
-              value={view}
-              onChange={changeView}
-            />
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onRefresh}
-              loading={refreshing}
-              disabled={refreshing}
-            >
-              <RefreshCw className="h-4 w-4" />
-              Refresh
-            </Button>
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              <SegmentedControl<ScheduleViewMode>
+                ariaLabel={t('sched.viewAria')}
+                options={[
+                  { value: 'list', label: t('sched.list') },
+                  { value: 'week', label: t('sched.week') },
+                  { value: 'month', label: t('sched.month') },
+                ]}
+                value={view}
+                onChange={changeView}
+              />
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onRefresh}
+                loading={refreshing}
+                disabled={refreshing}
+                aria-label={t('sched.refresh')}
+              >
+                <RefreshCw className="h-4 w-4" />
+                {/* Pull-to-refresh covers phones; the label only earns its
+                    width where there's room. */}
+                <span className="hidden sm:inline">{t('sched.refresh')}</span>
+              </Button>
+            </div>
           </div>
+          {(thisWeekMinutes > 40 * 60 || nextWeekMinutes > 40 * 60) && (
+            <p className="text-xs text-alert">{t('sched.over40')}</p>
+          )}
         </div>
       )}
 
@@ -315,33 +341,14 @@ export function AssociateScheduleView() {
       {!shifts && !error && <SkeletonRows count={4} rowHeight="h-20" />}
 
       {loaded && truncated && (
-        <p className="mb-4 text-xs text-silver/70">
-          Showing your next 100 shifts — anything scheduled beyond them will
-          appear here as earlier shifts pass.
-        </p>
-      )}
-
-      {loaded && (thisWeekMinutes > 0 || nextWeekMinutes > 0) && (
-        <p className="mb-4 text-xs text-silver tabular-nums">
-          This week{' '}
-          <span className={thisWeekMinutes > 40 * 60 ? 'text-alert font-medium' : 'text-white'}>
-            {(thisWeekMinutes / 60).toFixed(1)}h
-          </span>
-          {' · '}Next week{' '}
-          <span className={nextWeekMinutes > 40 * 60 ? 'text-alert font-medium' : 'text-white'}>
-            {(nextWeekMinutes / 60).toFixed(1)}h
-          </span>
-          {(thisWeekMinutes > 40 * 60 || nextWeekMinutes > 40 * 60) && (
-            <span className="text-alert"> · over 40h — check with your manager</span>
-          )}
-        </p>
+        <p className="mb-4 text-xs text-silver/70">{t('sched.truncated')}</p>
       )}
 
       {isEmpty && (
         <EmptyState
           icon={CalendarDays}
           title={t('sched.noShifts')}
-          description="When a manager publishes a shift for you, it'll show up here. Post your availability below to make scheduling easier."
+          description={t('sched.emptyDesc')}
         />
       )}
 
@@ -372,8 +379,22 @@ export function AssociateScheduleView() {
         <div className="space-y-5">
           {upcomingDays.map((group) => (
             <section key={group.reactKey}>
-              <h2 className="text-[11px] uppercase tracking-wider text-silver/80 mb-2">
-                {group.heading}
+              <h2 className="mb-2 flex items-baseline justify-between gap-3">
+                <span
+                  className={[
+                    'text-[11px] uppercase tracking-wider',
+                    group.isToday ? 'text-gold font-semibold' : 'text-silver/80',
+                  ].join(' ')}
+                >
+                  {group.heading}
+                </span>
+                <span className="text-[11px] text-silver/60 tabular-nums">
+                  {t(group.items.length === 1 ? 'sched.shiftsWord' : 'sched.shiftsWordPlural', {
+                    count: group.items.length,
+                  })}
+                  {' · '}
+                  {(group.minutes / 60).toFixed(1)}h
+                </span>
               </h2>
               <ul className="space-y-2">
                 {group.items.map((s) => (
@@ -422,13 +443,11 @@ export function AssociateScheduleView() {
                   loading={historyLoading}
                   disabled={historyLoading}
                 >
-                  Load older shifts
+                  {t('sched.loadOlder')}
                 </Button>
               )}
               {!hasOlder && (
-                <p className="mt-3 text-xs text-silver/60">
-                  That's your full shift history.
-                </p>
+                <p className="mt-3 text-xs text-silver/60">{t('sched.fullHistory')}</p>
               )}
             </>
           )}
@@ -439,6 +458,36 @@ export function AssociateScheduleView() {
         <CalendarSubscribeCard />
         <SwapMarketplace refreshToken={swapVersion} />
         <AvailabilityEditor />
+      </div>
+    </div>
+  );
+}
+
+/** One cell of the summary strip: tiny uppercase label over a tabular value. */
+function ScheduleStat({
+  label,
+  value,
+  sub,
+  alert = false,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  alert?: boolean;
+}) {
+  return (
+    <div className="px-3.5 py-2 first:pl-4 last:pr-4">
+      <div className="text-[10px] uppercase tracking-widest text-silver/80 whitespace-nowrap">
+        {label}
+      </div>
+      <div
+        className={[
+          'text-sm font-medium tabular-nums mt-0.5',
+          alert ? 'text-alert' : 'text-white',
+        ].join(' ')}
+      >
+        {value}
+        {sub && <span className="text-silver font-normal"> · {sub}</span>}
       </div>
     </div>
   );
