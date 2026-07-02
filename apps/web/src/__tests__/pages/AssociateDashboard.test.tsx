@@ -59,6 +59,7 @@ const shiftFixture = (startsAt: Date, endsAt: Date) =>
     scheduledMinutes: 480,
     publishedAt: new Date().toISOString(),
     lateNoticeReason: null,
+    acknowledgedAt: null,
   }) as never;
 
 function renderDashboard() {

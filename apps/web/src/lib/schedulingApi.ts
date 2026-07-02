@@ -1,10 +1,18 @@
 import type {
+  AdminOpenShiftClaimListResponse,
   AssociateListResponse,
   AutoFillResponse,
   AutoScheduleWeekInput,
   AutoScheduleWeekResponse,
+  AvailabilityExceptionCreateInput,
+  AvailabilityExceptionListResponse,
+  AvailabilityException,
   AvailabilityListResponse,
   AvailabilityReplaceInput,
+  MyShiftHistoryResponse,
+  OpenShiftClaim,
+  OpenShiftsResponse,
+  TradeOptionsResponse,
   BulkCreateShiftsInput,
   BulkCreateShiftsResponse,
   CalendarFeedUrlResponse,
@@ -89,6 +97,82 @@ export function listMyShifts(): Promise<ShiftListResponse> {
 /** One of my shifts + the teammates working alongside it. */
 export function getMyShiftDetail(id: string): Promise<MyShiftDetailResponse> {
   return apiFetch<MyShiftDetailResponse>(`/scheduling/me/shifts/${id}`);
+}
+
+/** Older shifts, newest-first, 50/page. Omit `before` for the first page. */
+export function listMyShiftHistory(before?: string): Promise<MyShiftHistoryResponse> {
+  const q = before ? `?before=${encodeURIComponent(before)}` : '';
+  return apiFetch<MyShiftHistoryResponse>(`/scheduling/me/shifts/history${q}`);
+}
+
+/** "I'll be there." Idempotent; returns the updated shift. */
+export function acknowledgeMyShift(id: string): Promise<Shift> {
+  return apiFetch<Shift>(`/scheduling/me/shifts/${id}/acknowledge`, {
+    method: 'POST',
+  });
+}
+
+/** Open shifts I'm eligible to pick up (conflict/PTO-filtered server-side). */
+export function listMyOpenShifts(): Promise<OpenShiftsResponse> {
+  return apiFetch<OpenShiftsResponse>('/scheduling/me/open-shifts');
+}
+
+export function claimOpenShift(shiftId: string): Promise<OpenShiftClaim> {
+  return apiFetch<OpenShiftClaim>(`/scheduling/me/open-shifts/${shiftId}/claim`, {
+    method: 'POST',
+  });
+}
+
+export function withdrawOpenShiftClaim(claimId: string): Promise<void> {
+  return apiFetch<void>(`/scheduling/me/open-shift-claims/${claimId}/withdraw`, {
+    method: 'POST',
+  });
+}
+
+/** Admin: pending pickup requests awaiting a decision. */
+export function listOpenShiftClaims(): Promise<AdminOpenShiftClaimListResponse> {
+  return apiFetch<AdminOpenShiftClaimListResponse>('/scheduling/open-shift-claims');
+}
+
+export function approveOpenShiftClaim(id: string): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(`/scheduling/open-shift-claims/${id}/approve`, {
+    method: 'POST',
+  });
+}
+
+export function rejectOpenShiftClaim(id: string): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(`/scheduling/open-shift-claims/${id}/reject`, {
+    method: 'POST',
+  });
+}
+
+/** One-off "can't work this day" exceptions. */
+export function listMyAvailabilityExceptions(): Promise<AvailabilityExceptionListResponse> {
+  return apiFetch<AvailabilityExceptionListResponse>(
+    '/scheduling/me/availability/exceptions',
+  );
+}
+
+export function addAvailabilityException(
+  body: AvailabilityExceptionCreateInput,
+): Promise<AvailabilityException> {
+  return apiFetch<AvailabilityException>('/scheduling/me/availability/exceptions', {
+    method: 'POST',
+    body,
+  });
+}
+
+export function deleteAvailabilityException(id: string): Promise<void> {
+  return apiFetch<void>(`/scheduling/me/availability/exceptions/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+/** The counterparty's upcoming shifts — pickable as the trade half. */
+export function listTradeOptions(counterpartyId: string): Promise<TradeOptionsResponse> {
+  return apiFetch<TradeOptionsResponse>(
+    `/scheduling/me/trade-options?counterpartyId=${encodeURIComponent(counterpartyId)}`,
+  );
 }
 
 /** Who I can offer this shift to (busy = they're already booked then). */

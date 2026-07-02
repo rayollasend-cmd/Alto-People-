@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import type {
   AssociateLite,
+  AdminOpenShiftClaim,
   AutoFillCandidate,
   ClientSummary,
   LocationSummary,
@@ -37,6 +38,7 @@ import { listClientLocations } from '@/lib/clientsApi';
 import { listShiftPositions } from '@/lib/orgApi';
 import {
   applyShiftTemplate,
+  approveOpenShiftClaim,
   assignShift,
   bulkCreateShifts,
   cancelShift,
@@ -48,6 +50,8 @@ import {
   getSchedulingKpis,
   getShiftConflicts,
   listAdminSwaps,
+  listOpenShiftClaims,
+  rejectOpenShiftClaim,
   listSchedulingAssociates,
   listShifts,
   listShiftTemplates,
@@ -2222,6 +2226,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       {canManage && (
         <div className="no-print">
           <AdminSwapsPanel />
+          <AdminPickupPanel />
         </div>
       )}
 
@@ -2977,6 +2982,12 @@ function AdminSwapsPanel() {
                       {fmtDateTime(s.shiftStartsAt)}
                     </span>
                   </div>
+                  {s.inExchange && (
+                    <div className="text-xs text-gold/90 mt-0.5 tabular-nums">
+                      Trade — {s.requesterName} takes: {s.inExchange.position} ·{' '}
+                      {fmtDateTime(s.inExchange.startsAt)}
+                    </div>
+                  )}
                   {s.note && (
                     <div className="text-xs text-silver/70 italic mt-1">"{s.note}"</div>
                   )}
@@ -3001,6 +3012,104 @@ function AdminSwapsPanel() {
                       wrap(s.id, () => managerRejectSwap(s.id), 'Swap rejected.')
                     }
                     disabled={pendingId === s.id}
+                  >
+                    Reject
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/* ===== Open-shift pickup requests panel ================================== */
+
+function AdminPickupPanel() {
+  const [items, setItems] = useState<AdminOpenShiftClaim[] | null>(null);
+  const [pendingId, setPendingId] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const res = await listOpenShiftClaims();
+      setItems(res.claims);
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError ? err.message : 'Failed to load pickup requests.',
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const wrap = async (id: string, fn: () => Promise<unknown>, successMsg: string) => {
+    setPendingId(id);
+    try {
+      await fn();
+      toast.success(successMsg);
+      await refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Action failed.');
+    } finally {
+      setPendingId(null);
+    }
+  };
+
+  return (
+    <Card className="mt-8">
+      <CardHeader>
+        <CardTitle>Open-shift pickup requests</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {!items && <Skeleton className="h-16" />}
+        {items && items.length === 0 && (
+          <p className="text-silver text-sm">
+            No pickup requests waiting. Associates see published open shifts
+            at their clients and can ask to take them.
+          </p>
+        )}
+        {items && items.length > 0 && (
+          <ul className="space-y-2">
+            {items.map((c) => (
+              <li
+                key={c.id}
+                className="p-3 bg-navy-secondary/30 border border-navy-secondary rounded-md flex items-start justify-between gap-3 flex-wrap"
+              >
+                <div>
+                  <div className="text-white text-sm">
+                    <span className="font-medium">{c.associateName}</span>
+                    {' wants '}
+                    <span className="font-medium">{c.shiftPosition}</span>
+                  </div>
+                  <div className="text-xs text-silver mt-0.5 tabular-nums">
+                    {c.shiftClientName ?? '—'} · {fmtDateTime(c.shiftStartsAt)}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() =>
+                      wrap(
+                        c.id,
+                        () => approveOpenShiftClaim(c.id),
+                        'Pickup approved — shift assigned.',
+                      )
+                    }
+                    disabled={pendingId === c.id}
+                  >
+                    Approve
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={() =>
+                      wrap(c.id, () => rejectOpenShiftClaim(c.id), 'Pickup rejected.')
+                    }
+                    disabled={pendingId === c.id}
                   >
                     Reject
                   </Button>

@@ -14,12 +14,24 @@ vi.mock('@/lib/schedulingApi', () => ({
   listSwapsOutgoing: vi.fn().mockResolvedValue({ requests: [] }),
   getMyAvailability: vi.fn().mockResolvedValue({ windows: [] }),
   replaceMyAvailability: vi.fn(),
+  listMyShiftHistory: vi.fn().mockResolvedValue({ shifts: [], nextBefore: null }),
+  acknowledgeMyShift: vi.fn(),
+  listMyOpenShifts: vi.fn().mockResolvedValue({ shifts: [] }),
+  claimOpenShift: vi.fn(),
+  withdrawOpenShiftClaim: vi.fn(),
+  listTradeOptions: vi.fn().mockResolvedValue({ options: [] }),
+  listMyAvailabilityExceptions: vi.fn().mockResolvedValue({ exceptions: [] }),
+  addAvailabilityException: vi.fn(),
+  deleteAvailabilityException: vi.fn(),
 }));
 
 import {
+  acknowledgeMyShift,
+  claimOpenShift,
   createSwap,
   getMyCalendarUrl,
   getMyShiftDetail,
+  listMyOpenShifts,
   listMyShifts,
   listSwapCandidates,
   listSwapsIncoming,
@@ -50,6 +62,7 @@ const shift = (over: Record<string, unknown> = {}) => ({
   scheduledMinutes: 480,
   publishedAt: new Date().toISOString(),
   lateNoticeReason: null,
+  acknowledgedAt: null,
   ...over,
 });
 
@@ -157,6 +170,53 @@ describe('<AssociateScheduleView> shift detail', () => {
     await waitFor(() =>
       expect(vi.mocked(listSwapsIncoming).mock.calls.length).toBeGreaterThan(1),
     );
+  });
+
+  it('confirming attendance flips the button to an acknowledged state', async () => {
+    vi.mocked(acknowledgeMyShift).mockResolvedValue(
+      shift({ acknowledgedAt: new Date().toISOString() }) as never,
+    );
+    const user = userEvent.setup();
+    renderView();
+    await user.click(await screen.findByRole('button', { name: /F&D Morning Shift/ }));
+    await user.click(await screen.findByRole('button', { name: /i'll be there/i }));
+    expect(await screen.findByText(/You confirmed this shift/)).toBeInTheDocument();
+    expect(acknowledgeMyShift).toHaveBeenCalledWith('s1');
+  });
+
+  it('open shifts section requests a pickup through the confirm dialog', async () => {
+    vi.mocked(listMyOpenShifts).mockResolvedValue({
+      shifts: [
+        {
+          ...(shift({
+            id: 'os1',
+            status: 'OPEN',
+            assignedAssociateId: null,
+            assignedAssociateName: null,
+          }) as object),
+          myClaimStatus: null,
+          myClaimId: null,
+        },
+      ] as never,
+    });
+    vi.mocked(claimOpenShift).mockResolvedValue({
+      id: 'cl1',
+      shiftId: 'os1',
+      status: 'PENDING',
+      createdAt: new Date().toISOString(),
+    });
+    const user = userEvent.setup();
+    renderView();
+
+    expect(
+      await screen.findByText(/Open shifts you can pick up/),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /pick up/i }));
+    await user.click(await screen.findByRole('button', { name: /request pickup/i }));
+
+    await waitFor(() => expect(claimOpenShift).toHaveBeenCalledWith('os1'));
+    expect(await screen.findByText('Requested')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /withdraw/i })).toBeInTheDocument();
   });
 
   it('past shifts do not offer a swap', async () => {

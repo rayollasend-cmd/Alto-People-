@@ -1,17 +1,25 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import type {
   CalendarFeedUrlResponse,
+  OpenShiftsResponse,
   Shift,
   ShiftTeammate,
   SwapCandidate,
+  TradeOption,
 } from '@alto-people/shared';
 import {
+  acknowledgeMyShift,
+  claimOpenShift,
   createSwap,
   getMyCalendarUrl,
   getMyShiftDetail,
+  listMyOpenShifts,
+  listMyShiftHistory,
   listMyShifts,
   listSwapCandidates,
+  listTradeOptions,
   rotateMyCalendarUrl,
+  withdrawOpenShiftClaim,
 } from '@/lib/schedulingApi';
 import { ApiError } from '@/lib/api';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -37,6 +45,7 @@ import {
   ChevronDown,
   Copy,
   ExternalLink,
+  HandHelping,
   MapPin,
   RefreshCw,
   RotateCcw,
@@ -86,6 +95,29 @@ export function AssociateScheduleView() {
   // Bumped when a swap is created from a shift card so the SwapMarketplace
   // section below refetches and shows the new outgoing request immediately.
   const [swapVersion, setSwapVersion] = useState(0);
+  // Remounts self-loading child sections (open shifts) on manual Refresh.
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  // Paged history older than the main list's 30-day window.
+  const [history, setHistory] = useState<Shift[] | null>(null);
+  const [historyNextBefore, setHistoryNextBefore] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  const loadOlder = async () => {
+    setHistoryLoading(true);
+    try {
+      const res = await listMyShiftHistory(
+        history === null ? undefined : historyNextBefore ?? undefined,
+      );
+      setHistory([...(history ?? []), ...res.shifts]);
+      setHistoryNextBefore(res.nextBefore);
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError ? err.message : 'Could not load older shifts.',
+      );
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
 
   const load = async () => {
     try {
@@ -114,13 +146,37 @@ export function AssociateScheduleView() {
   const onRefresh = async () => {
     setRefreshing(true);
     await load();
+    setRefreshNonce((v) => v + 1);
     setRefreshing(false);
   };
 
   // Split at "now" (ticks once a minute) into upcoming (ascending) and past
-  // (descending), then group the upcoming list by store-local day.
-  const { upcomingDays, past, nextId, upcomingCount, upcomingHours } = useMemo(() => {
+  // (descending), then group the upcoming list by store-local day. Week
+  // totals use the viewer's local Sunday-start week — close enough for a
+  // personal "am I heading into overtime" glance; payroll does its own math.
+  const {
+    upcomingDays,
+    past,
+    nextId,
+    upcomingCount,
+    upcomingHours,
+    thisWeekMinutes,
+    nextWeekMinutes,
+  } = useMemo(() => {
     const all = shifts ?? [];
+    const weekStart = new Date(now);
+    weekStart.setHours(0, 0, 0, 0);
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+    const w0 = weekStart.getTime();
+    const w1 = w0 + 7 * 86_400_000;
+    const w2 = w1 + 7 * 86_400_000;
+    let thisWeekMin = 0;
+    let nextWeekMin = 0;
+    for (const s of all) {
+      const t = new Date(s.startsAt).getTime();
+      if (t >= w0 && t < w1) thisWeekMin += shiftMinutes(s);
+      else if (t >= w1 && t < w2) nextWeekMin += shiftMinutes(s);
+    }
     const up = all
       .filter((s) => new Date(s.endsAt).getTime() >= now)
       .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
@@ -157,6 +213,8 @@ export function AssociateScheduleView() {
       nextId: up[0]?.id ?? null,
       upcomingCount: up.length,
       upcomingHours: minutes / 60,
+      thisWeekMinutes: thisWeekMin,
+      nextWeekMinutes: nextWeekMin,
     };
   }, [shifts, now]);
 
@@ -216,6 +274,22 @@ export function AssociateScheduleView() {
         </p>
       )}
 
+      {loaded && (thisWeekMinutes > 0 || nextWeekMinutes > 0) && (
+        <p className="mb-4 text-xs text-silver tabular-nums">
+          This week{' '}
+          <span className={thisWeekMinutes > 40 * 60 ? 'text-alert font-medium' : 'text-white'}>
+            {(thisWeekMinutes / 60).toFixed(1)}h
+          </span>
+          {' · '}Next week{' '}
+          <span className={nextWeekMinutes > 40 * 60 ? 'text-alert font-medium' : 'text-white'}>
+            {(nextWeekMinutes / 60).toFixed(1)}h
+          </span>
+          {(thisWeekMinutes > 40 * 60 || nextWeekMinutes > 40 * 60) && (
+            <span className="text-alert"> · over 40h — check with your manager</span>
+          )}
+        </p>
+      )}
+
       {isEmpty && (
         <EmptyState
           icon={CalendarDays}
@@ -246,21 +320,45 @@ export function AssociateScheduleView() {
         </div>
       )}
 
-      {loaded && past.length > 0 && (
+      {loaded && <OpenShiftsSection key={refreshNonce} />}
+
+      {loaded && (past.length > 0 || (history?.length ?? 0) > 0) && (
         <div className="mt-6">
           <button
             type="button"
             onClick={() => setShowPast((v) => !v)}
             className="text-xs uppercase tracking-wider text-silver/80 hover:text-white transition-colors"
           >
-            {showPast ? 'Hide' : 'Show'} recent shifts ({past.length})
+            {showPast ? 'Hide' : 'Show'} recent shifts ({past.length + (history?.length ?? 0)})
           </button>
           {showPast && (
-            <ul className="space-y-2 mt-3">
-              {past.map((s) => (
-                <ShiftCard key={s.id} shift={s} isNext={false} muted />
-              ))}
-            </ul>
+            <>
+              <ul className="space-y-2 mt-3">
+                {past.map((s) => (
+                  <ShiftCard key={s.id} shift={s} isNext={false} muted />
+                ))}
+                {(history ?? []).map((s) => (
+                  <ShiftCard key={s.id} shift={s} isNext={false} muted />
+                ))}
+              </ul>
+              {(history === null || historyNextBefore !== null) && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="mt-3"
+                  onClick={loadOlder}
+                  loading={historyLoading}
+                  disabled={historyLoading}
+                >
+                  Load older shifts
+                </Button>
+              )}
+              {history !== null && historyNextBefore === null && (
+                <p className="mt-3 text-xs text-silver/60">
+                  That's your full shift history.
+                </p>
+              )}
+            </>
           )}
         </div>
       )}
@@ -271,6 +369,163 @@ export function AssociateScheduleView() {
         <AvailabilityEditor />
       </div>
     </div>
+  );
+}
+
+/**
+ * Published OPEN shifts at clients where this associate is placed, already
+ * conflict/PTO-filtered by the server. Requesting one creates a PENDING
+ * pickup claim for the manager to approve — hidden entirely when there's
+ * nothing to offer, so the page stays quiet most days.
+ */
+function OpenShiftsSection() {
+  const [items, setItems] = useState<OpenShiftsResponse['shifts'] | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [confirmShift, setConfirmShift] = useState<OpenShiftsResponse['shifts'][number] | null>(
+    null,
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await listMyOpenShifts();
+        if (!cancelled) setItems(res.shifts);
+      } catch {
+        // Non-essential section: fail closed to hidden rather than noisy.
+        if (!cancelled) setItems([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!items || items.length === 0) return null;
+
+  const request = async (shift: OpenShiftsResponse['shifts'][number]) => {
+    setBusyId(shift.id);
+    try {
+      const claim = await claimOpenShift(shift.id);
+      setItems(
+        (prev) =>
+          prev?.map((s) =>
+            s.id === shift.id
+              ? { ...s, myClaimStatus: claim.status, myClaimId: claim.id }
+              : s,
+          ) ?? null,
+      );
+      setConfirmShift(null);
+      toast.success('Pickup requested — your manager will confirm it.');
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError ? err.message : 'Could not request this shift.',
+      );
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const withdraw = async (shift: OpenShiftsResponse['shifts'][number]) => {
+    if (!shift.myClaimId) return;
+    setBusyId(shift.id);
+    try {
+      await withdrawOpenShiftClaim(shift.myClaimId);
+      setItems(
+        (prev) =>
+          prev?.map((s) =>
+            s.id === shift.id ? { ...s, myClaimStatus: null, myClaimId: null } : s,
+          ) ?? null,
+      );
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError ? err.message : 'Could not withdraw the request.',
+      );
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <section className="mt-6">
+      <h2 className="text-[11px] uppercase tracking-wider text-silver/80 mb-2 flex items-center gap-1.5">
+        <HandHelping className="h-3.5 w-3.5" aria-hidden="true" />
+        Open shifts you can pick up ({items.length})
+      </h2>
+      <ul className="space-y-2">
+        {items.map((s) => (
+          <li
+            key={s.id}
+            className="flex items-center justify-between gap-4 p-4 rounded-lg border border-dashed border-navy-secondary bg-navy/60"
+          >
+            <div className="min-w-0">
+              <div className="text-white font-medium">
+                {s.position}{' '}
+                <span className="text-silver text-sm font-normal">
+                  · {s.clientName ?? '—'}
+                </span>
+              </div>
+              <div className="text-sm text-silver tabular-nums">
+                {fmtRelativeDayTz(s.startsAt, s.timezone)} ·{' '}
+                {fmtShiftRangeTz(s.startsAt, s.endsAt, s.timezone)}
+              </div>
+              {(s.locationName || s.location) && (
+                <div className="text-xs text-silver/70">
+                  {[s.locationName, s.location].filter(Boolean).join(' · ')}
+                </div>
+              )}
+            </div>
+            <div className="shrink-0">
+              {s.myClaimStatus === 'PENDING' ? (
+                <div className="flex flex-col items-end gap-1">
+                  <Badge variant="accent">Requested</Badge>
+                  <button
+                    type="button"
+                    onClick={() => withdraw(s)}
+                    disabled={busyId === s.id}
+                    className="text-xs text-silver/70 hover:text-white underline underline-offset-2"
+                  >
+                    Withdraw
+                  </button>
+                </div>
+              ) : (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setConfirmShift(s)}
+                  disabled={busyId === s.id}
+                >
+                  Pick up
+                </Button>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+      <ConfirmDialog
+        open={confirmShift !== null}
+        onOpenChange={(open) => {
+          if (!open) setConfirmShift(null);
+        }}
+        title="Request this shift?"
+        description={
+          confirmShift
+            ? `${confirmShift.position} · ${
+                confirmShift.clientName ?? '—'
+              } · ${fmtRelativeDayTz(confirmShift.startsAt, confirmShift.timezone)}, ${fmtShiftRangeTz(
+                confirmShift.startsAt,
+                confirmShift.endsAt,
+                confirmShift.timezone,
+              )}. Your manager confirms pickups before they're final.`
+            : undefined
+        }
+        confirmLabel="Request pickup"
+        busy={confirmShift !== null && busyId === confirmShift.id}
+        onConfirm={() => {
+          if (confirmShift) return request(confirmShift);
+        }}
+      />
+    </section>
   );
 }
 
@@ -430,11 +685,29 @@ function ShiftDetail({
   muted: boolean;
   onSwapCreated?: () => void;
 }) {
+  const [ackAt, setAckAt] = useState(shift.acknowledgedAt);
+  const [acking, setAcking] = useState(false);
   const site = [shift.locationName, shift.location].filter(Boolean).join(' · ');
-  const swappable =
+  const upcoming =
     !muted &&
     shift.status === 'ASSIGNED' &&
     new Date(shift.startsAt).getTime() > Date.now();
+
+  const acknowledge = async () => {
+    setAcking(true);
+    try {
+      const updated = await acknowledgeMyShift(shift.id);
+      setAckAt(updated.acknowledgedAt ?? new Date().toISOString());
+      toast.success('Confirmed — your manager can see you acknowledged it.');
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError ? err.message : 'Could not confirm the shift.',
+      );
+    } finally {
+      setAcking(false);
+    }
+  };
+
   return (
     <div className="space-y-2">
       <div className="text-sm text-silver">
@@ -457,8 +730,21 @@ function ShiftDetail({
           {shift.notes}
         </p>
       )}
-      {swappable && (
-        <SwapOfferForm shiftId={shift.id} onCreated={onSwapCreated} />
+      {upcoming && (
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          {ackAt ? (
+            <span className="inline-flex items-center gap-1 text-xs text-success">
+              <Check className="h-3.5 w-3.5" aria-hidden="true" />
+              You confirmed this shift
+            </span>
+          ) : (
+            <Button size="sm" onClick={acknowledge} loading={acking} disabled={acking}>
+              <Check className="h-3.5 w-3.5" />
+              I'll be there
+            </Button>
+          )}
+          <SwapOfferForm shiftId={shift.id} onCreated={onSwapCreated} />
+        </div>
       )}
     </div>
   );
@@ -481,8 +767,33 @@ function SwapOfferForm({
   const [candidates, setCandidates] = useState<SwapCandidate[] | null>(null);
   const [candError, setCandError] = useState<string | null>(null);
   const [counterpartyId, setCounterpartyId] = useState('');
+  const [tradeOptions, setTradeOptions] = useState<TradeOption[] | null>(null);
+  const [counterpartShiftId, setCounterpartShiftId] = useState('');
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  // Trade half: once a counterparty is picked, offer their upcoming shifts
+  // as an optional "take one in exchange" list.
+  useEffect(() => {
+    setCounterpartShiftId('');
+    if (!counterpartyId) {
+      setTradeOptions(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await listTradeOptions(counterpartyId);
+        if (!cancelled) setTradeOptions(res.options);
+      } catch {
+        // Trade list failing shouldn't block a plain give-away.
+        if (!cancelled) setTradeOptions([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [counterpartyId]);
 
   const openForm = async () => {
     setOpen(true);
@@ -517,12 +828,16 @@ function SwapOfferForm({
         shiftId,
         counterpartyAssociateId: counterpartyId,
         note: note.trim() || undefined,
+        counterpartShiftId: counterpartShiftId || undefined,
       });
       toast.success(
-        'Swap request sent. Track it under Shift swaps below — your manager has the final say.',
+        counterpartShiftId
+          ? 'Trade proposed. They accept first, then your manager approves both halves.'
+          : 'Swap request sent. Track it under Shift swaps below — your manager has the final say.',
       );
       setOpen(false);
       setCounterpartyId('');
+      setCounterpartShiftId('');
       setNote('');
       onCreated?.();
     } catch (err) {
@@ -564,6 +879,27 @@ function SwapOfferForm({
           ))}
         </Select>
       </label>
+      {counterpartyId && (tradeOptions?.length ?? 0) > 0 && (
+        <label className="block">
+          <span className="text-[11px] uppercase tracking-wider text-silver">
+            Take one of their shifts in exchange (optional)
+          </span>
+          <Select
+            size="sm"
+            value={counterpartShiftId}
+            onChange={(e) => setCounterpartShiftId(e.target.value)}
+            className="mt-1"
+          >
+            <option value="">Nothing — just hand mine off</option>
+            {(tradeOptions ?? []).map((o) => (
+              <option key={o.shiftId} value={o.shiftId}>
+                {o.position} · {fmtDateTz(o.startsAt, o.timezone)} ·{' '}
+                {fmtShiftRangeTz(o.startsAt, o.endsAt, o.timezone)}
+              </option>
+            ))}
+          </Select>
+        </label>
+      )}
       <label className="block">
         <span className="text-[11px] uppercase tracking-wider text-silver">
           Note (optional)

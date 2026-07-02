@@ -124,6 +124,21 @@ export function SwapMarketplace({
                     {fmtDateTz(s.shiftStartsAt, s.shiftTimezone)} ·{' '}
                     {fmtShiftRangeTz(s.shiftStartsAt, s.shiftEndsAt, s.shiftTimezone)}
                   </div>
+                  {s.inExchange && (
+                    <div className="text-xs text-gold/90 tabular-nums mt-0.5">
+                      {tab === 'incoming'
+                        ? 'They take your: '
+                        : 'You take their: '}
+                      {s.inExchange.position} ·{' '}
+                      {fmtWeekdayTz(s.inExchange.startsAt, s.inExchange.timezone)},{' '}
+                      {fmtDateTz(s.inExchange.startsAt, s.inExchange.timezone)} ·{' '}
+                      {fmtShiftRangeTz(
+                        s.inExchange.startsAt,
+                        s.inExchange.endsAt,
+                        s.inExchange.timezone,
+                      )}
+                    </div>
+                  )}
                   <div className="text-xs text-silver mt-1">
                     {tab === 'incoming' ? (
                       <>From <span className="text-white">{s.requesterName}</span></>

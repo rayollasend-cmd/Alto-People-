@@ -717,6 +717,7 @@ model Associate {
   pendingPayrollDeductions PendingPayrollDeduction[]
   performanceReviews       PerformanceReview[]
   availability             AssociateAvailability[]
+  availabilityExceptions   AvailabilityException[]
   swapsRequested           ShiftSwapRequest[]        @relation("SwapRequester")
   swapsReceived            ShiftSwapRequest[]        @relation("SwapCounterparty")
   timeOffBalances          TimeOffBalance[]
@@ -1250,11 +1251,19 @@ model Shift {
   // published inside the 14-day notice window (mutual agreement,
   // emergency call-out cover, etc.). Required by the API for those cases.
   lateNoticeReason    String?
+  // Associate tapped "I'll be there" on this published shift. Null = not
+  // yet acknowledged; admins can chase unconfirmed shifts before the day.
+  acknowledgedAt      DateTime?                       @db.Timestamptz(6)
+  // Day-before reminder dedupe stamp — the reminder cron claims a shift by
+  // setting this (guarded update), so overlapping sweeps can't double-send.
+  reminderSentAt      DateTime?                       @db.Timestamptz(6)
   client              Client                          @relation(fields: [clientId], references: [id], onDelete: Restrict)
   locationRel         Location?                       @relation(fields: [locationId], references: [id], onDelete: Restrict)
   assignedAssociate   Associate?                      @relation(fields: [assignedAssociateId], references: [id], onDelete: SetNull)
   createdBy           User?                           @relation("ShiftCreator", fields: [createdById], references: [id], onDelete: SetNull)
   swapRequests        ShiftSwapRequest[]
+  // Trades: swaps where THIS shift is what the requester takes in exchange.
+  tradeSwapRequests   ShiftSwapRequest[]              @relation("SwapCounterpartShift")
   // Phase 85 — qualification gates + open-shift claims.
   qualReqs            ShiftQualificationRequirement[]
   claims              OpenShiftClaim[]
@@ -1475,6 +1484,22 @@ model AssociateAvailability {
   @@index([associateId, dayOfWeek])
 }
 
+// One-off "can't work this day" exception, layered over the weekly
+// recurring AssociateAvailability windows. Date-granular (like time off)
+// because that's how people think about it; consumed by swap busy-flags,
+// open-shift eligibility, and the auto-scheduler.
+model AvailabilityException {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId String    @db.Uuid
+  date        DateTime  @db.Date
+  note        String?
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  associate   Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@unique([associateId, date])
+  @@index([date])
+}
+
 model ShiftSwapRequest {
   id                      String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   shiftId                 String          @db.Uuid
@@ -1484,9 +1509,15 @@ model ShiftSwapRequest {
   counterpartyAssociateId String          @db.Uuid
   status                  ShiftSwapStatus @default(PENDING_PEER)
   note                    String?
+  // True trade: a shift of the COUNTERPARTY the requester takes in
+  // exchange. Null = plain give-away (the original swap shape). SetNull
+  // so cancelling/deleting the exchange shift degrades the request to a
+  // give-away instead of breaking it.
+  counterpartShiftId      String?         @db.Uuid
   decidedById             String?         @db.Uuid
   decidedAt               DateTime?       @db.Timestamptz(6)
   shift                   Shift           @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  counterpartShift        Shift?          @relation("SwapCounterpartShift", fields: [counterpartShiftId], references: [id], onDelete: SetNull)
   requester               Associate       @relation("SwapRequester", fields: [requesterAssociateId], references: [id], onDelete: Cascade)
   counterparty            Associate       @relation("SwapCounterparty", fields: [counterpartyAssociateId], references: [id], onDelete: Cascade)
   createdAt               DateTime        @default(now()) @db.Timestamptz(6)
