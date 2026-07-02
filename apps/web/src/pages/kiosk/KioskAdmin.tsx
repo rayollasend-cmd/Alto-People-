@@ -809,7 +809,9 @@ function FaceConsentCell({
         <Badge variant="pending">Not asked</Badge>
       )}
       {canManage && (
-        <span className="inline-flex gap-2 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+        // Visible on touch (no hover exists to reveal it — this was
+        // tap-unreachable on tablets); hover-revealed on pointer devices.
+        <span className="inline-flex gap-2 opacity-100 can-hover:opacity-0 can-hover:group-hover:opacity-100 group-focus-within:opacity-100 transition">
           {status !== null && (
             <button
               type="button"

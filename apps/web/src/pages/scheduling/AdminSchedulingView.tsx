@@ -1957,11 +1957,12 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       {/* Mobile-only schedule list. The desktop grids (week/day pivots)
           are min-w-[700px]–[1200px] and force horizontal scroll on a
           phone — a scheduler can only see one column at a time. On
-          <md we always show a vertical, time-sorted list anchored to
-          dayAnchor regardless of which desktop view is selected. The
+          <md AND on coarse-pointer tablets below lg we show a vertical,
+          time-sorted list anchored to dayAnchor — an iPad manager in
+          portrait gets tappable rows, not a two-finger-pan grid. The
           assign / create drawers are shared with the desktop path. */}
       {filteredShifts && (
-        <div className="md:hidden">
+        <div className="lg:hidden fine:md:hidden">
           <MobileScheduleList
             shifts={filteredShifts}
             associates={associates}
@@ -1990,7 +1991,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
 
       {/* Week view */}
       {filteredShifts && view === 'week' && weekLayout === 'time-grid' && (
-        <div className="hidden md:block">
+        <div className="hidden lg:block fine:md:block">
         <TimeGridWeekView
           shifts={filteredShifts}
           associates={associates}
@@ -2023,7 +2024,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         </div>
       )}
       {filteredShifts && view === 'week' && weekLayout === 'compact' && (
-        <div className="hidden md:block">
+        <div className="hidden lg:block fine:md:block">
         <WeekCalendarView
           shifts={filteredShifts}
           associates={associates}
@@ -2057,7 +2058,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
 
       {/* Day view — same pivot, single column with hour grid + drag-to-resize */}
       {filteredShifts && view === 'day' && (
-        <div className="hidden md:block">
+        <div className="hidden lg:block fine:md:block">
         <DayCalendarView
           shifts={filteredShifts}
           associates={associates}
@@ -2084,7 +2085,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
 
       {/* Month view — 6×7 mini calendar with shift counts per day */}
       {filteredShifts && view === 'month' && (
-        <div className="hidden md:block">
+        <div className="hidden lg:block fine:md:block">
         <MonthCalendarView
           shifts={filteredShifts}
           monthAnchor={monthAnchor}

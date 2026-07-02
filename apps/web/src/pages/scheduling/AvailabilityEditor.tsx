@@ -168,14 +168,14 @@ export function AvailabilityEditor() {
                     type="time"
                     value={w.start}
                     onChange={(e) => updateWindow(idx, { start: e.target.value })}
-                    className="col-span-5 sm:col-span-3 px-2 py-1.5 min-h-11 md:min-h-0 rounded bg-navy-secondary/60 border border-navy-secondary text-white text-base md:text-sm"
+                    className="col-span-5 sm:col-span-3 px-2 py-1.5 coarse:min-h-11 rounded bg-navy-secondary/60 border border-navy-secondary text-white text-sm coarse:text-base"
                   />
                   <span className="col-span-2 sm:col-span-1 text-center text-silver">–</span>
                   <input
                     type="time"
                     value={w.end}
                     onChange={(e) => updateWindow(idx, { end: e.target.value })}
-                    className="col-span-5 sm:col-span-3 px-2 py-1.5 min-h-11 md:min-h-0 rounded bg-navy-secondary/60 border border-navy-secondary text-white text-base md:text-sm"
+                    className="col-span-5 sm:col-span-3 px-2 py-1.5 coarse:min-h-11 rounded bg-navy-secondary/60 border border-navy-secondary text-white text-sm coarse:text-base"
                   />
                 </li>
               ))}
@@ -323,7 +323,7 @@ function DaysOffEditor() {
           min={minDate}
           onChange={(e) => setDate(e.target.value)}
           aria-label="Day off date"
-          className="px-2 py-1.5 min-h-11 md:min-h-0 rounded bg-navy-secondary/60 border border-navy-secondary text-white text-base md:text-sm"
+          className="px-2 py-1.5 coarse:min-h-11 rounded bg-navy-secondary/60 border border-navy-secondary text-white text-sm coarse:text-base"
         />
         <input
           type="text"
@@ -332,7 +332,7 @@ function DaysOffEditor() {
           maxLength={200}
           placeholder="Reason (optional)"
           aria-label="Day off reason"
-          className="px-2 py-1.5 min-h-11 md:min-h-0 rounded bg-navy-secondary/60 border border-navy-secondary text-white text-base md:text-sm w-44"
+          className="px-2 py-1.5 coarse:min-h-11 rounded bg-navy-secondary/60 border border-navy-secondary text-white text-sm coarse:text-base w-44"
         />
         <Button type="button" variant="outline" size="sm" onClick={add} disabled={!date || saving}>
           Add day off
