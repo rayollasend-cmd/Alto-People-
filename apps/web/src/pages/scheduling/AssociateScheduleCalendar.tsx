@@ -22,6 +22,9 @@ import { ShiftCard, shiftMinutes } from './ShiftCard';
 interface CalendarProps {
   shifts: Shift[];
   now: number;
+  /** Browser-local day keys the associate can't work (days off + approved
+   *  PTO) — painted so unavailability is visible at a glance. */
+  blockedDays?: Set<string>;
   onSwapCreated?: () => void;
   /** True when older shifts exist beyond what's loaded. */
   hasOlder: boolean;
@@ -110,6 +113,7 @@ function OlderNote({
 export function ScheduleWeekView({
   shifts,
   now,
+  blockedDays,
   onSwapCreated,
   hasOlder,
   loadingOlder,
@@ -171,6 +175,7 @@ export function ScheduleWeekView({
         {days.map((d) => {
           const dayShifts = byDay.get(d.key) ?? [];
           const isToday = d.key === todayKey;
+          const isBlocked = blockedDays?.has(d.key) ?? false;
           return (
             <section key={d.key}>
               <h3
@@ -181,10 +186,16 @@ export function ScheduleWeekView({
               >
                 {WEEKDAYS[d.date.getDay()]}, {fmtHeader(d.date)}
                 {isToday && ' · Today'}
+                {isBlocked && (
+                  <span className="normal-case tracking-normal text-silver/60">
+                    {' '}
+                    · Unavailable
+                  </span>
+                )}
               </h3>
               {dayShifts.length === 0 ? (
                 <p className="text-xs text-silver/50 border border-dashed border-navy-secondary/60 rounded px-3 py-2">
-                  No shifts
+                  {isBlocked ? 'Day off' : 'No shifts'}
                 </p>
               ) : (
                 <ul className="space-y-2">
@@ -217,6 +228,7 @@ export function ScheduleWeekView({
 export function ScheduleMonthView({
   shifts,
   now,
+  blockedDays,
   onSwapCreated,
   hasOlder,
   loadingOlder,
@@ -294,6 +306,7 @@ export function ScheduleMonthView({
           const count = (byDay.get(key) ?? []).length;
           const isToday = key === todayKey;
           const isSelected = key === selectedKey;
+          const isBlocked = blockedDays?.has(key) ?? false;
           return (
             <button
               key={key}
@@ -302,20 +315,29 @@ export function ScheduleMonthView({
               aria-pressed={isSelected}
               aria-label={`${MONTHS[monthStart.getMonth()]} ${day}${
                 count > 0 ? `, ${count} shift${count === 1 ? '' : 's'}` : ''
-              }`}
+              }${isBlocked ? ', unavailable' : ''}`}
               className={[
                 'rounded-md py-1.5 flex flex-col items-center gap-0.5 border transition-colors',
                 'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
                 // Steel selected state, same idiom as SegmentedControl.
+                // Blocked days get a hatched-feel muted fill.
                 isSelected
                   ? 'border-steel bg-steel/20'
-                  : 'border-transparent hover:border-navy-secondary',
+                  : isBlocked
+                    ? 'border-transparent bg-navy-secondary/40 hover:border-navy-secondary'
+                    : 'border-transparent hover:border-navy-secondary',
               ].join(' ')}
             >
               <span
                 className={[
                   'text-sm tabular-nums',
-                  isToday ? 'text-gold font-semibold' : count > 0 ? 'text-white' : 'text-silver/60',
+                  isToday
+                    ? 'text-gold font-semibold'
+                    : isBlocked
+                      ? 'text-silver/40 line-through'
+                      : count > 0
+                        ? 'text-white'
+                        : 'text-silver/60',
                 ].join(' ')}
               >
                 {day}
@@ -331,6 +353,11 @@ export function ScheduleMonthView({
       </div>
 
       <div className="mt-4">
+        {selectedKey !== null && (blockedDays?.has(selectedKey) ?? false) && (
+          <p className="text-xs text-silver/60 mb-2">
+            You've marked this day as unavailable.
+          </p>
+        )}
         {selectedKey === null ? (
           <p className="text-xs text-silver/70">Pick a day to see its shifts.</p>
         ) : selectedShifts.length === 0 ? (

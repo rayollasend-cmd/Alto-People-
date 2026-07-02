@@ -24,6 +24,9 @@ vi.mock('@/lib/schedulingApi', () => ({
   addAvailabilityException: vi.fn(),
   deleteAvailabilityException: vi.fn(),
 }));
+vi.mock('@/lib/timeOffApi', () => ({
+  listMyRequests: vi.fn().mockResolvedValue({ requests: [] }),
+}));
 
 import {
   acknowledgeMyShift,

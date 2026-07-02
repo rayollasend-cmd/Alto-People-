@@ -23,6 +23,8 @@ const SWEEP_CAP = 200;
 export interface ShiftReminderSweepResult {
   scanned: number;
   reminded: number;
+  /** PENDING pickup claims whose shift already started — flipped to EXPIRED. */
+  expiredClaims: number;
   errors: { shiftId: string; error: string }[];
 }
 
@@ -30,6 +32,14 @@ export async function runShiftReminderSweep(
   prisma: PrismaClient = defaultPrisma,
   now: Date = new Date(),
 ): Promise<ShiftReminderSweepResult> {
+  // Housekeeping first: a pickup request for a shift that has already
+  // started can never be approved sensibly — expire it so the admin
+  // queue only shows decisions that still matter. Bulk update, no
+  // notifications (the shift is in the past; pinging is just noise).
+  const expired = await prisma.openShiftClaim.updateMany({
+    where: { status: 'PENDING', shift: { is: { startsAt: { lte: now } } } },
+    data: { status: 'EXPIRED', decidedAt: now, decisionNote: 'Shift started' },
+  });
   const due = await prisma.shift.findMany({
     where: {
       status: 'ASSIGNED',
@@ -77,7 +87,7 @@ export async function runShiftReminderSweep(
       });
     }
   }
-  return { scanned: due.length, reminded, errors };
+  return { scanned: due.length, reminded, expiredClaims: expired.count, errors };
 }
 
 let timer: NodeJS.Timeout | null = null;

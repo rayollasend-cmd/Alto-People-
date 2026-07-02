@@ -241,6 +241,55 @@ const SHIFT_INCLUDE = {
   locationRel: { select: { id: true, name: true, timezone: true } },
 } as const;
 
+/**
+ * For each (associate, shift-window) pair: would TAKING that shift push
+ * the associate past 40h scheduled in that shift's week? One batched
+ * query for the whole list. Advisory — chips the admin swap/pickup review
+ * rows; the auto-scheduler has its own hard 40h gate.
+ */
+async function wouldExceed40hFlags(
+  items: {
+    associateId: string;
+    startsAt: Date;
+    endsAt: Date;
+    /** Shifts the associate would GIVE UP in the same action (trade legs). */
+    excludeShiftIds?: string[];
+  }[],
+): Promise<boolean[]> {
+  if (items.length === 0) return [];
+  const ids = [...new Set(items.map((i) => i.associateId))];
+  const minStart = new Date(
+    Math.min(...items.map((i) => startOfWeekUTC(i.startsAt).getTime())),
+  );
+  const maxEnd = new Date(
+    Math.max(...items.map((i) => endOfWeekUTC(i.startsAt).getTime())),
+  );
+  const rows = await prisma.shift.findMany({
+    where: {
+      assignedAssociateId: { in: ids },
+      status: { notIn: ['CANCELLED'] },
+      startsAt: { gte: minStart, lt: maxEnd },
+    },
+    select: { id: true, assignedAssociateId: true, startsAt: true, endsAt: true },
+    take: 5000,
+  });
+  const byKey = new Map<string, { id: string; minutes: number }[]>();
+  for (const r of rows) {
+    const k = `${r.assignedAssociateId}:${startOfWeekUTC(r.startsAt).getTime()}`;
+    const list = byKey.get(k) ?? [];
+    list.push({ id: r.id, minutes: scheduledMinutes(r) });
+    byKey.set(k, list);
+  }
+  return items.map((i) => {
+    const k = `${i.associateId}:${startOfWeekUTC(i.startsAt).getTime()}`;
+    const excl = new Set(i.excludeShiftIds ?? []);
+    const existing = (byKey.get(k) ?? [])
+      .filter((r) => !excl.has(r.id))
+      .reduce((s, r) => s + r.minutes, 0);
+    return existing + scheduledMinutes(i) > 40 * 60;
+  });
+}
+
 // Hard cap on the PDF export. Each row pulls a shift row + client name
 // + associate name, ~400 bytes serialized; at 5000 rows that's ~2 MB
 // of working set per request, well within Railway's 512 MB-ish per-
@@ -251,13 +300,24 @@ const SCHEDULE_PDF_MAX_ROWS = 5000;
 
 /* ===== HR/Ops list + CRUD =============================================== */
 
+/** Parse an optional ISO query param; garbage → 400 instead of letting
+ *  Prisma choke on Invalid Date (500). */
+function parseDateParam(raw: string | undefined, name: string): Date | undefined {
+  if (!raw) return undefined;
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) {
+    throw new HttpError(400, 'invalid_range', `\`${name}\` must be an ISO datetime`);
+  }
+  return d;
+}
+
 schedulingRouter.get('/shifts', MANAGE, async (req, res, next) => {
   try {
     const status = req.query.status?.toString();
     const clientId = req.query.clientId?.toString();
     const locationId = req.query.locationId?.toString();
-    const from = req.query.from?.toString();
-    const to = req.query.to?.toString();
+    const from = parseDateParam(req.query.from?.toString(), 'from');
+    const to = parseDateParam(req.query.to?.toString(), 'to');
 
     const where: Prisma.ShiftWhereInput = {
       ...scopeShifts(req.user!),
@@ -268,12 +328,12 @@ schedulingRouter.get('/shifts', MANAGE, async (req, res, next) => {
       ...(from || to
         ? {
             startsAt: {
-              ...(from ? { gte: new Date(from) } : {}),
+              ...(from ? { gte: from } : {}),
               // Exclusive upper bound: the client sends the next period's start
               // (next midnight) as `to`. Using `lt` (not `lte`) keeps a shift
               // that starts exactly at that boundary in the NEXT period only,
               // instead of double-counting it in both adjacent windows.
-              ...(to ? { lt: new Date(to) } : {}),
+              ...(to ? { lt: to } : {}),
             },
           }
         : {}),
@@ -324,8 +384,8 @@ schedulingRouter.get('/kpis', MANAGE, async (req, res, next) => {
     defaultFrom.setDate(defaultFrom.getDate() - defaultFrom.getDay());
     const defaultTo = new Date(defaultFrom);
     defaultTo.setDate(defaultTo.getDate() + 7);
-    const from = fromParam ? new Date(fromParam) : defaultFrom;
-    const to = toParam ? new Date(toParam) : defaultTo;
+    const from = parseDateParam(fromParam, 'from') ?? defaultFrom;
+    const to = parseDateParam(toParam, 'to') ?? defaultTo;
 
     const where: Prisma.ShiftWhereInput = {
       ...scopeShifts(req.user!),
@@ -1804,9 +1864,22 @@ schedulingRouter.post('/me/open-shifts/:id/claim', async (req, res, next) => {
       throw new HttpError(409, 'already_requested', 'You already requested this shift');
     }
 
-    const claim = await prisma.openShiftClaim.create({
-      data: { shiftId: shift.id, associateId: user.associateId, status: 'PENDING' },
-    });
+    let claim;
+    try {
+      claim = await prisma.openShiftClaim.create({
+        data: { shiftId: shift.id, associateId: user.associateId, status: 'PENDING' },
+      });
+    } catch (err) {
+      // Partial unique index (shiftId, associateId) WHERE PENDING — the DB
+      // arbitrates the double-tap race the findFirst above can't close.
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        throw new HttpError(409, 'already_requested', 'You already requested this shift');
+      }
+      throw err;
+    }
     await recordShiftEvent({
       actorUserId: user.id,
       action: 'shift.pickup_requested',
@@ -1881,9 +1954,16 @@ schedulingRouter.get('/open-shift-claims', MANAGE, async (req, res, next) => {
       take: 100,
       include: CLAIM_INCLUDE,
     });
+    const otFlags = await wouldExceed40hFlags(
+      rows.map((c) => ({
+        associateId: c.associateId,
+        startsAt: c.shift.startsAt,
+        endsAt: c.shift.endsAt,
+      })),
+    );
     res.json(
       AdminOpenShiftClaimListResponseSchema.parse({
-        claims: rows.map((c) => ({
+        claims: rows.map((c, i) => ({
           id: c.id,
           status: c.status,
           associateId: c.associateId,
@@ -1894,6 +1974,7 @@ schedulingRouter.get('/open-shift-claims', MANAGE, async (req, res, next) => {
           shiftStartsAt: c.shift.startsAt.toISOString(),
           shiftEndsAt: c.shift.endsAt.toISOString(),
           shiftTimezone: c.shift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+          wouldExceed40h: otFlags[i],
           createdAt: c.createdAt.toISOString(),
         })),
       }),
@@ -2137,6 +2218,7 @@ schedulingRouter.get('/shifts/:id/conflicts', MANAGE, async (req, res, next) => 
     const associateId = req.query.associateId?.toString();
     const target = await prisma.shift.findFirst({
       where: { id: req.params.id, ...scopeShifts(req.user!) },
+      include: { locationRel: { select: { timezone: true } } },
     });
     if (!target) throw new HttpError(404, 'shift_not_found', 'Shift not found');
     if (!associateId) {
@@ -2144,12 +2226,16 @@ schedulingRouter.get('/shifts/:id/conflicts', MANAGE, async (req, res, next) => 
       return;
     }
 
-    // Day-bound the target so we can match it against day-granular
-    // TimeOffRequest rows (startDate / endDate are DATE columns).
-    const targetStartDate = new Date(target.startsAt);
-    targetStartDate.setUTCHours(0, 0, 0, 0);
-    const targetEndDate = new Date(target.endsAt);
-    targetEndDate.setUTCHours(0, 0, 0, 0);
+    // Day-bound the target in the STORE's zone so this advisory matches
+    // what /assign actually enforces (blockedForWindow). UTC flooring here
+    // was off by one day for evening shifts at stores west of UTC.
+    const conflictTz = target.locationRel?.timezone ?? DEFAULT_TIMEZONE;
+    const targetStartDate = new Date(
+      `${dayKeyInZone(target.startsAt, conflictTz)}T00:00:00Z`,
+    );
+    const targetEndDate = new Date(
+      `${dayKeyInZone(target.endsAt, conflictTz)}T00:00:00Z`,
+    );
 
     const [overlaps, ptoOverlaps, exceptionDays] = await Promise.all([
       prisma.shift.findMany({
@@ -2231,11 +2317,14 @@ schedulingRouter.get('/shifts/:id/auto-fill', MANAGE, async (req, res, next) => 
     // instant to the location's local day-of-week + minutes before matching.
     const targetTz = target.locationRel?.timezone ?? DEFAULT_TIMEZONE;
 
-    // Day-bound the target so we can match it against day-granular PTO rows.
-    const targetDayStart = new Date(target.startsAt);
-    targetDayStart.setUTCHours(0, 0, 0, 0);
-    const targetDayEnd = new Date(target.endsAt);
-    targetDayEnd.setUTCHours(0, 0, 0, 0);
+    // Day-bound the target in the store's zone so the ranking's PTO flag
+    // agrees with the /assign hard block (same fix as /conflicts).
+    const targetDayStart = new Date(
+      `${dayKeyInZone(target.startsAt, targetTz)}T00:00:00Z`,
+    );
+    const targetDayEnd = new Date(
+      `${dayKeyInZone(target.endsAt, targetTz)}T00:00:00Z`,
+    );
 
     const [associates, ptoRows, exceptionRows] = await Promise.all([
       prisma.associate.findMany({
@@ -2593,7 +2682,12 @@ schedulingRouter.get('/me/trade-options', async (req, res, next) => {
       throw new HttpError(403, 'not_an_associate', 'Forbidden');
     }
     const counterpartyId = req.query.counterpartyId?.toString();
-    if (!counterpartyId || !/^[0-9a-f-]{36}$/i.test(counterpartyId)) {
+    if (
+      !counterpartyId ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        counterpartyId,
+      )
+    ) {
       throw new HttpError(400, 'invalid_counterparty', 'counterpartyId required');
     }
     const rows = await prisma.shift.findMany({
@@ -2816,7 +2910,21 @@ schedulingRouter.get('/swap-requests/admin', MANAGE, async (req, res, next) => {
       take: 200,
       include: SWAP_INCLUDE,
     });
-    res.json(ShiftSwapListResponseSchema.parse({ requests: rows.map(toSwap) }));
+    // Advisory OT chip: would the counterparty cross 40h by taking this
+    // shift (net of the leg they'd hand off on a trade)?
+    const otFlags = await wouldExceed40hFlags(
+      rows.map((r) => ({
+        associateId: r.counterpartyAssociateId,
+        startsAt: r.shift.startsAt,
+        endsAt: r.shift.endsAt,
+        excludeShiftIds: r.counterpartShiftId ? [r.counterpartShiftId] : [],
+      })),
+    );
+    res.json(
+      ShiftSwapListResponseSchema.parse({
+        requests: rows.map((r, i) => ({ ...toSwap(r), wouldExceed40h: otFlags[i] })),
+      }),
+    );
   } catch (err) {
     next(err);
   }
@@ -3731,10 +3839,14 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
         (shift.endsAt.getTime() - shift.startsAt.getTime()) / 60_000,
       );
 
-      const shiftDayStart = new Date(shift.startsAt);
-      shiftDayStart.setUTCHours(0, 0, 0, 0);
-      const shiftDayEnd = new Date(shift.endsAt);
-      shiftDayEnd.setUTCHours(0, 0, 0, 0);
+      // Store-local day bounds — UTC flooring made the PTO/day-off veto
+      // off by one for evening shifts west of UTC (July re-audit P2).
+      const shiftDayStart = new Date(
+        `${dayKeyInZone(shift.startsAt, shiftTz)}T00:00:00Z`,
+      );
+      const shiftDayEnd = new Date(
+        `${dayKeyInZone(shift.endsAt, shiftTz)}T00:00:00Z`,
+      );
 
       type Scored = { state: AssocState; score: number };
       const scored: Scored[] = [];

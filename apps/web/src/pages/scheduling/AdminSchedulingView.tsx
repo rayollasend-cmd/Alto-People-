@@ -2250,6 +2250,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         <div className="no-print">
           <AdminSwapsPanel />
           <AdminPickupPanel />
+          <AdminUnconfirmedPanel />
         </div>
       )}
 
@@ -3070,6 +3071,9 @@ function AdminSwapsPanel() {
                   )}
                 </div>
                 <div className="flex items-center gap-2">
+                  {s.wouldExceed40h && (
+                    <Badge variant="destructive">Over 40h</Badge>
+                  )}
                   <Badge variant={SWAP_STATUS_VARIANT[s.status]}>
                     {s.status.replace(/_/g, ' ')}
                   </Badge>
@@ -3167,6 +3171,9 @@ function AdminPickupPanel() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
+                  {c.wouldExceed40h && (
+                    <Badge variant="destructive">Over 40h</Badge>
+                  )}
                   <Button
                     size="sm"
                     onClick={() =>
@@ -3195,6 +3202,76 @@ function AdminPickupPanel() {
             ))}
           </ul>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/* ===== Unconfirmed shifts panel ========================================== */
+
+/**
+ * Published, assigned shifts starting in the next 48h whose associate has
+ * NOT tapped "I'll be there". Hidden entirely when everyone confirmed —
+ * this panel exists to chase silence, not to celebrate compliance.
+ */
+function AdminUnconfirmedPanel() {
+  const [items, setItems] = useState<Shift[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const now = new Date();
+        const to = new Date(now.getTime() + 48 * 3_600_000);
+        const res = await listShifts({
+          status: 'ASSIGNED',
+          from: now.toISOString(),
+          to: to.toISOString(),
+        });
+        if (!cancelled) {
+          setItems(res.shifts.filter((s) => s.publishedAt && !s.acknowledgedAt));
+        }
+      } catch {
+        if (!cancelled) setItems([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!items || items.length === 0) return null;
+
+  return (
+    <Card className="mt-8">
+      <CardHeader>
+        <CardTitle>
+          Not yet confirmed by the associate ({items.length})
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="text-xs text-silver/70 mb-3">
+          Starting within 48 hours and the associate hasn't tapped "I'll be
+          there". Worth a call if the shift is critical.
+        </p>
+        <ul className="space-y-2">
+          {items.map((s) => (
+            <li
+              key={s.id}
+              className="p-3 bg-navy-secondary/30 border border-navy-secondary rounded-md flex items-center justify-between gap-3 flex-wrap"
+            >
+              <div>
+                <div className="text-white text-sm font-medium">
+                  {s.assignedAssociateName ?? '—'}
+                </div>
+                <div className="text-xs text-silver mt-0.5 tabular-nums">
+                  {s.position} · {s.clientName ?? '—'} · {fmtDateTime(s.startsAt)}
+                </div>
+              </div>
+              <Badge variant="pending">Unconfirmed</Badge>
+            </li>
+          ))}
+        </ul>
       </CardContent>
     </Card>
   );

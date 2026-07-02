@@ -1250,6 +1250,9 @@ export const AdminOpenShiftClaimSchema = z.object({
   shiftStartsAt: z.string().datetime(),
   shiftEndsAt: z.string().datetime(),
   shiftTimezone: z.string(),
+  /** Approving would push this associate past 40h scheduled that week.
+   *  Advisory chip — the manager can still approve. */
+  wouldExceed40h: z.boolean().default(false),
   createdAt: z.string().datetime(),
 });
 export type AdminOpenShiftClaim = z.infer<typeof AdminOpenShiftClaimSchema>;
@@ -2657,6 +2660,9 @@ export const ShiftSwapRequestSchema = z.object({
   note: z.string().nullable(),
   decidedAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
+  /** Admin list only: approving would push the receiving associate past
+   *  40h scheduled that week. Advisory. */
+  wouldExceed40h: z.boolean().optional(),
 });
 export type ShiftSwapRequest = z.infer<typeof ShiftSwapRequestSchema>;
 

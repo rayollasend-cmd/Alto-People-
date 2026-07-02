@@ -7,6 +7,7 @@ import type {
 import {
   claimOpenShift,
   getMyCalendarUrl,
+  listMyAvailabilityExceptions,
   listMyOpenShifts,
   listMyShiftHistory,
   listMyShifts,
@@ -32,6 +33,7 @@ import {
   RefreshCw,
   RotateCcw,
 } from 'lucide-react';
+import { listMyRequests } from '@/lib/timeOffApi';
 import { AvailabilityEditor } from './AvailabilityEditor';
 import { SwapMarketplace } from './SwapMarketplace';
 import { ShiftCard, shiftMinutes } from './ShiftCard';
@@ -121,6 +123,42 @@ export function AssociateScheduleView() {
     const t = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(t);
   }, []);
+
+  // Days the associate can't work (one-off days off + approved time off) —
+  // painted on the calendar views. Decorative: a failed fetch just leaves
+  // the calendar unpainted.
+  const [blockedDays, setBlockedDays] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [ex, pto] = await Promise.all([
+          listMyAvailabilityExceptions(),
+          listMyRequests(),
+        ]);
+        if (cancelled) return;
+        const keys = new Set<string>();
+        for (const x of ex.exceptions) keys.add(x.date);
+        for (const r of pto.requests) {
+          if (r.status !== 'APPROVED') continue;
+          // Expand the inclusive range via LOCAL-midnight dates so keys
+          // match the calendar's browser-local grid; bounded so a typo'd
+          // multi-year range can't spin.
+          const end = new Date(`${r.endDate}T00:00:00`);
+          const d = new Date(`${r.startDate}T00:00:00`);
+          for (let i = 0; d <= end && i < 180; i++, d.setDate(d.getDate() + 1)) {
+            keys.add(zonedDayKey(d));
+          }
+        }
+        setBlockedDays(keys);
+      } catch {
+        // Non-essential decoration.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshNonce]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -302,6 +340,7 @@ export function AssociateScheduleView() {
         <ScheduleWeekView
           shifts={allShifts}
           now={now}
+          blockedDays={blockedDays}
           onSwapCreated={() => setSwapVersion((v) => v + 1)}
           hasOlder={hasOlder}
           loadingOlder={historyLoading}
@@ -312,6 +351,7 @@ export function AssociateScheduleView() {
         <ScheduleMonthView
           shifts={allShifts}
           now={now}
+          blockedDays={blockedDays}
           onSwapCreated={() => setSwapVersion((v) => v + 1)}
           hasOlder={hasOlder}
           loadingOlder={historyLoading}

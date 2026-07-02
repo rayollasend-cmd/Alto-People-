@@ -628,4 +628,91 @@ describe('shift reminder sweep', () => {
     const second = await runShiftReminderSweep(prisma);
     expect(second.reminded).toBe(0);
   });
+
+  it('expires PENDING pickup claims once their shift has started', async () => {
+    const client = await createClient();
+    const { associate: me } = await mkPlaced(client.id, 'Maria', 'Lopez');
+    const started = await mkShift({
+      clientId: client.id,
+      status: 'OPEN',
+      assignedAssociateId: null,
+      startsAt: new Date(Date.now() - 2 * 3_600_000),
+      endsAt: new Date(Date.now() + 6 * 3_600_000),
+    });
+    const future = await mkShift({
+      clientId: client.id,
+      status: 'OPEN',
+      assignedAssociateId: null,
+      startsAt: hoursFromNow(48),
+      endsAt: hoursFromNow(56),
+    });
+    const stale = await prisma.openShiftClaim.create({
+      data: { shiftId: started.id, associateId: me.id, status: 'PENDING' },
+    });
+    const live = await prisma.openShiftClaim.create({
+      data: { shiftId: future.id, associateId: me.id, status: 'PENDING' },
+    });
+
+    const result = await runShiftReminderSweep(prisma);
+    expect(result.expiredClaims).toBe(1);
+
+    const staleAfter = await prisma.openShiftClaim.findUniqueOrThrow({
+      where: { id: stale.id },
+    });
+    expect(staleAfter.status).toBe('EXPIRED');
+    const liveAfter = await prisma.openShiftClaim.findUniqueOrThrow({
+      where: { id: live.id },
+    });
+    expect(liveAfter.status).toBe('PENDING');
+  });
+});
+
+describe('overtime chip on admin review lists', () => {
+  it('flags a pickup that would push the claimant past 40h that week', async () => {
+    const client = await createClient();
+    const { associate: busy, user: busyUser } = await mkPlaced(client.id, 'Bea', 'Busy');
+    const { associate: light, user: lightUser } = await mkPlaced(client.id, 'Lia', 'Light');
+
+    // Anchor everything inside next week (UTC Monday) so the 40h math
+    // can't straddle a week boundary regardless of when the suite runs.
+    const monday = new Date();
+    monday.setUTCHours(0, 0, 0, 0);
+    monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7) + 7);
+    const t = (h: number) => new Date(monday.getTime() + h * 3_600_000);
+
+    // Bea already has 5×8h Mon–Fri.
+    for (let d = 0; d < 5; d++) {
+      await mkShift({
+        clientId: client.id,
+        assignedAssociateId: busy.id,
+        startsAt: t(d * 24 + 9),
+        endsAt: t(d * 24 + 17),
+      });
+    }
+    // Saturday open shift both of them request.
+    const open = await mkShift({
+      clientId: client.id,
+      status: 'OPEN',
+      assignedAssociateId: null,
+      startsAt: t(5 * 24 + 9),
+      endsAt: t(5 * 24 + 17),
+    });
+    const busyAgent = await loginAs(busyUser.email);
+    await busyAgent.post(`/scheduling/me/open-shifts/${open.id}/claim`);
+    const lightAgent = await loginAs(lightUser.email);
+    await lightAgent.post(`/scheduling/me/open-shifts/${open.id}/claim`);
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+    const res = await hrAgent.get('/scheduling/open-shift-claims');
+    expect(res.status).toBe(200);
+    const byName = Object.fromEntries(
+      res.body.claims.map((c: { associateName: string; wouldExceed40h: boolean }) => [
+        c.associateName,
+        c.wouldExceed40h,
+      ]),
+    );
+    expect(byName['Bea Busy']).toBe(true);
+    expect(byName['Lia Light']).toBe(false);
+  });
 });
