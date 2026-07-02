@@ -231,7 +231,7 @@ export async function renderPayrollSheetPdf(
         .fontSize(9)
         .fillColor(INK)
         .text(
-          `Regular ${hrs(assoc.regularMinutes)}    Overtime ${hrs(assoc.overtimeMinutes)}`,
+          `Regular ${hrs(assoc.regularMinutes)}    Overtime ${hrs(assoc.overtimeMinutes)}    Scheduled ${hrs(assoc.scheduledMinutes ?? 0)}`,
           xDate + 6,
           y + 5,
           { width: wDate + wDay - 8 },
@@ -294,7 +294,7 @@ export async function renderPayrollSheetPdf(
       .fontSize(10)
       .fillColor('#FFFFFF')
       .text(
-        `HOURS — Regular ${hrs(data.sheet.totalRegularMinutes)}    Overtime ${hrs(data.sheet.totalOvertimeMinutes)}`,
+        `HOURS — Regular ${hrs(data.sheet.totalRegularMinutes)}    Overtime ${hrs(data.sheet.totalOvertimeMinutes)}    Scheduled ${hrs(data.sheet.totalScheduledMinutes ?? 0)}`,
         left + 8,
         y + 6,
         { width: contentWidth - 130 },

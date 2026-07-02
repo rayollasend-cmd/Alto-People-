@@ -1265,6 +1265,10 @@ model Shift {
   // Day-before reminder dedupe stamp — the reminder cron claims a shift by
   // setting this (guarded update), so overlapping sweeps can't double-send.
   reminderSentAt      DateTime?                       @db.Timestamptz(6)
+  // No-show alert dedupe stamp — the sweep claims a shift whose start
+  // passed with no linked punch by setting this (guarded update) before
+  // notifying admins, so each shift alerts at most once.
+  noShowNotifiedAt    DateTime?                       @db.Timestamptz(6)
   client              Client                          @relation(fields: [clientId], references: [id], onDelete: Restrict)
   locationRel         Location?                       @relation(fields: [locationId], references: [id], onDelete: Restrict)
   assignedAssociate   Associate?                      @relation(fields: [assignedAssociateId], references: [id], onDelete: SetNull)

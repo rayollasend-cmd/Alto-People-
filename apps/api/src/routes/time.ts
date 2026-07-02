@@ -92,6 +92,9 @@ async function recomputeAnomalies(params: {
   state: string | null;
   geofenceInOk: boolean | null;
   geofenceOutOk: boolean | null;
+  /** Linked shift window, when the entry has one — drives
+   *  EARLY_OUT / OUTSIDE_SHIFT_WINDOW. */
+  matchedShift?: { startsAt: Date; endsAt: Date } | null;
 }): Promise<TimeAnomaly[]> {
   const weekStart = startOfWeekUTC(params.clockInAt);
   const weekEnd = endOfWeekUTC(params.clockInAt);
@@ -125,6 +128,7 @@ async function recomputeAnomalies(params: {
       endedAt: b.endedAt,
     })),
     weeklyMinutesIncludingThis: weeklySoFar + thisMinutes,
+    matchedShift: params.matchedShift ?? undefined,
     state: params.state,
   });
 }
@@ -397,7 +401,11 @@ timeRouter.post('/me/clock-out', async (req, res, next) => {
 
     const active = await prisma.timeEntry.findFirst({
       where: { associateId: user.associateId, status: 'ACTIVE' },
-      include: { breaks: true, associate: { select: { state: true } } },
+      include: {
+        breaks: true,
+        associate: { select: { state: true } },
+        shift: { select: { startsAt: true, endsAt: true } },
+      },
     });
     if (!active) {
       throw new HttpError(409, 'not_clocked_in', 'No active time entry to close');
@@ -472,6 +480,9 @@ timeRouter.post('/me/clock-out', async (req, res, next) => {
         endedAt: b.endedAt,
       })),
       weeklyMinutesIncludingThis: weeklyTotal,
+      // Punch↔shift link: enables EARLY_OUT / OUTSIDE_SHIFT_WINDOW
+      // against the scheduled window.
+      matchedShift: active.shift ?? undefined,
       state: active.associate?.state ?? null,
     });
 
@@ -1105,6 +1116,12 @@ timeRouter.patch('/admin/entries/:id', MANAGE, async (req, res, next) => {
         state: existing.associate?.state ?? null,
         geofenceInOk: anomalies.includes('GEOFENCE_VIOLATION_IN') ? false : null,
         geofenceOutOk: anomalies.includes('GEOFENCE_VIOLATION_OUT') ? false : null,
+        matchedShift: existing.shiftId
+          ? await prisma.shift.findUnique({
+              where: { id: existing.shiftId },
+              select: { startsAt: true, endsAt: true },
+            })
+          : null,
       });
     }
 
@@ -1701,6 +1718,40 @@ async function loadPayrollSheet(
     breaks: r.breaks,
   }));
   const hoursSheet = buildPayrollSheet(inputRows);
+
+  // ---- Scheduled vs actual --------------------------------------------------
+  // Sum of assigned-shift minutes per associate in the same window, so the
+  // sheet shows worked hours NEXT TO what the schedule planned — the gap is
+  // uncovered shifts, unscheduled work, or early-out drift.
+  if (hoursSheet.associates.length > 0) {
+    const periodShifts = await prisma.shift.findMany({
+      where: {
+        assignedAssociateId: { in: hoursSheet.associates.map((a) => a.associateId) },
+        status: { in: ['ASSIGNED', 'COMPLETED'] },
+        startsAt: { gte: from, lt: to },
+        ...(input.clientId ? { clientId: input.clientId } : {}),
+        ...(input.locationId ? { locationId: input.locationId } : {}),
+      },
+      select: { assignedAssociateId: true, startsAt: true, endsAt: true },
+    });
+    const scheduledBy = new Map<string, number>();
+    for (const s of periodShifts) {
+      const min = Math.max(
+        0,
+        Math.round((s.endsAt.getTime() - s.startsAt.getTime()) / 60_000),
+      );
+      scheduledBy.set(
+        s.assignedAssociateId!,
+        (scheduledBy.get(s.assignedAssociateId!) ?? 0) + min,
+      );
+    }
+    let totalScheduled = 0;
+    for (const a of hoursSheet.associates) {
+      a.scheduledMinutes = scheduledBy.get(a.associateId) ?? 0;
+      totalScheduled += a.scheduledMinutes;
+    }
+    hoursSheet.totalScheduledMinutes = totalScheduled;
+  }
 
   // ---- Earnings (rate / gross / taxes / net) --------------------------------
   // Gross is driven by each associate's current compensation-record wage; net

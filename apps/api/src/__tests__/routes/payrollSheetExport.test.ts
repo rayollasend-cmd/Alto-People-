@@ -195,20 +195,22 @@ describe('payroll-sheet earnings (rate / gross / net, Florida taxes)', () => {
     });
     expect(row).not.toBeNull();
     const get = (c: number) => Number((row as unknown as ExcelJS.Row).getCell(c).value);
-    // Cols: 1 name, 2 reg, 3 ot, 4 total, 5 rate, 6 gross, 7 fed, 8 ss, 9 medicare, 10 state, 11 net
+    // Cols: 1 name, 2 reg, 3 ot, 4 total, 5 scheduled, 6 rate, 7 gross,
+    // 8 fed, 9 ss, 10 medicare, 11 state, 12 net
     expect(get(2)).toBeCloseTo(40, 2); // regular hours
     expect(get(3)).toBeCloseTo(5, 2); // overtime hours
-    expect(get(5)).toBeCloseTo(20, 2); // pay rate
+    expect(get(5)).toBeCloseTo(0, 2); // scheduled hours — no shifts seeded
+    expect(get(6)).toBeCloseTo(20, 2); // pay rate
     // Gross = 40×20 + 5×20×1.5 = 950
-    expect(get(6)).toBeCloseTo(950, 2);
+    expect(get(7)).toBeCloseTo(950, 2);
     // FICA 6.2% and Medicare 1.45% of gross.
-    expect(get(8)).toBeCloseTo(58.9, 2);
-    expect(get(9)).toBeCloseTo(13.78, 2);
+    expect(get(9)).toBeCloseTo(58.9, 2);
+    expect(get(10)).toBeCloseTo(13.78, 2);
     // Florida → no state income tax.
-    expect(get(10)).toBe(0);
+    expect(get(11)).toBe(0);
     // Net reconciles: gross − fed − ss − medicare − state.
-    const fed = get(7);
-    expect(get(11)).toBeCloseTo(950 - fed - 58.9 - 13.78 - 0, 1);
-    expect(get(11)).toBeLessThan(950);
+    const fed = get(8);
+    expect(get(12)).toBeCloseTo(950 - fed - 58.9 - 13.78 - 0, 1);
+    expect(get(12)).toBeLessThan(950);
   });
 });

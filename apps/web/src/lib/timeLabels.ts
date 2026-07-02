@@ -9,6 +9,7 @@ export const TIME_ANOMALY_LABELS: Record<string, string> = {
   OVERTIME_UNAPPROVED: 'Overtime',
   FORGOT_CLOCKOUT: 'Forgot clock-out',
   OUTSIDE_SHIFT_WINDOW: 'Off-schedule',
+  EARLY_OUT: 'Left early',
 };
 
 export function timeAnomalyLabel(code: string): string {

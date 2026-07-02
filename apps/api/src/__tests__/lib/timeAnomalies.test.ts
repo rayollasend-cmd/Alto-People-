@@ -131,6 +131,59 @@ describe('detectAnomalies', () => {
     });
     expect(a).toContain('OUTSIDE_SHIFT_WINDOW');
   });
+
+  it('flags EARLY_OUT when clock-out is >15 min before shift end', () => {
+    const shift = {
+      startsAt: new Date('2026-04-13T08:00:00Z'),
+      endsAt: new Date('2026-04-13T16:00:00Z'),
+    };
+    const a = detectAnomalies({
+      entry: {
+        clockInAt: new Date('2026-04-13T08:00:00Z'),
+        clockOutAt: new Date('2026-04-13T15:30:00Z'), // 30 min early
+        geofenceInOk: null,
+        geofenceOutOk: null,
+      },
+      breaks: [],
+      weeklyMinutesIncludingThis: 8 * 60,
+      matchedShift: shift,
+    });
+    expect(a).toContain('EARLY_OUT');
+    // 30 min early is still inside the 60-min OUTSIDE_SHIFT_WINDOW drift.
+    expect(a).not.toContain('OUTSIDE_SHIFT_WINDOW');
+  });
+
+  it('does NOT flag EARLY_OUT inside the 15-min grace or when staying late', () => {
+    const shift = {
+      startsAt: new Date('2026-04-13T08:00:00Z'),
+      endsAt: new Date('2026-04-13T16:00:00Z'),
+    };
+    const graceful = detectAnomalies({
+      entry: {
+        clockInAt: new Date('2026-04-13T08:00:00Z'),
+        clockOutAt: new Date('2026-04-13T15:50:00Z'), // 10 min early
+        geofenceInOk: null,
+        geofenceOutOk: null,
+      },
+      breaks: [],
+      weeklyMinutesIncludingThis: 8 * 60,
+      matchedShift: shift,
+    });
+    expect(graceful).not.toContain('EARLY_OUT');
+
+    const late = detectAnomalies({
+      entry: {
+        clockInAt: new Date('2026-04-13T08:00:00Z'),
+        clockOutAt: new Date('2026-04-13T16:30:00Z'), // stayed late
+        geofenceInOk: null,
+        geofenceOutOk: null,
+      },
+      breaks: [],
+      weeklyMinutesIncludingThis: 8 * 60,
+      matchedShift: shift,
+    });
+    expect(late).not.toContain('EARLY_OUT');
+  });
 });
 
 describe('week boundaries', () => {

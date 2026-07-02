@@ -2512,6 +2512,8 @@ export const TimeAnomalySchema = z.enum([
   'OVERTIME_UNAPPROVED',
   'FORGOT_CLOCKOUT',
   'OUTSIDE_SHIFT_WINDOW',
+  // Clocked out well before the linked shift's scheduled end.
+  'EARLY_OUT',
 ]);
 export type TimeAnomaly = z.infer<typeof TimeAnomalySchema>;
 

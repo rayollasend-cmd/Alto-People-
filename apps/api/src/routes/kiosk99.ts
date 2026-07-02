@@ -17,6 +17,7 @@ import {
 } from '../lib/kioskAuth.js';
 import { enforcePunchRateLimit } from '../lib/kioskRateLimit.js';
 import { matchShiftForPunch } from '../lib/matchShiftForPunch.js';
+import { recomputeEntryAnomalies } from '../lib/recomputeEntryAnomalies.js';
 import { encryptString, decryptString } from '../lib/crypto.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
@@ -2099,6 +2100,13 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     // lock already serializes per-associate so length isn't a risk.
     timeout: 15_000,
   });
+
+  // Kiosk clock-outs historically closed the entry with NO anomaly pass —
+  // NO_BREAK / OT / EARLY_OUT flags only appeared on web clock-outs.
+  // Advisory-only, so it runs after commit and never fails the punch.
+  if (result.action === 'CLOCK_OUT') {
+    void recomputeEntryAnomalies(prisma, result.timeEntry.id);
+  }
 
   res.json({
     action: result.action,

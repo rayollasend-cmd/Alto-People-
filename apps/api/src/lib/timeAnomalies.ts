@@ -76,6 +76,9 @@ export interface DetectAnomaliesInput {
 
 const NO_BREAK_THRESHOLD_HOURS = 6;
 const SHIFT_WINDOW_DRIFT_MINUTES = 60;
+// Leaving >15min before the scheduled end is worth a reviewer's glance;
+// smaller gaps are shift-change noise (registers handed over early, etc.).
+const EARLY_OUT_THRESHOLD_MINUTES = 15;
 // Floor used when the state policy doesn't mandate a meal break but the
 // associate still took one — under federal rules, a "break" of less than
 // 30min that's spent off-task is paid time, not unpaid lunch. We flag
@@ -129,6 +132,14 @@ export function detectAnomalies(input: DetectAnomaliesInput): TimeAnomaly[] {
     );
     if (inDrift > SHIFT_WINDOW_DRIFT_MINUTES || outDrift > SHIFT_WINDOW_DRIFT_MINUTES) {
       out.push('OUTSIDE_SHIFT_WINDOW');
+    }
+    // Direction-aware early departure — OUTSIDE_SHIFT_WINDOW only fires
+    // at 60min drift in either direction; leaving 20min early is the
+    // case managers actually chase.
+    const earlyMin =
+      (matchedShift.endsAt.getTime() - entry.clockOutAt.getTime()) / MIN_MS;
+    if (earlyMin > EARLY_OUT_THRESHOLD_MINUTES) {
+      out.push('EARLY_OUT');
     }
   }
 

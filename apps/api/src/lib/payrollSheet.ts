@@ -38,6 +38,9 @@ export interface PayrollSheetAssociate {
   regularMinutes: number;
   overtimeMinutes: number;
   totalMinutes: number;
+  /** Sum of assigned-shift minutes in the window — scheduled vs actual.
+   *  Stamped by the route (needs a Shift query); absent in unit builds. */
+  scheduledMinutes?: number;
 }
 
 export interface PayrollSheet {
@@ -45,6 +48,8 @@ export interface PayrollSheet {
   totalRegularMinutes: number;
   totalOvertimeMinutes: number;
   totalMinutes: number;
+  /** See PayrollSheetAssociate.scheduledMinutes. */
+  totalScheduledMinutes?: number;
 }
 
 function utcDateKey(d: Date): string {

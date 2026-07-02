@@ -117,8 +117,8 @@ function styleHeaderRow(row: ExcelJS.Row): void {
   });
 }
 
-const MONEY_COLS = [5, 6, 7, 8, 9, 10, 11]; // rate, gross, fed, ss, medicare, state, net
-const HOUR_COLS = [2, 3, 4];
+const MONEY_COLS = [6, 7, 8, 9, 10, 11, 12]; // rate, gross, fed, ss, medicare, state, net
+const HOUR_COLS = [2, 3, 4, 5]; // regular, overtime, total, scheduled
 
 function buildSummarySheet(wb: ExcelJS.Workbook, data: PayrollSheetReportData) {
   const ws = wb.addWorksheet('Summary', {
@@ -138,6 +138,7 @@ function buildSummarySheet(wb: ExcelJS.Workbook, data: PayrollSheetReportData) {
     { key: 'regular', width: 11 },
     { key: 'overtime', width: 11 },
     { key: 'total', width: 11 },
+    { key: 'scheduled', width: 12 },
     { key: 'rate', width: 12 },
     { key: 'gross', width: 13 },
     { key: 'fed', width: 13 },
@@ -147,7 +148,7 @@ function buildSummarySheet(wb: ExcelJS.Workbook, data: PayrollSheetReportData) {
     { key: 'net', width: 13 },
   ];
 
-  const headerRowNum = writeLetterhead(ws, data, 'K');
+  const headerRowNum = writeLetterhead(ws, data, 'L');
 
   const header = ws.getRow(headerRowNum);
   header.values = [
@@ -155,6 +156,7 @@ function buildSummarySheet(wb: ExcelJS.Workbook, data: PayrollSheetReportData) {
     'Regular (h)',
     'Overtime (h)',
     'Total (h)',
+    'Scheduled (h)',
     'Pay rate',
     'Gross',
     'Federal tax',
@@ -174,6 +176,7 @@ function buildSummarySheet(wb: ExcelJS.Workbook, data: PayrollSheetReportData) {
       hours(a.regularMinutes),
       hours(a.overtimeMinutes),
       hours(a.totalMinutes),
+      hours(a.scheduledMinutes ?? 0),
       p.hasRate ? p.hourlyRate : null,
       p.hasRate ? p.grossPay : null,
       p.hasRate ? p.federalIncomeTax : null,
@@ -208,6 +211,7 @@ function buildSummarySheet(wb: ExcelJS.Workbook, data: PayrollSheetReportData) {
     hours(data.sheet.totalRegularMinutes),
     hours(data.sheet.totalOvertimeMinutes),
     hours(data.sheet.totalMinutes),
+    hours(data.sheet.totalScheduledMinutes ?? 0),
     null,
     data.sheet.totalGross,
     data.sheet.totalFederalIncomeTax,
@@ -232,15 +236,15 @@ function buildSummarySheet(wb: ExcelJS.Workbook, data: PayrollSheetReportData) {
   r += 2;
 
   const note = ws.getCell(`A${r}`);
-  ws.mergeCells(`A${r}:K${r}`);
+  ws.mergeCells(`A${r}:L${r}`);
   note.value =
-    'Gross = compensation-record wage × hours (overtime at 1.5×). Net is estimated federal withholding for W-2 employees (W-4 on file; Single if none) plus pre-tax benefits and garnishments. Florida has no state income tax. Estimate for payroll prep, not a pay statement.';
+    'Gross = compensation-record wage × hours (overtime at 1.5×). Scheduled (h) = assigned-shift hours in the period, for scheduled-vs-actual reconciliation. Net is estimated federal withholding for W-2 employees (W-4 on file; Single if none) plus pre-tax benefits and garnishments. Florida has no state income tax. Estimate for payroll prep, not a pay statement.';
   note.font = { italic: true, size: 8, color: { argb: MUTED } };
   note.alignment = { wrapText: true };
   ws.getRow(r).height = 28;
 
   ws.views = [{ state: 'frozen', ySplit: headerRowNum }];
-  ws.autoFilter = { from: { row: headerRowNum, column: 1 }, to: { row: lastDataRow, column: 11 } };
+  ws.autoFilter = { from: { row: headerRowNum, column: 1 }, to: { row: lastDataRow, column: 12 } };
   ws.pageSetup.printTitlesRow = `${headerRowNum}:${headerRowNum}`;
 }
 

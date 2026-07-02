@@ -43,6 +43,8 @@ export interface PayrollSheetPaid {
   totalMedicare: number;
   totalStateIncomeTax: number;
   totalNet: number;
+  /** Scheduled-vs-actual passthrough from the hours sheet. */
+  totalScheduledMinutes?: number;
   /** True if any associate is missing an hourly wage (gross/net left blank). */
   anyMissingRate: boolean;
 }
@@ -89,6 +91,7 @@ export function attachEarnings(
     totalMedicare: sum((p) => p.medicare),
     totalStateIncomeTax: sum((p) => p.stateIncomeTax),
     totalNet: sum((p) => p.netPay),
+    totalScheduledMinutes: sheet.totalScheduledMinutes,
     anyMissingRate: associates.some((a) => !a.pay.hasRate),
   };
 }
