@@ -5,6 +5,7 @@ import {
   formatTimeInZone,
 } from './timezone.js';
 import { emailUserForCategory } from './notify.js';
+import { emitLiveEvent } from './liveEvents.js';
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
@@ -73,6 +74,10 @@ export async function notifyShift(
       linkUrl,
     },
   });
+  // Live nudge — best-effort: when called inside a transaction the row
+  // isn't committed yet, so a racing refetch may find nothing new and
+  // the next poll catches up. Never worth delaying the mutation for.
+  emitLiveEvent(user.id, 'notification');
 
   // Email rides the shared pipeline (mute prefs, EMAIL Notification row,
   // Resend). Fire-and-forget: the email must never fail — or wait on —

@@ -46,6 +46,7 @@ import {
 import { prisma } from '../db.js';
 import { send } from './notifications.js';
 import { sendPushToUser } from './webPush.js';
+import { emitLiveEvent } from './liveEvents.js';
 import { onboardingCompleteTemplate } from './emailTemplates.js';
 import { env } from '../config/env.js';
 
@@ -243,6 +244,8 @@ export function notifyUser(
           sentAt: new Date(),
         },
       });
+      // Live nudge: any open tab refetches the bell (and badge) instantly.
+      emitLiveEvent(userId, 'notification');
       // Email is best-effort and fired in parallel via its own track().
       // Skip the send if the user has muted this category bucket; the
       // IN_APP row above always lands so the bell still surfaces it.
@@ -304,6 +307,7 @@ export function notifyAllAdmins(
           sentAt: now,
         })),
       });
+      for (const u of recipients) emitLiveEvent(u.id, 'notification');
       // Honour each recipient's per-category mute. Looked up serially
       // before the (still-parallel) sends fire — N+1 against a small N
       // (admin role count, typically ≤10) and indexed on (userId, category).

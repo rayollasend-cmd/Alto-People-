@@ -45,6 +45,7 @@ import { qualificationsRouter } from './routes/qualifications.js';
 import { projectsAndPayRouter } from './routes/projectsAndPay.js';
 import { directoryAndCommsRouter } from './routes/directoryAndComms.js';
 import { approvalsRouter } from './routes/approvals.js';
+import { eventsRouter } from './routes/events.js';
 import { oshaWcEeoRouter } from './routes/oshaWcEeo.js';
 import { docTemplatesRouter } from './routes/docTemplates.js';
 import { recruiting90Router } from './routes/recruiting90.js';
@@ -255,6 +256,8 @@ export function createApp() {
   app.use('/jobs', requireCapability('view:scheduling'), jobsRouter);
   // Approvals inbox badge — counts only; the queues render via their own routers.
   app.use('/approvals', approvalsRouter);
+  // Live "something changed" SSE nudges (bell + badge instant refresh).
+  app.use('/events', eventsRouter);
   app.use('/audit', requireCapability('view:audit'), auditRouter);
   app.use('/benefits', requireCapability('view:payroll'), benefitsRouter);
   // Phase 76 — org hierarchy. Routes self-gate read vs write capability.

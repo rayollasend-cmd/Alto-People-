@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Bell, BellRing, CheckCheck, Inbox } from 'lucide-react';
 import type { Notification } from '@alto-people/shared';
 import { listMyInbox, markRead } from '@/lib/communicationsApi';
+import { onLiveEvent } from '@/lib/liveEvents';
 import { ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import {
@@ -68,10 +69,14 @@ export function NotificationsBell() {
     };
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('focus', refresh);
+    // Live SSE nudge — a notification just landed for this user; refetch
+    // immediately instead of waiting out the poll interval.
+    const offLive = onLiveEvent('notification', refresh);
     return () => {
       window.clearInterval(t);
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('focus', refresh);
+      offLive();
     };
   }, [refresh]);
 

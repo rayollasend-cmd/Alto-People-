@@ -12,11 +12,13 @@ import { Topbar } from './Topbar';
 import { MobileNav } from './MobileNav';
 import { BottomTabBar } from './BottomTabBar';
 import { InstallPrompt } from './InstallPrompt';
+import { WhatsNew } from './WhatsNew';
 import { NavigationProgress } from './NavigationProgress';
 import { RouteAnnouncer } from './RouteAnnouncer';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { moduleKeyForPath } from '@/lib/modules';
 import { recordRecentModule } from '@/lib/navPersonalization';
+import { startLiveEvents, stopLiveEvents } from '@/lib/liveEvents';
 
 // Per-route Suspense fallback shown while a lazy-loaded page chunk streams
 // in. A 40vh-centered spinner used to feel like "something is wrong" on
@@ -63,6 +65,13 @@ export function Layout() {
     const key = moduleKeyForPath(location.pathname);
     if (key) recordRecentModule(key);
   }, [location.pathname]);
+
+  // Live SSE channel for the authed shell — bell + approvals badge
+  // refetch the instant a notification lands instead of on next poll.
+  useEffect(() => {
+    startLiveEvents();
+    return () => stopLiveEvents();
+  }, []);
 
   useEffect(() => {
     const main = mainRef.current;
@@ -166,6 +175,7 @@ export function Layout() {
           onOpenChange={setShortcutsOpen}
         />
         <InstallPrompt />
+        <WhatsNew />
       </div>
     </TooltipProvider>
   );

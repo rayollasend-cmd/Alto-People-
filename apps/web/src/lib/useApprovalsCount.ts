@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { apiFetch } from './api';
 import { useAuth } from './auth';
+import { onLiveEvent } from './liveEvents';
 
 interface ApprovalsCount {
   swaps: number;
@@ -40,10 +41,14 @@ export function useApprovalsCount(): number | null {
     const timer = setInterval(load, POLL_MS);
     const onFocus = () => void load();
     window.addEventListener('focus', onFocus);
+    // New pending items notify admins in-app, so the same live nudge
+    // that refreshes the bell also refreshes this count instantly.
+    const offLive = onLiveEvent('notification', () => void load());
     return () => {
       cancelled = true;
       clearInterval(timer);
       window.removeEventListener('focus', onFocus);
+      offLive();
     };
   }, [allowed]);
 
