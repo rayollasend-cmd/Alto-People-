@@ -99,6 +99,7 @@ import {
   PageHeader,
   Select,
   SkeletonRows,
+  SortableTableHead,
   Table,
   TableBody,
   TableCell,
@@ -110,6 +111,8 @@ import {
   TabsList,
   TabsTrigger,
   Textarea,
+  useTableSort,
+  type TableSortState,
 } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
@@ -567,6 +570,16 @@ const VIRTUAL_OVERSCAN = 8;
 // inside the data grid" affordance.
 const VIRTUAL_CONTAINER_MAX_VH = 'max-h-[calc(100vh-360px)]';
 
+type DirectorySortKey =
+  | 'name'
+  | 'status'
+  | 'workplace'
+  | 'position'
+  | 'type'
+  | 'pay'
+  | 'manager'
+  | 'start';
+
 function DirectoryTable({
   rows,
   onSelect,
@@ -574,15 +587,32 @@ function DirectoryTable({
   rows: DirectoryEntry[];
   onSelect: (row: DirectoryEntry) => void;
 }) {
+  // Click-to-sort over the page of rows the server returned (post-filter).
+  // Third click on a header clears back to server order.
+  const { sorted, sortState, toggleSort } = useTableSort(rows, {
+    name: (r: DirectoryEntry) => `${r.firstName} ${r.lastName}`,
+    status: (r: DirectoryEntry) => r.status,
+    workplace: (r: DirectoryEntry) => r.workplaceClientName,
+    position: (r: DirectoryEntry) => r.position,
+    type: (r: DirectoryEntry) =>
+      EMPLOYMENT_LABEL[r.employmentType] ?? r.employmentType,
+    pay: (r: DirectoryEntry) => {
+      const n = r.payAmount === null ? NaN : Number(r.payAmount);
+      return Number.isFinite(n) ? n : null;
+    },
+    manager: (r: DirectoryEntry) => r.managerName,
+    start: (r: DirectoryEntry) =>
+      r.startDate ? new Date(r.startDate).getTime() : null,
+  });
   if (rows.length <= VIRTUALIZE_THRESHOLD) {
     return (
       <Card className="overflow-hidden">
         <Table caption="Associate directory">
           <TableHeader>
-            <DirectoryHeaderRow />
+            <DirectoryHeaderRow state={sortState} onSort={toggleSort} />
           </TableHeader>
           <TableBody>
-            {rows.map((r) => (
+            {sorted.map((r) => (
               <DirectoryRow key={r.id} row={r} onSelect={onSelect} />
             ))}
           </TableBody>
@@ -590,29 +620,62 @@ function DirectoryTable({
       </Card>
     );
   }
-  return <VirtualDirectoryTable rows={rows} onSelect={onSelect} />;
+  return (
+    <VirtualDirectoryTable
+      rows={sorted}
+      sortState={sortState}
+      onSort={toggleSort}
+      onSelect={onSelect}
+    />
+  );
 }
 
-function DirectoryHeaderRow() {
+function DirectoryHeaderRow({
+  state,
+  onSort,
+}: {
+  state: TableSortState<DirectorySortKey>;
+  onSort: (key: DirectorySortKey) => void;
+}) {
   return (
     <TableRow className="hover:bg-transparent">
-      <TableHead>Associate</TableHead>
-      <TableHead className="w-28">Status</TableHead>
-      <TableHead>Workplace</TableHead>
-      <TableHead className="hidden md:table-cell">Position</TableHead>
-      <TableHead className="hidden lg:table-cell w-24">Type</TableHead>
-      <TableHead className="hidden lg:table-cell">Pay rate</TableHead>
-      <TableHead className="hidden xl:table-cell">Manager</TableHead>
-      <TableHead className="hidden xl:table-cell w-24">Start</TableHead>
+      <SortableTableHead sortKey="name" state={state} onSort={onSort}>
+        Associate
+      </SortableTableHead>
+      <SortableTableHead sortKey="status" state={state} onSort={onSort} className="w-28">
+        Status
+      </SortableTableHead>
+      <SortableTableHead sortKey="workplace" state={state} onSort={onSort}>
+        Workplace
+      </SortableTableHead>
+      <SortableTableHead sortKey="position" state={state} onSort={onSort} className="hidden md:table-cell">
+        Position
+      </SortableTableHead>
+      <SortableTableHead sortKey="type" state={state} onSort={onSort} className="hidden lg:table-cell w-24">
+        Type
+      </SortableTableHead>
+      <SortableTableHead sortKey="pay" state={state} onSort={onSort} className="hidden lg:table-cell">
+        Pay rate
+      </SortableTableHead>
+      <SortableTableHead sortKey="manager" state={state} onSort={onSort} className="hidden xl:table-cell">
+        Manager
+      </SortableTableHead>
+      <SortableTableHead sortKey="start" state={state} onSort={onSort} className="hidden xl:table-cell w-24">
+        Start
+      </SortableTableHead>
     </TableRow>
   );
 }
 
 function VirtualDirectoryTable({
   rows,
+  sortState,
+  onSort,
   onSelect,
 }: {
   rows: DirectoryEntry[];
+  sortState: TableSortState<DirectorySortKey>;
+  onSort: (key: DirectorySortKey) => void;
   onSelect: (row: DirectoryEntry) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -640,7 +703,7 @@ function VirtualDirectoryTable({
       <div ref={scrollRef} className={`overflow-y-auto ${VIRTUAL_CONTAINER_MAX_VH}`}>
         <Table caption="Associate directory">
           <TableHeader>
-            <DirectoryHeaderRow />
+            <DirectoryHeaderRow state={sortState} onSort={onSort} />
           </TableHeader>
           <TableBody>
             {paddingTop > 0 && (

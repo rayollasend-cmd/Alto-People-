@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
 /**
@@ -160,6 +161,128 @@ export const TableCell = React.forwardRef<
   />
 ));
 TableCell.displayName = 'TableCell';
+
+/* ===== Column sorting ===================================================== */
+
+export type SortDirection = 'asc' | 'desc';
+
+export interface TableSortState<K extends string = string> {
+  key: K | null;
+  direction: SortDirection;
+}
+
+/**
+ * Client-side column sorting for the admin lists (these tables cap at a
+ * few hundred rows, so in-memory sorting is exact, not approximate).
+ *
+ *   const { sorted, sortState, toggleSort } = useTableSort(rows, {
+ *     name: (r) => r.name,
+ *     date: (r) => new Date(r.createdAt).getTime(),
+ *   });
+ *   …
+ *   <SortableTableHead sortKey="name" state={sortState} onSort={toggleSort}>
+ *     Associate
+ *   </SortableTableHead>
+ *
+ * With no active sort the input order (usually the server's) is kept.
+ * Strings compare case-insensitively via localeCompare; null/undefined
+ * accessor values always sink to the bottom in either direction.
+ */
+export function useTableSort<T, K extends string>(
+  rows: T[],
+  accessors: Record<K, (row: T) => string | number | null | undefined>,
+  initial?: TableSortState<K>,
+): {
+  sorted: T[];
+  sortState: TableSortState<K>;
+  toggleSort: (key: K) => void;
+} {
+  const [sortState, setSortState] = React.useState<TableSortState<K>>(
+    initial ?? { key: null, direction: 'asc' },
+  );
+
+  const toggleSort = React.useCallback((key: K) => {
+    setSortState((prev) =>
+      prev.key === key
+        ? prev.direction === 'asc'
+          ? { key, direction: 'desc' }
+          : // Third click clears back to the server's order.
+            { key: null, direction: 'asc' }
+        : { key, direction: 'asc' },
+    );
+  }, []);
+
+  const sorted = React.useMemo(() => {
+    if (!sortState.key) return rows;
+    const accessor = accessors[sortState.key];
+    const dir = sortState.direction === 'asc' ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      const av = accessor(a);
+      const bv = accessor(b);
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1; // nulls sink regardless of direction
+      if (bv == null) return -1;
+      if (typeof av === 'number' && typeof bv === 'number') {
+        return (av - bv) * dir;
+      }
+      return String(av).localeCompare(String(bv), undefined, { sensitivity: 'base' }) * dir;
+    });
+    // accessors is expected to be a stable literal; keying the memo on the
+    // state + rows keeps re-sorts cheap without demanding useMemo at every
+    // call site.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, sortState]);
+
+  return { sorted, sortState, toggleSort };
+}
+
+export interface SortableTableHeadProps<K extends string = string>
+  extends React.ThHTMLAttributes<HTMLTableCellElement> {
+  sortKey: K;
+  state: TableSortState<K>;
+  onSort: (key: K) => void;
+}
+
+/** TableHead with a click-to-sort affordance and aria-sort announcement. */
+export function SortableTableHead<K extends string>({
+  sortKey,
+  state,
+  onSort,
+  className,
+  children,
+  ...props
+}: SortableTableHeadProps<K>) {
+  const active = state.key === sortKey;
+  const direction = active ? state.direction : undefined;
+  return (
+    <TableHead
+      aria-sort={active ? (direction === 'asc' ? 'ascending' : 'descending') : 'none'}
+      className={cn('p-0', className)}
+      {...props}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className={cn(
+          'flex h-10 w-full items-center gap-1 px-3 text-left text-[10px] font-semibold uppercase tracking-widest transition-colors',
+          'focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gold-bright',
+          active ? 'text-gold' : 'text-silver hover:text-white',
+        )}
+      >
+        <span className="truncate">{children}</span>
+        {active ? (
+          direction === 'asc' ? (
+            <ArrowUp className="h-3 w-3 shrink-0" aria-hidden="true" />
+          ) : (
+            <ArrowDown className="h-3 w-3 shrink-0" aria-hidden="true" />
+          )
+        ) : (
+          <ArrowUpDown className="h-3 w-3 shrink-0 opacity-0 group-hover:opacity-60 [th:hover>&]:opacity-60" aria-hidden="true" />
+        )}
+      </button>
+    </TableHead>
+  );
+}
 
 export const TableCaption = React.forwardRef<
   HTMLTableCaptionElement,

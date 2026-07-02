@@ -53,12 +53,14 @@ import { Field } from '@/components/ui/Field';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import {
+  SortableTableHead,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
+  useTableSort,
 } from '@/components/ui/Table';
 import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
 import { cn } from '@/lib/cn';
@@ -236,6 +238,21 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         d.kind.toLowerCase().includes(q)
     );
   }, [docs, search]);
+
+  // Click-to-sort for the flat queue table. Operates on the filtered slice
+  // the table renders; third click restores server order (newest first).
+  const {
+    sorted: sortedDocs,
+    sortState: docSort,
+    toggleSort: toggleDocSort,
+  } = useTableSort(visibleDocs ?? [], {
+    file: (d: DocumentRecord) => d.filename,
+    kind: (d: DocumentRecord) => d.kind,
+    associate: (d: DocumentRecord) => d.associateName,
+    size: (d: DocumentRecord) => d.size,
+    uploaded: (d: DocumentRecord) => new Date(d.createdAt).getTime(),
+    status: (d: DocumentRecord) => d.status,
+  });
 
   // Group every doc the user can see by associate, so the "By associate"
   // view can act as a per-person folder. We pull from `allDocs` (not the
@@ -649,17 +666,29 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                     />
                   </TableHead>
                 )}
-                <TableHead>File</TableHead>
-                <TableHead className="hidden md:table-cell">Kind</TableHead>
-                <TableHead className="hidden sm:table-cell">Associate</TableHead>
-                <TableHead className="hidden md:table-cell w-20">Size</TableHead>
-                <TableHead className="hidden lg:table-cell w-24">Uploaded</TableHead>
-                <TableHead className="w-32">Status</TableHead>
+                <SortableTableHead sortKey="file" state={docSort} onSort={toggleDocSort}>
+                  File
+                </SortableTableHead>
+                <SortableTableHead sortKey="kind" state={docSort} onSort={toggleDocSort} className="hidden md:table-cell">
+                  Kind
+                </SortableTableHead>
+                <SortableTableHead sortKey="associate" state={docSort} onSort={toggleDocSort} className="hidden sm:table-cell">
+                  Associate
+                </SortableTableHead>
+                <SortableTableHead sortKey="size" state={docSort} onSort={toggleDocSort} className="hidden md:table-cell w-20">
+                  Size
+                </SortableTableHead>
+                <SortableTableHead sortKey="uploaded" state={docSort} onSort={toggleDocSort} className="hidden lg:table-cell w-24">
+                  Uploaded
+                </SortableTableHead>
+                <SortableTableHead sortKey="status" state={docSort} onSort={toggleDocSort} className="w-32">
+                  Status
+                </SortableTableHead>
                 {canManage && <TableHead className="hidden md:table-cell w-44 text-right" aria-label="Actions" />}
               </TableRow>
             </TableHeader>
             <TableBody>
-              {visibleDocs.map((d) => {
+              {sortedDocs.map((d) => {
                 const selectable =
                   d.status === 'UPLOADED' || d.status === 'REJECTED';
                 return (

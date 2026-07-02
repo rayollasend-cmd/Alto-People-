@@ -68,6 +68,7 @@ import {
   Select,
   Skeleton,
   SkeletonRows,
+  SortableTableHead,
   Table,
   TableBody,
   TableCell,
@@ -75,6 +76,7 @@ import {
   TableHeader,
   TableRow,
   Textarea,
+  useTableSort,
 } from '@/components/ui';
 
 const STATUS_FILTERS: Array<{ value: TimeEntryStatus | 'ALL'; label: string }> = [
@@ -436,6 +438,22 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     if (!anomaliesOnly) return entries;
     return entries.filter((e) => (e.anomalies?.length ?? 0) > 0);
   }, [entries, anomaliesOnly]);
+
+  // Click-to-sort for the queue's desktop table. Sorts the filtered page
+  // the table renders; the md:hidden card stack keeps server order.
+  const {
+    sorted: sortedEntries,
+    sortState: queueSort,
+    toggleSort: toggleQueueSort,
+  } = useTableSort(visibleEntries ?? [], {
+    associate: (e: TimeEntry) => e.associateName,
+    client: (e: TimeEntry) => e.clientName,
+    in: (e: TimeEntry) => new Date(e.clockInAt).getTime(),
+    out: (e: TimeEntry) =>
+      e.clockOutAt ? new Date(e.clockOutAt).getTime() : null,
+    duration: (e: TimeEntry) => e.netMinutes ?? e.minutesElapsed,
+    status: (e: TimeEntry) => e.status,
+  });
 
   const selectableIds = useMemo(() => {
     if (!visibleEntries) return [] as string[];
@@ -924,17 +942,29 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                             />
                           </TableHead>
                         )}
-                        <TableHead>Associate</TableHead>
-                        <TableHead>Client</TableHead>
-                        <TableHead>In</TableHead>
-                        <TableHead>Out</TableHead>
-                        <TableHead>Duration</TableHead>
-                        <TableHead>Status</TableHead>
+                        <SortableTableHead sortKey="associate" state={queueSort} onSort={toggleQueueSort}>
+                          Associate
+                        </SortableTableHead>
+                        <SortableTableHead sortKey="client" state={queueSort} onSort={toggleQueueSort}>
+                          Client
+                        </SortableTableHead>
+                        <SortableTableHead sortKey="in" state={queueSort} onSort={toggleQueueSort}>
+                          In
+                        </SortableTableHead>
+                        <SortableTableHead sortKey="out" state={queueSort} onSort={toggleQueueSort}>
+                          Out
+                        </SortableTableHead>
+                        <SortableTableHead sortKey="duration" state={queueSort} onSort={toggleQueueSort}>
+                          Duration
+                        </SortableTableHead>
+                        <SortableTableHead sortKey="status" state={queueSort} onSort={toggleQueueSort}>
+                          Status
+                        </SortableTableHead>
                         {canManage && <TableHead className="text-right">Actions</TableHead>}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {visibleEntries.map((e) => {
+                      {sortedEntries.map((e) => {
                         const isSelectable = canManage && filter === 'COMPLETED' && e.status === 'COMPLETED';
                         return (
                           <TableRow
