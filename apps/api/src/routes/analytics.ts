@@ -9,12 +9,41 @@ import {
   type OnboardingTrackBreakdown,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { startOfWeekUTC } from '../lib/timeAnomalies.js';
 
 export const analyticsRouter = Router();
 
 /* ---------------------------------------------------------------- helpers */
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const ONE_WEEK_MS = 7 * ONE_DAY_MS;
+
+/** Number of weekly buckets in each KPI micro-trend (ending this week). */
+const TREND_WEEKS = 8;
+
+/** Bucket index (0..TREND_WEEKS-1) for an instant, or -1 when outside. */
+function trendBucket(d: Date, trendStart: Date): number {
+  const idx = Math.floor((d.getTime() - trendStart.getTime()) / ONE_WEEK_MS);
+  return idx >= 0 && idx < TREND_WEEKS ? idx : -1;
+}
+
+/** Weekly count series for a list of event timestamps. */
+function weeklyCounts(dates: Date[], trendStart: Date): number[] {
+  const series = new Array<number>(TREND_WEEKS).fill(0);
+  for (const d of dates) {
+    const i = trendBucket(d, trendStart);
+    if (i >= 0) series[i] += 1;
+  }
+  return series;
+}
+
+/** delta = last COMPLETE week vs the week before it. The final bucket is
+ *  the in-progress week, so comparing it would always read as a dip. */
+function trendDelta(series: number[]): number {
+  const lastComplete = series[series.length - 2] ?? 0;
+  const prior = series[series.length - 3] ?? 0;
+  return lastComplete - prior;
+}
 
 function daysBetween(a: Date, b: Date): number {
   return (b.getTime() - a.getTime()) / ONE_DAY_MS;
@@ -68,6 +97,15 @@ analyticsRouter.get('/dashboard', async (req, res, next) => {
     const in30 = new Date(now.getTime() + windowMs);
     const minus30 = new Date(now.getTime() - windowMs);
 
+    // Micro-trend window: TREND_WEEKS UTC weeks ending with the current
+    // (partial) week. Every trend query below is bounded to this range so
+    // the dashboard never scans whole tables.
+    const thisWeekStart = startOfWeekUTC(now);
+    const trendStart = new Date(
+      thisWeekStart.getTime() - (TREND_WEEKS - 1) * ONE_WEEK_MS
+    );
+    const trendEnd = new Date(thisWeekStart.getTime() + ONE_WEEK_MS);
+
     const [
       activeAssociates,
       openShiftsNext30d,
@@ -78,6 +116,10 @@ analyticsRouter.get('/dashboard', async (req, res, next) => {
       paidAggregate,
       pendingDisbursementAggregate,
       applicationStatusGroups,
+      trendTimeEntries,
+      trendShifts,
+      trendApplications,
+      trendHires,
     ] = await Promise.all([
       prisma.associate.count({ where: { deletedAt: null } }),
       prisma.shift.count({
@@ -107,12 +149,67 @@ analyticsRouter.get('/dashboard', async (req, res, next) => {
         where: { deletedAt: null },
         _count: { _all: true },
       }),
+      // Trend feeds — timestamps only, bounded to the 8-week window.
+      // Hours worked: completed punches, approximated as clockOut−clockIn
+      // (there's no netMinutes column; break math isn't worth it here).
+      prisma.timeEntry.findMany({
+        where: {
+          clockInAt: { gte: trendStart, lt: trendEnd },
+          clockOutAt: { not: null },
+        },
+        select: { clockInAt: true, clockOutAt: true },
+      }),
+      prisma.shift.findMany({
+        where: {
+          startsAt: { gte: trendStart, lt: trendEnd },
+          status: { not: 'CANCELLED' },
+        },
+        select: { startsAt: true },
+      }),
+      prisma.application.findMany({
+        where: { deletedAt: null, createdAt: { gte: trendStart, lt: trendEnd } },
+        select: { createdAt: true },
+      }),
+      prisma.associate.findMany({
+        where: { deletedAt: null, createdAt: { gte: trendStart, lt: trendEnd } },
+        select: { createdAt: true },
+      }),
     ]);
 
     const applicationStatusCounts: Record<string, number> = {};
     for (const g of applicationStatusGroups) {
       applicationStatusCounts[g.status] = g._count._all;
     }
+
+    // Hours worked per week, bucketed by clock-in and rounded to 0.1h.
+    const hoursSeries = new Array<number>(TREND_WEEKS).fill(0);
+    for (const e of trendTimeEntries) {
+      const i = trendBucket(e.clockInAt, trendStart);
+      if (i < 0 || !e.clockOutAt) continue;
+      const ms = e.clockOutAt.getTime() - e.clockInAt.getTime();
+      if (ms > 0) hoursSeries[i] += ms / (60 * 60 * 1000);
+    }
+    for (let i = 0; i < hoursSeries.length; i++) {
+      hoursSeries[i] = Math.round(hoursSeries[i] * 10) / 10;
+    }
+    const shiftsSeries = weeklyCounts(
+      trendShifts.map((s) => s.startsAt),
+      trendStart
+    );
+    const applicationsSeries = weeklyCounts(
+      trendApplications.map((a) => a.createdAt),
+      trendStart
+    );
+    const hiresSeries = weeklyCounts(
+      trendHires.map((a) => a.createdAt),
+      trendStart
+    );
+    const trends: DashboardKPIs['trends'] = {
+      hoursWorked: { series: hoursSeries, delta: Math.round(trendDelta(hoursSeries) * 10) / 10 },
+      shiftsScheduled: { series: shiftsSeries, delta: trendDelta(shiftsSeries) },
+      applications: { series: applicationsSeries, delta: trendDelta(applicationsSeries) },
+      hires: { series: hiresSeries, delta: trendDelta(hiresSeries) },
+    };
 
     const payload: DashboardKPIs = DashboardKPIsSchema.parse({
       activeAssociates,
@@ -125,6 +222,7 @@ analyticsRouter.get('/dashboard', async (req, res, next) => {
       netPendingDisbursement: Number(pendingDisbursementAggregate._sum.totalNet ?? 0),
       applicationStatusCounts,
       windowDays: days,
+      trends,
     });
     res.json(payload);
   } catch (err) {

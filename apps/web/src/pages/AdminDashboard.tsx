@@ -23,6 +23,7 @@ import {
 import type {
   AuditSearchEntry,
   DashboardKPIs,
+  KpiTrend,
 } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { ROLE_LABELS, type Role } from '@/lib/roles';
@@ -35,6 +36,11 @@ import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import {
+  CountUpValue,
+  DeltaChip,
+  Sparkline,
+} from '@/components/ui/MetricCard';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 
@@ -511,6 +517,9 @@ interface Kpi {
   /** Destination route. When present, the tile becomes clickable and
    *  lifts on hover via the Card primitive's interactive prop. */
   to?: string;
+  /** 8-week micro-trend (sparkline + week-over-week delta chip),
+   *  present only when the API computed a matching series. */
+  trend?: KpiTrend & { deltaLabel: string };
 }
 
 function KpiSection({ kpis }: { kpis: DashboardKPIs | null }) {
@@ -536,6 +545,14 @@ function KpiSection({ kpis }: { kpis: DashboardKPIs | null }) {
   );
 }
 
+/** Attach a deltaLabel only when the API sent that series. */
+function withLabel(
+  trend: KpiTrend | undefined,
+  deltaLabel: string,
+): Kpi['trend'] {
+  return trend ? { ...trend, deltaLabel } : undefined;
+}
+
 function buildKpis(k: DashboardKPIs): Kpi[] {
   return [
     {
@@ -547,6 +564,8 @@ function buildKpis(k: DashboardKPIs): Kpi[] {
           : 'No one on the clock',
       icon: Users,
       to: '/people?status=ACTIVE',
+      // Series is weekly *hires* — the leading edge of headcount.
+      trend: withLabel(k.trends?.hires, 'hires vs last wk'),
     },
     {
       label: `Open shifts · next ${k.windowDays}d`,
@@ -554,6 +573,8 @@ function buildKpis(k: DashboardKPIs): Kpi[] {
       hint: k.openShiftsNext30d === 0 ? 'Schedule fully covered' : undefined,
       icon: Clock,
       to: '/scheduling',
+      // Series is shifts scheduled per week (all non-cancelled statuses).
+      trend: withLabel(k.trends?.shiftsScheduled, 'scheduled vs last wk'),
     },
     {
       label: 'Onboarding in flight',
@@ -564,6 +585,8 @@ function buildKpis(k: DashboardKPIs): Kpi[] {
           : 'I-9s up to date',
       icon: ClipboardList,
       to: '/onboarding',
+      // Series is new applications per week.
+      trend: withLabel(k.trends?.applications, 'new vs last wk'),
     },
     {
       label: `Net paid · last ${k.windowDays}d`,
@@ -598,8 +621,17 @@ function KpiTile({ kpi }: { kpi: Kpi }) {
           <Icon className="h-3.5 w-3.5 text-gold/70" aria-hidden="true" />
         </div>
         <div className="font-display text-3xl md:text-[2rem] text-gold-bright mt-3 leading-none tabular-nums">
-          {kpi.value}
+          <CountUpValue value={kpi.value} />
         </div>
+        {kpi.trend && (
+          <div className="mt-2 flex items-center gap-2 text-silver">
+            <Sparkline series={kpi.trend.series} />
+            <DeltaChip
+              delta={kpi.trend.delta}
+              deltaLabel={kpi.trend.deltaLabel}
+            />
+          </div>
+        )}
         {kpi.hint && (
           <div className="text-xs text-silver mt-2 truncate">{kpi.hint}</div>
         )}

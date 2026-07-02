@@ -2231,6 +2231,17 @@ export type J1UpsertInput = z.infer<typeof J1UpsertInputSchema>;
  *  Analytics — Phase 11
  * -------------------------------------------------------------------------- */
 
+/** One KPI's weekly trend: 8 UTC-week buckets (oldest → current; the last
+ *  bucket is the in-progress week) plus the change between the last two
+ *  complete weeks. */
+export const KpiTrendSchema = z.object({
+  /** Weekly values, oldest first; last bucket is the in-progress week. */
+  series: z.array(z.number()),
+  /** Last complete week minus the week before it (absolute change). */
+  delta: z.number(),
+});
+export type KpiTrend = z.infer<typeof KpiTrendSchema>;
+
 export const DashboardKPIsSchema = z.object({
   activeAssociates: z.number().int().nonnegative(),
   openShiftsNext30d: z.number().int().nonnegative(),
@@ -2248,6 +2259,10 @@ export const DashboardKPIsSchema = z.object({
    *  Default 30; overridable via ?days=N on /analytics/dashboard. The legacy
    *  field names retain "30d"/"Next30d" for back-compat. */
   windowDays: z.number().int().positive().default(30),
+  /** Optional weekly micro-trends keyed by series name (`hoursWorked`,
+   *  `shiftsScheduled`, `applications`, `hires`). All-optional so older
+   *  clients — and older servers — interop without a lockstep deploy. */
+  trends: z.record(KpiTrendSchema).optional(),
 });
 export type DashboardKPIs = z.infer<typeof DashboardKPIsSchema>;
 
