@@ -46,6 +46,7 @@ import {
 import { Badge } from '@/components/ui/Badge';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
+import { usePersistentState } from '@/lib/usePersistentState';
 
 const fmtMoney = (n: number) =>
   n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
@@ -91,7 +92,13 @@ interface Props {
 }
 
 export function GarnishmentsView({ canProcess }: Props) {
-  const [filter, setFilter] = useState<GarnishmentStatus | 'ALL'>('ACTIVE');
+  // Persisted status chip — a stored value no longer in STATUS_FILTERS
+  // falls back to the default instead of rendering an empty list silently.
+  const [filter, setFilter] = usePersistentState<GarnishmentStatus | 'ALL'>(
+    'alto:list.garnishments.status.v1',
+    'ACTIVE',
+    (v): v is GarnishmentStatus | 'ALL' => STATUS_FILTERS.some((f) => f.value === v),
+  );
   const [rows, setRows] = useState<Garnishment[] | null>(null);
   const [creating, setCreating] = useState(false);
   const [statusChange, setStatusChange] = useState<

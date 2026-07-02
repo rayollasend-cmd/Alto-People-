@@ -64,6 +64,7 @@ import {
 } from '@/components/ui/Table';
 import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
 import { cn } from '@/lib/cn';
+import { usePersistentState } from '@/lib/usePersistentState';
 
 // Filter value space: the real DocumentStatuses plus two synthetic buckets.
 // 'ACTION_NEEDED' rolls up the states that require HR to do something —
@@ -124,7 +125,13 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   );
   // Default to "Action needed" so HR lands on everything that requires them
   // (uploads to review + expired docs to renew), not just one slice of it.
-  const [filter, setFilter] = useState<DocFilter>('ACTION_NEEDED');
+  // Persisted — a stored chip that no longer exists in STATUS_FILTERS falls
+  // back to the default instead of rendering an unexplained empty queue.
+  const [filter, setFilter] = usePersistentState<DocFilter>(
+    'alto:list.documents.status.v1',
+    'ACTION_NEEDED',
+    (v): v is DocFilter => STATUS_FILTERS.some((f) => f.value === v),
+  );
   const [kindFilter, setKindFilter] = useState<DocumentKind | 'ALL'>('ALL');
   const [docs, setDocs] = useState<DocumentRecord[] | null>(null);
   // Unfiltered roll-up for the KPI / chip counts so they stay stable as

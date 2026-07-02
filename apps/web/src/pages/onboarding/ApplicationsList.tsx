@@ -68,6 +68,7 @@ import { BulkInviteDialog } from './BulkInviteDialog';
 import { NewApplicationDialog } from './NewApplicationDialog';
 import { NudgeDialog } from './NudgeDialog';
 import { cn } from '@/lib/cn';
+import { usePersistentState } from '@/lib/usePersistentState';
 
 const VIEW_OPTIONS = ['table', 'cards'] as const;
 type ApplicationsView = (typeof VIEW_OPTIONS)[number];
@@ -115,6 +116,27 @@ const STATUS_FILTERS: Array<{ value: StatusFilter; label: string }> = [
   { value: 'ARCHIVED', label: 'Archived' },
 ];
 
+// Every value setStatus can be handed — the chip row plus the legacy /
+// programmatic values ('ALL' via "Clear filters", raw statuses via banners
+// and bookmarks). Guards both the persisted value and URL junk.
+const STATUS_FILTER_VALUES: readonly StatusFilter[] = [
+  'ACTIVE',
+  'ARCHIVED',
+  'ALL',
+  'DRAFT',
+  'SUBMITTED',
+  'IN_REVIEW',
+  'APPROVED',
+  'REJECTED',
+];
+
+function isStatusFilter(v: unknown): v is StatusFilter {
+  return (
+    typeof v === 'string' &&
+    (STATUS_FILTER_VALUES as readonly string[]).includes(v)
+  );
+}
+
 const STALE_DAYS = 7;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -151,7 +173,19 @@ export function ApplicationsList() {
   // Default lands on ACTIVE so terminal applications (Approved/Rejected)
   // are hidden until the user explicitly clicks Archived. Legacy URLs
   // with ?status=ALL still pass through unchanged.
-  const status = (searchParams.get('status') as StatusFilter | null) ?? 'ACTIVE';
+  //
+  // The URL param stays the source of truth (bookmarks / deep links win),
+  // but the last chip the admin clicked is persisted so a clean URL lands
+  // on their previous slice instead of always resetting to ACTIVE.
+  const [storedStatus, setStoredStatus] = usePersistentState<StatusFilter>(
+    'alto:list.applications.status.v1',
+    'ACTIVE',
+    isStatusFilter,
+  );
+  const urlStatus = searchParams.get('status');
+  const status: StatusFilter = isStatusFilter(urlStatus)
+    ? urlStatus
+    : storedStatus;
   const clientId = searchParams.get('clientId') ?? '';
   const urlQ = searchParams.get('q') ?? '';
   const [qInput, setQInput] = useState(urlQ);
@@ -169,6 +203,9 @@ export function ApplicationsList() {
   }, [qInput]);
 
   const setStatus = (s: StatusFilter) => {
+    // Keep the persisted copy in sync so the choice survives the next visit
+    // (and so deleting the ACTIVE param below doesn't resurrect an old value).
+    setStoredStatus(s);
     const next = new URLSearchParams(searchParams);
     // Active is the implicit default — omit the param so the URL stays clean.
     if (s === 'ACTIVE') next.delete('status');

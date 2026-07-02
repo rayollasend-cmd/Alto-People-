@@ -115,6 +115,7 @@ import {
   type TableSortState,
 } from '@/components/ui';
 import { cn } from '@/lib/cn';
+import { usePersistentState } from '@/lib/usePersistentState';
 
 const STATUS_VARIANT: Record<
   DirectoryStatus,
@@ -168,17 +169,77 @@ const SEEDABLE_STATUSES = new Set<DirectoryStatus>([
   'INACTIVE',
 ]);
 
+// Validators for the persisted filters — a stored value from a removed
+// option falls back to the default instead of silently hiding rows.
+const isStatusFilter = (v: unknown): v is DirectoryStatus | '' =>
+  v === '' ||
+  (typeof v === 'string' && SEEDABLE_STATUSES.has(v as DirectoryStatus));
+
+type EmploymentTypeFilter = NonNullable<DirectoryFilters['employmentType']>;
+
+const EMPLOYMENT_TYPE_VALUES: readonly EmploymentTypeFilter[] = [
+  'W2_EMPLOYEE',
+  'CONTRACTOR_1099_INDIVIDUAL',
+  'CONTRACTOR_1099_BUSINESS',
+];
+
+const isEmploymentTypeFilter = (v: unknown): v is EmploymentTypeFilter | '' =>
+  v === '' ||
+  (typeof v === 'string' &&
+    (EMPLOYMENT_TYPE_VALUES as readonly string[]).includes(v));
+
 export function PeopleDirectory() {
   const queryClient = useQueryClient();
+  // Persisted list filters — status / workplace / employment type survive
+  // revisits ('' = All). Free-text search and the cascading location /
+  // department facets deliberately stay per-session.
+  const [status, setStatus] = usePersistentState<DirectoryStatus | ''>(
+    'alto:list.people.status.v1',
+    '',
+    isStatusFilter,
+  );
+  const [clientId, setClientId] = usePersistentState<string>(
+    'alto:list.people.client.v1',
+    '',
+    (v): v is string => typeof v === 'string',
+  );
+  const [employmentType, setEmploymentType] = usePersistentState<
+    EmploymentTypeFilter | ''
+  >('alto:list.people.employmentType.v1', '', isEmploymentTypeFilter);
+  const [locationId, setLocationId] = useState('');
+  const [departmentId, setDepartmentId] = useState('');
+  // ?q= seeds the search box (command-palette people results deep-link
+  // here) — initial value only; typing takes over from there.
+  const [q, setQ] = useState(
+    () => new URLSearchParams(window.location.search).get('q')?.trim() ?? '',
+  );
   // Seed the status filter from ?status= so dashboard tiles / cross-links can
   // deep-link straight to a filtered directory (e.g. /people?status=ACTIVE).
-  const [filters, setFilters] = useState<DirectoryFilters>(() => {
+  // The deep link beats the persisted value. Applied during the first render
+  // (React's adjust-state-while-rendering pattern) so the initial fetch
+  // already carries the right filter.
+  const urlSeedApplied = useRef(false);
+  if (!urlSeedApplied.current) {
+    urlSeedApplied.current = true;
     const raw = new URLSearchParams(window.location.search).get(
       'status',
     ) as DirectoryStatus | null;
-    return raw && SEEDABLE_STATUSES.has(raw) ? { status: raw } : {};
-  });
-  const [search, setSearch] = useState('');
+    if (raw && SEEDABLE_STATUSES.has(raw) && raw !== status) setStatus(raw);
+  }
+  const filters = useMemo<DirectoryFilters>(
+    () => ({
+      ...(q ? { q } : {}),
+      ...(status ? { status } : {}),
+      ...(clientId ? { clientId } : {}),
+      ...(locationId ? { locationId } : {}),
+      ...(departmentId ? { departmentId } : {}),
+      ...(employmentType ? { employmentType } : {}),
+    }),
+    [q, status, clientId, locationId, departmentId, employmentType],
+  );
+  const [search, setSearch] = useState(
+    () => new URLSearchParams(window.location.search).get('q') ?? '',
+  );
   // useDeferredValue keeps the search input itself snappy even when the
   // committed `search` change would cause an expensive React re-render
   // downstream (virtualizer measure pass, filter chip recompute). React
@@ -200,11 +261,8 @@ export function PeopleDirectory() {
   // the field snappy under load.
   useEffect(() => {
     const id = setTimeout(() => {
-      setFilters((f) => {
-        const trimmed = deferredSearch.trim();
-        if ((f.q ?? '') === trimmed) return f;
-        return { ...f, q: trimmed || undefined };
-      });
+      // Same-value sets of a primitive are no-ops, so no churn guard needed.
+      setQ(deferredSearch.trim());
     }, 250);
     return () => clearTimeout(id);
   }, [deferredSearch]);
@@ -230,12 +288,25 @@ export function PeopleDirectory() {
   // makes sense once a client is chosen. The locationId is cleared in the
   // Workplace onChange below so it can never dangle on a different client.
   const { data: locations = [] } = useQuery({
-    queryKey: ['client-locations', filters.clientId],
-    queryFn: async () =>
-      (await listClientLocations(filters.clientId!)).locations,
-    enabled: Boolean(filters.clientId),
+    queryKey: ['client-locations', clientId],
+    queryFn: async () => (await listClientLocations(clientId)).locations,
+    enabled: Boolean(clientId),
     staleTime: 5 * 60_000,
   });
+
+  // A persisted workplace filter can outlive its client. If the loaded
+  // client list doesn't contain it, the Select would display "All" while
+  // the server filter silently hides everyone — reset it instead.
+  useEffect(() => {
+    if (
+      clientId &&
+      clients.length > 0 &&
+      !clients.some((c) => c.id === clientId)
+    ) {
+      setClientId('');
+      setLocationId('');
+    }
+  }, [clientId, clients, setClientId]);
 
   // keepPreviousData makes filter/search changes show the old rows
   // (faded by isFetching) until the new ones arrive instead of flashing
@@ -295,12 +366,9 @@ export function PeopleDirectory() {
               label="Pending onboarding"
               value={stats.PENDING}
               tone={stats.PENDING > 0 ? 'text-warning' : 'text-silver'}
-              active={filters.status === 'PENDING'}
+              active={status === 'PENDING'}
               onClick={() =>
-                setFilters((f) => ({
-                  ...f,
-                  status: f.status === 'PENDING' ? undefined : 'PENDING',
-                }))
+                setStatus((s) => (s === 'PENDING' ? '' : 'PENDING'))
               }
             />
             <Kpi label="Inactive" value={stats.INACTIVE} tone="text-silver" />
@@ -337,13 +405,8 @@ export function PeopleDirectory() {
           </div>
           <FilterPicker
             label="Status"
-            value={filters.status ?? ''}
-            onChange={(v) =>
-              setFilters((f) => ({
-                ...f,
-                status: (v || undefined) as DirectoryStatus | undefined,
-              }))
-            }
+            value={status}
+            onChange={(v) => setStatus(v as DirectoryStatus | '')}
             options={[
               { value: '', label: 'All' },
               { value: 'ACTIVE', label: 'Active' },
@@ -353,28 +416,23 @@ export function PeopleDirectory() {
           />
           <FilterPicker
             label="Workplace"
-            value={filters.clientId ?? ''}
-            onChange={(v) =>
+            value={clientId}
+            onChange={(v) => {
               // Changing the workplace drops any location filter — a store
               // from the previous client would match nothing here.
-              setFilters((f) => ({
-                ...f,
-                clientId: v || undefined,
-                locationId: undefined,
-              }))
-            }
+              setClientId(v);
+              setLocationId('');
+            }}
             options={[
               { value: '', label: 'All' },
               ...clients.map((c) => ({ value: c.id, label: c.name })),
             ]}
           />
-          {filters.clientId && locations.length > 0 && (
+          {clientId && locations.length > 0 && (
             <FilterPicker
               label="Location"
-              value={filters.locationId ?? ''}
-              onChange={(v) =>
-                setFilters((f) => ({ ...f, locationId: v || undefined }))
-              }
+              value={locationId}
+              onChange={setLocationId}
               options={[
                 { value: '', label: 'All' },
                 ...locations.map((l) => ({ value: l.id, label: l.name })),
@@ -384,10 +442,8 @@ export function PeopleDirectory() {
           {departments.length > 0 && (
             <FilterPicker
               label="Department"
-              value={filters.departmentId ?? ''}
-              onChange={(v) =>
-                setFilters((f) => ({ ...f, departmentId: v || undefined }))
-              }
+              value={departmentId}
+              onChange={setDepartmentId}
               options={[
                 { value: '', label: 'All' },
                 ...departments.map((d) => ({ value: d.id, label: d.name })),
@@ -396,13 +452,8 @@ export function PeopleDirectory() {
           )}
           <FilterPicker
             label="Employment type"
-            value={filters.employmentType ?? ''}
-            onChange={(v) =>
-              setFilters((f) => ({
-                ...f,
-                employmentType: (v || undefined) as DirectoryFilters['employmentType'],
-              }))
-            }
+            value={employmentType}
+            onChange={(v) => setEmploymentType(v as EmploymentTypeFilter | '')}
             options={[
               { value: '', label: 'All' },
               { value: 'W2_EMPLOYEE', label: 'W-2' },

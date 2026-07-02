@@ -40,6 +40,7 @@ import { listClients, listClientLocations } from '@/lib/clientsApi';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { usePersistentState } from '@/lib/usePersistentState';
 import { timeAnomalyLabel } from '@/lib/timeLabels';
 import { fmtDateTime, fmtTime } from '@/lib/format';
 import {
@@ -231,7 +232,14 @@ function liveEntryToTimeEntry(e: ActiveDashboardEntry): TimeEntry {
 export function AdminTimeView({ canManage }: AdminTimeViewProps) {
   const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>('live');
-  const [filter, setFilter] = useState<TimeEntryStatus | 'ALL'>('COMPLETED');
+  // Persisted list filter — a reviewer who works the Approved slice gets it
+  // back next visit. A stored value no longer in STATUS_FILTERS falls back
+  // to the default instead of silently rendering an empty queue.
+  const [filter, setFilter] = usePersistentState<TimeEntryStatus | 'ALL'>(
+    'alto:list.time.status.v1',
+    'COMPLETED',
+    (v): v is TimeEntryStatus | 'ALL' => STATUS_FILTERS.some((f) => f.value === v),
+  );
   const [entries, setEntries] = useState<TimeEntry[] | null>(null);
   const [active, setActive] = useState<ActiveDashboardEntry[] | null>(null);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
@@ -245,8 +253,13 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
   const [fromYmd, setFromYmd] = useState<string>(defaultFromYmd());
   const [toYmd, setToYmd] = useState<string>(defaultToYmd());
   // Triage lens: show only flagged entries (client-side over the loaded
-  // window — same scope as everything else on this tab).
-  const [anomaliesOnly, setAnomaliesOnly] = useState(false);
+  // window — same scope as everything else on this tab). Persisted — the
+  // lit toggle button keeps the active lens obvious across visits.
+  const [anomaliesOnly, setAnomaliesOnly] = usePersistentState<boolean>(
+    'alto:list.time.anomaliesOnly.v1',
+    false,
+    (v): v is boolean => typeof v === 'boolean',
+  );
   // Server hit its row cap — the window has MORE rows than shown.
   const [truncated, setTruncated] = useState(false);
   const [exportBusy, setExportBusy] = useState<null | 'csv' | 'pdf'>(null);
