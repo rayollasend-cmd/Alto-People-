@@ -12,6 +12,7 @@ import {
   PanelLeftOpen,
   Rows3,
   Rows4,
+  Star,
   Sun,
   User,
   type LucideIcon,
@@ -27,6 +28,7 @@ import {
 } from '@/lib/modules';
 import { useAuth } from '@/lib/auth';
 import { useApprovalsCount } from '@/lib/useApprovalsCount';
+import { usePinnedModules, useRecentModules } from '@/lib/navPersonalization';
 import { useTheme } from '@/lib/theme';
 import { useDensity } from '@/lib/density';
 import { ROLE_LABELS } from '@/lib/roles';
@@ -102,11 +104,26 @@ export function Sidebar() {
   const visible = MODULES.filter((m) => can(m.requires));
   const activePath = useActiveNavPath();
   const approvalsCount = useApprovalsCount();
+  const { pinned, isPinned, togglePin } = usePinnedModules();
+  const recents = useRecentModules();
 
   const grouped: Partial<Record<ModuleGroup, ModuleNav[]>> = {};
   for (const m of visible) {
     (grouped[m.group] ??= []).push(m);
   }
+
+  // Personalized shortcuts above the groups: explicit pins first, then the
+  // three most-recent modules that aren't already pinned. Both restricted
+  // to what this user can actually see.
+  const byKey = new Map(visible.map((m) => [m.key, m]));
+  const pinnedModules = pinned
+    .map((k) => byKey.get(k))
+    .filter((m): m is ModuleNav => !!m);
+  const recentModules = recents
+    .filter((k) => !pinned.includes(k))
+    .map((k) => byKey.get(k))
+    .filter((m): m is ModuleNav => !!m)
+    .slice(0, 3);
 
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => readCollapsedGroups());
   const [railCollapsed, setRailCollapsed] = useState<boolean>(() => readRailCollapsed());
@@ -167,6 +184,48 @@ export function Sidebar() {
           railCollapsed={railCollapsed}
         />
 
+        {pinnedModules.length > 0 && (
+          <SidebarSection
+            label="Pinned"
+            collapsed={collapsedGroups.has('__pinned')}
+            onToggle={() => toggleGroup('__pinned')}
+            railCollapsed={railCollapsed}
+          >
+            {pinnedModules.map((m) => (
+              <PinnableRow
+                key={m.key}
+                module={m}
+                active={activePath === m.path}
+                railCollapsed={railCollapsed}
+                badge={m.key === 'approvals' ? approvalsCount : null}
+                pinned
+                onTogglePin={togglePin}
+              />
+            ))}
+          </SidebarSection>
+        )}
+
+        {recentModules.length > 0 && (
+          <SidebarSection
+            label="Recent"
+            collapsed={collapsedGroups.has('__recent')}
+            onToggle={() => toggleGroup('__recent')}
+            railCollapsed={railCollapsed}
+          >
+            {recentModules.map((m) => (
+              <PinnableRow
+                key={m.key}
+                module={m}
+                active={activePath === m.path}
+                railCollapsed={railCollapsed}
+                badge={m.key === 'approvals' ? approvalsCount : null}
+                pinned={false}
+                onTogglePin={togglePin}
+              />
+            ))}
+          </SidebarSection>
+        )}
+
         {GROUP_ORDER.map((group) => {
           const items = grouped[group];
           if (!items || items.length === 0) return null;
@@ -180,14 +239,14 @@ export function Sidebar() {
               railCollapsed={railCollapsed}
             >
               {items.map((m) => (
-                <SidebarLink
+                <PinnableRow
                   key={m.key}
-                  to={m.path}
+                  module={m}
                   active={activePath === m.path}
-                  label={m.label}
-                  icon={m.icon}
                   railCollapsed={railCollapsed}
                   badge={m.key === 'approvals' ? approvalsCount : null}
+                  pinned={isPinned(m.key)}
+                  onTogglePin={togglePin}
                 />
               ))}
             </SidebarSection>
@@ -291,6 +350,73 @@ function SidebarSection({
         )}
       </button>
       {!collapsed && <div className="mt-0.5">{children}</div>}
+    </div>
+  );
+}
+
+interface PinnableRowProps {
+  module: ModuleNav;
+  active: boolean;
+  railCollapsed: boolean;
+  badge?: number | null;
+  pinned: boolean;
+  onTogglePin: (key: ModuleNav['key']) => void;
+}
+
+/**
+ * A module row with a star-to-pin affordance. The star is a SIBLING of
+ * the link (absolutely positioned) — nesting a button inside the <a>
+ * would be invalid HTML and break AT. Hover-revealed on pointer devices;
+ * always visible on touch (there's no hover to reveal it with), and when
+ * already pinned so it can be unpinned.
+ */
+function PinnableRow({
+  module: m,
+  active,
+  railCollapsed,
+  badge,
+  pinned,
+  onTogglePin,
+}: PinnableRowProps) {
+  if (railCollapsed) {
+    // Collapsed rail is icon-only — no room for the star; pin management
+    // happens with the rail expanded.
+    return (
+      <SidebarLink
+        to={m.path}
+        active={active}
+        label={m.label}
+        icon={m.icon}
+        railCollapsed
+        badge={badge}
+      />
+    );
+  }
+  return (
+    <div className="relative group/pin">
+      <SidebarLink
+        to={m.path}
+        active={active}
+        label={m.label}
+        icon={m.icon}
+        railCollapsed={false}
+        badge={badge}
+      />
+      <button
+        type="button"
+        onClick={() => onTogglePin(m.key)}
+        aria-label={pinned ? `Unpin ${m.label}` : `Pin ${m.label}`}
+        aria-pressed={pinned}
+        className={cn(
+          'absolute right-3 top-1/2 -translate-y-1/2 grid h-6 w-6 place-items-center rounded transition-opacity',
+          'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright focus-visible:opacity-100',
+          pinned
+            ? 'text-gold opacity-100'
+            : 'text-silver/70 hover:text-gold opacity-100 can-hover:opacity-0 can-hover:group-hover/pin:opacity-100',
+        )}
+      >
+        <Star className={cn('h-3.5 w-3.5', pinned && 'fill-gold')} aria-hidden="true" />
+      </button>
     </div>
   );
 }

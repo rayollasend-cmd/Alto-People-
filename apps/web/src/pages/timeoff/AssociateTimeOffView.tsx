@@ -13,6 +13,7 @@ import {
   listMyRequests,
 } from '@/lib/timeOffApi';
 import { ApiError } from '@/lib/api';
+import { performWithUndo } from '@/lib/undoToast';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { Button } from '@/components/ui/Button';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -87,16 +88,27 @@ export function AssociateTimeOffView() {
     refresh();
   }, [refresh]);
 
-  const onCancel = async (id: string) => {
-    try {
-      await cancelMyRequest(id);
-      toast.success(t('timeoff.withdrawnToast'));
-      refresh();
-    } catch (err) {
-      toast.error(t('timeoff.cancelFailed'), {
-        description: err instanceof Error ? err.message : String(err),
-      });
-    }
+  const onCancel = (id: string) => {
+    // Gmail-style undo: flip the row to Withdrawn immediately, commit to
+    // the server only after the 5s undo window — no confirm dialog, no
+    // lost requests from a mis-tap.
+    const before = requests;
+    setRequests(
+      (prev) =>
+        prev?.map((r) =>
+          r.id === id ? { ...r, status: 'CANCELLED' as const } : r,
+        ) ?? prev,
+    );
+    performWithUndo({
+      message: t('timeoff.withdrawnToast'),
+      undoLabel: t('common.undo'),
+      onCommit: async () => {
+        await cancelMyRequest(id);
+        refresh();
+      },
+      onUndo: () => setRequests(before),
+      commitFailedMessage: t('timeoff.cancelFailed'),
+    });
   };
 
   return (

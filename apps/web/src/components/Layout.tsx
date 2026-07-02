@@ -15,6 +15,8 @@ import { InstallPrompt } from './InstallPrompt';
 import { NavigationProgress } from './NavigationProgress';
 import { RouteAnnouncer } from './RouteAnnouncer';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { moduleKeyForPath } from '@/lib/modules';
+import { recordRecentModule } from '@/lib/navPersonalization';
 
 // Per-route Suspense fallback shown while a lazy-loaded page chunk streams
 // in. A 40vh-centered spinner used to feel like "something is wrong" on
@@ -54,6 +56,13 @@ export function Layout() {
   const navigationType = useNavigationType();
   const mainRef = useRef<HTMLElement>(null);
   const prevKey = useRef(location.key);
+
+  // Feed the sidebar's "Recent" section — every module navigation bumps
+  // that module to the top of the recents list.
+  useEffect(() => {
+    const key = moduleKeyForPath(location.pathname);
+    if (key) recordRecentModule(key);
+  }, [location.pathname]);
 
   useEffect(() => {
     const main = mainRef.current;

@@ -40,6 +40,8 @@ const en = {
   'common.cancel': 'Cancel',
   'common.search': 'Search…',
   'common.language': 'Language',
+  'common.undo': 'Undo',
+  'nav.pinned': 'Pinned',
 
   // Associate dashboard
   'dash.greeting': 'Hey {name} 👋',
@@ -264,6 +266,8 @@ const es: Record<MessageKey, string> = {
   'common.cancel': 'Cancelar',
   'common.search': 'Buscar…',
   'common.language': 'Idioma',
+  'common.undo': 'Deshacer',
+  'nav.pinned': 'Fijados',
 
   'dash.greeting': 'Hola {name} 👋',
   'dash.subtitle': 'Esto es lo que hay para hoy.',

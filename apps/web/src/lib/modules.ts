@@ -705,6 +705,18 @@ export const DASHBOARD_NAV = {
  * owns the URL, while detail pages (/clients/:id) still highlight their
  * parent module.
  */
+/** Module that owns a pathname — same longest-prefix rule as
+ *  useActiveNavPath, returning the key instead of the path. Null for
+ *  the dashboard and non-module routes. */
+export function moduleKeyForPath(pathname: string): ModuleKey | null {
+  let best: ModuleNav | null = null;
+  for (const m of MODULES) {
+    const hit = pathname === m.path || pathname.startsWith(`${m.path}/`);
+    if (hit && (!best || m.path.length > best.path.length)) best = m;
+  }
+  return best?.key ?? null;
+}
+
 export function useActiveNavPath(): string | null {
   const { pathname } = useLocation();
   let best: string | null = null;

@@ -11,6 +11,7 @@ import {
 } from '@/lib/modules';
 import { useAuth } from '@/lib/auth';
 import { useApprovalsCount } from '@/lib/useApprovalsCount';
+import { usePinnedModules } from '@/lib/navPersonalization';
 import { useI18n, type Lang } from '@/lib/i18n';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { cn } from '@/lib/cn';
@@ -34,7 +35,12 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
   const { can } = useAuth();
   const { lang, setLang, t } = useI18n();
   const approvalsCount = useApprovalsCount();
+  const { pinned } = usePinnedModules();
   const visible = MODULES.filter((m) => can(m.requires));
+  const byKey = new Map(visible.map((m) => [m.key, m]));
+  const pinnedModules = pinned
+    .map((k) => byKey.get(k))
+    .filter((m): m is ModuleNav => !!m);
   const activePath = useActiveNavPath();
   const panelRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -148,6 +154,23 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
             label={DASHBOARD_NAV.label}
             icon={DASHBOARD_NAV.icon}
           />
+          {pinnedModules.length > 0 && (
+            <div className="mt-3">
+              <div className="px-4 py-1 text-[10px] font-semibold uppercase tracking-widest text-silver/80">
+                {t('nav.pinned')}
+              </div>
+              {pinnedModules.map((m) => (
+                <MobileLink
+                  key={`pin-${m.key}`}
+                  to={m.path}
+                  active={activePath === m.path}
+                  label={m.label}
+                  icon={m.icon}
+                  badge={m.key === 'approvals' ? approvalsCount : null}
+                />
+              ))}
+            </div>
+          )}
           {GROUP_ORDER.map((group) => {
             const items = grouped[group];
             if (!items || items.length === 0) return null;
