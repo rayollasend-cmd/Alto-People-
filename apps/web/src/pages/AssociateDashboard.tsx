@@ -32,7 +32,8 @@ import {
   PullToRefreshIndicator,
   usePullToRefresh,
 } from '@/lib/usePullToRefresh';
-import { hapticSuccess } from '@/lib/haptics';
+import { hapticSuccess, hapticConfirm } from '@/lib/haptics';
+import { getPushStatus, subscribeToPush } from '@/lib/push';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { OnboardingBanner } from '@/components/OnboardingBanner';
 import { cn } from '@/lib/cn';
@@ -135,6 +136,7 @@ export function AssociateDashboard() {
       />
 
       <OnboardingBanner />
+      <EnablePushCard />
 
       {/* Top row — clock-in and next shift get the spotlight. */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4 mb-4">
@@ -185,6 +187,71 @@ export function AssociateDashboard() {
 }
 
 /* ---------------------------- helpers / cards ----------------------------- */
+
+const PUSH_DISMISS_KEY = 'alto:pushCard.dismissed.v1';
+
+/**
+ * One-tap opt-in for lock-screen notifications. Only renders when push is
+ * actually available here (supported browser, permission not denied, not
+ * already subscribed) and the user hasn't dismissed it — most sessions
+ * never see it. The permission prompt fires from the tap, as required.
+ */
+function EnablePushCard() {
+  const [status, setStatus] = useState<'hidden' | 'ready' | 'working'>('hidden');
+
+  useEffect(() => {
+    let cancelled = false;
+    if (localStorage.getItem(PUSH_DISMISS_KEY)) return;
+    getPushStatus().then((s) => {
+      if (!cancelled && s === 'available') setStatus('ready');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (status === 'hidden') return null;
+
+  const enable = async () => {
+    setStatus('working');
+    try {
+      await subscribeToPush();
+      hapticConfirm();
+      toast.success("Notifications on — you'll hear about shifts even with the app closed.");
+      setStatus('hidden');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not enable notifications.');
+      setStatus('ready');
+    }
+  };
+  const dismiss = () => {
+    try {
+      localStorage.setItem(PUSH_DISMISS_KEY, '1');
+    } catch {
+      // Storage unavailable — the card just reappears next session.
+    }
+    setStatus('hidden');
+  };
+
+  return (
+    <div className="mb-4 p-4 rounded-lg border border-gold/40 bg-gold/5 flex items-center justify-between gap-3 flex-wrap">
+      <div className="min-w-0">
+        <div className="text-white font-medium">Get shift alerts on your lock screen</div>
+        <p className="text-xs text-silver mt-0.5">
+          New shifts, swaps, and reminders — even when the app is closed.
+        </p>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        <Button size="sm" onClick={enable} loading={status === 'working'}>
+          Turn on
+        </Button>
+        <Button variant="ghost" size="sm" onClick={dismiss}>
+          Not now
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 // Same definition of "next" as the My Schedule page (endsAt >= now): an
 // in-progress shift IS the next shift until it ends. The old startsAt-based

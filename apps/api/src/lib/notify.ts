@@ -45,6 +45,7 @@ import {
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { send } from './notifications.js';
+import { sendPushToUser } from './webPush.js';
 import { onboardingCompleteTemplate } from './emailTemplates.js';
 import { env } from '../config/env.js';
 
@@ -197,7 +198,17 @@ export function emailUserForCategory(
   return track(
     (async () => {
       const muted = await isEmailMutedForCategory(userId, opts.category);
-      if (!muted) await sendEmailNotification(userId, email, opts);
+      if (muted) return;
+      // Email + push ride the same mute switch: "don't bother me about
+      // this category" means neither inbox nor lock screen.
+      await Promise.all([
+        sendEmailNotification(userId, email, opts),
+        sendPushToUser(userId, {
+          title: opts.subject ?? 'Alto People',
+          body: opts.body,
+          url: opts.linkUrl,
+        }),
+      ]);
     })().catch((err: unknown) => {
       console.warn(
         '[notify] emailUserForCategory failed:',
@@ -242,6 +253,13 @@ export function notifyUser(
         const muted = await isEmailMutedForCategory(userId, opts.category);
         if (!muted) {
           void sendEmailNotification(userId, u.email, opts);
+          void track(
+            sendPushToUser(userId, {
+              title: opts.subject ?? 'Alto People',
+              body: opts.body,
+              url: opts.linkUrl,
+            }),
+          );
         }
       }
     })().catch((err: unknown) => {

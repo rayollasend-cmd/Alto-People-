@@ -18,7 +18,7 @@
 // activate handler evicts the previous cache instead of leaving stale
 // entries (e.g. an old index.html with chunk hashes from a prior
 // deploy that no longer exist on the server) lying around.
-const CACHE_NAME = 'alto-shell-v12';
+const CACHE_NAME = 'alto-shell-v13';
 const SHELL = [
   '/',
   '/index.html',
@@ -118,6 +118,50 @@ function isApiPath(url) {
     p.startsWith('/api')
   );
 }
+
+// ---- Web push -------------------------------------------------------------
+// Payload contract (set by the API's push sender): JSON
+//   { title, body, url? }  — url is a relative in-app path to open on tap.
+// Everything is defensive: a malformed payload still shows SOMETHING so a
+// user-visible push is never silently dropped (required by Chrome anyway
+// when userVisibleOnly is true).
+
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = { title: 'Alto People', body: event.data ? event.data.text() : '' };
+  }
+  const title = data.title || 'Alto People';
+  const options = {
+    body: data.body || '',
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    data: { url: data.url || '/' },
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || '/';
+  event.waitUntil(
+    self.clients
+      .matchAll({ type: 'window', includeUncontrolled: true })
+      .then((clientList) => {
+        // Focus an existing app window and navigate it, else open fresh.
+        for (const client of clientList) {
+          if ('focus' in client) {
+            client.focus();
+            if ('navigate' in client) return client.navigate(url);
+            return undefined;
+          }
+        }
+        return self.clients.openWindow(url);
+      }),
+  );
+});
 
 self.addEventListener('fetch', (event) => {
   const req = event.request;

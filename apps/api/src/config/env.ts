@@ -54,6 +54,14 @@ const EnvSchema = z.object({
   // Optional: real Resend API key. If unset, EMAIL notifications stay
   // stubbed — the body (with magic link) prints to the API console and a
   // STUB-EMAIL-... ref is returned so the UI flow still works end-to-end.
+  // Web push (VAPID). All optional — with keys absent, push is cleanly
+  // "not configured": the public-key endpoint 404s so clients never
+  // subscribe, and the sender no-ops. Generate once with
+  // `npx web-push generate-vapid-keys`; rotating keys orphans every
+  // outstanding subscription (clients re-subscribe on next visit).
+  VAPID_PUBLIC_KEY: z.string().optional(),
+  VAPID_PRIVATE_KEY: z.string().optional(),
+  VAPID_SUBJECT: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
   // Sender shown in real Resend emails. Required only when RESEND_API_KEY is set.
   // Must match Resend's accepted formats:

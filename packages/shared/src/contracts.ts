@@ -3857,3 +3857,26 @@ export const AssociateTransferResponseSchema = z.object({
 });
 export type AssociateTransferResponse = z.infer<typeof AssociateTransferResponseSchema>;
 
+/* ===== Web push subscriptions ============================================ */
+
+/** Browser PushSubscription payload — stored per user; the API pushes
+ *  through it whenever a bell notification is created. */
+export const PushSubscribeInputSchema = z.object({
+  endpoint: z.string().url().max(1000),
+  keys: z.object({
+    p256dh: z.string().min(1).max(300),
+    auth: z.string().min(1).max(100),
+  }),
+});
+export type PushSubscribeInput = z.infer<typeof PushSubscribeInputSchema>;
+
+export const PushUnsubscribeInputSchema = z.object({
+  endpoint: z.string().url().max(1000),
+});
+export type PushUnsubscribeInput = z.infer<typeof PushUnsubscribeInputSchema>;
+
+export const PushPublicKeyResponseSchema = z.object({
+  publicKey: z.string(),
+});
+export type PushPublicKeyResponse = z.infer<typeof PushPublicKeyResponseSchema>;
+

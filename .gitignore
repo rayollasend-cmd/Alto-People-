@@ -51,3 +51,6 @@ apps/web/public/face-models/
 
 # Local Claude Code agent state
 .claude/
+
+# Playwright artifacts
+apps/web/e2e-results/
