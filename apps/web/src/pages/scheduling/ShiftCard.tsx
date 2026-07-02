@@ -107,7 +107,7 @@ export function ShiftCard({
         onClick={toggle}
         aria-expanded={expanded}
         aria-controls={detailId}
-        className="w-full flex items-center justify-between gap-4 p-4 text-left rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+        className="w-full flex items-center justify-between gap-4 p-4 text-left rounded-lg transition-colors active:bg-navy-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
       >
         <div className="min-w-0">
           <div className="text-white font-medium">

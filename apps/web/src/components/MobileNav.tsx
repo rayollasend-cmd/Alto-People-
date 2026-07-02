@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Briefcase, X, type LucideIcon } from 'lucide-react';
+import { Briefcase, Search, X, type LucideIcon } from 'lucide-react';
 import {
   DASHBOARD_NAV,
   GROUP_LABEL,
@@ -22,9 +22,12 @@ const GROUP_ORDER: Array<Exclude<ModuleGroup, 'core'>> = [
 interface MobileNavProps {
   open: boolean;
   onClose: () => void;
+  /** Opens the command palette (the Topbar trigger is desktop-only, so
+   *  this drawer entry is mobile's ONLY route into search). */
+  onOpenCommandPalette?: () => void;
 }
 
-export function MobileNav({ open, onClose }: MobileNavProps) {
+export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProps) {
   const { can } = useAuth();
   const visible = MODULES.filter((m) => can(m.requires));
   const activePath = useActiveNavPath();
@@ -121,6 +124,19 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
         </div>
 
         <nav className="flex-1 overflow-y-auto py-2" onClick={onClose}>
+          {onOpenCommandPalette && (
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onOpenCommandPalette();
+              }}
+              className="mx-2 my-0.5 flex w-[calc(100%-1rem)] items-center gap-2.5 rounded-md px-3 py-2.5 min-h-11 text-sm text-silver hover:text-white hover:bg-navy-secondary/50 active:bg-navy-secondary/60 transition-colors"
+            >
+              <Search className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="truncate">Search…</span>
+            </button>
+          )}
           <MobileLink
             to={DASHBOARD_NAV.path}
             active={activePath === DASHBOARD_NAV.path}

@@ -30,7 +30,12 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
             'appearance-none flex w-full rounded-md border bg-navy-secondary/40 transition-colors',
             'border-navy-secondary hover:border-silver/40 focus:border-gold focus:outline-none focus:ring-2 focus:ring-gold/40',
             'disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-navy-secondary text-white',
-            sm ? 'h-8 pl-2.5 pr-7 text-xs' : 'h-10 pl-3 pr-9 text-sm',
+            // Touch: 44px tall and 16px text regardless of size — a 32px
+            // select with 12px text is both hard to hit and triggers the
+            // iOS focus-zoom. Desktop keeps the compact variants.
+            sm
+              ? 'h-11 md:h-8 pl-2.5 pr-7 text-base md:text-xs'
+              : 'h-11 md:h-10 pl-3 pr-9 text-base md:text-sm',
             invalid && 'border-alert hover:border-alert focus:border-alert focus:ring-alert/40',
             className,
           )}

@@ -34,6 +34,10 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { listMyRequests } from '@/lib/timeOffApi';
+import {
+  PullToRefreshIndicator,
+  usePullToRefresh,
+} from '@/lib/usePullToRefresh';
 import { AvailabilityEditor } from './AvailabilityEditor';
 import { SwapMarketplace } from './SwapMarketplace';
 import { ShiftCard, shiftMinutes } from './ShiftCard';
@@ -166,6 +170,7 @@ export function AssociateScheduleView() {
     setRefreshNonce((v) => v + 1);
     setRefreshing(false);
   };
+  const pullState = usePullToRefresh(onRefresh);
 
   // Split at "now" (ticks once a minute) into upcoming (ascending) and past
   // (descending), then group the upcoming list by store-local day. Week
@@ -249,6 +254,7 @@ export function AssociateScheduleView() {
 
   return (
     <div className="mx-auto">
+      <PullToRefreshIndicator state={pullState} />
       <PageHeader title="My schedule" subtitle="Your published shifts." />
 
       {loaded && !isEmpty && (
@@ -388,7 +394,7 @@ export function AssociateScheduleView() {
           <button
             type="button"
             onClick={() => setShowPast((v) => !v)}
-            className="text-xs uppercase tracking-wider text-silver/80 hover:text-white transition-colors"
+            className="inline-flex items-center min-h-11 md:min-h-0 text-xs uppercase tracking-wider text-silver/80 hover:text-white active:text-white transition-colors"
           >
             {showPast ? 'Hide' : 'Show'} recent shifts ({past.length + (history?.length ?? 0)})
           </button>
@@ -544,7 +550,7 @@ function OpenShiftsSection() {
                     type="button"
                     onClick={() => withdraw(s)}
                     disabled={busyId === s.id}
-                    className="text-xs text-silver/70 hover:text-white underline underline-offset-2"
+                    className="inline-flex items-center min-h-11 md:min-h-0 px-2 -mx-2 text-xs text-silver/70 hover:text-white active:text-white underline underline-offset-2"
                   >
                     Withdraw
                   </button>
@@ -691,7 +697,7 @@ function CalendarSubscribeCard() {
             </Button>
             <a
               href={feed.webcalUrl}
-              className="inline-flex items-center gap-1 text-xs text-gold hover:text-gold-bright underline underline-offset-2"
+              className="inline-flex items-center gap-1 min-h-11 md:min-h-0 text-xs text-gold hover:text-gold-bright active:text-gold-bright underline underline-offset-2"
             >
               <ExternalLink className="h-3 w-3" />
               Open in Apple Calendar
@@ -699,7 +705,7 @@ function CalendarSubscribeCard() {
             <button
               type="button"
               onClick={() => setConfirmReset(true)}
-              className="inline-flex items-center gap-1 text-xs text-silver/70 hover:text-white underline underline-offset-2 transition-colors"
+              className="inline-flex items-center gap-1 min-h-11 md:min-h-0 text-xs text-silver/70 hover:text-white active:text-white underline underline-offset-2 transition-colors"
             >
               <RotateCcw className="h-3 w-3" />
               Reset link

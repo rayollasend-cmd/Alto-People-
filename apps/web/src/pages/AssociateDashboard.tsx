@@ -28,6 +28,10 @@ import { getMyBalance } from '@/lib/timeOffApi';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
+import {
+  PullToRefreshIndicator,
+  usePullToRefresh,
+} from '@/lib/usePullToRefresh';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { OnboardingBanner } from '@/components/OnboardingBanner';
 import { cn } from '@/lib/cn';
@@ -91,6 +95,7 @@ export function AssociateDashboard() {
     refreshAll();
   }, [refreshAll]);
 
+  const pullState = usePullToRefresh(refreshAll);
   const isClockedIn = !!active?.active;
 
   const handleClockToggle = async () => {
@@ -120,6 +125,7 @@ export function AssociateDashboard() {
 
   return (
     <div className="mx-auto">
+      <PullToRefreshIndicator state={pullState} />
       <PageHeader
         title={<>Hey {greetingName} 👋</>}
         subtitle="Here's what's on for today."
@@ -317,7 +323,7 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
           </p>
           <Link
             to="/scheduling"
-            className="text-sm text-gold hover:text-gold-bright mt-3 inline-flex items-center gap-1"
+            className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 min-h-11 md:min-h-0"
           >
             View schedule
             <ArrowRight className="h-3.5 w-3.5" />
@@ -353,7 +359,7 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
         )}
         <Link
           to="/scheduling"
-          className="text-sm text-gold hover:text-gold-bright mt-3 inline-flex items-center gap-1"
+          className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 min-h-11 md:min-h-0"
         >
           See full schedule
           <ArrowRight className="h-3.5 w-3.5" />
@@ -417,7 +423,7 @@ function PaystubCard({
         <button
           type="button"
           onClick={onView}
-          className="text-sm text-gold hover:text-gold-bright mt-3 inline-flex items-center gap-1"
+          className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 min-h-11 md:min-h-0"
         >
           View pay history
           <ArrowRight className="h-3.5 w-3.5" />
@@ -469,7 +475,7 @@ function TimeOffCard({
           <button
             type="button"
             onClick={onView}
-            className="text-sm text-gold hover:text-gold-bright mt-3 inline-flex items-center gap-1"
+            className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 min-h-11 md:min-h-0"
           >
             Open time off
             <ArrowRight className="h-3.5 w-3.5" />
@@ -510,7 +516,7 @@ function TimeOffCard({
         <button
           type="button"
           onClick={onView}
-          className="text-sm text-gold hover:text-gold-bright mt-3 inline-flex items-center gap-1"
+          className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 min-h-11 md:min-h-0"
         >
           Request or view balance
           <ArrowRight className="h-3.5 w-3.5" />
@@ -536,7 +542,7 @@ function QuickActions() {
           <Link
             key={to}
             to={to}
-            className="group flex items-center gap-2 px-3 py-3 rounded-md border border-navy-secondary bg-navy hover:border-gold/50 hover:bg-navy/80 transition-colors text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+            className="group flex items-center gap-2 px-3 py-3 min-h-12 rounded-md border border-navy-secondary bg-navy hover:border-gold/50 hover:bg-navy/80 active:bg-navy-secondary/60 active:border-gold/50 transition-colors text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
           >
             <Icon className="h-4 w-4 text-silver group-hover:text-gold transition-colors" aria-hidden="true" />
             <span className="flex-1 truncate">{label}</span>

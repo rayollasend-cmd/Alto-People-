@@ -133,9 +133,12 @@ export function AvailabilityEditor() {
               {drafts.map((w, idx) => (
                 <li
                   key={idx}
+                  // Phones: day+Remove on one row, the time range on the
+                  // next — the desktop single-line 12-col layout crammed
+                  // four controls into ~328px. sm+ restores one line.
                   className="grid grid-cols-12 gap-2 items-center"
                 >
-                  <div className="col-span-3">
+                  <div className="col-span-8 sm:col-span-3">
                     <Select
                       value={w.dayOfWeek}
                       onChange={(e) =>
@@ -150,28 +153,30 @@ export function AvailabilityEditor() {
                       ))}
                     </Select>
                   </div>
+                  <div className="col-span-4 sm:order-last sm:col-span-2 text-right">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => removeWindow(idx)}
+                      className="text-silver/70 hover:text-alert hover:bg-transparent"
+                    >
+                      Remove
+                    </Button>
+                  </div>
                   <input
                     type="time"
                     value={w.start}
                     onChange={(e) => updateWindow(idx, { start: e.target.value })}
-                    className="col-span-3 px-2 py-1.5 rounded bg-navy-secondary/60 border border-navy-secondary text-white text-sm"
+                    className="col-span-5 sm:col-span-3 px-2 py-1.5 min-h-11 md:min-h-0 rounded bg-navy-secondary/60 border border-navy-secondary text-white text-base md:text-sm"
                   />
-                  <span className="col-span-1 text-center text-silver">–</span>
+                  <span className="col-span-2 sm:col-span-1 text-center text-silver">–</span>
                   <input
                     type="time"
                     value={w.end}
                     onChange={(e) => updateWindow(idx, { end: e.target.value })}
-                    className="col-span-3 px-2 py-1.5 rounded bg-navy-secondary/60 border border-navy-secondary text-white text-sm"
+                    className="col-span-5 sm:col-span-3 px-2 py-1.5 min-h-11 md:min-h-0 rounded bg-navy-secondary/60 border border-navy-secondary text-white text-base md:text-sm"
                   />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="xs"
-                    onClick={() => removeWindow(idx)}
-                    className="col-span-2 text-silver/70 hover:text-alert hover:bg-transparent"
-                  >
-                    Remove
-                  </Button>
                 </li>
               ))}
             </ul>
@@ -295,7 +300,9 @@ function DaysOffEditor() {
                 type="button"
                 onClick={() => remove(x.id)}
                 aria-label={`Remove day off ${x.date}`}
-                className="text-silver/60 hover:text-alert ml-0.5"
+                // Bare × glyph was a ~14px tap target; pad the hit area
+                // without inflating the chip visually.
+                className="grid place-items-center h-9 w-9 -my-2 -mr-2 text-silver/60 hover:text-alert active:text-alert rounded"
               >
                 ×
               </button>
@@ -316,7 +323,7 @@ function DaysOffEditor() {
           min={minDate}
           onChange={(e) => setDate(e.target.value)}
           aria-label="Day off date"
-          className="px-2 py-1.5 rounded bg-navy-secondary/60 border border-navy-secondary text-white text-sm"
+          className="px-2 py-1.5 min-h-11 md:min-h-0 rounded bg-navy-secondary/60 border border-navy-secondary text-white text-base md:text-sm"
         />
         <input
           type="text"
@@ -325,7 +332,7 @@ function DaysOffEditor() {
           maxLength={200}
           placeholder="Reason (optional)"
           aria-label="Day off reason"
-          className="px-2 py-1.5 rounded bg-navy-secondary/60 border border-navy-secondary text-white text-sm w-44"
+          className="px-2 py-1.5 min-h-11 md:min-h-0 rounded bg-navy-secondary/60 border border-navy-secondary text-white text-base md:text-sm w-44"
         />
         <Button type="button" variant="outline" size="sm" onClick={add} disabled={!date || saving}>
           Add day off

@@ -322,8 +322,9 @@ export function ScheduleMonthView({
                 count > 0 ? `, ${count} shift${count === 1 ? '' : 's'}` : ''
               }${isBlocked ? ', unavailable' : ''}`}
               className={[
-                'rounded-md py-1.5 flex flex-col items-center gap-0.5 border transition-colors',
-                'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                // py-2.5 on touch lifts the cell to ~44px tap height.
+                'rounded-md py-2.5 md:py-1.5 flex flex-col items-center gap-0.5 border transition-colors',
+                'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright active:bg-navy-secondary/50',
                 // Steel selected state, same idiom as SegmentedControl.
                 // Blocked days get a hatched-feel muted fill.
                 isSelected

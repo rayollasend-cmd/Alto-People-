@@ -2,6 +2,29 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  /* Native-app touch feel. The gray/blue tap flash is the loudest
+     "this is a website" tell on phones — our components carry their own
+     active states instead. text-size-adjust stops mobile browsers from
+     inflating text after orientation changes. */
+  html {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+  /* touch-action: manipulation removes the double-tap-to-zoom delay on
+     every interactive control without disabling pinch-zoom on content. */
+  a,
+  button,
+  input,
+  select,
+  textarea,
+  [role='button'],
+  [role='tab'] {
+    touch-action: manipulation;
+  }
+}
+
 :root {
   /* Brand tokens — RGB triplets so Tailwind can apply <alpha-value>.
      Source: Alto HR brand palette.
