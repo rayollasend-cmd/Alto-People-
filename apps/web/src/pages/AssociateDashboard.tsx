@@ -22,20 +22,23 @@ import { useAuth } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
 import { clockIn, clockOut, getActiveTimeEntry, tryGetGeolocation } from '@/lib/timeApi';
 import { listMyShifts } from '@/lib/schedulingApi';
-import { fmtDateTz, fmtTimeTz, fmtWeekdayTz, zonedDayKey } from '@/lib/format';
+import { fmtDate, fmtRelativeDayTz, fmtShiftRangeTz, fmtTime } from '@/lib/format';
 import { listMyPayrollItems } from '@/lib/payrollApi';
 import { getMyBalance } from '@/lib/timeOffApi';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
+import {
+  PullToRefreshIndicator,
+  usePullToRefresh,
+} from '@/lib/usePullToRefresh';
+import { hapticSuccess } from '@/lib/haptics';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { OnboardingBanner } from '@/components/OnboardingBanner';
 import { cn } from '@/lib/cn';
 
 const fmtMoney = (n: number) =>
   n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
-
-const HOUR_MS = 60 * 60 * 1000;
 
 export function AssociateDashboard() {
   const { user } = useAuth();
@@ -45,6 +48,12 @@ export function AssociateDashboard() {
   const [nextShift, setNextShift] = useState<Shift | null | undefined>(undefined);
   const [latestPaystub, setLatestPaystub] = useState<PayrollItem | null | undefined>(undefined);
   const [balances, setBalances] = useState<TimeOffBalance[] | null | undefined>(undefined);
+  const [failed, setFailed] = useState({
+    clock: false,
+    shift: false,
+    pay: false,
+    timeOff: false,
+  });
   const [clocking, setClocking] = useState(false);
 
   const greetingName =
@@ -52,13 +61,18 @@ export function AssociateDashboard() {
 
   const refreshAll = useCallback(async () => {
     // Each fetch is independent; one failing shouldn't blank out the others.
-    // 403s are fully expected for non-associate roles that hit this view by
-    // mistake (the parent gates by role, but defensive doesn't cost much).
-    const settle = <T,>(p: Promise<T>): Promise<T | null> =>
-      p.catch((err) => {
-        if (err instanceof ApiError && (err.status === 403 || err.status === 404)) return null;
-        return null;
-      });
+    // 403/404 are fully expected for accounts without the linked records
+    // (non-associate roles hitting this view, no payroll yet) and render as
+    // genuine empty states. Anything else — network down, 500 — must NOT
+    // masquerade as "Nothing scheduled": the card shows a retry instead.
+    const settle = <T,>(p: Promise<T>): Promise<{ value: T | null; failed: boolean }> =>
+      p.then(
+        (value) => ({ value, failed: false }),
+        (err) => ({
+          value: null,
+          failed: !(err instanceof ApiError && (err.status === 403 || err.status === 404)),
+        }),
+      );
 
     const [a, shifts, pay, bal] = await Promise.all([
       settle(getActiveTimeEntry()),
@@ -66,16 +80,23 @@ export function AssociateDashboard() {
       settle(listMyPayrollItems()),
       settle(getMyBalance()),
     ]);
-    setActive(a ?? null);
-    setNextShift(pickNextShift(shifts?.shifts ?? []));
-    setLatestPaystub((pay?.items ?? [])[0] ?? null);
-    setBalances(bal?.balances ?? []);
+    setActive(a.value ?? null);
+    setNextShift(pickNextShift(shifts.value?.shifts ?? []));
+    setLatestPaystub((pay.value?.items ?? [])[0] ?? null);
+    setBalances(bal.value?.balances ?? []);
+    setFailed({
+      clock: a.failed,
+      shift: shifts.failed,
+      pay: pay.failed,
+      timeOff: bal.failed,
+    });
   }, []);
 
   useEffect(() => {
     refreshAll();
   }, [refreshAll]);
 
+  const pullState = usePullToRefresh(refreshAll);
   const isClockedIn = !!active?.active;
 
   const handleClockToggle = async () => {
@@ -88,9 +109,11 @@ export function AssociateDashboard() {
       const body = geo ? { geo } : {};
       if (isClockedIn) {
         await clockOut(body);
+        hapticSuccess();
         toast.success('Clocked out.');
       } else {
         await clockIn(body);
+        hapticSuccess();
         toast.success('Clocked in.');
       }
       await refreshAll();
@@ -105,6 +128,7 @@ export function AssociateDashboard() {
 
   return (
     <div className="mx-auto">
+      <PullToRefreshIndicator state={pullState} />
       <PageHeader
         title={<>Hey {greetingName} 👋</>}
         subtitle="Here's what's on for today."
@@ -114,19 +138,45 @@ export function AssociateDashboard() {
 
       {/* Top row — clock-in and next shift get the spotlight. */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4 mb-4">
-        <ClockCard
-          active={active}
-          isClockedIn={isClockedIn}
-          clocking={clocking}
-          onToggle={handleClockToggle}
-        />
-        <NextShiftCard nextShift={nextShift} />
+        {failed.clock ? (
+          <LoadFailedCard
+            label="Clock"
+            icon={Clock}
+            onRetry={refreshAll}
+            className="md:col-span-1"
+          />
+        ) : (
+          <ClockCard
+            active={active}
+            isClockedIn={isClockedIn}
+            clocking={clocking}
+            onToggle={handleClockToggle}
+          />
+        )}
+        {failed.shift ? (
+          <LoadFailedCard
+            label="Next shift"
+            icon={Timer}
+            onRetry={refreshAll}
+            className="md:col-span-2"
+          />
+        ) : (
+          <NextShiftCard nextShift={nextShift} />
+        )}
       </div>
 
       {/* Second row — pay + time-off balance. Quieter, but still front-page. */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 mb-6">
-        <PaystubCard item={latestPaystub} onView={() => navigate('/payroll')} />
-        <TimeOffCard balances={balances} onView={() => navigate('/time-off')} />
+        {failed.pay ? (
+          <LoadFailedCard label="Last paystub" icon={DollarSign} onRetry={refreshAll} />
+        ) : (
+          <PaystubCard item={latestPaystub} onView={() => navigate('/payroll')} />
+        )}
+        {failed.timeOff ? (
+          <LoadFailedCard label="Time off" icon={CalendarOff} onRetry={refreshAll} />
+        ) : (
+          <TimeOffCard balances={balances} onView={() => navigate('/time-off')} />
+        )}
       </div>
 
       <QuickActions />
@@ -136,27 +186,16 @@ export function AssociateDashboard() {
 
 /* ---------------------------- helpers / cards ----------------------------- */
 
+// Same definition of "next" as the My Schedule page (endsAt >= now): an
+// in-progress shift IS the next shift until it ends. The old startsAt-based
+// window made this card skip ahead to the following shift an hour into the
+// current one while the schedule page still highlighted the current one.
 function pickNextShift(shifts: Shift[]): Shift | null {
   const now = Date.now();
   const upcoming = shifts
-    .filter((s) => new Date(s.startsAt).getTime() >= now - HOUR_MS && s.status !== 'CANCELLED')
+    .filter((s) => new Date(s.endsAt).getTime() >= now && s.status !== 'CANCELLED')
     .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
   return upcoming[0] ?? null;
-}
-
-function fmtTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-}
-
-// Relative day in the SHIFT'S work-site timezone, so a store in another zone
-// doesn't flip "Today/Tomorrow" or the weekday for the viewer.
-function fmtRelativeDay(iso: string, tz?: string | null): string {
-  const now = Date.now();
-  const key = zonedDayKey(iso, tz);
-  if (key === zonedDayKey(new Date(now), tz)) return 'Today';
-  if (key === zonedDayKey(new Date(now + 86_400_000), tz)) return 'Tomorrow';
-  const within7 = new Date(iso).getTime() - now < 7 * 86_400_000;
-  return within7 ? fmtWeekdayTz(iso, tz) : fmtDateTz(iso, tz);
 }
 
 function fmtElapsed(sinceIso: string): string {
@@ -166,6 +205,44 @@ function fmtElapsed(sinceIso: string): string {
   const m = totalMin % 60;
   if (h === 0) return `${m}m`;
   return `${h}h ${m}m`;
+}
+
+/**
+ * Rendered in place of a card whose fetch failed for a non-expected reason
+ * (network down, 500). Deliberately NOT the card's empty state — "Nothing
+ * scheduled" when the request never landed is confidently wrong, and for
+ * the clock card guessing "off the clock" could trigger a double punch.
+ */
+function LoadFailedCard({
+  label,
+  icon: Icon,
+  onRetry,
+  className,
+}: {
+  label: string;
+  icon: typeof Clock;
+  onRetry: () => void;
+  className?: string;
+}) {
+  return (
+    <Card className={className}>
+      <CardContent className="pt-5">
+        <div className="text-[10px] uppercase tracking-widest text-silver flex items-center gap-1.5">
+          <Icon className="h-3 w-3" aria-hidden="true" />
+          {label}
+        </div>
+        <div role="alert" className="font-display text-xl text-white mt-2">
+          Couldn't load this
+        </div>
+        <p className="text-sm text-silver mt-1">
+          Check your connection and try again.
+        </p>
+        <Button variant="secondary" size="sm" className="mt-3" onClick={onRetry}>
+          Retry
+        </Button>
+      </CardContent>
+    </Card>
+  );
 }
 
 interface ClockCardProps {
@@ -249,7 +326,7 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
           </p>
           <Link
             to="/scheduling"
-            className="text-sm text-gold hover:text-gold-bright mt-3 inline-flex items-center gap-1"
+            className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 min-h-11 md:min-h-0"
           >
             View schedule
             <ArrowRight className="h-3.5 w-3.5" />
@@ -267,11 +344,10 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
         </div>
         <div className="flex items-baseline gap-2 mt-2 flex-wrap">
           <div className="font-display text-2xl text-white leading-tight">
-            {fmtRelativeDay(nextShift.startsAt, nextShift.timezone)}
+            {fmtRelativeDayTz(nextShift.startsAt, nextShift.timezone)}
           </div>
           <div className="text-lg text-gold tabular-nums">
-            {fmtTimeTz(nextShift.startsAt, nextShift.timezone)} –{' '}
-            {fmtTimeTz(nextShift.endsAt, nextShift.timezone)}
+            {fmtShiftRangeTz(nextShift.startsAt, nextShift.endsAt, nextShift.timezone)}
           </div>
         </div>
         <div className="text-sm text-silver mt-1">
@@ -286,7 +362,7 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
         )}
         <Link
           to="/scheduling"
-          className="text-sm text-gold hover:text-gold-bright mt-3 inline-flex items-center gap-1"
+          className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 min-h-11 md:min-h-0"
         >
           See full schedule
           <ArrowRight className="h-3.5 w-3.5" />
@@ -344,13 +420,13 @@ function PaystubCard({
         <div className="text-xs text-silver mt-1 tabular-nums">
           Net · {item.hoursWorked.toFixed(2)}h worked
           {showDisbursed && item.disbursedAt && (
-            <> · paid {new Date(item.disbursedAt).toLocaleDateString()}</>
+            <> · paid {fmtDate(item.disbursedAt)}</>
           )}
         </div>
         <button
           type="button"
           onClick={onView}
-          className="text-sm text-gold hover:text-gold-bright mt-3 inline-flex items-center gap-1"
+          className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 min-h-11 md:min-h-0"
         >
           View pay history
           <ArrowRight className="h-3.5 w-3.5" />
@@ -402,7 +478,7 @@ function TimeOffCard({
           <button
             type="button"
             onClick={onView}
-            className="text-sm text-gold hover:text-gold-bright mt-3 inline-flex items-center gap-1"
+            className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 min-h-11 md:min-h-0"
           >
             Open time off
             <ArrowRight className="h-3.5 w-3.5" />
@@ -443,7 +519,7 @@ function TimeOffCard({
         <button
           type="button"
           onClick={onView}
-          className="text-sm text-gold hover:text-gold-bright mt-3 inline-flex items-center gap-1"
+          className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 min-h-11 md:min-h-0"
         >
           Request or view balance
           <ArrowRight className="h-3.5 w-3.5" />
@@ -469,7 +545,7 @@ function QuickActions() {
           <Link
             key={to}
             to={to}
-            className="group flex items-center gap-2 px-3 py-3 rounded-md border border-navy-secondary bg-navy hover:border-gold/50 hover:bg-navy/80 transition-colors text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+            className="group flex items-center gap-2 px-3 py-3 min-h-12 rounded-md border border-navy-secondary bg-navy hover:border-gold/50 hover:bg-navy/80 active:bg-navy-secondary/60 active:border-gold/50 transition-colors text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
           >
             <Icon className="h-4 w-4 text-silver group-hover:text-gold transition-colors" aria-hidden="true" />
             <span className="flex-1 truncate">{label}</span>

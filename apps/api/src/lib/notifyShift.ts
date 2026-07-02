@@ -4,14 +4,16 @@ import {
   formatDateInZone,
   formatTimeInZone,
 } from './timezone.js';
+import { emailUserForCategory } from './notify.js';
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
 /**
  * Phase 49 — fan-out a scheduling-related notification to one associate
- * via the Notification table. IN_APP delivery only for now (the EMAIL
- * channel adapter is still stubbed; a separate worker reads QUEUED rows
- * and ships them when a real provider is configured).
+ * via the Notification table (bell) PLUS a best-effort email through the
+ * shared notify pipeline, so schedule changes reach people who aren't in
+ * the app. Email honors the user's per-category mute prefs and never
+ * fails the caller.
  *
  * No-op when the associate has no User row yet (mid-onboarding) — the
  * shift event is still recorded in the audit log via the caller.
@@ -23,12 +25,16 @@ export interface NotifyShiftParams {
   subject: string;
   /** Body of the notification. Plain text. */
   body: string;
-  /** Loose category for inbox filtering. */
+  /** Loose category for inbox filtering. `shift_*` maps to the
+   *  "scheduling" email bucket, `swap_*` to "shift_swaps". */
   category:
     | 'shift_assigned'
     | 'shift_unassigned'
     | 'shift_cancelled'
     | 'shift_published'
+    | 'shift_reminder'
+    | 'shift_pickup_approved'
+    | 'shift_pickup_rejected'
     | 'swap_peer_request'
     | 'swap_peer_accepted'
     | 'swap_peer_declined'
@@ -61,6 +67,15 @@ export async function notifyShift(
       category: params.category,
       senderUserId: params.senderUserId ?? null,
     },
+  });
+
+  // Email rides the shared pipeline (mute prefs, EMAIL Notification row,
+  // Resend). Fire-and-forget: the email must never fail — or wait on —
+  // the scheduling mutation that triggered it.
+  void emailUserForCategory(user.id, user.email, {
+    subject: params.subject,
+    body: params.body,
+    category: params.category,
   });
 }
 

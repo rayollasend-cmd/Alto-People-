@@ -313,7 +313,9 @@ function CreateRequestDialog({ open, onOpenChange, onCreated }: CreateProps) {
             )}
           </Field>
 
-          <div className="grid grid-cols-2 gap-3">
+          {/* Stack the date pair on phones — two native date inputs
+              side-by-side don't fit inside the 360px bottom sheet. */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Start date" required>
               {(p) => (
                 <Input

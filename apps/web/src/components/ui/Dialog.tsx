@@ -33,24 +33,34 @@ export const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        'fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2',
-        // Width: leave a 1rem gutter on each side at phone widths so the
-        // dialog never touches the screen edges; cap at max-w-lg on
-        // larger screens.
-        'w-[calc(100vw-2rem)] max-w-lg',
+        'fixed z-50 bg-navy elev-3 p-6 grid gap-4 focus:outline-none overflow-y-auto overscroll-contain',
+        // PHONES: a bottom sheet, not a floating web modal. Anchored to
+        // the bottom edge it survives the iOS keyboard (which pushes it
+        // up instead of clipping a vertically-centered box), slides up
+        // like a native form, and puts the primary action near thumbs.
+        'inset-x-0 bottom-0 w-full rounded-t-2xl border-t border-navy-secondary',
+        'max-h-[calc(100dvh-3rem-env(safe-area-inset-top))]',
+        'pb-[max(1.5rem,env(safe-area-inset-bottom))]',
+        'data-[state=open]:animate-slide-up-in data-[state=closed]:animate-slide-down-out',
+        // sm+: the original centered dialog.
+        'sm:inset-x-auto sm:bottom-auto sm:left-1/2 sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2',
+        'sm:w-[calc(100vw-2rem)] sm:max-w-lg sm:rounded-lg sm:border sm:border-navy-secondary',
         // Height: cap at viewport-minus-gutter-minus-safe-area so tall
         // dialogs (long forms, listings) stay clear of the iOS notch and
         // home indicator. Internal scroll handles overflow — without
-        // this, the submit button drops below the fold on phones.
-        'max-h-[calc(100dvh-2rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] overflow-y-auto',
-        'bg-navy border border-navy-secondary rounded-lg elev-3',
-        'p-6 grid gap-4',
-        'data-[state=open]:animate-zoom-in data-[state=closed]:animate-zoom-out',
-        'focus:outline-none',
+        // this, the submit button drops below the fold.
+        'sm:max-h-[calc(100dvh-2rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))]',
+        'sm:pb-6',
+        'sm:data-[state=open]:animate-zoom-in sm:data-[state=closed]:animate-zoom-out',
         className
       )}
       {...props}
     >
+      {/* Grab-handle affordance — sheet idiom, phones only. */}
+      <div
+        aria-hidden="true"
+        className="sm:hidden mx-auto -mt-3 -mb-1 h-1 w-10 rounded-full bg-silver/30"
+      />
       {children}
       <DialogPrimitive.Close
         // Same safe-area-aware positioning as Drawer's close button so

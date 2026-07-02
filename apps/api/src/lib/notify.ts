@@ -185,6 +185,29 @@ function sendEmailNotification(
 }
 
 /**
+ * Email-only companion for callers that already wrote their own IN_APP row
+ * (notifyShift in scheduling). Honors the same per-category mute prefs as
+ * notifyUser; fire-and-forget and tracked for flushPendingNotifications.
+ */
+export function emailUserForCategory(
+  userId: string,
+  email: string,
+  opts: NotifyOpts,
+): Promise<void> {
+  return track(
+    (async () => {
+      const muted = await isEmailMutedForCategory(userId, opts.category);
+      if (!muted) await sendEmailNotification(userId, email, opts);
+    })().catch((err: unknown) => {
+      console.warn(
+        '[notify] emailUserForCategory failed:',
+        err instanceof Error ? err.message : err,
+      );
+    }),
+  );
+}
+
+/**
  * Create one IN_APP notification for a single user AND email them. Returns
  * silently on any failure — the bell will pick it up next poll if it lands;
  * if writes fail, the underlying event still happened, we don't mask that.

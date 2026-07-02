@@ -263,6 +263,51 @@ describe('Shift swap marketplace', () => {
     expect(after.assignedAssociateId).toBe(aCounter.id);
   });
 
+  it('swap payload carries the shift work-site timezone', async () => {
+    const client = await createClient();
+    const aReq = await createAssociate({ firstName: 'Req', lastName: 'A' });
+    const aCounter = await createAssociate({ firstName: 'Counter', lastName: 'B' });
+    const { user: uReq } = await createUser({
+      role: 'ASSOCIATE',
+      email: aReq.email,
+      associateId: aReq.id,
+    });
+    const { user: uCounter } = await createUser({
+      role: 'ASSOCIATE',
+      email: aCounter.email,
+      associateId: aCounter.id,
+    });
+    const loc = await prisma.location.create({
+      data: { clientId: client.id, name: 'Store 1424', timezone: 'America/Chicago' },
+    });
+    const shift = await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        locationId: loc.id,
+        position: 'Server',
+        startsAt: new Date(future(60)),
+        endsAt: new Date(future(60 * 8)),
+        assignedAssociateId: aReq.id,
+        status: 'ASSIGNED',
+      },
+    });
+
+    const reqAgent = await loginAs(uReq.email);
+    const create = await reqAgent.post('/scheduling/swap-requests').send({
+      shiftId: shift.id,
+      counterpartyAssociateId: aCounter.id,
+    });
+    expect(create.status).toBe(201);
+    // Swap cards render the shift's hours in this zone — without it the web
+    // app fell back to browser-local and disagreed with the schedule list.
+    expect(create.body.shiftTimezone).toBe('America/Chicago');
+
+    const counterAgent = await loginAs(uCounter.email);
+    const incoming = await counterAgent.get('/scheduling/swap-requests/me/incoming');
+    expect(incoming.status).toBe(200);
+    expect(incoming.body.requests[0].shiftTimezone).toBe('America/Chicago');
+  });
+
   it('counterparty cannot accept a swap they were not invited to', async () => {
     const client = await createClient();
     const aReq = await createAssociate();

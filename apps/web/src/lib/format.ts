@@ -269,6 +269,11 @@ export function utcToZonedDatetimeInput(
  * Returns the browser-local calendar date when `timeZone` is absent (so the
  * same-zone case is byte-for-byte the previous behavior).
  */
+// Intl.DateTimeFormat construction is expensive (locale + tz data
+// resolution); zonedDayKey runs per shift in the calendar bucketing hot
+// path, so cache one formatter per zone.
+const DAY_KEY_FMT_CACHE = new Map<string, Intl.DateTimeFormat>();
+
 export function zonedDayKey(
   value: string | Date,
   timeZone?: string | null,
@@ -278,12 +283,16 @@ export function zonedDayKey(
   if (!timeZone) {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   }
-  const dtf = new Intl.DateTimeFormat(EN_US, {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  });
+  let dtf = DAY_KEY_FMT_CACHE.get(timeZone);
+  if (!dtf) {
+    dtf = new Intl.DateTimeFormat(EN_US, {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    DAY_KEY_FMT_CACHE.set(timeZone, dtf);
+  }
   const p: Record<string, string> = {};
   for (const part of dtf.formatToParts(d)) {
     if (part.type !== 'literal') p[part.type] = part.value;
@@ -313,6 +322,47 @@ export function zonedMinutesOfDay(
     if (part.type !== 'literal') p[part.type] = Number(part.value);
   }
   return p.hour * 60 + p.minute;
+}
+
+/**
+ * Shift time range in the WORK SITE's timezone: "7:00 AM – 3:00 PM".
+ * Cross-midnight shifts carry the end date ("11:00 PM – 7:00 AM (Jun 17)"),
+ * and the zone abbreviation is appended when the viewer's browser isn't in
+ * the store's zone so nobody misreads a shift. The single source of truth
+ * for rendering a shift's hours anywhere in the associate portal — the
+ * schedule list, the dashboard card, and swap cards must all agree.
+ */
+export function fmtShiftRangeTz(
+  startsAt: string | Date,
+  endsAt: string | Date,
+  timeZone?: string | null,
+): string {
+  const start = fmtTimeTz(startsAt, timeZone);
+  const end = fmtTimeTz(endsAt, timeZone);
+  const crossesMidnight =
+    zonedDayKey(startsAt, timeZone) !== zonedDayKey(endsAt, timeZone);
+  const base = crossesMidnight
+    ? `${start} – ${end} (${fmtDateTz(endsAt, timeZone)})`
+    : `${start} – ${end}`;
+  const showZone = timeZone && timeZone !== browserTimeZone();
+  return showZone ? `${base} ${tzAbbrev(timeZone, startsAt)}` : base;
+}
+
+/**
+ * "Today", "Tomorrow", or "Mon, Jun 16" — relative to `now`, evaluated in
+ * the store's timezone so a store across a date line doesn't flip the label.
+ * Shared by the schedule day headers and the dashboard next-shift card so
+ * the two surfaces never disagree about what day a shift is.
+ */
+export function fmtRelativeDayTz(
+  value: string | Date,
+  timeZone?: string | null,
+  now: number = Date.now(),
+): string {
+  const key = zonedDayKey(value, timeZone);
+  if (key === zonedDayKey(new Date(now), timeZone)) return 'Today';
+  if (key === zonedDayKey(new Date(now + 86_400_000), timeZone)) return 'Tomorrow';
+  return `${fmtWeekdayTz(value, timeZone)}, ${fmtDateTz(value, timeZone)}`;
 }
 
 /** "2h ago", "yesterday", "Mar 4". For activity feeds. */

@@ -11,7 +11,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
-import { fmtDateTime, fmtTime } from '@/lib/format';
+import { fmtDateTz, fmtShiftRangeTz, fmtWeekdayTz } from '@/lib/format';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 
@@ -26,7 +26,13 @@ const STATUS_CLS: Record<ShiftSwapStatus, string> = {
   CANCELLED: 'text-silver/70',
 };
 
-export function SwapMarketplace() {
+export function SwapMarketplace({
+  // Parent bumps this when a swap is created elsewhere on the page (the
+  // shift-card offer flow) so the list refetches without a manual reload.
+  refreshToken = 0,
+}: {
+  refreshToken?: number;
+}) {
   const [tab, setTab] = useState<Tab>('incoming');
   const [items, setItems] = useState<ShiftSwapRequest[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +50,7 @@ export function SwapMarketplace() {
 
   useEffect(() => {
     refresh();
-  }, [refresh]);
+  }, [refresh, refreshToken]);
 
   const wrap = async (id: string, fn: () => Promise<unknown>) => {
     setPendingId(id);
@@ -72,10 +78,10 @@ export function SwapMarketplace() {
             aria-selected={tab === t}
             onClick={() => setTab(t)}
             className={cn(
-              'px-3 py-2 text-sm border-b-2 -mb-px transition capitalize',
+              'px-3 py-2 min-h-11 md:min-h-0 text-sm border-b-2 -mb-px transition capitalize',
               tab === t
                 ? 'border-gold text-gold'
-                : 'border-transparent text-silver hover:text-white'
+                : 'border-transparent text-silver hover:text-white active:text-white'
             )}
           >
             {t}
@@ -114,9 +120,25 @@ export function SwapMarketplace() {
                     {s.shiftPosition} · {s.shiftClientName ?? '—'}
                   </div>
                   <div className="text-xs text-silver tabular-nums">
-                    {fmtDateTime(s.shiftStartsAt)} –{' '}
-                    {fmtTime(s.shiftEndsAt)}
+                    {fmtWeekdayTz(s.shiftStartsAt, s.shiftTimezone)},{' '}
+                    {fmtDateTz(s.shiftStartsAt, s.shiftTimezone)} ·{' '}
+                    {fmtShiftRangeTz(s.shiftStartsAt, s.shiftEndsAt, s.shiftTimezone)}
                   </div>
+                  {s.inExchange && (
+                    <div className="text-xs text-gold/90 tabular-nums mt-0.5">
+                      {tab === 'incoming'
+                        ? 'They take your: '
+                        : 'You take their: '}
+                      {s.inExchange.position} ·{' '}
+                      {fmtWeekdayTz(s.inExchange.startsAt, s.inExchange.timezone)},{' '}
+                      {fmtDateTz(s.inExchange.startsAt, s.inExchange.timezone)} ·{' '}
+                      {fmtShiftRangeTz(
+                        s.inExchange.startsAt,
+                        s.inExchange.endsAt,
+                        s.inExchange.timezone,
+                      )}
+                    </div>
+                  )}
                   <div className="text-xs text-silver mt-1">
                     {tab === 'incoming' ? (
                       <>From <span className="text-white">{s.requesterName}</span></>

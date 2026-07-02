@@ -108,6 +108,11 @@ const EnvSchema = z.object({
   // inside the sweep ensures a 1h cadence doesn't spam HR — each
   // (key, periodStart) reminder fires at most once per 24h.
   ATTESTATION_REMINDER_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(0),
+  // Day-before shift reminder cron. 0 (default) disables; production should
+  // set 1800-3600. Each assigned+published shift starting within the next
+  // 24h is reminded exactly once — Shift.reminderSentAt is claimed with a
+  // guarded update, so overlapping sweeps/replicas can't double-send.
+  SHIFT_REMINDER_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(0),
   // Kiosk maintenance cron: auto-closes forgotten clock-outs and purges
   // selfies past their retention window. 0 (default) disables; production
   // should set 3600 (hourly). Thresholds (18h forgotten-shift, 90d selfie

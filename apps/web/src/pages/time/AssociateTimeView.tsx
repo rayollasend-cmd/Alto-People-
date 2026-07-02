@@ -12,8 +12,11 @@ import {
 import { listJobs } from '@/lib/jobsApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { fmtDateTime, fmtTime } from '@/lib/format';
+import { hapticSuccess } from '@/lib/haptics';
 import { timeAnomalyLabel } from '@/lib/timeLabels';
 import { Button } from '@/components/ui/Button';
+import { Select } from '@/components/ui/Select';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -138,6 +141,7 @@ export function AssociateTimeView() {
         geo: geo ?? undefined,
         jobId: selectedJobId || undefined,
       });
+      hapticSuccess();
       await refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Clock-in failed.');
@@ -154,6 +158,7 @@ export function AssociateTimeView() {
     try {
       const geo = await tryGetGeolocation();
       await clockOut({ geo: geo ?? undefined });
+      hapticSuccess();
       setOnBreak(false);
       await refresh();
     } catch (err) {
@@ -262,7 +267,7 @@ export function AssociateTimeView() {
               {formatHM(liveMinutes)}
             </div>
             <div className="text-sm text-silver mb-6">
-              since {new Date(active.clockInAt).toLocaleTimeString()}
+              since {fmtTime(active.clockInAt)}
               {active.clockInLat != null && active.clockInLng != null && (
                 <span className="ml-2 text-silver/70">
                   · {active.clockInLat.toFixed(4)}, {active.clockInLng.toFixed(4)}
@@ -285,32 +290,33 @@ export function AssociateTimeView() {
               </button>
               {!onBreak ? (
                 <>
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
                     onClick={() => handleStartBreak('MEAL')}
                     disabled={breakBusy}
-                    className="px-3 py-2 rounded text-sm border border-gold/40 text-gold hover:bg-gold/10 disabled:opacity-50"
                   >
                     Start meal break
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
+                    variant="ghost"
                     onClick={() => handleStartBreak('REST')}
                     disabled={breakBusy}
-                    className="px-3 py-2 rounded text-sm border border-silver/30 text-silver hover:bg-silver/10 disabled:opacity-50"
                   >
                     Start rest break
-                  </button>
+                  </Button>
                 </>
               ) : (
-                <button
+                <Button
                   type="button"
+                  variant="outline"
                   onClick={handleEndBreak}
+                  loading={breakBusy}
                   disabled={breakBusy}
-                  className="px-3 py-2 rounded text-sm border border-gold/40 text-gold hover:bg-gold/10 disabled:opacity-50"
                 >
-                  {breakBusy ? 'Ending…' : 'End break'}
-                </button>
+                  End break
+                </Button>
               )}
             </div>
           </>
@@ -327,10 +333,9 @@ export function AssociateTimeView() {
                 <span className="block text-xs uppercase tracking-widest text-silver mb-1">
                   Job (optional)
                 </span>
-                <select
+                <Select
                   value={selectedJobId}
                   onChange={(e) => setSelectedJobId(e.target.value)}
-                  className="w-full px-3 py-2 rounded bg-navy-secondary/60 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white"
                 >
                   <option value="">— No job tag —</option>
                   {jobs.map((j) => (
@@ -340,7 +345,7 @@ export function AssociateTimeView() {
                       {j.clientName ? ` · ${j.clientName}` : ''}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
             )}
             <Button
@@ -370,7 +375,9 @@ export function AssociateTimeView() {
       <section aria-label="Recent time entries">
         <div className="flex flex-wrap items-end justify-between gap-3 mb-3">
           <h2 className="font-display text-2xl text-white">Recent entries</h2>
-          <div className="flex items-end gap-2">
+          {/* Full-width 2-up on phones (two fixed w-40 fields overflowed
+              360px screens); back to the compact inline pair at sm+. */}
+          <div className="grid grid-cols-2 gap-2 w-full sm:flex sm:w-auto sm:items-end">
             <div>
               <label className="block text-[10px] uppercase tracking-wider text-silver mb-1">
                 From
@@ -382,7 +389,7 @@ export function AssociateTimeView() {
                 onChange={(e) =>
                   setHistoryFromYmd(e.target.value || defaultHistoryFromYmd())
                 }
-                className="h-9 text-sm rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold w-40"
+                className="h-11 md:h-9 text-base md:text-sm rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold w-full sm:w-40"
               />
             </div>
             <div>
@@ -396,7 +403,7 @@ export function AssociateTimeView() {
                 onChange={(e) =>
                   setHistoryToYmd(e.target.value || defaultHistoryToYmd())
                 }
-                className="h-9 text-sm rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold w-40"
+                className="h-11 md:h-9 text-base md:text-sm rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold w-full sm:w-40"
               />
             </div>
           </div>
@@ -432,10 +439,8 @@ export function AssociateTimeView() {
                 >
                   <div className="min-w-0 flex-1">
                     <div className="text-white tabular-nums">
-                      {new Date(e.clockInAt).toLocaleString()} –{' '}
-                      {e.clockOutAt
-                        ? new Date(e.clockOutAt).toLocaleTimeString()
-                        : '…'}
+                      {fmtDateTime(e.clockInAt)} –{' '}
+                      {e.clockOutAt ? fmtTime(e.clockOutAt) : '…'}
                     </div>
                     <div className="text-sm text-silver">
                       {formatHM(e.netMinutes ?? e.minutesElapsed)}

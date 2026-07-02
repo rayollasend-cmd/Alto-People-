@@ -25,15 +25,31 @@ calendarFeedRouter.get('/v1/:associateId/:tokenWithExt', async (req, res, next) 
       ? tokenWithExt.slice(0, -4)
       : tokenWithExt;
 
-    if (!verifyCalendarToken(associateId, token)) {
+    // Garbage ids 404 before touching the DB — Prisma throws (500) on
+    // non-UUID values in a @db.Uuid filter.
+    const UUID_RE =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!UUID_RE.test(associateId)) {
       throw new HttpError(404, 'feed_not_found', 'Feed not found');
     }
 
+    // Load the associate BEFORE verifying — the token is versioned per
+    // associate (calendarFeedVersion), so verification needs the row.
+    // Both failure modes return the same 404 so a probe can't tell a
+    // bad token from a missing associate.
     const associate = await prisma.associate.findFirst({
       where: { id: associateId, deletedAt: null },
-      select: { id: true, firstName: true, lastName: true },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        calendarFeedVersion: true,
+      },
     });
-    if (!associate) {
+    if (
+      !associate ||
+      !verifyCalendarToken(associateId, token, associate.calendarFeedVersion)
+    ) {
       throw new HttpError(404, 'feed_not_found', 'Feed not found');
     }
 
@@ -52,7 +68,10 @@ calendarFeedRouter.get('/v1/:associateId/:tokenWithExt', async (req, res, next) 
         startsAt: { gte: from, lt: to },
       },
       orderBy: { startsAt: 'asc' },
-      include: { client: { select: { name: true } } },
+      include: {
+        client: { select: { name: true } },
+        locationRel: { select: { name: true } },
+      },
       take: 1000,
     });
 
@@ -61,12 +80,16 @@ calendarFeedRouter.get('/v1/:associateId/:tokenWithExt', async (req, res, next) 
       events: shifts.map((s) => {
         const summaryParts = [s.position];
         if (s.client?.name) summaryParts.push(`@ ${s.client.name}`);
+        // Site name first, then the free-text sub-zone ("Store 1424 · Bar").
+        // s.location alone is just the sub-zone, which is useless in a
+        // calendar event without the site it belongs to.
+        const locationParts = [s.locationRel?.name, s.location].filter(Boolean);
         return {
           uid: `shift-${s.id}@alto-people`,
           startsAt: s.startsAt,
           endsAt: s.endsAt,
           summary: summaryParts.join(' '),
-          location: s.location,
+          location: locationParts.length ? locationParts.join(' · ') : null,
           description: s.notes,
           status:
             s.status === 'CANCELLED'

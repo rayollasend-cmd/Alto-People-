@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import type {
   AssociateLite,
+  AdminOpenShiftClaim,
   AutoFillCandidate,
   ClientSummary,
   LocationSummary,
@@ -37,6 +38,7 @@ import { listClientLocations } from '@/lib/clientsApi';
 import { listShiftPositions } from '@/lib/orgApi';
 import {
   applyShiftTemplate,
+  approveOpenShiftClaim,
   assignShift,
   bulkCreateShifts,
   cancelShift,
@@ -48,6 +50,8 @@ import {
   getSchedulingKpis,
   getShiftConflicts,
   listAdminSwaps,
+  listOpenShiftClaims,
+  rejectOpenShiftClaim,
   listSchedulingAssociates,
   listShifts,
   listShiftTemplates,
@@ -61,7 +65,7 @@ import {
   type SchedulingKpis,
 } from '@/lib/schedulingApi';
 import { apiFetch, ApiError } from '@/lib/api';
-import { useConfirm } from '@/lib/confirm';
+import { useConfirm, type ConfirmOptions } from '@/lib/confirm';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -1307,10 +1311,16 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     if (!autoFillForShift) return;
     setPendingId(autoFillForShift.shiftId);
     try {
-      await assignShift(autoFillForShift.shiftId, { associateId });
-      setAutoFillForShift(null);
-      toast.success('Shift assigned.');
-      await refresh();
+      const assigned = await assignWithOverridePrompt(
+        autoFillForShift.shiftId,
+        associateId,
+        confirm,
+      );
+      if (assigned) {
+        setAutoFillForShift(null);
+        toast.success('Shift assigned.');
+        await refresh();
+      }
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Assign failed.');
     } finally {
@@ -2222,6 +2232,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       {canManage && (
         <div className="no-print">
           <AdminSwapsPanel />
+          <AdminPickupPanel />
+          <AdminUnconfirmedPanel />
         </div>
       )}
 
@@ -2414,6 +2426,10 @@ function AssignDialog({
   const [query, setQuery] = useState('');
   const [conflicts, setConflicts] = useState<ConflictRow[] | null>(null);
   const [timeOff, setTimeOff] = useState<TimeOffRow[] | null>(null);
+  const [unavailable, setUnavailable] = useState<
+    { date: string; note: string | null }[] | null
+  >(null);
+  const confirmOverride = useConfirm();
   const [checking, setChecking] = useState(false);
   // Set when the conflict check itself FAILS (network/500) — distinct from
   // "checked, no conflicts" so the admin isn't misled into assigning blind.
@@ -2429,6 +2445,7 @@ function AssignDialog({
       setQuery('');
       setConflicts(null);
       setTimeOff(null);
+      setUnavailable(null);
       setCheckError(null);
       setSubmitting(false);
       setChecking(false);
@@ -2441,6 +2458,7 @@ function AssignDialog({
     if (!target || !picked) {
       setConflicts(null);
       setTimeOff(null);
+      setUnavailable(null);
       setCheckError(null);
       return;
     }
@@ -2465,10 +2483,12 @@ function AssignDialog({
             endDate: t.endDate,
           }))
         );
+        setUnavailable(c.unavailableDays ?? []);
       } catch {
         if (!cancelled) {
           setConflicts(null);
           setTimeOff(null);
+          setUnavailable(null);
           setCheckError('Couldn’t check for conflicts — verify manually before assigning.');
         }
       } finally {
@@ -2485,8 +2505,17 @@ function AssignDialog({
     if (!target || !picked) return;
     setSubmitting(true);
     try {
-      await assignShift(target.id, { associateId: picked.id });
-      onAssigned();
+      const assigned = await assignWithOverridePrompt(
+        target.id,
+        picked.id,
+        confirmOverride,
+        `${picked.firstName} ${picked.lastName}`,
+      );
+      if (assigned) {
+        onAssigned();
+        return;
+      }
+      setSubmitting(false);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Assign failed.');
       setSubmitting(false);
@@ -2667,6 +2696,28 @@ function AssignDialog({
               </div>
             )}
           </div>
+
+          {!!(unavailable && unavailable.length > 0) && (
+            <div className="flex items-start gap-2 p-3 rounded-md border border-error/50 bg-error/10 text-sm">
+              <AlertTriangle className="h-4 w-4 text-error mt-0.5 shrink-0" />
+              <div>
+                <div className="font-medium text-white">
+                  They marked this day as unavailable
+                </div>
+                <ul className="mt-2 space-y-1 text-silver">
+                  {unavailable.map((u) => (
+                    <li key={u.date} className="text-xs">
+                      • <span className="tabular-nums">{u.date}</span>
+                      {u.note ? ` — ${u.note}` : ''}
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-1.5 text-xs text-silver/70">
+                  Assigning will ask you to explicitly override.
+                </p>
+              </div>
+            </div>
+          )}
 
           {hasTimeOff && (
             <div className="flex items-start gap-2 p-3 rounded-md border border-error/50 bg-error/10 text-sm">
@@ -2977,11 +3028,20 @@ function AdminSwapsPanel() {
                       {fmtDateTime(s.shiftStartsAt)}
                     </span>
                   </div>
+                  {s.inExchange && (
+                    <div className="text-xs text-gold/90 mt-0.5 tabular-nums">
+                      Trade — {s.requesterName} takes: {s.inExchange.position} ·{' '}
+                      {fmtDateTime(s.inExchange.startsAt)}
+                    </div>
+                  )}
                   {s.note && (
                     <div className="text-xs text-silver/70 italic mt-1">"{s.note}"</div>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
+                  {s.wouldExceed40h && (
+                    <Badge variant="destructive">Over 40h</Badge>
+                  )}
                   <Badge variant={SWAP_STATUS_VARIANT[s.status]}>
                     {s.status.replace(/_/g, ' ')}
                   </Badge>
@@ -3009,6 +3069,210 @@ function AdminSwapsPanel() {
             ))}
           </ul>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/* ===== Open-shift pickup requests panel ================================== */
+
+function AdminPickupPanel() {
+  const [items, setItems] = useState<AdminOpenShiftClaim[] | null>(null);
+  const [pendingId, setPendingId] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const res = await listOpenShiftClaims();
+      setItems(res.claims);
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError ? err.message : 'Failed to load pickup requests.',
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const wrap = async (id: string, fn: () => Promise<unknown>, successMsg: string) => {
+    setPendingId(id);
+    try {
+      await fn();
+      toast.success(successMsg);
+      await refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Action failed.');
+    } finally {
+      setPendingId(null);
+    }
+  };
+
+  return (
+    <Card className="mt-8">
+      <CardHeader>
+        <CardTitle>Open-shift pickup requests</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {!items && <Skeleton className="h-16" />}
+        {items && items.length === 0 && (
+          <p className="text-silver text-sm">
+            No pickup requests waiting. Associates see published open shifts
+            at their clients and can ask to take them.
+          </p>
+        )}
+        {items && items.length > 0 && (
+          <ul className="space-y-2">
+            {items.map((c) => (
+              <li
+                key={c.id}
+                className="p-3 bg-navy-secondary/30 border border-navy-secondary rounded-md flex items-start justify-between gap-3 flex-wrap"
+              >
+                <div>
+                  <div className="text-white text-sm">
+                    <span className="font-medium">{c.associateName}</span>
+                    {' wants '}
+                    <span className="font-medium">{c.shiftPosition}</span>
+                  </div>
+                  <div className="text-xs text-silver mt-0.5 tabular-nums">
+                    {c.shiftClientName ?? '—'} · {fmtDateTime(c.shiftStartsAt)}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {c.wouldExceed40h && (
+                    <Badge variant="destructive">Over 40h</Badge>
+                  )}
+                  <Button
+                    size="sm"
+                    onClick={() =>
+                      wrap(
+                        c.id,
+                        () => approveOpenShiftClaim(c.id),
+                        'Pickup approved — shift assigned.',
+                      )
+                    }
+                    disabled={pendingId === c.id}
+                  >
+                    Approve
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={() =>
+                      wrap(c.id, () => rejectOpenShiftClaim(c.id), 'Pickup rejected.')
+                    }
+                    disabled={pendingId === c.id}
+                  >
+                    Reject
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Assign with the day-off/PTO override flow: a plain assign that, on the
+ * server's `associate_unavailable` hard block, asks for an explicit
+ * destructive confirmation and retries with overrideUnavailability. One
+ * implementation for every assign entry point (dialog, auto-fill) so the
+ * override UX can't drift. Returns true when an assignment landed; false
+ * when the admin declined the override. Non-unavailability errors throw.
+ */
+async function assignWithOverridePrompt(
+  shiftId: string,
+  associateId: string,
+  confirm: (opts: ConfirmOptions) => Promise<boolean>,
+  who = 'This associate',
+): Promise<boolean> {
+  try {
+    await assignShift(shiftId, { associateId });
+    return true;
+  } catch (err) {
+    if (!(err instanceof ApiError) || err.code !== 'associate_unavailable') {
+      throw err;
+    }
+    const ok = await confirm({
+      title: 'Assign on their day off?',
+      description: `${who} has approved time off or a declared day off covering this shift. Assigning anyway overrides that — they'll be notified.`,
+      confirmLabel: 'Assign anyway',
+      destructive: true,
+    });
+    if (!ok) return false;
+    await assignShift(shiftId, { associateId, overrideUnavailability: true });
+    return true;
+  }
+}
+
+/* ===== Unconfirmed shifts panel ========================================== */
+
+/**
+ * Published, assigned shifts starting in the next 48h whose associate has
+ * NOT tapped "I'll be there". Hidden entirely when everyone confirmed —
+ * this panel exists to chase silence, not to celebrate compliance.
+ */
+function AdminUnconfirmedPanel() {
+  const [items, setItems] = useState<Shift[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const now = new Date();
+        const to = new Date(now.getTime() + 48 * 3_600_000);
+        const res = await listShifts({
+          status: 'ASSIGNED',
+          from: now.toISOString(),
+          to: to.toISOString(),
+        });
+        if (!cancelled) {
+          setItems(res.shifts.filter((s) => s.publishedAt && !s.acknowledgedAt));
+        }
+      } catch {
+        if (!cancelled) setItems([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!items || items.length === 0) return null;
+
+  return (
+    <Card className="mt-8">
+      <CardHeader>
+        <CardTitle>
+          Not yet confirmed by the associate ({items.length})
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="text-xs text-silver/70 mb-3">
+          Starting within 48 hours and the associate hasn't tapped "I'll be
+          there". Worth a call if the shift is critical.
+        </p>
+        <ul className="space-y-2">
+          {items.map((s) => (
+            <li
+              key={s.id}
+              className="p-3 bg-navy-secondary/30 border border-navy-secondary rounded-md flex items-center justify-between gap-3 flex-wrap"
+            >
+              <div>
+                <div className="text-white text-sm font-medium">
+                  {s.assignedAssociateName ?? '—'}
+                </div>
+                <div className="text-xs text-silver mt-0.5 tabular-nums">
+                  {s.position} · {s.clientName ?? '—'} · {fmtDateTime(s.startsAt)}
+                </div>
+              </div>
+              <Badge variant="pending">Unconfirmed</Badge>
+            </li>
+          ))}
+        </ul>
       </CardContent>
     </Card>
   );

@@ -1,16 +1,23 @@
 import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import {
+  AdminOpenShiftClaimListResponseSchema,
   AssociateListResponseSchema,
   AutoFillResponseSchema,
   AutoScheduleWeekInputSchema,
   AutoScheduleWeekResponseSchema,
+  AvailabilityExceptionCreateInputSchema,
+  AvailabilityExceptionListResponseSchema,
   AvailabilityListResponseSchema,
   AvailabilityReplaceInputSchema,
   BulkCreateShiftsInputSchema,
   BulkCreateShiftsResponseSchema,
   CalendarFeedUrlResponseSchema,
   CopyWeekInputSchema,
+  MyShiftDetailResponseSchema,
+  MyShiftHistoryResponseSchema,
+  OpenShiftClaimSchema,
+  OpenShiftsResponseSchema,
   PublishWeekInputSchema,
   PublishWeekResponseSchema,
   ScheduleExportInputSchema,
@@ -24,8 +31,10 @@ import {
   ShiftTemplateCreateInputSchema,
   ShiftTemplateListResponseSchema,
   ShiftUpdateInputSchema,
+  SwapCandidateListResponseSchema,
   SwapCreateInputSchema,
   SwapDecideInputSchema,
+  TradeOptionsResponseSchema,
   type AutoFillCandidate,
   type AutoScheduleSkip,
   type AutoScheduleWeekResponse,
@@ -47,7 +56,7 @@ import { scopeShifts } from '../lib/scope.js';
 import { firstLocationForClient } from '../lib/firstLocationForClient.js';
 import { enqueueAudit, recordShiftEvent } from '../lib/audit.js';
 import { formatShiftLine, notifyShift } from '../lib/notifyShift.js';
-import { notifyManager } from '../lib/notify.js';
+import { notifyAllAdmins, notifyManager } from '../lib/notify.js';
 import { shiftSwapManagerTemplate } from '../lib/emailTemplates.js';
 import { netWorkedMinutes, startOfWeekUTC, endOfWeekUTC } from '../lib/timeAnomalies.js';
 import {
@@ -110,15 +119,27 @@ function scheduledMinutes(row: { startsAt: Date; endsAt: Date }): number {
  * the check + write are atomic against a concurrent assignment.
  */
 async function associateHasOverlap(
-  tx: Prisma.TransactionClient,
+  tx: Prisma.TransactionClient | typeof prisma,
   associateId: string,
   startsAt: Date,
   endsAt: Date,
   excludeShiftId: string,
 ): Promise<boolean> {
+  return hasOverlapExcluding(tx, associateId, startsAt, endsAt, [excludeShiftId]);
+}
+
+/** Overlap check excluding SEVERAL shifts — trades hand off two shifts at
+ *  once, so each party's own half must not count against them. */
+async function hasOverlapExcluding(
+  tx: Prisma.TransactionClient | typeof prisma,
+  associateId: string,
+  startsAt: Date,
+  endsAt: Date,
+  excludeShiftIds: string[],
+): Promise<boolean> {
   const clash = await tx.shift.findFirst({
     where: {
-      id: { not: excludeShiftId },
+      id: { notIn: excludeShiftIds },
       assignedAssociateId: associateId,
       status: { notIn: ['CANCELLED'] },
       startsAt: { lt: endsAt },
@@ -159,7 +180,62 @@ function toShift(row: RawShift): Shift {
     scheduledMinutes: scheduledMinutes(row),
     publishedAt: row.publishedAt ? row.publishedAt.toISOString() : null,
     lateNoticeReason: row.lateNoticeReason,
+    acknowledgedAt: row.acknowledgedAt ? row.acknowledgedAt.toISOString() : null,
   };
+}
+
+/** "YYYY-MM-DD" of an instant as seen in `tz` — for comparing a shift's
+ *  window against day-granular records (time off, availability exceptions). */
+function dayKeyInZone(d: Date, tz: string): string {
+  // en-CA formats as YYYY-MM-DD.
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
+}
+
+/**
+ * Which of `associateIds` can't work [startsAt, endsAt) because an APPROVED
+ * time-off request or a one-off availability exception covers a store-local
+ * day the window touches. Day-granular records live as UTC-midnight dates,
+ * so both sides compare as calendar days in the SHIFT's zone.
+ */
+async function blockedForWindow(
+  associateIds: string[],
+  startsAt: Date,
+  endsAt: Date,
+  tz: string,
+  // Pass the transaction client to make check+write atomic (assignment
+  // paths); defaults to the pool for advisory reads.
+  db: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<Set<string>> {
+  if (associateIds.length === 0) return new Set();
+  const startDay = new Date(`${dayKeyInZone(startsAt, tz)}T00:00:00Z`);
+  const endDay = new Date(`${dayKeyInZone(endsAt, tz)}T00:00:00Z`);
+  const [pto, exceptions] = await Promise.all([
+    db.timeOffRequest.findMany({
+      where: {
+        associateId: { in: associateIds },
+        status: 'APPROVED',
+        startDate: { lte: endDay },
+        endDate: { gte: startDay },
+      },
+      select: { associateId: true },
+    }),
+    db.availabilityException.findMany({
+      where: {
+        associateId: { in: associateIds },
+        date: { gte: startDay, lte: endDay },
+      },
+      select: { associateId: true },
+    }),
+  ]);
+  return new Set([
+    ...pto.map((r) => r.associateId),
+    ...exceptions.map((r) => r.associateId),
+  ]);
 }
 
 const SHIFT_INCLUDE = {
@@ -167,6 +243,55 @@ const SHIFT_INCLUDE = {
   assignedAssociate: { select: { firstName: true, lastName: true } },
   locationRel: { select: { id: true, name: true, timezone: true } },
 } as const;
+
+/**
+ * For each (associate, shift-window) pair: would TAKING that shift push
+ * the associate past 40h scheduled in that shift's week? One batched
+ * query for the whole list. Advisory — chips the admin swap/pickup review
+ * rows; the auto-scheduler has its own hard 40h gate.
+ */
+async function wouldExceed40hFlags(
+  items: {
+    associateId: string;
+    startsAt: Date;
+    endsAt: Date;
+    /** Shifts the associate would GIVE UP in the same action (trade legs). */
+    excludeShiftIds?: string[];
+  }[],
+): Promise<boolean[]> {
+  if (items.length === 0) return [];
+  const ids = [...new Set(items.map((i) => i.associateId))];
+  const minStart = new Date(
+    Math.min(...items.map((i) => startOfWeekUTC(i.startsAt).getTime())),
+  );
+  const maxEnd = new Date(
+    Math.max(...items.map((i) => endOfWeekUTC(i.startsAt).getTime())),
+  );
+  const rows = await prisma.shift.findMany({
+    where: {
+      assignedAssociateId: { in: ids },
+      status: { notIn: ['CANCELLED'] },
+      startsAt: { gte: minStart, lt: maxEnd },
+    },
+    select: { id: true, assignedAssociateId: true, startsAt: true, endsAt: true },
+    take: 5000,
+  });
+  const byKey = new Map<string, { id: string; minutes: number }[]>();
+  for (const r of rows) {
+    const k = `${r.assignedAssociateId}:${startOfWeekUTC(r.startsAt).getTime()}`;
+    const list = byKey.get(k) ?? [];
+    list.push({ id: r.id, minutes: scheduledMinutes(r) });
+    byKey.set(k, list);
+  }
+  return items.map((i) => {
+    const k = `${i.associateId}:${startOfWeekUTC(i.startsAt).getTime()}`;
+    const excl = new Set(i.excludeShiftIds ?? []);
+    const existing = (byKey.get(k) ?? [])
+      .filter((r) => !excl.has(r.id))
+      .reduce((s, r) => s + r.minutes, 0);
+    return existing + scheduledMinutes(i) > 40 * 60;
+  });
+}
 
 // Hard cap on the PDF export. Each row pulls a shift row + client name
 // + associate name, ~400 bytes serialized; at 5000 rows that's ~2 MB
@@ -178,13 +303,24 @@ const SCHEDULE_PDF_MAX_ROWS = 5000;
 
 /* ===== HR/Ops list + CRUD =============================================== */
 
+/** Parse an optional ISO query param; garbage → 400 instead of letting
+ *  Prisma choke on Invalid Date (500). */
+function parseDateParam(raw: string | undefined, name: string): Date | undefined {
+  if (!raw) return undefined;
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) {
+    throw new HttpError(400, 'invalid_range', `\`${name}\` must be an ISO datetime`);
+  }
+  return d;
+}
+
 schedulingRouter.get('/shifts', MANAGE, async (req, res, next) => {
   try {
     const status = req.query.status?.toString();
     const clientId = req.query.clientId?.toString();
     const locationId = req.query.locationId?.toString();
-    const from = req.query.from?.toString();
-    const to = req.query.to?.toString();
+    const from = parseDateParam(req.query.from?.toString(), 'from');
+    const to = parseDateParam(req.query.to?.toString(), 'to');
 
     const where: Prisma.ShiftWhereInput = {
       ...scopeShifts(req.user!),
@@ -195,12 +331,12 @@ schedulingRouter.get('/shifts', MANAGE, async (req, res, next) => {
       ...(from || to
         ? {
             startsAt: {
-              ...(from ? { gte: new Date(from) } : {}),
+              ...(from ? { gte: from } : {}),
               // Exclusive upper bound: the client sends the next period's start
               // (next midnight) as `to`. Using `lt` (not `lte`) keeps a shift
               // that starts exactly at that boundary in the NEXT period only,
               // instead of double-counting it in both adjacent windows.
-              ...(to ? { lt: new Date(to) } : {}),
+              ...(to ? { lt: to } : {}),
             },
           }
         : {}),
@@ -251,8 +387,8 @@ schedulingRouter.get('/kpis', MANAGE, async (req, res, next) => {
     defaultFrom.setDate(defaultFrom.getDate() - defaultFrom.getDay());
     const defaultTo = new Date(defaultFrom);
     defaultTo.setDate(defaultTo.getDate() + 7);
-    const from = fromParam ? new Date(fromParam) : defaultFrom;
-    const to = toParam ? new Date(toParam) : defaultTo;
+    const from = parseDateParam(fromParam, 'from') ?? defaultFrom;
+    const to = parseDateParam(toParam, 'to') ?? defaultTo;
 
     const where: Prisma.ShiftWhereInput = {
       ...scopeShifts(req.user!),
@@ -588,6 +724,16 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
     };
     const openCount = input.openCount ?? 0;
 
+    // Associates who declared this day unavailable (approved time off or a
+    // one-off day off) are skipped like conflicts — a bulk assign must not
+    // steamroll a day someone said they can't work.
+    const unavailableIds = await blockedForWindow(
+      candidateIds,
+      startsAt,
+      endsAt,
+      location.timezone ?? DEFAULT_TIMEZONE,
+    );
+
     // Conflict-check + create everything atomically.
     const { createdIds, toAssign, conflictedSkips } = await prisma.$transaction(
       async (tx) => {
@@ -604,13 +750,15 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
               })
             : [];
         const conflicted = new Set(conflictRows.map((r) => r.assignedAssociateId));
-        const toAssign = candidateIds.filter((id) => !conflicted.has(id));
+        const toAssign = candidateIds.filter(
+          (id) => !conflicted.has(id) && !unavailableIds.has(id),
+        );
         const conflictedSkips = candidateIds
-          .filter((id) => conflicted.has(id))
+          .filter((id) => conflicted.has(id) || unavailableIds.has(id))
           .map((id) => ({
             associateId: id,
             associateName: nameById.get(id)!,
-            reason: 'already_scheduled',
+            reason: conflicted.has(id) ? 'already_scheduled' : 'day_unavailable',
           }));
 
         if (toAssign.length > 0) {
@@ -781,10 +929,47 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
       data.lateNoticeReason = null;
     }
 
-    const updated = await prisma.shift.update({
-      where: { id: existing.id },
-      data,
-      include: SHIFT_INCLUDE,
+    // June audit P0: editing an assigned shift's times (or promoting it to
+    // ASSIGNED) had no double-booking guard — moving a shift onto another
+    // of the same associate's shifts silently double-booked them. Check
+    // inside the same transaction as the write so a concurrent /assign
+    // can't slip in between.
+    const timesChanged = i.startsAt !== undefined || i.endsAt !== undefined;
+    const assigneeAfter =
+      existing.assignedAssociateId && (i.status ?? existing.status) === 'ASSIGNED'
+        ? existing.assignedAssociateId
+        : null;
+    const newStarts = i.startsAt ? new Date(i.startsAt) : existing.startsAt;
+    const newEnds = i.endsAt ? new Date(i.endsAt) : existing.endsAt;
+    // The schema's endsAt>startsAt refine only fires when BOTH are in the
+    // body — a startsAt-only patch could invert the window against the
+    // EXISTING end (July review): overlap checks then match nothing and a
+    // negative-duration shift gets written. Validate the effective pair.
+    if (timesChanged && newEnds <= newStarts) {
+      throw new HttpError(
+        400,
+        'invalid_range',
+        'endsAt must be after startsAt (check the field you did not change).',
+      );
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      if (assigneeAfter && (timesChanged || i.status === 'ASSIGNED')) {
+        if (
+          await associateHasOverlap(tx, assigneeAfter, newStarts, newEnds, existing.id)
+        ) {
+          throw new HttpError(
+            409,
+            'associate_double_booked',
+            'These times overlap another shift already assigned to this associate.',
+          );
+        }
+      }
+      return tx.shift.update({
+        where: { id: existing.id },
+        data,
+        include: SHIFT_INCLUDE,
+      });
     });
 
     await recordShiftEvent({
@@ -877,6 +1062,7 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
 
     const shift = await prisma.shift.findFirst({
       where: { id: req.params.id, ...scopeShifts(req.user!) },
+      include: { locationRel: { select: { timezone: true } } },
     });
     if (!shift) throw new HttpError(404, 'shift_not_found', 'Shift not found');
     if (shift.status === 'CANCELLED') {
@@ -891,9 +1077,32 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
     });
     if (!associate) throw new HttpError(404, 'associate_not_found', 'Associate not found');
 
-    // Conflict check + write in one transaction so two managers can't
-    // assign the same associate to overlapping shifts at the same instant.
+    // Conflict + unavailability checks + write in one transaction so two
+    // managers can't assign the same associate to overlapping shifts at
+    // the same instant, and a day-off/PTO approved between check and write
+    // can't be steamrolled (July review: the unavailability check used to
+    // run outside the transaction).
     const updated = await prisma.$transaction(async (tx) => {
+      // Approved time off and one-off days off BLOCK assignment by
+      // default — an associate declaring a day unavailable means exactly
+      // that. Admins can push through with overrideUnavailability
+      // (audited below); an explicit per-assignment decision, never silent.
+      if (!parsed.data.overrideUnavailability) {
+        const blocked = await blockedForWindow(
+          [associate.id],
+          shift.startsAt,
+          shift.endsAt,
+          shift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+          tx,
+        );
+        if (blocked.size > 0) {
+          throw new HttpError(
+            409,
+            'associate_unavailable',
+            `${associate.firstName} ${associate.lastName} has approved time off or a declared day off covering this shift.`,
+          );
+        }
+      }
       if (
         await associateHasOverlap(
           tx,
@@ -925,7 +1134,12 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
       action: 'shift.assigned',
       shiftId: updated.id,
       clientId: updated.clientId,
-      metadata: { associateId: associate.id },
+      metadata: {
+        associateId: associate.id,
+        ...(parsed.data.overrideUnavailability
+          ? { overrodeUnavailability: true }
+          : {}),
+      },
       req,
     });
 
@@ -1112,6 +1326,18 @@ schedulingRouter.post('/shifts/:id/cancel', MANAGE, async (req, res, next) => {
 
 /* ===== Associate-facing /me ============================================ */
 
+const MY_SHIFTS_CAP = 100;
+
+/**
+ * The admin `toShift` payload minus the money fields. `hourlyRate` is the
+ * CLIENT BILL rate (revenue side) — paired with `payRate` it exposes the
+ * staffing margin, so neither belongs in an associate-facing response.
+ * Nulled rather than omitted so the shared ShiftSchema still parses.
+ */
+function toAssociateShift(row: Parameters<typeof toShift>[0]): Shift {
+  return { ...toShift(row), hourlyRate: null, payRate: null };
+}
+
 schedulingRouter.get('/me/shifts', async (req, res, next) => {
   try {
     const user = req.user!;
@@ -1139,10 +1365,244 @@ schedulingRouter.get('/me/shifts', async (req, res, next) => {
         startsAt: { gte: pastHorizon },
       },
       orderBy: { startsAt: 'asc' },
-      take: 100,
+      // Over-fetch one row so truncation is detectable — ascending order
+      // means the FURTHEST-FUTURE shifts are the ones that fall off, which
+      // must never read as "no more shifts".
+      take: MY_SHIFTS_CAP + 1,
       include: SHIFT_INCLUDE,
     });
-    res.json({ shifts: rows.map(toShift) } satisfies ShiftListResponse);
+    const truncated = rows.length > MY_SHIFTS_CAP;
+    res.json({
+      shifts: rows.slice(0, MY_SHIFTS_CAP).map(toAssociateShift),
+      truncated,
+    } satisfies ShiftListResponse);
+  } catch (err) {
+    next(err);
+  }
+});
+
+const HISTORY_PAGE = 50;
+
+/**
+ * GET /scheduling/me/shifts/history?before=<ISO>
+ *
+ * Older published shifts, newest-first, 50 a page. `before` defaults to the
+ * main list's 30-day horizon so the first page picks up exactly where the
+ * Recent section ends. Registered BEFORE /me/shifts/:id so the literal
+ * "history" segment isn't swallowed as an id.
+ */
+schedulingRouter.get('/me/shifts/history', async (req, res, next) => {
+  try {
+    const user = req.user!;
+    if (!user.associateId) {
+      res.json(MyShiftHistoryResponseSchema.parse({ shifts: [], nextBefore: null }));
+      return;
+    }
+    const raw = req.query.before?.toString();
+    const parsed = raw ? new Date(raw) : null;
+    if (raw && Number.isNaN(parsed!.getTime())) {
+      throw new HttpError(400, 'invalid_before', '`before` must be an ISO datetime');
+    }
+    const before =
+      parsed ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const rows = await prisma.shift.findMany({
+      where: {
+        assignedAssociateId: user.associateId,
+        publishedAt: { not: null },
+        status: { notIn: ['CANCELLED'] },
+        startsAt: { lt: before },
+      },
+      orderBy: { startsAt: 'desc' },
+      take: HISTORY_PAGE + 1,
+      include: SHIFT_INCLUDE,
+    });
+    const page = rows.slice(0, HISTORY_PAGE);
+    res.json(
+      MyShiftHistoryResponseSchema.parse({
+        shifts: page.map(toAssociateShift),
+        nextBefore:
+          rows.length > HISTORY_PAGE
+            ? page[page.length - 1]!.startsAt.toISOString()
+            : null,
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /scheduling/me/shifts/:id
+ *
+ * Detail for ONE of the caller's own published shifts, plus everyone whose
+ * published shift overlaps it at the same work site — the "who am I working
+ * with" panel (Sling-style). Teammates scope to the same location when the
+ * shift has one, otherwise the same client, and expose only name/position/
+ * times/sub-zone (names are already associate-visible via /directory).
+ */
+schedulingRouter.get('/me/shifts/:id', async (req, res, next) => {
+  try {
+    const user = req.user!;
+    if (!user.associateId) {
+      throw new HttpError(404, 'shift_not_found', 'Shift not found');
+    }
+    const shift = await prisma.shift.findFirst({
+      where: {
+        id: req.params.id,
+        assignedAssociateId: user.associateId,
+        publishedAt: { not: null },
+        status: { notIn: ['CANCELLED'] },
+      },
+      include: SHIFT_INCLUDE,
+    });
+    // Same 404 whether the shift doesn't exist or belongs to someone else —
+    // don't confirm foreign shift ids to a probing client.
+    if (!shift) {
+      throw new HttpError(404, 'shift_not_found', 'Shift not found');
+    }
+
+    const overlapping = await prisma.shift.findMany({
+      where: {
+        id: { not: shift.id },
+        clientId: shift.clientId,
+        ...(shift.locationId ? { locationId: shift.locationId } : {}),
+        publishedAt: { not: null },
+        status: { notIn: ['CANCELLED'] },
+        AND: [
+          { assignedAssociateId: { not: null } },
+          { assignedAssociateId: { not: user.associateId } },
+        ],
+        startsAt: { lt: shift.endsAt },
+        endsAt: { gt: shift.startsAt },
+      },
+      orderBy: { startsAt: 'asc' },
+      take: 50,
+      include: { assignedAssociate: { select: { firstName: true, lastName: true } } },
+    });
+    // One row per person — back-to-back split shifts would otherwise list
+    // the same teammate twice.
+    const seen = new Set<string>();
+    const teammates = overlapping.flatMap((s) => {
+      if (!s.assignedAssociateId || !s.assignedAssociate || seen.has(s.assignedAssociateId)) {
+        return [];
+      }
+      seen.add(s.assignedAssociateId);
+      return [
+        {
+          associateId: s.assignedAssociateId,
+          name: `${s.assignedAssociate.firstName} ${s.assignedAssociate.lastName}`,
+          position: s.position,
+          startsAt: s.startsAt.toISOString(),
+          endsAt: s.endsAt.toISOString(),
+          location: s.location,
+        },
+      ];
+    });
+
+    res.json(
+      MyShiftDetailResponseSchema.parse({
+        shift: toAssociateShift(shift),
+        teammates,
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /scheduling/me/shifts/:id/swap-candidates
+ *
+ * Who the caller can offer this shift to: the schedulable pool (ACTIVE
+ * ASSOCIATE-role, onboarded) minus themselves, each flagged `busy` when
+ * they already have a shift overlapping this one. Advisory — the swap
+ * POST and manager approval remain the enforcement points.
+ */
+schedulingRouter.get('/me/shifts/:id/swap-candidates', async (req, res, next) => {
+  try {
+    const user = req.user!;
+    if (!user.associateId) {
+      throw new HttpError(404, 'shift_not_found', 'Shift not found');
+    }
+    const shift = await prisma.shift.findFirst({
+      where: {
+        id: req.params.id,
+        assignedAssociateId: user.associateId,
+        publishedAt: { not: null },
+        status: { notIn: ['CANCELLED'] },
+      },
+      select: {
+        id: true,
+        clientId: true,
+        startsAt: true,
+        endsAt: true,
+        locationRel: { select: { timezone: true } },
+      },
+    });
+    if (!shift) {
+      throw new HttpError(404, 'shift_not_found', 'Shift not found');
+    }
+
+    // Schedulable pool ∩ placed at THIS client — offering a Publix shift
+    // to someone who has never worked Publix is a dead-on-arrival request.
+    // AND-composed because ACTIVE_ASSOCIATE_FILTER carries its own OR;
+    // spreading a second OR key would silently overwrite the first.
+    const pool = await prisma.associate.findMany({
+      where: {
+        AND: [
+          ACTIVE_ASSOCIATE_FILTER,
+          { id: { not: user.associateId } },
+          {
+            OR: [
+              { applications: { some: { clientId: shift.clientId, status: 'APPROVED' } } },
+              {
+                assignments: {
+                  some: { endedAt: null, location: { is: { clientId: shift.clientId } } },
+                },
+              },
+            ],
+          },
+        ],
+      },
+      select: { id: true, firstName: true, lastName: true },
+      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+      take: 200,
+    });
+    const poolIds = pool.map((a) => a.id);
+    const [clashes, dayBlocked] = await Promise.all([
+      prisma.shift.findMany({
+        where: {
+          id: { not: shift.id },
+          assignedAssociateId: { in: poolIds },
+          status: { notIn: ['CANCELLED'] },
+          startsAt: { lt: shift.endsAt },
+          endsAt: { gt: shift.startsAt },
+        },
+        select: { assignedAssociateId: true },
+      }),
+      // Approved time off + one-off days off count as busy too — a request
+      // to someone on vacation dies at manager review anyway.
+      blockedForWindow(
+        poolIds,
+        shift.startsAt,
+        shift.endsAt,
+        shift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+      ),
+    ]);
+    const busyIds = new Set([
+      ...clashes.map((c) => c.assignedAssociateId as string),
+      ...dayBlocked,
+    ]);
+
+    res.json(
+      SwapCandidateListResponseSchema.parse({
+        candidates: pool.map((a) => ({
+          associateId: a.id,
+          name: `${a.firstName} ${a.lastName}`,
+          busy: busyIds.has(a.id),
+        })),
+      }),
+    );
   } catch (err) {
     next(err);
   }
@@ -1160,23 +1620,645 @@ schedulingRouter.get('/me/shifts', async (req, res, next) => {
  * macOS/iOS without an extra step; the https:// URL works for Google
  * Calendar's "Add by URL" flow and Outlook.
  */
+/**
+ * POST /scheduling/me/shifts/:id/acknowledge
+ *
+ * "I'll be there." Idempotent — the guarded update only stamps the first
+ * tap, and re-acknowledging returns the shift unchanged. Admins see
+ * acknowledgedAt on every shift payload and can chase the silent ones.
+ */
+schedulingRouter.post('/me/shifts/:id/acknowledge', async (req, res, next) => {
+  try {
+    const user = req.user!;
+    if (!user.associateId) {
+      throw new HttpError(404, 'shift_not_found', 'Shift not found');
+    }
+    const owned = await prisma.shift.findFirst({
+      where: {
+        id: req.params.id,
+        assignedAssociateId: user.associateId,
+        publishedAt: { not: null },
+        status: { notIn: ['CANCELLED'] },
+      },
+      select: { id: true },
+    });
+    if (!owned) throw new HttpError(404, 'shift_not_found', 'Shift not found');
+    await prisma.shift.updateMany({
+      where: { id: owned.id, acknowledgedAt: null },
+      data: { acknowledgedAt: new Date() },
+    });
+    const fresh = await prisma.shift.findUniqueOrThrow({
+      where: { id: owned.id },
+      include: SHIFT_INCLUDE,
+    });
+    res.json(toAssociateShift(fresh));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== One-off availability exceptions ("can't work July 15") ========== */
+
+const exceptionDayString = (d: Date) => d.toISOString().slice(0, 10);
+
+schedulingRouter.get('/me/availability/exceptions', async (req, res, next) => {
+  try {
+    const user = req.user!;
+    if (!user.associateId) {
+      res.json(AvailabilityExceptionListResponseSchema.parse({ exceptions: [] }));
+      return;
+    }
+    // From yesterday forward — past exceptions are noise in the editor.
+    const from = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const rows = await prisma.availabilityException.findMany({
+      where: { associateId: user.associateId, date: { gte: from } },
+      orderBy: { date: 'asc' },
+      take: 100,
+    });
+    res.json(
+      AvailabilityExceptionListResponseSchema.parse({
+        exceptions: rows.map((r) => ({
+          id: r.id,
+          date: exceptionDayString(r.date),
+          note: r.note,
+        })),
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+schedulingRouter.post('/me/availability/exceptions', async (req, res, next) => {
+  try {
+    const user = req.user!;
+    if (!user.associateId) {
+      throw new HttpError(403, 'not_an_associate', 'Only associates set availability');
+    }
+    const parsed = AvailabilityExceptionCreateInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const date = new Date(`${parsed.data.date}T00:00:00Z`);
+    if (Number.isNaN(date.getTime())) {
+      throw new HttpError(400, 'invalid_date', 'Invalid date');
+    }
+    // Upsert on the (associateId, date) unique key — re-adding the same
+    // day just refreshes the note instead of erroring.
+    const row = await prisma.availabilityException.upsert({
+      where: { associateId_date: { associateId: user.associateId, date } },
+      create: {
+        associateId: user.associateId,
+        date,
+        note: parsed.data.note?.trim() || null,
+      },
+      update: { note: parsed.data.note?.trim() || null },
+    });
+    res.status(201).json({
+      id: row.id,
+      date: exceptionDayString(row.date),
+      note: row.note,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+schedulingRouter.delete('/me/availability/exceptions/:id', async (req, res, next) => {
+  try {
+    const user = req.user!;
+    if (!user.associateId) {
+      throw new HttpError(404, 'not_found', 'Not found');
+    }
+    const gone = await prisma.availabilityException.deleteMany({
+      where: { id: req.params.id, associateId: user.associateId },
+    });
+    if (gone.count === 0) throw new HttpError(404, 'not_found', 'Not found');
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Open-shift pickup (Phase 85 claims, finally wired) =============== */
+
+/** ClientIds where the associate is placed — approved application or an
+ *  open assignment. Open shifts outside these clients aren't offered. */
+async function placedClientIds(associateId: string): Promise<string[]> {
+  const [apps, assignments] = await Promise.all([
+    prisma.application.findMany({
+      where: { associateId, status: 'APPROVED' },
+      select: { clientId: true },
+    }),
+    prisma.associateAssignment.findMany({
+      where: { associateId, endedAt: null },
+      select: { location: { select: { clientId: true } } },
+    }),
+  ]);
+  return Array.from(
+    new Set([
+      ...apps.map((a) => a.clientId),
+      ...assignments.map((a) => a.location.clientId),
+    ]),
+  );
+}
+
+schedulingRouter.get('/me/open-shifts', async (req, res, next) => {
+  try {
+    const user = req.user!;
+    if (!user.associateId) {
+      res.json(OpenShiftsResponseSchema.parse({ shifts: [] }));
+      return;
+    }
+    const clientIds = await placedClientIds(user.associateId);
+    if (clientIds.length === 0) {
+      res.json(OpenShiftsResponseSchema.parse({ shifts: [] }));
+      return;
+    }
+    const rows = await prisma.shift.findMany({
+      where: {
+        clientId: { in: clientIds },
+        status: 'OPEN',
+        assignedAssociateId: null,
+        publishedAt: { not: null },
+        startsAt: { gt: new Date() },
+      },
+      orderBy: { startsAt: 'asc' },
+      take: 50,
+      include: SHIFT_INCLUDE,
+    });
+
+    // Hide shifts the associate couldn't actually take: overlapping their
+    // own schedule, or on a day they're off (PTO / exception). One batched
+    // fetch of their schedule + blocking rows, then in-memory filtering —
+    // the per-shift blockedForWindow loop here was a 100-query N+1 (July
+    // review).
+    const horizon = rows.length
+      ? new Date(Math.max(...rows.map((s) => s.endsAt.getTime())))
+      : new Date();
+    const [mine, ptoRows, exceptionRows] = await Promise.all([
+      prisma.shift.findMany({
+        where: {
+          assignedAssociateId: user.associateId,
+          status: { notIn: ['CANCELLED'] },
+          endsAt: { gt: new Date() },
+        },
+        select: { startsAt: true, endsAt: true },
+      }),
+      prisma.timeOffRequest.findMany({
+        where: {
+          associateId: user.associateId,
+          status: 'APPROVED',
+          startDate: { lte: horizon },
+          endDate: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+        },
+        select: { startDate: true, endDate: true },
+      }),
+      prisma.availabilityException.findMany({
+        where: {
+          associateId: user.associateId,
+          date: {
+            gte: new Date(Date.now() - 24 * 60 * 60 * 1000),
+            lte: horizon,
+          },
+        },
+        select: { date: true },
+      }),
+    ]);
+    const dayOfRow = (d: Date) => d.toISOString().slice(0, 10);
+    const eligible = rows.filter((s) => {
+      const overlaps = mine.some(
+        (m) => m.startsAt < s.endsAt && m.endsAt > s.startsAt,
+      );
+      if (overlaps) return false;
+      const tz = s.locationRel?.timezone ?? DEFAULT_TIMEZONE;
+      const startKey = dayKeyInZone(s.startsAt, tz);
+      const endKey = dayKeyInZone(s.endsAt, tz);
+      const ptoBlocked = ptoRows.some(
+        (r) => dayOfRow(r.startDate) <= endKey && dayOfRow(r.endDate) >= startKey,
+      );
+      if (ptoBlocked) return false;
+      return !exceptionRows.some((x) => {
+        const k = dayOfRow(x.date);
+        return k >= startKey && k <= endKey;
+      });
+    });
+
+    const claims = await prisma.openShiftClaim.findMany({
+      where: {
+        associateId: user.associateId,
+        shiftId: { in: eligible.map((s) => s.id) },
+        status: 'PENDING',
+      },
+      select: { id: true, shiftId: true, status: true },
+    });
+    const claimByShift = new Map(claims.map((c) => [c.shiftId, c]));
+
+    res.json(
+      OpenShiftsResponseSchema.parse({
+        shifts: eligible.map((s) => ({
+          ...toAssociateShift(s),
+          myClaimStatus: claimByShift.get(s.id)?.status ?? null,
+          myClaimId: claimByShift.get(s.id)?.id ?? null,
+        })),
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+schedulingRouter.post('/me/open-shifts/:id/claim', async (req, res, next) => {
+  try {
+    const user = req.user!;
+    if (!user.associateId) {
+      throw new HttpError(403, 'not_an_associate', 'Only associates can pick up shifts');
+    }
+    const shift = await prisma.shift.findFirst({
+      where: {
+        id: req.params.id,
+        status: 'OPEN',
+        assignedAssociateId: null,
+        publishedAt: { not: null },
+        startsAt: { gt: new Date() },
+      },
+      include: SHIFT_INCLUDE,
+    });
+    if (!shift) {
+      throw new HttpError(404, 'shift_not_available', 'This shift is no longer open');
+    }
+    const clientIds = await placedClientIds(user.associateId);
+    if (!clientIds.includes(shift.clientId)) {
+      throw new HttpError(403, 'not_placed_at_client', 'You are not placed at this client');
+    }
+    if (
+      await associateHasOverlap(prisma, user.associateId, shift.startsAt, shift.endsAt, shift.id)
+    ) {
+      throw new HttpError(409, 'overlaps_your_schedule', 'This shift overlaps one of yours');
+    }
+    const tz = shift.locationRel?.timezone ?? DEFAULT_TIMEZONE;
+    const blocked = await blockedForWindow([user.associateId], shift.startsAt, shift.endsAt, tz);
+    if (blocked.size > 0) {
+      throw new HttpError(409, 'day_unavailable', 'You have time off or a day off then');
+    }
+    const existing = await prisma.openShiftClaim.findFirst({
+      where: { shiftId: shift.id, associateId: user.associateId, status: 'PENDING' },
+      select: { id: true },
+    });
+    if (existing) {
+      throw new HttpError(409, 'already_requested', 'You already requested this shift');
+    }
+
+    let claim;
+    try {
+      claim = await prisma.openShiftClaim.create({
+        data: { shiftId: shift.id, associateId: user.associateId, status: 'PENDING' },
+      });
+    } catch (err) {
+      // Partial unique index (shiftId, associateId) WHERE PENDING — the DB
+      // arbitrates the double-tap race the findFirst above can't close.
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        throw new HttpError(409, 'already_requested', 'You already requested this shift');
+      }
+      throw err;
+    }
+    await recordShiftEvent({
+      actorUserId: user.id,
+      action: 'shift.pickup_requested',
+      shiftId: shift.id,
+      clientId: shift.clientId,
+      metadata: { associateId: user.associateId, claimId: claim.id },
+      req,
+    });
+    const me = await prisma.associate.findUnique({
+      where: { id: user.associateId },
+      select: { firstName: true, lastName: true },
+    });
+    void notifyAllAdmins({
+      subject: 'Open-shift pickup request',
+      body: `${me?.firstName ?? 'An associate'} ${me?.lastName ?? ''} wants to pick up: ${formatShiftLine({
+        position: shift.position,
+        clientName: shift.client?.name ?? null,
+        startsAt: shift.startsAt,
+        endsAt: shift.endsAt,
+        timezone: tz,
+      })}\nApprove or reject it from the Scheduling page.`,
+      category: 'scheduling',
+      excludeUserId: user.id,
+    });
+
+    res.status(201).json(
+      OpenShiftClaimSchema.parse({
+        id: claim.id,
+        shiftId: claim.shiftId,
+        status: claim.status,
+        createdAt: claim.createdAt.toISOString(),
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+schedulingRouter.post('/me/open-shift-claims/:id/withdraw', async (req, res, next) => {
+  try {
+    const user = req.user!;
+    if (!user.associateId) throw new HttpError(404, 'not_found', 'Not found');
+    // Guarded transition: only a still-PENDING claim of mine can withdraw.
+    const cas = await prisma.openShiftClaim.updateMany({
+      where: { id: req.params.id, associateId: user.associateId, status: 'PENDING' },
+      data: { status: 'WITHDRAWN' },
+    });
+    if (cas.count === 0) {
+      throw new HttpError(409, 'not_pending', 'This request was already decided');
+    }
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+const CLAIM_INCLUDE = {
+  associate: { select: { firstName: true, lastName: true } },
+  shift: {
+    include: {
+      client: { select: { name: true } },
+      locationRel: { select: { timezone: true } },
+    },
+  },
+} as const;
+
+schedulingRouter.get('/open-shift-claims', MANAGE, async (req, res, next) => {
+  try {
+    const rows = await prisma.openShiftClaim.findMany({
+      where: { status: 'PENDING', shift: { is: scopeShifts(req.user!) } },
+      orderBy: { createdAt: 'asc' },
+      take: 100,
+      include: CLAIM_INCLUDE,
+    });
+    const otFlags = await wouldExceed40hFlags(
+      rows.map((c) => ({
+        associateId: c.associateId,
+        startsAt: c.shift.startsAt,
+        endsAt: c.shift.endsAt,
+      })),
+    );
+    res.json(
+      AdminOpenShiftClaimListResponseSchema.parse({
+        claims: rows.map((c, i) => ({
+          id: c.id,
+          status: c.status,
+          associateId: c.associateId,
+          associateName: `${c.associate.firstName} ${c.associate.lastName}`,
+          shiftId: c.shiftId,
+          shiftPosition: c.shift.position,
+          shiftClientName: c.shift.client?.name ?? null,
+          shiftStartsAt: c.shift.startsAt.toISOString(),
+          shiftEndsAt: c.shift.endsAt.toISOString(),
+          shiftTimezone: c.shift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+          wouldExceed40h: otFlags[i],
+          createdAt: c.createdAt.toISOString(),
+        })),
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+schedulingRouter.post('/open-shift-claims/:id/approve', MANAGE, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    const claim = await prisma.openShiftClaim.findFirst({
+      where: { id: req.params.id, shift: { is: scopeShifts(req.user!) } },
+      include: CLAIM_INCLUDE,
+    });
+    if (!claim) throw new HttpError(404, 'claim_not_found', 'Pickup request not found');
+    if (claim.status !== 'PENDING') {
+      throw new HttpError(409, 'not_pending', `Request is ${claim.status}`);
+    }
+
+    // Atomic: CAS the claim, guarded-claim the shift (it must STILL be
+    // open+unassigned — mirrors the auto-scheduler's TOCTOU guard), verify
+    // the associate didn't get double-booked since requesting.
+    await prisma.$transaction(async (tx) => {
+      const cas = await tx.openShiftClaim.updateMany({
+        where: { id: claim.id, status: 'PENDING' },
+        data: { status: 'APPROVED', decidedById: user.id, decidedAt: new Date() },
+      });
+      if (cas.count === 0) {
+        throw new HttpError(409, 'not_pending', 'Request was already decided');
+      }
+      if (
+        await associateHasOverlap(
+          tx,
+          claim.associateId,
+          claim.shift.startsAt,
+          claim.shift.endsAt,
+          claim.shiftId,
+        )
+      ) {
+        throw new HttpError(
+          409,
+          'associate_double_booked',
+          'They picked up another overlapping shift in the meantime',
+        );
+      }
+      // Day off / PTO approved AFTER they requested the pickup wins —
+      // same re-check the swap approval does.
+      const nowBlocked = await blockedForWindow(
+        [claim.associateId],
+        claim.shift.startsAt,
+        claim.shift.endsAt,
+        claim.shift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+        tx,
+      );
+      if (nowBlocked.size > 0) {
+        throw new HttpError(
+          409,
+          'associate_unavailable',
+          'They now have time off or a day off covering this shift.',
+        );
+      }
+      const took = await tx.shift.updateMany({
+        where: { id: claim.shiftId, status: 'OPEN', assignedAssociateId: null },
+        data: {
+          status: 'ASSIGNED',
+          assignedAssociateId: claim.associateId,
+          assignedAt: new Date(),
+        },
+      });
+      if (took.count === 0) {
+        throw new HttpError(409, 'shift_gone', 'Shift was filled or changed already');
+      }
+      // Everyone else waiting on this shift loses automatically.
+      await tx.openShiftClaim.updateMany({
+        where: { shiftId: claim.shiftId, status: 'PENDING' },
+        data: {
+          status: 'REJECTED',
+          decidedById: user.id,
+          decidedAt: new Date(),
+          decisionNote: 'Shift was filled',
+        },
+      });
+    });
+
+    await recordShiftEvent({
+      actorUserId: user.id,
+      action: 'shift.pickup_approved',
+      shiftId: claim.shiftId,
+      clientId: claim.shift.clientId,
+      metadata: { associateId: claim.associateId, claimId: claim.id },
+      req,
+    });
+    const line = formatShiftLine({
+      position: claim.shift.position,
+      clientName: claim.shift.client?.name ?? null,
+      startsAt: claim.shift.startsAt,
+      endsAt: claim.shift.endsAt,
+      timezone: claim.shift.locationRel?.timezone ?? null,
+    });
+    await notifyShift(prisma, {
+      associateId: claim.associateId,
+      subject: 'Pickup approved — shift is yours',
+      body: `You're on: ${line}`,
+      category: 'shift_pickup_approved',
+      senderUserId: user.id,
+    });
+    // Notify the associates whose pending requests just auto-lost.
+    const losers = await prisma.openShiftClaim.findMany({
+      where: {
+        shiftId: claim.shiftId,
+        status: 'REJECTED',
+        decisionNote: 'Shift was filled',
+        decidedAt: { gte: new Date(Date.now() - 60_000) },
+        NOT: { associateId: claim.associateId },
+      },
+      select: { associateId: true },
+      distinct: ['associateId'],
+    });
+    for (const l of losers) {
+      await notifyShift(prisma, {
+        associateId: l.associateId,
+        subject: 'Open shift filled',
+        body: `That open shift went to someone else: ${line}`,
+        category: 'shift_pickup_rejected',
+        senderUserId: user.id,
+      });
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+schedulingRouter.post('/open-shift-claims/:id/reject', MANAGE, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    const claim = await prisma.openShiftClaim.findFirst({
+      where: { id: req.params.id, shift: { is: scopeShifts(req.user!) } },
+      include: CLAIM_INCLUDE,
+    });
+    if (!claim) throw new HttpError(404, 'claim_not_found', 'Pickup request not found');
+    const cas = await prisma.openShiftClaim.updateMany({
+      where: { id: claim.id, status: 'PENDING' },
+      data: { status: 'REJECTED', decidedById: user.id, decidedAt: new Date() },
+    });
+    if (cas.count === 0) {
+      throw new HttpError(409, 'not_pending', `Request is ${claim.status}`);
+    }
+    await notifyShift(prisma, {
+      associateId: claim.associateId,
+      subject: 'Pickup request declined',
+      body: `Your pickup request wasn't approved: ${formatShiftLine({
+        position: claim.shift.position,
+        clientName: claim.shift.client?.name ?? null,
+        startsAt: claim.shift.startsAt,
+        endsAt: claim.shift.endsAt,
+        timezone: claim.shift.locationRel?.timezone ?? null,
+      })}`,
+      category: 'shift_pickup_rejected',
+      senderUserId: user.id,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+function buildCalendarFeedUrls(associateId: string, version: number) {
+  const token = mintCalendarToken(associateId, version);
+  // APP_BASE_URL is the web app origin in dev; in prod the API and SPA
+  // share an origin (Railway single-service setup), so this works for
+  // both. The `/api/calendar/v1/...` prefix matches the prod proxy path
+  // — in dev the SPA proxies `/api/*` to the API.
+  const base = env.APP_BASE_URL.replace(/\/$/, '');
+  const url = `${base}/api/calendar/v1/${associateId}/${token}.ics`;
+  const webcalUrl = url.replace(/^https?:\/\//, 'webcal://');
+  return CalendarFeedUrlResponseSchema.parse({ url, webcalUrl });
+}
+
 schedulingRouter.get('/me/calendar-url', async (req, res, next) => {
   try {
     const user = req.user!;
     if (!user.associateId) {
       throw new HttpError(404, 'no_associate', 'No associate profile linked');
     }
-    const token = mintCalendarToken(user.associateId);
-    // APP_BASE_URL is the web app origin in dev; in prod the API and SPA
-    // share an origin (Railway single-service setup), so this works for
-    // both. The `/api/calendar/v1/...` prefix matches the prod proxy path
-    // — in dev the SPA proxies `/api/*` to the API.
-    const base = env.APP_BASE_URL.replace(/\/$/, '');
-    const path = `/api/calendar/v1/${user.associateId}/${token}.ics`;
-    const url = `${base}${path}`;
-    const webcalUrl = url.replace(/^https?:\/\//, 'webcal://');
+    const associate = await prisma.associate.findUnique({
+      where: { id: user.associateId },
+      select: { calendarFeedVersion: true },
+    });
+    if (!associate) {
+      throw new HttpError(404, 'no_associate', 'No associate profile linked');
+    }
     res.json(
-      CalendarFeedUrlResponseSchema.parse({ url, webcalUrl }),
+      buildCalendarFeedUrls(user.associateId, associate.calendarFeedVersion),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /scheduling/me/calendar-url/rotate
+ *
+ * Invalidates the caller's current iCal URL (leaked link, ex-roommate's
+ * laptop, ...) by bumping their calendarFeedVersion, and returns the new
+ * URL. Only affects THIS associate — everyone else's subscriptions keep
+ * working. Every calendar app subscribed to the old URL goes dark until
+ * the new one is added, so the UI confirms before calling.
+ */
+schedulingRouter.post('/me/calendar-url/rotate', async (req, res, next) => {
+  try {
+    const user = req.user!;
+    if (!user.associateId) {
+      throw new HttpError(404, 'no_associate', 'No associate profile linked');
+    }
+    const associate = await prisma.associate.update({
+      where: { id: user.associateId },
+      data: { calendarFeedVersion: { increment: 1 } },
+      select: { calendarFeedVersion: true },
+    });
+    enqueueAudit(
+      {
+        actorUserId: user.id,
+        action: 'scheduling.calendar_feed_rotated',
+        entityType: 'Associate',
+        entityId: user.associateId,
+        metadata: {
+          ip: req.ip ?? null,
+          userAgent: req.headers['user-agent'] ?? null,
+          version: associate.calendarFeedVersion,
+        },
+      },
+      'scheduling.calendar_feed_rotated'
+    );
+    res.json(
+      buildCalendarFeedUrls(user.associateId, associate.calendarFeedVersion),
     );
   } catch (err) {
     next(err);
@@ -1188,14 +2270,16 @@ schedulingRouter.get('/me/calendar-url', async (req, res, next) => {
 /**
  * Returns existing assigned shifts that overlap the given target shift's
  * time window for the proposed associate. Used by the assign UI to warn
- * before clobbering. Doesn't block — the actual /assign endpoint still
- * runs; HR can override.
+ * before clobbering. Shift overlaps here are advisory (/assign re-checks
+ * transactionally); time off + declared days off are shown because
+ * /assign HARD-BLOCKS on them unless overrideUnavailability is sent.
  */
 schedulingRouter.get('/shifts/:id/conflicts', MANAGE, async (req, res, next) => {
   try {
     const associateId = req.query.associateId?.toString();
     const target = await prisma.shift.findFirst({
       where: { id: req.params.id, ...scopeShifts(req.user!) },
+      include: { locationRel: { select: { timezone: true } } },
     });
     if (!target) throw new HttpError(404, 'shift_not_found', 'Shift not found');
     if (!associateId) {
@@ -1203,14 +2287,18 @@ schedulingRouter.get('/shifts/:id/conflicts', MANAGE, async (req, res, next) => 
       return;
     }
 
-    // Day-bound the target so we can match it against day-granular
-    // TimeOffRequest rows (startDate / endDate are DATE columns).
-    const targetStartDate = new Date(target.startsAt);
-    targetStartDate.setUTCHours(0, 0, 0, 0);
-    const targetEndDate = new Date(target.endsAt);
-    targetEndDate.setUTCHours(0, 0, 0, 0);
+    // Day-bound the target in the STORE's zone so this advisory matches
+    // what /assign actually enforces (blockedForWindow). UTC flooring here
+    // was off by one day for evening shifts at stores west of UTC.
+    const conflictTz = target.locationRel?.timezone ?? DEFAULT_TIMEZONE;
+    const targetStartDate = new Date(
+      `${dayKeyInZone(target.startsAt, conflictTz)}T00:00:00Z`,
+    );
+    const targetEndDate = new Date(
+      `${dayKeyInZone(target.endsAt, conflictTz)}T00:00:00Z`,
+    );
 
-    const [overlaps, ptoOverlaps] = await Promise.all([
+    const [overlaps, ptoOverlaps, exceptionDays] = await Promise.all([
       prisma.shift.findMany({
         take: 100,
         where: {
@@ -1233,6 +2321,16 @@ schedulingRouter.get('/shifts/:id/conflicts', MANAGE, async (req, res, next) => 
           endDate: { gte: targetStartDate },
         },
       }),
+      // One-off "can't work this day" declarations on the shift's day(s) —
+      // these HARD-BLOCK /assign unless the admin overrides, so the dialog
+      // must show them before submit.
+      prisma.availabilityException.findMany({
+        take: 10,
+        where: {
+          associateId,
+          date: { gte: targetStartDate, lte: targetEndDate },
+        },
+      }),
     ]);
 
     const conflicts: ShiftConflict[] = overlaps.map((s) => ({
@@ -1248,7 +2346,13 @@ schedulingRouter.get('/shifts/:id/conflicts', MANAGE, async (req, res, next) => 
       startDate: r.startDate.toISOString().slice(0, 10),
       endDate: r.endDate.toISOString().slice(0, 10),
     }));
-    res.json(ShiftConflictsResponseSchema.parse({ conflicts, timeOffConflicts }));
+    const unavailableDays = exceptionDays.map((x) => ({
+      date: x.date.toISOString().slice(0, 10),
+      note: x.note,
+    }));
+    res.json(
+      ShiftConflictsResponseSchema.parse({ conflicts, timeOffConflicts, unavailableDays }),
+    );
   } catch (err) {
     next(err);
   }
@@ -1274,13 +2378,16 @@ schedulingRouter.get('/shifts/:id/auto-fill', MANAGE, async (req, res, next) => 
     // instant to the location's local day-of-week + minutes before matching.
     const targetTz = target.locationRel?.timezone ?? DEFAULT_TIMEZONE;
 
-    // Day-bound the target so we can match it against day-granular PTO rows.
-    const targetDayStart = new Date(target.startsAt);
-    targetDayStart.setUTCHours(0, 0, 0, 0);
-    const targetDayEnd = new Date(target.endsAt);
-    targetDayEnd.setUTCHours(0, 0, 0, 0);
+    // Day-bound the target in the store's zone so the ranking's PTO flag
+    // agrees with the /assign hard block (same fix as /conflicts).
+    const targetDayStart = new Date(
+      `${dayKeyInZone(target.startsAt, targetTz)}T00:00:00Z`,
+    );
+    const targetDayEnd = new Date(
+      `${dayKeyInZone(target.endsAt, targetTz)}T00:00:00Z`,
+    );
 
-    const [associates, ptoRows] = await Promise.all([
+    const [associates, ptoRows, exceptionRows] = await Promise.all([
       prisma.associate.findMany({
         where: ACTIVE_ASSOCIATE_FILTER,
         include: {
@@ -1311,9 +2418,18 @@ schedulingRouter.get('/shifts/:id/auto-fill', MANAGE, async (req, res, next) => 
         },
         select: { associateId: true },
       }),
+      // One-off days off — same treatment as PTO in the ranking.
+      prisma.availabilityException.findMany({
+        take: 200,
+        where: { date: { gte: targetDayStart, lte: targetDayEnd } },
+        select: { associateId: true },
+      }),
     ]);
 
-    const ptoAssociateIds = new Set(ptoRows.map((r) => r.associateId));
+    const ptoAssociateIds = new Set([
+      ...ptoRows.map((r) => r.associateId),
+      ...exceptionRows.map((r) => r.associateId),
+    ]);
 
     const targetDOW = zonedDayOfWeek(target.startsAt, targetTz);
     const startMin = zonedMinutes(target.startsAt, targetTz);
@@ -1444,7 +2560,18 @@ schedulingRouter.put('/me/availability', async (req, res, next) => {
 
 type RawSwap = Prisma.ShiftSwapRequestGetPayload<{
   include: {
-    shift: { include: { client: { select: { name: true } } } };
+    shift: {
+      include: {
+        client: { select: { name: true } };
+        locationRel: { select: { timezone: true } };
+      };
+    };
+    counterpartShift: {
+      include: {
+        client: { select: { name: true } };
+        locationRel: { select: { timezone: true } };
+      };
+    };
     requester: { select: { firstName: true; lastName: true } };
     counterparty: { select: { firstName: true; lastName: true } };
   };
@@ -1452,6 +2579,12 @@ type RawSwap = Prisma.ShiftSwapRequestGetPayload<{
 
 const SWAP_INCLUDE = {
   shift: {
+    include: {
+      client: { select: { name: true } },
+      locationRel: { select: { timezone: true } },
+    },
+  },
+  counterpartShift: {
     include: {
       client: { select: { name: true } },
       locationRel: { select: { timezone: true } },
@@ -1467,8 +2600,19 @@ function toSwap(row: RawSwap): ShiftSwapRequestDTO {
     shiftId: row.shiftId,
     shiftStartsAt: row.shift.startsAt.toISOString(),
     shiftEndsAt: row.shift.endsAt.toISOString(),
+    shiftTimezone: row.shift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
     shiftPosition: row.shift.position,
     shiftClientName: row.shift.client?.name ?? null,
+    inExchange: row.counterpartShift
+      ? {
+          shiftId: row.counterpartShift.id,
+          position: row.counterpartShift.position,
+          clientName: row.counterpartShift.client?.name ?? null,
+          startsAt: row.counterpartShift.startsAt.toISOString(),
+          endsAt: row.counterpartShift.endsAt.toISOString(),
+          timezone: row.counterpartShift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+        }
+      : null,
     requesterAssociateId: row.requesterAssociateId,
     requesterName: `${row.requester.firstName} ${row.requester.lastName}`,
     counterpartyAssociateId: row.counterpartyAssociateId,
@@ -1493,7 +2637,7 @@ schedulingRouter.post('/swap-requests', async (req, res, next) => {
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
-    const { shiftId, counterpartyAssociateId, note } = parsed.data;
+    const { shiftId, counterpartyAssociateId, note, counterpartShiftId } = parsed.data;
 
     if (counterpartyAssociateId === user.associateId) {
       throw new HttpError(400, 'self_swap', 'You cannot swap a shift with yourself');
@@ -1511,11 +2655,36 @@ schedulingRouter.post('/swap-requests', async (req, res, next) => {
     });
     if (!counterparty) throw new HttpError(404, 'counterparty_not_found', 'Counterparty associate not found');
 
+    // Trade half: the exchange shift must be a real, upcoming, published
+    // shift OF THE COUNTERPARTY — otherwise this degrades into a lever for
+    // grabbing arbitrary shifts. Deeper checks (double-booking both ways)
+    // run at manager-approve time, when they're actually decisive.
+    if (counterpartShiftId) {
+      if (counterpartShiftId === shiftId) {
+        throw new HttpError(400, 'same_shift', 'Exchange shift must differ from yours');
+      }
+      const exchange = await prisma.shift.findUnique({ where: { id: counterpartShiftId } });
+      if (
+        !exchange ||
+        exchange.assignedAssociateId !== counterpartyAssociateId ||
+        exchange.status !== 'ASSIGNED' ||
+        !exchange.publishedAt ||
+        exchange.startsAt <= new Date()
+      ) {
+        throw new HttpError(
+          409,
+          'invalid_exchange_shift',
+          "The exchange shift must be one of the counterparty's upcoming shifts",
+        );
+      }
+    }
+
     const created = await prisma.shiftSwapRequest.create({
       data: {
         shiftId,
         requesterAssociateId: user.associateId,
         counterpartyAssociateId,
+        counterpartShiftId: counterpartShiftId ?? null,
         note: note ?? null,
         status: 'PENDING_PEER',
       },
@@ -1555,6 +2724,59 @@ schedulingRouter.post('/swap-requests', async (req, res, next) => {
     });
 
     res.status(201).json(toSwap(created));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /scheduling/me/trade-options?counterpartyId=<uuid>
+ *
+ * The counterparty's upcoming published shifts — what the requester can
+ * ask for in exchange. Position/times only, same exposure rationale as
+ * the teammates panel.
+ */
+schedulingRouter.get('/me/trade-options', async (req, res, next) => {
+  try {
+    const user = req.user!;
+    if (!user.associateId) {
+      throw new HttpError(403, 'not_an_associate', 'Forbidden');
+    }
+    const counterpartyId = req.query.counterpartyId?.toString();
+    if (
+      !counterpartyId ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        counterpartyId,
+      )
+    ) {
+      throw new HttpError(400, 'invalid_counterparty', 'counterpartyId required');
+    }
+    const rows = await prisma.shift.findMany({
+      where: {
+        assignedAssociateId: counterpartyId,
+        status: 'ASSIGNED',
+        publishedAt: { not: null },
+        startsAt: { gt: new Date() },
+      },
+      orderBy: { startsAt: 'asc' },
+      take: 20,
+      include: {
+        client: { select: { name: true } },
+        locationRel: { select: { timezone: true } },
+      },
+    });
+    res.json(
+      TradeOptionsResponseSchema.parse({
+        options: rows.map((s) => ({
+          shiftId: s.id,
+          position: s.position,
+          clientName: s.client?.name ?? null,
+          startsAt: s.startsAt.toISOString(),
+          endsAt: s.endsAt.toISOString(),
+          timezone: s.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+        })),
+      }),
+    );
   } catch (err) {
     next(err);
   }
@@ -1661,9 +2883,17 @@ schedulingRouter.post('/swap-requests/:id/peer-decline', async (req, res, next) 
     if (swap.status !== 'PENDING_PEER') {
       throw new HttpError(409, 'invalid_state', `Swap is in ${swap.status}, cannot decline`);
     }
-    const updated = await prisma.shiftSwapRequest.update({
-      where: { id: swap.id },
+    // CAS, same as peer-accept — a decline racing an accept must lose to
+    // whichever landed first instead of overwriting it.
+    const cas = await prisma.shiftSwapRequest.updateMany({
+      where: { id: swap.id, status: 'PENDING_PEER' },
       data: { status: 'PEER_DECLINED' },
+    });
+    if (cas.count === 0) {
+      throw new HttpError(409, 'invalid_state', 'This swap was already resolved.');
+    }
+    const updated = await prisma.shiftSwapRequest.findUniqueOrThrow({
+      where: { id: swap.id },
       include: SWAP_INCLUDE,
     });
 
@@ -1702,9 +2932,21 @@ schedulingRouter.post('/swap-requests/:id/cancel', async (req, res, next) => {
     if (swap.status === 'MANAGER_APPROVED' || swap.status === 'CANCELLED') {
       throw new HttpError(409, 'invalid_state', `Swap is in ${swap.status}, cannot cancel`);
     }
-    const updated = await prisma.shiftSwapRequest.update({
-      where: { id: swap.id },
+    // Guarded write: re-assert "not yet approved" AT WRITE TIME. Without
+    // this, a cancel racing manager-approve could stamp CANCELLED over an
+    // approved swap whose assignment already moved (June audit P0).
+    const cas = await prisma.shiftSwapRequest.updateMany({
+      where: {
+        id: swap.id,
+        status: { notIn: ['MANAGER_APPROVED', 'CANCELLED'] },
+      },
       data: { status: 'CANCELLED' },
+    });
+    if (cas.count === 0) {
+      throw new HttpError(409, 'invalid_state', 'This swap was already resolved.');
+    }
+    const updated = await prisma.shiftSwapRequest.findUniqueOrThrow({
+      where: { id: swap.id },
       include: SWAP_INCLUDE,
     });
     res.json(toSwap(updated));
@@ -1729,7 +2971,21 @@ schedulingRouter.get('/swap-requests/admin', MANAGE, async (req, res, next) => {
       take: 200,
       include: SWAP_INCLUDE,
     });
-    res.json(ShiftSwapListResponseSchema.parse({ requests: rows.map(toSwap) }));
+    // Advisory OT chip: would the counterparty cross 40h by taking this
+    // shift (net of the leg they'd hand off on a trade)?
+    const otFlags = await wouldExceed40hFlags(
+      rows.map((r) => ({
+        associateId: r.counterpartyAssociateId,
+        startsAt: r.shift.startsAt,
+        endsAt: r.shift.endsAt,
+        excludeShiftIds: r.counterpartShiftId ? [r.counterpartShiftId] : [],
+      })),
+    );
+    res.json(
+      ShiftSwapListResponseSchema.parse({
+        requests: rows.map((r, i) => ({ ...toSwap(r), wouldExceed40h: otFlags[i] })),
+      }),
+    );
   } catch (err) {
     next(err);
   }
@@ -1746,7 +3002,10 @@ schedulingRouter.post('/swap-requests/:id/manager-approve', MANAGE, async (req, 
     // admin must not approve another client's swap by guessing the id.
     const swap = await prisma.shiftSwapRequest.findFirst({
       where: { id: req.params.id, shift: { is: scopeShifts(req.user!) } },
-      include: { shift: true },
+      include: {
+        shift: { include: { locationRel: { select: { timezone: true } } } },
+        counterpartShift: { include: { locationRel: { select: { timezone: true } } } },
+      },
     });
     if (!swap) throw new HttpError(404, 'swap_not_found', 'Swap request not found');
     if (swap.status !== 'PEER_ACCEPTED') {
@@ -1757,10 +3016,51 @@ schedulingRouter.post('/swap-requests/:id/manager-approve', MANAGE, async (req, 
       );
     }
 
-    // Execute the swap atomically: CAS the swap status, verify the
-    // counterparty isn't already booked over this shift's window (they
-    // could have picked up another shift between peer-accept and now), then
-    // flip the assignment. Any throw rolls the whole thing back.
+    // Declared unavailability blocks the receiving side of each leg — PTO
+    // approved (or a day off added) AFTER the peer accepted must not get
+    // steamrolled by the approval. Independent reads, so both legs check
+    // in parallel.
+    const [cptBlocked, reqBlocked] = await Promise.all([
+      blockedForWindow(
+        [swap.counterpartyAssociateId],
+        swap.shift.startsAt,
+        swap.shift.endsAt,
+        swap.shift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+      ),
+      swap.counterpartShift
+        ? blockedForWindow(
+            [swap.requesterAssociateId],
+            swap.counterpartShift.startsAt,
+            swap.counterpartShift.endsAt,
+            swap.counterpartShift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+          )
+        : Promise.resolve(new Set<string>()),
+    ]);
+    if (cptBlocked.size > 0) {
+      throw new HttpError(
+        409,
+        'counterparty_unavailable',
+        'The counterparty now has time off or a day off covering this shift.',
+      );
+    }
+    if (reqBlocked.size > 0) {
+      throw new HttpError(
+        409,
+        'requester_unavailable',
+        'The requester now has time off or a day off covering the exchange shift.',
+      );
+    }
+
+    // Execute atomically: CAS the swap status, verify neither party is
+    // double-booked by the leg they're taking, then move the assignment(s)
+    // with WRITE-TIME preconditions — the shift must still be ASSIGNED to
+    // the expected person (June audit P0: an approve racing a shift
+    // cancel/unassign used to resurrect the assignment blindly). Trades
+    // move both legs or none. Any throw rolls the whole thing back.
+    const isTrade = !!swap.counterpartShiftId && !!swap.counterpartShift;
+    const excludeIds = isTrade
+      ? [swap.shiftId, swap.counterpartShiftId!]
+      : [swap.shiftId];
     await prisma.$transaction(async (tx) => {
       const cas = await tx.shiftSwapRequest.updateMany({
         where: { id: swap.id, status: 'PEER_ACCEPTED' },
@@ -1770,12 +3070,12 @@ schedulingRouter.post('/swap-requests/:id/manager-approve', MANAGE, async (req, 
         throw new HttpError(409, 'invalid_state', 'This swap was already decided.');
       }
       if (
-        await associateHasOverlap(
+        await hasOverlapExcluding(
           tx,
           swap.counterpartyAssociateId,
           swap.shift.startsAt,
           swap.shift.endsAt,
-          swap.shiftId,
+          excludeIds,
         )
       ) {
         throw new HttpError(
@@ -1784,13 +3084,63 @@ schedulingRouter.post('/swap-requests/:id/manager-approve', MANAGE, async (req, 
           'The counterparty now has another shift overlapping this one — they can’t take it.',
         );
       }
-      await tx.shift.update({
-        where: { id: swap.shiftId },
+      if (
+        isTrade &&
+        (await hasOverlapExcluding(
+          tx,
+          swap.requesterAssociateId,
+          swap.counterpartShift!.startsAt,
+          swap.counterpartShift!.endsAt,
+          excludeIds,
+        ))
+      ) {
+        throw new HttpError(
+          409,
+          'requester_double_booked',
+          'The requester now has another shift overlapping the exchange shift.',
+        );
+      }
+      const main = await tx.shift.updateMany({
+        where: {
+          id: swap.shiftId,
+          status: 'ASSIGNED',
+          assignedAssociateId: swap.requesterAssociateId,
+        },
         data: {
           assignedAssociateId: swap.counterpartyAssociateId,
           assignedAt: new Date(),
+          // New owner hasn't confirmed anything — reset the ack.
+          acknowledgedAt: null,
         },
       });
+      if (main.count === 0) {
+        throw new HttpError(
+          409,
+          'shift_changed',
+          'The shift was cancelled or reassigned while this swap was pending.',
+        );
+      }
+      if (isTrade) {
+        const leg = await tx.shift.updateMany({
+          where: {
+            id: swap.counterpartShiftId!,
+            status: 'ASSIGNED',
+            assignedAssociateId: swap.counterpartyAssociateId,
+          },
+          data: {
+            assignedAssociateId: swap.requesterAssociateId,
+            assignedAt: new Date(),
+            acknowledgedAt: null,
+          },
+        });
+        if (leg.count === 0) {
+          throw new HttpError(
+            409,
+            'exchange_shift_changed',
+            'The exchange shift was cancelled or reassigned while this swap was pending.',
+          );
+        }
+      }
     });
 
     await recordShiftEvent({
@@ -1802,9 +3152,25 @@ schedulingRouter.post('/swap-requests/:id/manager-approve', MANAGE, async (req, 
         from: swap.requesterAssociateId,
         to: swap.counterpartyAssociateId,
         swapRequestId: swap.id,
+        trade: isTrade,
       },
       req,
     });
+    if (isTrade) {
+      await recordShiftEvent({
+        actorUserId: user.id,
+        action: 'shift.swapped',
+        shiftId: swap.counterpartShiftId!,
+        clientId: swap.counterpartShift!.clientId,
+        metadata: {
+          from: swap.counterpartyAssociateId,
+          to: swap.requesterAssociateId,
+          swapRequestId: swap.id,
+          trade: true,
+        },
+        req,
+      });
+    }
 
     const updated = await prisma.shiftSwapRequest.findUniqueOrThrow({
       where: { id: swap.id },
@@ -1820,17 +3186,30 @@ schedulingRouter.post('/swap-requests/:id/manager-approve', MANAGE, async (req, 
       endsAt: updated.shift.endsAt,
       timezone: updated.shift.locationRel?.timezone ?? null,
     });
+    const exchangeLine = updated.counterpartShift
+      ? formatShiftLine({
+          position: updated.counterpartShift.position,
+          clientName: updated.counterpartShift.client?.name ?? null,
+          startsAt: updated.counterpartShift.startsAt,
+          endsAt: updated.counterpartShift.endsAt,
+          timezone: updated.counterpartShift.locationRel?.timezone ?? null,
+        })
+      : null;
     await notifyShift(prisma, {
       associateId: updated.counterpartyAssociateId,
       subject: 'Swap approved — shift is yours',
-      body: `HR approved the swap. You're now scheduled for: ${shiftLine}`,
+      body:
+        `HR approved the swap. You're now scheduled for: ${shiftLine}` +
+        (exchangeLine ? `\nYou handed off: ${exchangeLine}` : ''),
       category: 'swap_manager_approved',
       senderUserId: req.user!.id,
     });
     await notifyShift(prisma, {
       associateId: updated.requesterAssociateId,
       subject: 'Swap approved — shift handed off',
-      body: `HR approved your swap with ${updated.counterparty.firstName} ${updated.counterparty.lastName}. You're off this shift: ${shiftLine}`,
+      body:
+        `HR approved your swap with ${updated.counterparty.firstName} ${updated.counterparty.lastName}. You're off this shift: ${shiftLine}` +
+        (exchangeLine ? `\nIn exchange you're now on: ${exchangeLine}` : ''),
       category: 'swap_manager_approved',
       senderUserId: req.user!.id,
     });
@@ -1855,9 +3234,20 @@ schedulingRouter.post('/swap-requests/:id/manager-reject', MANAGE, async (req, r
     if (swap.status === 'MANAGER_APPROVED' || swap.status === 'MANAGER_REJECTED' || swap.status === 'CANCELLED') {
       throw new HttpError(409, 'invalid_state', `Swap is in ${swap.status}, cannot reject`);
     }
-    const updated = await prisma.shiftSwapRequest.update({
-      where: { id: swap.id },
+    // Guarded write — mirrors cancel: never overwrite a terminal state
+    // that landed between our read and this update.
+    const cas = await prisma.shiftSwapRequest.updateMany({
+      where: {
+        id: swap.id,
+        status: { in: ['PENDING_PEER', 'PEER_ACCEPTED', 'PEER_DECLINED'] },
+      },
       data: { status: 'MANAGER_REJECTED', decidedById: user.id, decidedAt: new Date() },
+    });
+    if (cas.count === 0) {
+      throw new HttpError(409, 'invalid_state', 'This swap was already resolved.');
+    }
+    const updated = await prisma.shiftSwapRequest.findUniqueOrThrow({
+      where: { id: swap.id },
       include: SWAP_INCLUDE,
     });
 
@@ -2199,6 +3589,39 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
     const skipped: PublishWeekSkip[] = [];
     const publishable: typeof drafts = [];
 
+    // Tracks each associate's occupied windows as this batch is admitted,
+    // so two overlapping DRAFTS for the same person can't both publish
+    // (June audit P0 — publish-week had no double-booking guard).
+    const admittedByAssociate = new Map<string, { startsAt: Date; endsAt: Date }[]>();
+
+    // One batched fetch of every assigned draft's LIVE shifts (per-draft
+    // findFirst here was an up-to-100-query loop — July review). Window is
+    // overlap-based, not week-bounded, so an overnight shift from the
+    // previous Sunday still counts.
+    const assignedDraftIds = drafts
+      .map((s) => s.assignedAssociateId)
+      .filter((id): id is string => !!id);
+    const liveByAssociate = new Map<string, { startsAt: Date; endsAt: Date }[]>();
+    if (assignedDraftIds.length > 0) {
+      const minStart = new Date(Math.min(...drafts.map((s) => s.startsAt.getTime())));
+      const maxEnd = new Date(Math.max(...drafts.map((s) => s.endsAt.getTime())));
+      const live = await prisma.shift.findMany({
+        where: {
+          assignedAssociateId: { in: [...new Set(assignedDraftIds)] },
+          status: { notIn: ['CANCELLED', 'DRAFT'] },
+          startsAt: { lt: maxEnd },
+          endsAt: { gt: minStart },
+        },
+        select: { assignedAssociateId: true, startsAt: true, endsAt: true },
+        take: 2000,
+      });
+      for (const r of live) {
+        const list = liveByAssociate.get(r.assignedAssociateId!) ?? [];
+        list.push({ startsAt: r.startsAt, endsAt: r.endsAt });
+        liveByAssociate.set(r.assignedAssociateId!, list);
+      }
+    }
+
     for (const s of drafts) {
       const evaluation = evaluateShiftNotice({
         state: s.client.state,
@@ -2212,6 +3635,29 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
           detail: `Inside 14-day notice window in ${evaluation.state} — open the shift and add lateNoticeReason before publishing.`,
         });
         continue;
+      }
+      if (s.assignedAssociateId) {
+        const inBatch = admittedByAssociate.get(s.assignedAssociateId) ?? [];
+        const clashesInBatch = inBatch.some(
+          (w) => w.startsAt < s.endsAt && w.endsAt > s.startsAt,
+        );
+        // LIVE-shift check from the batched prefetch — other drafts are
+        // handled by the in-batch tracker above (they'd otherwise veto
+        // each other and publish nothing).
+        const liveClash = (liveByAssociate.get(s.assignedAssociateId) ?? []).some(
+          (w) => w.startsAt < s.endsAt && w.endsAt > s.startsAt,
+        );
+        if (clashesInBatch || liveClash) {
+          skipped.push({
+            shiftId: s.id,
+            reason: 'double_booking',
+            detail:
+              'Publishing would double-book the assigned associate — adjust the times or reassign first.',
+          });
+          continue;
+        }
+        inBatch.push({ startsAt: s.startsAt, endsAt: s.endsAt });
+        admittedByAssociate.set(s.assignedAssociateId, inBatch);
       }
       publishable.push(s);
     }
@@ -2377,7 +3823,7 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
     const weekStartUTC = startOfWeekUTC(openShifts[0].startsAt);
     const weekEndUTC = endOfWeekUTC(openShifts[0].startsAt);
 
-    const [associates, ptoRows] = await Promise.all([
+    const [associates, ptoRows, exceptionRows] = await Promise.all([
       prisma.associate.findMany({
         where: ACTIVE_ASSOCIATE_FILTER,
         include: {
@@ -2405,6 +3851,13 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
         },
         select: { associateId: true, startDate: true, endDate: true },
       }),
+      // One-off "can't work this day" exceptions — same veto as PTO, so
+      // they merge into the pto ranges below as single-day blocks.
+      prisma.availabilityException.findMany({
+        take: 500,
+        where: { date: { gte: start, lte: end } },
+        select: { associateId: true, date: true },
+      }),
     ]);
 
     type AssocState = {
@@ -2424,6 +3877,11 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
       const list = ptoByAssociate.get(r.associateId) ?? [];
       list.push({ start: r.startDate, end: r.endDate });
       ptoByAssociate.set(r.associateId, list);
+    }
+    for (const x of exceptionRows) {
+      const list = ptoByAssociate.get(x.associateId) ?? [];
+      list.push({ start: x.date, end: x.date });
+      ptoByAssociate.set(x.associateId, list);
     }
 
     const states: AssocState[] = associates.map((a) => {
@@ -2466,10 +3924,14 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
         (shift.endsAt.getTime() - shift.startsAt.getTime()) / 60_000,
       );
 
-      const shiftDayStart = new Date(shift.startsAt);
-      shiftDayStart.setUTCHours(0, 0, 0, 0);
-      const shiftDayEnd = new Date(shift.endsAt);
-      shiftDayEnd.setUTCHours(0, 0, 0, 0);
+      // Store-local day bounds — UTC flooring made the PTO/day-off veto
+      // off by one for evening shifts west of UTC (July re-audit P2).
+      const shiftDayStart = new Date(
+        `${dayKeyInZone(shift.startsAt, shiftTz)}T00:00:00Z`,
+      );
+      const shiftDayEnd = new Date(
+        `${dayKeyInZone(shift.endsAt, shiftTz)}T00:00:00Z`,
+      );
 
       type Scored = { state: AssocState; score: number };
       const scored: Scored[] = [];

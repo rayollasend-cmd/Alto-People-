@@ -61,6 +61,15 @@ export default {
           from: { transform: 'translateX(0)' },
           to: { transform: 'translateX(100%)' },
         },
+        // Bottom-sheet dialogs on phones.
+        'slide-up-in': {
+          from: { transform: 'translateY(100%)' },
+          to: { transform: 'translateY(0)' },
+        },
+        'slide-down-out': {
+          from: { transform: 'translateY(0)' },
+          to: { transform: 'translateY(100%)' },
+        },
         'shimmer': {
           '100%': { transform: 'translateX(100%)' },
         },
@@ -85,6 +94,8 @@ export default {
         'zoom-out': 'zoom-out 0.18s cubic-bezier(0.4,0,1,1)',
         'slide-in-from-right': 'slide-in-from-right 0.22s cubic-bezier(0.16,1,0.3,1)',
         'slide-out-to-right': 'slide-out-to-right 0.18s cubic-bezier(0.4,0,1,1)',
+        'slide-up-in': 'slide-up-in 0.26s cubic-bezier(0.16,1,0.3,1)',
+        'slide-down-out': 'slide-down-out 0.2s cubic-bezier(0.4,0,1,1)',
         'shimmer': 'shimmer 1.6s infinite',
         'splash-sweep': 'splash-sweep 1.4s ease-in-out infinite',
       },

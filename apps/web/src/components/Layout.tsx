@@ -10,6 +10,7 @@ import {
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 import { MobileNav } from './MobileNav';
+import { BottomTabBar } from './BottomTabBar';
 import { InstallPrompt } from './InstallPrompt';
 import { NavigationProgress } from './NavigationProgress';
 import { RouteAnnouncer } from './RouteAnnouncer';
@@ -107,7 +108,11 @@ export function Layout() {
         style={{ height: '100dvh' }}
       >
         <Sidebar />
-        <MobileNav open={mobileOpen} onClose={() => setMobileOpen(false)} />
+        <MobileNav
+          open={mobileOpen}
+          onClose={() => setMobileOpen(false)}
+          onOpenCommandPalette={() => setPaletteOpen(true)}
+        />
         <div className="flex-1 flex flex-col min-w-0">
           <Topbar
             onOpenMobileNav={() => setMobileOpen(true)}
@@ -138,6 +143,7 @@ export function Layout() {
               </motion.div>
             </AnimatePresence>
           </main>
+          <BottomTabBar onOpenMenu={() => setMobileOpen(true)} />
         </div>
         <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
         <KeyboardShortcutsDialog

@@ -1161,6 +1161,8 @@ export const ShiftSchema = z.object({
   // shift is published inside the 14-day notice window.
   publishedAt: z.string().datetime().nullable(),
   lateNoticeReason: z.string().nullable(),
+  /** When the assigned associate tapped "I'll be there". Null = unconfirmed. */
+  acknowledgedAt: z.string().datetime().nullable(),
 });
 export type Shift = z.infer<typeof ShiftSchema>;
 
@@ -1172,6 +1174,151 @@ export const ShiftListResponseSchema = z.object({
   truncated: z.boolean().optional(),
 });
 export type ShiftListResponse = z.infer<typeof ShiftListResponseSchema>;
+
+/* Associate-facing shift detail — the tap-to-expand card on My Schedule. */
+
+/** A coworker whose published shift overlaps yours at the same work site.
+ *  Names are already associate-visible via /directory; times/position let
+ *  the associate see who they're working with, Sling-style. Deliberately
+ *  NO rates, contact info, or notes — those stay on each person's own shift. */
+export const ShiftTeammateSchema = z.object({
+  associateId: UuidSchema,
+  name: z.string(),
+  position: z.string(),
+  startsAt: z.string().datetime(),
+  endsAt: z.string().datetime(),
+  /** Their shift's free-text sub-zone ("Bar", "Produce"), if any. */
+  location: z.string().nullable(),
+});
+export type ShiftTeammate = z.infer<typeof ShiftTeammateSchema>;
+
+export const MyShiftDetailResponseSchema = z.object({
+  shift: ShiftSchema,
+  teammates: z.array(ShiftTeammateSchema),
+});
+export type MyShiftDetailResponse = z.infer<typeof MyShiftDetailResponseSchema>;
+
+/** Older shifts, newest-first. `nextBefore` = cursor for the next page;
+ *  null when history is exhausted. */
+export const MyShiftHistoryResponseSchema = z.object({
+  shifts: z.array(ShiftSchema),
+  nextBefore: z.string().datetime().nullable(),
+});
+export type MyShiftHistoryResponse = z.infer<typeof MyShiftHistoryResponseSchema>;
+
+/* Open-shift pickup (Phase 85 claims table, finally wired) */
+
+export const OpenShiftClaimStatusSchema = z.enum([
+  'PENDING',
+  'APPROVED',
+  'REJECTED',
+  'WITHDRAWN',
+  'EXPIRED',
+]);
+export type OpenShiftClaimStatus = z.infer<typeof OpenShiftClaimStatusSchema>;
+
+/** Open shifts the caller is eligible to pick up, each carrying the
+ *  caller's own claim state so the UI can show "Requested" instead of a
+ *  second button. */
+export const OpenShiftsResponseSchema = z.object({
+  shifts: z.array(
+    ShiftSchema.extend({
+      myClaimStatus: OpenShiftClaimStatusSchema.nullable(),
+      myClaimId: UuidSchema.nullable(),
+    }),
+  ),
+});
+export type OpenShiftsResponse = z.infer<typeof OpenShiftsResponseSchema>;
+
+export const OpenShiftClaimSchema = z.object({
+  id: UuidSchema,
+  shiftId: UuidSchema,
+  status: OpenShiftClaimStatusSchema,
+  createdAt: z.string().datetime(),
+});
+export type OpenShiftClaim = z.infer<typeof OpenShiftClaimSchema>;
+
+/** Admin review row — who wants which open shift. */
+export const AdminOpenShiftClaimSchema = z.object({
+  id: UuidSchema,
+  status: OpenShiftClaimStatusSchema,
+  associateId: UuidSchema,
+  associateName: z.string(),
+  shiftId: UuidSchema,
+  shiftPosition: z.string(),
+  shiftClientName: z.string().nullable(),
+  shiftStartsAt: z.string().datetime(),
+  shiftEndsAt: z.string().datetime(),
+  shiftTimezone: z.string(),
+  /** Approving would push this associate past 40h scheduled that week.
+   *  Advisory chip — the manager can still approve. */
+  wouldExceed40h: z.boolean().default(false),
+  createdAt: z.string().datetime(),
+});
+export type AdminOpenShiftClaim = z.infer<typeof AdminOpenShiftClaimSchema>;
+
+export const AdminOpenShiftClaimListResponseSchema = z.object({
+  claims: z.array(AdminOpenShiftClaimSchema),
+});
+export type AdminOpenShiftClaimListResponse = z.infer<
+  typeof AdminOpenShiftClaimListResponseSchema
+>;
+
+/* One-off availability exceptions ("can't work July 15") */
+
+export const AvailabilityExceptionSchema = z.object({
+  id: UuidSchema,
+  /** Calendar date, YYYY-MM-DD. Day-granular by design, like time off. */
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  note: z.string().nullable(),
+});
+export type AvailabilityException = z.infer<typeof AvailabilityExceptionSchema>;
+
+export const AvailabilityExceptionListResponseSchema = z.object({
+  exceptions: z.array(AvailabilityExceptionSchema),
+});
+export type AvailabilityExceptionListResponse = z.infer<
+  typeof AvailabilityExceptionListResponseSchema
+>;
+
+export const AvailabilityExceptionCreateInputSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  note: z.string().trim().max(200).optional(),
+});
+export type AvailabilityExceptionCreateInput = z.infer<
+  typeof AvailabilityExceptionCreateInputSchema
+>;
+
+/** A counterparty shift the requester could take in exchange (trades). */
+export const TradeOptionSchema = z.object({
+  shiftId: UuidSchema,
+  position: z.string(),
+  clientName: z.string().nullable(),
+  startsAt: z.string().datetime(),
+  endsAt: z.string().datetime(),
+  timezone: z.string(),
+});
+export type TradeOption = z.infer<typeof TradeOptionSchema>;
+
+export const TradeOptionsResponseSchema = z.object({
+  options: z.array(TradeOptionSchema),
+});
+export type TradeOptionsResponse = z.infer<typeof TradeOptionsResponseSchema>;
+
+/** Someone the associate can offer a shift to. `busy` flags an overlapping
+ *  assignment so the picker can steer away from people who can't take it —
+ *  advisory only; the swap POST and manager approval stay the real gates. */
+export const SwapCandidateSchema = z.object({
+  associateId: UuidSchema,
+  name: z.string(),
+  busy: z.boolean(),
+});
+export type SwapCandidate = z.infer<typeof SwapCandidateSchema>;
+
+export const SwapCandidateListResponseSchema = z.object({
+  candidates: z.array(SwapCandidateSchema),
+});
+export type SwapCandidateListResponse = z.infer<typeof SwapCandidateListResponseSchema>;
 
 export const ShiftCreateInputSchema = z
   .object({
@@ -1274,6 +1421,10 @@ export type ShiftUpdateInput = z.infer<typeof ShiftUpdateInputSchema>;
 
 export const ShiftAssignInputSchema = z.object({
   associateId: UuidSchema,
+  /** Assign even though the associate has approved time off or a declared
+   *  day off covering the shift. Without it, /assign 409s with
+   *  `associate_unavailable`. Overrides are audit-logged. */
+  overrideUnavailability: z.boolean().optional(),
 });
 export type ShiftAssignInput = z.infer<typeof ShiftAssignInputSchema>;
 
@@ -1374,6 +1525,9 @@ export type PublishWeekInput = z.infer<typeof PublishWeekInputSchema>;
 
 export const PublishWeekSkipReasonSchema = z.enum([
   'predictive_schedule_violation',
+  // Publishing this draft would give its associate two overlapping
+  // ASSIGNED shifts — fix the times or reassign, then re-publish.
+  'double_booking',
 ]);
 export type PublishWeekSkipReason = z.infer<typeof PublishWeekSkipReasonSchema>;
 
@@ -2489,7 +2643,14 @@ export const ShiftSwapRequestSchema = z.object({
   shiftId: UuidSchema,
   shiftStartsAt: z.string().datetime(),
   shiftEndsAt: z.string().datetime(),
+  // IANA timezone of the shift's work site — swap cards render the shift's
+  // hours in THIS zone, same as the schedule list, so the two surfaces never
+  // show different wall-clock times for the same shift.
+  shiftTimezone: z.string(),
   shiftPosition: z.string(),
+  /** Trade half: the counterparty shift the requester takes in exchange.
+   *  Null = plain give-away. */
+  inExchange: TradeOptionSchema.nullable(),
   shiftClientName: z.string().nullable(),
   requesterAssociateId: UuidSchema,
   requesterName: z.string(),
@@ -2499,6 +2660,9 @@ export const ShiftSwapRequestSchema = z.object({
   note: z.string().nullable(),
   decidedAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
+  /** Admin list only: approving would push the receiving associate past
+   *  40h scheduled that week. Advisory. */
+  wouldExceed40h: z.boolean().optional(),
 });
 export type ShiftSwapRequest = z.infer<typeof ShiftSwapRequestSchema>;
 
@@ -2511,6 +2675,9 @@ export const SwapCreateInputSchema = z.object({
   shiftId: UuidSchema,
   counterpartyAssociateId: UuidSchema,
   note: z.string().max(500).optional(),
+  /** Optional trade: a shift of the counterparty's the requester takes in
+   *  exchange. Must belong to the counterparty and still be upcoming. */
+  counterpartShiftId: UuidSchema.optional(),
 });
 export type SwapCreateInput = z.infer<typeof SwapCreateInputSchema>;
 
@@ -2542,6 +2709,15 @@ export type TimeOffConflict = z.infer<typeof TimeOffConflictSchema>;
 export const ShiftConflictsResponseSchema = z.object({
   conflicts: z.array(ShiftConflictSchema),
   timeOffConflicts: z.array(TimeOffConflictSchema).default([]),
+  /** One-off "can't work this day" declarations covering the shift day. */
+  unavailableDays: z
+    .array(
+      z.object({
+        date: z.string(), // YYYY-MM-DD
+        note: z.string().nullable(),
+      }),
+    )
+    .default([]),
 });
 export type ShiftConflictsResponse = z.infer<typeof ShiftConflictsResponseSchema>;
 
