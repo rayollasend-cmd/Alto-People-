@@ -90,18 +90,23 @@ export function MentorshipHome() {
                 <TableRow>
                   <TableHead>Mentor</TableHead>
                   <TableHead>Mentee</TableHead>
-                  <TableHead>Focus</TableHead>
+                  <TableHead className="hidden md:table-cell">Focus</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Started</TableHead>
+                  <TableHead className="hidden md:table-cell">Started</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((m) => (
                   <TableRow key={m.id} className="group">
-                    <TableCell className="font-medium text-white">{m.mentorName}</TableCell>
+                    <TableCell className="font-medium text-white">
+                      <div className="truncate">{m.mentorName}</div>
+                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        {m.focusSkillName ?? '—'} · {fmtDate(m.startedAt)}
+                      </div>
+                    </TableCell>
                     <TableCell>{m.menteeName}</TableCell>
-                    <TableCell className="text-silver">{m.focusSkillName ?? '—'}</TableCell>
+                    <TableCell className="text-silver hidden md:table-cell">{m.focusSkillName ?? '—'}</TableCell>
                     <TableCell>
                       <Badge
                         variant={
@@ -117,7 +122,7 @@ export function MentorshipHome() {
                         {m.status}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-xs">
+                    <TableCell className="text-xs hidden md:table-cell">
                       {fmtDate(m.startedAt)}
                     </TableCell>
                     <TableCell className="text-right space-x-2">

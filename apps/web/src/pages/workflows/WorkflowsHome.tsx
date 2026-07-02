@@ -143,9 +143,9 @@ export function WorkflowsHome() {
                 <TableRow>
                   <TableHead>Name</TableHead>
                   <TableHead>Trigger</TableHead>
-                  <TableHead>Actions</TableHead>
+                  <TableHead className="hidden md:table-cell">Actions</TableHead>
                   <TableHead>Active</TableHead>
-                  <TableHead className="text-right">Runs</TableHead>
+                  <TableHead className="text-right hidden md:table-cell">Runs</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -159,17 +159,22 @@ export function WorkflowsHome() {
                       setDrawerTarget(d);
                     }}
                   >
-                    <TableCell className="font-medium">{d.name}</TableCell>
+                    <TableCell className="font-medium">
+                      {d.name}
+                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        {d.actions.length} action{d.actions.length === 1 ? '' : 's'} · {d.runCount} run{d.runCount === 1 ? '' : 's'}
+                      </div>
+                    </TableCell>
                     <TableCell>
                       <Badge variant="outline">{d.trigger}</Badge>
                     </TableCell>
-                    <TableCell className="text-silver">{d.actions.length}</TableCell>
+                    <TableCell className="text-silver hidden md:table-cell">{d.actions.length}</TableCell>
                     <TableCell>
                       <Badge variant={d.isActive ? 'success' : 'default'}>
                         {d.isActive ? 'Active' : 'Disabled'}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">
+                    <TableCell className="text-right tabular-nums hidden md:table-cell">
                       {d.runCount}
                     </TableCell>
                   </TableRow>
@@ -233,23 +238,28 @@ function RunsTab() {
       <TableHeader>
         <TableRow>
           <TableHead>Workflow</TableHead>
-          <TableHead>Trigger</TableHead>
+          <TableHead className="hidden md:table-cell">Trigger</TableHead>
           <TableHead>Started</TableHead>
-          <TableHead>Steps</TableHead>
+          <TableHead className="hidden md:table-cell">Steps</TableHead>
           <TableHead>Status</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {runs.map((r) => (
           <TableRow key={r.id}>
-            <TableCell className="font-medium">{r.definitionName}</TableCell>
-            <TableCell>
+            <TableCell className="font-medium">
+              {r.definitionName}
+              <div className="md:hidden text-[11px] text-silver/70 truncate">
+                {r.trigger} · <span className="tabular-nums">{r.stepsCompleted}/{r.stepCount}</span> steps
+              </div>
+            </TableCell>
+            <TableCell className="hidden md:table-cell">
               <Badge variant="outline">{r.trigger}</Badge>
             </TableCell>
             <TableCell className="text-silver tabular-nums">
               {r.startedAt ? new Date(r.startedAt).toLocaleString() : '—'}
             </TableCell>
-            <TableCell className="text-silver tabular-nums">
+            <TableCell className="text-silver tabular-nums hidden md:table-cell">
               {r.stepsCompleted}/{r.stepCount}
               {r.stepsFailed > 0 && (
                 <span className="text-alert"> ({r.stepsFailed} failed)</span>

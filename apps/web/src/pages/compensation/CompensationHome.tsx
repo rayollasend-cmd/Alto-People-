@@ -211,9 +211,9 @@ function BandsTab({ clientId, canManage }: { clientId: string; canManage: boolea
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
-                  <TableHead>Job profile</TableHead>
-                  <TableHead>Level</TableHead>
-                  <TableHead>Type</TableHead>
+                  <TableHead className="hidden md:table-cell">Job profile</TableHead>
+                  <TableHead className="hidden md:table-cell">Level</TableHead>
+                  <TableHead className="hidden lg:table-cell">Type</TableHead>
                   <TableHead>Range</TableHead>
                   <TableHead className="w-32 text-right">Actions</TableHead>
                 </TableRow>
@@ -236,10 +236,15 @@ function BandsTab({ clientId, canManage }: { clientId: string; canManage: boolea
                       });
                     }}
                   >
-                    <TableCell className="font-medium text-white">{b.name}</TableCell>
-                    <TableCell>{b.jobProfileTitle ?? '—'}</TableCell>
-                    <TableCell>{b.level ?? '—'}</TableCell>
-                    <TableCell>{b.payType}</TableCell>
+                    <TableCell className="font-medium text-white">
+                      <div className="truncate">{b.name}</div>
+                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        {b.jobProfileTitle ?? '—'}{b.level ? ` · ${b.level}` : ''}
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">{b.jobProfileTitle ?? '—'}</TableCell>
+                    <TableCell className="hidden md:table-cell">{b.level ?? '—'}</TableCell>
+                    <TableCell className="hidden lg:table-cell">{b.payType}</TableCell>
                     <TableCell className="tabular-nums">
                       {fmtMoney(b.minAmount)} · {fmtMoney(b.midAmount)} · {fmtMoney(b.maxAmount)}
                     </TableCell>
@@ -456,9 +461,9 @@ function CyclesTab({ clientId, canManage }: { clientId: string; canManage: boole
                 <TableRow>
                   <TableHead>Name</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Period</TableHead>
+                  <TableHead className="hidden md:table-cell">Period</TableHead>
                   <TableHead>Effective</TableHead>
-                  <TableHead>Budget</TableHead>
+                  <TableHead className="hidden md:table-cell">Budget</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -468,7 +473,12 @@ function CyclesTab({ clientId, canManage }: { clientId: string; canManage: boole
                     className="cursor-pointer"
                     onClick={() => setActive(c)}
                   >
-                    <TableCell className="font-medium text-white">{c.name}</TableCell>
+                    <TableCell className="font-medium text-white">
+                      <div className="truncate">{c.name}</div>
+                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        {fmtDate(c.reviewPeriodStart)} – {fmtDate(c.reviewPeriodEnd)}
+                      </div>
+                    </TableCell>
                     <TableCell>
                       <Badge
                         variant={
@@ -482,11 +492,11 @@ function CyclesTab({ clientId, canManage }: { clientId: string; canManage: boole
                         {c.status}
                       </Badge>
                     </TableCell>
-                    <TableCell className="whitespace-nowrap">
+                    <TableCell className="whitespace-nowrap hidden md:table-cell">
                       {fmtDate(c.reviewPeriodStart)} – {fmtDate(c.reviewPeriodEnd)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">{fmtDate(c.effectiveDate)}</TableCell>
-                    <TableCell className="tabular-nums">{fmtMoney(c.budget)}</TableCell>
+                    <TableCell className="tabular-nums hidden md:table-cell">{fmtMoney(c.budget)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -757,7 +767,7 @@ function CycleDetailDrawer({
             <TableHeader>
               <TableRow>
                 <TableHead>Associate</TableHead>
-                <TableHead>Current</TableHead>
+                <TableHead className="hidden md:table-cell">Current</TableHead>
                 <TableHead>Proposed</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right w-44">Decide</TableHead>
@@ -767,9 +777,12 @@ function CycleDetailDrawer({
               {proposals.map((p) => (
                 <TableRow key={p.id}>
                   <TableCell className="font-medium text-white">
-                    {p.associateName}
+                    <div className="truncate">{p.associateName}</div>
+                    <div className="md:hidden text-[11px] text-silver/70 truncate tabular-nums">
+                      ${p.currentAmount} {p.currentPayType}
+                    </div>
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="hidden md:table-cell">
                     ${p.currentAmount} <span className="text-silver text-xs">{p.currentPayType}</span>
                   </TableCell>
                   <TableCell>

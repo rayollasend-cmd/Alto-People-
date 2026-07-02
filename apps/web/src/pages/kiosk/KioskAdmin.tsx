@@ -394,21 +394,32 @@ function DevicesTab({
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
-                  <TableHead>Client</TableHead>
-                  <TableHead>Location</TableHead>
+                  <TableHead className="hidden md:table-cell">Client</TableHead>
+                  <TableHead className="hidden lg:table-cell">Location</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Last seen</TableHead>
-                  <TableHead>Token</TableHead>
-                  <TableHead>Punches</TableHead>
+                  <TableHead className="hidden sm:table-cell">Last seen</TableHead>
+                  <TableHead className="hidden md:table-cell">Token</TableHead>
+                  <TableHead className="hidden lg:table-cell">Punches</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((d) => (
                   <TableRow key={d.id} className="group">
-                    <TableCell className="font-medium text-white">{d.name}</TableCell>
-                    <TableCell>{d.clientName}</TableCell>
-                    <TableCell className="text-silver">
+                    <TableCell className="font-medium text-white">
+                      <div className="min-w-0">
+                        <div className="truncate">{d.name}</div>
+                        <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                          {d.clientName}
+                          <span className="sm:hidden">
+                            {' · '}
+                            {d.lastSeenAt ? fmtDateTime(d.lastSeenAt) : 'never used'}
+                          </span>
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">{d.clientName}</TableCell>
+                    <TableCell className="text-silver hidden lg:table-cell">
                       {d.locationName ?? '—'}
                     </TableCell>
                     <TableCell>
@@ -418,7 +429,7 @@ function DevicesTab({
                         <Badge variant="destructive">Revoked</Badge>
                       )}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="hidden sm:table-cell">
                       {d.lastSeenAt ? (
                         <span
                           className={
@@ -438,8 +449,8 @@ function DevicesTab({
                         '—'
                       )}
                     </TableCell>
-                    <TableCell>{renderTokenStatus(d.tokenExpiresAt)}</TableCell>
-                    <TableCell>{d.punchCount}</TableCell>
+                    <TableCell className="hidden md:table-cell">{renderTokenStatus(d.tokenExpiresAt)}</TableCell>
+                    <TableCell className="hidden lg:table-cell">{d.punchCount}</TableCell>
                     <TableCell className="text-right space-x-2">
                       {canManage && d.isActive && (
                         <Button
@@ -1328,12 +1339,14 @@ function PinsTab({ canManage }: { canManage: boolean }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Associate</TableHead>
-                  {clientId === ALL_CLIENTS && <TableHead>Client</TableHead>}
-                  <TableHead>Location</TableHead>
-                  <TableHead>Email</TableHead>
+                  {clientId === ALL_CLIENTS && (
+                    <TableHead className="hidden lg:table-cell">Client</TableHead>
+                  )}
+                  <TableHead className="hidden lg:table-cell">Location</TableHead>
+                  <TableHead className="hidden lg:table-cell">Email</TableHead>
                   <TableHead>Employee #</TableHead>
-                  <TableHead>Face consent</TableHead>
-                  <TableHead>Issued</TableHead>
+                  <TableHead className="hidden md:table-cell">Face consent</TableHead>
+                  <TableHead className="hidden lg:table-cell">Issued</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -1341,22 +1354,28 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                 {filteredRows.map((p) => (
                   <TableRow key={p.id} className="group">
                     <TableCell className="font-medium text-white">
-                      {p.associateName}
+                      <div className="min-w-0">
+                        <div className="truncate">{p.associateName}</div>
+                        <div className="lg:hidden text-[11px] text-silver/70 truncate font-normal">
+                          {p.clientName}
+                          {p.locationName ? ` · ${p.locationName}` : ''}
+                        </div>
+                      </div>
                     </TableCell>
                     {clientId === ALL_CLIENTS && (
-                      <TableCell className="text-silver">{p.clientName}</TableCell>
+                      <TableCell className="text-silver hidden lg:table-cell">{p.clientName}</TableCell>
                     )}
-                    <TableCell className="text-silver">
+                    <TableCell className="text-silver hidden lg:table-cell">
                       {p.locationName ?? '—'}
                     </TableCell>
-                    <TableCell className="text-silver">{p.associateEmail}</TableCell>
+                    <TableCell className="text-silver hidden lg:table-cell">{p.associateEmail}</TableCell>
                     <TableCell>
                       <EmployeeNumberCell value={p.employeeNumber} />
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="hidden md:table-cell">
                       <FaceConsentCell pin={p} canManage={canManage} onChanged={refresh} />
                     </TableCell>
-                    <TableCell>{fmtDate(p.createdAt)}</TableCell>
+                    <TableCell className="hidden lg:table-cell">{fmtDate(p.createdAt)}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-3">
                         {canManage && p.employeeNumber && (
@@ -2266,20 +2285,27 @@ function LogTab() {
               <TableHeader>
                 <TableRow>
                   <TableHead>When</TableHead>
-                  <TableHead>Device</TableHead>
+                  <TableHead className="hidden md:table-cell">Device</TableHead>
                   <TableHead>Associate</TableHead>
                   <TableHead>Action</TableHead>
-                  <TableHead>Distance</TableHead>
-                  <TableHead>Face</TableHead>
-                  <TableHead>Selfie</TableHead>
-                  <TableHead>Notes</TableHead>
+                  <TableHead className="hidden lg:table-cell">Distance</TableHead>
+                  <TableHead className="hidden md:table-cell">Face</TableHead>
+                  <TableHead className="hidden lg:table-cell">Selfie</TableHead>
+                  <TableHead className="hidden lg:table-cell">Notes</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((p) => (
                   <TableRow key={p.id}>
-                    <TableCell>{fmtDateTime(p.createdAt)}</TableCell>
-                    <TableCell className="font-mono text-xs">{p.deviceName}</TableCell>
+                    <TableCell>
+                      <div className="min-w-0">
+                        <div>{fmtDateTime(p.createdAt)}</div>
+                        <div className="md:hidden text-[11px] text-silver/70 truncate">
+                          {p.deviceName}
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs hidden md:table-cell">{p.deviceName}</TableCell>
                     <TableCell>{p.associateName ?? '—'}</TableCell>
                     <TableCell>
                       <Badge
@@ -2296,10 +2322,10 @@ function LogTab() {
                         {p.action}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-xs">
+                    <TableCell className="text-xs hidden lg:table-cell">
                       {p.distanceMeters != null ? `${p.distanceMeters}m` : '—'}
                     </TableCell>
-                    <TableCell className="text-xs">
+                    <TableCell className="text-xs hidden md:table-cell">
                       {p.faceDistance == null ? (
                         '—'
                       ) : p.faceMismatch ? (
@@ -2312,7 +2338,7 @@ function LogTab() {
                         </Badge>
                       )}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="hidden lg:table-cell">
                       {p.hasSelfie ? (
                         <a
                           href={`/api/kiosk-punches/${p.id}/selfie`}
@@ -2326,7 +2352,7 @@ function LogTab() {
                         '—'
                       )}
                     </TableCell>
-                    <TableCell className="text-xs text-silver">
+                    <TableCell className="text-xs text-silver hidden lg:table-cell">
                       {p.rejectReason ?? ''}
                     </TableCell>
                   </TableRow>
@@ -2377,9 +2403,9 @@ function FacesTab({ canManage }: { canManage: boolean }) {
             <TableHeader>
               <TableRow>
                 <TableHead>Associate</TableHead>
-                <TableHead>Email</TableHead>
+                <TableHead className="hidden md:table-cell">Email</TableHead>
                 <TableHead>Enrolled</TableHead>
-                <TableHead>Updated</TableHead>
+                <TableHead className="hidden md:table-cell">Updated</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -2387,13 +2413,18 @@ function FacesTab({ canManage }: { canManage: boolean }) {
               {rows.map((r) => (
                 <TableRow key={r.id} className="group">
                   <TableCell className="font-medium text-white">
-                    {r.associateName}
+                    <div className="min-w-0">
+                      <div className="truncate">{r.associateName}</div>
+                      <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                        {r.associateEmail}
+                      </div>
+                    </div>
                   </TableCell>
-                  <TableCell className="text-silver">{r.associateEmail}</TableCell>
+                  <TableCell className="text-silver hidden md:table-cell">{r.associateEmail}</TableCell>
                   <TableCell className="text-xs">
                     {fmtDateTime(r.enrolledAt)}
                   </TableCell>
-                  <TableCell className="text-xs text-silver">
+                  <TableCell className="text-xs text-silver hidden md:table-cell">
                     {fmtDate(r.updatedAt)}
                   </TableCell>
                   <TableCell className="text-right">
@@ -2621,13 +2652,13 @@ function ReviewTab({
                       />
                     </TableHead>
                   )}
-                  <TableHead>When</TableHead>
+                  <TableHead className="hidden md:table-cell">When</TableHead>
                   <TableHead>Aging</TableHead>
                   <TableHead>Associate</TableHead>
-                  <TableHead>Device</TableHead>
-                  <TableHead>Action</TableHead>
+                  <TableHead className="hidden lg:table-cell">Device</TableHead>
+                  <TableHead className="hidden sm:table-cell">Action</TableHead>
                   <TableHead>Reason</TableHead>
-                  <TableHead>Selfie</TableHead>
+                  <TableHead className="hidden lg:table-cell">Selfie</TableHead>
                   <TableHead className="text-right">Decision</TableHead>
                 </TableRow>
               </TableHeader>
@@ -2644,15 +2675,21 @@ function ReviewTab({
                         />
                       </TableCell>
                     )}
-                    <TableCell className="text-xs">
+                    <TableCell className="text-xs hidden md:table-cell">
                       {fmtDateTime(p.createdAt)}
                     </TableCell>
                     <TableCell>{renderPendingBadge(p.createdAt)}</TableCell>
                     <TableCell className="font-medium text-white">
-                      {p.associateName ?? '—'}
+                      <div className="min-w-0">
+                        <div className="truncate">{p.associateName ?? '—'}</div>
+                        <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                          {fmtDateTime(p.createdAt)}
+                          <span className="sm:hidden">{` · ${p.action}`}</span>
+                        </div>
+                      </div>
                     </TableCell>
-                    <TableCell className="text-xs">{p.deviceName}</TableCell>
-                    <TableCell>
+                    <TableCell className="text-xs hidden lg:table-cell">{p.deviceName}</TableCell>
+                    <TableCell className="hidden sm:table-cell">
                       <Badge variant={p.action === 'CLOCK_IN' ? 'success' : 'accent'}>
                         {p.action}
                       </Badge>
@@ -2673,7 +2710,7 @@ function ReviewTab({
                         <div className="text-silver">{p.anomalyDetail}</div>
                       )}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="hidden lg:table-cell">
                       {p.hasSelfie ? (
                         <a
                           href={`/api/kiosk-punches/${p.id}/selfie`}

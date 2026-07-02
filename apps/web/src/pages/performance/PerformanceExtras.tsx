@@ -194,8 +194,8 @@ function GoalsTab() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Title</TableHead>
-                  <TableHead>Kind</TableHead>
-                  <TableHead>Period</TableHead>
+                  <TableHead className="hidden md:table-cell">Kind</TableHead>
+                  <TableHead className="hidden md:table-cell">Period</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Progress</TableHead>
                   <TableHead className="w-32 text-right">Actions</TableHead>
@@ -204,9 +204,14 @@ function GoalsTab() {
               <TableBody>
                 {rows.map((g) => (
                   <TableRow key={g.id}>
-                    <TableCell className="font-medium text-white">{g.title}</TableCell>
-                    <TableCell>{g.kind === 'OBJECTIVE' ? 'OKR' : 'Goal'}</TableCell>
-                    <TableCell>
+                    <TableCell className="font-medium text-white">
+                      <div className="truncate">{g.title}</div>
+                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        {g.kind === 'OBJECTIVE' ? 'OKR' : 'Goal'} · {g.periodStart} – {g.periodEnd}
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">{g.kind === 'OBJECTIVE' ? 'OKR' : 'Goal'}</TableCell>
+                    <TableCell className="hidden md:table-cell">
                       {g.periodStart} – {g.periodEnd}
                     </TableCell>
                     <TableCell>
@@ -788,7 +793,7 @@ function PipsTab({ canManage }: { canManage: boolean }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Period</TableHead>
-                  <TableHead>Reason</TableHead>
+                  <TableHead className="hidden md:table-cell">Reason</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right w-44">Decide</TableHead>
                 </TableRow>
@@ -796,8 +801,13 @@ function PipsTab({ canManage }: { canManage: boolean }) {
               <TableBody>
                 {rows.map((p) => (
                   <TableRow key={p.id}>
-                    <TableCell>{p.startDate} – {p.endDate}</TableCell>
-                    <TableCell className="max-w-md truncate">{p.reason}</TableCell>
+                    <TableCell>
+                      <div className="truncate">{p.startDate} – {p.endDate}</div>
+                      <div className="md:hidden text-[11px] text-silver/70 truncate max-w-[24ch]">
+                        {p.reason}
+                      </div>
+                    </TableCell>
+                    <TableCell className="max-w-md truncate hidden md:table-cell">{p.reason}</TableCell>
                     <TableCell>
                       <Badge
                         variant={
@@ -973,17 +983,22 @@ function Reviews360Tab({ canManage }: { canManage: boolean }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Subject</TableHead>
-                  <TableHead>Period</TableHead>
+                  <TableHead className="hidden md:table-cell">Period</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Feedback</TableHead>
+                  <TableHead className="hidden md:table-cell">Feedback</TableHead>
                   <TableHead className="w-32 text-right">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((r) => (
                   <TableRow key={r.id}>
-                    <TableCell className="font-mono text-xs">{r.subjectAssociateId}</TableCell>
-                    <TableCell>{r.periodStart} – {r.periodEnd}</TableCell>
+                    <TableCell className="font-mono text-xs">
+                      <div className="truncate">{r.subjectAssociateId}</div>
+                      <div className="md:hidden font-sans text-[11px] text-silver/70 truncate">
+                        {r.periodStart} – {r.periodEnd} · {r.feedbackCount} feedback
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">{r.periodStart} – {r.periodEnd}</TableCell>
                     <TableCell>
                       <Badge
                         variant={
@@ -997,7 +1012,7 @@ function Reviews360Tab({ canManage }: { canManage: boolean }) {
                         {r.status}
                       </Badge>
                     </TableCell>
-                    <TableCell>{r.feedbackCount}</TableCell>
+                    <TableCell className="hidden md:table-cell">{r.feedbackCount}</TableCell>
                     <TableCell className="text-right">
                       {canManage && r.status === 'COLLECTING' && (
                         <Button size="sm" variant="ghost" onClick={() => onClose(r.id)}>

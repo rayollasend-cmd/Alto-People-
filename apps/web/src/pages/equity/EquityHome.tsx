@@ -193,9 +193,9 @@ export function EquityHome() {
                     <TableHead>Type</TableHead>
                     <TableHead>Total</TableHead>
                     <TableHead>Vested</TableHead>
-                    <TableHead>Unvested</TableHead>
-                    <TableHead>Strike</TableHead>
-                    <TableHead>Grant date</TableHead>
+                    <TableHead className="hidden md:table-cell">Unvested</TableHead>
+                    <TableHead className="hidden lg:table-cell">Strike</TableHead>
+                    <TableHead className="hidden md:table-cell">Grant date</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -206,7 +206,11 @@ export function EquityHome() {
                       onClick={() => setOpenMine(g)}
                     >
                       <TableCell className="font-medium text-white">
-                        {GRANT_TYPE_LABELS[g.grantType]}
+                        <div className="truncate">{GRANT_TYPE_LABELS[g.grantType]}</div>
+                        <div className="md:hidden text-[11px] text-silver/70 truncate">
+                          {g.grantDate}
+                          {g.strikePrice ? ` · ${g.currency} ${g.strikePrice}` : ''}
+                        </div>
                       </TableCell>
                       <TableCell className="text-sm">
                         {g.totalShares.toLocaleString()}
@@ -214,15 +218,15 @@ export function EquityHome() {
                       <TableCell className="text-sm text-success">
                         {g.vestedShares.toLocaleString()}
                       </TableCell>
-                      <TableCell className="text-sm text-silver">
+                      <TableCell className="text-sm text-silver hidden md:table-cell">
                         {g.unvestedShares.toLocaleString()}
                       </TableCell>
-                      <TableCell className="text-sm">
+                      <TableCell className="text-sm hidden lg:table-cell">
                         {g.strikePrice
                           ? `${g.currency} ${g.strikePrice}`
                           : '—'}
                       </TableCell>
-                      <TableCell className="text-xs text-silver">
+                      <TableCell className="text-xs text-silver hidden md:table-cell">
                         {g.grantDate}
                       </TableCell>
                     </TableRow>
@@ -250,10 +254,10 @@ export function EquityHome() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Associate</TableHead>
-                    <TableHead>Type</TableHead>
+                    <TableHead className="hidden md:table-cell">Type</TableHead>
                     <TableHead>Shares</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Grant date</TableHead>
+                    <TableHead className="hidden md:table-cell">Grant date</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -270,8 +274,11 @@ export function EquityHome() {
                         <div className="text-xs text-silver">
                           {g.associateEmail ?? ''}
                         </div>
+                        <div className="md:hidden text-[11px] text-silver/70 truncate">
+                          {GRANT_TYPE_LABELS[g.grantType]} · {g.grantDate}
+                        </div>
                       </TableCell>
-                      <TableCell className="text-sm">
+                      <TableCell className="text-sm hidden md:table-cell">
                         {GRANT_TYPE_LABELS[g.grantType]}
                       </TableCell>
                       <TableCell className="text-sm">
@@ -282,7 +289,7 @@ export function EquityHome() {
                           {g.status}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-xs text-silver">
+                      <TableCell className="text-xs text-silver hidden md:table-cell">
                         {g.grantDate}
                       </TableCell>
                     </TableRow>
@@ -735,18 +742,23 @@ function AdminDetailDrawer({
                     <TableRow>
                       <TableHead>Date</TableHead>
                       <TableHead>Shares</TableHead>
-                      <TableHead>Type</TableHead>
+                      <TableHead className="hidden md:table-cell">Type</TableHead>
                       <TableHead>Vested</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {grant.events.map((e) => (
                       <TableRow key={e.id}>
-                        <TableCell className="text-xs">{e.vestDate}</TableCell>
+                        <TableCell className="text-xs">
+                          <div className="truncate">{e.vestDate}</div>
+                          <div className="md:hidden text-[11px] text-silver/70 truncate">
+                            {e.isCliff ? 'Cliff' : 'Monthly'}
+                          </div>
+                        </TableCell>
                         <TableCell className="text-sm">
                           {e.shares.toLocaleString()}
                         </TableCell>
-                        <TableCell className="text-xs text-silver">
+                        <TableCell className="text-xs text-silver hidden md:table-cell">
                           {e.isCliff ? 'Cliff' : 'Monthly'}
                         </TableCell>
                         <TableCell>

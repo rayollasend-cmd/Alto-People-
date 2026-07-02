@@ -249,9 +249,9 @@ function InboxTab() {
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead>Type</TableHead>
+          <TableHead className="hidden md:table-cell">Type</TableHead>
           <TableHead>Associate</TableHead>
-          <TableHead>Details</TableHead>
+          <TableHead className="hidden md:table-cell">Details</TableHead>
           <TableHead className="tabular-nums">Age</TableHead>
           <TableHead className="text-right">Action</TableHead>
         </TableRow>
@@ -263,7 +263,7 @@ function InboxTab() {
           const stale = item.ageDays >= 3;
           return (
             <TableRow key={`${item.kind}-${item.id}`}>
-              <TableCell>
+              <TableCell className="hidden md:table-cell">
                 <div className="flex items-center gap-1.5 text-xs">
                   <Icon className={`h-3.5 w-3.5 ${meta.tone}`} />
                   <span className="text-silver">{meta.label}</span>
@@ -272,10 +272,15 @@ function InboxTab() {
               <TableCell className="font-medium">
                 <div className="flex items-center gap-2.5">
                   <Avatar name={item.associateName} size="sm" />
-                  <span>{item.associateName}</span>
+                  <div className="min-w-0">
+                    <div className="truncate">{item.associateName}</div>
+                    <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      {meta.label}{item.summary ? ` · ${item.summary}` : ''}
+                    </div>
+                  </div>
                 </div>
               </TableCell>
-              <TableCell className="text-silver">{item.summary}</TableCell>
+              <TableCell className="hidden md:table-cell text-silver">{item.summary}</TableCell>
               <TableCell className={`tabular-nums ${stale ? 'text-alert' : 'text-silver'}`}>
                 {item.ageDays === 0 ? 'today' : `${item.ageDays}d`}
               </TableCell>
@@ -308,9 +313,9 @@ function ReportsList({ reports }: { reports: DirectReport[] | null }) {
       <TableHeader>
         <TableRow>
           <TableHead>Associate</TableHead>
-          <TableHead>Email</TableHead>
+          <TableHead className="hidden md:table-cell">Email</TableHead>
           <TableHead>Title</TableHead>
-          <TableHead>Department</TableHead>
+          <TableHead className="hidden md:table-cell">Department</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -323,12 +328,17 @@ function ReportsList({ reports }: { reports: DirectReport[] | null }) {
                   email={r.email}
                   size="sm"
                 />
-                <span>{r.firstName} {r.lastName}</span>
+                <div className="min-w-0">
+                  <div className="truncate">{r.firstName} {r.lastName}</div>
+                  <div className="md:hidden text-[11px] text-silver/70 truncate">
+                    {r.email}{r.departmentName ? ` · ${r.departmentName}` : ''}
+                  </div>
+                </div>
               </div>
             </TableCell>
-            <TableCell className="text-silver">{r.email}</TableCell>
+            <TableCell className="hidden md:table-cell text-silver">{r.email}</TableCell>
             <TableCell className="text-silver">{r.jobTitle ?? '—'}</TableCell>
-            <TableCell className="text-silver">{r.departmentName ?? '—'}</TableCell>
+            <TableCell className="hidden md:table-cell text-silver">{r.departmentName ?? '—'}</TableCell>
           </TableRow>
         ))}
       </TableBody>
@@ -475,8 +485,8 @@ function TimesheetsTab() {
               />
             </TableHead>
             <TableHead>Associate</TableHead>
-            <TableHead>Client</TableHead>
-            <TableHead>Clock in</TableHead>
+            <TableHead className="hidden lg:table-cell">Client</TableHead>
+            <TableHead className="hidden md:table-cell">Clock in</TableHead>
             <TableHead>Clock out</TableHead>
             <TableHead className="text-right">Actions</TableHead>
           </TableRow>
@@ -499,11 +509,19 @@ function TimesheetsTab() {
               <TableCell className="font-medium">
                 <div className="flex items-center gap-2.5">
                   <Avatar name={e.associateName} size="sm" />
-                  <span>{e.associateName}</span>
+                  <div className="min-w-0">
+                    <div className="truncate">{e.associateName}</div>
+                    <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <span className="tabular-nums">
+                        In {new Date(e.clockInAt).toLocaleString()}
+                      </span>
+                      {e.clientName ? ` · ${e.clientName}` : ''}
+                    </div>
+                  </div>
                 </div>
               </TableCell>
-              <TableCell className="text-silver">{e.clientName ?? '—'}</TableCell>
-              <TableCell className="text-silver tabular-nums">
+              <TableCell className="hidden lg:table-cell text-silver">{e.clientName ?? '—'}</TableCell>
+              <TableCell className="hidden md:table-cell text-silver tabular-nums">
                 {new Date(e.clockInAt).toLocaleString()}
               </TableCell>
               <TableCell className="text-silver tabular-nums">
@@ -671,9 +689,9 @@ function TimeOffTab() {
               />
             </TableHead>
             <TableHead>Associate</TableHead>
-            <TableHead>Category</TableHead>
+            <TableHead className="hidden md:table-cell">Category</TableHead>
             <TableHead>Dates</TableHead>
-            <TableHead>Hours</TableHead>
+            <TableHead className="hidden sm:table-cell">Hours</TableHead>
             <TableHead className="text-right">Actions</TableHead>
           </TableRow>
         </TableHeader>
@@ -695,14 +713,23 @@ function TimeOffTab() {
               <TableCell className="font-medium">
                 <div className="flex items-center gap-2.5">
                   <Avatar name={r.associateName} size="sm" />
-                  <span>{r.associateName}</span>
+                  <div className="min-w-0">
+                    <div className="truncate">{r.associateName}</div>
+                    <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      {r.category}
+                      <span className="sm:hidden tabular-nums">
+                        {' · '}
+                        {(r.requestedMinutes / 60).toFixed(1)}h
+                      </span>
+                    </div>
+                  </div>
                 </div>
               </TableCell>
-              <TableCell className="text-silver">{r.category}</TableCell>
+              <TableCell className="hidden md:table-cell text-silver">{r.category}</TableCell>
               <TableCell className="text-silver tabular-nums">
                 {r.startDate} → {r.endDate}
               </TableCell>
-              <TableCell className="tabular-nums">
+              <TableCell className="hidden sm:table-cell tabular-nums">
                 {(r.requestedMinutes / 60).toFixed(1)}h
               </TableCell>
               <TableCell className="text-right">

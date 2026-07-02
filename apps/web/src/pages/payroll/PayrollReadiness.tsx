@@ -89,11 +89,11 @@ export function PayrollReadiness() {
                     <TableRow>
                       <TableHead>Associate</TableHead>
                       <TableHead>Type</TableHead>
-                      <TableHead className="text-center">W-4 / TIN</TableHead>
-                      <TableHead className="text-center">Tax state</TableHead>
-                      <TableHead className="text-center">Payout</TableHead>
-                      <TableHead className="text-center">Schedule</TableHead>
-                      <TableHead className="text-center">User</TableHead>
+                      <TableHead className="text-center hidden md:table-cell">W-4 / TIN</TableHead>
+                      <TableHead className="text-center hidden md:table-cell">Tax state</TableHead>
+                      <TableHead className="text-center hidden md:table-cell">Payout</TableHead>
+                      <TableHead className="text-center hidden md:table-cell">Schedule</TableHead>
+                      <TableHead className="text-center hidden md:table-cell">User</TableHead>
                       <TableHead className="text-center">Ready</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -146,25 +146,42 @@ function ReadinessTableRow({ row }: { row: PayrollReadinessRow }) {
       <TableCell className="font-medium text-white">
         {row.firstName} {row.lastName}
         <div className="text-xs text-silver">{row.email}</div>
+        {!row.ready && (
+          <div className="md:hidden text-[11px] text-silver/70 truncate">
+            Missing:{' '}
+            {[
+              !row.flags.w4OnFile &&
+                (row.employmentType === 'W2_EMPLOYEE' ? 'W-4' : 'TIN'),
+              !row.flags.taxStateSet && 'tax state',
+              !row.flags.payoutMethodOnFile && 'payout',
+              !row.flags.payScheduleAssigned && 'schedule',
+              !row.flags.userLinked && 'user',
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </div>
+        )}
       </TableCell>
       <TableCell>
         <Badge variant={row.employmentType === 'W2_EMPLOYEE' ? 'default' : 'pending'}>
           {row.employmentType === 'W2_EMPLOYEE' ? 'W-2' : '1099'}
         </Badge>
       </TableCell>
-      <Flag ok={row.flags.w4OnFile} href={profileUrl} title={w4Label} />
-      <Flag ok={row.flags.taxStateSet} href={profileUrl} title="Tax state missing or unsupported" />
+      <Flag ok={row.flags.w4OnFile} href={profileUrl} title={w4Label} className="hidden md:table-cell" />
+      <Flag ok={row.flags.taxStateSet} href={profileUrl} title="Tax state missing or unsupported" className="hidden md:table-cell" />
       <Flag
         ok={row.flags.payoutMethodOnFile}
         href={profileUrl}
         title="No Branch card or bank account on file"
+        className="hidden md:table-cell"
       />
       <Flag
         ok={row.flags.payScheduleAssigned}
         href={profileUrl}
         title="No pay schedule assigned"
+        className="hidden md:table-cell"
       />
-      <Flag ok={row.flags.userLinked} href={profileUrl} title="No user account linked" />
+      <Flag ok={row.flags.userLinked} href={profileUrl} title="No user account linked" className="hidden md:table-cell" />
       <TableCell className="text-center">
         {row.ready ? (
           <Badge variant="success">Ready</Badge>
@@ -176,10 +193,20 @@ function ReadinessTableRow({ row }: { row: PayrollReadinessRow }) {
   );
 }
 
-function Flag({ ok, href, title }: { ok: boolean; href: string; title: string }) {
+function Flag({
+  ok,
+  href,
+  title,
+  className,
+}: {
+  ok: boolean;
+  href: string;
+  title: string;
+  className?: string;
+}) {
   if (ok) {
     return (
-      <TableCell className="text-center">
+      <TableCell className={`text-center ${className ?? ''}`}>
         <CheckCircle2
           className="mx-auto h-5 w-5 text-success"
           aria-label="Complete"
@@ -190,7 +217,7 @@ function Flag({ ok, href, title }: { ok: boolean; href: string; title: string })
   }
   // Red — clickable link to the associate profile so HR can fix the gap.
   return (
-    <TableCell className="text-center">
+    <TableCell className={`text-center ${className ?? ''}`}>
       <Link
         to={href}
         title={title}

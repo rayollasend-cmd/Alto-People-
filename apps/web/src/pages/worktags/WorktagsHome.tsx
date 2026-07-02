@@ -110,7 +110,7 @@ function CategoriesTab({ canManage }: { canManage: boolean }) {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Key</TableHead>
+                  <TableHead className="hidden md:table-cell">Key</TableHead>
                   <TableHead>Label</TableHead>
                   <TableHead>Required</TableHead>
                   <TableHead>Values</TableHead>
@@ -119,8 +119,13 @@ function CategoriesTab({ canManage }: { canManage: boolean }) {
               <TableBody>
                 {rows.map((c) => (
                   <TableRow key={c.id}>
-                    <TableCell className="font-mono text-xs">{c.key}</TableCell>
-                    <TableCell className="font-medium text-white">{c.label}</TableCell>
+                    <TableCell className="font-mono text-xs hidden md:table-cell">{c.key}</TableCell>
+                    <TableCell className="font-medium text-white">
+                      {c.label}
+                      <div className="md:hidden text-[11px] text-silver/70 truncate font-mono font-normal">
+                        {c.key}
+                      </div>
+                    </TableCell>
                     <TableCell>
                       {c.isRequired ? (
                         <Badge variant="destructive">Required</Badge>

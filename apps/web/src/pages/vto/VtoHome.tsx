@@ -203,10 +203,10 @@ export function VtoHome() {
                   <TableRow>
                     <TableHead>Date</TableHead>
                     <TableHead>Hours</TableHead>
-                    <TableHead>Organization</TableHead>
-                    <TableHead>Cause</TableHead>
+                    <TableHead className="hidden md:table-cell">Organization</TableHead>
+                    <TableHead className="hidden lg:table-cell">Cause</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Match</TableHead>
+                    <TableHead className="hidden md:table-cell">Match</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -218,14 +218,17 @@ export function VtoHome() {
                     >
                       <TableCell className="text-xs text-silver">
                         {e.activityDate}
+                        <div className="md:hidden text-[11px] text-silver/70 truncate">
+                          {e.organization}{e.cause ? ` · ${e.cause}` : ''}
+                        </div>
                       </TableCell>
                       <TableCell className="text-sm font-medium text-white">
                         {e.hours}
                       </TableCell>
-                      <TableCell className="text-sm">
+                      <TableCell className="text-sm hidden md:table-cell">
                         {e.organization}
                       </TableCell>
-                      <TableCell className="text-sm text-silver">
+                      <TableCell className="text-sm text-silver hidden lg:table-cell">
                         {e.cause ?? '—'}
                       </TableCell>
                       <TableCell>
@@ -233,7 +236,7 @@ export function VtoHome() {
                           {e.status}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-sm">
+                      <TableCell className="text-sm hidden md:table-cell">
                         {e.matchAmount
                           ? `${e.matchCurrency} ${e.matchAmount}`
                           : e.matchRequested
@@ -265,11 +268,11 @@ export function VtoHome() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Associate</TableHead>
-                    <TableHead>Date</TableHead>
+                    <TableHead className="hidden md:table-cell">Date</TableHead>
                     <TableHead>Hours</TableHead>
-                    <TableHead>Organization</TableHead>
+                    <TableHead className="hidden md:table-cell">Organization</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Match</TableHead>
+                    <TableHead className="hidden lg:table-cell">Match</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -286,12 +289,15 @@ export function VtoHome() {
                         <div className="text-xs text-silver">
                           {e.associateEmail}
                         </div>
+                        <div className="md:hidden text-[11px] text-silver/70 truncate">
+                          {e.activityDate} · {e.organization}
+                        </div>
                       </TableCell>
-                      <TableCell className="text-xs text-silver">
+                      <TableCell className="text-xs text-silver hidden md:table-cell">
                         {e.activityDate}
                       </TableCell>
                       <TableCell className="text-sm">{e.hours}</TableCell>
-                      <TableCell className="text-sm">
+                      <TableCell className="text-sm hidden md:table-cell">
                         {e.organization}
                       </TableCell>
                       <TableCell>
@@ -299,7 +305,7 @@ export function VtoHome() {
                           {e.status}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-xs">
+                      <TableCell className="text-xs hidden lg:table-cell">
                         {e.matchRequested ? (
                           e.matchAmount ? (
                             <span className="text-success">

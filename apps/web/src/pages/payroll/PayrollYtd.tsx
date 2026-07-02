@@ -121,14 +121,14 @@ export function PayrollYtd() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Associate</TableHead>
-                    <TableHead className="text-right">Paystubs</TableHead>
+                    <TableHead className="text-right hidden md:table-cell">Paystubs</TableHead>
                     <TableHead className="text-right">Gross</TableHead>
-                    <TableHead className="text-right">FIT</TableHead>
-                    <TableHead className="text-right">FICA</TableHead>
-                    <TableHead className="text-right">Medicare</TableHead>
-                    <TableHead className="text-right">SIT</TableHead>
-                    <TableHead className="text-right">Pre-tax</TableHead>
-                    <TableHead className="text-right">Post-tax</TableHead>
+                    <TableHead className="text-right hidden lg:table-cell">FIT</TableHead>
+                    <TableHead className="text-right hidden lg:table-cell">FICA</TableHead>
+                    <TableHead className="text-right hidden lg:table-cell">Medicare</TableHead>
+                    <TableHead className="text-right hidden lg:table-cell">SIT</TableHead>
+                    <TableHead className="text-right hidden lg:table-cell">Pre-tax</TableHead>
+                    <TableHead className="text-right hidden lg:table-cell">Post-tax</TableHead>
                     <TableHead className="text-right">Net</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -152,19 +152,22 @@ export function PayrollYtd() {
                           {r.firstName} {r.lastName}
                         </Link>
                         <div className="text-xs text-silver/70">{r.email}</div>
+                        <div className="md:hidden text-[11px] text-silver/70 tabular-nums truncate">
+                          {r.paystubCount} paystub{r.paystubCount === 1 ? '' : 's'}
+                        </div>
                       </TableCell>
-                      <TableCell className="text-right tabular-nums">
+                      <TableCell className="text-right tabular-nums hidden md:table-cell">
                         {r.paystubCount}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">{fmt(r.gross)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{fmt(r.fit)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{fmt(r.fica)}</TableCell>
-                      <TableCell className="text-right tabular-nums">
+                      <TableCell className="text-right tabular-nums hidden lg:table-cell">{fmt(r.fit)}</TableCell>
+                      <TableCell className="text-right tabular-nums hidden lg:table-cell">{fmt(r.fica)}</TableCell>
+                      <TableCell className="text-right tabular-nums hidden lg:table-cell">
                         {fmt(r.medicare)}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums">{fmt(r.sit)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{fmt(r.preTax)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{fmt(r.postTax)}</TableCell>
+                      <TableCell className="text-right tabular-nums hidden lg:table-cell">{fmt(r.sit)}</TableCell>
+                      <TableCell className="text-right tabular-nums hidden lg:table-cell">{fmt(r.preTax)}</TableCell>
+                      <TableCell className="text-right tabular-nums hidden lg:table-cell">{fmt(r.postTax)}</TableCell>
                       <TableCell className="text-right tabular-nums font-medium">
                         {fmt(r.net)}
                       </TableCell>

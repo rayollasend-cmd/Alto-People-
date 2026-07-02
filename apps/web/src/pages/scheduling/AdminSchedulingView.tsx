@@ -2148,10 +2148,10 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead>Position</TableHead>
-                <TableHead>Client</TableHead>
+                <TableHead className="hidden lg:table-cell">Client</TableHead>
                 <TableHead>Starts</TableHead>
-                <TableHead>Ends</TableHead>
-                <TableHead>Assigned</TableHead>
+                <TableHead className="hidden md:table-cell">Ends</TableHead>
+                <TableHead className="hidden md:table-cell">Assigned</TableHead>
                 <TableHead>Status</TableHead>
                 {canManage && <TableHead className="text-right no-print">Actions</TableHead>}
               </TableRow>
@@ -2159,11 +2159,19 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             <TableBody>
               {shifts.map((s) => (
                 <TableRow key={s.id}>
-                  <TableCell className="font-medium">{s.position}</TableCell>
-                  <TableCell className="text-silver">{s.clientName ?? '—'}</TableCell>
+                  <TableCell className="font-medium">
+                    <div className="min-w-0">
+                      <div className="truncate">{s.position}</div>
+                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        {s.assignedAssociateName ?? 'Unassigned'}
+                        {s.clientName ? ` · ${s.clientName}` : ''}
+                      </div>
+                    </div>
+                  </TableCell>
+                  <TableCell className="hidden lg:table-cell text-silver">{s.clientName ?? '—'}</TableCell>
                   <TableCell className="tabular-nums">{fmt(s.startsAt)}</TableCell>
-                  <TableCell className="tabular-nums">{fmt(s.endsAt)}</TableCell>
-                  <TableCell className="text-silver">
+                  <TableCell className="hidden md:table-cell tabular-nums">{fmt(s.endsAt)}</TableCell>
+                  <TableCell className="hidden md:table-cell text-silver">
                     {s.assignedAssociateName ?? '—'}
                   </TableCell>
                   <TableCell>

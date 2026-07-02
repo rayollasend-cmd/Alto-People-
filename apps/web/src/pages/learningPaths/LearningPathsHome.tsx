@@ -98,16 +98,21 @@ export function LearningPathsHome() {
                 <TableRow>
                   <TableHead>Title</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Steps</TableHead>
-                  <TableHead>Enrollments</TableHead>
-                  <TableHead>Required</TableHead>
+                  <TableHead className="hidden md:table-cell">Steps</TableHead>
+                  <TableHead className="hidden md:table-cell">Enrollments</TableHead>
+                  <TableHead className="hidden lg:table-cell">Required</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((p) => (
                   <TableRow key={p.id} className="group">
-                    <TableCell className="font-medium text-white">{p.title}</TableCell>
+                    <TableCell className="font-medium text-white">
+                      {p.title}
+                      <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                        {p.stepCount} step{p.stepCount === 1 ? '' : 's'} · {p.enrollmentCount} enrolled
+                      </div>
+                    </TableCell>
                     <TableCell>
                       <Badge
                         variant={
@@ -121,9 +126,9 @@ export function LearningPathsHome() {
                         {p.status}
                       </Badge>
                     </TableCell>
-                    <TableCell>{p.stepCount}</TableCell>
-                    <TableCell>{p.enrollmentCount}</TableCell>
-                    <TableCell>
+                    <TableCell className="hidden md:table-cell">{p.stepCount}</TableCell>
+                    <TableCell className="hidden md:table-cell">{p.enrollmentCount}</TableCell>
+                    <TableCell className="hidden lg:table-cell">
                       {p.isRequired ? <Badge variant="accent">Required</Badge> : '—'}
                     </TableCell>
                     <TableCell className="text-right space-x-2">
@@ -502,7 +507,7 @@ function PathDetailDrawer({
                       <TableRow>
                         <TableHead>Associate</TableHead>
                         <TableHead>Status</TableHead>
-                        <TableHead>Assigned</TableHead>
+                        <TableHead className="hidden md:table-cell">Assigned</TableHead>
                         {canManage && <TableHead className="text-right" />}
                       </TableRow>
                     </TableHeader>
@@ -515,6 +520,9 @@ function PathDetailDrawer({
                             </div>
                             <div className="text-xs text-silver">
                               {e.associateEmail}
+                            </div>
+                            <div className="md:hidden text-[11px] text-silver/70 truncate">
+                              Assigned {fmtDate(e.assignedAt)}
                             </div>
                           </TableCell>
                           <TableCell>
@@ -530,7 +538,7 @@ function PathDetailDrawer({
                               {e.status}
                             </Badge>
                           </TableCell>
-                          <TableCell className="text-xs text-silver">
+                          <TableCell className="text-xs text-silver hidden md:table-cell">
                             {fmtDate(e.assignedAt)}
                           </TableCell>
                           {canManage && (

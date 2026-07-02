@@ -193,11 +193,11 @@ export function GarnishmentsView({ canProcess }: Props) {
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
                   <TableHead>Associate</TableHead>
-                  <TableHead>Kind</TableHead>
-                  <TableHead>Per period</TableHead>
+                  <TableHead className="hidden md:table-cell">Kind</TableHead>
+                  <TableHead className="hidden md:table-cell">Per period</TableHead>
                   <TableHead className="text-right">Withheld</TableHead>
-                  <TableHead className="text-right">Cap</TableHead>
-                  <TableHead className="text-center">Priority</TableHead>
+                  <TableHead className="text-right hidden lg:table-cell">Cap</TableHead>
+                  <TableHead className="text-center hidden lg:table-cell">Priority</TableHead>
                   <TableHead>Status</TableHead>
                   {canProcess && <TableHead />}
                 </TableRow>
@@ -297,19 +297,23 @@ function GarnishmentRow({
         {g.caseNumber && (
           <div className="text-xs text-silver/70">Case #{g.caseNumber}</div>
         )}
+        <div className="md:hidden text-[11px] text-silver/70 truncate">
+          {KIND_LABEL[g.kind]}
+          {perPeriod !== '—' ? ` · ${perPeriod}` : ''}
+        </div>
       </TableCell>
-      <TableCell>
+      <TableCell className="hidden md:table-cell">
         <div className="text-silver">{KIND_LABEL[g.kind]}</div>
         {g.agencyName && (
           <div className="text-xs text-silver/70">{g.agencyName}</div>
         )}
       </TableCell>
-      <TableCell className="text-silver">{perPeriod}</TableCell>
+      <TableCell className="text-silver hidden md:table-cell">{perPeriod}</TableCell>
       <TableCell className="text-right tabular-nums text-white">
         {fmtMoney(withheld)}
         <div className="text-[10px] text-silver/70">{g.deductionCount} run{g.deductionCount === 1 ? '' : 's'}</div>
       </TableCell>
-      <TableCell className="text-right tabular-nums text-silver">
+      <TableCell className="text-right tabular-nums text-silver hidden lg:table-cell">
         {cap !== null ? fmtMoney(cap) : '—'}
         {cap !== null && (
           <div className="text-[10px] text-silver/70">
@@ -317,7 +321,7 @@ function GarnishmentRow({
           </div>
         )}
       </TableCell>
-      <TableCell className="text-center text-silver">{g.priority}</TableCell>
+      <TableCell className="text-center text-silver hidden lg:table-cell">{g.priority}</TableCell>
       <TableCell>
         <Badge variant={STATUS_VARIANT[g.status]}>{g.status}</Badge>
       </TableCell>

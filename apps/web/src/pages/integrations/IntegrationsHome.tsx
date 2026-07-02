@@ -142,9 +142,9 @@ function KeysTab({ canManage }: { canManage: boolean }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
-                  <TableHead>Key</TableHead>
-                  <TableHead>Capabilities</TableHead>
-                  <TableHead>Last used</TableHead>
+                  <TableHead className="hidden sm:table-cell">Key</TableHead>
+                  <TableHead className="hidden lg:table-cell">Capabilities</TableHead>
+                  <TableHead className="hidden md:table-cell">Last used</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -152,14 +152,23 @@ function KeysTab({ canManage }: { canManage: boolean }) {
               <TableBody>
                 {keys.map((k) => (
                   <TableRow key={k.id} className="group">
-                    <TableCell className="font-medium text-white">{k.name}</TableCell>
-                    <TableCell className="font-mono text-xs">altop_…{k.last4}</TableCell>
-                    <TableCell className="text-xs text-silver">
+                    <TableCell className="font-medium text-white">
+                      <div className="truncate">{k.name}</div>
+                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        <span className="sm:hidden font-mono">
+                          altop_…{k.last4}
+                          {' · '}
+                        </span>
+                        {fmtDate(k.lastUsedAt)}
+                      </div>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs hidden sm:table-cell">altop_…{k.last4}</TableCell>
+                    <TableCell className="text-xs text-silver hidden lg:table-cell">
                       {k.capabilities.length > 0
                         ? k.capabilities.join(', ')
                         : '(inherits creator)'}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="hidden md:table-cell">
                       {fmtDate(k.lastUsedAt)}
                     </TableCell>
                     <TableCell>
@@ -618,9 +627,9 @@ function WebhooksTab({ canManage }: { canManage: boolean }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
-                  <TableHead>URL</TableHead>
-                  <TableHead>Events</TableHead>
-                  <TableHead>Deliveries</TableHead>
+                  <TableHead className="hidden sm:table-cell">URL</TableHead>
+                  <TableHead className="hidden lg:table-cell">Events</TableHead>
+                  <TableHead className="hidden md:table-cell">Deliveries</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -628,14 +637,23 @@ function WebhooksTab({ canManage }: { canManage: boolean }) {
               <TableBody>
                 {rows.map((w) => (
                   <TableRow key={w.id} className="group">
-                    <TableCell className="font-medium text-white">{w.name}</TableCell>
-                    <TableCell className="font-mono text-xs truncate max-w-[140px] sm:max-w-[200px] md:max-w-[280px]">
+                    <TableCell className="font-medium text-white">
+                      <div className="truncate">{w.name}</div>
+                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        <span className="sm:hidden font-mono">
+                          {w.url}
+                          {' · '}
+                        </span>
+                        <span className="tabular-nums">{w.deliveryCount}</span> deliveries
+                      </div>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs truncate max-w-[140px] sm:max-w-[200px] md:max-w-[280px] hidden sm:table-cell">
                       {w.url}
                     </TableCell>
-                    <TableCell className="text-xs text-silver">
+                    <TableCell className="text-xs text-silver hidden lg:table-cell">
                       {w.eventTypes.length > 0 ? w.eventTypes.join(', ') : '(all)'}
                     </TableCell>
-                    <TableCell>{w.deliveryCount}</TableCell>
+                    <TableCell className="hidden md:table-cell">{w.deliveryCount}</TableCell>
                     <TableCell>
                       {w.isActive ? (
                         <Badge variant="success">Active</Badge>

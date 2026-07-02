@@ -140,8 +140,8 @@ export function SuccessionHome() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Position</TableHead>
-                  <TableHead>Department</TableHead>
-                  <TableHead>Incumbent</TableHead>
+                  <TableHead className="hidden md:table-cell">Department</TableHead>
+                  <TableHead className="hidden md:table-cell">Incumbent</TableHead>
                   <TableHead>Successors</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -156,11 +156,14 @@ export function SuccessionHome() {
                     <TableCell>
                       <div className="font-medium text-white">{p.title}</div>
                       <div className="text-xs text-silver font-mono">{p.code}</div>
+                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        {p.departmentName ?? '—'} · {p.incumbent ? p.incumbent.name : 'Vacant'}
+                      </div>
                     </TableCell>
-                    <TableCell className="text-sm text-silver">
+                    <TableCell className="text-sm text-silver hidden md:table-cell">
                       {p.departmentName ?? '—'}
                     </TableCell>
-                    <TableCell className="text-sm">
+                    <TableCell className="text-sm hidden md:table-cell">
                       {p.incumbent ? (
                         p.incumbent.name
                       ) : (

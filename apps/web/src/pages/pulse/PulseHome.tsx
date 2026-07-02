@@ -284,27 +284,34 @@ function AdminPulseTab() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Question</TableHead>
-                  <TableHead>Scale</TableHead>
-                  <TableHead>Audience</TableHead>
+                  <TableHead className="hidden lg:table-cell">Scale</TableHead>
+                  <TableHead className="hidden md:table-cell">Audience</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Responses</TableHead>
+                  <TableHead className="hidden sm:table-cell">Responses</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filtered.map((s) => (
                   <TableRow key={s.id} className="group">
-                    <TableCell className="font-medium text-white max-w-md truncate">
-                      {s.question}
+                    <TableCell className="font-medium text-white max-w-md">
+                      <div className="truncate">{s.question}</div>
+                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        {s.audienceLabel ?? '—'}
+                        <span className="sm:hidden tabular-nums">
+                          {' · '}
+                          {s.responseCount} responses
+                        </span>
+                      </div>
                     </TableCell>
-                    <TableCell>{s.scale === 'SCORE_1_5' ? '1-5' : 'Yes/No'}</TableCell>
-                    <TableCell className="text-xs">{s.audienceLabel ?? '—'}</TableCell>
+                    <TableCell className="hidden lg:table-cell">{s.scale === 'SCORE_1_5' ? '1-5' : 'Yes/No'}</TableCell>
+                    <TableCell className="text-xs hidden md:table-cell">{s.audienceLabel ?? '—'}</TableCell>
                     <TableCell>
                       <Badge variant={s.isOpen ? 'success' : 'pending'}>
                         {s.isOpen ? 'Open' : 'Closed'}
                       </Badge>
                     </TableCell>
-                    <TableCell>{s.responseCount}</TableCell>
+                    <TableCell className="hidden sm:table-cell">{s.responseCount}</TableCell>
                     <TableCell className="text-right space-x-2">
                       <Button
                         size="sm"

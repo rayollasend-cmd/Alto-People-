@@ -304,22 +304,29 @@ function DrillDrawer({
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
-                <TableHead>Email</TableHead>
+                <TableHead className="hidden md:table-cell">Email</TableHead>
                 <TableHead>Job profile</TableHead>
-                <TableHead>Manager</TableHead>
+                <TableHead className="hidden md:table-cell">Manager</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {rows.map((a) => (
                 <TableRow key={a.id}>
                   <TableCell className="font-medium text-white">
-                    {a.firstName} {a.lastName}
+                    <div className="min-w-0">
+                      <div className="truncate">
+                        {a.firstName} {a.lastName}
+                      </div>
+                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        {a.email}{a.managerName ? ` · ${a.managerName}` : ''}
+                      </div>
+                    </div>
                   </TableCell>
-                  <TableCell className="text-xs text-silver">{a.email}</TableCell>
+                  <TableCell className="hidden md:table-cell text-xs text-silver">{a.email}</TableCell>
                   <TableCell className="text-sm">
                     {a.jobProfileTitle ?? <span className="text-silver">—</span>}
                   </TableCell>
-                  <TableCell className="text-sm">
+                  <TableCell className="hidden md:table-cell text-sm">
                     {a.managerName ?? <span className="text-silver">—</span>}
                   </TableCell>
                 </TableRow>

@@ -182,9 +182,9 @@ function GarnishmentsTab({ canManage }: { canManage: boolean }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Associate</TableHead>
-                  <TableHead>Kind</TableHead>
-                  <TableHead>Withhold</TableHead>
-                  <TableHead>Cap / progress</TableHead>
+                  <TableHead className="hidden md:table-cell">Kind</TableHead>
+                  <TableHead className="hidden sm:table-cell">Withhold</TableHead>
+                  <TableHead className="hidden lg:table-cell">Cap / progress</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -193,17 +193,29 @@ function GarnishmentsTab({ canManage }: { canManage: boolean }) {
                 {rows.map((g) => (
                   <TableRow key={g.id}>
                     <TableCell className="font-medium text-white">
-                      {g.associateName}
+                      <div className="min-w-0">
+                        <div className="truncate">{g.associateName}</div>
+                        <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                          {GARN_KIND_LABEL[g.kind]}
+                          <span className="sm:hidden">
+                            {g.amountPerRun
+                              ? ` · $${g.amountPerRun}/run`
+                              : g.percentOfDisp
+                                ? ` · ${(Number(g.percentOfDisp) * 100).toFixed(2)}% of disp.`
+                                : ''}
+                          </span>
+                        </div>
+                      </div>
                     </TableCell>
-                    <TableCell>{GARN_KIND_LABEL[g.kind]}</TableCell>
-                    <TableCell>
+                    <TableCell className="hidden md:table-cell">{GARN_KIND_LABEL[g.kind]}</TableCell>
+                    <TableCell className="hidden sm:table-cell">
                       {g.amountPerRun
                         ? `$${g.amountPerRun}/run`
                         : g.percentOfDisp
                           ? `${(Number(g.percentOfDisp) * 100).toFixed(2)}% of disp.`
                           : '—'}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="hidden lg:table-cell">
                       {g.totalCap
                         ? `$${g.amountWithheld} / $${g.totalCap}`
                         : `$${g.amountWithheld}`}
@@ -813,9 +825,9 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
                 <TableRow>
                   <TableHead>Kind</TableHead>
                   <TableHead>Year / Q</TableHead>
-                  <TableHead>Recipient</TableHead>
+                  <TableHead className="hidden md:table-cell">Recipient</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Filed</TableHead>
+                  <TableHead className="hidden lg:table-cell">Filed</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -823,17 +835,22 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
                 {rows.map((f) => (
                   <TableRow key={f.id}>
                     <TableCell className="font-medium text-white">
-                      {FORM_KIND_LABEL[f.kind]}
+                      <div className="min-w-0">
+                        <div className="truncate">{FORM_KIND_LABEL[f.kind]}</div>
+                        <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                          {f.associateName ?? 'Aggregate'}
+                        </div>
+                      </div>
                     </TableCell>
                     <TableCell>
                       {f.taxYear}
                       {f.quarter ? ` Q${f.quarter}` : ''}
                     </TableCell>
-                    <TableCell>{f.associateName ?? 'Aggregate'}</TableCell>
+                    <TableCell className="hidden md:table-cell">{f.associateName ?? 'Aggregate'}</TableCell>
                     <TableCell>
                       <Badge variant={FORM_STATUS_BADGE[f.status]}>{f.status}</Badge>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="hidden lg:table-cell">
                       {fmtDate(f.filedAt)}
                     </TableCell>
                     <TableCell className="text-right space-x-2">

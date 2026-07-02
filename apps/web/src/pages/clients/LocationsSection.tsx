@@ -156,8 +156,8 @@ export function LocationsSection({ clientId }: Props) {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>City / state</TableHead>
-                <TableHead>Time zone</TableHead>
-                <TableHead>Geofence</TableHead>
+                <TableHead className="hidden md:table-cell">Time zone</TableHead>
+                <TableHead className="hidden lg:table-cell">Geofence</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -165,16 +165,25 @@ export function LocationsSection({ clientId }: Props) {
             <TableBody>
               {items.map((l) => (
                 <TableRow key={l.id}>
-                  <TableCell className="text-white">{l.name}</TableCell>
+                  <TableCell className="text-white">
+                    <div className="min-w-0">
+                      <div className="truncate">{l.name}</div>
+                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        {TIMEZONE_LABELS[
+                          l.timezone as (typeof SUPPORTED_TIMEZONES)[number]
+                        ] ?? l.timezone}
+                      </div>
+                    </div>
+                  </TableCell>
                   <TableCell className="text-silver">
                     {[l.city, l.state].filter(Boolean).join(', ') || '—'}
                   </TableCell>
-                  <TableCell className="text-silver">
+                  <TableCell className="hidden md:table-cell text-silver">
                     {TIMEZONE_LABELS[
                       l.timezone as (typeof SUPPORTED_TIMEZONES)[number]
                     ] ?? l.timezone}
                   </TableCell>
-                  <TableCell className="text-silver tabular-nums">
+                  <TableCell className="hidden lg:table-cell text-silver tabular-nums">
                     {l.latitude !== null &&
                     l.longitude !== null &&
                     l.geofenceRadiusMeters !== null

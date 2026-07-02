@@ -131,10 +131,10 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Title</TableHead>
-                  <TableHead>Required</TableHead>
-                  <TableHead>Validity</TableHead>
-                  <TableHead>Modules</TableHead>
-                  <TableHead>Enrolled</TableHead>
+                  <TableHead className="hidden md:table-cell">Required</TableHead>
+                  <TableHead className="hidden lg:table-cell">Validity</TableHead>
+                  <TableHead className="hidden lg:table-cell">Modules</TableHead>
+                  <TableHead className="hidden md:table-cell">Enrolled</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -142,15 +142,20 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
               <TableBody>
                 {rows.map((c) => (
                   <TableRow key={c.id} className="group">
-                    <TableCell className="font-medium text-white">{c.title}</TableCell>
-                    <TableCell>
+                    <TableCell className="font-medium text-white">
+                      {c.title}
+                      <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                        {c.isRequired ? 'Required · ' : ''}{c.enrollmentCount} enrolled
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">
                       {c.isRequired ? <Badge variant="destructive">Required</Badge> : '—'}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="hidden lg:table-cell">
                       {c.validityDays ? `${c.validityDays}d` : 'Never expires'}
                     </TableCell>
-                    <TableCell>{c.moduleCount}</TableCell>
-                    <TableCell>{c.enrollmentCount}</TableCell>
+                    <TableCell className="hidden lg:table-cell">{c.moduleCount}</TableCell>
+                    <TableCell className="hidden md:table-cell">{c.enrollmentCount}</TableCell>
                     <TableCell>
                       <Badge variant={COURSE_BADGE[c.status]}>{c.status}</Badge>
                     </TableCell>
@@ -423,23 +428,28 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
                 <TableHead>Course</TableHead>
                 <TableHead>Associate</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Completed</TableHead>
-                <TableHead>Expires</TableHead>
-                <TableHead>Score</TableHead>
+                <TableHead className="hidden lg:table-cell">Completed</TableHead>
+                <TableHead className="hidden md:table-cell">Expires</TableHead>
+                <TableHead className="hidden lg:table-cell">Score</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {rows.map((e) => (
                 <TableRow key={e.id}>
-                  <TableCell className="font-medium text-white">{e.courseTitle}</TableCell>
+                  <TableCell className="font-medium text-white">
+                    {e.courseTitle}
+                    <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                      Expires {fmtDate(e.expiresAt)}
+                    </div>
+                  </TableCell>
                   <TableCell>{e.associateName}</TableCell>
                   <TableCell>
                     <Badge variant={ENROLL_BADGE[e.status]}>{e.status}</Badge>
                   </TableCell>
-                  <TableCell>{fmtDate(e.completedAt)}</TableCell>
-                  <TableCell>{fmtDate(e.expiresAt)}</TableCell>
-                  <TableCell>{e.score ?? '—'}</TableCell>
+                  <TableCell className="hidden lg:table-cell">{fmtDate(e.completedAt)}</TableCell>
+                  <TableCell className="hidden md:table-cell">{fmtDate(e.expiresAt)}</TableCell>
+                  <TableCell className="hidden lg:table-cell">{e.score ?? '—'}</TableCell>
                   <TableCell className="text-right space-x-2">
                     {(e.status === 'ASSIGNED' || e.status === 'IN_PROGRESS') && (
                       <Button size="sm" onClick={() => onComplete(e.id)}>
@@ -564,8 +574,8 @@ function ExpiringTab() {
                 <TableRow>
                   <TableHead>Course</TableHead>
                   <TableHead>Associate</TableHead>
-                  <TableHead>Required</TableHead>
-                  <TableHead>Expires</TableHead>
+                  <TableHead className="hidden md:table-cell">Required</TableHead>
+                  <TableHead className="hidden md:table-cell">Expires</TableHead>
                   <TableHead>Days left</TableHead>
                 </TableRow>
               </TableHeader>
@@ -574,12 +584,15 @@ function ExpiringTab() {
                   <TableRow key={e.id}>
                     <TableCell className="font-medium text-white">
                       {e.courseTitle}
+                      <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                        Expires {fmtDate(e.expiresAt)}{e.isRequired ? ' · Required' : ''}
+                      </div>
                     </TableCell>
                     <TableCell>{e.associateName}</TableCell>
-                    <TableCell>
+                    <TableCell className="hidden md:table-cell">
                       {e.isRequired ? <Badge variant="destructive">Required</Badge> : '—'}
                     </TableCell>
-                    <TableCell>{fmtDate(e.expiresAt)}</TableCell>
+                    <TableCell className="hidden md:table-cell">{fmtDate(e.expiresAt)}</TableCell>
                     <TableCell>
                       <Badge variant={e.daysLeft <= 7 ? 'destructive' : 'pending'}>
                         {e.daysLeft}d

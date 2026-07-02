@@ -103,10 +103,10 @@ export function TemplatesHome() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
-                  <TableHead>Kind</TableHead>
+                  <TableHead className="hidden md:table-cell">Kind</TableHead>
                   <TableHead>Current version</TableHead>
-                  <TableHead>Versions</TableHead>
-                  <TableHead>Renders</TableHead>
+                  <TableHead className="hidden lg:table-cell">Versions</TableHead>
+                  <TableHead className="hidden lg:table-cell">Renders</TableHead>
                   <TableHead className="w-32 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -117,8 +117,13 @@ export function TemplatesHome() {
                     className="group cursor-pointer"
                     onClick={() => setActive(t)}
                   >
-                    <TableCell className="font-medium text-white">{t.name}</TableCell>
-                    <TableCell>{KIND_LABEL[t.kind]}</TableCell>
+                    <TableCell className="font-medium text-white">
+                      {t.name}
+                      <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                        {KIND_LABEL[t.kind]} · {t.versionCount} version{t.versionCount === 1 ? '' : 's'}
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">{KIND_LABEL[t.kind]}</TableCell>
                     <TableCell>
                       {t.currentVersion ? (
                         <Badge variant="success">v{t.currentVersion}</Badge>
@@ -126,8 +131,8 @@ export function TemplatesHome() {
                         <Badge variant="pending">Draft only</Badge>
                       )}
                     </TableCell>
-                    <TableCell>{t.versionCount}</TableCell>
-                    <TableCell>{t.renderCount}</TableCell>
+                    <TableCell className="hidden lg:table-cell">{t.versionCount}</TableCell>
+                    <TableCell className="hidden lg:table-cell">{t.renderCount}</TableCell>
                     <TableCell className="text-right">
                       <button
                         data-no-row-click
@@ -356,14 +361,19 @@ function TemplateDrawer({
                   <TableRow>
                     <TableHead>Version</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Published</TableHead>
+                    <TableHead className="hidden md:table-cell">Published</TableHead>
                     <TableHead className="text-right">Action</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {versions.map((v) => (
                     <TableRow key={v.id}>
-                      <TableCell>v{v.version}</TableCell>
+                      <TableCell>
+                        v{v.version}
+                        <div className="md:hidden text-[11px] text-silver/70 truncate">
+                          {v.publishedAt ? new Date(v.publishedAt).toLocaleString() : '—'}
+                        </div>
+                      </TableCell>
                       <TableCell>
                         {v.publishedAt ? (
                           <Badge variant="success">Published</Badge>
@@ -371,7 +381,7 @@ function TemplateDrawer({
                           <Badge variant="pending">Draft</Badge>
                         )}
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="hidden md:table-cell">
                         {v.publishedAt ? new Date(v.publishedAt).toLocaleString() : '—'}
                       </TableCell>
                       <TableCell className="text-right">

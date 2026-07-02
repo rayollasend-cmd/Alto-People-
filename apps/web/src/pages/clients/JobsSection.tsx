@@ -143,7 +143,7 @@ export function JobsSection({ clientId }: Props) {
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
-                <TableHead className="text-right">Bill rate</TableHead>
+                <TableHead className="text-right hidden md:table-cell">Bill rate</TableHead>
                 <TableHead className="text-right">Pay rate</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -152,8 +152,15 @@ export function JobsSection({ clientId }: Props) {
             <TableBody>
               {items.map((j) => (
                 <TableRow key={j.id}>
-                  <TableCell className="text-white">{j.name}</TableCell>
-                  <TableCell className="text-right tabular-nums text-silver">
+                  <TableCell className="text-white">
+                    <div className="min-w-0">
+                      <div className="truncate">{j.name}</div>
+                      <div className="md:hidden text-[11px] text-silver/70 truncate tabular-nums">
+                        Bill {fmtRate(j.billRate)}
+                      </div>
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums text-silver hidden md:table-cell">
                     {fmtRate(j.billRate)}
                   </TableCell>
                   <TableCell className="text-right tabular-nums text-silver">

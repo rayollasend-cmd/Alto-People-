@@ -197,11 +197,11 @@ export function TuitionHome() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Course</TableHead>
-                    <TableHead>School</TableHead>
-                    <TableHead>Term</TableHead>
+                    <TableHead className="hidden md:table-cell">School</TableHead>
+                    <TableHead className="hidden lg:table-cell">Term</TableHead>
                     <TableHead>Amount</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Grade</TableHead>
+                    <TableHead className="hidden md:table-cell">Grade</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -213,8 +213,11 @@ export function TuitionHome() {
                     >
                       <TableCell className="font-medium text-white">
                         {r.courseName}
+                        <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                          {r.schoolName}{r.gradeReceived ? ` · ${r.gradeReceived}` : ''}
+                        </div>
                       </TableCell>
-                      <TableCell className="text-sm">
+                      <TableCell className="text-sm hidden md:table-cell">
                         {r.schoolName}
                         {r.programName && (
                           <div className="text-xs text-silver">
@@ -222,7 +225,7 @@ export function TuitionHome() {
                           </div>
                         )}
                       </TableCell>
-                      <TableCell className="text-xs text-silver">
+                      <TableCell className="text-xs text-silver hidden lg:table-cell">
                         {r.termStartDate} → {r.termEndDate}
                       </TableCell>
                       <TableCell className="text-sm">
@@ -233,7 +236,7 @@ export function TuitionHome() {
                           {r.status}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-sm">
+                      <TableCell className="text-sm hidden md:table-cell">
                         {r.gradeReceived ?? (
                           <span className="text-silver">—</span>
                         )}
@@ -263,11 +266,11 @@ export function TuitionHome() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Associate</TableHead>
-                    <TableHead>Course</TableHead>
-                    <TableHead>School</TableHead>
+                    <TableHead className="hidden md:table-cell">Course</TableHead>
+                    <TableHead className="hidden lg:table-cell">School</TableHead>
                     <TableHead>Amount</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Grade</TableHead>
+                    <TableHead className="hidden lg:table-cell">Grade</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -284,9 +287,12 @@ export function TuitionHome() {
                         <div className="text-xs text-silver">
                           {r.associateEmail}
                         </div>
+                        <div className="md:hidden text-[11px] text-silver/70 truncate">
+                          {r.courseName} · {r.schoolName}
+                        </div>
                       </TableCell>
-                      <TableCell className="text-sm">{r.courseName}</TableCell>
-                      <TableCell className="text-sm">{r.schoolName}</TableCell>
+                      <TableCell className="text-sm hidden md:table-cell">{r.courseName}</TableCell>
+                      <TableCell className="text-sm hidden lg:table-cell">{r.schoolName}</TableCell>
                       <TableCell className="text-sm">
                         {r.currency} {r.amount}
                       </TableCell>
@@ -295,7 +301,7 @@ export function TuitionHome() {
                           {r.status}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-sm">
+                      <TableCell className="text-sm hidden lg:table-cell">
                         {r.gradeReceived ?? (
                           <span className="text-silver">—</span>
                         )}

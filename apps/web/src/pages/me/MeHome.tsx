@@ -567,8 +567,8 @@ function EmergencyPanel({
                   <TableHead>Name</TableHead>
                   <TableHead>Relation</TableHead>
                   <TableHead>Phone</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Primary</TableHead>
+                  <TableHead className="hidden md:table-cell">Email</TableHead>
+                  <TableHead className="hidden md:table-cell">Primary</TableHead>
                   <TableHead className="w-32 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -588,11 +588,18 @@ function EmergencyPanel({
                       })
                     }
                   >
-                    <TableCell className="font-medium text-white">{row.name}</TableCell>
+                    <TableCell className="font-medium text-white">
+                      <div className="min-w-0">
+                        <div className="truncate">{row.name}</div>
+                        <div className="md:hidden text-[11px] text-silver/70 truncate">
+                          {row.email ?? '—'}{row.isPrimary ? ' · Primary' : ''}
+                        </div>
+                      </div>
+                    </TableCell>
                     <TableCell>{RELATION_LABEL[row.relation] ?? row.relation}</TableCell>
                     <TableCell>{row.phone}</TableCell>
-                    <TableCell>{row.email ?? '—'}</TableCell>
-                    <TableCell>
+                    <TableCell className="hidden md:table-cell">{row.email ?? '—'}</TableCell>
+                    <TableCell className="hidden md:table-cell">
                       {row.isPrimary ? <Badge variant="accent">Primary</Badge> : '—'}
                     </TableCell>
                     <TableCell className="text-right">
@@ -791,8 +798,8 @@ function DependentsPanel({
                 <TableRow>
                   <TableHead>Name</TableHead>
                   <TableHead>Relation</TableHead>
-                  <TableHead>DOB</TableHead>
-                  <TableHead>SSN (last 4)</TableHead>
+                  <TableHead className="hidden md:table-cell">DOB</TableHead>
+                  <TableHead className="hidden lg:table-cell">SSN (last 4)</TableHead>
                   <TableHead>Covered</TableHead>
                   <TableHead className="w-32 text-right">Actions</TableHead>
                 </TableRow>
@@ -815,11 +822,19 @@ function DependentsPanel({
                     }
                   >
                     <TableCell className="font-medium text-white">
-                      {row.firstName} {row.lastName}
+                      <div className="min-w-0">
+                        <div className="truncate">
+                          {row.firstName} {row.lastName}
+                        </div>
+                        <div className="md:hidden text-[11px] text-silver/70 truncate">
+                          {row.dob ? `DOB ${row.dob.slice(0, 10)}` : '—'}
+                          {row.ssnLast4 ? ` · •••-••-${row.ssnLast4}` : ''}
+                        </div>
+                      </div>
                     </TableCell>
                     <TableCell>{RELATION_LABEL[row.relation] ?? row.relation}</TableCell>
-                    <TableCell>{row.dob ? row.dob.slice(0, 10) : '—'}</TableCell>
-                    <TableCell>{row.ssnLast4 ? `•••-••-${row.ssnLast4}` : '—'}</TableCell>
+                    <TableCell className="hidden md:table-cell">{row.dob ? row.dob.slice(0, 10) : '—'}</TableCell>
+                    <TableCell className="hidden lg:table-cell">{row.ssnLast4 ? `•••-••-${row.ssnLast4}` : '—'}</TableCell>
                     <TableCell>
                       {row.isCovered ? <Badge variant="accent">Yes</Badge> : 'No'}
                     </TableCell>
@@ -1058,7 +1073,7 @@ function BeneficiariesPanel({
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
-                  <TableHead>Relation</TableHead>
+                  <TableHead className="hidden md:table-cell">Relation</TableHead>
                   <TableHead>Kind</TableHead>
                   <TableHead>Percentage</TableHead>
                   <TableHead className="w-32 text-right">Actions</TableHead>
@@ -1079,8 +1094,15 @@ function BeneficiariesPanel({
                       })
                     }
                   >
-                    <TableCell className="font-medium text-white">{row.name}</TableCell>
-                    <TableCell>{RELATION_LABEL[row.relation] ?? row.relation}</TableCell>
+                    <TableCell className="font-medium text-white">
+                      <div className="min-w-0">
+                        <div className="truncate">{row.name}</div>
+                        <div className="md:hidden text-[11px] text-silver/70 truncate">
+                          {RELATION_LABEL[row.relation] ?? row.relation}
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">{RELATION_LABEL[row.relation] ?? row.relation}</TableCell>
                     <TableCell>
                       <Badge variant={row.kind === 'PRIMARY' ? 'accent' : 'default'}>
                         {row.kind}
@@ -1291,15 +1313,21 @@ function LifeEventsPanel({
                   <TableHead>Event</TableHead>
                   <TableHead>Date</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Submitted</TableHead>
-                  <TableHead>Notes</TableHead>
+                  <TableHead className="hidden md:table-cell">Submitted</TableHead>
+                  <TableHead className="hidden lg:table-cell">Notes</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((row) => (
                   <TableRow key={row.id}>
                     <TableCell className="font-medium text-white">
-                      {row.kind.replace(/_/g, ' ')}
+                      <div className="min-w-0">
+                        <div className="truncate">{row.kind.replace(/_/g, ' ')}</div>
+                        <div className="md:hidden text-[11px] text-silver/70 truncate">
+                          Submitted {fmtDate(row.createdAt)}
+                          {row.notes ? ` · ${row.notes}` : ''}
+                        </div>
+                      </div>
                     </TableCell>
                     <TableCell>{row.eventDate.slice(0, 10)}</TableCell>
                     <TableCell>
@@ -1315,8 +1343,8 @@ function LifeEventsPanel({
                         {row.status.replace(/_/g, ' ')}
                       </Badge>
                     </TableCell>
-                    <TableCell>{fmtDate(row.createdAt)}</TableCell>
-                    <TableCell className="max-w-xs truncate">{row.notes ?? '—'}</TableCell>
+                    <TableCell className="hidden md:table-cell">{fmtDate(row.createdAt)}</TableCell>
+                    <TableCell className="hidden lg:table-cell max-w-xs truncate">{row.notes ?? '—'}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -1393,8 +1421,8 @@ function TaxDocsPanel({ rows }: { rows: TaxDoc[] | null }) {
               <TableRow>
                 <TableHead>Form</TableHead>
                 <TableHead>Tax year</TableHead>
-                <TableHead>Issued</TableHead>
-                <TableHead>Size</TableHead>
+                <TableHead className="hidden md:table-cell">Issued</TableHead>
+                <TableHead className="hidden md:table-cell">Size</TableHead>
                 <TableHead className="w-32 text-right">Action</TableHead>
               </TableRow>
             </TableHeader>
@@ -1402,11 +1430,19 @@ function TaxDocsPanel({ rows }: { rows: TaxDoc[] | null }) {
               {rows.map((row) => (
                 <TableRow key={row.id}>
                   <TableCell className="font-medium text-white">
-                    {TAX_DOC_LABEL[row.kind] ?? row.kind}
+                    <div className="min-w-0">
+                      <div className="truncate">
+                        {TAX_DOC_LABEL[row.kind] ?? row.kind}
+                      </div>
+                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        Issued {fmtDate(row.issuedAt)}
+                        {row.fileSize ? ` · ${Math.round(row.fileSize / 1024)} KB` : ''}
+                      </div>
+                    </div>
                   </TableCell>
                   <TableCell>{row.taxYear}</TableCell>
-                  <TableCell>{fmtDate(row.issuedAt)}</TableCell>
-                  <TableCell>
+                  <TableCell className="hidden md:table-cell">{fmtDate(row.issuedAt)}</TableCell>
+                  <TableCell className="hidden md:table-cell">
                     {row.fileSize ? `${Math.round(row.fileSize / 1024)} KB` : '—'}
                   </TableCell>
                   <TableCell className="text-right">

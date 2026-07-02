@@ -106,11 +106,11 @@ export function CustomFieldsTab({
           <TableHeader>
             <TableRow>
               <TableHead>Label</TableHead>
-              <TableHead>Key</TableHead>
+              <TableHead className="hidden md:table-cell">Key</TableHead>
               <TableHead>Entity</TableHead>
               <TableHead>Type</TableHead>
-              <TableHead>Required</TableHead>
-              <TableHead>Scope</TableHead>
+              <TableHead className="hidden md:table-cell">Required</TableHead>
+              <TableHead className="hidden md:table-cell">Scope</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -124,16 +124,24 @@ export function CustomFieldsTab({
                   setDrawerTarget(d);
                 }}
               >
-                <TableCell className="font-medium">{d.label}</TableCell>
-                <TableCell className="text-silver font-mono text-xs">{d.key}</TableCell>
+                <TableCell className="font-medium">
+                  <div className="min-w-0">
+                    <div className="truncate">{d.label}</div>
+                    <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <span className="font-mono">{d.key}</span>
+                      {` · ${d.clientId ? 'Per-client' : 'Global'}`}
+                    </div>
+                  </div>
+                </TableCell>
+                <TableCell className="hidden md:table-cell text-silver font-mono text-xs">{d.key}</TableCell>
                 <TableCell>
                   <Badge variant="outline">{d.entityType}</Badge>
                 </TableCell>
                 <TableCell>
                   <Badge variant="default">{d.type}</Badge>
                 </TableCell>
-                <TableCell className="text-silver">{d.isRequired ? 'Yes' : '—'}</TableCell>
-                <TableCell className="text-silver">
+                <TableCell className="hidden md:table-cell text-silver">{d.isRequired ? 'Yes' : '—'}</TableCell>
+                <TableCell className="hidden md:table-cell text-silver">
                   {d.clientId ? 'Per-client' : 'Global'}
                 </TableCell>
               </TableRow>

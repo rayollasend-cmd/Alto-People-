@@ -119,19 +119,28 @@ function DirectoryTab() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Phone</TableHead>
-                  <TableHead>Department</TableHead>
+                  <TableHead className="hidden sm:table-cell">Email</TableHead>
+                  <TableHead className="hidden md:table-cell">Phone</TableHead>
+                  <TableHead className="hidden lg:table-cell">Department</TableHead>
                   <TableHead>Title</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {people.map((p) => (
                   <TableRow key={p.id}>
-                    <TableCell className="font-medium text-white">{p.name}</TableCell>
-                    <TableCell>{p.email}</TableCell>
-                    <TableCell>{p.phone ?? '—'}</TableCell>
-                    <TableCell>{p.department ?? '—'}</TableCell>
+                    <TableCell className="font-medium text-white">
+                      <div className="truncate">{p.name}</div>
+                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        <span className="sm:hidden">
+                          {p.email}
+                          {' · '}
+                        </span>
+                        {p.phone ?? '—'}
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden sm:table-cell">{p.email}</TableCell>
+                    <TableCell className="hidden md:table-cell">{p.phone ?? '—'}</TableCell>
+                    <TableCell className="hidden lg:table-cell">{p.department ?? '—'}</TableCell>
                     <TableCell>{p.jobTitle ?? '—'}</TableCell>
                   </TableRow>
                 ))}
@@ -195,16 +204,25 @@ function BroadcastsTab({ canManage }: { canManage: boolean }) {
                 <TableRow>
                   <TableHead>Title</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Channels</TableHead>
-                  <TableHead>Recipients</TableHead>
-                  <TableHead>Sent</TableHead>
+                  <TableHead className="hidden lg:table-cell">Channels</TableHead>
+                  <TableHead className="hidden md:table-cell">Recipients</TableHead>
+                  <TableHead className="hidden sm:table-cell">Sent</TableHead>
                   <TableHead className="w-32 text-right">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((b) => (
                   <TableRow key={b.id}>
-                    <TableCell className="font-medium text-white">{b.title}</TableCell>
+                    <TableCell className="font-medium text-white">
+                      <div className="truncate">{b.title}</div>
+                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        <span className="sm:hidden">
+                          {b.sentAt ? new Date(b.sentAt).toLocaleString() : 'Not sent'}
+                          {' · '}
+                        </span>
+                        <span className="tabular-nums">{b.receiptCount}</span> recipients
+                      </div>
+                    </TableCell>
                     <TableCell>
                       <Badge
                         variant={
@@ -218,9 +236,9 @@ function BroadcastsTab({ canManage }: { canManage: boolean }) {
                         {b.status}
                       </Badge>
                     </TableCell>
-                    <TableCell>{b.channels.join(', ')}</TableCell>
-                    <TableCell>{b.receiptCount}</TableCell>
-                    <TableCell>
+                    <TableCell className="hidden lg:table-cell">{b.channels.join(', ')}</TableCell>
+                    <TableCell className="hidden md:table-cell">{b.receiptCount}</TableCell>
+                    <TableCell className="hidden sm:table-cell">
                       {b.sentAt ? new Date(b.sentAt).toLocaleString() : '—'}
                     </TableCell>
                     <TableCell className="text-right">
@@ -342,15 +360,24 @@ function SurveysTab({ canManage }: { canManage: boolean }) {
                 <TableRow>
                   <TableHead>Title</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Anonymous</TableHead>
-                  <TableHead>Questions</TableHead>
+                  <TableHead className="hidden md:table-cell">Anonymous</TableHead>
+                  <TableHead className="hidden sm:table-cell">Questions</TableHead>
                   <TableHead>Responses</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((s) => (
                   <TableRow key={s.id}>
-                    <TableCell className="font-medium text-white">{s.title}</TableCell>
+                    <TableCell className="font-medium text-white">
+                      <div className="truncate">{s.title}</div>
+                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        <span className="sm:hidden tabular-nums">
+                          {s.questionCount} questions
+                          {' · '}
+                        </span>
+                        {s.isAnonymous ? 'Anonymous' : 'Named'}
+                      </div>
+                    </TableCell>
                     <TableCell>
                       <Badge
                         variant={
@@ -364,8 +391,8 @@ function SurveysTab({ canManage }: { canManage: boolean }) {
                         {s.status}
                       </Badge>
                     </TableCell>
-                    <TableCell>{s.isAnonymous ? 'Yes' : 'No'}</TableCell>
-                    <TableCell>{s.questionCount}</TableCell>
+                    <TableCell className="hidden md:table-cell">{s.isAnonymous ? 'Yes' : 'No'}</TableCell>
+                    <TableCell className="hidden sm:table-cell">{s.questionCount}</TableCell>
                     <TableCell>{s.responseCount}</TableCell>
                   </TableRow>
                 ))}

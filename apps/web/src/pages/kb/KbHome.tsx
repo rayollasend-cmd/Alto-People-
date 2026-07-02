@@ -229,10 +229,10 @@ export function KbHome() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Title</TableHead>
-                    <TableHead>Category</TableHead>
+                    <TableHead className="hidden sm:table-cell">Category</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Views</TableHead>
-                    <TableHead>Helpful</TableHead>
+                    <TableHead className="hidden lg:table-cell">Views</TableHead>
+                    <TableHead className="hidden md:table-cell">Helpful</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -244,8 +244,15 @@ export function KbHome() {
                         <div className="text-xs font-mono text-silver">
                           /{a.slug}
                         </div>
+                        <div className="md:hidden text-[11px] text-silver/70 truncate">
+                          <span className="sm:hidden">
+                            {a.category}
+                            {' · '}
+                          </span>
+                          <span className="tabular-nums">{a.helpful}</span> helpful
+                        </div>
                       </TableCell>
-                      <TableCell className="text-sm text-silver">
+                      <TableCell className="text-sm text-silver hidden sm:table-cell">
                         {a.category}
                       </TableCell>
                       <TableCell>
@@ -253,8 +260,8 @@ export function KbHome() {
                           {a.status}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-sm">{a.views}</TableCell>
-                      <TableCell className="text-sm text-success">
+                      <TableCell className="text-sm hidden lg:table-cell">{a.views}</TableCell>
+                      <TableCell className="text-sm text-success hidden md:table-cell">
                         {a.helpful}{' '}
                         {a.notHelpful > 0 && (
                           <span className="text-alert">/ {a.notHelpful}</span>

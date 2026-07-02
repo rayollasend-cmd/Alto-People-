@@ -151,16 +151,21 @@ function KitsTab({ canManage }: { canManage: boolean }) {
                 <TableRow>
                   <TableHead>Name</TableHead>
                   <TableHead>Questions</TableHead>
-                  <TableHead>Updated</TableHead>
+                  <TableHead className="hidden md:table-cell">Updated</TableHead>
                   <TableHead className="w-32 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {kits.map((k) => (
                   <TableRow key={k.id} className="group">
-                    <TableCell className="font-medium text-white">{k.name}</TableCell>
+                    <TableCell className="font-medium text-white">
+                      <div className="truncate">{k.name}</div>
+                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        {fmtDate(k.updatedAt)}
+                      </div>
+                    </TableCell>
                     <TableCell>{k.questions.length}</TableCell>
-                    <TableCell>{fmtDate(k.updatedAt)}</TableCell>
+                    <TableCell className="hidden md:table-cell">{fmtDate(k.updatedAt)}</TableCell>
                     <TableCell className="text-right space-x-3">
                       {canManage && (
                         <button
@@ -435,8 +440,8 @@ function OffersTab({ canManage }: { canManage: boolean }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Candidate</TableHead>
-                  <TableHead>Job title</TableHead>
-                  <TableHead>Start</TableHead>
+                  <TableHead className="hidden md:table-cell">Job title</TableHead>
+                  <TableHead className="hidden lg:table-cell">Start</TableHead>
                   <TableHead>Pay</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
@@ -445,9 +450,14 @@ function OffersTab({ canManage }: { canManage: boolean }) {
               <TableBody>
                 {offers.map((o) => (
                   <TableRow key={o.id}>
-                    <TableCell className="font-medium text-white">{o.candidateName}</TableCell>
-                    <TableCell>{o.jobTitle}</TableCell>
-                    <TableCell>{o.startDate}</TableCell>
+                    <TableCell className="font-medium text-white">
+                      <div className="truncate">{o.candidateName}</div>
+                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        {o.jobTitle} · {o.startDate}
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">{o.jobTitle}</TableCell>
+                    <TableCell className="hidden lg:table-cell">{o.startDate}</TableCell>
                     <TableCell>
                       {o.salary
                         ? `${o.currency} ${Number(o.salary).toLocaleString()}/yr`
@@ -685,10 +695,10 @@ function ReferralsTab({ canManage }: { canManage: boolean }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Candidate</TableHead>
-                  <TableHead>Position</TableHead>
-                  <TableHead>Referrer</TableHead>
+                  <TableHead className="hidden md:table-cell">Position</TableHead>
+                  <TableHead className="hidden lg:table-cell">Referrer</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Bonus</TableHead>
+                  <TableHead className="hidden md:table-cell">Bonus</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -698,13 +708,17 @@ function ReferralsTab({ canManage }: { canManage: boolean }) {
                     <TableCell className="font-medium text-white">
                       <div>{r.candidateName}</div>
                       <div className="text-xs text-silver">{r.candidateEmail}</div>
+                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        {r.position ?? '—'}
+                        {r.bonusAmount ? ` · ${r.bonusCurrency} ${r.bonusAmount}${r.bonusPaidAt ? ' (paid)' : ''}` : ''}
+                      </div>
                     </TableCell>
-                    <TableCell>{r.position ?? '—'}</TableCell>
-                    <TableCell className="text-xs">{r.referrerEmail}</TableCell>
+                    <TableCell className="hidden md:table-cell">{r.position ?? '—'}</TableCell>
+                    <TableCell className="text-xs hidden lg:table-cell">{r.referrerEmail}</TableCell>
                     <TableCell>
                       <Badge variant={REF_BADGE[r.status]}>{r.status}</Badge>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="hidden md:table-cell">
                       {r.bonusAmount
                         ? `${r.bonusCurrency} ${r.bonusAmount}${r.bonusPaidAt ? ' (paid)' : ''}`
                         : '—'}
@@ -926,9 +940,9 @@ function PostingsTab({ canManage }: { canManage: boolean }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Title</TableHead>
-                  <TableHead>Slug</TableHead>
-                  <TableHead>Location</TableHead>
-                  <TableHead>Pay range</TableHead>
+                  <TableHead className="hidden lg:table-cell">Slug</TableHead>
+                  <TableHead className="hidden md:table-cell">Location</TableHead>
+                  <TableHead className="hidden md:table-cell">Pay range</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -936,10 +950,18 @@ function PostingsTab({ canManage }: { canManage: boolean }) {
               <TableBody>
                 {postings.map((p) => (
                   <TableRow key={p.id} className="group">
-                    <TableCell className="font-medium text-white">{p.title}</TableCell>
-                    <TableCell className="font-mono text-xs">/careers/{p.slug}</TableCell>
-                    <TableCell>{p.location ?? '—'}</TableCell>
-                    <TableCell>
+                    <TableCell className="font-medium text-white">
+                      <div className="truncate">{p.title}</div>
+                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        {p.location ?? '—'}
+                        {p.minSalary && p.maxSalary
+                          ? ` · ${p.currency} ${p.minSalary}–${p.maxSalary}`
+                          : ''}
+                      </div>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs hidden lg:table-cell">/careers/{p.slug}</TableCell>
+                    <TableCell className="hidden md:table-cell">{p.location ?? '—'}</TableCell>
+                    <TableCell className="hidden md:table-cell">
                       {p.minSalary && p.maxSalary
                         ? `${p.currency} ${p.minSalary}–${p.maxSalary}`
                         : '—'}

@@ -149,10 +149,10 @@ export function BenefitsPlansSection({ clientId }: Props) {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Kind</TableHead>
+                <TableHead className="hidden md:table-cell">Kind</TableHead>
                 <TableHead>Name</TableHead>
                 <TableHead className="text-right">Default elect</TableHead>
-                <TableHead className="text-right">Employer match</TableHead>
+                <TableHead className="text-right hidden md:table-cell">Employer match</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -160,16 +160,26 @@ export function BenefitsPlansSection({ clientId }: Props) {
             <TableBody>
               {plans.map((p) => (
                 <TableRow key={p.id}>
-                  <TableCell>
+                  <TableCell className="hidden md:table-cell">
                     <Badge variant="outline" className="text-[10px]">
                       {KIND_LABEL[p.kind]}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-white">{p.name}</TableCell>
+                  <TableCell className="text-white">
+                    <div className="min-w-0">
+                      <div className="truncate">{p.name}</div>
+                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        {KIND_LABEL[p.kind]}
+                        <span className="tabular-nums">
+                          {` · ${fmtMoney(p.employerContributionCentsPerPeriod)} match`}
+                        </span>
+                      </div>
+                    </div>
+                  </TableCell>
                   <TableCell className="text-right tabular-nums text-silver">
                     {fmtMoney(p.employeeContributionDefaultCentsPerPeriod)}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums text-silver">
+                  <TableCell className="text-right tabular-nums text-silver hidden md:table-cell">
                     {fmtMoney(p.employerContributionCentsPerPeriod)}
                   </TableCell>
                   <TableCell>

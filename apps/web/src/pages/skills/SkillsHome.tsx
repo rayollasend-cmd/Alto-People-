@@ -144,24 +144,30 @@ function SearchTab() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Name</TableHead>
-                    <TableHead>Email</TableHead>
+                    <TableHead className="hidden md:table-cell">Email</TableHead>
                     <TableHead>Skill</TableHead>
                     <TableHead>Level</TableHead>
-                    <TableHead>Years</TableHead>
-                    <TableHead>Verified</TableHead>
+                    <TableHead className="hidden lg:table-cell">Years</TableHead>
+                    <TableHead className="hidden md:table-cell">Verified</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {data.associates.map((a) => (
                     <TableRow key={`${a.associateId}-${a.skillName}`}>
-                      <TableCell className="font-medium text-white">{a.name}</TableCell>
-                      <TableCell className="text-silver">{a.email}</TableCell>
+                      <TableCell className="font-medium text-white">
+                        <div className="truncate">{a.name}</div>
+                        <div className="md:hidden text-[11px] text-silver/70 truncate">
+                          {a.verified ? 'Verified' : 'Self-attested'}
+                          {a.yearsExperience ? ` · ${a.yearsExperience}y` : ''}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-silver hidden md:table-cell">{a.email}</TableCell>
                       <TableCell>{a.skillName}</TableCell>
                       <TableCell>
                         <Badge variant={levelVariant(a.level)}>{a.level}</Badge>
                       </TableCell>
-                      <TableCell>{a.yearsExperience ?? '—'}</TableCell>
-                      <TableCell>
+                      <TableCell className="hidden lg:table-cell">{a.yearsExperience ?? '—'}</TableCell>
+                      <TableCell className="hidden md:table-cell">
                         {a.verified ? (
                           <ShieldCheck className="h-4 w-4 text-success" />
                         ) : (
@@ -219,7 +225,7 @@ function CatalogTab({ canManage }: { canManage: boolean }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
-                  <TableHead>Category</TableHead>
+                  <TableHead className="hidden md:table-cell">Category</TableHead>
                   <TableHead>Holders</TableHead>
                   {canManage && <TableHead className="text-right">Actions</TableHead>}
                 </TableRow>
@@ -227,8 +233,15 @@ function CatalogTab({ canManage }: { canManage: boolean }) {
               <TableBody>
                 {rows.map((s) => (
                   <TableRow key={s.id} className="group">
-                    <TableCell className="font-medium text-white">{s.name}</TableCell>
-                    <TableCell className="text-silver">{s.category ?? '—'}</TableCell>
+                    <TableCell className="font-medium text-white">
+                      <div className="truncate">{s.name}</div>
+                      {s.category && (
+                        <div className="md:hidden text-[11px] text-silver/70 truncate">
+                          {s.category}
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-silver hidden md:table-cell">{s.category ?? '—'}</TableCell>
                     <TableCell>{s.associateCount}</TableCell>
                     {canManage && (
                       <TableCell className="text-right">

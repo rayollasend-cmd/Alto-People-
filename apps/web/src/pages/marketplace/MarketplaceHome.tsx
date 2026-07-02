@@ -208,8 +208,8 @@ function ClaimsTab() {
             <TableHeader>
               <TableRow>
                 <TableHead>Associate</TableHead>
-                <TableHead>Position</TableHead>
-                <TableHead>Client</TableHead>
+                <TableHead className="hidden md:table-cell">Position</TableHead>
+                <TableHead className="hidden md:table-cell">Client</TableHead>
                 <TableHead>Shift</TableHead>
                 <TableHead className="text-right w-44">Decide</TableHead>
               </TableRow>
@@ -218,10 +218,15 @@ function ClaimsTab() {
               {rows.map((c) => (
                 <TableRow key={c.id}>
                   <TableCell className="font-medium text-white">
-                    {c.associateName}
+                    <div className="truncate">{c.associateName}</div>
+                    <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      {c.position}
+                      {' · '}
+                      {c.clientName}
+                    </div>
                   </TableCell>
-                  <TableCell>{c.position}</TableCell>
-                  <TableCell>{c.clientName}</TableCell>
+                  <TableCell className="hidden md:table-cell">{c.position}</TableCell>
+                  <TableCell className="hidden md:table-cell">{c.clientName}</TableCell>
                   <TableCell>
                     {fmtDateTime(c.startsAt)} –{' '}
                     {fmtTime(c.endsAt)}
@@ -367,18 +372,24 @@ function CatalogTab() {
                 <TableRow>
                   <TableHead>Code</TableHead>
                   <TableHead>Name</TableHead>
-                  <TableHead>Cert</TableHead>
-                  <TableHead>Scope</TableHead>
+                  <TableHead className="hidden md:table-cell">Cert</TableHead>
+                  <TableHead className="hidden md:table-cell">Scope</TableHead>
                   <TableHead className="w-24 text-right">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((q) => (
                   <TableRow key={q.id}>
-                    <TableCell className="font-mono text-xs">{q.code}</TableCell>
+                    <TableCell className="font-mono text-xs">
+                      <div className="truncate">{q.code}</div>
+                      <div className="md:hidden text-[11px] text-silver/70 truncate font-sans">
+                        {q.clientId ? 'Client-scoped' : 'Global'}
+                        {q.isCert ? ' · Cert' : ''}
+                      </div>
+                    </TableCell>
                     <TableCell className="text-white">{q.name}</TableCell>
-                    <TableCell>{q.isCert ? <Badge variant="accent">Cert</Badge> : '—'}</TableCell>
-                    <TableCell>{q.clientId ? 'Client-scoped' : 'Global'}</TableCell>
+                    <TableCell className="hidden md:table-cell">{q.isCert ? <Badge variant="accent">Cert</Badge> : '—'}</TableCell>
+                    <TableCell className="hidden md:table-cell">{q.clientId ? 'Client-scoped' : 'Global'}</TableCell>
                     <TableCell className="text-right">
                       <Button size="sm" variant="ghost" onClick={() => onDelete(q.id)}>
                         Delete
