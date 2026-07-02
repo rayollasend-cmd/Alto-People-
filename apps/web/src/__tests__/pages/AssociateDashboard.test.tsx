@@ -33,7 +33,33 @@ import { clockIn, clockOut, getActiveTimeEntry } from '@/lib/timeApi';
 import { listMyShifts } from '@/lib/schedulingApi';
 import { listMyPayrollItems } from '@/lib/payrollApi';
 import { getMyBalance } from '@/lib/timeOffApi';
+import { ApiError } from '@/lib/api';
 import { AssociateDashboard } from '@/pages/AssociateDashboard';
+
+const shiftFixture = (startsAt: Date, endsAt: Date) =>
+  ({
+    id: 's1',
+    clientId: 'c1',
+    clientName: 'Publix 1424',
+    position: 'F&D Morning Shift',
+    startsAt: startsAt.toISOString(),
+    endsAt: endsAt.toISOString(),
+    location: null,
+    hourlyRate: null,
+    payRate: null,
+    status: 'ASSIGNED',
+    notes: null,
+    locationId: null,
+    locationName: null,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    assignedAssociateId: 'a',
+    assignedAssociateName: 'Maria Lopez',
+    assignedAt: null,
+    cancellationReason: null,
+    scheduledMinutes: 480,
+    publishedAt: new Date().toISOString(),
+    lateNoticeReason: null,
+  }) as never;
 
 function renderDashboard() {
   const value = {
@@ -129,6 +155,46 @@ describe('<AssociateDashboard>', () => {
     renderDashboard();
     await waitFor(() => expect(listMyShifts).toHaveBeenCalled());
     expect(await screen.findByText(/Nothing scheduled/)).toBeInTheDocument();
+  });
+
+  it('an in-progress shift stays the "next shift" until it ends', async () => {
+    // Started 2h ago, ends in 6h. The old startsAt-based picker skipped this
+    // and (with nothing after it) claimed "Nothing scheduled" mid-shift.
+    vi.mocked(listMyShifts).mockResolvedValue({
+      shifts: [
+        shiftFixture(
+          new Date(Date.now() - 2 * 3_600_000),
+          new Date(Date.now() + 6 * 3_600_000),
+        ),
+      ],
+    });
+    renderDashboard();
+    await waitFor(() => expect(listMyShifts).toHaveBeenCalled());
+    expect(await screen.findByText('Today')).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing scheduled/)).not.toBeInTheDocument();
+  });
+
+  it('a real fetch failure shows a retry card, NOT "Nothing scheduled"', async () => {
+    vi.mocked(listMyShifts).mockRejectedValueOnce(new Error('network down'));
+    renderDashboard();
+    await waitFor(() => expect(listMyShifts).toHaveBeenCalled());
+    expect(await screen.findByText(/Couldn't load this/)).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing scheduled/)).not.toBeInTheDocument();
+
+    // Retry refetches; this time it succeeds and the empty state is honest.
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /retry/i }));
+    expect(await screen.findByText(/Nothing scheduled/)).toBeInTheDocument();
+  });
+
+  it('an expected 403 still renders as a plain empty state', async () => {
+    vi.mocked(listMyShifts).mockRejectedValue(
+      new ApiError(403, 'forbidden', 'Forbidden'),
+    );
+    renderDashboard();
+    await waitFor(() => expect(listMyShifts).toHaveBeenCalled());
+    expect(await screen.findByText(/Nothing scheduled/)).toBeInTheDocument();
+    expect(screen.queryByText(/Couldn't load this/)).not.toBeInTheDocument();
   });
 
   it('shows the latest paystub net pay when present', async () => {

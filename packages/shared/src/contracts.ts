@@ -2489,6 +2489,10 @@ export const ShiftSwapRequestSchema = z.object({
   shiftId: UuidSchema,
   shiftStartsAt: z.string().datetime(),
   shiftEndsAt: z.string().datetime(),
+  // IANA timezone of the shift's work site — swap cards render the shift's
+  // hours in THIS zone, same as the schedule list, so the two surfaces never
+  // show different wall-clock times for the same shift.
+  shiftTimezone: z.string(),
   shiftPosition: z.string(),
   shiftClientName: z.string().nullable(),
   requesterAssociateId: UuidSchema,

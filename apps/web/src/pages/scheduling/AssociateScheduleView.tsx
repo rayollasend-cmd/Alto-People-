@@ -9,14 +9,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { toast } from '@/components/ui/Toaster';
-import {
-  browserTimeZone,
-  fmtDateTz,
-  fmtTimeTz,
-  fmtWeekdayTz,
-  tzAbbrev,
-  zonedDayKey,
-} from '@/lib/format';
+import { fmtRelativeDayTz, fmtShiftRangeTz, zonedDayKey } from '@/lib/format';
 import {
   CalendarDays,
   Check,
@@ -50,31 +43,6 @@ function shiftMinutes(s: Shift): number {
   return ms > 0 ? Math.round(ms / 60000) : 0;
 }
 
-/** "7:00 AM – 3:00 PM" — or "11:00 PM – 7:00 AM (Jun 17)" when it crosses
- *  midnight — rendered in the SHIFT'S work-site timezone, not the browser's.
- *  Appends the zone abbreviation when the viewer isn't in the store's zone. */
-function timeRange(s: Shift): string {
-  const tz = s.timezone;
-  const start = fmtTimeTz(s.startsAt, tz);
-  const end = fmtTimeTz(s.endsAt, tz);
-  const crossesMidnight = zonedDayKey(s.startsAt, tz) !== zonedDayKey(s.endsAt, tz);
-  const base = crossesMidnight
-    ? `${start} – ${end} (${fmtDateTz(s.endsAt, tz)})`
-    : `${start} – ${end}`;
-  const showZone = tz && tz !== browserTimeZone();
-  return showZone ? `${base} ${tzAbbrev(tz, s.startsAt)}` : base;
-}
-
-/** "Today", "Tomorrow", or "Mon, Jun 16" — in the store's timezone. */
-function dayHeading(s: Shift, now: number): string {
-  const tz = s.timezone;
-  const key = zonedDayKey(s.startsAt, tz);
-  const todayKey = zonedDayKey(new Date(now), tz);
-  const tomorrowKey = zonedDayKey(new Date(now + 86_400_000), tz);
-  if (key === todayKey) return 'Today';
-  if (key === tomorrowKey) return 'Tomorrow';
-  return `${fmtWeekdayTz(s.startsAt, tz)}, ${fmtDateTz(s.startsAt, tz)}`;
-}
 
 export function AssociateScheduleView() {
   const [shifts, setShifts] = useState<Shift[] | null>(null);
@@ -142,7 +110,7 @@ export function AssociateScheduleView() {
           // keys in this UTC-sorted list, yielding two runs with the same
           // day — suffix with the run index so sibling keys stay unique.
           reactKey: `${key}#${groups.length}`,
-          heading: dayHeading(s, now),
+          heading: fmtRelativeDayTz(s.startsAt, s.timezone, now),
           items: [s],
         });
       }
@@ -293,7 +261,9 @@ function ShiftCard({
             · {shift.clientName ?? '—'}
           </span>
         </div>
-        <div className="text-sm text-silver tabular-nums">{timeRange(shift)}</div>
+        <div className="text-sm text-silver tabular-nums">
+          {fmtShiftRangeTz(shift.startsAt, shift.endsAt, shift.timezone)}
+        </div>
         {shift.location && (
           <div className="text-xs text-silver/70">{shift.location}</div>
         )}

@@ -68,7 +68,10 @@ calendarFeedRouter.get('/v1/:associateId/:tokenWithExt', async (req, res, next) 
         startsAt: { gte: from, lt: to },
       },
       orderBy: { startsAt: 'asc' },
-      include: { client: { select: { name: true } } },
+      include: {
+        client: { select: { name: true } },
+        locationRel: { select: { name: true } },
+      },
       take: 1000,
     });
 
@@ -77,12 +80,16 @@ calendarFeedRouter.get('/v1/:associateId/:tokenWithExt', async (req, res, next) 
       events: shifts.map((s) => {
         const summaryParts = [s.position];
         if (s.client?.name) summaryParts.push(`@ ${s.client.name}`);
+        // Site name first, then the free-text sub-zone ("Store 1424 · Bar").
+        // s.location alone is just the sub-zone, which is useless in a
+        // calendar event without the site it belongs to.
+        const locationParts = [s.locationRel?.name, s.location].filter(Boolean);
         return {
           uid: `shift-${s.id}@alto-people`,
           startsAt: s.startsAt,
           endsAt: s.endsAt,
           summary: summaryParts.join(' '),
-          location: s.location,
+          location: locationParts.length ? locationParts.join(' · ') : null,
           description: s.notes,
           status:
             s.status === 'CANCELLED'

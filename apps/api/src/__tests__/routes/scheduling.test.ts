@@ -415,6 +415,38 @@ describe('calendar feed URL rotation', () => {
     const res = await request(app()).get('/calendar/v1/not-a-uuid/whatever.ics');
     expect(res.status).toBe(404);
   });
+
+  it('feed events carry the site name, not just the sub-zone label', async () => {
+    const client = await createClient();
+    const me = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    const { user: meUser } = await createUser({
+      role: 'ASSOCIATE',
+      email: me.email,
+      associateId: me.id,
+    });
+    const loc = await prisma.location.create({
+      data: { clientId: client.id, name: 'Store 1424', timezone: 'America/New_York' },
+    });
+    await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        locationId: loc.id,
+        location: 'Bar',
+        assignedAssociateId: me.id,
+        position: 'Server',
+        startsAt: new Date(Date.now() + 3_600_000),
+        endsAt: new Date(Date.now() + 8 * 3_600_000),
+        status: 'ASSIGNED',
+        publishedAt: new Date(),
+      },
+    });
+
+    const meAgent = await loginAs(meUser.email);
+    const urlRes = await meAgent.get('/scheduling/me/calendar-url');
+    const ics = await request(app()).get(feedPath(urlRes.body.url));
+    expect(ics.status).toBe(200);
+    expect(ics.text).toContain('LOCATION:Store 1424 · Bar');
+  });
 });
 
 describe('CLIENT_PORTAL access', () => {

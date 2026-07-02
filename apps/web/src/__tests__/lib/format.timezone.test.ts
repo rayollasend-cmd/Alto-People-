@@ -1,10 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import {
-  zonedWallTimeToUtc,
+  browserTimeZone,
+  fmtRelativeDayTz,
+  fmtShiftRangeTz,
   localInputToUtcIso,
+  tzAbbrev,
   utcToZonedDatetimeInput,
   zonedDayKey,
   zonedMinutesOfDay,
+  zonedWallTimeToUtc,
 } from '@/lib/format';
 
 /**
@@ -87,5 +91,69 @@ describe('zone-aware grid bucketing & placement', () => {
     expect(zonedMinutesOfDay('2026-06-13T04:15:00.000Z', 'America/Los_Angeles')).toBe(
       21 * 60 + 15,
     );
+  });
+});
+
+/**
+ * The shared shift-display helpers: every associate-facing surface (schedule
+ * list, dashboard card, swap cards) renders through these, so their behavior
+ * IS the display contract.
+ */
+describe('fmtShiftRangeTz', () => {
+  // 7am–3pm EDT on Jun 13 2026.
+  const start = '2026-06-13T11:00:00.000Z';
+  const end = '2026-06-13T19:00:00.000Z';
+
+  it('renders the range in the store zone with times only (same store day)', () => {
+    expect(fmtShiftRangeTz(start, end, 'America/New_York')).toContain(
+      '7:00 AM – 3:00 PM',
+    );
+  });
+
+  it('annotates a cross-midnight shift with the end date', () => {
+    // 11pm Jun 13 → 7am Jun 14 Eastern.
+    const r = fmtShiftRangeTz(
+      '2026-06-14T03:00:00.000Z',
+      '2026-06-14T11:00:00.000Z',
+      'America/New_York',
+    );
+    expect(r).toContain('11:00 PM – 7:00 AM (Jun 14)');
+  });
+
+  it('appends the zone abbreviation only when the viewer is elsewhere', () => {
+    // Pick a zone guaranteed to differ from wherever this test runs.
+    const other =
+      browserTimeZone() === 'America/New_York'
+        ? 'America/Chicago'
+        : 'America/New_York';
+    expect(fmtShiftRangeTz(start, end, other)).toContain(tzAbbrev(other, start));
+    // And the viewer's own zone gets no suffix noise.
+    const local = fmtShiftRangeTz(start, end, browserTimeZone());
+    expect(local).not.toContain(tzAbbrev(browserTimeZone(), start));
+  });
+});
+
+describe('fmtRelativeDayTz', () => {
+  // "now" = Jun 13 2026, noon Eastern.
+  const now = new Date('2026-06-13T16:00:00.000Z').getTime();
+
+  it('labels the store-local day relative to now', () => {
+    expect(fmtRelativeDayTz('2026-06-13T21:00:00.000Z', 'America/New_York', now)).toBe(
+      'Today',
+    );
+    expect(fmtRelativeDayTz('2026-06-14T13:00:00.000Z', 'America/New_York', now)).toBe(
+      'Tomorrow',
+    );
+    expect(fmtRelativeDayTz('2026-06-20T13:00:00.000Z', 'America/New_York', now)).toBe(
+      'Sat, Jun 20',
+    );
+  });
+
+  it('evaluates Today in the STORE zone, not the browser zone', () => {
+    // 10pm Pacific Jun 13 = 1am Eastern Jun 14: Today for the Pacific store,
+    // Tomorrow for an Eastern one — the store's answer is the right one.
+    const instant = '2026-06-14T05:00:00.000Z';
+    expect(fmtRelativeDayTz(instant, 'America/Los_Angeles', now)).toBe('Today');
+    expect(fmtRelativeDayTz(instant, 'America/New_York', now)).toBe('Tomorrow');
   });
 });

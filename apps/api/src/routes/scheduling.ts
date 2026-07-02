@@ -1515,7 +1515,12 @@ schedulingRouter.put('/me/availability', async (req, res, next) => {
 
 type RawSwap = Prisma.ShiftSwapRequestGetPayload<{
   include: {
-    shift: { include: { client: { select: { name: true } } } };
+    shift: {
+      include: {
+        client: { select: { name: true } };
+        locationRel: { select: { timezone: true } };
+      };
+    };
     requester: { select: { firstName: true; lastName: true } };
     counterparty: { select: { firstName: true; lastName: true } };
   };
@@ -1538,6 +1543,7 @@ function toSwap(row: RawSwap): ShiftSwapRequestDTO {
     shiftId: row.shiftId,
     shiftStartsAt: row.shift.startsAt.toISOString(),
     shiftEndsAt: row.shift.endsAt.toISOString(),
+    shiftTimezone: row.shift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
     shiftPosition: row.shift.position,
     shiftClientName: row.shift.client?.name ?? null,
     requesterAssociateId: row.requesterAssociateId,

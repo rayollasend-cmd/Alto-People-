@@ -11,7 +11,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
-import { fmtDateTime, fmtTime } from '@/lib/format';
+import { fmtDateTz, fmtShiftRangeTz, fmtWeekdayTz } from '@/lib/format';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 
@@ -114,8 +114,9 @@ export function SwapMarketplace() {
                     {s.shiftPosition} · {s.shiftClientName ?? '—'}
                   </div>
                   <div className="text-xs text-silver tabular-nums">
-                    {fmtDateTime(s.shiftStartsAt)} –{' '}
-                    {fmtTime(s.shiftEndsAt)}
+                    {fmtWeekdayTz(s.shiftStartsAt, s.shiftTimezone)},{' '}
+                    {fmtDateTz(s.shiftStartsAt, s.shiftTimezone)} ·{' '}
+                    {fmtShiftRangeTz(s.shiftStartsAt, s.shiftEndsAt, s.shiftTimezone)}
                   </div>
                   <div className="text-xs text-silver mt-1">
                     {tab === 'incoming' ? (
