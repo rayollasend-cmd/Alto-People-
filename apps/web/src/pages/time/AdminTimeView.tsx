@@ -41,6 +41,7 @@ import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { timeAnomalyLabel } from '@/lib/timeLabels';
+import { fmtTime } from '@/lib/format';
 import {
   Avatar,
   Badge,
@@ -116,6 +117,27 @@ function DurationCell({ entry }: { entry: TimeEntry }) {
         </div>
       )}
     </div>
+  );
+}
+
+// Punch↔shift comparison chip. Entries auto-link to the scheduled shift
+// at clock-in; when the punch landed meaningfully after the scheduled
+// start, surface it inline so reviewers see lateness without opening
+// the drawer. 5-minute grace absorbs kiosk-queue jitter.
+const LATE_GRACE_MINUTES = 5;
+function LateChip({ entry }: { entry: TimeEntry }) {
+  if (!entry.shiftStartsAt) return null;
+  const lateMin = Math.floor(
+    (new Date(entry.clockInAt).getTime() - new Date(entry.shiftStartsAt).getTime()) / 60_000,
+  );
+  if (lateMin <= LATE_GRACE_MINUTES) return null;
+  return (
+    <span
+      className="text-[10px] uppercase tracking-widest px-1.5 py-0.5 rounded border border-alert/40 bg-alert/10 text-alert whitespace-nowrap"
+      title={`Scheduled ${fmtTime(entry.shiftStartsAt)}${entry.shiftPosition ? ` · ${entry.shiftPosition}` : ''}`}
+    >
+      Late {lateMin >= 60 ? `${Math.floor(lateMin / 60)}h ${lateMin % 60}m` : `${lateMin}m`}
+    </span>
   );
 }
 
@@ -955,7 +977,10 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                               <DurationCell entry={e} />
                             </TableCell>
                             <TableCell>
-                              <Badge variant={statusVariant(e.status)}>{e.status}</Badge>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <Badge variant={statusVariant(e.status)}>{e.status}</Badge>
+                                <LateChip entry={e} />
+                              </div>
                               <AnomalyChips anomalies={e.anomalies} />
                               {e.rejectionReason && (
                                 <div className="text-alert text-[10px] mt-1">
@@ -1063,6 +1088,9 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                                   <span className="tabular-nums text-white">
                                     {formatHM(e.netMinutes ?? e.minutesElapsed)}
                                   </span>
+                                </div>
+                                <div className="mt-1 empty:hidden">
+                                  <LateChip entry={e} />
                                 </div>
                                 <AnomalyChips anomalies={e.anomalies} />
                                 {e.rejectionReason && (
@@ -1262,6 +1290,16 @@ function TimeEntryDetailPanel({
               ? `$${entry.payRate.toFixed(2)}/hr`
               : <span className="text-silver/80">—</span>}
           </DetailRow>
+          {entry.shiftStartsAt && (
+            <DetailRow label="Scheduled shift">
+              <span className="tabular-nums">
+                {new Date(entry.shiftStartsAt).toLocaleString()}
+              </span>
+              {entry.shiftPosition && (
+                <span className="text-silver/80"> · {entry.shiftPosition}</span>
+              )}
+            </DetailRow>
+          )}
           {(entry.clockInLat != null && entry.clockInLng != null) && (
             <DetailRow label="Clock-in geofence">
               <span className="font-mono text-xs">

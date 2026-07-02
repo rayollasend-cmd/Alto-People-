@@ -1198,8 +1198,14 @@ model TimeEntry {
   approvedAt      DateTime?       @db.Timestamptz(6)
   // Phase 86 — optional project tag for cost coding.
   projectId       String?         @db.Uuid
+  // Punch↔shift link — the scheduled shift this entry fulfills. Matched
+  // automatically at clock-in (kiosk + web) to the associate's nearest
+  // assigned shift whose window covers the punch; NULL for unscheduled
+  // punches and entries that pre-date the link.
+  shiftId         String?         @db.Uuid
 
   associate            Associate            @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  shift                Shift?               @relation("ShiftTimeEntries", fields: [shiftId], references: [id], onDelete: SetNull)
   approvedBy           User?                @relation("TimeApprover", fields: [approvedById], references: [id], onDelete: SetNull)
   job                  Job?                 @relation(fields: [jobId], references: [id], onDelete: SetNull)
   project              Project?             @relation(fields: [projectId], references: [id], onDelete: SetNull)
@@ -1219,6 +1225,7 @@ model TimeEntry {
   @@index([status])
   @@index([jobId])
   @@index([projectId])
+  @@index([shiftId])
 }
 
 model Shift {
@@ -1263,6 +1270,8 @@ model Shift {
   assignedAssociate   Associate?                      @relation(fields: [assignedAssociateId], references: [id], onDelete: SetNull)
   createdBy           User?                           @relation("ShiftCreator", fields: [createdById], references: [id], onDelete: SetNull)
   swapRequests        ShiftSwapRequest[]
+  // Time entries auto-matched to this shift at punch time.
+  timeEntries         TimeEntry[]                     @relation("ShiftTimeEntries")
   // Trades: swaps where THIS shift is what the requester takes in exchange.
   tradeSwapRequests   ShiftSwapRequest[]              @relation("SwapCounterpartShift")
   // Phase 85 — qualification gates + open-shift claims.

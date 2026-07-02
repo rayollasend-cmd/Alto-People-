@@ -16,6 +16,7 @@ import {
   verifyDeviceTokenHash,
 } from '../lib/kioskAuth.js';
 import { enforcePunchRateLimit } from '../lib/kioskRateLimit.js';
+import { matchShiftForPunch } from '../lib/matchShiftForPunch.js';
 import { encryptString, decryptString } from '../lib/crypto.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
@@ -2001,6 +2002,9 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
           // entry so history queries can group by site without
           // chasing the device row.
           locationId: device.locationId,
+          // Punch↔shift link: tie the entry to the shift being worked
+          // so reviewers see scheduled-vs-actual on the timesheet.
+          shiftId: await matchShiftForPunch(tx, pinRow.associateId, at),
           clockInAt: at,
           status: 'ACTIVE',
           ...(punchLat != null && punchLng != null

@@ -988,6 +988,14 @@ export const TimeEntrySchema = z.object({
       }),
     )
     .optional(),
+  /** Punch↔shift link — the scheduled shift this entry fulfills, matched
+   *  automatically at clock-in (nearest assigned shift whose window covers
+   *  the punch). Null on unscheduled punches and entries that pre-date the
+   *  link. shiftStartsAt/shiftPosition are denormalized so reviewers can
+   *  compare actual vs scheduled without another fetch. */
+  shiftId: UuidSchema.nullable().optional(),
+  shiftStartsAt: z.string().datetime().nullable().optional(),
+  shiftPosition: z.string().nullable().optional(),
 });
 export type TimeEntry = z.infer<typeof TimeEntrySchema>;
 

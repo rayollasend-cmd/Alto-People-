@@ -29,6 +29,7 @@ import { scopeTimeEntries } from '../lib/scope.js';
 import { recordTimeEvent } from '../lib/audit.js';
 import { checkGeofence } from '../lib/geo.js';
 import { resolveAssociateGeofence } from '../lib/geofenceForAssociate.js';
+import { matchShiftForPunch } from '../lib/matchShiftForPunch.js';
 import {
   detectAnomalies,
   endOfWeekUTC,
@@ -62,6 +63,7 @@ type RawEntry = Prisma.TimeEntryGetPayload<{
     approvedBy: { select: { email: true } };
     job: { select: { name: true } };
     breaks: true;
+    shift: { select: { startsAt: true; position: true } };
   };
 }>;
 
@@ -70,6 +72,7 @@ const ENTRY_INCLUDE = {
   approvedBy: { select: { email: true } },
   job: { select: { name: true } },
   breaks: true,
+  shift: { select: { startsAt: true, position: true } },
 } as const;
 
 function minutesElapsed(row: { clockInAt: Date; clockOutAt: Date | null }): number {
@@ -183,6 +186,11 @@ function buildEntry(row: RawEntry, clientName: string | null): TimeEntry {
     clockOutLat: row.clockOutLat ? Number(row.clockOutLat) : null,
     clockOutLng: row.clockOutLng ? Number(row.clockOutLng) : null,
     anomalies: Array.isArray(row.anomalies) ? (row.anomalies as string[]) : [],
+    // Punch↔shift link — lets reviewers compare actual vs scheduled
+    // (late chip, coverage reconciliation) without a second fetch.
+    shiftId: row.shiftId,
+    shiftStartsAt: row.shift?.startsAt ? row.shift.startsAt.toISOString() : null,
+    shiftPosition: row.shift?.position ?? null,
     // Server-derived so the clock widget survives a refresh mid-break
     // (the UI used to track this in component state and forget it).
     onBreak:
@@ -332,6 +340,9 @@ timeRouter.post('/me/clock-in', async (req, res, next) => {
     const geofenceResult = checkGeofence(resolved.geofence, geo ?? null);
     const geofenceOk: boolean | null = geofenceResult.inside;
 
+    const clockInAt = new Date();
+    const shiftId = await matchShiftForPunch(prisma, user.associateId, clockInAt);
+
     let entry;
     try {
       entry = await prisma.timeEntry.create({
@@ -340,7 +351,8 @@ timeRouter.post('/me/clock-in', async (req, res, next) => {
           clientId,
           locationId: resolved.locationId,
           jobId: jobId ?? null,
-          clockInAt: new Date(),
+          shiftId,
+          clockInAt,
           clockInLat: geo?.lat ?? null,
           clockInLng: geo?.lng ?? null,
           payRate,
