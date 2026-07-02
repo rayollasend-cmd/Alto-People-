@@ -38,6 +38,7 @@ import {
   PullToRefreshIndicator,
   usePullToRefresh,
 } from '@/lib/usePullToRefresh';
+import { hapticConfirm } from '@/lib/haptics';
 import { AvailabilityEditor } from './AvailabilityEditor';
 import { SwapMarketplace } from './SwapMarketplace';
 import { ShiftCard, shiftMinutes } from './ShiftCard';
@@ -483,6 +484,7 @@ function OpenShiftsSection() {
           ) ?? null,
       );
       setConfirmShift(null);
+      hapticConfirm();
       toast.success('Pickup requested — your manager will confirm it.');
     } catch (err) {
       toast.error(

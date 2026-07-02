@@ -21,6 +21,7 @@ import { SkeletonRows } from '@/components/ui/Skeleton';
 import { toast } from '@/components/ui/Toaster';
 import { fmtDateTz, fmtShiftRangeTz, fmtWeekdayTz } from '@/lib/format';
 import { ArrowLeftRight, Check, ChevronDown, MapPin, Users } from 'lucide-react';
+import { hapticConfirm } from '@/lib/haptics';
 
 export function statusBadge(
   status: Shift['status'],
@@ -226,6 +227,7 @@ function ShiftDetail({
     try {
       const updated = await acknowledgeMyShift(shift.id);
       setAckAt(updated.acknowledgedAt ?? new Date().toISOString());
+      hapticConfirm();
       toast.success('Confirmed — your manager can see you acknowledged it.');
     } catch (err) {
       toast.error(
@@ -359,6 +361,7 @@ function SwapOfferForm({
         note: note.trim() || undefined,
         counterpartShiftId: counterpartShiftId || undefined,
       });
+      hapticConfirm();
       toast.success(
         counterpartShiftId
           ? 'Trade proposed. They accept first, then your manager approves both halves.'

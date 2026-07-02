@@ -23,6 +23,17 @@
   [role='tab'] {
     touch-action: manipulation;
   }
+  /* Long-pressing a control in a native app never starts text selection
+     or the iOS copy callout — reserve selection for CONTENT (paragraphs,
+     table cells, code), not chrome. */
+  button,
+  nav a,
+  [role='button'],
+  [role='tab'] {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
 }
 
 :root {

@@ -32,6 +32,7 @@ import {
   PullToRefreshIndicator,
   usePullToRefresh,
 } from '@/lib/usePullToRefresh';
+import { hapticSuccess } from '@/lib/haptics';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { OnboardingBanner } from '@/components/OnboardingBanner';
 import { cn } from '@/lib/cn';
@@ -108,9 +109,11 @@ export function AssociateDashboard() {
       const body = geo ? { geo } : {};
       if (isClockedIn) {
         await clockOut(body);
+        hapticSuccess();
         toast.success('Clocked out.');
       } else {
         await clockIn(body);
+        hapticSuccess();
         toast.success('Clocked in.');
       }
       await refreshAll();

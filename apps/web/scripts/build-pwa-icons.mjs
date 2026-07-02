@@ -151,3 +151,28 @@ async function renderSplash(width, height, outName) {
 
 await renderSplash(1280, 720, 'screenshot-wide.png');
 await renderSplash(720, 1280, 'screenshot-narrow.png');
+
+// ---- iOS launch (startup) images -----------------------------------------
+// Without apple-touch-startup-image links, an installed iOS app launches to
+// a plain WHITE flash before the shell paints — the single worst "not a
+// real app" moment. iOS demands exact-pixel images per device class, matched
+// via media queries in index.html. Portrait-only (the manifest locks
+// portrait-primary). Set covers every iPhone class from SE to Pro Max.
+const IOS_SPLASHES = [
+  // [cssWidth, cssHeight, dpr]
+  [320, 568, 2], // SE 1st gen
+  [375, 667, 2], // 6/7/8, SE 2/3
+  [414, 736, 3], // 6+/7+/8+
+  [375, 812, 3], // X/XS/11 Pro/12-13 mini
+  [390, 844, 3], // 12/13/14
+  [393, 852, 3], // 14 Pro/15/16
+  [402, 874, 3], // 16 Pro
+  [414, 896, 2], // XR/11
+  [414, 896, 3], // XS Max/11 Pro Max
+  [428, 926, 3], // 12/13 Pro Max, 14 Plus
+  [430, 932, 3], // 14 Pro Max/15 Plus/16 Plus
+  [440, 956, 3], // 16 Pro Max
+];
+for (const [w, h, dpr] of IOS_SPLASHES) {
+  await renderSplash(w * dpr, h * dpr, `splash-${w * dpr}x${h * dpr}.png`);
+}

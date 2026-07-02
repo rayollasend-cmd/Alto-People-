@@ -13,6 +13,7 @@ import { listJobs } from '@/lib/jobsApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { fmtDateTime, fmtTime } from '@/lib/format';
+import { hapticSuccess } from '@/lib/haptics';
 import { timeAnomalyLabel } from '@/lib/timeLabels';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
@@ -140,6 +141,7 @@ export function AssociateTimeView() {
         geo: geo ?? undefined,
         jobId: selectedJobId || undefined,
       });
+      hapticSuccess();
       await refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Clock-in failed.');
@@ -156,6 +158,7 @@ export function AssociateTimeView() {
     try {
       const geo = await tryGetGeolocation();
       await clockOut({ geo: geo ?? undefined });
+      hapticSuccess();
       setOnBreak(false);
       await refresh();
     } catch (err) {
