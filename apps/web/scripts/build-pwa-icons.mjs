@@ -151,6 +151,8 @@ async function renderSplash(width, height, outName) {
 
 await renderSplash(1280, 720, 'screenshot-wide.png');
 await renderSplash(720, 1280, 'screenshot-narrow.png');
+// Link-preview card (Open Graph / Twitter) — canonical 1200x630.
+await renderSplash(1200, 630, 'og-image.png');
 
 // ---- iOS launch (startup) images -----------------------------------------
 // Without apple-touch-startup-image links, an installed iOS app launches to

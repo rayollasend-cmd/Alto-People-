@@ -294,7 +294,7 @@ function LoadFailedCard({
   return (
     <Card className={className}>
       <CardContent className="pt-5">
-        <div className="text-[10px] uppercase tracking-widest text-silver flex items-center gap-1.5">
+        <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
           <Icon className="h-3 w-3" aria-hidden="true" />
           {label}
         </div>
@@ -339,7 +339,7 @@ function ClockCard({ active, isClockedIn, clocking, onToggle }: ClockCardProps) 
       )}
     >
       <CardContent className="pt-5">
-        <div className="text-[10px] uppercase tracking-widest text-silver flex items-center gap-1.5">
+        <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
           <Clock className="h-3 w-3" aria-hidden="true" />
           Clock
         </div>
@@ -381,7 +381,7 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
     return (
       <Card className="md:col-span-2">
         <CardContent className="pt-5">
-          <div className="text-[10px] uppercase tracking-widest text-silver flex items-center gap-1.5">
+          <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
             <Timer className="h-3 w-3" aria-hidden="true" />
             Next shift
           </div>
@@ -405,7 +405,7 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
   return (
     <Card className="md:col-span-2">
       <CardContent className="pt-5">
-        <div className="text-[10px] uppercase tracking-widest text-silver flex items-center gap-1.5">
+        <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
           <Timer className="h-3 w-3" aria-hidden="true" />
           Next shift
         </div>
@@ -464,7 +464,7 @@ function PaystubCard({
     return (
       <Card>
         <CardContent className="pt-5">
-          <div className="text-[10px] uppercase tracking-widest text-silver flex items-center gap-1.5">
+          <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
             <DollarSign className="h-3 w-3" aria-hidden="true" />
             Last paystub
           </div>
@@ -480,7 +480,7 @@ function PaystubCard({
   return (
     <Card>
       <CardContent className="pt-5">
-        <div className="text-[10px] uppercase tracking-widest text-silver flex items-center gap-1.5">
+        <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
           <DollarSign className="h-3 w-3" aria-hidden="true" />
           Last paystub
         </div>
@@ -537,7 +537,7 @@ function TimeOffCard({
     return (
       <Card>
         <CardContent className="pt-5">
-          <div className="text-[10px] uppercase tracking-widest text-silver flex items-center gap-1.5">
+          <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
             <CalendarOff className="h-3 w-3" aria-hidden="true" />
             Time off
           </div>
@@ -564,7 +564,7 @@ function TimeOffCard({
   return (
     <Card>
       <CardContent className="pt-5">
-        <div className="text-[10px] uppercase tracking-widest text-silver flex items-center gap-1.5">
+        <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
           <CalendarOff className="h-3 w-3" aria-hidden="true" />
           Time off
         </div>

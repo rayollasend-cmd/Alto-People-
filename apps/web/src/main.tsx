@@ -44,19 +44,23 @@ if (!rootEl) throw new Error('Root element #root not found');
 // Phase 68 — set the theme attribute before React renders so the first
 // paint already has the right colors. This avoids a brief flash of dark
 // when the user has light selected (or vice versa). Mirrors the resolve
-// logic in lib/theme.tsx: 'system' reads `prefers-color-scheme`, anything
-// else maps 1:1.
+// logic in lib/theme.tsx: no stored choice or 'system' follows the OS
+// (`prefers-color-scheme`); explicit light/dark map 1:1. Also swaps the
+// theme-color meta so the browser/status-bar chrome matches from frame 1.
 try {
   const stored = window.localStorage.getItem('alto.theme');
-  let resolved: 'light' | 'dark' = 'dark';
+  let resolved: 'light' | 'dark';
   if (stored === 'light' || stored === 'dark') {
     resolved = stored;
-  } else if (stored === 'system') {
+  } else {
     resolved = window.matchMedia('(prefers-color-scheme: dark)').matches
       ? 'dark'
       : 'light';
   }
   document.documentElement.dataset.theme = resolved;
+  document
+    .querySelector('meta[name="theme-color"]')
+    ?.setAttribute('content', resolved === 'dark' ? '#0B1832' : '#F8FAFC');
 } catch {
   document.documentElement.dataset.theme = 'dark';
 }

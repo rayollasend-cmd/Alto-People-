@@ -414,13 +414,16 @@ function PaystubTable({
     // breakdown can scroll horizontally on narrow phones instead of
     // squishing the tabular-num columns into illegible 2-3 char cells.
     <div className="-mx-2 overflow-x-auto sm:mx-0">
-      <table className="w-full min-w-[20rem] text-xs">
+      {/* 13px, not 12 — these cells carry the associate's pay math, the
+          most load-bearing numbers in the app, read on phones at arm's
+          length. Still fits the 5-col grid at 320px. */}
+      <table className="w-full min-w-[20rem] text-[13px]">
       <thead>
         <tr className="text-silver/70">
           {headers.map((h, i) => (
             <th
               key={i}
-              className={cn('py-1 font-normal text-[10px] uppercase tracking-widest', i === 0 ? 'text-left' : 'text-right')}
+              className={cn('py-1 font-normal text-[11px] uppercase tracking-widest', i === 0 ? 'text-left' : 'text-right')}
             >
               {h}
             </th>

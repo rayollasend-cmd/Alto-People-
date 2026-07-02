@@ -1,0 +1,5 @@
+# Alto People is an authenticated HR system — there is nothing useful to
+# index and employee-adjacent URLs should never appear in search results.
+# Public marketing/careers content lives on the separate marketing site.
+User-agent: *
+Disallow: /

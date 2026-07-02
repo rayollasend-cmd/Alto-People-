@@ -140,7 +140,16 @@ self.addEventListener('push', (event) => {
     badge: '/icon-192.png',
     data: { url: data.url || '/' },
   };
-  event.waitUntil(self.registration.showNotification(title, options));
+  event.waitUntil(
+    Promise.all([
+      self.registration.showNotification(title, options),
+      // Dot the installed-app icon even while the app is closed; the
+      // bell syncs it to the exact count next time the app opens.
+      typeof self.navigator?.setAppBadge === 'function'
+        ? self.navigator.setAppBadge().catch(() => {})
+        : Promise.resolve(),
+    ]),
+  );
 });
 
 self.addEventListener('notificationclick', (event) => {

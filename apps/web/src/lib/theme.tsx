@@ -11,8 +11,9 @@ import {
 /**
  * Light / dark / system theme. Persists the user's choice in localStorage
  * and applies it via `data-theme` on the html element so CSS variables
- * swap with no React re-render cost. Defaults to "dark" (Alto's original
- * look) for first-time users.
+ * swap with no React re-render cost. Defaults to "system" — a field
+ * workforce reads this outdoors, and forcing dark on a light-mode phone
+ * is the worst sunlight-legibility case. Users can still pin either.
  *
  * Two values flow through the context:
  *   - preference: what the user picked ('light' | 'dark' | 'system') —
@@ -29,7 +30,14 @@ export type Theme = 'dark' | 'light';
 export type ThemePreference = Theme | 'system';
 
 const STORAGE_KEY = 'alto.theme';
-const DEFAULT_PREFERENCE: ThemePreference = 'dark';
+const DEFAULT_PREFERENCE: ThemePreference = 'system';
+
+// Browser/OS chrome color per theme (status bar in installed mode, tab
+// strip on Android). Mirrors --color-midnight in index.css.
+const THEME_COLOR: Record<Theme, string> = {
+  dark: '#0B1832',
+  light: '#F8FAFC',
+};
 
 interface ThemeContextValue {
   /** User's stored choice (drives the settings UI). */
@@ -70,6 +78,11 @@ function resolveTheme(pref: ThemePreference): Theme {
 function applyTheme(theme: Theme): void {
   if (typeof document === 'undefined') return;
   document.documentElement.dataset.theme = theme;
+  // Keep the browser/OS chrome in step — a light app under a navy status
+  // bar reads as a mismatched website, not an app.
+  document
+    .querySelector('meta[name="theme-color"]')
+    ?.setAttribute('content', THEME_COLOR[theme]);
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {

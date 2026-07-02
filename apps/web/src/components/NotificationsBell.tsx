@@ -77,6 +77,20 @@ export function NotificationsBell() {
   const unread = (items ?? []).filter((n) => !n.readAt);
   const unreadCount = unread.length;
 
+  // Installed-app icon badge (Badging API — Android/desktop PWA; iOS 16.4+
+  // installed). Mirrors the bell count; silent no-op where unsupported.
+  useEffect(() => {
+    try {
+      if (unreadCount > 0) {
+        navigator.setAppBadge?.(unreadCount);
+      } else {
+        navigator.clearAppBadge?.();
+      }
+    } catch {
+      // Badging unavailable — irrelevant.
+    }
+  }, [unreadCount]);
+
   const navigate = useNavigate();
 
   const onItemClick = async (n: Notification) => {

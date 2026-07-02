@@ -379,7 +379,7 @@ export function AssociateTimeView() {
               360px screens); back to the compact inline pair at sm+. */}
           <div className="grid grid-cols-2 gap-2 w-full sm:flex sm:w-auto sm:items-end">
             <div>
-              <label className="block text-[10px] uppercase tracking-wider text-silver mb-1">
+              <label className="block text-[11px] uppercase tracking-wider text-silver mb-1">
                 From
               </label>
               <input
@@ -393,7 +393,7 @@ export function AssociateTimeView() {
               />
             </div>
             <div>
-              <label className="block text-[10px] uppercase tracking-wider text-silver mb-1">
+              <label className="block text-[11px] uppercase tracking-wider text-silver mb-1">
                 To
               </label>
               <input
@@ -462,7 +462,7 @@ export function AssociateTimeView() {
                         {anomalies.map((a) => (
                           <span
                             key={a}
-                            className="text-[10px] uppercase tracking-widest px-2 py-0.5 rounded border border-alert/40 bg-alert/10 text-alert"
+                            className="text-[11px] uppercase tracking-widest px-2 py-0.5 rounded border border-alert/40 bg-alert/10 text-alert"
                           >
                             {timeAnomalyLabel(a)}
                           </span>
