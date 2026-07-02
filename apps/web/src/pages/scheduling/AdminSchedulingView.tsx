@@ -1316,7 +1316,30 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       toast.success('Shift assigned.');
       await refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Assign failed.');
+      if (err instanceof ApiError && err.code === 'associate_unavailable') {
+        const ok = await confirm({
+          title: 'Assign on their day off?',
+          description:
+            'This associate has approved time off or a declared day off covering the shift. Assigning anyway overrides that.',
+          confirmLabel: 'Assign anyway',
+          destructive: true,
+        });
+        if (ok) {
+          try {
+            await assignShift(autoFillForShift.shiftId, {
+              associateId,
+              overrideUnavailability: true,
+            });
+            setAutoFillForShift(null);
+            toast.success('Shift assigned (override).');
+            await refresh();
+          } catch (err2) {
+            toast.error(err2 instanceof ApiError ? err2.message : 'Assign failed.');
+          }
+        }
+      } else {
+        toast.error(err instanceof ApiError ? err.message : 'Assign failed.');
+      }
     } finally {
       setPendingId(null);
     }
@@ -2419,6 +2442,10 @@ function AssignDialog({
   const [query, setQuery] = useState('');
   const [conflicts, setConflicts] = useState<ConflictRow[] | null>(null);
   const [timeOff, setTimeOff] = useState<TimeOffRow[] | null>(null);
+  const [unavailable, setUnavailable] = useState<
+    { date: string; note: string | null }[] | null
+  >(null);
+  const confirmOverride = useConfirm();
   const [checking, setChecking] = useState(false);
   // Set when the conflict check itself FAILS (network/500) — distinct from
   // "checked, no conflicts" so the admin isn't misled into assigning blind.
@@ -2434,6 +2461,7 @@ function AssignDialog({
       setQuery('');
       setConflicts(null);
       setTimeOff(null);
+      setUnavailable(null);
       setCheckError(null);
       setSubmitting(false);
       setChecking(false);
@@ -2446,6 +2474,7 @@ function AssignDialog({
     if (!target || !picked) {
       setConflicts(null);
       setTimeOff(null);
+      setUnavailable(null);
       setCheckError(null);
       return;
     }
@@ -2470,10 +2499,12 @@ function AssignDialog({
             endDate: t.endDate,
           }))
         );
+        setUnavailable(c.unavailableDays ?? []);
       } catch {
         if (!cancelled) {
           setConflicts(null);
           setTimeOff(null);
+          setUnavailable(null);
           setCheckError('Couldn’t check for conflicts — verify manually before assigning.');
         }
       } finally {
@@ -2493,6 +2524,30 @@ function AssignDialog({
       await assignShift(target.id, { associateId: picked.id });
       onAssigned();
     } catch (err) {
+      // Declared unavailability hard-blocks the assign; overriding is an
+      // explicit second decision, never a silent retry.
+      if (err instanceof ApiError && err.code === 'associate_unavailable') {
+        const ok = await confirmOverride({
+          title: 'Assign on their day off?',
+          description: `${picked.firstName} ${picked.lastName} has approved time off or a declared day off covering this shift. Assigning anyway overrides that — they'll be notified.`,
+          confirmLabel: 'Assign anyway',
+          destructive: true,
+        });
+        if (ok) {
+          try {
+            await assignShift(target.id, {
+              associateId: picked.id,
+              overrideUnavailability: true,
+            });
+            onAssigned();
+            return;
+          } catch (err2) {
+            toast.error(err2 instanceof ApiError ? err2.message : 'Assign failed.');
+          }
+        }
+        setSubmitting(false);
+        return;
+      }
       toast.error(err instanceof ApiError ? err.message : 'Assign failed.');
       setSubmitting(false);
     }
@@ -2672,6 +2727,28 @@ function AssignDialog({
               </div>
             )}
           </div>
+
+          {!!(unavailable && unavailable.length > 0) && (
+            <div className="flex items-start gap-2 p-3 rounded-md border border-error/50 bg-error/10 text-sm">
+              <AlertTriangle className="h-4 w-4 text-error mt-0.5 shrink-0" />
+              <div>
+                <div className="font-medium text-white">
+                  They marked this day as unavailable
+                </div>
+                <ul className="mt-2 space-y-1 text-silver">
+                  {unavailable.map((u) => (
+                    <li key={u.date} className="text-xs">
+                      • <span className="tabular-nums">{u.date}</span>
+                      {u.note ? ` — ${u.note}` : ''}
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-1.5 text-xs text-silver/70">
+                  Assigning will ask you to explicitly override.
+                </p>
+              </div>
+            </div>
+          )}
 
           {hasTimeOff && (
             <div className="flex items-start gap-2 p-3 rounded-md border border-error/50 bg-error/10 text-sm">

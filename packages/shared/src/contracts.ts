@@ -1418,6 +1418,10 @@ export type ShiftUpdateInput = z.infer<typeof ShiftUpdateInputSchema>;
 
 export const ShiftAssignInputSchema = z.object({
   associateId: UuidSchema,
+  /** Assign even though the associate has approved time off or a declared
+   *  day off covering the shift. Without it, /assign 409s with
+   *  `associate_unavailable`. Overrides are audit-logged. */
+  overrideUnavailability: z.boolean().optional(),
 });
 export type ShiftAssignInput = z.infer<typeof ShiftAssignInputSchema>;
 
@@ -2699,6 +2703,15 @@ export type TimeOffConflict = z.infer<typeof TimeOffConflictSchema>;
 export const ShiftConflictsResponseSchema = z.object({
   conflicts: z.array(ShiftConflictSchema),
   timeOffConflicts: z.array(TimeOffConflictSchema).default([]),
+  /** One-off "can't work this day" declarations covering the shift day. */
+  unavailableDays: z
+    .array(
+      z.object({
+        date: z.string(), // YYYY-MM-DD
+        note: z.string().nullable(),
+      }),
+    )
+    .default([]),
 });
 export type ShiftConflictsResponse = z.infer<typeof ShiftConflictsResponseSchema>;
 

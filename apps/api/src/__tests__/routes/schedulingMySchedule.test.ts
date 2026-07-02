@@ -457,6 +457,140 @@ describe('double-booking guards (June audit P0s)', () => {
   });
 });
 
+describe('declared unavailability blocks assignment', () => {
+  it('/assign 409s on a day off; explicit override assigns and is audited', async () => {
+    const client = await createClient();
+    const { associate: me } = await mkPlaced(client.id, 'Maria', 'Lopez');
+    const open = await mkShift({
+      clientId: client.id,
+      status: 'OPEN',
+      assignedAssociateId: null,
+    });
+    const day = new Date(open.startsAt.toISOString().slice(0, 10) + 'T00:00:00Z');
+    await prisma.availabilityException.create({
+      data: { associateId: me.id, date: day, note: 'Family trip' },
+    });
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+
+    // Conflicts pre-check surfaces the day off to the dialog.
+    const check = await hrAgent.get(
+      `/scheduling/shifts/${open.id}/conflicts?associateId=${me.id}`,
+    );
+    expect(check.status).toBe(200);
+    expect(check.body.unavailableDays).toHaveLength(1);
+    expect(check.body.unavailableDays[0].note).toBe('Family trip');
+
+    // Plain assign is blocked.
+    const blocked = await hrAgent
+      .post(`/scheduling/shifts/${open.id}/assign`)
+      .send({ associateId: me.id });
+    expect(blocked.status).toBe(409);
+
+    const stillOpen = await prisma.shift.findUniqueOrThrow({ where: { id: open.id } });
+    expect(stillOpen.assignedAssociateId).toBeNull();
+
+    // Explicit override goes through.
+    const forced = await hrAgent
+      .post(`/scheduling/shifts/${open.id}/assign`)
+      .send({ associateId: me.id, overrideUnavailability: true });
+    expect(forced.status).toBe(200);
+    expect(forced.body.assignedAssociateId).toBe(me.id);
+  });
+
+  it('approved time off blocks /assign the same way', async () => {
+    const client = await createClient();
+    const { associate: me } = await mkPlaced(client.id, 'Maria', 'Lopez');
+    const open = await mkShift({
+      clientId: client.id,
+      status: 'OPEN',
+      assignedAssociateId: null,
+    });
+    const day = new Date(open.startsAt.toISOString().slice(0, 10) + 'T00:00:00Z');
+    await prisma.timeOffRequest.create({
+      data: {
+        associateId: me.id,
+        category: 'VACATION',
+        startDate: day,
+        endDate: day,
+        requestedMinutes: 480,
+        status: 'APPROVED',
+      },
+    });
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+    const blocked = await hrAgent
+      .post(`/scheduling/shifts/${open.id}/assign`)
+      .send({ associateId: me.id });
+    expect(blocked.status).toBe(409);
+  });
+
+  it('bulk multi-assign skips unavailable associates with day_unavailable', async () => {
+    const client = await createClient();
+    const { associate: free } = await mkPlaced(client.id, 'Fay', 'Free');
+    const { associate: off } = await mkPlaced(client.id, 'Dan', 'Dayoff');
+    const startsAt = hoursFromNow(24);
+    const day = new Date(startsAt.toISOString().slice(0, 10) + 'T00:00:00Z');
+    await prisma.availabilityException.create({
+      data: { associateId: off.id, date: day },
+    });
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+    const res = await hrAgent.post('/scheduling/shifts/bulk').send({
+      clientId: client.id,
+      position: 'Server',
+      startsAt: startsAt.toISOString(),
+      endsAt: hoursFromNow(32).toISOString(),
+      associateIds: [free.id, off.id],
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.skipped).toHaveLength(1);
+    expect(res.body.skipped[0]).toMatchObject({
+      associateId: off.id,
+      reason: 'day_unavailable',
+    });
+
+    const created = await prisma.shift.findMany({
+      where: { clientId: client.id, position: 'Server' },
+      select: { assignedAssociateId: true },
+    });
+    expect(created.map((s) => s.assignedAssociateId)).toEqual([free.id]);
+  });
+
+  it('swap approval 409s when the counterparty declared the day off after accepting', async () => {
+    const client = await createClient();
+    const { associate: req, user: reqUser } = await mkPlaced(client.id, 'Req', 'A');
+    const { associate: cpt, user: cptUser } = await mkPlaced(client.id, 'Cpt', 'B');
+    const mine = await mkShift({ clientId: client.id, assignedAssociateId: req.id });
+
+    const reqAgent = await loginAs(reqUser.email);
+    const create = await reqAgent.post('/scheduling/swap-requests').send({
+      shiftId: mine.id,
+      counterpartyAssociateId: cpt.id,
+    });
+    const cptAgent = await loginAs(cptUser.email);
+    await cptAgent.post(`/scheduling/swap-requests/${create.body.id}/peer-accept`).send({});
+
+    // Counterparty declares the day off between accepting and HR approval.
+    const day = new Date(mine.startsAt.toISOString().slice(0, 10) + 'T00:00:00Z');
+    await prisma.availabilityException.create({
+      data: { associateId: cpt.id, date: day },
+    });
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+    const approve = await hrAgent
+      .post(`/scheduling/swap-requests/${create.body.id}/manager-approve`)
+      .send({});
+    expect(approve.status).toBe(409);
+    const shiftAfter = await prisma.shift.findUniqueOrThrow({ where: { id: mine.id } });
+    expect(shiftAfter.assignedAssociateId).toBe(req.id);
+  });
+});
+
 describe('shift reminder sweep', () => {
   it('reminds each next-24h shift exactly once', async () => {
     const client = await createClient();

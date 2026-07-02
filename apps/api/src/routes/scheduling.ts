@@ -661,6 +661,16 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
     };
     const openCount = input.openCount ?? 0;
 
+    // Associates who declared this day unavailable (approved time off or a
+    // one-off day off) are skipped like conflicts — a bulk assign must not
+    // steamroll a day someone said they can't work.
+    const unavailableIds = await blockedForWindow(
+      candidateIds,
+      startsAt,
+      endsAt,
+      location.timezone ?? DEFAULT_TIMEZONE,
+    );
+
     // Conflict-check + create everything atomically.
     const { createdIds, toAssign, conflictedSkips } = await prisma.$transaction(
       async (tx) => {
@@ -677,13 +687,15 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
               })
             : [];
         const conflicted = new Set(conflictRows.map((r) => r.assignedAssociateId));
-        const toAssign = candidateIds.filter((id) => !conflicted.has(id));
+        const toAssign = candidateIds.filter(
+          (id) => !conflicted.has(id) && !unavailableIds.has(id),
+        );
         const conflictedSkips = candidateIds
-          .filter((id) => conflicted.has(id))
+          .filter((id) => conflicted.has(id) || unavailableIds.has(id))
           .map((id) => ({
             associateId: id,
             associateName: nameById.get(id)!,
-            reason: 'already_scheduled',
+            reason: conflicted.has(id) ? 'already_scheduled' : 'day_unavailable',
           }));
 
         if (toAssign.length > 0) {
@@ -976,6 +988,7 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
 
     const shift = await prisma.shift.findFirst({
       where: { id: req.params.id, ...scopeShifts(req.user!) },
+      include: { locationRel: { select: { timezone: true } } },
     });
     if (!shift) throw new HttpError(404, 'shift_not_found', 'Shift not found');
     if (shift.status === 'CANCELLED') {
@@ -989,6 +1002,26 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
       where: { id: parsed.data.associateId, deletedAt: null },
     });
     if (!associate) throw new HttpError(404, 'associate_not_found', 'Associate not found');
+
+    // Approved time off and one-off days off BLOCK assignment by default —
+    // an associate declaring a day unavailable means exactly that. Admins
+    // can still push through with overrideUnavailability (audited below);
+    // it's an explicit, per-assignment decision, never silent.
+    if (!parsed.data.overrideUnavailability) {
+      const blocked = await blockedForWindow(
+        [associate.id],
+        shift.startsAt,
+        shift.endsAt,
+        shift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+      );
+      if (blocked.size > 0) {
+        throw new HttpError(
+          409,
+          'associate_unavailable',
+          `${associate.firstName} ${associate.lastName} has approved time off or a declared day off covering this shift.`,
+        );
+      }
+    }
 
     // Conflict check + write in one transaction so two managers can't
     // assign the same associate to overlapping shifts at the same instant.
@@ -1024,7 +1057,12 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
       action: 'shift.assigned',
       shiftId: updated.id,
       clientId: updated.clientId,
-      metadata: { associateId: associate.id },
+      metadata: {
+        associateId: associate.id,
+        ...(parsed.data.overrideUnavailability
+          ? { overrodeUnavailability: true }
+          : {}),
+      },
       req,
     });
 
@@ -2090,8 +2128,9 @@ schedulingRouter.post('/me/calendar-url/rotate', async (req, res, next) => {
 /**
  * Returns existing assigned shifts that overlap the given target shift's
  * time window for the proposed associate. Used by the assign UI to warn
- * before clobbering. Doesn't block — the actual /assign endpoint still
- * runs; HR can override.
+ * before clobbering. Shift overlaps here are advisory (/assign re-checks
+ * transactionally); time off + declared days off are shown because
+ * /assign HARD-BLOCKS on them unless overrideUnavailability is sent.
  */
 schedulingRouter.get('/shifts/:id/conflicts', MANAGE, async (req, res, next) => {
   try {
@@ -2112,7 +2151,7 @@ schedulingRouter.get('/shifts/:id/conflicts', MANAGE, async (req, res, next) => 
     const targetEndDate = new Date(target.endsAt);
     targetEndDate.setUTCHours(0, 0, 0, 0);
 
-    const [overlaps, ptoOverlaps] = await Promise.all([
+    const [overlaps, ptoOverlaps, exceptionDays] = await Promise.all([
       prisma.shift.findMany({
         take: 100,
         where: {
@@ -2135,6 +2174,16 @@ schedulingRouter.get('/shifts/:id/conflicts', MANAGE, async (req, res, next) => 
           endDate: { gte: targetStartDate },
         },
       }),
+      // One-off "can't work this day" declarations on the shift's day(s) —
+      // these HARD-BLOCK /assign unless the admin overrides, so the dialog
+      // must show them before submit.
+      prisma.availabilityException.findMany({
+        take: 10,
+        where: {
+          associateId,
+          date: { gte: targetStartDate, lte: targetEndDate },
+        },
+      }),
     ]);
 
     const conflicts: ShiftConflict[] = overlaps.map((s) => ({
@@ -2150,7 +2199,13 @@ schedulingRouter.get('/shifts/:id/conflicts', MANAGE, async (req, res, next) => 
       startDate: r.startDate.toISOString().slice(0, 10),
       endDate: r.endDate.toISOString().slice(0, 10),
     }));
-    res.json(ShiftConflictsResponseSchema.parse({ conflicts, timeOffConflicts }));
+    const unavailableDays = exceptionDays.map((x) => ({
+      date: x.date.toISOString().slice(0, 10),
+      note: x.note,
+    }));
+    res.json(
+      ShiftConflictsResponseSchema.parse({ conflicts, timeOffConflicts, unavailableDays }),
+    );
   } catch (err) {
     next(err);
   }
@@ -2182,7 +2237,7 @@ schedulingRouter.get('/shifts/:id/auto-fill', MANAGE, async (req, res, next) => 
     const targetDayEnd = new Date(target.endsAt);
     targetDayEnd.setUTCHours(0, 0, 0, 0);
 
-    const [associates, ptoRows] = await Promise.all([
+    const [associates, ptoRows, exceptionRows] = await Promise.all([
       prisma.associate.findMany({
         where: ACTIVE_ASSOCIATE_FILTER,
         include: {
@@ -2213,9 +2268,18 @@ schedulingRouter.get('/shifts/:id/auto-fill', MANAGE, async (req, res, next) => 
         },
         select: { associateId: true },
       }),
+      // One-off days off — same treatment as PTO in the ranking.
+      prisma.availabilityException.findMany({
+        take: 200,
+        where: { date: { gte: targetDayStart, lte: targetDayEnd } },
+        select: { associateId: true },
+      }),
     ]);
 
-    const ptoAssociateIds = new Set(ptoRows.map((r) => r.associateId));
+    const ptoAssociateIds = new Set([
+      ...ptoRows.map((r) => r.associateId),
+      ...exceptionRows.map((r) => r.associateId),
+    ]);
 
     const targetDOW = zonedDayOfWeek(target.startsAt, targetTz);
     const startMin = zonedMinutes(target.startsAt, targetTz);
@@ -2769,7 +2833,10 @@ schedulingRouter.post('/swap-requests/:id/manager-approve', MANAGE, async (req, 
     // admin must not approve another client's swap by guessing the id.
     const swap = await prisma.shiftSwapRequest.findFirst({
       where: { id: req.params.id, shift: { is: scopeShifts(req.user!) } },
-      include: { shift: true, counterpartShift: true },
+      include: {
+        shift: { include: { locationRel: { select: { timezone: true } } } },
+        counterpartShift: { include: { locationRel: { select: { timezone: true } } } },
+      },
     });
     if (!swap) throw new HttpError(404, 'swap_not_found', 'Swap request not found');
     if (swap.status !== 'PEER_ACCEPTED') {
@@ -2778,6 +2845,38 @@ schedulingRouter.post('/swap-requests/:id/manager-approve', MANAGE, async (req, 
         'not_peer_accepted',
         'Counterparty must accept the swap before HR approval'
       );
+    }
+
+    // Declared unavailability blocks the receiving side of each leg — PTO
+    // approved (or a day off added) AFTER the peer accepted must not get
+    // steamrolled by the approval.
+    const cptBlocked = await blockedForWindow(
+      [swap.counterpartyAssociateId],
+      swap.shift.startsAt,
+      swap.shift.endsAt,
+      swap.shift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+    );
+    if (cptBlocked.size > 0) {
+      throw new HttpError(
+        409,
+        'counterparty_unavailable',
+        'The counterparty now has time off or a day off covering this shift.',
+      );
+    }
+    if (swap.counterpartShift) {
+      const reqBlocked = await blockedForWindow(
+        [swap.requesterAssociateId],
+        swap.counterpartShift.startsAt,
+        swap.counterpartShift.endsAt,
+        swap.counterpartShift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+      );
+      if (reqBlocked.size > 0) {
+        throw new HttpError(
+          409,
+          'requester_unavailable',
+          'The requester now has time off or a day off covering the exchange shift.',
+        );
+      }
     }
 
     // Execute atomically: CAS the swap status, verify neither party is
