@@ -26,7 +26,7 @@ import {
 } from '@/components/ui/Dialog';
 import { Badge } from '@/components/ui/Badge';
 import { Input, Textarea } from '@/components/ui/Input';
-import { SkeletonRows } from '@/components/ui/Skeleton';
+import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { cn } from '@/lib/cn';
 
@@ -35,8 +35,8 @@ import { cn } from '@/lib/cn';
  * many hours did I get approved for?" without asking a manager.
  * Entries group by week (local Sunday-start) with per-week totals and
  * an overtime callout past 40h, each row shows kiosk in/out vs the
- * scheduled shift, and approved hours roll up into an estimated-gross
- * chip when every approved entry carries a pay rate.
+ * scheduled shift, and approved hours roll up into a summary band with
+ * an estimated-gross figure when every approved entry carries a rate.
  *
  * Read-only by design — associates PUNCH at the kiosk; when something
  * looks wrong, the per-entry "Report an issue" files an HR case with
@@ -77,8 +77,8 @@ function daysAgoYmd(days: number): string {
 }
 
 /** Local Sunday-start week anchor for grouping. */
-function weekStartMs(iso: string): number {
-  const d = new Date(iso);
+function weekStartMs(input: string | Date): number {
+  const d = new Date(input);
   d.setHours(0, 0, 0, 0);
   d.setDate(d.getDate() - d.getDay());
   return d.getTime();
@@ -98,13 +98,23 @@ const fmtMoney = (n: number) =>
 
 type Preset = 'THIS_WEEK' | 'LAST_WEEK' | 'LAST14';
 
+const PRESETS: Array<[Preset, MessageKey]> = [
+  ['THIS_WEEK', 'sched.thisWeek'],
+  ['LAST_WEEK', 'time.lastWeek'],
+  ['LAST14', 'time.last14'],
+];
+
 export function MyTimesheet() {
   const { t } = useI18n();
   const [fromYmd, setFromYmd] = useState(daysAgoYmd(13));
   const [toYmd, setToYmd] = useState(ymdLocal(new Date()));
+  // Which quick-range chip produced the current window; manual date
+  // edits clear it so the chips never lie about what's shown.
+  const [activePreset, setActivePreset] = useState<Preset | null>('LAST14');
   const [disputeTarget, setDisputeTarget] = useState<TimeEntry | null>(null);
 
   const applyPreset = (p: Preset) => {
+    setActivePreset(p);
     const now = new Date();
     if (p === 'LAST14') {
       setFromYmd(daysAgoYmd(13));
@@ -179,6 +189,14 @@ export function MyTimesheet() {
     };
   }, [entries]);
 
+  // "This week" / "Last week" instead of anonymous dates where they apply.
+  const currentWeekMs = weekStartMs(new Date());
+  const weekLabel = (weekMs: number): string => {
+    if (weekMs === currentWeekMs) return t('sched.thisWeek');
+    if (weekMs === currentWeekMs - 7 * 86_400_000) return t('time.lastWeek');
+    return t('time.weekOf', { date: fmtDateTz(new Date(weekMs)) });
+  };
+
   return (
     <Card className="mt-6">
       <CardHeader>
@@ -186,24 +204,56 @@ export function MyTimesheet() {
         <CardDescription>{t('time.myTimesheetDesc')}</CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="flex flex-wrap items-end gap-3 mb-4">
-          <div className="flex flex-wrap gap-1.5" role="group" aria-label={t('time.rangeAria')}>
-            {(
-              [
-                ['THIS_WEEK', 'sched.thisWeek'],
-                ['LAST_WEEK', 'time.lastWeek'],
-                ['LAST14', 'time.last14'],
-              ] as Array<[Preset, MessageKey]>
-            ).map(([preset, key]) => (
-              <Button
-                key={preset}
-                size="xs"
-                variant="outline"
-                onClick={() => applyPreset(preset)}
-              >
-                {t(key)}
-              </Button>
-            ))}
+        {/* Summary band — the three numbers the page exists to answer,
+            in the same stat-strip language as My Schedule. */}
+        {!entries && !query.isError && <Skeleton className="h-16 mb-4" />}
+        {entries && entries.length > 0 && (
+          <div className="mb-4 inline-flex items-stretch rounded-lg border border-navy-secondary bg-navy divide-x divide-navy-secondary">
+            <TimesheetStat
+              label={t('time.status.APPROVED')}
+              value={fmtH(approvedMin)}
+              tone="success"
+            />
+            <TimesheetStat
+              label={t('time.status.COMPLETED')}
+              value={fmtH(pendingMin)}
+              tone={pendingMin > 0 ? 'gold' : 'muted'}
+            />
+            {grossEstimate !== null && (
+              <TimesheetStat
+                label={t('time.grossLabel')}
+                value={fmtMoney(grossEstimate)}
+                tone="plain"
+                title={t('time.grossDisclaimer')}
+              />
+            )}
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-end gap-3 mb-5">
+          <div
+            className="flex flex-wrap gap-1.5"
+            role="group"
+            aria-label={t('time.rangeAria')}
+          >
+            {PRESETS.map(([preset, key]) => {
+              const active = activePreset === preset;
+              return (
+                <Button
+                  key={preset}
+                  size="xs"
+                  variant="outline"
+                  aria-pressed={active}
+                  onClick={() => applyPreset(preset)}
+                  className={cn(
+                    active &&
+                      'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold',
+                  )}
+                >
+                  {t(key)}
+                </Button>
+              );
+            })}
           </div>
           <label className="block">
             <span className="text-[11px] uppercase tracking-wider text-silver">
@@ -213,7 +263,10 @@ export function MyTimesheet() {
               type="date"
               value={fromYmd}
               max={toYmd}
-              onChange={(e) => setFromYmd(e.target.value)}
+              onChange={(e) => {
+                setFromYmd(e.target.value);
+                setActivePreset(null);
+              }}
               className="mt-1 w-40"
             />
           </label>
@@ -225,30 +278,13 @@ export function MyTimesheet() {
               type="date"
               value={toYmd}
               min={fromYmd}
-              onChange={(e) => setToYmd(e.target.value)}
+              onChange={(e) => {
+                setToYmd(e.target.value);
+                setActivePreset(null);
+              }}
               className="mt-1 w-40"
             />
           </label>
-          {entries && entries.length > 0 && (
-            <div className="ml-auto flex flex-wrap items-center gap-2 text-xs tabular-nums">
-              <span className="rounded-full border border-success/40 bg-success/10 px-2.5 py-1 text-success">
-                {t('time.approvedTotal', { hours: fmtH(approvedMin) })}
-              </span>
-              {pendingMin > 0 && (
-                <span className="rounded-full border border-gold/40 bg-gold/10 px-2.5 py-1 text-gold">
-                  {t('time.pendingTotal', { hours: fmtH(pendingMin) })}
-                </span>
-              )}
-              {grossEstimate !== null && (
-                <span
-                  className="rounded-full border border-navy-secondary bg-navy-secondary/40 px-2.5 py-1 text-white"
-                  title={t('time.grossDisclaimer')}
-                >
-                  {t('time.grossEstimate', { amount: fmtMoney(grossEstimate) })}
-                </span>
-              )}
-            </div>
-          )}
         </div>
 
         {query.isError && (
@@ -267,75 +303,101 @@ export function MyTimesheet() {
           />
         )}
         {entries && entries.length > 0 && (
-          <div className="space-y-5">
+          <div className="space-y-6">
             {weeks.map(([weekMs, bucket]) => {
               const overtimeMin = Math.max(0, bucket.workedMin - WEEK_REGULAR_CAP_MIN);
               return (
                 <section key={weekMs}>
-                  <div className="mb-1.5 flex items-baseline justify-between gap-3">
-                    <h3 className="text-[11px] uppercase tracking-wider text-silver/80">
-                      {t('time.weekOf', { date: fmtDateTz(new Date(weekMs)) })}
-                    </h3>
-                    <span
+                  <div className="mb-2 flex items-baseline justify-between gap-3 border-b border-navy-secondary pb-1.5">
+                    <h3
                       className={cn(
-                        'text-[11px] tabular-nums',
-                        overtimeMin > 0 ? 'text-warning' : 'text-silver/60',
+                        'text-[11px] uppercase tracking-wider',
+                        weekMs === currentWeekMs
+                          ? 'text-gold font-semibold'
+                          : 'text-silver/80',
                       )}
                     >
+                      {weekLabel(weekMs)}
+                    </h3>
+                    <span className="flex items-center gap-2 text-[11px] tabular-nums text-silver/70">
                       {fmtH(bucket.workedMin)}
-                      {overtimeMin > 0 &&
-                        ` · ${t('time.weekOvertime', { hours: fmtH(overtimeMin) })}`}
+                      {overtimeMin > 0 && (
+                        <span className="rounded-full border border-warning/40 bg-warning/10 px-2 py-0.5 text-warning">
+                          {t('time.weekOvertime', { hours: fmtH(overtimeMin) })}
+                        </span>
+                      )}
                     </span>
                   </div>
-                  <ul className="divide-y divide-navy-secondary">
+                  <ul className="divide-y divide-navy-secondary/60">
                     {bucket.entries.map((e) => {
                       const breakMin = (e.breaks ?? []).reduce((s, b) => s + b.minutes, 0);
+                      const live = e.status === 'ACTIVE';
                       return (
                         <li
                           key={e.id}
-                          className="py-3 flex items-start justify-between gap-3"
+                          className={cn(
+                            'py-3 pl-3 -ml-3 rounded-md',
+                            live && 'bg-success/5',
+                            e.status === 'REJECTED' &&
+                              'border-l-2 border-l-alert pl-2.5',
+                          )}
                         >
-                          <div className="min-w-0">
-                            <div className="text-sm text-white font-medium">
-                              {fmtEntryDay(e.clockInAt)}
-                            </div>
-                            <div className="text-xs text-silver mt-0.5 tabular-nums">
-                              {fmtTime(e.clockInAt)}
-                              {' – '}
-                              {e.clockOutAt ? fmtTime(e.clockOutAt) : t('time.stillOn')}
-                              {breakMin > 0 &&
-                                ` · ${t('time.breakMinutes', { minutes: breakMin })}`}
-                            </div>
-                            {e.shiftStartsAt && e.shiftEndsAt && (
-                              <div className="text-[11px] text-silver/60 mt-0.5 tabular-nums">
-                                {t('time.scheduled', {
-                                  range: `${fmtTime(e.shiftStartsAt)}–${fmtTime(e.shiftEndsAt)}`,
-                                })}
-                                {e.shiftPosition && ` · ${e.shiftPosition}`}
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 text-sm text-white font-medium">
+                                {live && (
+                                  <span
+                                    className="h-2 w-2 shrink-0 rounded-full bg-success animate-pulse"
+                                    aria-hidden="true"
+                                  />
+                                )}
+                                {fmtEntryDay(e.clockInAt)}
                               </div>
-                            )}
-                            {e.rejectionReason && (
-                              <div className="text-xs text-alert mt-1">
-                                {e.rejectionReason}
+                              <div className="text-xs text-silver mt-0.5 tabular-nums">
+                                {fmtTime(e.clockInAt)}
+                                {' – '}
+                                {e.clockOutAt ? fmtTime(e.clockOutAt) : t('time.stillOn')}
+                                {breakMin > 0 &&
+                                  ` · ${t('time.breakMinutes', { minutes: breakMin })}`}
                               </div>
-                            )}
-                          </div>
-                          <div className="flex shrink-0 flex-col items-end gap-1">
-                            <span className="text-sm text-white tabular-nums">
-                              {fmtH(e.netMinutes ?? e.minutesElapsed)}
-                            </span>
-                            <Badge variant={STATUS_VARIANT[e.status]}>
-                              {t(STATUS_KEY[e.status])}
-                            </Badge>
-                            <Button
-                              size="xs"
-                              variant="ghost"
-                              className="text-silver/70 hover:text-white"
-                              onClick={() => setDisputeTarget(e)}
-                            >
-                              <Flag className="h-3 w-3" />
-                              {t('time.reportIssue')}
-                            </Button>
+                              {e.shiftStartsAt && e.shiftEndsAt && (
+                                <div className="text-[11px] text-silver/60 mt-0.5 tabular-nums">
+                                  {t('time.scheduled', {
+                                    range: `${fmtTime(e.shiftStartsAt)}–${fmtTime(e.shiftEndsAt)}`,
+                                  })}
+                                  {e.shiftPosition && ` · ${e.shiftPosition}`}
+                                </div>
+                              )}
+                              {e.rejectionReason && (
+                                <div className="text-xs text-alert mt-1">
+                                  {e.rejectionReason}
+                                </div>
+                              )}
+                              <Button
+                                size="xs"
+                                variant="ghost"
+                                className="mt-1 -ml-2 text-silver/60 hover:text-white"
+                                onClick={() => setDisputeTarget(e)}
+                              >
+                                <Flag className="h-3 w-3" />
+                                {t('time.reportIssue')}
+                              </Button>
+                            </div>
+                            <div className="flex shrink-0 flex-col items-end gap-1.5">
+                              <span
+                                className={cn(
+                                  'text-base font-medium tabular-nums',
+                                  e.status === 'REJECTED'
+                                    ? 'text-silver/50 line-through'
+                                    : 'text-white',
+                                )}
+                              >
+                                {fmtH(e.netMinutes ?? e.minutesElapsed)}
+                              </span>
+                              <Badge variant={STATUS_VARIANT[e.status]}>
+                                {t(STATUS_KEY[e.status])}
+                              </Badge>
+                            </div>
                           </div>
                         </li>
                       );
@@ -353,6 +415,37 @@ export function MyTimesheet() {
 
       <DisputeDialog target={disputeTarget} onClose={() => setDisputeTarget(null)} />
     </Card>
+  );
+}
+
+function TimesheetStat({
+  label,
+  value,
+  tone,
+  title,
+}: {
+  label: string;
+  value: string;
+  tone: 'success' | 'gold' | 'muted' | 'plain';
+  title?: string;
+}) {
+  return (
+    <div className="px-3.5 py-2 first:pl-4 last:pr-4" title={title}>
+      <div className="text-[10px] uppercase tracking-widest text-silver/80 whitespace-nowrap">
+        {label}
+      </div>
+      <div
+        className={cn(
+          'text-sm font-medium tabular-nums mt-0.5',
+          tone === 'success' && 'text-success',
+          tone === 'gold' && 'text-gold',
+          tone === 'muted' && 'text-silver',
+          tone === 'plain' && 'text-white',
+        )}
+      >
+        {value}
+      </div>
+    </div>
   );
 }
 

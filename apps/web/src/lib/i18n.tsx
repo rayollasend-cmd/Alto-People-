@@ -161,6 +161,7 @@ const en = {
   'time.weekOvertime': 'includes {hours} overtime',
   'time.scheduled': 'Scheduled {range}',
   'time.grossEstimate': '≈ {amount} gross (approved)',
+  'time.grossLabel': '≈ Est. gross',
   'time.grossDisclaimer':
     'Estimate before taxes and deductions — not a pay statement.',
   'time.reportIssue': 'Report an issue',
@@ -419,6 +420,7 @@ const es: Record<MessageKey, string> = {
   'time.weekOvertime': 'incluye {hours} extra',
   'time.scheduled': 'Programado {range}',
   'time.grossEstimate': '≈ {amount} bruto (aprobado)',
+  'time.grossLabel': '≈ Bruto est.',
   'time.grossDisclaimer':
     'Estimación antes de impuestos y deducciones — no es un comprobante de pago.',
   'time.reportIssue': 'Reportar un problema',

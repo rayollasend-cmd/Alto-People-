@@ -77,19 +77,23 @@ describe('<MyTimesheet>', () => {
     renderSheet();
     await waitFor(() => expect(listMyTimeEntries).toHaveBeenCalled());
 
-    // Approved row: net hours + status badge + break subline.
-    expect(await screen.findByText('7.5h')).toBeInTheDocument();
-    expect(screen.getByText('Approved')).toBeInTheDocument();
+    // Approved: hours appear in the summary band AND on the row; the
+    // status word appears as the band label AND the row badge.
+    expect(await screen.findAllByText('7.5h')).toHaveLength(2);
+    expect(screen.getAllByText('Approved')).toHaveLength(2);
     expect(screen.getByText(/30m break/)).toBeInTheDocument();
-    // Pending row.
-    expect(screen.getByText('4.0h')).toBeInTheDocument();
-    expect(screen.getByText('Pending review')).toBeInTheDocument();
-    // Range totals + gross estimate (7.53h × $20 ≈ $151).
-    expect(screen.getByText('7.5h approved')).toBeInTheDocument();
-    expect(screen.getByText('4.0h pending review')).toBeInTheDocument();
-    expect(screen.getByText(/≈ \$151 gross/)).toBeInTheDocument();
-    // Weekly grouping header (both entries share the same local week).
-    expect(screen.getByText(/Week of /)).toBeInTheDocument();
+    // Pending: same duality.
+    expect(screen.getAllByText('4.0h')).toHaveLength(2);
+    expect(screen.getAllByText('Pending review')).toHaveLength(2);
+    // Gross estimate stat (7.53h × $20 ≈ $151).
+    expect(screen.getByText('≈ Est. gross')).toBeInTheDocument();
+    expect(screen.getByText('$151')).toBeInTheDocument();
+    // Weekly grouping header (h3) — "This week" while the fixtures are
+    // fresh, "Week of …" once real time moves past their week. Role-
+    // scoped because a "This week" preset chip also exists.
+    expect(
+      screen.getByRole('heading', { name: /This week|Week of / }),
+    ).toBeInTheDocument();
     // Each row offers the dispute entry point.
     expect(screen.getAllByRole('button', { name: /report an issue/i })).toHaveLength(2);
   });
