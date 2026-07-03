@@ -30,6 +30,8 @@ import { recordTimeEvent } from '../lib/audit.js';
 import { checkGeofence } from '../lib/geo.js';
 import { resolveAssociateGeofence } from '../lib/geofenceForAssociate.js';
 import { matchShiftForPunch } from '../lib/matchShiftForPunch.js';
+import { notifyAssociate } from '../lib/notify.js';
+import { DEFAULT_TIMEZONE, formatDateInZone, formatTimeInZone } from '../lib/timezone.js';
 import {
   detectAnomalies,
   endOfWeekUTC,
@@ -63,7 +65,7 @@ type RawEntry = Prisma.TimeEntryGetPayload<{
     approvedBy: { select: { email: true } };
     job: { select: { name: true } };
     breaks: true;
-    shift: { select: { startsAt: true; position: true } };
+    shift: { select: { startsAt: true; endsAt: true; position: true } };
   };
 }>;
 
@@ -72,8 +74,42 @@ const ENTRY_INCLUDE = {
   approvedBy: { select: { email: true } },
   job: { select: { name: true } },
   breaks: true,
-  shift: { select: { startsAt: true, position: true } },
+  shift: { select: { startsAt: true, endsAt: true, position: true } },
 } as const;
+
+/**
+ * Tell the associate their hours were decided. Rejections are
+ * pay-affecting and were previously SILENT — the associate found out on
+ * payday. Fire-and-forget (never fails the decision); bell + email +
+ * push via the shared pipeline.
+ */
+function notifyEntryDecision(
+  entry: { associateId: string; clockInAt: Date; clockOutAt: Date | null },
+  decision:
+    | { kind: 'approved'; minutes: number }
+    | { kind: 'rejected'; reason: string },
+): void {
+  const tz = DEFAULT_TIMEZONE;
+  const day = formatDateInZone(entry.clockInAt, tz);
+  const range = `${formatTimeInZone(entry.clockInAt, tz)}–${
+    entry.clockOutAt ? formatTimeInZone(entry.clockOutAt, tz) : '…'
+  }`;
+  if (decision.kind === 'approved') {
+    void notifyAssociate(entry.associateId, {
+      subject: 'Hours approved',
+      body: `Your ${day} time entry (${range}) was approved — ${(decision.minutes / 60).toFixed(1)}h.`,
+      category: 'time_entry',
+      linkUrl: '/time-attendance',
+    });
+  } else {
+    void notifyAssociate(entry.associateId, {
+      subject: 'Time entry rejected',
+      body: `Your ${day} time entry (${range}) was rejected: "${decision.reason}". Talk to your manager if this looks wrong.`,
+      category: 'time_entry',
+      linkUrl: '/time-attendance',
+    });
+  }
+}
 
 function minutesElapsed(row: { clockInAt: Date; clockOutAt: Date | null }): number {
   const end = row.clockOutAt ?? new Date();
@@ -194,6 +230,7 @@ function buildEntry(row: RawEntry, clientName: string | null): TimeEntry {
     // (late chip, coverage reconciliation) without a second fetch.
     shiftId: row.shiftId,
     shiftStartsAt: row.shift?.startsAt ? row.shift.startsAt.toISOString() : null,
+    shiftEndsAt: row.shift?.endsAt ? row.shift.endsAt.toISOString() : null,
     shiftPosition: row.shift?.position ?? null,
     // Server-derived so the clock widget survives a refresh mid-break
     // (the UI used to track this in component state and forget it).
@@ -842,6 +879,11 @@ timeRouter.post('/admin/entries/:id/approve', MANAGE, async (req, res, next) => 
       req,
     });
 
+    notifyEntryDecision(updated, {
+      kind: 'approved',
+      minutes: netWorkedMinutes(updated, updated.breaks),
+    });
+
     res.json(await toEntry(updated));
   } catch (err) {
     next(err);
@@ -898,6 +940,8 @@ timeRouter.post('/admin/entries/:id/reject', MANAGE, async (req, res, next) => {
       },
       req,
     });
+
+    notifyEntryDecision(updated, { kind: 'rejected', reason: parsed.data.reason });
 
     res.json(await toEntry(updated));
   } catch (err) {
@@ -1170,7 +1214,7 @@ async function approveOneEntry(
   user: TimeUser,
   entryId: string,
   req: import('express').Request,
-): Promise<void> {
+): Promise<{ associateId: string; minutes: number } | null> {
   const existing = await prisma.timeEntry.findFirst({
     where: { id: entryId, ...scopeTimeEntries(user) },
   });
@@ -1181,7 +1225,7 @@ async function approveOneEntry(
     throw new HttpError(409, 'still_active', 'Cannot approve an entry that has not been clocked out');
   }
   if (existing.status === 'APPROVED') {
-    return; // idempotent
+    return null; // idempotent — no state change, no notification
   }
 
   const updated = await prisma.timeEntry.update({
@@ -1212,6 +1256,11 @@ async function approveOneEntry(
     },
     req,
   });
+
+  return {
+    associateId: updated.associateId,
+    minutes: netWorkedMinutes(updated, updated.breaks),
+  };
 }
 
 async function rejectOneEntry(
@@ -1219,7 +1268,7 @@ async function rejectOneEntry(
   entryId: string,
   reason: string,
   req: import('express').Request,
-): Promise<void> {
+): Promise<{ associateId: string } | null> {
   const existing = await prisma.timeEntry.findFirst({
     where: { id: entryId, ...scopeTimeEntries(user) },
   });
@@ -1230,7 +1279,7 @@ async function rejectOneEntry(
     throw new HttpError(409, 'still_active', 'Cannot reject an entry that has not been clocked out');
   }
   if (existing.status === 'REJECTED') {
-    return; // idempotent
+    return null; // idempotent — no state change, no notification
   }
 
   // Mirror the single-reject path: voiding an APPROVED shift pulls its
@@ -1266,6 +1315,8 @@ async function rejectOneEntry(
     },
     req,
   });
+
+  return { associateId: updated.associateId };
 }
 
 timeRouter.post('/admin/bulk-approve', MANAGE, async (req, res, next) => {
@@ -1278,9 +1329,18 @@ timeRouter.post('/admin/bulk-approve', MANAGE, async (req, res, next) => {
     const results: BulkTimeResultRow[] = [];
     let succeeded = 0;
     let failed = 0;
+    // One SUMMARY notification per associate, not one per entry — a
+    // Friday bulk-approve of 40 entries must not buzz a phone 5 times.
+    const approvedByAssociate = new Map<string, { count: number; minutes: number }>();
     for (const entryId of parsed.data.entryIds) {
       try {
-        await approveOneEntry(user, entryId, req);
+        const done = await approveOneEntry(user, entryId, req);
+        if (done) {
+          const agg = approvedByAssociate.get(done.associateId) ?? { count: 0, minutes: 0 };
+          agg.count += 1;
+          agg.minutes += done.minutes;
+          approvedByAssociate.set(done.associateId, agg);
+        }
         results.push({ entryId, ok: true, errorCode: null, errorMessage: null });
         succeeded++;
       } catch (err) {
@@ -1289,6 +1349,14 @@ timeRouter.post('/admin/bulk-approve', MANAGE, async (req, res, next) => {
         results.push({ entryId, ok: false, errorCode, errorMessage });
         failed++;
       }
+    }
+    for (const [associateId, agg] of approvedByAssociate) {
+      void notifyAssociate(associateId, {
+        subject: 'Hours approved',
+        body: `${agg.count} time ${agg.count === 1 ? 'entry' : 'entries'} approved — ${(agg.minutes / 60).toFixed(1)}h total.`,
+        category: 'time_entry',
+        linkUrl: '/time-attendance',
+      });
     }
     const response: BulkTimeResponse = { succeeded, failed, results };
     res.status(200).json(response);
@@ -1308,9 +1376,16 @@ timeRouter.post('/admin/bulk-reject', MANAGE, async (req, res, next) => {
     const results: BulkTimeResultRow[] = [];
     let succeeded = 0;
     let failed = 0;
+    const rejectedByAssociate = new Map<string, number>();
     for (const entryId of entryIds) {
       try {
-        await rejectOneEntry(user, entryId, reason, req);
+        const done = await rejectOneEntry(user, entryId, reason, req);
+        if (done) {
+          rejectedByAssociate.set(
+            done.associateId,
+            (rejectedByAssociate.get(done.associateId) ?? 0) + 1,
+          );
+        }
         results.push({ entryId, ok: true, errorCode: null, errorMessage: null });
         succeeded++;
       } catch (err) {
@@ -1319,6 +1394,14 @@ timeRouter.post('/admin/bulk-reject', MANAGE, async (req, res, next) => {
         results.push({ entryId, ok: false, errorCode, errorMessage });
         failed++;
       }
+    }
+    for (const [associateId, count] of rejectedByAssociate) {
+      void notifyAssociate(associateId, {
+        subject: 'Time entries rejected',
+        body: `${count} time ${count === 1 ? 'entry was' : 'entries were'} rejected: "${reason}". Talk to your manager if this looks wrong.`,
+        category: 'time_entry',
+        linkUrl: '/time-attendance',
+      });
     }
     const response: BulkTimeResponse = { succeeded, failed, results };
     res.status(200).json(response);

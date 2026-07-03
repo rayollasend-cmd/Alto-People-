@@ -1000,6 +1000,7 @@ export const TimeEntrySchema = z.object({
    *  compare actual vs scheduled without another fetch. */
   shiftId: UuidSchema.nullable().optional(),
   shiftStartsAt: z.string().datetime().nullable().optional(),
+  shiftEndsAt: z.string().datetime().nullable().optional(),
   shiftPosition: z.string().nullable().optional(),
 });
 export type TimeEntry = z.infer<typeof TimeEntrySchema>;

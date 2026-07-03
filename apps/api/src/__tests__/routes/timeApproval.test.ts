@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../app.js';
 import { signSession } from '../../lib/jwt.js';
+import { flushPendingNotifications } from '../../lib/notify.js';
 import {
   createAssociate,
   createClient,
@@ -60,6 +61,97 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await prisma.$disconnect();
+});
+
+describe('decision notifications', () => {
+  it('rejecting notifies the associate with the reason; approving notifies too', async () => {
+    const { associate, entry } = await setupCompletedShift();
+    // Give the associate an ACTIVE user so notifyAssociate has an inbox.
+    const { user: assocUser } = await createUser({
+      role: 'ASSOCIATE',
+      email: associate.email,
+      associateId: associate.id,
+    });
+    const cookie = await adminCookie();
+
+    const reject = await request(app())
+      .post(`/time/admin/entries/${entry.id}/reject`)
+      .set('Cookie', [cookie])
+      .send({ reason: 'duplicate punch' });
+    expect(reject.status).toBe(200);
+    await flushPendingNotifications();
+
+    const rejectNote = await prisma.notification.findFirst({
+      where: {
+        channel: 'IN_APP',
+        category: 'time_entry',
+        recipientUserId: assocUser.id,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(rejectNote).not.toBeNull();
+    expect(rejectNote?.subject).toBe('Time entry rejected');
+    expect(rejectNote?.body).toContain('duplicate punch');
+    expect(rejectNote?.linkUrl).toBe('/time-attendance');
+
+    const approve = await request(app())
+      .post(`/time/admin/entries/${entry.id}/approve`)
+      .set('Cookie', [cookie])
+      .send({});
+    expect(approve.status).toBe(200);
+    await flushPendingNotifications();
+
+    const approveNotes = await prisma.notification.findMany({
+      where: {
+        channel: 'IN_APP',
+        category: 'time_entry',
+        recipientUserId: assocUser.id,
+        subject: 'Hours approved',
+      },
+    });
+    expect(approveNotes).toHaveLength(1);
+    expect(approveNotes[0].body).toContain('8.0h');
+  });
+
+  it('bulk approve sends ONE summary per associate', async () => {
+    const { associate, entry } = await setupCompletedShift();
+    const clockInAt = new Date(Date.now() - 30 * HOUR);
+    const second = await prisma.timeEntry.create({
+      data: {
+        associateId: associate.id,
+        clientId: entry.clientId,
+        clockInAt,
+        clockOutAt: new Date(clockInAt.getTime() + 4 * HOUR),
+        status: 'COMPLETED',
+        anomalies: [],
+      },
+    });
+    const { user: assocUser } = await createUser({
+      role: 'ASSOCIATE',
+      email: associate.email,
+      associateId: associate.id,
+    });
+    const cookie = await adminCookie();
+
+    const res = await request(app())
+      .post('/time/admin/bulk-approve')
+      .set('Cookie', [cookie])
+      .send({ entryIds: [entry.id, second.id] });
+    expect(res.status).toBe(200);
+    expect(res.body.succeeded).toBe(2);
+    await flushPendingNotifications();
+
+    const notes = await prisma.notification.findMany({
+      where: {
+        channel: 'IN_APP',
+        category: 'time_entry',
+        recipientUserId: assocUser.id,
+      },
+    });
+    expect(notes).toHaveLength(1);
+    expect(notes[0].body).toContain('2 time entries approved');
+    expect(notes[0].body).toContain('12.0h');
+  });
 });
 
 describe('time approval ↔ sick-leave accrual lifecycle', () => {

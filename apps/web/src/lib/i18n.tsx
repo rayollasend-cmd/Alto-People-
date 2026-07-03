@@ -154,6 +154,23 @@ const en = {
   'time.status.COMPLETED': 'Pending review',
   'time.status.APPROVED': 'Approved',
   'time.status.REJECTED': 'Rejected',
+  'time.lastWeek': 'Last week',
+  'time.last14': 'Last 14 days',
+  'time.rangeAria': 'Quick date ranges',
+  'time.weekOf': 'Week of {date}',
+  'time.weekOvertime': 'includes {hours} overtime',
+  'time.scheduled': 'Scheduled {range}',
+  'time.grossEstimate': '≈ {amount} gross (approved)',
+  'time.grossDisclaimer':
+    'Estimate before taxes and deductions — not a pay statement.',
+  'time.reportIssue': 'Report an issue',
+  'time.reportIssueDesc':
+    "Tell HR what looks wrong with this entry. The date and punch times are attached automatically, and you can track the case under HR cases.",
+  'time.whatsWrong': 'What looks wrong?',
+  'time.reportPlaceholder': 'e.g. I clocked out at 5:00, not 4:30',
+  'time.send': 'Send to HR',
+  'time.reportSent': 'Sent — HR will follow up.',
+  'time.reportFailed': 'Could not send',
 
   // Time off — associate view
   'timeoff.title': 'Time off',
@@ -395,6 +412,23 @@ const es: Record<MessageKey, string> = {
   'time.status.COMPLETED': 'Por revisar',
   'time.status.APPROVED': 'Aprobado',
   'time.status.REJECTED': 'Rechazado',
+  'time.lastWeek': 'Semana pasada',
+  'time.last14': 'Últimos 14 días',
+  'time.rangeAria': 'Rangos rápidos de fechas',
+  'time.weekOf': 'Semana del {date}',
+  'time.weekOvertime': 'incluye {hours} extra',
+  'time.scheduled': 'Programado {range}',
+  'time.grossEstimate': '≈ {amount} bruto (aprobado)',
+  'time.grossDisclaimer':
+    'Estimación antes de impuestos y deducciones — no es un comprobante de pago.',
+  'time.reportIssue': 'Reportar un problema',
+  'time.reportIssueDesc':
+    'Cuéntale a RR. HH. qué está mal con este registro. La fecha y las horas se adjuntan automáticamente, y puedes seguir el caso en Casos de RR. HH.',
+  'time.whatsWrong': '¿Qué está mal?',
+  'time.reportPlaceholder': 'p. ej. Marqué salida a las 5:00, no a las 4:30',
+  'time.send': 'Enviar a RR. HH.',
+  'time.reportSent': 'Enviado — RR. HH. te responderá.',
+  'time.reportFailed': 'No se pudo enviar',
 
   'timeoff.title': 'Ausencias',
   'timeoff.subtitle': 'Envía una solicitud, consulta tu saldo y sigue las aprobaciones.',

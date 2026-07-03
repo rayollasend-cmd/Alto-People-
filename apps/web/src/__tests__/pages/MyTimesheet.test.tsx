@@ -6,6 +6,9 @@ import type { TimeEntry } from '@alto-people/shared';
 vi.mock('@/lib/timeApi', () => ({
   listMyTimeEntries: vi.fn(),
 }));
+vi.mock('@/lib/hrCases123Api', () => ({
+  fileCase: vi.fn(),
+}));
 
 import { listMyTimeEntries } from '@/lib/timeApi';
 import { MyTimesheet } from '@/pages/time/MyTimesheet';
@@ -20,6 +23,7 @@ const entryFixture = (over: Partial<TimeEntry>): TimeEntry =>
     clockInAt: '2026-07-01T13:02:00.000Z',
     clockOutAt: '2026-07-01T21:04:00.000Z',
     status: 'APPROVED',
+    payRate: 20,
     notes: null,
     rejectionReason: null,
     approvedById: null,
@@ -80,9 +84,14 @@ describe('<MyTimesheet>', () => {
     // Pending row.
     expect(screen.getByText('4.0h')).toBeInTheDocument();
     expect(screen.getByText('Pending review')).toBeInTheDocument();
-    // Range totals.
+    // Range totals + gross estimate (7.53h × $20 ≈ $151).
     expect(screen.getByText('7.5h approved')).toBeInTheDocument();
     expect(screen.getByText('4.0h pending review')).toBeInTheDocument();
+    expect(screen.getByText(/≈ \$151 gross/)).toBeInTheDocument();
+    // Weekly grouping header (both entries share the same local week).
+    expect(screen.getByText(/Week of /)).toBeInTheDocument();
+    // Each row offers the dispute entry point.
+    expect(screen.getAllByRole('button', { name: /report an issue/i })).toHaveLength(2);
   });
 
   it('renders the empty state when there are no punches', async () => {
