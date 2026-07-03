@@ -39,7 +39,11 @@ export function EmptyState({
           <Icon className="h-6 w-6 text-silver" aria-hidden="true" />
         </div>
       )}
-      <h3 className="font-display text-xl text-white mb-1">{title}</h3>
+      {/* h2, not h3: EmptyState sits directly under the page's h1 in
+          practice, and an h1 → h3 jump trips axe's heading-order rule.
+          Skipped entirely when callers pass an empty title (e.g. the
+          Expirations buckets) — an empty <h2> trips axe's empty-heading. */}
+      {title && <h2 className="font-display text-xl text-white mb-1">{title}</h2>}
       {description && (
         <p className="text-sm text-silver max-w-sm">{description}</p>
       )}

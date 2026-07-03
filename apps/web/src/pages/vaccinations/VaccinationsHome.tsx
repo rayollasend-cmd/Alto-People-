@@ -129,6 +129,7 @@ export function VaccinationsHome() {
           <div className="flex gap-2">
             <Select
               size="sm"
+              aria-label="Filter by kind"
               value={filterKind}
               onChange={(e) =>
                 setFilterKind(e.target.value as VaccinationKind | 'ALL')

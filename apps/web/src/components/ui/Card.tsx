@@ -45,7 +45,10 @@ export const CardTitle = React.forwardRef<
   HTMLHeadingElement,
   React.HTMLAttributes<HTMLHeadingElement>
 >(({ className, ...props }, ref) => (
-  <h3
+  // h2, not h3: card titles sit directly under the page's h1 in practice
+  // (same reasoning as EmptyState) — an h1 → h3 jump trips axe's
+  // heading-order rule. Styling is class-driven, so this is visual-noop.
+  <h2
     ref={ref}
     className={cn('font-display text-xl text-white leading-tight', className)}
     {...props}

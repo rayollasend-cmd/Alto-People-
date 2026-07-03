@@ -131,6 +131,7 @@ export function HotlineAdmin() {
       <div className="flex justify-end">
         <Select
           size="sm"
+          aria-label="Filter by status"
           value={statusFilter}
           onChange={(e) =>
             setStatusFilter(e.target.value as ReportStatus | 'ALL')

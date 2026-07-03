@@ -77,8 +77,14 @@ export function PayRulesHome() {
       />
       <Card>
         <CardContent className="p-4 flex items-center gap-3 flex-wrap">
-          <span className="text-[11px] uppercase tracking-wider text-silver">Client</span>
+          <label
+            htmlFor="payrules-client"
+            className="text-[11px] uppercase tracking-wider text-silver"
+          >
+            Client
+          </label>
           <Select
+            id="payrules-client"
             size="sm"
             value={clientId}
             onChange={(e) => setClientId(e.target.value)}

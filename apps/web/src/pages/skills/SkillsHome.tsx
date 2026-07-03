@@ -100,8 +100,9 @@ function SearchTab() {
         <CardContent className="space-y-3">
           <div className="flex gap-3 items-end">
             <div className="flex-1">
-              <Label>Skill</Label>
+              <Label htmlFor="skills-search-query">Skill</Label>
               <Input
+                id="skills-search-query"
                 className="mt-1"
                 placeholder="Python, forklift, Spanish…"
                 value={q}
@@ -110,8 +111,9 @@ function SearchTab() {
               />
             </div>
             <div>
-              <Label>Min level</Label>
+              <Label htmlFor="skills-search-min-level">Min level</Label>
               <Select
+                id="skills-search-min-level"
                 className="mt-1"
                 value={minLevel}
                 onChange={(e) => setMinLevel(e.target.value as SkillLevel | '')}
