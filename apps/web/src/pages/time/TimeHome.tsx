@@ -4,6 +4,7 @@ import { useI18n } from '@/lib/i18n';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { AssociateTimeView } from './AssociateTimeView';
 import { AdminTimeView } from './AdminTimeView';
+import { MyTimesheet } from './MyTimesheet';
 
 export function TimeHome() {
   const { user, can } = useAuth();
@@ -60,6 +61,10 @@ function AssociateKioskOnlyView() {
           {t('time.kioskBody')}
         </p>
       </div>
+      {/* The receipt side: every kiosk punch with in/out times, net
+          hours, and review status — the page the dashboard's
+          "My timesheet" quick link promises. */}
+      <MyTimesheet />
     </div>
   );
 }

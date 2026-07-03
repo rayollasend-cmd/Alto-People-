@@ -41,6 +41,8 @@ const en = {
   'common.search': 'Search…',
   'common.language': 'Language',
   'common.undo': 'Undo',
+  'common.from': 'From',
+  'common.to': 'To',
   'nav.pinned': 'Pinned',
 
   // Associate dashboard
@@ -137,6 +139,21 @@ const en = {
   'time.kioskHeading': 'Use the time-clock tablet at your worksite',
   'time.kioskBody':
     "Hourly associates clock in and out using the kiosk tablet installed at your site, not from a personal phone. Tap your 4-digit PIN, take the selfie, and you're punched in. Ask your manager if you don't know your PIN yet.",
+  'time.myTimesheet': 'My timesheet',
+  'time.myTimesheetDesc':
+    'Every kiosk punch with your hours and approval status.',
+  'time.approvedTotal': '{hours} approved',
+  'time.pendingTotal': '{hours} pending review',
+  'time.stillOn': 'still on the clock',
+  'time.breakMinutes': '{minutes}m break',
+  'time.noEntries': 'No punches in this range',
+  'time.noEntriesDesc':
+    'Punches from the worksite kiosk will show up here the moment you clock in.',
+  'time.loadFailed': 'Could not load your timesheet.',
+  'time.status.ACTIVE': 'On the clock',
+  'time.status.COMPLETED': 'Pending review',
+  'time.status.APPROVED': 'Approved',
+  'time.status.REJECTED': 'Rejected',
 
   // Time off — associate view
   'timeoff.title': 'Time off',
@@ -267,6 +284,8 @@ const es: Record<MessageKey, string> = {
   'common.search': 'Buscar…',
   'common.language': 'Idioma',
   'common.undo': 'Deshacer',
+  'common.from': 'Desde',
+  'common.to': 'Hasta',
   'nav.pinned': 'Fijados',
 
   'dash.greeting': 'Hola {name} 👋',
@@ -361,6 +380,21 @@ const es: Record<MessageKey, string> = {
   'time.kioskHeading': 'Usa la tableta de marcaje en tu sitio de trabajo',
   'time.kioskBody':
     'Los asociados por hora marcan entrada y salida en la tableta del quiosco instalada en su sitio, no desde un teléfono personal. Ingresa tu PIN de 4 dígitos, tómate la selfie y quedas registrado. Pregunta a tu gerente si aún no conoces tu PIN.',
+  'time.myTimesheet': 'Mi hoja de horas',
+  'time.myTimesheetDesc':
+    'Cada marcaje del quiosco con tus horas y su estado de aprobación.',
+  'time.approvedTotal': '{hours} aprobadas',
+  'time.pendingTotal': '{hours} por revisar',
+  'time.stillOn': 'aún en turno',
+  'time.breakMinutes': '{minutes}m de descanso',
+  'time.noEntries': 'No hay marcajes en este rango',
+  'time.noEntriesDesc':
+    'Los marcajes del quiosco de tu sitio aparecerán aquí en cuanto marques entrada.',
+  'time.loadFailed': 'No se pudo cargar tu hoja de horas.',
+  'time.status.ACTIVE': 'En turno',
+  'time.status.COMPLETED': 'Por revisar',
+  'time.status.APPROVED': 'Aprobado',
+  'time.status.REJECTED': 'Rechazado',
 
   'timeoff.title': 'Ausencias',
   'timeoff.subtitle': 'Envía una solicitud, consulta tu saldo y sigue las aprobaciones.',
