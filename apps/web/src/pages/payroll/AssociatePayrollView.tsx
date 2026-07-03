@@ -5,7 +5,8 @@
 // the page. Associates can also download their own paystub as a PDF —
 // the backend authorizes the item owner on GET /payroll/items/:id/paystub.pdf.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { PayrollItem, PayrollItemEarning } from '@alto-people/shared';
 import { downloadMyPaystub, listMyPayrollItems } from '@/lib/payrollApi';
@@ -50,22 +51,41 @@ function statusBadge(status: PayrollItem['status']): { labelKey: MessageKey; cls
   }
 }
 
+/**
+ * 403/404 are fully expected for accounts without payroll records and
+ * render as a genuine empty state (null data); anything else rethrows so
+ * the query errors. Mirrors the dashboard's emptyOnExpectedDenial — the
+ * ['me','payrollItems'] key is SHARED with the dashboard's paystub card,
+ * so both queryFns must produce the same cached shape.
+ */
+async function emptyOnExpectedDenial<T>(p: Promise<T>): Promise<T | null> {
+  try {
+    return await p;
+  } catch (err) {
+    if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
+      return null;
+    }
+    throw err;
+  }
+}
+
 export function AssociatePayrollView() {
   const { t } = useI18n();
-  const [items, setItems] = useState<PayrollItem[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await listMyPayrollItems();
-        setItems(res.items);
-      } catch (err) {
-        setError(err instanceof ApiError ? err.message : t('pay.loadFailed'));
-      }
-    })();
-  }, [t]);
+  const payQuery = useQuery({
+    queryKey: ['me', 'payrollItems'],
+    queryFn: () => emptyOnExpectedDenial(listMyPayrollItems()),
+  });
+
+  // undefined → still loading (skeleton); null (expected denial) → empty state.
+  const items: PayrollItem[] | null =
+    payQuery.data === undefined ? null : (payQuery.data?.items ?? []);
+  const error = payQuery.error
+    ? payQuery.error instanceof ApiError
+      ? payQuery.error.message
+      : t('pay.loadFailed')
+    : null;
 
   const toggle = (id: string) => {
     setExpanded((prev) => {

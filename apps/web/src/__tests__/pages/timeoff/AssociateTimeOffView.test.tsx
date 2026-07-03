@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Capability } from '@alto-people/shared';
 import { AuthContext } from '@/lib/auth';
 
@@ -21,6 +22,14 @@ import {
 import { AssociateTimeOffView } from '@/pages/timeoff/AssociateTimeOffView';
 
 function renderView() {
+  // Fresh client per render so cached lists never leak between tests;
+  // retry off so mocked failures surface immediately.
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
   const value = {
     isInitializing: false,
     isOffline: false,
@@ -39,11 +48,13 @@ function renderView() {
     can: () => false,
   };
   return render(
-    <AuthContext.Provider value={value}>
-      <MemoryRouter>
-        <AssociateTimeOffView />
-      </MemoryRouter>
-    </AuthContext.Provider>
+    <QueryClientProvider client={queryClient}>
+      <AuthContext.Provider value={value}>
+        <MemoryRouter>
+          <AssociateTimeOffView />
+        </MemoryRouter>
+      </AuthContext.Provider>
+    </QueryClientProvider>
   );
 }
 

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Sparkles, X } from 'lucide-react';
+import { useAuth } from '@/lib/auth';
 import { Button } from '@/components/ui/Button';
 
 /**
@@ -13,10 +14,18 @@ import { Button } from '@/components/ui/Button';
 
 const SEEN_KEY = 'alto.whatsnew.seen.v1';
 
+interface ChangelogBullet {
+  text: string;
+  /** Only shown to users who can manage scheduling — an associate on a
+   *  phone has no sidebar to hover or ⌘K to press, and reading about
+   *  admin features they can't touch is noise, not news. */
+  adminOnly?: boolean;
+}
+
 interface ChangelogEntry {
   id: string;
   title: string;
-  bullets: string[];
+  bullets: ChangelogBullet[];
 }
 
 const CHANGELOG: ChangelogEntry[] = [
@@ -24,10 +33,22 @@ const CHANGELOG: ChangelogEntry[] = [
     id: '2026-07-02',
     title: 'New this week',
     bullets: [
-      'Pin your most-used pages — hover a sidebar item and tap the star.',
-      'Press ⌘K to search people and clients, not just pages.',
-      'Approvals now show a live count badge and update instantly.',
-      'La aplicación ahora habla español — cámbialo en el menú.',
+      {
+        text: 'Pin your most-used pages — hover a sidebar item and tap the star.',
+        adminOnly: true,
+      },
+      {
+        text: 'Press ⌘K to search people and clients, not just pages.',
+        adminOnly: true,
+      },
+      {
+        text: 'Approvals now show a live count badge and update instantly.',
+        adminOnly: true,
+      },
+      {
+        text: "You'll get “Your week ahead” the evening before your work week starts.",
+      },
+      { text: 'La aplicación ahora habla español — cámbialo en el menú.' },
     ],
   },
 ];
@@ -44,8 +65,13 @@ function latestUnseen(): ChangelogEntry | null {
 }
 
 export function WhatsNew() {
+  const { can } = useAuth();
   const [entry, setEntry] = useState<ChangelogEntry | null>(() => latestUnseen());
   if (!entry) return null;
+
+  const isAdmin = can('manage:scheduling');
+  const bullets = entry.bullets.filter((b) => isAdmin || !b.adminOnly);
+  if (bullets.length === 0) return null;
 
   const dismiss = () => {
     try {
@@ -78,12 +104,12 @@ export function WhatsNew() {
         </Button>
       </div>
       <ul className="mt-2 space-y-1.5 text-sm text-silver">
-        {entry.bullets.map((b) => (
-          <li key={b} className="flex gap-2">
+        {bullets.map((b) => (
+          <li key={b.text} className="flex gap-2">
             <span className="text-gold" aria-hidden="true">
               ·
             </span>
-            <span>{b}</span>
+            <span>{b.text}</span>
           </li>
         ))}
       </ul>

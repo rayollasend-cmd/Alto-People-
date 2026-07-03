@@ -359,9 +359,16 @@ export function fmtRelativeDayTz(
   timeZone?: string | null,
   now: number = Date.now(),
 ): string {
+  // Date FORMATTING stays en-US app-wide, but "Today"/"Tomorrow" are our
+  // own words and read badly inside otherwise-Spanish sentences. The
+  // I18nProvider keeps <html lang> current, so this non-React helper can
+  // localize the two words without threading a lang param everywhere.
+  const es =
+    typeof document !== 'undefined' && document.documentElement.lang === 'es';
   const key = zonedDayKey(value, timeZone);
-  if (key === zonedDayKey(new Date(now), timeZone)) return 'Today';
-  if (key === zonedDayKey(new Date(now + 86_400_000), timeZone)) return 'Tomorrow';
+  if (key === zonedDayKey(new Date(now), timeZone)) return es ? 'Hoy' : 'Today';
+  if (key === zonedDayKey(new Date(now + 86_400_000), timeZone))
+    return es ? 'Mañana' : 'Tomorrow';
   return `${fmtWeekdayTz(value, timeZone)}, ${fmtDateTz(value, timeZone)}`;
 }
 

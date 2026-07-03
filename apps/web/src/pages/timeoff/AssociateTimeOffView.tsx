@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarOff, Plus, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
   TimeOffBalance,
   TimeOffCategory,
   TimeOffRequest,
+  TimeOffRequestListResponse,
 } from '@alto-people/shared';
 import {
   cancelMyRequest,
@@ -60,44 +62,85 @@ function fmtDate(iso: string): string {
   return `${m}/${d}/${y.slice(2)}`;
 }
 
+// The balance key is SHARED with the dashboard's time-off card
+// (AssociateDashboard uses the same ['me','timeOffBalance'] key), so a
+// visit to either page primes the cache for the other. The cached shape
+// must therefore stay `response | null` on both sides.
+const BALANCE_KEY = ['me', 'timeOffBalance'] as const;
+const REQUESTS_KEY = ['me', 'timeOffRequests'] as const;
+
+/**
+ * Caller isn't an associate — a fully expected 403 that renders as an
+ * empty state (null data), never an error toast. Anything else rethrows
+ * so the query errors and the load-failed toast fires.
+ */
+async function emptyOnForbidden<T>(p: Promise<T>): Promise<T | null> {
+  try {
+    return await p;
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 403) return null;
+    throw err;
+  }
+}
+
 export function AssociateTimeOffView() {
   const { t } = useI18n();
-  const [balances, setBalances] = useState<TimeOffBalance[] | null>(null);
-  const [requests, setRequests] = useState<TimeOffRequest[] | null>(null);
+  const queryClient = useQueryClient();
   const [openCreate, setOpenCreate] = useState(false);
 
-  const refresh = useCallback(async () => {
-    try {
-      const [bal, reqs] = await Promise.all([getMyBalance(), listMyRequests()]);
-      setBalances(bal.balances);
-      setRequests(reqs.requests);
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 403) {
-        // Caller isn't an associate — render empty state instead of an error.
-        setBalances([]);
-        setRequests([]);
-        return;
-      }
+  const balancesQuery = useQuery({
+    queryKey: BALANCE_KEY,
+    queryFn: () => emptyOnForbidden(getMyBalance()),
+  });
+  const requestsQuery = useQuery({
+    queryKey: REQUESTS_KEY,
+    queryFn: () => emptyOnForbidden(listMyRequests()),
+  });
+
+  // undefined → still loading (skeleton); null (403) → honest empty state.
+  const balances: TimeOffBalance[] | null =
+    balancesQuery.data === undefined
+      ? null
+      : (balancesQuery.data?.balances ?? []);
+  const requests: TimeOffRequest[] | null =
+    requestsQuery.data === undefined
+      ? null
+      : (requestsQuery.data?.requests ?? []);
+
+  const loadError = balancesQuery.error ?? requestsQuery.error;
+  useEffect(() => {
+    if (loadError) {
       toast.error(t('timeoff.loadFailed'), {
-        description: err instanceof Error ? err.message : String(err),
+        description: loadError instanceof Error ? loadError.message : String(loadError),
       });
     }
-  }, [t]);
+  }, [loadError, t]);
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: BALANCE_KEY });
+    queryClient.invalidateQueries({ queryKey: REQUESTS_KEY });
+  };
 
   const onCancel = (id: string) => {
     // Gmail-style undo: flip the row to Withdrawn immediately, commit to
     // the server only after the 5s undo window — no confirm dialog, no
-    // lost requests from a mis-tap.
-    const before = requests;
-    setRequests(
+    // lost requests from a mis-tap. The optimistic flip lives in the query
+    // cache (snapshot/restore) so it survives this component unmounting
+    // during the undo window.
+    const before = queryClient.getQueryData<TimeOffRequestListResponse | null>(
+      REQUESTS_KEY,
+    );
+    queryClient.setQueryData<TimeOffRequestListResponse | null>(
+      REQUESTS_KEY,
       (prev) =>
-        prev?.map((r) =>
-          r.id === id ? { ...r, status: 'CANCELLED' as const } : r,
-        ) ?? prev,
+        prev
+          ? {
+              ...prev,
+              requests: prev.requests.map((r) =>
+                r.id === id ? { ...r, status: 'CANCELLED' as const } : r,
+              ),
+            }
+          : prev,
     );
     performWithUndo({
       message: t('timeoff.withdrawnToast'),
@@ -106,7 +149,7 @@ export function AssociateTimeOffView() {
         await cancelMyRequest(id);
         refresh();
       },
-      onUndo: () => setRequests(before),
+      onUndo: () => queryClient.setQueryData(REQUESTS_KEY, before),
       commitFailedMessage: t('timeoff.cancelFailed'),
     });
   };

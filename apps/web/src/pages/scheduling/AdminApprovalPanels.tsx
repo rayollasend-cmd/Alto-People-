@@ -1,9 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
-import type {
-  AdminOpenShiftClaim,
-  Shift,
-  ShiftSwapRequest,
-} from '@alto-people/shared';
+import { useEffect, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { ShiftSwapRequest } from '@alto-people/shared';
 import {
   approveOpenShiftClaim,
   listAdminSwaps,
@@ -44,34 +41,45 @@ const SWAP_STATUS_VARIANT: Record<
   CANCELLED: 'default',
 };
 
+const SWAPS_KEY = ['approvals', 'swaps'] as const;
+
 export function AdminSwapsPanel() {
-  const [items, setItems] = useState<ShiftSwapRequest[] | null>(null);
+  const queryClient = useQueryClient();
   const [pendingId, setPendingId] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    try {
-      const res = await listAdminSwaps({ status: 'PEER_ACCEPTED' });
-      setItems(res.requests);
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to load swaps.');
-    }
-  }, []);
+  const swapsQuery = useQuery({
+    queryKey: SWAPS_KEY,
+    queryFn: () => listAdminSwaps({ status: 'PEER_ACCEPTED' }),
+  });
+  const items = swapsQuery.data?.requests ?? null;
 
+  const loadError = swapsQuery.error;
   useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  const wrap = async (id: string, fn: () => Promise<unknown>, successMsg: string) => {
-    setPendingId(id);
-    try {
-      await fn();
-      toast.success(successMsg);
-      await refresh();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Action failed.');
-    } finally {
-      setPendingId(null);
+    if (loadError) {
+      toast.error(loadError instanceof ApiError ? loadError.message : 'Failed to load swaps.');
     }
+  }, [loadError]);
+
+  const decideMutation = useMutation({
+    mutationFn: (vars: { id: string; fn: () => Promise<unknown>; successMsg: string }) =>
+      vars.fn(),
+    onSuccess: (_res, { successMsg }) => {
+      toast.success(successMsg);
+      // Returned so the row's pending state holds until the refetched
+      // list lands — same ordering as the old await-refresh wrap().
+      return queryClient.invalidateQueries({ queryKey: SWAPS_KEY });
+    },
+    onError: (err) => {
+      toast.error(err instanceof ApiError ? err.message : 'Action failed.');
+    },
+  });
+
+  const wrap = (id: string, fn: () => Promise<unknown>, successMsg: string) => {
+    setPendingId(id);
+    decideMutation.mutate(
+      { id, fn, successMsg },
+      { onSettled: () => setPendingId(null) },
+    );
   };
 
   return (
@@ -153,36 +161,47 @@ export function AdminSwapsPanel() {
 
 /* ===== Open-shift pickup requests panel ================================== */
 
+const PICKUPS_KEY = ['approvals', 'pickups'] as const;
+
 export function AdminPickupPanel() {
-  const [items, setItems] = useState<AdminOpenShiftClaim[] | null>(null);
+  const queryClient = useQueryClient();
   const [pendingId, setPendingId] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    try {
-      const res = await listOpenShiftClaims();
-      setItems(res.claims);
-    } catch (err) {
+  const pickupsQuery = useQuery({
+    queryKey: PICKUPS_KEY,
+    queryFn: () => listOpenShiftClaims(),
+  });
+  const items = pickupsQuery.data?.claims ?? null;
+
+  const loadError = pickupsQuery.error;
+  useEffect(() => {
+    if (loadError) {
       toast.error(
-        err instanceof ApiError ? err.message : 'Failed to load pickup requests.',
+        loadError instanceof ApiError ? loadError.message : 'Failed to load pickup requests.',
       );
     }
-  }, []);
+  }, [loadError]);
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  const wrap = async (id: string, fn: () => Promise<unknown>, successMsg: string) => {
-    setPendingId(id);
-    try {
-      await fn();
+  const decideMutation = useMutation({
+    mutationFn: (vars: { id: string; fn: () => Promise<unknown>; successMsg: string }) =>
+      vars.fn(),
+    onSuccess: (_res, { successMsg }) => {
       toast.success(successMsg);
-      await refresh();
-    } catch (err) {
+      // Returned so the row's pending state holds until the refetched
+      // list lands — same ordering as the old await-refresh wrap().
+      return queryClient.invalidateQueries({ queryKey: PICKUPS_KEY });
+    },
+    onError: (err) => {
       toast.error(err instanceof ApiError ? err.message : 'Action failed.');
-    } finally {
-      setPendingId(null);
-    }
+    },
+  });
+
+  const wrap = (id: string, fn: () => Promise<unknown>, successMsg: string) => {
+    setPendingId(id);
+    decideMutation.mutate(
+      { id, fn, successMsg },
+      { onSettled: () => setPendingId(null) },
+    );
   };
 
   return (
@@ -259,12 +278,12 @@ export function AdminPickupPanel() {
  * NOT tapped "I'll be there". Hidden entirely when everyone confirmed —
  * this panel exists to chase silence, not to celebrate compliance.
  */
-export function AdminUnconfirmedPanel() {
-  const [items, setItems] = useState<Shift[] | null>(null);
+const UNCONFIRMED_KEY = ['approvals', 'unconfirmed'] as const;
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
+export function AdminUnconfirmedPanel() {
+  const unconfirmedQuery = useQuery({
+    queryKey: UNCONFIRMED_KEY,
+    queryFn: async () => {
       try {
         const now = new Date();
         const to = new Date(now.getTime() + 48 * 3_600_000);
@@ -273,17 +292,14 @@ export function AdminUnconfirmedPanel() {
           from: now.toISOString(),
           to: to.toISOString(),
         });
-        if (!cancelled) {
-          setItems(res.shifts.filter((s) => s.publishedAt && !s.acknowledgedAt));
-        }
+        return res.shifts.filter((s) => s.publishedAt && !s.acknowledgedAt);
       } catch {
-        if (!cancelled) setItems([]);
+        // Best-effort chase list — a load failure just hides the panel.
+        return [];
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    },
+  });
+  const items = unconfirmedQuery.data ?? null;
 
   if (!items || items.length === 0) return null;
 
