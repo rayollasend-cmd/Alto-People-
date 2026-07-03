@@ -59,6 +59,51 @@ async function seedWorld(): Promise<SeededWorld> {
   return { client, associate, application, hrUser, associateUser };
 }
 
+describe('GET /onboarding/applications — invited-date window', () => {
+  it('filters by invitedFrom / invitedTo ([from, to))', async () => {
+    const client = await createClient();
+    const mk = async (email: string, invitedAt: Date) => {
+      const associate = await createAssociate({ email });
+      const app_ = (await createApplicationWithChecklist({
+        associateId: associate.id,
+        clientId: client.id,
+      })) as { id: string };
+      await prisma.application.update({
+        where: { id: app_.id },
+        data: { invitedAt },
+      });
+      return app_.id;
+    };
+    const todayId = await mk('today@example.com', new Date('2026-07-02T15:00:00.000Z'));
+    const yesterdayId = await mk('yesterday@example.com', new Date('2026-07-01T15:00:00.000Z'));
+    await mk('lastmonth@example.com', new Date('2026-06-01T15:00:00.000Z'));
+
+    const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(user.email);
+
+    // "Today" (from midnight, no upper bound).
+    const today = await a.get(
+      '/onboarding/applications?invitedFrom=2026-07-02T00:00:00.000Z',
+    );
+    expect(today.status).toBe(200);
+    expect(today.body.applications.map((x: { id: string }) => x.id)).toEqual([todayId]);
+
+    // "Yesterday" — [from, to) excludes today's invite.
+    const yesterday = await a.get(
+      '/onboarding/applications?invitedFrom=2026-07-01T00:00:00.000Z&invitedTo=2026-07-02T00:00:00.000Z',
+    );
+    expect(yesterday.body.applications.map((x: { id: string }) => x.id)).toEqual([
+      yesterdayId,
+    ]);
+    expect(yesterday.body.total).toBe(1);
+
+    // Garbage dates are ignored, not 500s.
+    const junk = await a.get('/onboarding/applications?invitedFrom=not-a-date');
+    expect(junk.status).toBe(200);
+    expect(junk.body.total).toBe(3);
+  });
+});
+
 describe('POST /onboarding/applications (HR creates)', () => {
   it('HR_ADMINISTRATOR creates an application from a template', async () => {
     const client = await createClient();

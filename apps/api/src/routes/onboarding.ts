@@ -445,10 +445,29 @@ onboardingRouter.get('/applications', async (req, res, next) => {
       };
     }
 
+    // Invited-date window ("show me who we invited today / this week").
+    // Client sends ISO instants computed from ITS local midnight, so the
+    // buckets match the admin's wall clock, not the server's.
+    const parseInstant = (v: unknown): Date | null => {
+      if (typeof v !== 'string' || !v) return null;
+      const d = new Date(v);
+      return Number.isNaN(d.getTime()) ? null : d;
+    };
+    const invitedFrom = parseInstant(req.query.invitedFrom);
+    const invitedTo = parseInstant(req.query.invitedTo);
+
     const where: Prisma.ApplicationWhereInput = {
       ...scopeApplications(req.user!),
       ...statusWhere,
       ...(clientId ? { clientId } : {}),
+      ...(invitedFrom || invitedTo
+        ? {
+            invitedAt: {
+              ...(invitedFrom ? { gte: invitedFrom } : {}),
+              ...(invitedTo ? { lt: invitedTo } : {}),
+            },
+          }
+        : {}),
       ...(q
         ? {
             associate: {

@@ -116,6 +116,63 @@ const STATUS_FILTERS: Array<{ value: StatusFilter; label: string }> = [
   { value: 'ARCHIVED', label: 'Archived' },
 ];
 
+// "Show me who we invited today / this week" — relative presets, safe to
+// persist (unlike absolute dates, TODAY recomputes every day).
+type InvitedWindow = 'ALL' | 'TODAY' | 'YESTERDAY' | 'LAST7' | 'LAST30';
+
+const INVITED_WINDOWS: Array<{ value: InvitedWindow; label: string }> = [
+  { value: 'ALL', label: 'Any time' },
+  { value: 'TODAY', label: 'Today' },
+  { value: 'YESTERDAY', label: 'Yesterday' },
+  { value: 'LAST7', label: 'Last 7 days' },
+  { value: 'LAST30', label: 'Last 30 days' },
+];
+
+const isInvitedWindow = (v: unknown): v is InvitedWindow =>
+  typeof v === 'string' && INVITED_WINDOWS.some((w) => w.value === v);
+
+/** [from, to) instants for a preset, anchored to the ADMIN's local
+ *  midnights so "Today" means their today, not the server's. */
+function invitedRange(w: InvitedWindow): { invitedFrom?: string; invitedTo?: string } {
+  if (w === 'ALL') return {};
+  const startOfDay = (offsetDays: number): Date => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + offsetDays);
+    return d;
+  };
+  switch (w) {
+    case 'TODAY':
+      return { invitedFrom: startOfDay(0).toISOString() };
+    case 'YESTERDAY':
+      return {
+        invitedFrom: startOfDay(-1).toISOString(),
+        invitedTo: startOfDay(0).toISOString(),
+      };
+    case 'LAST7':
+      // 7 calendar days including today.
+      return { invitedFrom: startOfDay(-6).toISOString() };
+    case 'LAST30':
+      return { invitedFrom: startOfDay(-29).toISOString() };
+  }
+}
+
+/** "Today" / "Yesterday" / "3d ago" — CALENDAR days (local midnights),
+ *  so a 11pm invite reads "Yesterday" the next morning, not "Today". */
+function invitedLabel(iso: string, now: number): string {
+  const localMidnight = (t: number): number => {
+    const d = new Date(t);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  };
+  const days = Math.round(
+    (localMidnight(now) - localMidnight(new Date(iso).getTime())) / ONE_DAY_MS,
+  );
+  if (days <= 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  return `${days}d ago`;
+}
+
 // Every value setStatus can be handed — the chip row plus the legacy /
 // programmatic values ('ALL' via "Clear filters", raw statuses via banners
 // and bookmarks). Guards both the persisted value and URL junk.
@@ -260,9 +317,25 @@ export function ApplicationsList() {
   // Phase 72 — table / cards view toggle, persisted per-user.
   const [view, setView] = useViewMode<ApplicationsView>('applications', 'table', VIEW_OPTIONS);
 
+  // Invited-date window chips ("who did we invite today?"). Persisted:
+  // relative presets recompute daily, so they can't go stale the way an
+  // absolute date range would.
+  const [invitedWindow, setInvitedWindow] = usePersistentState<InvitedWindow>(
+    'alto:list.applications.invited.v1',
+    'ALL',
+    isInvitedWindow,
+  );
+
   const refresh = useCallback(() => {
     setError(null);
-    listApplications({ status, q: urlQ, clientId: clientId || undefined, page, pageSize: PAGE_SIZE })
+    listApplications({
+      status,
+      q: urlQ,
+      clientId: clientId || undefined,
+      ...invitedRange(invitedWindow),
+      page,
+      pageSize: PAGE_SIZE,
+    })
       .then((res) => {
         setItems(res.applications);
         setFilteredTotal(res.total);
@@ -270,7 +343,7 @@ export function ApplicationsList() {
       .catch((err) =>
         setError(err instanceof ApiError ? err.message : 'Failed to load.')
       );
-  }, [status, urlQ, clientId, page]);
+  }, [status, urlQ, clientId, invitedWindow, page]);
 
   // Roll-up stats for KPIs / banners / chip counts. Tiny payload (counts +
   // up to ~6 sample rows) regardless of how many applications exist.
@@ -284,7 +357,7 @@ export function ApplicationsList() {
   // pointing at nothing after the user narrows results.
   useEffect(() => {
     setPage(1);
-  }, [status, urlQ, clientId]);
+  }, [status, urlQ, clientId, invitedWindow]);
 
   useEffect(() => {
     refresh();
@@ -681,6 +754,33 @@ export function ApplicationsList() {
               );
             })}
           </div>
+          <div
+            className="flex flex-wrap items-center gap-1.5"
+            role="group"
+            aria-label="Filter by invite date"
+          >
+            <span className="text-[10px] uppercase tracking-widest text-silver/70">
+              Invited
+            </span>
+            {INVITED_WINDOWS.map((w) => {
+              const active = invitedWindow === w.value;
+              return (
+                <Button
+                  key={w.value}
+                  size="xs"
+                  variant="outline"
+                  onClick={() => setInvitedWindow(w.value)}
+                  aria-pressed={active}
+                  className={cn(
+                    active &&
+                      'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold',
+                  )}
+                >
+                  {w.label}
+                </Button>
+              );
+            })}
+          </div>
           <span className="ml-auto text-[10px] text-silver/80 tabular-nums">
             {items ? `${items.length} shown` : ''}
           </span>
@@ -913,8 +1013,16 @@ export function ApplicationsList() {
                     <TableCell className="hidden lg:table-cell text-silver">
                       {TRACK_LABEL[a.onboardingTrack] ?? a.onboardingTrack}
                     </TableCell>
-                    <TableCell className="hidden md:table-cell text-xs text-silver tabular-nums">
-                      {daysSince(a.invitedAt, now)}d ago
+                    <TableCell className="hidden md:table-cell text-xs tabular-nums">
+                      <span
+                        className={cn(
+                          invitedLabel(a.invitedAt, now) === 'Today'
+                            ? 'text-gold font-medium'
+                            : 'text-silver',
+                        )}
+                      >
+                        {invitedLabel(a.invitedAt, now)}
+                      </span>
                     </TableCell>
                     <TableCell>
                       <Badge

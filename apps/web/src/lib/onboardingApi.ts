@@ -41,6 +41,9 @@ export interface ListApplicationsFilters {
   q?: string;
   /** Scope the result set to a single client. */
   clientId?: string;
+  /** Invited-date window (ISO instants, [from, to) — see the route). */
+  invitedFrom?: string;
+  invitedTo?: string;
   page?: number;
   pageSize?: number;
 }
@@ -52,6 +55,8 @@ export function listApplications(
   if (filters.status && filters.status !== 'ALL') p.set('status', filters.status);
   if (filters.q && filters.q.trim()) p.set('q', filters.q.trim());
   if (filters.clientId && filters.clientId.trim()) p.set('clientId', filters.clientId.trim());
+  if (filters.invitedFrom) p.set('invitedFrom', filters.invitedFrom);
+  if (filters.invitedTo) p.set('invitedTo', filters.invitedTo);
   if (filters.page && filters.page > 1) p.set('page', String(filters.page));
   if (filters.pageSize) p.set('pageSize', String(filters.pageSize));
   const qs = p.toString();
