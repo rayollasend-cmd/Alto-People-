@@ -220,6 +220,7 @@ clientsRouter.patch('/:id', MANAGE, async (req, res, next) => {
     if (parsed.data.industry !== undefined) data.industry = parsed.data.industry;
     if (parsed.data.status !== undefined) data.status = parsed.data.status;
     if (parsed.data.contactEmail !== undefined) data.contactEmail = parsed.data.contactEmail;
+    if (parsed.data.weekStartsOn !== undefined) data.weekStartsOn = parsed.data.weekStartsOn;
     if (Object.keys(data).length === 0) {
       res.json(toSummary(existing));
       return;
@@ -479,6 +480,7 @@ function toSummary(row: {
   status: 'ACTIVE' | 'INACTIVE' | 'PROSPECT';
   contactEmail: string | null;
   state: string | null;
+  weekStartsOn: number;
 }): ClientSummary {
   return {
     id: row.id,
@@ -487,6 +489,7 @@ function toSummary(row: {
     status: row.status,
     contactEmail: row.contactEmail,
     state: row.state,
+    weekStartsOn: row.weekStartsOn,
   };
 }
 

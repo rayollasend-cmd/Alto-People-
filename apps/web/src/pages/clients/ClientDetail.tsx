@@ -33,6 +33,17 @@ import { QuickbooksSection } from './QuickbooksSection';
 
 const STATUSES: ClientStatus[] = ['PROSPECT', 'ACTIVE', 'INACTIVE'];
 
+// Index = the 0=Sunday…6=Saturday convention Client.weekStartsOn uses.
+const WEEKDAY_NAMES: string[] = [
+  'Sunday',
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+];
+
 // Two-letter US state codes that have either OT/break rules in Phase 23
 // or predictive scheduling in Phase 25. The select doubles as a shortcut
 // for the states the engine actually does something with.
@@ -159,6 +170,7 @@ function BasicsEditor({
   const [industry, setIndustry] = useState(client.industry ?? '');
   const [status, setStatus] = useState<ClientStatus>(client.status);
   const [contactEmail, setContactEmail] = useState(client.contactEmail ?? '');
+  const [weekStartsOn, setWeekStartsOn] = useState(client.weekStartsOn ?? 0);
   const [saving, setSaving] = useState(false);
 
   // Re-sync local state when the parent reloads the client (e.g. after a
@@ -168,13 +180,15 @@ function BasicsEditor({
     setIndustry(client.industry ?? '');
     setStatus(client.status);
     setContactEmail(client.contactEmail ?? '');
-  }, [client.name, client.industry, client.status, client.contactEmail]);
+    setWeekStartsOn(client.weekStartsOn ?? 0);
+  }, [client.name, client.industry, client.status, client.contactEmail, client.weekStartsOn]);
 
   const dirty =
     name.trim() !== client.name ||
     (industry.trim() || null) !== (client.industry || null) ||
     status !== client.status ||
-    (contactEmail.trim() || null) !== (client.contactEmail || null);
+    (contactEmail.trim() || null) !== (client.contactEmail || null) ||
+    weekStartsOn !== (client.weekStartsOn ?? 0);
 
   const submit = async () => {
     const trimmed = name.trim();
@@ -189,6 +203,7 @@ function BasicsEditor({
         industry: industry.trim() || null,
         status,
         contactEmail: contactEmail.trim() || null,
+        weekStartsOn,
       });
       onSaved(updated);
       toast.success('Client saved.');
@@ -265,6 +280,25 @@ function BasicsEditor({
                 disabled={!canManage}
                 {...p}
               />
+            )}
+          </Field>
+          <Field
+            label="Week starts on"
+            hint="This client's scheduling week. Associates get their week-ahead digest the evening before."
+          >
+            {(p) => (
+              <Select
+                disabled={!canManage}
+                value={String(weekStartsOn)}
+                onChange={(e) => setWeekStartsOn(Number(e.target.value))}
+                {...p}
+              >
+                {WEEKDAY_NAMES.map((label, i) => (
+                  <option key={label} value={String(i)}>
+                    {label}
+                  </option>
+                ))}
+              </Select>
             )}
           </Field>
         </div>

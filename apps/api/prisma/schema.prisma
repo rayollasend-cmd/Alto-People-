@@ -467,6 +467,11 @@ model Client {
   industry     String?
   status       ClientStatus @default(ACTIVE)
   contactEmail String?
+  // This client's scheduling week start, 0=Sunday … 6=Saturday. Some
+  // clients run Sun–Sat weeks, others Wed–Tue; drives the associate
+  // week-ahead digest (sent the evening before this day) and future
+  // per-client week math.
+  weekStartsOn Int          @default(0)
   // Gap 1 — Employer identity used on tax forms (W-2, 941, 1099-NEC).
   // legalName is the IRS-registered name shown on the W-2 employer block;
   // it can differ from `name` (the brand / display name). ein is the EIN

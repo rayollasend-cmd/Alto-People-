@@ -131,6 +131,14 @@ const EnvSchema = z.object({
   // Local hour (0-23, deployment timezone) after which the daily digest
   // may send. Default 6 → admins have it before the first shift.
   SCHEDULE_DIGEST_HOUR: z.coerce.number().int().min(0).max(23).default(6),
+  // Associate week-ahead digest: the evening before each CLIENT's week
+  // start (Client.weekStartsOn — some clients run Sun–Sat weeks, others
+  // Wed–Tue), every associate scheduled that week gets their shift list.
+  // Sweep cadence in seconds; 0 (default) disables. Production: 1800.
+  WEEK_AHEAD_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(0),
+  // Local hour (deployment timezone) after which the "evening before"
+  // send may fire. Default 17 (5 PM).
+  WEEK_AHEAD_SEND_HOUR: z.coerce.number().int().min(0).max(23).default(17),
   // Kiosk maintenance cron: auto-closes forgotten clock-outs and purges
   // selfies past their retention window. 0 (default) disables; production
   // should set 3600 (hourly). Thresholds (18h forgotten-shift, 90d selfie

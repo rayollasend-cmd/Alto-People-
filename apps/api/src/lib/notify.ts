@@ -75,7 +75,12 @@ function bucketForRawCategory(raw: string | undefined): NotificationCategory | n
   if (raw === 'probation') return 'probation';
   if (raw === 'documents') return 'documents';
   if (raw === 'time-off') return 'time_off';
-  if (raw === 'scheduling' || raw === 'schedule_digest' || raw.startsWith('shift_'))
+  if (
+    raw === 'scheduling' ||
+    raw === 'schedule_digest' ||
+    raw === 'week_ahead' ||
+    raw.startsWith('shift_')
+  )
     return 'scheduling';
   if (raw.startsWith('swap_')) return 'shift_swaps';
   if (raw.startsWith('onboarding')) return 'onboarding';

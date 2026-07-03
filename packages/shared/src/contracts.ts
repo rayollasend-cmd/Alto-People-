@@ -74,6 +74,10 @@ export const ClientSummarySchema = z.object({
   // Two-letter USPS code; drives Phase 23 OT/break policy and Phase 25
   // predictive-scheduling enforcement. Null = federal default.
   state: z.string().length(2).nullable(),
+  /** This client's scheduling week start, 0=Sunday … 6=Saturday. Drives
+   *  the associate week-ahead digest (sent the evening before) and any
+   *  future per-client week math. Optional for old clients of the API. */
+  weekStartsOn: z.number().int().min(0).max(6).optional(),
 });
 export type ClientSummary = z.infer<typeof ClientSummarySchema>;
 
@@ -123,6 +127,7 @@ export const ClientUpdateInputSchema = z.object({
   industry: z.string().trim().max(80).nullable().optional(),
   status: ClientStatusSchema.optional(),
   contactEmail: z.string().trim().email().max(254).nullable().optional(),
+  weekStartsOn: z.number().int().min(0).max(6).optional(),
 });
 export type ClientUpdateInput = z.infer<typeof ClientUpdateInputSchema>;
 
