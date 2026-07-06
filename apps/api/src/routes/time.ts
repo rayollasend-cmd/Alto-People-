@@ -1054,9 +1054,14 @@ timeRouter.post('/admin/entries', MANAGE, async (req, res, next) => {
   }
 });
 
-// Edit an entry before it's approved: fix clock times, re-tag a job, attach
-// notes, or clock an associate out (supply clockOutAt on an ACTIVE entry →
-// it becomes COMPLETED). Blocked once APPROVED — reject it first.
+// Edit an entry: fix clock times, re-tag a job, attach notes, or clock an
+// associate out (supply clockOutAt on an ACTIVE entry → it becomes
+// COMPLETED). APPROVED entries are editable too — payroll corrections
+// surface days later ("the kiosk clock was wrong all Tuesday") and the
+// old reject→edit→re-approve dance left a misleading REJECTED event in
+// the audit trail. Editing an approved entry keeps it APPROVED, reverses
+// and re-accrues its sick leave from the corrected hours, and notifies
+// the associate (their approved pay basis just changed).
 timeRouter.patch('/admin/entries/:id', MANAGE, async (req, res, next) => {
   try {
     const user = req.user!;
@@ -1071,13 +1076,6 @@ timeRouter.patch('/admin/entries/:id', MANAGE, async (req, res, next) => {
     });
     if (!existing) {
       throw new HttpError(404, 'time_entry_not_found', 'Time entry not found');
-    }
-    if (existing.status === 'APPROVED') {
-      throw new HttpError(
-        409,
-        'already_approved',
-        'This entry is approved. Reject it first to change the times.',
-      );
     }
 
     const clockInAt = parsed.data.clockInAt
@@ -1105,6 +1103,18 @@ timeRouter.patch('/admin/entries/:id', MANAGE, async (req, res, next) => {
     // Supplying a clock-out on an ACTIVE entry = admin clocking them out.
     const becomingCompleted = existing.status === 'ACTIVE' && !!clockOutAt;
     const status = becomingCompleted ? 'COMPLETED' : existing.status;
+
+    // Approved-entry corrections: the hours changing means the posted
+    // sick-leave accrual is stale — pull it back out before the update
+    // and re-accrue from the corrected times after (same reverse/accrue
+    // cycle the reject→re-approve path uses, proven cycle-safe).
+    const timesChanged =
+      clockInAt.getTime() !== existing.clockInAt.getTime() ||
+      (clockOutAt?.getTime() ?? null) !== (existing.clockOutAt?.getTime() ?? null);
+    const approvedCorrection = existing.status === 'APPROVED' && timesChanged;
+    if (approvedCorrection) {
+      await reverseSickLeaveForEntry(prisma, existing.id);
+    }
 
     // Clocking out an ACTIVE entry must close any still-open break — same as
     // self clock-out. Otherwise the break stays open on a COMPLETED row and
@@ -1183,6 +1193,24 @@ timeRouter.patch('/admin/entries/:id', MANAGE, async (req, res, next) => {
       include: ENTRY_INCLUDE,
     });
 
+    // Re-post the accrual from the corrected hours, and tell the
+    // associate — an after-the-fact change to APPROVED hours moves
+    // their pay basis and must never be silent.
+    if (approvedCorrection) {
+      await accrueSickLeaveForEntry(prisma, updated.id);
+      const tz = DEFAULT_TIMEZONE;
+      const day = formatDateInZone(updated.clockInAt, tz);
+      const range = `${formatTimeInZone(updated.clockInAt, tz)}–${
+        updated.clockOutAt ? formatTimeInZone(updated.clockOutAt, tz) : '…'
+      }`;
+      void notifyAssociate(updated.associateId, {
+        subject: 'Approved hours adjusted',
+        body: `Your approved ${day} time entry was corrected by an admin — it now reads ${range} (${(netWorkedMinutes(updated, updated.breaks) / 60).toFixed(1)}h). Talk to your manager if this looks wrong.`,
+        category: 'time_entry',
+        linkUrl: '/time-attendance',
+      });
+    }
+
     await recordTimeEvent({
       actorUserId: user.id,
       action: becomingCompleted ? 'time.admin_clock_out' : 'time.admin_edited',
@@ -1194,6 +1222,7 @@ timeRouter.patch('/admin/entries/:id', MANAGE, async (req, res, next) => {
         fromStatus: existing.status,
         toStatus: status,
         editedFields: Object.keys(parsed.data),
+        ...(approvedCorrection ? { approvedCorrection: true } : {}),
       },
       req,
     });

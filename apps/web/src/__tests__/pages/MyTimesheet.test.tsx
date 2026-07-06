@@ -88,11 +88,12 @@ describe('<MyTimesheet>', () => {
     // Gross estimate stat (7.53h × $20 ≈ $151).
     expect(screen.getByText('≈ Est. gross')).toBeInTheDocument();
     expect(screen.getByText('$151')).toBeInTheDocument();
-    // Weekly grouping header (h3) — "This week" while the fixtures are
-    // fresh, "Week of …" once real time moves past their week. Role-
-    // scoped because a "This week" preset chip also exists.
+    // Weekly grouping header (h3) — the label depends on how far real
+    // time has moved past the fixed fixtures ("This week" → "Last week"
+    // → "Week of …"), so accept all three. Role-scoped because preset
+    // chips with the same words also exist.
     expect(
-      screen.getByRole('heading', { name: /This week|Week of / }),
+      screen.getByRole('heading', { name: /This week|Last week|Week of / }),
     ).toBeInTheDocument();
     // Each row offers the dispute entry point.
     expect(screen.getAllByRole('button', { name: /report an issue/i })).toHaveLength(2);

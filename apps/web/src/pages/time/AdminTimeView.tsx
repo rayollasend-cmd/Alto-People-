@@ -145,6 +145,64 @@ function LateChip({ entry }: { entry: TimeEntry }) {
   );
 }
 
+/**
+ * Header strip for the individual-timesheet focus: whose entries these
+ * are, their range totals by status, and the way out. The date range
+ * and status chips below keep working — this only pins the WHO.
+ */
+function FocusBanner({
+  name,
+  entries,
+  onClear,
+}: {
+  name: string;
+  entries: TimeEntry[] | null;
+  onClear: () => void;
+}) {
+  const list = entries ?? [];
+  const sum = (statuses: TimeEntry['status'][]) =>
+    list
+      .filter((e) => statuses.includes(e.status))
+      .reduce((s, e) => s + (e.netMinutes ?? e.minutesElapsed), 0);
+  const approvedMin = sum(['APPROVED']);
+  const pendingMin = sum(['COMPLETED', 'ACTIVE']);
+  const rejectedCount = list.filter((e) => e.status === 'REJECTED').length;
+  const fmtH = (m: number) => `${(m / 60).toFixed(1)}h`;
+
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-md border border-gold/40 bg-gold/5 px-3 py-2">
+      <Avatar name={name} size="sm" />
+      <div className="min-w-0">
+        <div className="text-sm text-white font-medium truncate">{name}</div>
+        <div className="text-[11px] text-silver/70">
+          Individual timesheet — date range and status filters still apply
+        </div>
+      </div>
+      <div className="ml-auto flex flex-wrap items-center gap-2 text-xs tabular-nums">
+        <span className="rounded-full border border-success/40 bg-success/10 px-2.5 py-1 text-success">
+          {fmtH(approvedMin)} approved
+        </span>
+        <span className="rounded-full border border-gold/40 bg-gold/10 px-2.5 py-1 text-gold">
+          {fmtH(pendingMin)} pending
+        </span>
+        {rejectedCount > 0 && (
+          <span className="rounded-full border border-alert/40 bg-alert/10 px-2.5 py-1 text-alert">
+            {rejectedCount} rejected
+          </span>
+        )}
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          onClick={onClear}
+          aria-label="Back to all associates"
+        >
+          <X className="h-4 w-4" aria-hidden="true" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // Inline anomaly chips for queue rows. Reviewers used to see flags only
 // after opening each row's drawer — bulk-approving meant approving
 // anomalies sight-unseen.
@@ -273,6 +331,21 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<TimeEntry | null>(null);
 
+  // Individual timesheet focus: click an associate's name in the queue to
+  // scope every filter to just their entries, with range totals up top.
+  // Session-only by design — a persisted person-filter is the classic
+  // "where did everyone go?" trap.
+  const [focusAssociate, setFocusAssociate] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
+
+  const focusOn = (e: TimeEntry) => {
+    setFocusAssociate({ id: e.associateId, name: e.associateName ?? '—' });
+    // Their full timesheet, not just the current status slice.
+    setFilter('ALL');
+  };
+
   const refresh = useCallback(async () => {
     try {
       setError(null);
@@ -281,6 +354,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
         from: ymdToIsoStart(fromYmd),
         to: ymdToIsoEndExclusive(toYmd),
         ...(appliedSearch ? { search: appliedSearch } : {}),
+        ...(focusAssociate ? { associateId: focusAssociate.id } : {}),
       });
       setEntries(res.entries);
       setTruncated(Boolean(res.truncated));
@@ -289,7 +363,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load.');
     }
-  }, [filter, fromYmd, toYmd, appliedSearch]);
+  }, [filter, fromYmd, toYmd, appliedSearch, focusAssociate]);
 
   const refreshActive = useCallback(async () => {
     try {
@@ -751,8 +825,17 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
       {tab === 'queue' && (
         <Card>
           <CardHeader className="pb-3 gap-3">
+            {focusAssociate && (
+              <FocusBanner
+                name={focusAssociate.name}
+                entries={entries}
+                onClear={() => setFocusAssociate(null)}
+              />
+            )}
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <CardTitle className="text-base">Time entries</CardTitle>
+              <CardTitle className="text-base">
+                {focusAssociate ? `${focusAssociate.name} — timesheet` : 'Time entries'}
+              </CardTitle>
               <div className="flex flex-wrap gap-2">
                 {STATUS_FILTERS.map((f) => (
                   <Button
@@ -1005,10 +1088,17 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                               </TableCell>
                             )}
                             <TableCell className="font-medium">
-                              <div className="flex items-center gap-2.5">
+                              <button
+                                type="button"
+                                onClick={() => focusOn(e)}
+                                title="View individual timesheet"
+                                className="flex items-center gap-2.5 rounded text-left hover:text-gold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                              >
                                 <Avatar name={e.associateName ?? '—'} size="sm" />
-                                <span>{e.associateName ?? '—'}</span>
-                              </div>
+                                <span className="underline-offset-2 hover:underline">
+                                  {e.associateName ?? '—'}
+                                </span>
+                              </button>
                             </TableCell>
                             <TableCell className="text-silver">{e.clientName ?? '—'}</TableCell>
                             <TableCell className="tabular-nums">
@@ -1176,6 +1266,14 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                                     Reject
                                   </Button>
                                 )}
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="ml-auto text-silver/70 hover:text-white"
+                                  onClick={() => focusOn(e)}
+                                >
+                                  Timesheet
+                                </Button>
                               </div>
                             )}
                         </div>
@@ -1288,8 +1386,11 @@ function TimeEntryDetailPanel({
     canManage && (entry.status === 'COMPLETED' || entry.status === 'REJECTED');
   const showReject =
     canManage && (entry.status === 'COMPLETED' || entry.status === 'APPROVED');
-  // Edit/clock-out is allowed any time before approval.
-  const showEdit = canManage && entry.status !== 'APPROVED';
+  // Edit/clock-out is allowed at ANY status — including APPROVED, for
+  // payroll corrections that surface days later. The API keeps the entry
+  // approved, re-runs the sick-leave accrual from the corrected hours,
+  // and notifies the associate.
+  const showEdit = canManage;
   return (
     <>
       <DrawerHeader>

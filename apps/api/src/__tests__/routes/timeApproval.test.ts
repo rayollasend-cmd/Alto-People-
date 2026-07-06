@@ -154,6 +154,82 @@ describe('decision notifications', () => {
   });
 });
 
+describe('editing an APPROVED entry (payroll correction)', () => {
+  it('keeps it approved, re-runs the accrual from corrected hours, and notifies', async () => {
+    const { associate, entry } = await setupCompletedShift();
+    const { user: assocUser } = await createUser({
+      role: 'ASSOCIATE',
+      email: associate.email,
+      associateId: associate.id,
+    });
+    const cookie = await adminCookie();
+
+    const approve = await request(app())
+      .post(`/time/admin/entries/${entry.id}/approve`)
+      .set('Cookie', [cookie])
+      .send({});
+    expect(approve.status).toBe(200);
+    // 8h approved → CA accrues 16 minutes.
+    expect(await sickBalance(associate.id)).toBe(16);
+
+    // Correction days later: the shift actually ran 14h (clock-out +6h).
+    const fixed = await request(app())
+      .patch(`/time/admin/entries/${entry.id}`)
+      .set('Cookie', [cookie])
+      .send({
+        clockOutAt: new Date(
+          new Date(approve.body.clockOutAt).getTime() + 6 * HOUR,
+        ).toISOString(),
+      });
+    expect(fixed.status).toBe(200);
+    expect(fixed.body.status).toBe('APPROVED'); // stays approved
+
+    // Accrual re-posted from 14h = 840 min → 28 minutes (not 16, not 44).
+    expect(await sickBalance(associate.id)).toBe(28);
+
+    await flushPendingNotifications();
+    const note = await prisma.notification.findFirst({
+      where: {
+        channel: 'IN_APP',
+        recipientUserId: assocUser.id,
+        subject: 'Approved hours adjusted',
+      },
+    });
+    expect(note).not.toBeNull();
+    expect(note?.body).toContain('14.0h');
+  });
+
+  it('a notes-only edit on an approved entry does not touch accrual or notify', async () => {
+    const { associate, entry } = await setupCompletedShift();
+    await createUser({
+      role: 'ASSOCIATE',
+      email: associate.email,
+      associateId: associate.id,
+    });
+    const cookie = await adminCookie();
+
+    await request(app())
+      .post(`/time/admin/entries/${entry.id}/approve`)
+      .set('Cookie', [cookie])
+      .send({});
+    expect(await sickBalance(associate.id)).toBe(16);
+
+    const res = await request(app())
+      .patch(`/time/admin/entries/${entry.id}`)
+      .set('Cookie', [cookie])
+      .send({ notes: 'covered register 4' });
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('APPROVED');
+    expect(await sickBalance(associate.id)).toBe(16);
+
+    await flushPendingNotifications();
+    const notes = await prisma.notification.count({
+      where: { channel: 'IN_APP', subject: 'Approved hours adjusted' },
+    });
+    expect(notes).toBe(0);
+  });
+});
+
 describe('time approval ↔ sick-leave accrual lifecycle', () => {
   it('approve credits, reject reverses, re-approve re-credits (cycle-safe)', async () => {
     const { associate, entry } = await setupCompletedShift();
