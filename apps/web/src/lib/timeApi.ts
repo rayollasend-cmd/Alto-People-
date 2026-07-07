@@ -10,6 +10,7 @@ import type {
   BulkTimeResponse,
   ClockInInputV2,
   ClockOutInputV2,
+  PayPeriodListResponse,
   TimeApproveInput,
   TimeEntry,
   TimeEntryListResponse,
@@ -101,6 +102,11 @@ export function countAdminTimeEntries(
 ): Promise<{ count: number }> {
   const qs = status ? `?status=${status}` : '';
   return apiFetch<{ count: number }>(`/time/admin/entries/count${qs}`);
+}
+
+/** Selectable pay-period windows (schedule cadence + actual run history). */
+export function listPayPeriods(): Promise<PayPeriodListResponse> {
+  return apiFetch<PayPeriodListResponse>('/time/admin/pay-periods');
 }
 
 export function listAdminTimeEntries(filters: {

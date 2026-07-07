@@ -9,6 +9,7 @@ import {
   BulkTimeRejectInputSchema,
   ClockInInputV2Schema,
   ClockOutInputV2Schema,
+  PayPeriodListResponseSchema,
   StartBreakInputSchema,
   TimeApproveInputSchema,
   TimeEntryListResponseSchema,
@@ -54,6 +55,7 @@ import {
 import { aggregatePayrollProjection } from '../lib/payrollAggregator.js';
 import { renderPayrollSheetPdf } from '../lib/payrollSheetPdf.js';
 import { renderPayrollSheetXlsx } from '../lib/payrollSheetXlsx.js';
+import { listPayPeriods } from '../lib/payPeriods.js';
 
 export const timeRouter = Router();
 
@@ -741,6 +743,17 @@ timeRouter.get('/admin/active', MANAGE, async (req, res, next) => {
 });
 
 /* ===== HR/Ops (/admin) =================================================== */
+
+// Selectable pay-period windows for the review picker — derived from the
+// active payroll schedule's cadence plus actual run history.
+timeRouter.get('/admin/pay-periods', MANAGE, async (_req, res, next) => {
+  try {
+    const periods = await listPayPeriods(prisma);
+    res.json(PayPeriodListResponseSchema.parse({ periods }));
+  } catch (err) {
+    next(err);
+  }
+});
 
 // Cheap COUNT for the "Pending review" KPI — the UI used to fetch up to
 // 500 full rows (serializer and all) just to read .length, and the KPI

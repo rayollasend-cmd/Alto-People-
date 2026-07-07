@@ -1895,6 +1895,24 @@ export const PayrollScheduleListResponseSchema = z.object({
 });
 export type PayrollScheduleListResponse = z.infer<typeof PayrollScheduleListResponseSchema>;
 
+/** One selectable pay-period window in the admin time review picker. */
+export const PayPeriodSchema = z.object({
+  /** YYYY-MM-DD, inclusive. */
+  start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  /** YYYY-MM-DD, inclusive. */
+  end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  /** True when today falls inside the period. */
+  current: z.boolean(),
+  /** True when a payroll run exists for exactly this window. */
+  hasRun: z.boolean(),
+});
+export type PayPeriod = z.infer<typeof PayPeriodSchema>;
+
+export const PayPeriodListResponseSchema = z.object({
+  periods: z.array(PayPeriodSchema),
+});
+export type PayPeriodListResponse = z.infer<typeof PayPeriodListResponseSchema>;
+
 export const PayrollScheduleCreateInputSchema = z.object({
   clientId: UuidSchema.nullable().optional(),
   name: z.string().min(1).max(120),

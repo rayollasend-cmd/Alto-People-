@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import type {
   ActiveDashboardEntry,
+  PayPeriod,
   TimeEntry,
   TimeEntryStatus,
 } from '@alto-people/shared';
@@ -33,6 +34,7 @@ import {
   exportTimeSummary,
   getActiveDashboard,
   listAdminTimeEntries,
+  listPayPeriods,
   rejectTimeEntry,
 } from '@/lib/timeApi';
 import { listDirectory } from '@/lib/directoryApi';
@@ -42,7 +44,7 @@ import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { timeAnomalyLabel } from '@/lib/timeLabels';
-import { fmtDateTime, fmtTime } from '@/lib/format';
+import { fmtDateTime, fmtDateTz, fmtTime } from '@/lib/format';
 import {
   Avatar,
   Badge,
@@ -169,6 +171,18 @@ function FocusBanner({
   const rejectedCount = list.filter((e) => e.status === 'REJECTED').length;
   const fmtH = (m: number) => `${(m / 60).toFixed(1)}h`;
 
+  // Weekly overtime across the loaded range: net minutes beyond 40h in any
+  // local Sunday-based week (same grouping the associate timesheet uses).
+  const byWeek = new Map<number, number>();
+  for (const e of list) {
+    if (e.status === 'REJECTED') continue;
+    const d = new Date(e.clockInAt);
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - d.getDay());
+    byWeek.set(d.getTime(), (byWeek.get(d.getTime()) ?? 0) + (e.netMinutes ?? e.minutesElapsed));
+  }
+  const otMin = [...byWeek.values()].reduce((s, m) => s + Math.max(0, m - 40 * 60), 0);
+
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-md border border-gold/40 bg-gold/5 px-3 py-2">
       <Avatar name={name} size="sm" />
@@ -185,6 +199,11 @@ function FocusBanner({
         <span className="rounded-full border border-gold/40 bg-gold/10 px-2.5 py-1 text-gold">
           {fmtH(pendingMin)} pending
         </span>
+        {otMin > 0 && (
+          <span className="rounded-full border border-warning/40 bg-warning/10 px-2.5 py-1 text-warning">
+            {fmtH(otMin)} OT
+          </span>
+        )}
         {rejectedCount > 0 && (
           <span className="rounded-full border border-alert/40 bg-alert/10 px-2.5 py-1 text-alert">
             {rejectedCount} rejected
@@ -243,6 +262,12 @@ function defaultToYmd(): string {
 
 function ymdToIsoStart(ymd: string): string {
   return new Date(`${ymd}T00:00:00`).toISOString();
+}
+
+// "Jun 22 – Jul 5" — compact label for a pay-period option. Bare YYYY-MM-DD
+// parses as UTC midnight, so format in UTC or the day shifts west of GMT.
+function periodLabel(p: PayPeriod): string {
+  return `${fmtDateTz(p.start, 'UTC')} – ${fmtDateTz(p.end, 'UTC')}`;
 }
 
 function ymdToIsoEndExclusive(ymd: string): string {
@@ -310,6 +335,10 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
   const [appliedSearch, setAppliedSearch] = useState('');
   const [fromYmd, setFromYmd] = useState<string>(defaultFromYmd());
   const [toYmd, setToYmd] = useState<string>(defaultToYmd());
+  // Pay-period picker: choosing a period drives From/To; hand-editing
+  // either date drops back to "Custom range" (stateful-chip pattern).
+  const [payPeriods, setPayPeriods] = useState<PayPeriod[] | null>(null);
+  const [periodKey, setPeriodKey] = useState('');
   // Triage lens: show only flagged entries (client-side over the loaded
   // window — same scope as everything else on this tab). Persisted — the
   // lit toggle button keeps the active lens obvious across visits.
@@ -408,6 +437,23 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     const id = setTimeout(() => setAppliedSearch(queueSearch.trim()), 300);
     return () => clearTimeout(id);
   }, [queueSearch]);
+
+  // Pay-period options load once; on failure the picker simply stays hidden
+  // and the manual From/To range keeps working.
+  useEffect(() => {
+    listPayPeriods()
+      .then((r) => setPayPeriods(r.periods))
+      .catch(() => setPayPeriods([]));
+  }, []);
+
+  const onPickPeriod = (key: string) => {
+    setPeriodKey(key);
+    if (!key) return; // back to custom range — keep current dates
+    const p = (payPeriods ?? []).find((x) => `${x.start}|${x.end}` === key);
+    if (!p) return;
+    setFromYmd(p.start);
+    setToYmd(p.end);
+  };
 
   // Auto-refresh the live tab every 30s while it's open.
   useEffect(() => {
@@ -859,6 +905,30 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
 
             {/* Phase 65 — date range + free-text search + export buttons. */}
             <div className="flex flex-wrap items-end gap-3">
+              {payPeriods !== null && payPeriods.length > 0 && (
+                <div>
+                  <label
+                    htmlFor="pay-period-picker"
+                    className="block text-[10px] uppercase tracking-wider text-silver mb-1"
+                  >
+                    Pay period
+                  </label>
+                  <Select
+                    id="pay-period-picker"
+                    value={periodKey}
+                    onChange={(e) => onPickPeriod(e.target.value)}
+                    className="h-9 text-sm w-52"
+                  >
+                    <option value="">Custom range</option>
+                    {payPeriods.map((p) => (
+                      <option key={`${p.start}|${p.end}`} value={`${p.start}|${p.end}`}>
+                        {periodLabel(p)}
+                        {p.current ? ' · current' : p.hasRun ? ' · paid' : ''}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              )}
               <div className="flex items-end gap-2">
                 <div>
                   <label className="block text-[10px] uppercase tracking-wider text-silver mb-1">
@@ -868,7 +938,10 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                     type="date"
                     value={fromYmd}
                     max={toYmd}
-                    onChange={(e) => setFromYmd(e.target.value || defaultFromYmd())}
+                    onChange={(e) => {
+                      setPeriodKey('');
+                      setFromYmd(e.target.value || defaultFromYmd());
+                    }}
                     className="h-9 text-sm w-40"
                   />
                 </div>
@@ -880,7 +953,10 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                     type="date"
                     value={toYmd}
                     min={fromYmd}
-                    onChange={(e) => setToYmd(e.target.value || defaultToYmd())}
+                    onChange={(e) => {
+                      setPeriodKey('');
+                      setToYmd(e.target.value || defaultToYmd());
+                    }}
                     className="h-9 text-sm w-40"
                   />
                 </div>
