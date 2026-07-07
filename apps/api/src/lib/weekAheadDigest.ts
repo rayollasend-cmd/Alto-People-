@@ -159,16 +159,20 @@ export async function runWeekAheadSweep(
     // sweeps can't double-send.
     const claimed = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`week_ahead:${u.id}`}, 0))`;
+      // Dedupe on sentAt (the sweep's injected `now`), not createdAt
+      // (DB wall time) — same-clock comparison, and fixed-date tests
+      // stay deterministic. See scheduleDigest for the same pattern.
       const last = await tx.notification.findFirst({
         where: {
           category: DIGEST_CATEGORY,
           channel: 'IN_APP',
           recipientUserId: u.id,
+          sentAt: { not: null },
         },
-        orderBy: { createdAt: 'desc' },
-        select: { createdAt: true },
+        orderBy: { sentAt: 'desc' },
+        select: { sentAt: true },
       });
-      if (last && dayKey(last.createdAt, tz) === todayKey) return false;
+      if (last?.sentAt && dayKey(last.sentAt, tz) === todayKey) return false;
       await tx.notification.create({
         data: {
           channel: 'IN_APP',

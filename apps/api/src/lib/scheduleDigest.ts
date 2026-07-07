@@ -183,12 +183,16 @@ export async function runScheduleDigestSweep(
   // sweep blocks on the lock, then sees today's rows and backs off.
   const claimed = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${DIGEST_CATEGORY}, 0))`;
+    // Dedupe on sentAt, NOT createdAt: sentAt carries the sweep's
+    // injected `now`, so the once-per-day check follows the same clock
+    // as the rest of the logic (createdAt is DB wall time, which made
+    // fixed-date tests rot the day after they were written).
     const last = await tx.notification.findFirst({
-      where: { category: DIGEST_CATEGORY, channel: 'IN_APP' },
-      orderBy: { createdAt: 'desc' },
-      select: { createdAt: true },
+      where: { category: DIGEST_CATEGORY, channel: 'IN_APP', sentAt: { not: null } },
+      orderBy: { sentAt: 'desc' },
+      select: { sentAt: true },
     });
-    if (last && dayKey(last.createdAt, tz) === todayKey) return false;
+    if (last?.sentAt && dayKey(last.sentAt, tz) === todayKey) return false;
     await tx.notification.createMany({
       data: recipients.map((u) => ({
         channel: 'IN_APP' as const,
