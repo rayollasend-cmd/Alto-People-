@@ -26,6 +26,7 @@ import {
   adminCreateTimeEntry,
   adminEditTimeEntry,
   approveTimeEntry,
+  bulkApplyBreakTimeEntries,
   bulkApproveTimeEntries,
   bulkRejectTimeEntries,
   countAdminTimeEntries,
@@ -524,6 +525,33 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
       await Promise.all([refresh(), refreshPendingCount()]);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Bulk approve failed.');
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  // Standard-break cleanup for NO_BREAK piles: book the 1h unpaid meal on
+  // every selected entry. The server skips entries that already have a
+  // meal break, are under 6h, or aren't pending review — so a reviewer
+  // can sweep-select and let the guardrails sort it out.
+  const onBulkApplyBreak = async () => {
+    if (selected.size === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    try {
+      const res = await bulkApplyBreakTimeEntries(Array.from(selected));
+      if (res.succeeded > 0) {
+        toast.success(
+          `1h meal break applied to ${res.succeeded} ${res.succeeded === 1 ? 'entry' : 'entries'}.`,
+        );
+      }
+      if (res.failed > 0) {
+        toast.warning(
+          `${res.failed} ${res.failed === 1 ? 'entry was' : 'entries were'} skipped (already has a break, under 6h, or not pending review).`,
+        );
+      }
+      await Promise.all([refresh(), refreshPendingCount()]);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Applying breaks failed.');
     } finally {
       setBulkBusy(false);
     }
@@ -1062,6 +1090,16 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                   disabled={bulkBusy}
                 >
                   Reject {selected.size}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={onBulkApplyBreak}
+                  disabled={bulkBusy}
+                  title="Book the standard 1-hour unpaid meal break, centered mid-shift, on each selected entry that has none (6h+ shifts only)"
+                >
+                  <Coffee className="h-4 w-4" />
+                  Apply 1h break
                 </Button>
                 <Button
                   size="sm"

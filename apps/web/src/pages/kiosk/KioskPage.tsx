@@ -50,6 +50,9 @@ const LOCATION_TTL_MS = 5 * 60 * 1000;
 
 // 'consent' — one-time face-verification consent, shown after the first
 // successful PIN entry when the associate has never been asked.
+// 'confirmOut' — the punch would clock this associate OUT: ask whether
+// they're leaving or just taking a break, so a forgotten break toggle
+// doesn't split the shift in two.
 // 'submitting' — brief interstitial for the PIN-only path (declined
 // consent), which skips the camera and goes straight to the punch.
 type Stage =
@@ -57,6 +60,7 @@ type Stage =
   | 'idle'
   | 'pin'
   | 'consent'
+  | 'confirmOut'
   | 'selfie'
   | 'submitting'
   | 'result'
@@ -110,6 +114,9 @@ interface KioskStrings {
   privacy: string;
   cameraUnavailable: string;
   continueWithoutSelfie: string;
+  confirmOutTitle: string;
+  confirmOutBreak: string;
+  confirmOutLeave: string;
   greet: Record<KioskPunchAction, string>;
   resultPrefix: Record<KioskPunchAction, string>;
   resultVerb: Record<KioskPunchAction, string>;
@@ -152,6 +159,9 @@ const STRINGS: Record<Lang, KioskStrings> = {
     privacy: 'Your photo is used only to verify this time punch.',
     cameraUnavailable: 'Camera unavailable',
     continueWithoutSelfie: 'Continue without selfie',
+    confirmOutTitle: 'Done for the day,',
+    confirmOutBreak: '☕ Just taking a break',
+    confirmOutLeave: 'Leaving — clock me out',
     greet: {
       CLOCK_IN: 'Clocking you in',
       CLOCK_OUT: 'Clocking you out',
@@ -207,6 +217,9 @@ const STRINGS: Record<Lang, KioskStrings> = {
     privacy: 'Tu foto se usa solo para verificar esta marcación.',
     cameraUnavailable: 'Cámara no disponible',
     continueWithoutSelfie: 'Continuar sin foto',
+    confirmOutTitle: '¿Terminaste por hoy,',
+    confirmOutBreak: '☕ Solo voy a descansar',
+    confirmOutLeave: 'Me voy — marcar salida',
     greet: {
       CLOCK_IN: 'Marcando tu entrada',
       CLOCK_OUT: 'Marcando tu salida',
@@ -512,7 +525,7 @@ export function KioskPage() {
   // timers; the selfie screen self-advances in ~1s.
   const ABANDONED_AFTER_MS = 60_000;
   useEffect(() => {
-    if (stage !== 'pin' && stage !== 'consent') return;
+    if (stage !== 'pin' && stage !== 'consent' && stage !== 'confirmOut') return;
     const t = window.setTimeout(reset, ABANDONED_AFTER_MS);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only
@@ -582,11 +595,15 @@ export function KioskPage() {
     }
   };
 
-  const submit = async (selfieData: string | null) => {
+  // `intentOverride` exists for same-tick callers (the confirmOut screen
+  // routes straight into a PIN-only submit before React has re-rendered
+  // with the new `intent` state); everyone else relies on state.
+  const submit = async (selfieData: string | null, intentOverride?: Intent) => {
     if (!token) {
       setStage('setup');
       return;
     }
+    const effIntent = intentOverride === undefined ? intent : intentOverride;
     const idempotencyKey = newIdempotencyKey();
     const capturedAt = new Date().toISOString();
     const loc = await tryGetLocation();
@@ -603,7 +620,7 @@ export function KioskPage() {
       faceDescriptor: null,
       idempotencyKey,
       clientPunchedAt: capturedAt,
-      intent,
+      intent: effIntent,
     };
     try {
       const r = await kioskPunch(payload);
@@ -670,7 +687,7 @@ export function KioskPage() {
         latitude: loc?.lat ?? null,
         longitude: loc?.lng ?? null,
         capturedAt,
-        intent,
+        intent: effIntent,
       });
       setQueued(queueSize());
       // Optimistic display — we don't actually know CLOCK_IN vs CLOCK_OUT
@@ -683,6 +700,24 @@ export function KioskPage() {
       });
       setStage('result');
       scheduleReset(4000);
+    }
+  };
+
+  // Route by consent: never asked → one-time consent screen; declined →
+  // PIN-only, no camera; granted → selfie as usual. `intentOverride`
+  // rides along for the PIN-only path, which submits in this same tick
+  // (before a setIntent has re-rendered).
+  const routeByConsent = (
+    consent: FaceConsentStatus | null,
+    intentOverride?: Intent,
+  ) => {
+    if (consent === null) {
+      setStage('consent');
+    } else if (consent === 'DECLINED') {
+      setStage('submitting');
+      void submit(null, intentOverride);
+    } else {
+      setStage('selfie');
     }
   };
 
@@ -791,16 +826,14 @@ export function KioskPage() {
                 predictedAction: v.predictedAction,
                 faceConsent: v.faceConsent,
               });
-              // Route by consent: never asked → one-time consent
-              // screen; declined → PIN-only, no camera; granted →
-              // selfie as usual.
-              if (v.faceConsent === null) {
-                setStage('consent');
-              } else if (v.faceConsent === 'DECLINED') {
-                setStage('submitting');
-                void submit(null);
+              // A punch that would clock them OUT gets one question
+              // first: leaving, or just on break? Most mid-shift
+              // clock-outs are a forgotten break toggle, and answering
+              // here keeps the shift in one piece.
+              if (v.predictedAction === 'CLOCK_OUT') {
+                setStage('confirmOut');
               } else {
-                setStage('selfie');
+                routeByConsent(v.faceConsent);
               }
             } catch (err) {
               if (err instanceof ApiError && err.status >= 400 && err.status < 500) {
@@ -876,6 +909,41 @@ export function KioskPage() {
           }}
           onCancel={reset}
         />
+      )}
+      {stage === 'confirmOut' && preflight && (
+        <div className="flex flex-col items-center max-w-lg px-6 text-center">
+          <div className="text-3xl text-white mb-8">
+            {t.confirmOutTitle}{' '}
+            <span className="text-gold-bright">{preflight.firstName}</span>?
+          </div>
+          <button
+            onClick={() => {
+              // "Just a break" — same outcome as the break toggle they
+              // forgot: the punch carries intent=BREAK and the entry
+              // stays open. Greeting flips to match.
+              setIntent('BREAK');
+              setPreflight((p) =>
+                p ? { ...p, predictedAction: 'BREAK_START' } : p,
+              );
+              routeByConsent(preflight.faceConsent, 'BREAK');
+            }}
+            className="w-full min-h-[56px] bg-gold hover:bg-gold-bright text-navy rounded-xl py-4 text-xl font-medium transition-colors"
+          >
+            {t.confirmOutBreak}
+          </button>
+          <button
+            onClick={() => routeByConsent(preflight.faceConsent, null)}
+            className="w-full min-h-[56px] mt-3 bg-navy-secondary hover:bg-navy-secondary/70 text-white rounded-xl py-4 text-xl transition-colors"
+          >
+            {t.confirmOutLeave}
+          </button>
+          <button
+            onClick={reset}
+            className="mt-6 min-h-[44px] px-6 text-silver text-base hover:text-white transition"
+          >
+            {t.cancel}
+          </button>
+        </div>
       )}
       {stage === 'selfie' && (
         <SelfieCapture

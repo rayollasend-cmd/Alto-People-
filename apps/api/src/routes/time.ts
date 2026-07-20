@@ -27,7 +27,9 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopeTimeEntries } from '../lib/scope.js';
+import { z } from 'zod';
 import { recordTimeEvent } from '../lib/audit.js';
+import { recomputeEntryAnomalies } from '../lib/recomputeEntryAnomalies.js';
 import { checkGeofence } from '../lib/geo.js';
 import { resolveAssociateGeofence } from '../lib/geofenceForAssociate.js';
 import { matchShiftForPunch } from '../lib/matchShiftForPunch.js';
@@ -1444,6 +1446,92 @@ timeRouter.post('/admin/bulk-reject', MANAGE, async (req, res, next) => {
         category: 'time_entry',
         linkUrl: '/time-attendance',
       });
+    }
+    const response: BulkTimeResponse = { succeeded, failed, results };
+    res.status(200).json(response);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Bulk standard-break application =================================== */
+
+// Most associates never punch their meal break, so 6h+ shifts pile up in
+// review flagged NO_BREAK. This lets a reviewer select those entries and
+// book the site's standard unpaid meal — 1 hour, centered mid-shift — in
+// one action. Deliberately an explicit reviewer action, never automatic:
+// hours are docked only when a human chose to.
+const APPLIED_BREAK_MINUTES = 60;
+// Only shifts long enough that the NO_BREAK flag fires (6h) qualify;
+// docking an hour from a short shift is a payroll error, not a cleanup.
+const APPLY_BREAK_MIN_SHIFT_HOURS = 6;
+
+const BulkApplyBreakSchema = z.object({
+  entryIds: z.array(z.string().uuid()).min(1).max(500),
+});
+
+timeRouter.post('/admin/bulk-apply-break', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = BulkApplyBreakSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const user = req.user!;
+    const results: BulkTimeResultRow[] = [];
+    let succeeded = 0;
+    let failed = 0;
+    for (const entryId of parsed.data.entryIds) {
+      try {
+        const entry = await prisma.timeEntry.findFirst({
+          where: { id: entryId, ...scopeTimeEntries(user) },
+          include: { breaks: true },
+        });
+        if (!entry) {
+          throw new HttpError(404, 'not_found', 'Entry not found.');
+        }
+        // COMPLETED only — the break changes paid hours, so it must land
+        // before approval, never rewrite an approved (or rejected) entry.
+        if (entry.status !== 'COMPLETED' || !entry.clockOutAt) {
+          throw new HttpError(409, 'not_pending', 'Only completed entries awaiting review can take a standard break.');
+        }
+        if (entry.breaks.some((b) => b.type === 'MEAL')) {
+          throw new HttpError(409, 'already_has_break', 'Entry already has a meal break.');
+        }
+        const grossMin =
+          (entry.clockOutAt.getTime() - entry.clockInAt.getTime()) / 60_000;
+        if (grossMin < APPLY_BREAK_MIN_SHIFT_HOURS * 60) {
+          throw new HttpError(409, 'shift_too_short', `Shift under ${APPLY_BREAK_MIN_SHIFT_HOURS}h — no standard break to deduct.`);
+        }
+        const midMs =
+          (entry.clockInAt.getTime() + entry.clockOutAt.getTime()) / 2;
+        const halfBreakMs = (APPLIED_BREAK_MINUTES / 2) * 60_000;
+        await prisma.breakEntry.create({
+          data: {
+            timeEntryId: entry.id,
+            type: 'MEAL',
+            startedAt: new Date(midMs - halfBreakMs),
+            endedAt: new Date(midMs + halfBreakMs),
+          },
+        });
+        // Break changes net minutes → NO_BREAK clears, OT flags may move.
+        await recomputeEntryAnomalies(prisma, entry.id);
+        await recordTimeEvent({
+          actorUserId: user.id,
+          action: 'time.break_applied',
+          timeEntryId: entry.id,
+          associateId: entry.associateId,
+          clientId: entry.clientId,
+          metadata: { minutes: APPLIED_BREAK_MINUTES, standard: true },
+          req,
+        });
+        results.push({ entryId, ok: true, errorCode: null, errorMessage: null });
+        succeeded++;
+      } catch (err) {
+        const errorCode = err instanceof HttpError ? err.code : 'apply_break_failed';
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        results.push({ entryId, ok: false, errorCode, errorMessage });
+        failed++;
+      }
     }
     const response: BulkTimeResponse = { succeeded, failed, results };
     res.status(200).json(response);

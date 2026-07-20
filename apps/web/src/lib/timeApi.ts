@@ -188,6 +188,18 @@ export function bulkRejectTimeEntries(
   });
 }
 
+/** Book the standard unpaid 1-hour meal break, centered mid-shift, on each
+ *  selected COMPLETED entry that has none — the reviewer's answer to a
+ *  NO_BREAK flag when the crew skipped their break punches. */
+export function bulkApplyBreakTimeEntries(
+  entryIds: string[]
+): Promise<BulkTimeResponse> {
+  return apiFetch<BulkTimeResponse>('/time/admin/bulk-apply-break', {
+    method: 'POST',
+    body: { entryIds },
+  });
+}
+
 /**
  * Phase 65 — POSTs to a streaming export route, gets back a Blob, and
  * triggers a browser download via a synthetic <a download>. We can't use
