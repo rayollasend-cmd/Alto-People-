@@ -23,9 +23,12 @@ import type {
   TimeEntryStatus,
 } from '@alto-people/shared';
 import {
+  addTimeEntryBreak,
   adminCreateTimeEntry,
   adminEditTimeEntry,
   approveTimeEntry,
+  deleteTimeEntryBreak,
+  updateTimeEntryBreak,
   bulkApplyBreakTimeEntries,
   bulkApproveTimeEntries,
   bulkRejectTimeEntries,
@@ -1814,6 +1817,21 @@ function TimeEntryFormDrawer({
   const [payRate, setPayRate] = useState(
     mode === 'edit' && entry?.payRate != null ? String(entry.payRate) : '',
   );
+  // Breaks, editable inline like the clock times. Rows with an id mirror
+  // existing BreakEntry rows; id=null rows are new and created on save.
+  // An empty end is only legal on a pre-existing open break (associate
+  // is on it right now).
+  const [breakRows, setBreakRows] = useState<
+    Array<{ id: string | null; startLocal: string; endLocal: string }>
+  >(
+    mode === 'edit' && entry?.breaks
+      ? entry.breaks.map((b) => ({
+          id: b.id,
+          startLocal: isoToLocalInput(b.startedAt),
+          endLocal: b.endedAt ? isoToLocalInput(b.endedAt) : '',
+        }))
+      : [],
+  );
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -1843,8 +1861,40 @@ function TimeEntryFormDrawer({
       }
       payRateVal = n;
     }
+    // Validate breaks up front — the entry itself saves first, so a break
+    // the server would reject must be caught before anything is written.
+    const inMs = new Date(clockInLocal).getTime();
+    const outMs = clockOutLocal ? new Date(clockOutLocal).getTime() : Date.now();
+    for (const [i, r] of breakRows.entries()) {
+      const orig = r.id ? entry?.breaks?.find((b) => b.id === r.id) : undefined;
+      const openBreak = !!orig && orig.endedAt === null && r.endLocal === '';
+      if (!r.startLocal || (!r.endLocal && !openBreak)) {
+        setErr(`Break ${i + 1} needs both a start and an end time.`);
+        return;
+      }
+      const s = new Date(r.startLocal).getTime();
+      const e = r.endLocal ? new Date(r.endLocal).getTime() : outMs;
+      if (e <= s) {
+        setErr(`Break ${i + 1} must end after it starts.`);
+        return;
+      }
+      if (s < inMs || e > outMs) {
+        setErr(`Break ${i + 1} must fall inside the clock-in/clock-out window.`);
+        return;
+      }
+      for (const [j, other] of breakRows.entries()) {
+        if (j >= i || !other.startLocal) continue;
+        const os = new Date(other.startLocal).getTime();
+        const oe = other.endLocal ? new Date(other.endLocal).getTime() : outMs;
+        if (s < oe && e > os) {
+          setErr(`Breaks ${j + 1} and ${i + 1} overlap.`);
+          return;
+        }
+      }
+    }
     setBusy(true);
     try {
+      let entryId: string;
       if (mode === 'create') {
         const created = await adminCreateTimeEntry({
           associateId: assoc!.id,
@@ -1853,6 +1903,7 @@ function TimeEntryFormDrawer({
           payRate: payRateVal,
           notes: notes.trim() || null,
         });
+        entryId = created.id;
         // No job picked and no open assignment to resolve one from — the
         // entry saved clientless, which keeps it out of every client-scoped
         // payroll export. Say so now, not at export time.
@@ -1866,8 +1917,9 @@ function TimeEntryFormDrawer({
             clockOutLocal ? 'Shift logged.' : `Clocked in ${assoc!.name}.`,
           );
         }
-      } else if (entry) {
-        await adminEditTimeEntry(entry.id, {
+      } else {
+        entryId = entry!.id;
+        await adminEditTimeEntry(entry!.id, {
           clockInAt: localInputToIso(clockInLocal),
           clockOutAt: clockOutLocal ? localInputToIso(clockOutLocal) : null,
           payRate: payRateVal,
@@ -1875,8 +1927,47 @@ function TimeEntryFormDrawer({
         });
         toast.success(
           isActive && clockOutLocal
-            ? `Clocked out ${entry.associateName ?? 'associate'}.`
+            ? `Clocked out ${entry!.associateName ?? 'associate'}.`
             : 'Entry updated.',
+        );
+      }
+      // Sync breaks AFTER the entry saved — deletions, then edits, then
+      // adds. A failure here must not strand the drawer (the entry write
+      // already landed, and in create mode a retry would duplicate it):
+      // warn, close, and let the admin reopen edit to fix the break.
+      try {
+        const origBreaks = mode === 'edit' ? (entry?.breaks ?? []) : [];
+        const keptIds = new Set(breakRows.map((r) => r.id).filter(Boolean));
+        for (const b of origBreaks) {
+          if (!keptIds.has(b.id)) await deleteTimeEntryBreak(b.id);
+        }
+        for (const r of breakRows) {
+          if (!r.id) {
+            await addTimeEntryBreak(entryId, {
+              startedAt: localInputToIso(r.startLocal),
+              endedAt: localInputToIso(r.endLocal),
+            });
+            continue;
+          }
+          const orig = origBreaks.find((b) => b.id === r.id);
+          if (!orig) continue;
+          const startChanged = isoToLocalInput(orig.startedAt) !== r.startLocal;
+          const origEndLocal = orig.endedAt ? isoToLocalInput(orig.endedAt) : '';
+          const endChanged = origEndLocal !== r.endLocal;
+          if (!startChanged && !endChanged) continue;
+          await updateTimeEntryBreak(r.id, {
+            ...(startChanged ? { startedAt: localInputToIso(r.startLocal) } : {}),
+            ...(endChanged && r.endLocal
+              ? { endedAt: localInputToIso(r.endLocal) }
+              : {}),
+          });
+        }
+      } catch (breakErr) {
+        toast.warning(
+          `Entry saved, but a break change failed: ${
+            breakErr instanceof ApiError ? breakErr.message : 'unknown error'
+          }. Reopen the entry to fix its breaks.`,
+          { duration: 10000 },
         );
       }
       onSaved();
@@ -1949,6 +2040,74 @@ function TimeEntryFormDrawer({
               Setting a clock-out clocks this associate out.
             </p>
           )}
+        </div>
+        <div>
+          <FieldLabel>Breaks (unpaid)</FieldLabel>
+          {breakRows.length === 0 && (
+            <p className="mb-1 text-xs text-silver">No breaks on this entry.</p>
+          )}
+          <div className="space-y-2">
+            {breakRows.map((r, i) => (
+              <div key={r.id ?? `new-${i}`} className="flex items-center gap-2">
+                <Input
+                  type="datetime-local"
+                  aria-label={`Break ${i + 1} start`}
+                  value={r.startLocal}
+                  onChange={(e) =>
+                    setBreakRows((rows) =>
+                      rows.map((row, j) =>
+                        j === i ? { ...row, startLocal: e.target.value } : row,
+                      ),
+                    )
+                  }
+                  className="flex-1"
+                />
+                <span className="text-silver" aria-hidden="true">–</span>
+                <Input
+                  type="datetime-local"
+                  aria-label={`Break ${i + 1} end`}
+                  value={r.endLocal}
+                  onChange={(e) =>
+                    setBreakRows((rows) =>
+                      rows.map((row, j) =>
+                        j === i ? { ...row, endLocal: e.target.value } : row,
+                      ),
+                    )
+                  }
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`Remove break ${i + 1}`}
+                  onClick={() =>
+                    setBreakRows((rows) => rows.filter((_, j) => j !== i))
+                  }
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="mt-2"
+            onClick={() =>
+              setBreakRows((rows) => [
+                ...rows,
+                { id: null, startLocal: '', endLocal: '' },
+              ])
+            }
+          >
+            <Plus className="h-4 w-4" />
+            Add break
+          </Button>
+          <p className="mt-1 text-xs text-silver">
+            Unpaid time inside the shift — subtracted from paid hours.
+          </p>
         </div>
         <div>
           <FieldLabel>Pay rate ($/hr)</FieldLabel>
