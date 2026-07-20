@@ -48,6 +48,8 @@ import {
   type IrsFirePayee,
 } from '../lib/irsFire.js';
 import { renderGarnishmentLetterPdf } from '../lib/garnishmentLetter.js';
+import { renderTaxFormSummaryPdf } from '../lib/taxFormSummaryPdf.js';
+import { send } from '../lib/notifications.js';
 
 /**
  * Phase 91 â€” Garnishments + tax forms (941, 940, W-2, 1099-NEC).
@@ -483,6 +485,177 @@ payrollTax91Router.get('/tax-forms/build/941', VIEW, async (req, res) => {
     periodStart: periodStart.toISOString().slice(0, 10),
     periodEnd: periodEnd.toISOString().slice(0, 10),
   });
+});
+
+/**
+ * Aggregate "build" helper for Form 940 (annual FUTA). Per-associate wage
+ * caps applied: FUTA taxable wages = min(gross, $7,000) per W-2 employee;
+ * everything above is "payments exceeding $7,000" (form line 5). Deposits
+ * already made come from the TaxDeposit ledger so line 13 is pre-filled.
+ */
+payrollTax91Router.get('/tax-forms/build/940', VIEW, async (req, res) => {
+  const taxYear = z
+    .preprocess((v) => Number(v), z.number().int().min(2000).max(2100))
+    .parse(req.query.taxYear);
+  const yearStart = new Date(Date.UTC(taxYear, 0, 1));
+  const yearEnd = new Date(Date.UTC(taxYear + 1, 0, 1));
+
+  const items = await prisma.payrollItem.findMany({
+    take: 50_000,
+    where: {
+      status: 'DISBURSED',
+      payrollRun: { disbursedAt: { gte: yearStart, lt: yearEnd } },
+      associate: { employmentType: 'W2_EMPLOYEE' },
+    },
+    select: { associateId: true, grossPay: true, employerFuta: true },
+  });
+
+  const FUTA_WAGE_BASE = 7000;
+  const grossByAssociate = new Map<string, number>();
+  let futaAccrued = 0;
+  for (const i of items) {
+    grossByAssociate.set(
+      i.associateId,
+      (grossByAssociate.get(i.associateId) ?? 0) + Number(i.grossPay),
+    );
+    futaAccrued += Number(i.employerFuta);
+  }
+  let totalPayments = 0;
+  let futaTaxableWages = 0;
+  for (const gross of grossByAssociate.values()) {
+    totalPayments += gross;
+    futaTaxableWages += Math.min(gross, FUTA_WAGE_BASE);
+  }
+  const excessPayments = totalPayments - futaTaxableWages;
+  const futaTaxNet = futaTaxableWages * 0.006;
+
+  const deposits = await prisma.taxDeposit.findMany({
+    where: { kind: 'FUTA', status: 'PAID', liabilityDate: { gte: yearStart, lt: yearEnd } },
+    select: { amount: true },
+  });
+  const depositsMade = deposits.reduce((s, d) => s + Number(d.amount), 0);
+
+  res.json({
+    suggestedAmounts: {
+      employeeCount: grossByAssociate.size,
+      totalPayments: totalPayments.toFixed(2),
+      exemptPayments: '0.00',
+      excessPayments: excessPayments.toFixed(2),
+      futaTaxableWages: futaTaxableWages.toFixed(2),
+      futaTaxNet: futaTaxNet.toFixed(2),
+      futaTaxAccrued: futaAccrued.toFixed(2),
+      depositsMade: depositsMade.toFixed(2),
+      balanceDue: Math.max(0, futaTaxNet - depositsMade).toFixed(2),
+    },
+    taxYear,
+    note:
+      'Assumes the full 5.4% state credit (net 0.6%). If any state was a credit-reduction state this year, adjust line 11 before filing.',
+  });
+});
+
+/**
+ * GET /tax-forms/w3.pdf?taxYear=YYYY — W-3 transmittal totals: the sums of
+ * every non-VOIDED W-2 for the year, which is exactly what the W-3 boxes
+ * carry. Rendered as a labeled summary sheet for transcription to the
+ * official form (the SSA EFW2 file's RT/RU records carry the same totals
+ * when e-filing).
+ */
+payrollTax91Router.get('/tax-forms/w3.pdf', VIEW, async (req, res, next) => {
+  try {
+    const taxYear = z
+      .preprocess((v) => Number(v), z.number().int().min(2000).max(2100))
+      .parse(req.query.taxYear);
+    const forms = await prisma.taxForm.findMany({
+      where: { kind: 'W2', taxYear, status: { not: 'VOIDED' } },
+      select: { amounts: true },
+    });
+    if (forms.length === 0) {
+      throw new HttpError(404, 'no_forms', `No W-2s exist for ${taxYear} — generate them first.`);
+    }
+    const sumBox = (key: string) =>
+      forms.reduce((s, f) => {
+        const v = (f.amounts as Record<string, unknown>)[key];
+        return s + (typeof v === 'number' ? v : 0);
+      }, 0);
+    const money = (n: number) =>
+      n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+    const profile = await prisma.submitterProfile.findUnique({ where: { id: 'singleton' } });
+    const { pdf } = await renderTaxFormSummaryPdf({
+      title: `Form W-3 transmittal totals — ${taxYear}`,
+      employer: { name: profile?.name ?? 'Alto HR', ein: profile?.ein ?? '—' },
+      status: 'SUMMARY',
+      generatedAt: new Date().toISOString(),
+      lines: [
+        { label: 'Number of W-2 forms (box c)', value: String(forms.length), bold: true },
+        { label: 'Box 1 — wages, tips, other compensation', value: money(sumBox('box1')) },
+        { label: 'Box 2 — federal income tax withheld', value: money(sumBox('box2')) },
+        { label: 'Box 3 — Social Security wages', value: money(sumBox('box3')) },
+        { label: 'Box 4 — Social Security tax withheld', value: money(sumBox('box4')) },
+        { label: 'Box 5 — Medicare wages and tips', value: money(sumBox('box5')) },
+        { label: 'Box 6 — Medicare tax withheld', value: money(sumBox('box6')) },
+      ],
+      footnote:
+        'These totals must equal the sums of the attached W-2s and reconcile with the four quarterly 941s for the year. When e-filing via EFW2, the RT/RU records carry these same totals — a standalone W-3 is only mailed with paper Copy A.',
+    });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="w3-${taxYear}.pdf"`);
+    res.send(pdf);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /tax-forms/:id/send-recipient-copy — email the worker their copy
+ * (W-2 Copy B, W-2c, or 1099) as a PDF attachment and stamp
+ * recipientCopySentAt. Filing isn't complete until the recipient copy is
+ * distributed; this makes that step auditable. `force: true` re-sends.
+ */
+payrollTax91Router.post('/tax-forms/:id/send-recipient-copy', MANAGE, async (req, res, next) => {
+  try {
+    const form = await prisma.taxForm.findUnique({
+      where: { id: req.params.id },
+      include: { associate: { select: { email: true, firstName: true, lastName: true } } },
+    });
+    if (!form) throw new HttpError(404, 'not_found', 'Form not found.');
+    if (form.kind === 'F941' || form.kind === 'F940') {
+      throw new HttpError(400, 'no_recipient', 'Aggregate forms have no recipient copy.');
+    }
+    if (!form.associate?.email) {
+      throw new HttpError(409, 'no_email', 'Associate has no email on file.');
+    }
+    const force = req.body?.force === true;
+    if (form.recipientCopySentAt && !force) {
+      throw new HttpError(409, 'already_sent', `Recipient copy already sent ${form.recipientCopySentAt.toISOString()}. Pass force:true to re-send.`);
+    }
+
+    const { pdf, filename } =
+      form.kind === 'F1099_NEC'
+        ? await renderF1099NecForForm(form.id)
+        : form.kind === 'F1099_MISC'
+          ? await renderF1099MiscForForm(form.id)
+          : await renderW2ForForm(form.id, { layout: 'single', copy: 'B' });
+
+    const label =
+      form.kind === 'W2' ? 'W-2' : form.kind === 'W2C' ? 'W-2c (corrected W-2)' : form.kind === 'F1099_NEC' ? '1099-NEC' : '1099-MISC';
+    await send({
+      channel: 'EMAIL',
+      recipient: { userId: null, phone: null, email: form.associate.email },
+      subject: `Your ${form.taxYear} ${label} from Alto HR`,
+      body:
+        `Hi ${form.associate.firstName},\n\nAttached is your ${form.taxYear} ${label}. ` +
+        `Keep it for your tax records — you'll need it to file your ${form.taxYear} return.\n\n` +
+        `If anything on it looks wrong, contact your manager right away so a correction can be issued.`,
+      attachments: [{ filename, content: pdf, contentType: 'application/pdf' }],
+    });
+    await prisma.taxForm.update({
+      where: { id: form.id },
+      data: { recipientCopySentAt: new Date() },
+    });
+    res.json({ ok: true, sentTo: form.associate.email });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // ----- W-2 generation (Gap 1) --------------------------------------------
@@ -1247,6 +1420,40 @@ payrollTax91Router.get('/tax-forms/:id/pdf', async (req, res, next) => {
     ].includes(user.role);
     if (!isOwner && !canManage) {
       throw new HttpError(404, 'not_found', 'Form not found.');
+    }
+
+    // Aggregate forms (941/940) render as labeled summary sheets — the
+    // review-and-transcribe copy for the official form or e-file portal.
+    if (form.kind === 'F941' || form.kind === 'F940') {
+      const profile = await prisma.submitterProfile.findUnique({ where: { id: 'singleton' } });
+      const amounts = (form.amounts ?? {}) as Record<string, unknown>;
+      const lines = Object.entries(amounts).map(([key, v]) => ({
+        // camelCase → spaced words; numbers get currency formatting.
+        label: key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/^./, (c) => c.toUpperCase()),
+        value:
+          typeof v === 'number'
+            ? v.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+            : String(v),
+      }));
+      const { pdf } = await renderTaxFormSummaryPdf({
+        title:
+          form.kind === 'F941'
+            ? `Form 941 — Q${form.quarter} ${form.taxYear}`
+            : `Form 940 — ${form.taxYear}`,
+        employer: { name: profile?.name ?? 'Alto HR', ein: form.ein ?? profile?.ein ?? '—' },
+        status: form.status,
+        generatedAt: new Date().toISOString(),
+        lines,
+        footnote:
+          'Transcribe these figures to the official IRS form (or e-file portal). This sheet is a working copy, not a filing.',
+      });
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${form.kind.toLowerCase()}-${form.taxYear}${form.quarter ? `-q${form.quarter}` : ''}.pdf"`,
+      );
+      res.send(pdf);
+      return;
     }
 
     // Parse W-2 render options. layout/copy are honoured on W-2 only;

@@ -3714,6 +3714,11 @@ model TaxForm {
   // enforced at the migration). The original is flipped to AMENDED at
   // W-2c create time so the UI hides it from the active list.
   amendsTaxFormId String?       @db.Uuid
+  // Tier-1 — when the recipient copy (employee W-2 Copy B, contractor
+  // 1099) was emailed to the associate. Filing isn't done until the
+  // worker has their copy; this makes distribution auditable instead of
+  // a UI checkbox nobody can verify.
+  recipientCopySentAt DateTime? @db.Timestamptz(6)
   createdAt       DateTime      @default(now()) @db.Timestamptz(6)
   updatedAt       DateTime      @updatedAt @db.Timestamptz(6)
 
