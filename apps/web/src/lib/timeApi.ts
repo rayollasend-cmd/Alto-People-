@@ -188,6 +188,46 @@ export function bulkRejectTimeEntries(
   });
 }
 
+/** Admin break editing — each call returns the full updated entry so the
+ *  drawer re-renders (net minutes, anomaly flags) from one response. */
+export function addTimeEntryBreak(
+  entryId: string,
+  body: { startedAt: string; endedAt: string; type?: 'MEAL' | 'REST' }
+): Promise<TimeEntry> {
+  return apiFetch<TimeEntry>(`/time/admin/entries/${entryId}/breaks`, {
+    method: 'POST',
+    body,
+  });
+}
+
+export function updateTimeEntryBreak(
+  breakId: string,
+  body: { startedAt?: string; endedAt?: string }
+): Promise<TimeEntry> {
+  return apiFetch<TimeEntry>(`/time/admin/breaks/${breakId}`, {
+    method: 'PATCH',
+    body,
+  });
+}
+
+export function deleteTimeEntryBreak(breakId: string): Promise<TimeEntry> {
+  return apiFetch<TimeEntry>(`/time/admin/breaks/${breakId}`, {
+    method: 'DELETE',
+  });
+}
+
+/** Book the standard unpaid 1-hour meal break, centered mid-shift, on each
+ *  selected COMPLETED entry that has none — the reviewer's answer to a
+ *  NO_BREAK flag when the crew skipped their break punches. */
+export function bulkApplyBreakTimeEntries(
+  entryIds: string[]
+): Promise<BulkTimeResponse> {
+  return apiFetch<BulkTimeResponse>('/time/admin/bulk-apply-break', {
+    method: 'POST',
+    body: { entryIds },
+  });
+}
+
 /**
  * Phase 65 — POSTs to a streaming export route, gets back a Blob, and
  * triggers a browser download via a synthetic <a download>. We can't use

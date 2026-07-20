@@ -1312,6 +1312,34 @@ const VerifyPinInputSchema = z.object({
 
 type PunchAction = 'CLOCK_IN' | 'CLOCK_OUT' | 'BREAK_START' | 'BREAK_END';
 
+// Quick-return rejoin window. An associate who clocks OUT (instead of
+// starting a break) and punches back in within this window almost
+// certainly never left the shift — they took lunch through the wrong
+// button. Rather than opening a second entry (which splits an overnight
+// 10pm–7am shift across two "days" and floods review with EARLY_OUT /
+// NO_BREAK noise), the punch reopens the shift and books the gap as an
+// unpaid MEAL break. Sized to cover a 1-hour meal with stragglers;
+// anyone returning later than this is genuinely starting a new shift.
+const REJOIN_WINDOW_MS = 90 * 60 * 1000;
+
+/** The entry a punch-in would resume instead of starting fresh: the
+ *  associate's latest COMPLETED (not yet reviewed) entry, clocked out
+ *  less than REJOIN_WINDOW_MS before `at`. Approval freezes an entry —
+ *  approved/rejected entries never reopen. */
+async function findRejoinableEntry(
+  db: Pick<Prisma.TransactionClient, 'timeEntry'>,
+  associateId: string,
+  at: Date,
+) {
+  const last = await db.timeEntry.findFirst({
+    where: { associateId, status: 'COMPLETED', clockOutAt: { not: null } },
+    orderBy: { clockOutAt: 'desc' },
+  });
+  if (!last?.clockOutAt) return null;
+  const gapMs = at.getTime() - last.clockOutAt.getTime();
+  return gapMs > 0 && gapMs <= REJOIN_WINDOW_MS ? last : null;
+}
+
 /**
  * Read-only mirror of the punch decision tree (see the punch txn below)
  * so the preflight can tell the associate what their punch will do.
@@ -1328,7 +1356,14 @@ async function predictPunchAction(
     orderBy: { clockInAt: 'desc' },
     select: { id: true },
   });
-  if (!open) return intent === 'BREAK' ? null : 'CLOCK_IN';
+  if (!open) {
+    if (intent === 'BREAK') return null;
+    // Mirror the rejoin: a punch-in shortly after a full clock-out will
+    // resume the shift, so greet with "Ending your break", not "Clocking
+    // you in".
+    const rejoin = await findRejoinableEntry(prisma, associateId, new Date());
+    return rejoin ? 'BREAK_END' : 'CLOCK_IN';
+  }
   const openBreak = await prisma.breakEntry.findFirst({
     where: { timeEntryId: open.id, endedAt: null },
     select: { id: true },
@@ -1995,25 +2030,58 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
         action = 'CLOCK_OUT';
       }
     } else {
-      timeEntry = await tx.timeEntry.create({
-        data: {
-          associateId: pinRow.associateId,
-          clientId: device.clientId,
-          // Phase 131 — snapshot the device's locationId onto the
-          // entry so history queries can group by site without
-          // chasing the device row.
-          locationId: device.locationId,
-          // Punch↔shift link: tie the entry to the shift being worked
-          // so reviewers see scheduled-vs-actual on the timesheet.
-          shiftId: await matchShiftForPunch(tx, pinRow.associateId, at),
-          clockInAt: at,
-          status: 'ACTIVE',
-          ...(punchLat != null && punchLng != null
-            ? { clockInLat: punchLat, clockInLng: punchLng }
-            : {}),
-        },
-      });
-      action = 'CLOCK_IN';
+      // Quick-return rejoin — a punch-in within REJOIN_WINDOW_MS of the
+      // last full clock-out means "I'm back from break", not "new
+      // shift". The wrong-button clock-out used to split an overnight
+      // shift into two entries across two calendar days; instead,
+      // reopen the completed entry and book the gap as an unpaid MEAL
+      // break, exactly as if they'd used the break toggle. Only
+      // COMPLETED entries rejoin — approval freezes an entry.
+      const rejoin = await findRejoinableEntry(tx, pinRow.associateId, at);
+      if (rejoin?.clockOutAt) {
+        await tx.breakEntry.create({
+          data: {
+            timeEntryId: rejoin.id,
+            type: 'MEAL',
+            startedAt: rejoin.clockOutAt,
+            endedAt: at,
+          },
+        });
+        timeEntry = await tx.timeEntry.update({
+          where: { id: rejoin.id },
+          data: {
+            clockOutAt: null,
+            status: 'ACTIVE',
+            clockOutLat: null,
+            clockOutLng: null,
+            // Flags computed at the premature clock-out are stale (that
+            // clock-out no longer exists); the real pass runs when the
+            // shift actually ends.
+            anomalies: [],
+          },
+        });
+        action = 'BREAK_END';
+      } else {
+        timeEntry = await tx.timeEntry.create({
+          data: {
+            associateId: pinRow.associateId,
+            clientId: device.clientId,
+            // Phase 131 — snapshot the device's locationId onto the
+            // entry so history queries can group by site without
+            // chasing the device row.
+            locationId: device.locationId,
+            // Punch↔shift link: tie the entry to the shift being worked
+            // so reviewers see scheduled-vs-actual on the timesheet.
+            shiftId: await matchShiftForPunch(tx, pinRow.associateId, at),
+            clockInAt: at,
+            status: 'ACTIVE',
+            ...(punchLat != null && punchLng != null
+              ? { clockInLat: punchLat, clockInLng: punchLng }
+              : {}),
+          },
+        });
+        action = 'CLOCK_IN';
+      }
     }
 
     // Phase 104 — pick a primary anomaly classification. Impossible-travel

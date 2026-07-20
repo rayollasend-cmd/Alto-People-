@@ -27,7 +27,9 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopeTimeEntries } from '../lib/scope.js';
+import { z } from 'zod';
 import { recordTimeEvent } from '../lib/audit.js';
+import { recomputeEntryAnomalies } from '../lib/recomputeEntryAnomalies.js';
 import { checkGeofence } from '../lib/geo.js';
 import { resolveAssociateGeofence } from '../lib/geofenceForAssociate.js';
 import { matchShiftForPunch } from '../lib/matchShiftForPunch.js';
@@ -1246,6 +1248,219 @@ timeRouter.patch('/admin/entries/:id', MANAGE, async (req, res, next) => {
   }
 });
 
+/* ===== Admin break editing ============================================== */
+// Breaks are first-class in the edit drawer: the same admin who fixes
+// clock times can add the meal an associate never punched, adjust a
+// mislogged one, or delete a bogus row. Every mutation revalidates
+// against the entry's bounds, recomputes anomalies, and — on APPROVED
+// entries — runs the same reverse/re-accrue sick-leave cycle as a time
+// correction, because net minutes are the pay basis.
+
+const AdminBreakCreateSchema = z.object({
+  startedAt: z.string().datetime(),
+  endedAt: z.string().datetime(),
+  type: z.enum(['MEAL', 'REST']).optional(),
+});
+const AdminBreakPatchSchema = z.object({
+  startedAt: z.string().datetime().optional(),
+  endedAt: z.string().datetime().optional(),
+});
+
+function assertBreakFits(
+  entry: { clockInAt: Date; clockOutAt: Date | null },
+  otherBreaks: Array<{ startedAt: Date; endedAt: Date | null }>,
+  startedAt: Date,
+  endedAt: Date,
+) {
+  if (endedAt.getTime() <= startedAt.getTime()) {
+    throw new HttpError(400, 'invalid_range', 'Break end must be after its start.');
+  }
+  // ACTIVE entries have no clock-out yet — the break just can't run
+  // into the future.
+  const upper = entry.clockOutAt ?? new Date();
+  if (
+    startedAt.getTime() < entry.clockInAt.getTime() ||
+    endedAt.getTime() > upper.getTime()
+  ) {
+    throw new HttpError(
+      400,
+      'break_out_of_bounds',
+      'Break must fall inside the clock-in / clock-out window.',
+    );
+  }
+  for (const b of otherBreaks) {
+    const bEnd = b.endedAt ?? upper;
+    if (startedAt.getTime() < bEnd.getTime() && endedAt.getTime() > b.startedAt.getTime()) {
+      throw new HttpError(409, 'break_overlap', 'Break overlaps another break on this entry.');
+    }
+  }
+}
+
+// Shared load + guard for all three break routes. Rejected entries are
+// resubmitted by the associate, not edited around — mutating their
+// breaks would change hours nobody is going to pay.
+async function loadEntryForBreakEdit(user: TimeUser, entryId: string) {
+  const entry = await prisma.timeEntry.findFirst({
+    where: { id: entryId, ...scopeTimeEntries(user) },
+    include: { breaks: true },
+  });
+  if (!entry) {
+    throw new HttpError(404, 'time_entry_not_found', 'Time entry not found');
+  }
+  if (entry.status === 'REJECTED') {
+    throw new HttpError(409, 'entry_rejected', 'Rejected entries are resubmitted, not edited.');
+  }
+  return entry;
+}
+
+// After the break row changed: re-accrue (approved entries only — the
+// pay basis moved), refresh anomaly flags, audit, notify, and return
+// the full updated entry so the drawer can re-render from one response.
+async function finishBreakMutation(opts: {
+  user: TimeUser;
+  req: import('express').Request;
+  entry: {
+    id: string;
+    associateId: string;
+    clientId: string | null;
+    status: string;
+    clockOutAt: Date | null;
+  };
+  action: string;
+  metadata: Record<string, unknown>;
+}) {
+  const { user, req, entry, action, metadata } = opts;
+  if (entry.status === 'APPROVED') {
+    await accrueSickLeaveForEntry(prisma, entry.id);
+    void notifyAssociate(entry.associateId, {
+      subject: 'Approved hours adjusted',
+      body: 'An admin adjusted the break time on one of your approved entries, which changes your paid hours. Talk to your manager if this looks wrong.',
+      category: 'time_entry',
+      linkUrl: '/time-attendance',
+    });
+  }
+  if (entry.clockOutAt) await recomputeEntryAnomalies(prisma, entry.id);
+  await recordTimeEvent({
+    actorUserId: user.id,
+    action,
+    timeEntryId: entry.id,
+    associateId: entry.associateId,
+    clientId: entry.clientId,
+    metadata: { onBehalf: true, ...metadata },
+    req,
+  });
+  const updated = await prisma.timeEntry.findFirst({
+    where: { id: entry.id },
+    include: ENTRY_INCLUDE,
+  });
+  return toEntry(updated!);
+}
+
+timeRouter.post('/admin/entries/:id/breaks', MANAGE, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    const parsed = AdminBreakCreateSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const entry = await loadEntryForBreakEdit(user, req.params.id);
+    const startedAt = new Date(parsed.data.startedAt);
+    const endedAt = new Date(parsed.data.endedAt);
+    assertBreakFits(entry, entry.breaks, startedAt, endedAt);
+    if (entry.status === 'APPROVED') await reverseSickLeaveForEntry(prisma, entry.id);
+    const created = await prisma.breakEntry.create({
+      data: {
+        timeEntryId: entry.id,
+        type: parsed.data.type ?? 'MEAL',
+        startedAt,
+        endedAt,
+      },
+    });
+    res.status(201).json(
+      await finishBreakMutation({
+        user,
+        req,
+        entry,
+        action: 'time.break_added',
+        metadata: { breakId: created.id, minutes: Math.round((endedAt.getTime() - startedAt.getTime()) / 60_000) },
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+timeRouter.patch('/admin/breaks/:breakId', MANAGE, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    const parsed = AdminBreakPatchSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const br = await prisma.breakEntry.findUnique({ where: { id: req.params.breakId } });
+    if (!br) throw new HttpError(404, 'break_not_found', 'Break not found');
+    const entry = await loadEntryForBreakEdit(user, br.timeEntryId);
+    const startedAt = parsed.data.startedAt ? new Date(parsed.data.startedAt) : br.startedAt;
+    // A still-open break (ACTIVE entry, associate on break now) keeps its
+    // null end unless the edit explicitly supplies one — validation just
+    // treats "now" as its provisional end.
+    const endedAt =
+      parsed.data.endedAt !== undefined ? new Date(parsed.data.endedAt) : br.endedAt;
+    assertBreakFits(
+      entry,
+      entry.breaks.filter((b) => b.id !== br.id),
+      startedAt,
+      endedAt ?? new Date(),
+    );
+    if (entry.status === 'APPROVED') await reverseSickLeaveForEntry(prisma, entry.id);
+    await prisma.breakEntry.update({
+      where: { id: br.id },
+      data: {
+        startedAt,
+        ...(parsed.data.endedAt !== undefined ? { endedAt: new Date(parsed.data.endedAt) } : {}),
+      },
+    });
+    res.json(
+      await finishBreakMutation({
+        user,
+        req,
+        entry,
+        action: 'time.break_edited',
+        metadata: {
+          breakId: br.id,
+          minutes: endedAt
+            ? Math.round((endedAt.getTime() - startedAt.getTime()) / 60_000)
+            : null,
+        },
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+timeRouter.delete('/admin/breaks/:breakId', MANAGE, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    const br = await prisma.breakEntry.findUnique({ where: { id: req.params.breakId } });
+    if (!br) throw new HttpError(404, 'break_not_found', 'Break not found');
+    const entry = await loadEntryForBreakEdit(user, br.timeEntryId);
+    if (entry.status === 'APPROVED') await reverseSickLeaveForEntry(prisma, entry.id);
+    await prisma.breakEntry.delete({ where: { id: br.id } });
+    res.json(
+      await finishBreakMutation({
+        user,
+        req,
+        entry,
+        action: 'time.break_removed',
+        metadata: { breakId: br.id, type: br.type },
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
 /* ===== Phase 64 — bulk approve / bulk reject ============================ */
 // Mirrors the bulk-invite pattern from onboarding Phase 58: per-row try/catch,
 // stable error codes, response with succeeded/failed counts + per-row results.
@@ -1444,6 +1659,92 @@ timeRouter.post('/admin/bulk-reject', MANAGE, async (req, res, next) => {
         category: 'time_entry',
         linkUrl: '/time-attendance',
       });
+    }
+    const response: BulkTimeResponse = { succeeded, failed, results };
+    res.status(200).json(response);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Bulk standard-break application =================================== */
+
+// Most associates never punch their meal break, so 6h+ shifts pile up in
+// review flagged NO_BREAK. This lets a reviewer select those entries and
+// book the site's standard unpaid meal — 1 hour, centered mid-shift — in
+// one action. Deliberately an explicit reviewer action, never automatic:
+// hours are docked only when a human chose to.
+const APPLIED_BREAK_MINUTES = 60;
+// Only shifts long enough that the NO_BREAK flag fires (6h) qualify;
+// docking an hour from a short shift is a payroll error, not a cleanup.
+const APPLY_BREAK_MIN_SHIFT_HOURS = 6;
+
+const BulkApplyBreakSchema = z.object({
+  entryIds: z.array(z.string().uuid()).min(1).max(500),
+});
+
+timeRouter.post('/admin/bulk-apply-break', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = BulkApplyBreakSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const user = req.user!;
+    const results: BulkTimeResultRow[] = [];
+    let succeeded = 0;
+    let failed = 0;
+    for (const entryId of parsed.data.entryIds) {
+      try {
+        const entry = await prisma.timeEntry.findFirst({
+          where: { id: entryId, ...scopeTimeEntries(user) },
+          include: { breaks: true },
+        });
+        if (!entry) {
+          throw new HttpError(404, 'not_found', 'Entry not found.');
+        }
+        // COMPLETED only — the break changes paid hours, so it must land
+        // before approval, never rewrite an approved (or rejected) entry.
+        if (entry.status !== 'COMPLETED' || !entry.clockOutAt) {
+          throw new HttpError(409, 'not_pending', 'Only completed entries awaiting review can take a standard break.');
+        }
+        if (entry.breaks.some((b) => b.type === 'MEAL')) {
+          throw new HttpError(409, 'already_has_break', 'Entry already has a meal break.');
+        }
+        const grossMin =
+          (entry.clockOutAt.getTime() - entry.clockInAt.getTime()) / 60_000;
+        if (grossMin < APPLY_BREAK_MIN_SHIFT_HOURS * 60) {
+          throw new HttpError(409, 'shift_too_short', `Shift under ${APPLY_BREAK_MIN_SHIFT_HOURS}h — no standard break to deduct.`);
+        }
+        const midMs =
+          (entry.clockInAt.getTime() + entry.clockOutAt.getTime()) / 2;
+        const halfBreakMs = (APPLIED_BREAK_MINUTES / 2) * 60_000;
+        await prisma.breakEntry.create({
+          data: {
+            timeEntryId: entry.id,
+            type: 'MEAL',
+            startedAt: new Date(midMs - halfBreakMs),
+            endedAt: new Date(midMs + halfBreakMs),
+          },
+        });
+        // Break changes net minutes → NO_BREAK clears, OT flags may move.
+        await recomputeEntryAnomalies(prisma, entry.id);
+        await recordTimeEvent({
+          actorUserId: user.id,
+          action: 'time.break_applied',
+          timeEntryId: entry.id,
+          associateId: entry.associateId,
+          clientId: entry.clientId,
+          metadata: { minutes: APPLIED_BREAK_MINUTES, standard: true },
+          req,
+        });
+        results.push({ entryId, ok: true, errorCode: null, errorMessage: null });
+        succeeded++;
+      } catch (err) {
+        const errorCode = err instanceof HttpError ? err.code : 'apply_break_failed';
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        results.push({ entryId, ok: false, errorCode, errorMessage });
+        failed++;
+      }
     }
     const response: BulkTimeResponse = { succeeded, failed, results };
     res.status(200).json(response);
