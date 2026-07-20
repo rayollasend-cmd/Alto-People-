@@ -28,6 +28,8 @@ export type ModuleKey =
   | 'scheduling'
   | 'approvals'
   | 'payroll'
+  | 'payroll-tax'
+  | 'payroll-compliance'
   | 'documents'
   | 'communications'
   | 'clients'
@@ -528,6 +530,26 @@ export const MODULES: ModuleNav[] = [
     description:
       'Multi-state payroll, anomaly detection, Branch cards, and Wise transfers.',
     requires: 'view:payroll',
+    icon: DollarSign,
+    group: 'time-and-pay',
+  },
+  {
+    key: 'payroll-tax',
+    path: '/payroll/tax',
+    label: 'Tax forms',
+    description:
+      'Garnishment orders, quarterly 941/940 builders, W-2 / 1099 generation and e-file exports, and the employer submitter profile.',
+    requires: 'view:payroll',
+    icon: DollarSign,
+    group: 'time-and-pay',
+  },
+  {
+    key: 'payroll-compliance',
+    path: '/payroll/compliance',
+    label: 'Payroll compliance',
+    description:
+      'Federal tax deposit deadlines, garnishment remittances owed to agencies, and state new-hire reporting.',
+    requires: 'process:payroll',
     icon: DollarSign,
     group: 'time-and-pay',
   },

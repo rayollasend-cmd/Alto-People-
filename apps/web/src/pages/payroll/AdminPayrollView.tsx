@@ -399,6 +399,18 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                 </Link>
               </Button>
               <Button asChild variant="ghost" size="sm">
+                <Link to="/payroll/tax">
+                  <FileText className="mr-1 h-4 w-4" />
+                  Tax forms
+                </Link>
+              </Button>
+              <Button asChild variant="ghost" size="sm">
+                <Link to="/payroll/compliance">
+                  <AlertTriangle className="mr-1 h-4 w-4" />
+                  Compliance
+                </Link>
+              </Button>
+              <Button asChild variant="ghost" size="sm">
                 <Link to="/payroll/year-end-close">
                   <CheckCircle2 className="mr-1 h-4 w-4" />
                   Year-end close

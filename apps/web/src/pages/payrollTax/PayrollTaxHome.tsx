@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { ChevronDown, Download, FileText, Plus, Receipt, Scale } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
@@ -90,9 +91,14 @@ export function PayrollTaxHome() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Payroll tax"
-        subtitle="Garnishments and federal tax forms (941, 940, W-2, 1099-NEC)."
-        breadcrumbs={[{ label: 'Payroll' }, { label: 'Tax & withholdings' }]}
+        title="Tax forms & garnishments"
+        subtitle="Garnishment orders and federal tax forms (941, 940, W-2, 1099-NEC, W-3)."
+        breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Tax forms' }]}
+        secondaryActions={
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/payroll/config">Tax rate tables</Link>
+          </Button>
+        }
       />
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>

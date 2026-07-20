@@ -83,6 +83,10 @@ const PayrollYearEndClose = lazyNamed(
   'PayrollYearEndClose',
 );
 const PayrollTaxHome = lazyNamed(() => import('@/pages/payrollTax/PayrollTaxHome'), 'PayrollTaxHome');
+const PayrollCompliance = lazyNamed(
+  () => import('@/pages/payroll/PayrollCompliance'),
+  'PayrollCompliance',
+);
 const PayRulesHome = lazyNamed(() => import('@/pages/payrules/PayRulesHome'), 'PayRulesHome');
 const ReimbursementsHome = lazyNamed(() => import('@/pages/reimbursements/ReimbursementsHome'), 'ReimbursementsHome');
 
@@ -369,6 +373,7 @@ const LAYOUT_ROUTES = [
   { path: 'recruiting/extras', element: <RequireCapability cap="view:recruiting"><RecruitingExtras /></RequireCapability> },
   { path: 'payroll/tax', element: <RequireCapability cap="view:payroll"><PayrollTaxHome /></RequireCapability> },
   { path: 'payroll/config', element: <RequireCapability cap="process:payroll"><PayrollConfigView /></RequireCapability> },
+  { path: 'payroll/compliance', element: <RequireCapability cap="process:payroll"><PayrollCompliance /></RequireCapability> },
   { path: 'payroll/readiness', element: <RequireCapability cap="process:payroll"><PayrollReadiness /></RequireCapability> },
   { path: 'payroll/ytd', element: <RequireCapability cap="process:payroll"><PayrollYtd /></RequireCapability> },
   { path: 'payroll/year-end-close', element: <RequireCapability cap="process:payroll"><PayrollYearEndClose /></RequireCapability> },
