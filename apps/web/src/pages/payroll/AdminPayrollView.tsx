@@ -387,22 +387,22 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
           canProcess ? (
             <div className="flex flex-wrap items-center gap-2">
               <Button asChild variant="ghost" size="sm">
-                <a href="/payroll/readiness">
+                <Link to="/payroll/readiness">
                   <Users className="mr-1 h-4 w-4" />
                   Readiness
-                </a>
+                </Link>
               </Button>
               <Button asChild variant="ghost" size="sm">
-                <a href="/payroll/ytd">
+                <Link to="/payroll/ytd">
                   <FileText className="mr-1 h-4 w-4" />
                   YTD report
-                </a>
+                </Link>
               </Button>
               <Button asChild variant="ghost" size="sm">
-                <a href="/payroll/year-end-close">
+                <Link to="/payroll/year-end-close">
                   <CheckCircle2 className="mr-1 h-4 w-4" />
                   Year-end close
-                </a>
+                </Link>
               </Button>
               <Button onClick={() => setShowCreate(true)}>
                 <Plus className="h-4 w-4" />
