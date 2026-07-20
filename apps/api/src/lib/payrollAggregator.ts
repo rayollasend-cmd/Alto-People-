@@ -194,6 +194,8 @@ export interface ProjectedItem {
   fica: number;
   medicare: number;
   stateIncomeTax: number;
+  /** Tier-2 — city/county withholding from the associate's LocalTaxRule. */
+  localIncomeTax: number;
   taxState: string | null;
   /** Pay frequency from the schedule (or BIWEEKLY fallback). */
   payFrequency: PayFrequency;
@@ -263,6 +265,7 @@ export async function aggregatePayrollProjection(
           state: true,
           employmentType: true,
           payrollSchedule: { select: { frequency: true } },
+          localTaxRule: { select: { rate: true, isActive: true, name: true } },
           w4Submission: {
             select: {
               filingStatus: true,
@@ -364,6 +367,7 @@ export async function aggregatePayrollProjection(
     state: true,
     employmentType: true,
     payrollSchedule: { select: { frequency: true } },
+    localTaxRule: { select: { rate: true, isActive: true, name: true } },
     w4Submission: {
       select: {
         filingStatus: true,
@@ -384,6 +388,25 @@ export async function aggregatePayrollProjection(
       select: ASSOCIATE_META_SELECT,
     });
     for (const a of extra) metaById.set(a.id, a);
+  }
+
+  // Tier-2 — the client's actual SUTA experience rate (state agency
+  // notice) beats the new-employer default. Client-scoped runs only;
+  // cross-client runs keep the per-state defaults.
+  let sutaOverride: { rate: number; wageBase: number | null } | null = null;
+  if (clientId) {
+    const client = await tx.client.findUnique({
+      where: { id: clientId },
+      select: { sutaRateOverride: true, sutaWageBaseOverride: true },
+    });
+    if (client?.sutaRateOverride) {
+      sutaOverride = {
+        rate: Number(client.sutaRateOverride),
+        wageBase: client.sutaWageBaseOverride
+          ? Number(client.sutaWageBaseOverride)
+          : null,
+      };
+    }
   }
 
   const yearStart = new Date(Date.UTC(periodStart.getUTCFullYear(), 0, 1));
@@ -590,6 +613,7 @@ export async function aggregatePayrollProjection(
         deductions: w4?.deductions ? Number(w4.deductions) : 0,
         otherIncome: w4?.otherIncome ? Number(w4.otherIncome) : 0,
         dependentsAmount: w4?.dependentsAmount ? Number(w4.dependentsAmount) : 0,
+        sutaOverride,
       };
       // Full-gross pass drives SS / Medicare / SIT / employer taxes.
       const full = computePaycheckTaxes({
@@ -629,6 +653,22 @@ export async function aggregatePayrollProjection(
       breakdown = zeroTaxBreakdown(grossPay);
     }
 
+    // Tier-2 — city/county withholding on gross (Philadelphia-style flat
+    // wage tax). W-2 employees only; zero without an assigned rule.
+    const localIncomeTax =
+      employmentType === 'W2_EMPLOYEE' &&
+      meta.localTaxRule?.isActive &&
+      grossPay > 0
+        ? round2(grossPay * Number(meta.localTaxRule.rate))
+        : 0;
+    if (localIncomeTax > 0) {
+      breakdown = {
+        ...breakdown,
+        totalEmployeeTax: round2(breakdown.totalEmployeeTax + localIncomeTax),
+        netPay: round2(breakdown.netPay - localIncomeTax),
+      };
+    }
+
     const disposableEarnings =
       employmentType === 'W2_EMPLOYEE'
         ? round2(
@@ -636,7 +676,8 @@ export async function aggregatePayrollProjection(
               breakdown.federalIncomeTax -
               breakdown.socialSecurity -
               breakdown.medicare -
-              breakdown.stateIncomeTax
+              breakdown.stateIncomeTax -
+              localIncomeTax
           )
         : 0;
 
@@ -759,6 +800,7 @@ export async function aggregatePayrollProjection(
       fica: breakdown.socialSecurity,
       medicare: breakdown.medicare,
       stateIncomeTax: breakdown.stateIncomeTax,
+      localIncomeTax,
       taxState: associateState,
       payFrequency,
       disposableEarnings,

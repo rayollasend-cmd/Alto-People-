@@ -60,6 +60,12 @@ export interface PayrollTaxConfig {
   fedBrackets: Record<W4FilingStatus, Bracket[]>;
   ssWageBase: number;
   medicareSurchargeThreshold: number;
+  /**
+   * Tier-2 — {"HI": 0.045, ...}: flat withholding for states outside the
+   * code tables. Consulted before the 4% blanket fallback so the long
+   * tail can be tuned from data instead of a deploy.
+   */
+  stateFlatRates?: Record<string, number> | null;
 }
 
 let CONFIG_CACHE: PayrollTaxConfig | null = null;
@@ -102,6 +108,7 @@ function configFromRow(row: {
   fedBracketsHoh: Prisma.JsonValue;
   ssWageBase: Prisma.Decimal;
   medicareSurchargeThreshold: Prisma.Decimal;
+  stateFlatRates?: Prisma.JsonValue | null;
 }): PayrollTaxConfig {
   return {
     year: row.year,
@@ -112,6 +119,10 @@ function configFromRow(row: {
     },
     ssWageBase: Number(row.ssWageBase),
     medicareSurchargeThreshold: Number(row.medicareSurchargeThreshold),
+    stateFlatRates:
+      row.stateFlatRates && typeof row.stateFlatRates === 'object'
+        ? (row.stateFlatRates as Record<string, number>)
+        : null,
   };
 }
 
@@ -362,6 +373,12 @@ export function computeStateIncomeTax(input: StateInput): number {
       const annualGross = input.grossPay * periods;
       return annualToCycle(table, annualGross, periods);
     }
+
+    // Tier-2 — config-driven long-tail rates before the blanket fallback.
+    const configured = CONFIG_CACHE?.stateFlatRates?.[state];
+    if (typeof configured === 'number' && configured >= 0 && configured < 1) {
+      return round2(input.grossPay * configured);
+    }
   }
 
   // Long-tail fallback for states we haven't tabulated. Slightly above
@@ -374,7 +391,12 @@ export function computeStateIncomeTax(input: StateInput): number {
 export function isStateTaxSupported(state: string | null): boolean {
   if (!state) return false;
   const s = state.toUpperCase().trim();
-  return NO_SIT_STATES.has(s) || s in FLAT_STATE_RATES_2024 || s in BRACKET_STATES_2024;
+  return (
+    NO_SIT_STATES.has(s) ||
+    s in FLAT_STATE_RATES_2024 ||
+    s in BRACKET_STATES_2024 ||
+    typeof CONFIG_CACHE?.stateFlatRates?.[s] === 'number'
+  );
 }
 
 function annualToCycle(table: Bracket[], annualGross: number, periods: number): number {
@@ -461,6 +483,13 @@ export interface EmployerInput {
   ytdMedicareWages: number;
   /** Wave 2.3 — drives per-state SUTA wage base + rate. */
   state?: string | null;
+  /**
+   * Tier-2 — the employer's actual experience rate from the state
+   * agency's annual notice (per-client override). Beats the
+   * new-employer default table when present; a null wageBase keeps the
+   * state table's base.
+   */
+  sutaOverride?: { rate: number; wageBase: number | null } | null;
 }
 
 export interface EmployerBreakdown {
@@ -483,9 +512,17 @@ export function computeEmployerTaxes(input: EmployerInput): EmployerBreakdown {
   const futa = round2(futaTaxable * FUTA_RATE_NET);
 
   const stateKey = input.state?.toUpperCase().trim();
-  const suta = stateKey && SUTA_2024[stateKey]
-    ? sutaFor(SUTA_2024[stateKey], input.grossPay, input.ytdWages)
-    : sutaFor({ wageBase: FUTA_WAGE_BASE, rate: 0.027 }, input.grossPay, input.ytdWages);
+  const stateCfg =
+    stateKey && SUTA_2024[stateKey]
+      ? SUTA_2024[stateKey]
+      : { wageBase: FUTA_WAGE_BASE, rate: 0.027 };
+  const sutaCfg = input.sutaOverride
+    ? {
+        rate: input.sutaOverride.rate,
+        wageBase: input.sutaOverride.wageBase ?? stateCfg.wageBase,
+      }
+    : stateCfg;
+  const suta = sutaFor(sutaCfg, input.grossPay, input.ytdWages);
 
   return { fica, medicare, futa, suta };
 }
@@ -527,6 +564,9 @@ export interface PaycheckTaxInput {
   deductions?: number;
   otherIncome?: number;
   dependentsAmount?: number;
+  /** Tier-2 — per-client SUTA experience-rate override, passed through
+   *  to computeEmployerTaxes. */
+  sutaOverride?: { rate: number; wageBase: number | null } | null;
 }
 
 export interface PaycheckTaxBreakdown {
@@ -584,6 +624,7 @@ export function computePaycheckTaxes(input: PaycheckTaxInput): PaycheckTaxBreakd
     ytdWages: input.ytdWages,
     ytdMedicareWages: input.ytdMedicareWages,
     state: input.state,
+    sutaOverride: input.sutaOverride ?? null,
   });
   return {
     federalIncomeTax: fit,

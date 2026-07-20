@@ -475,6 +475,11 @@ model Client {
   // week-ahead digest (sent the evening before this day) and future
   // per-client week math.
   weekStartsOn Int          @default(0)
+  // Tier-2 — this employer's actual SUTA experience rate + wage base
+  // from the state agency's annual notice. Null = the new-employer
+  // defaults baked into the engine's per-state table.
+  sutaRateOverride     Decimal? @db.Decimal(6, 5)
+  sutaWageBaseOverride Decimal? @db.Decimal(12, 2)
   // Gap 1 — Employer identity used on tax forms (W-2, 941, 1099-NEC).
   // legalName is the IRS-registered name shown on the W-2 employer block;
   // it can differ from `name` (the brand / display name). ein is the EIN
@@ -690,6 +695,10 @@ model Associate {
   // (federally required within ~20 days of hire). Null = not yet
   // reported; the new-hire report endpoints surface and stamp this.
   newHireReportedAt DateTime?      @db.Timestamptz(6)
+  // Tier-2 — city/county withholding rule for this associate (null =
+  // no local tax). Withheld into PayrollItem.localWithholding.
+  localTaxRuleId    String?        @db.Uuid
+  localTaxRule      LocalTaxRule?  @relation(fields: [localTaxRuleId], references: [id], onDelete: SetNull)
   // Profile photo. photoS3Key is the storage path under uploads/profile-photos/;
   // photoUpdatedAt is the cache-buster the API stamps onto the photo URL so
   // the browser refetches after an upload. Null when no photo on file —
@@ -1694,6 +1703,9 @@ model PayrollItem {
   // time). Lets the paystub label the SIT line and the auditor see why a
   // CA-rate was applied to someone who later moved to TX.
   taxState            String?
+  // Tier-2 — city/county withholding (W-2 Box 19). Zero unless the
+  // associate carries a LocalTaxRule.
+  localWithholding    Decimal           @default(0) @db.Decimal(12, 2)
   status              PayrollItemStatus @default(PENDING)
   // sha256 of the rendered paystub PDF the FIRST time it was downloaded.
   // Subsequent downloads must produce the same hash; verifies immutability.
@@ -5581,10 +5593,32 @@ model PayrollConfig {
   // Has held at $200,000 since 2013; lives here so the engine reads
   // every parameter from one source.
   medicareSurchargeThreshold Decimal  @db.Decimal(12, 2)
+  // Tier-2 — {"HI": 0.045, ...}: flat withholding rates for states not
+  // covered by the code tables. Consulted before the 4% blanket
+  // fallback, so finance can tune the long tail without a deploy.
+  stateFlatRates             Json?
   createdAt                  DateTime @default(now()) @db.Timestamptz(6)
   updatedAt                  DateTime @updatedAt @db.Timestamptz(6)
 
   @@map("payroll_config")
+}
+
+// Tier-2 — city/county income tax rules (Philadelphia wage tax, Ohio
+// municipal, NYC resident, Indiana counties). Flat-rate on gross;
+// assigned per-associate. Kept minimal — a locality with a wage base or
+// progressive schedule needs a code table like the states.
+model LocalTaxRule {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  state     String   @db.VarChar(2)
+  name      String
+  rate      Decimal  @db.Decimal(6, 5)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  associates Associate[]
+
+  @@index([state, isActive])
 }
 
 // Gap 1 — Singleton row carrying the SSA BSO submitter block used at the

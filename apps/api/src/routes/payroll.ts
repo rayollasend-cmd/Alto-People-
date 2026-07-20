@@ -716,6 +716,7 @@ async function aggregateAndPersistRun(
             fica: p.fica,
             medicare: p.medicare,
             stateWithholding: p.stateIncomeTax,
+            localWithholding: p.localIncomeTax,
             taxState: p.taxState,
             ytdWages: p.ytdWages,
             ytdMedicareWages: p.ytdMedicareWages,
@@ -738,6 +739,7 @@ async function aggregateAndPersistRun(
             fica: p.fica,
             medicare: p.medicare,
             stateWithholding: p.stateIncomeTax,
+            localWithholding: p.localIncomeTax,
             taxState: p.taxState,
             ytdWages: p.ytdWages,
             ytdMedicareWages: p.ytdMedicareWages,
@@ -893,6 +895,7 @@ async function aggregateAndPersistRun(
           fica: true,
           medicare: true,
           stateWithholding: true,
+          localWithholding: true,
           netPay: true,
           employerFica: true,
           employerMedicare: true,
@@ -907,7 +910,8 @@ async function aggregateAndPersistRun(
             Number(i.federalWithholding) +
             Number(i.fica) +
             Number(i.medicare) +
-            Number(i.stateWithholding);
+            Number(i.stateWithholding) +
+            Number(i.localWithholding);
           acc.totalNet += Number(i.netPay);
           acc.totalEmployerTax +=
             Number(i.employerFica) +
@@ -1474,6 +1478,82 @@ payrollRouter.get('/tax-deposits/:id/worksheet.pdf', PROCESS, async (req, res, n
       `attachment; filename="tax-deposit-${ymd(deposit.dueDate)}-${deposit.kind}.pdf"`,
     );
     res.send(pdf);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Tier-2 — local (city/county) tax rules =========================== */
+
+const LocalTaxRuleBodySchema = z.object({
+  state: z.string().regex(/^[A-Za-z]{2}$/),
+  name: z.string().min(2).max(120),
+  rate: z.number().gt(0).lt(0.2),
+});
+
+/** GET /payroll/local-tax-rules */
+payrollRouter.get('/local-tax-rules', PROCESS, async (_req, res, next) => {
+  try {
+    const rules = await prisma.localTaxRule.findMany({
+      orderBy: [{ state: 'asc' }, { name: 'asc' }],
+      include: { associates: { select: { id: true } } },
+    });
+    res.json({
+      rules: rules.map((r) => ({
+        id: r.id,
+        state: r.state,
+        name: r.name,
+        rate: Number(r.rate),
+        isActive: r.isActive,
+        assignedCount: r.associates.length,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** POST /payroll/local-tax-rules {state, name, rate} */
+payrollRouter.post('/local-tax-rules', PROCESS, async (req, res, next) => {
+  try {
+    const parsed = LocalTaxRuleBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const rule = await prisma.localTaxRule.create({
+      data: {
+        state: parsed.data.state.toUpperCase(),
+        name: parsed.data.name,
+        rate: parsed.data.rate,
+      },
+    });
+    res.status(201).json({ id: rule.id });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** POST /payroll/associates/:id/local-tax-rule {ruleId|null} */
+payrollRouter.post('/associates/:id/local-tax-rule', PROCESS, async (req, res, next) => {
+  try {
+    const ruleId =
+      req.body?.ruleId === null
+        ? null
+        : z.string().uuid().parse(req.body?.ruleId);
+    const associate = await prisma.associate.findFirst({
+      where: { id: req.params.id, deletedAt: null },
+      select: { id: true },
+    });
+    if (!associate) throw new HttpError(404, 'associate_not_found', 'Associate not found');
+    if (ruleId) {
+      const rule = await prisma.localTaxRule.findUnique({ where: { id: ruleId } });
+      if (!rule) throw new HttpError(404, 'rule_not_found', 'Local tax rule not found');
+    }
+    await prisma.associate.update({
+      where: { id: associate.id },
+      data: { localTaxRuleId: ruleId },
+    });
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }
