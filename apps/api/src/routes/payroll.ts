@@ -78,6 +78,7 @@ const RUN_LIST_PAGE_SIZE = 100;
 type RawRun = Prisma.PayrollRunGetPayload<{
   include: {
     client: { select: { name: true } };
+    approvedBy: { select: { email: true } };
     items: {
       include: {
         associate: { select: { firstName: true; lastName: true } };
@@ -163,6 +164,8 @@ function toSummary(r: RawRun): PayrollRunSummary {
     cancelledById: r.cancelledById,
     cancelReason: r.cancelReason,
     voidJournalEntryId: r.voidJournalEntryId,
+    approvedAt: r.approvedAt ? r.approvedAt.toISOString() : null,
+    approverEmail: r.approvedBy?.email ?? null,
   };
 }
 
@@ -175,6 +178,7 @@ function toDetail(r: RawRun): PayrollRunDetail {
 
 const RUN_INCLUDE = {
   client: { select: { name: true } },
+  approvedBy: { select: { email: true } },
   items: {
     include: {
       associate: { select: { firstName: true, lastName: true } },
