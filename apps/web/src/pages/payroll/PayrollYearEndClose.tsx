@@ -12,18 +12,13 @@ import { Input } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 
-const STORAGE_PREFIX = 'altoYearEndDistributionConfirmed_';
-
 export function PayrollYearEndClose() {
   const lastYear = new Date().getUTCFullYear() - 1;
   const [year, setYear] = useState(lastYear);
   const [data, setData] = useState<YearEndCloseResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [distributedConfirmed, setDistributedConfirmed] = useState(false);
 
   useEffect(() => {
-    const stored = localStorage.getItem(`${STORAGE_PREFIX}${year}`);
-    setDistributedConfirmed(stored === '1');
     let cancelled = false;
     setData(null);
     setError(null);
@@ -39,13 +34,7 @@ export function PayrollYearEndClose() {
     };
   }, [year]);
 
-  const onConfirmDistribution = (v: boolean) => {
-    setDistributedConfirmed(v);
-    if (v) localStorage.setItem(`${STORAGE_PREFIX}${year}`, '1');
-    else localStorage.removeItem(`${STORAGE_PREFIX}${year}`);
-  };
-
-  const allReady = (data?.readyToClose ?? false) && distributedConfirmed;
+  const allReady = data?.readyToClose ?? false;
 
   return (
     <div className="mx-auto">
@@ -101,9 +90,8 @@ export function PayrollYearEndClose() {
                 <div className="flex items-center gap-2 text-warning">
                   <Circle className="h-5 w-5" />
                   <span className="font-medium">
-                    {data.checks.filter((c) => !c.done).length +
-                      (distributedConfirmed ? 0 : 1)}{' '}
-                    item(s) still open before {year} can close.
+                    {data.checks.filter((c) => !c.done).length} item(s) still open before {year} can
+                    close.
                   </span>
                 </div>
               )}
@@ -151,45 +139,6 @@ export function PayrollYearEndClose() {
                 </Card>
               </li>
             ))}
-
-            <li>
-              <Card
-                className={
-                  distributedConfirmed
-                    ? 'border-success/30 bg-success/[0.04]'
-                    : 'border-navy-secondary'
-                }
-              >
-                <CardContent className="flex items-start gap-3 py-3 text-sm">
-                  {distributedConfirmed ? (
-                    <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-success" />
-                  ) : (
-                    <Circle className="mt-0.5 h-5 w-5 shrink-0 text-silver/70" />
-                  )}
-                  <div className="flex-1">
-                    <div
-                      className={`font-medium ${distributedConfirmed ? 'text-success' : 'text-white'}`}
-                    >
-                      Recipient copies sent
-                    </div>
-                    <div className="text-xs text-silver mt-0.5">
-                      W-2 Copy B/C/2 to employees and 1099 Copy B/2 to recipients (mail or
-                      portal). Manual confirm — distribution isn't tracked in the data
-                      model.
-                    </div>
-                  </div>
-                  <label className="shrink-0 inline-flex items-center gap-2 text-xs text-silver/70 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={distributedConfirmed}
-                      onChange={(e) => onConfirmDistribution(e.target.checked)}
-                      className="accent-gold"
-                    />
-                    Confirm sent
-                  </label>
-                </CardContent>
-              </Card>
-            </li>
           </ul>
         </>
       )}

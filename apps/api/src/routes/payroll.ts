@@ -3217,10 +3217,8 @@ payrollRouter.get('/readiness', PROCESS, async (_req, res, next) => {
  *   3. All eligible 1099-NECs exist.
  *   4. All eligible 1099-MISCs exist.
  *   5. All TaxForm rows for the year are FILED (not DRAFT).
- *
- * Distribution (sending recipient copies) isn't tracked in the data
- * model today, so we surface it as a manual-confirm checkbox in the UI
- * rather than a derived check here.
+ *   6. All recipient copies (W-2/1099) distributed — derived from
+ *      TaxForm.recipientCopySentAt, replacing the old UI-only checkbox.
  */
 payrollRouter.get('/year-end-close', PROCESS, async (req, res, next) => {
   try {
@@ -3256,7 +3254,7 @@ payrollRouter.get('/year-end-close', PROCESS, async (req, res, next) => {
             status: { not: 'VOIDED' },
             kind: { in: ['W2', 'F1099_NEC', 'F1099_MISC'] },
           },
-          select: { kind: true, status: true, associateId: true },
+          select: { kind: true, status: true, associateId: true, recipientCopySentAt: true },
         }),
       ]);
 
@@ -3280,6 +3278,7 @@ payrollRouter.get('/year-end-close', PROCESS, async (req, res, next) => {
 
     const formsDraft = formsForYear.filter((f) => f.status === 'DRAFT').length;
     const formsTotal = formsForYear.length;
+    const copiesUnsent = formsForYear.filter((f) => !f.recipientCopySentAt).length;
 
     const checks = [
       {
@@ -3332,6 +3331,18 @@ payrollRouter.get('/year-end-close', PROCESS, async (req, res, next) => {
             : formsDraft === 0
               ? `All ${formsTotal} form(s) marked FILED.`
               : `${formsDraft} of ${formsTotal} form(s) still in DRAFT.`,
+        href: '/payroll/tax',
+      },
+      {
+        key: 'copies_sent',
+        label: 'Recipient copies sent',
+        done: formsTotal > 0 && copiesUnsent === 0,
+        detail:
+          formsTotal === 0
+            ? 'No forms generated yet for this tax year.'
+            : copiesUnsent === 0
+              ? `All ${formsTotal} recipient copies distributed.`
+              : `${copiesUnsent} of ${formsTotal} form(s) not yet emailed to the worker.`,
         href: '/payroll/tax',
       },
     ];

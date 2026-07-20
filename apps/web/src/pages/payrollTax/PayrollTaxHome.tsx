@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ChevronDown, Download, FileText, Plus, Receipt, Scale } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
+  build940,
   build941,
   createGarnishment,
   createTaxForm,
@@ -20,8 +21,10 @@ import {
   listGarnishments,
   listTaxForms,
   saveSubmitterProfile,
+  sendRecipientCopy,
   setGarnishmentStatus,
   taxFormPdfUrl,
+  w3PdfUrl,
   voidTaxForm,
   w2BulkZipUrl,
   w2Efw2Url,
@@ -728,6 +731,7 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
   const [rows, setRows] = useState<TaxForm[] | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [show941Builder, setShow941Builder] = useState(false);
+  const [show940Builder, setShow940Builder] = useState(false);
   const [showW2Generate, setShowW2Generate] = useState(false);
   const [showF1099NecGenerate, setShowF1099NecGenerate] = useState(false);
   const [showF1099MiscGenerate, setShowF1099MiscGenerate] = useState(false);
@@ -790,6 +794,33 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
     }
   };
 
+  const onSendCopy = async (id: string) => {
+    try {
+      const r = await sendRecipientCopy(id);
+      toast.success(`Recipient copy emailed to ${r.sentTo}.`);
+      refresh();
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'already_sent') {
+        if (
+          await confirm({
+            title: 'Copy already sent',
+            description: `${err.message} Send it again?`,
+          })
+        ) {
+          try {
+            const r = await sendRecipientCopy(id, true);
+            toast.success(`Recipient copy re-sent to ${r.sentTo}.`);
+            refresh();
+          } catch (e) {
+            toast.error(e instanceof ApiError ? e.message : "Couldn't re-send.");
+          }
+        }
+        return;
+      }
+      toast.error(err instanceof ApiError ? err.message : "Couldn't send recipient copy.");
+    }
+  };
+
   return (
     <div className="space-y-4">
       <TaxFormsWorkflowSteps rows={rows} />
@@ -800,6 +831,14 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
           </Button>
           <Button variant="ghost" onClick={() => setShow941Builder(true)}>
             Build 941
+          </Button>
+          <Button variant="ghost" onClick={() => setShow940Builder(true)}>
+            Build 940
+          </Button>
+          <Button asChild variant="ghost">
+            <a href={w3PdfUrl(new Date().getFullYear() - 1)} download>
+              <Download className="mr-2 h-4 w-4" /> W-3 totals
+            </a>
           </Button>
           <Button variant="ghost" onClick={() => setShowW2Generate(true)}>
             Generate W-2s
@@ -929,6 +968,25 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
                           File
                         </Button>
                       )}
+                      {canManage &&
+                        f.status !== 'VOIDED' &&
+                        (f.kind === 'W2' ||
+                          f.kind === 'W2C' ||
+                          f.kind === 'F1099_NEC' ||
+                          f.kind === 'F1099_MISC') && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => onSendCopy(f.id)}
+                            title={
+                              f.recipientCopySentAt
+                                ? `Recipient copy sent ${fmtDate(f.recipientCopySentAt)}`
+                                : 'Email the worker their copy'
+                            }
+                          >
+                            {f.recipientCopySentAt ? '✓ Copy sent' : 'Send copy'}
+                          </Button>
+                        )}
                       {canManage && f.status === 'FILED' && f.kind !== 'W2' && (
                         <Button size="sm" variant="ghost" onClick={() => onVoid(f.id)}>
                           Void
@@ -953,6 +1011,9 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
       )}
       {show941Builder && (
         <Form941BuilderDrawer onClose={() => setShow941Builder(false)} />
+      )}
+      {show940Builder && (
+        <Form940BuilderDrawer onClose={() => setShow940Builder(false)} />
       )}
       {showW2Generate && (
         <W2GenerateDrawer
@@ -1724,9 +1785,102 @@ function Form941BuilderDrawer({ onClose }: { onClose: () => void }) {
           {loading ? 'Building…' : 'Build'}
         </Button>
         {result && (
-          <pre className="mt-2 whitespace-pre-wrap text-xs text-white bg-navy-secondary/40 border border-navy-secondary rounded-md p-3">
-{JSON.stringify(result, null, 2)}
-          </pre>
+          <BuilderAmounts
+            amounts={result.suggestedAmounts}
+            caption={`Q${quarter} ${taxYear} · ${result.periodStart} – ${result.periodEnd}`}
+          />
+        )}
+      </DrawerBody>
+      <DrawerFooter>
+        <Button variant="ghost" onClick={onClose}>
+          Close
+        </Button>
+      </DrawerFooter>
+    </Drawer>
+  );
+}
+
+/** Renders a builder's suggested amounts as labeled rows (camelCase →
+ *  spaced words, numeric strings currency-formatted) — the transcribe
+ *  sheet, not a raw JSON dump. */
+function BuilderAmounts({
+  amounts,
+  caption,
+}: {
+  amounts: Record<string, string | number>;
+  caption: string;
+}) {
+  const fmt = (v: string | number) => {
+    const n = typeof v === 'number' ? v : Number(v);
+    if (Number.isFinite(n) && String(v).match(/^-?\d*\.?\d+$/)) {
+      return n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+    }
+    return String(v);
+  };
+  return (
+    <div className="mt-2 rounded-md border border-navy-secondary bg-navy-secondary/30 p-3">
+      <div className="mb-2 text-xs text-silver/70">{caption}</div>
+      <dl className="space-y-1">
+        {Object.entries(amounts).map(([key, v]) => (
+          <div key={key} className="flex justify-between text-sm">
+            <dt className="text-silver capitalize">
+              {key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase()}
+            </dt>
+            <dd className="tabular-nums text-white">{fmt(v)}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="mt-2 text-xs text-silver/60">
+        Transcribe these into a draft form (New form) or the official IRS form.
+      </p>
+    </div>
+  );
+}
+
+function Form940BuilderDrawer({ onClose }: { onClose: () => void }) {
+  const [taxYear, setTaxYear] = useState(String(new Date().getFullYear() - 1));
+  const [result, setResult] = useState<Awaited<ReturnType<typeof build940>> | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const onBuild = async () => {
+    setLoading(true);
+    try {
+      setResult(await build940(Number(taxYear)));
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Couldn't build the 940. Try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+      <DrawerHeader>
+        <DrawerTitle>940 builder (annual FUTA)</DrawerTitle>
+      </DrawerHeader>
+      <DrawerBody className="space-y-4">
+        <div className="text-sm text-silver">
+          Aggregates the year&rsquo;s disbursed runs into Form 940 line amounts —
+          $7,000 wage cap per employee, net 0.6% tax, and deposits already made
+          from the deposit ledger.
+        </div>
+        <div>
+          <Label>Tax year</Label>
+          <Input
+            type="number"
+            className="mt-1"
+            value={taxYear}
+            onChange={(e) => setTaxYear(e.target.value)}
+          />
+        </div>
+        <Button onClick={onBuild} disabled={loading}>
+          {loading ? 'Building…' : 'Build'}
+        </Button>
+        {result && (
+          <>
+            <BuilderAmounts amounts={result.suggestedAmounts} caption={`Tax year ${result.taxYear}`} />
+            <p className="text-xs text-silver/70">{result.note}</p>
+          </>
         )}
       </DrawerBody>
       <DrawerFooter>

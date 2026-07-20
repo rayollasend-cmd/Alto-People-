@@ -110,6 +110,7 @@ export interface TaxForm {
   status: TaxFormStatus;
   filedAt: string | null;
   ein: string | null;
+  recipientCopySentAt: string | null;
   createdAt: string;
 }
 
