@@ -1,10 +1,12 @@
 import { env } from '../config/env.js';
+import { prisma } from '../db.js';
 import {
   createPayment as branchCreatePayment,
   isBranchConfigured,
   mapBranchStatus,
   type BranchBankRail,
 } from './branch.js';
+import { createWiseTransfer, isWiseConfigured } from './wise.js';
 
 /**
  * Disbursement adapter (Phase 22).
@@ -27,7 +29,7 @@ import {
  * `pickAdapter().disburse(...)` and never need to know which provider ran.
  */
 
-export type DisbursementProvider = 'STUB' | 'WISE' | 'BRANCH';
+export type DisbursementProvider = 'STUB' | 'WISE' | 'BRANCH' | 'CHECK';
 
 export interface DisbursementInput {
   amount: number;
@@ -45,6 +47,11 @@ export interface DisbursementInput {
     accountNumber?: string | null;
     accountType?: 'CHECKING' | 'SAVINGS' | null;
     branchCardId?: string | null;
+    /** Mailing address — required by Wise ABA recipients; also printed on checks. */
+    addressLine1?: string | null;
+    city?: string | null;
+    state?: string | null;
+    zip?: string | null;
   };
   /** Idempotency key — the route passes PayrollItem.id so duplicate calls don't double-pay. */
   idempotencyKey: string;
@@ -67,6 +74,19 @@ export interface DisbursementAdapter {
 class StubAdapter implements DisbursementAdapter {
   readonly provider: DisbursementProvider = 'STUB';
   async disburse(input: DisbursementInput): Promise<DisbursementResult> {
+    // Tier-1 honesty guard: a stub "payment" moves no money. In production
+    // that must never masquerade as a paid item — refuse loudly unless ops
+    // explicitly opted in (e.g. a demo environment).
+    if (env.NODE_ENV === 'production' && !env.PAYROLL_ALLOW_STUB_DISBURSEMENT) {
+      return {
+        provider: 'STUB',
+        externalRef: '',
+        status: 'FAILED',
+        failureReason:
+          'no_disbursement_provider: PAYROLL_DISBURSEMENT_PROVIDER is STUB — no money can move. ' +
+          'Configure BRANCH, WISE, or CHECK (or set PAYROLL_ALLOW_STUB_DISBURSEMENT=true for demo environments).',
+      };
+    }
     // Deterministic synthetic ref derived from idempotencyKey so re-running
     // a stubbed run produces the same "result" — useful for tests and dev.
     return {
@@ -80,26 +100,103 @@ class StubAdapter implements DisbursementAdapter {
 
 class WiseAdapter implements DisbursementAdapter {
   readonly provider: DisbursementProvider = 'WISE';
-  constructor(private readonly apiKey: string) {}
   async disburse(input: DisbursementInput): Promise<DisbursementResult> {
-    // Real call shape (when business is ready to flip the switch):
-    //   POST https://api.wise.com/v3/profiles/{profileId}/transfers
-    //   Authorization: Bearer ${this.apiKey}
-    //   { sourceAccount, targetAccount, quote, customerTransactionId,
-    //     details: { reference } }
-    //
-    // For now we emit a STUB-WISE-... ref so dev flows still finish even
-    // when the env key is set. Replacing the body below with a real fetch
-    // is the only change needed.
-    void this.apiKey;
+    if (input.currency !== 'USD') {
+      return {
+        provider: 'WISE',
+        externalRef: '',
+        status: 'FAILED',
+        failureReason: `unsupported_currency: USD payouts only, got ${input.currency}`,
+      };
+    }
+    if (!input.recipient.routingNumber || !input.recipient.accountNumber) {
+      return {
+        provider: 'WISE',
+        externalRef: '',
+        status: 'FAILED',
+        failureReason: 'no_payout_rail: associate has no bank account on file',
+      };
+    }
+    const result = await createWiseTransfer({
+      amount: input.amount,
+      idempotencyKey: input.idempotencyKey,
+      memo: input.memo,
+      recipient: {
+        fullName: input.recipient.fullName,
+        routingNumber: input.recipient.routingNumber,
+        accountNumber: input.recipient.accountNumber,
+        accountType: input.recipient.accountType ?? 'CHECKING',
+        address: {
+          line1: input.recipient.addressLine1 ?? null,
+          city: input.recipient.city ?? null,
+          state: input.recipient.state ?? null,
+          zip: input.recipient.zip ?? null,
+        },
+      },
+    });
     return {
       provider: 'WISE',
-      externalRef: `STUB-WISE-${input.idempotencyKey.slice(0, 8)}`,
+      externalRef: result.transferId,
+      status: result.status,
+      failureReason: result.failureReason,
+    };
+  }
+}
+
+/**
+ * Paper checks. "Disbursing" an item on this rail records a PayCheck row
+ * with the next number from the global register; the physical check is
+ * printed from the run's check-register PDF. Idempotent: an item that
+ * already has an unvoided check returns the same check number.
+ */
+class CheckAdapter implements DisbursementAdapter {
+  readonly provider: DisbursementProvider = 'CHECK';
+  async disburse(input: DisbursementInput): Promise<DisbursementResult> {
+    if (input.currency !== 'USD') {
+      return {
+        provider: 'CHECK',
+        externalRef: '',
+        status: 'FAILED',
+        failureReason: `unsupported_currency: checks are USD only, got ${input.currency}`,
+      };
+    }
+    const existing = await prisma.payCheck.findUnique({
+      where: { payrollItemId: input.idempotencyKey },
+    });
+    if (existing && !existing.voidedAt) {
+      return {
+        provider: 'CHECK',
+        externalRef: `CHECK-${existing.checkNumber}`,
+        status: 'SUCCESS',
+        failureReason: null,
+      };
+    }
+    if (existing?.voidedAt) {
+      // Reissue after a void: replace the row so the unique holds and the
+      // new check gets a fresh number.
+      await prisma.payCheck.delete({ where: { id: existing.id } });
+    }
+    const check = await prisma.payCheck.create({
+      data: {
+        payrollItemId: input.idempotencyKey,
+        payeeName: input.recipient.fullName,
+        amount: input.amount,
+        memo: input.memo ?? null,
+      },
+    });
+    return {
+      provider: 'CHECK',
+      externalRef: `CHECK-${check.checkNumber}`,
       status: 'SUCCESS',
       failureReason: null,
     };
   }
 }
+
+// Exposed for the disburse route's electronic→check fallback: when the
+// primary provider reports no_payout_rail and PAYROLL_CHECK_FALLBACK is on,
+// the item gets a check instead of landing in the HELD queue.
+export const checkAdapter: DisbursementAdapter = new CheckAdapter();
 
 class BranchAdapter implements DisbursementAdapter {
   readonly provider: DisbursementProvider = 'BRANCH';
@@ -162,6 +259,7 @@ function envFingerprint(): string {
   return [
     env.PAYROLL_DISBURSEMENT_PROVIDER ?? 'STUB',
     env.WISE_API_KEY ? 'wise' : '-',
+    env.WISE_PROFILE_ID ? 'wisep' : '-',
     env.BRANCH_API_KEY ? 'branch' : '-',
   ].join('|');
 }
@@ -173,10 +271,12 @@ export function pickAdapter(): DisbursementAdapter {
   if (cached && cachedFor === fp) return cached;
   const want = (env.PAYROLL_DISBURSEMENT_PROVIDER ?? 'STUB').toUpperCase();
   let chosen: DisbursementAdapter;
-  if (want === 'WISE' && env.WISE_API_KEY) {
-    chosen = new WiseAdapter(env.WISE_API_KEY);
+  if (want === 'WISE' && isWiseConfigured()) {
+    chosen = new WiseAdapter();
   } else if (want === 'BRANCH' && isBranchConfigured()) {
     chosen = new BranchAdapter();
+  } else if (want === 'CHECK') {
+    chosen = new CheckAdapter();
   } else {
     chosen = new StubAdapter();
   }

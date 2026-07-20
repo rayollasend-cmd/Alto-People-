@@ -40,7 +40,8 @@ import { consumePendingDeductions } from '../lib/payrollYtd.js';
 import { computePayrollExceptions } from '../lib/payrollExceptions.js';
 import { hashPdf, renderPaystubPdf, type PaystubData } from '../lib/paystub.js';
 import { sendPaystubEmail } from '../lib/sendPaystubEmail.js';
-import { pickAdapter, type DisbursementInput } from '../lib/disbursement.js';
+import { checkAdapter, pickAdapter, type DisbursementInput } from '../lib/disbursement.js';
+import { renderCheckRegisterPdf } from '../lib/checkRegister.js';
 import { decryptString } from '../lib/crypto.js';
 import type { PayoutMethod } from '@prisma/client';
 import { enqueueAudit, recordPayrollEvent } from '../lib/audit.js';
@@ -952,18 +953,35 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
       }
 
       const primary = item.associate.payoutMethods[0] ?? null;
-      const result = await adapter.disburse({
+      const disburseInput = {
         amount: netPayNum,
         currency: 'USD',
         recipient: recipientFromPayoutMethod(item.associate, primary),
         idempotencyKey: item.id,
         memo: `Payroll ${ymd(run.periodStart)}–${ymd(run.periodEnd)}`,
-      }).catch((err: unknown) => ({
+      };
+      let result = await adapter.disburse(disburseInput).catch((err: unknown) => ({
         provider: adapter.provider,
         externalRef: '',
         status: 'FAILED' as const,
         failureReason: err instanceof Error ? err.message : String(err),
       }));
+      // Electronic → paper fallback: an associate with no card and no bank
+      // account gets a check from the register instead of stranding in the
+      // HELD queue, when ops opted in.
+      if (
+        result.status === 'FAILED' &&
+        env.PAYROLL_CHECK_FALLBACK &&
+        adapter.provider !== 'CHECK' &&
+        (result.failureReason ?? '').startsWith('no_payout_rail')
+      ) {
+        result = await checkAdapter.disburse(disburseInput).catch((err: unknown) => ({
+          provider: 'CHECK' as const,
+          externalRef: '',
+          status: 'FAILED' as const,
+          failureReason: err instanceof Error ? err.message : String(err),
+        }));
+      }
 
       // Append the attempt log first — we want it persisted even if the
       // PayrollItem update later races.
@@ -1085,6 +1103,53 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
     }
 
     res.json(toDetail(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /payroll/runs/:id/check-register.pdf — the printable register of
+ * paper checks issued for this run (CHECK rail or electronic fallback).
+ * Voided checks stay on the sheet, struck through, so every check number
+ * ever issued is accounted for.
+ */
+payrollRouter.get('/runs/:id/check-register.pdf', PROCESS, async (req, res, next) => {
+  try {
+    const run = await prisma.payrollRun.findFirst({
+      where: { id: req.params.id, ...scopePayrollRuns(req.user!) },
+    });
+    if (!run) throw new HttpError(404, 'run_not_found', 'Payroll run not found');
+    const checks = await prisma.payCheck.findMany({
+      where: { payrollItem: { payrollRunId: run.id } },
+      orderBy: { checkNumber: 'asc' },
+    });
+    if (checks.length === 0) {
+      throw new HttpError(404, 'no_checks', 'No paper checks were issued for this run.');
+    }
+    const pdf = await renderCheckRegisterPdf({
+      company: { name: 'Alto HR' },
+      run: {
+        id: run.id,
+        periodStart: ymd(run.periodStart),
+        periodEnd: ymd(run.periodEnd),
+      },
+      rows: checks.map((c) => ({
+        checkNumber: c.checkNumber,
+        issuedAt: c.issuedAt.toISOString(),
+        payeeName: c.payeeName,
+        memo: c.memo,
+        amount: Number(c.amount),
+        voided: c.voidedAt !== null,
+      })),
+      generatedAt: new Date().toISOString(),
+    });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="check-register-${ymd(run.periodStart)}-${ymd(run.periodEnd)}.pdf"`,
+    );
+    res.send(pdf);
   } catch (err) {
     next(err);
   }
@@ -1544,18 +1609,35 @@ payrollRouter.post('/runs/:id/amend', VOID, async (req, res, next) => {
  * BANK_ACCOUNT details so Branch can push ACH to their own bank.
  */
 function recipientFromPayoutMethod(
-  associate: { id: string; firstName: string; lastName: string },
+  associate: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    addressLine1?: string | null;
+    city?: string | null;
+    state?: string | null;
+    zip?: string | null;
+  },
   pm: PayoutMethod | null
 ): DisbursementInput['recipient'] {
   const fullName = `${associate.firstName} ${associate.lastName}`;
+  // Mailing address rides along on every rail: Wise requires it for ABA
+  // recipients, and the check register prints it.
+  const address = {
+    addressLine1: associate.addressLine1 ?? null,
+    city: associate.city ?? null,
+    state: associate.state ?? null,
+    zip: associate.zip ?? null,
+  };
   if (!pm) {
-    return { associateId: associate.id, fullName };
+    return { associateId: associate.id, fullName, ...address };
   }
   if (pm.branchCardId) {
     return {
       associateId: associate.id,
       fullName,
       branchCardId: pm.branchCardId,
+      ...address,
     };
   }
   if (pm.routingNumberEnc && pm.accountNumberEnc) {
@@ -1565,9 +1647,10 @@ function recipientFromPayoutMethod(
       routingNumber: decryptString(pm.routingNumberEnc),
       accountNumber: decryptString(pm.accountNumberEnc),
       accountType: pm.accountType === 'SAVINGS' ? 'SAVINGS' : 'CHECKING',
+      ...address,
     };
   }
-  return { associateId: associate.id, fullName };
+  return { associateId: associate.id, fullName, ...address };
 }
 
 function aggregateForQbo(items: Array<{
