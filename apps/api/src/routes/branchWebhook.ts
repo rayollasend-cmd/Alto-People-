@@ -8,6 +8,8 @@ import { recordPayrollEvent } from '../lib/audit.js';
 import { describeBranchFailure } from '../lib/achReturnCodes.js';
 import { notifyHrOfPaymentFailure } from '../lib/payrollFailureNotify.js';
 import { sendPaystubEmail } from '../lib/sendPaystubEmail.js';
+import { accrueDepositsForRun } from '../lib/taxDeposits.js';
+import { accrueRemittancesForRun } from '../lib/garnishmentRemittance.js';
 
 export const branchWebhookRouter = Router();
 
@@ -252,6 +254,16 @@ branchWebhookRouter.post(
         // SUCCESS event; sendPaystubEmail's paystubEmailedAt guard ensures
         // we mail the associate exactly once per item.
         void sendPaystubEmail(prisma, { payrollItemId: result.item.id });
+      }
+      // Tier-1 — the async settlement just completed the run: accrue the
+      // federal deposit obligation exactly as the synchronous path does.
+      if (result.runFlippedToDisbursed) {
+        void accrueDepositsForRun(prisma, result.item.payrollRunId).catch((err) =>
+          console.warn('[branch-webhook] tax-deposit accrual failed (advisory):', err),
+        );
+        void accrueRemittancesForRun(prisma, result.item.payrollRunId).catch((err) =>
+          console.warn('[branch-webhook] garnishment-remittance accrual failed (advisory):', err),
+        );
       }
 
       await recordPayrollEvent({

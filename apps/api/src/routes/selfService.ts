@@ -6,8 +6,9 @@ import { HttpError } from '../middleware/error.js';
 import { recordChange } from '../lib/associateHistory.js';
 import { emit as emitWorkflow } from '../lib/workflow.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
-import { decryptString } from '../lib/crypto.js';
+import { decryptString, encryptString } from '../lib/crypto.js';
 import { enqueueAudit } from '../lib/audit.js';
+import { send } from '../lib/notifications.js';
 import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
 
 /**
@@ -488,34 +489,246 @@ selfServiceRouter.post('/me/life-events', async (req, res) => {
 
 // ----- Tax documents ------------------------------------------------------
 
+// Tier-3 — the real W-2 / W-2c / 1099 PDFs live on TaxForm rows and the
+// per-form PDF route already allows owner download. This listing merges
+// them (with a working downloadUrl) with any legacy TaxDocument rows, so
+// self-service finally serves actual bytes instead of a stub note.
 selfServiceRouter.get('/me/tax-documents', async (req, res) => {
   const id = requireAssociate(req);
-  const rows = await prisma.taxDocument.findMany({
-    take: 500,
-    where: { associateId: id },
-    orderBy: [{ taxYear: 'desc' }, { kind: 'asc' }],
-  });
+  const [rows, forms] = await Promise.all([
+    prisma.taxDocument.findMany({
+      take: 500,
+      where: { associateId: id },
+      orderBy: [{ taxYear: 'desc' }, { kind: 'asc' }],
+    }),
+    prisma.taxForm.findMany({
+      take: 200,
+      where: {
+        associateId: id,
+        kind: { in: ['W2', 'W2C', 'F1099_NEC', 'F1099_MISC'] },
+        status: { not: 'VOIDED' },
+      },
+      orderBy: [{ taxYear: 'desc' }, { kind: 'asc' }],
+    }),
+  ]);
   res.json({
-    documents: rows.map((r) => ({
-      id: r.id,
-      kind: r.kind,
-      taxYear: r.taxYear,
-      issuedAt: r.issuedAt.toISOString(),
-      fileSize: r.fileSize,
-    })),
+    documents: [
+      ...forms.map((f) => ({
+        id: f.id,
+        kind: f.kind,
+        taxYear: f.taxYear,
+        issuedAt: (f.filedAt ?? f.createdAt).toISOString(),
+        fileSize: null as number | null,
+        downloadUrl: `/api/tax-forms/${f.id}/pdf`,
+      })),
+      ...rows.map((r) => ({
+        id: r.id,
+        kind: r.kind,
+        taxYear: r.taxYear,
+        issuedAt: r.issuedAt.toISOString(),
+        fileSize: r.fileSize,
+        downloadUrl: null as string | null,
+      })),
+    ],
   });
 });
 
 selfServiceRouter.get('/me/tax-documents/:id/download', async (req, res) => {
   const associateId = requireAssociate(req);
   const id = req.params.id;
+  // TaxForm ids resolve to the real PDF route (the owner-scoped renderer).
+  const form = await prisma.taxForm.findFirst({
+    where: { id, associateId, status: { not: 'VOIDED' } },
+    select: { id: true },
+  });
+  if (form) {
+    res.redirect(302, `/api/tax-forms/${form.id}/pdf`);
+    return;
+  }
   const doc = await prisma.taxDocument.findUnique({ where: { id } });
   if (!doc || doc.associateId !== associateId) {
     throw new HttpError(404, 'not_found', 'Document not found.');
   }
-  // v1 stub — Phase 91 wires actual W-2 / 1099 PDF generation.
-  res.json({
-    note: 'Tax document PDF generation lands in Phase 91. This endpoint will stream the file once available.',
-    storageKey: doc.storageKey,
+  throw new HttpError(
+    410,
+    'legacy_document',
+    'This legacy document has no stored file. Current W-2s and 1099s download directly from this page.',
+  );
+});
+
+// ----- W-4 (Tier-3 self-service) -----------------------------------------
+
+const W4UpdateSchema = z.object({
+  filingStatus: z.enum(['SINGLE', 'MARRIED_FILING_JOINTLY', 'HEAD_OF_HOUSEHOLD']),
+  multipleJobs: z.boolean().optional(),
+  dependentsAmount: z.number().min(0).max(50_000).optional(),
+  otherIncome: z.number().min(0).max(10_000_000).optional(),
+  deductions: z.number().min(0).max(10_000_000).optional(),
+  extraWithholding: z.number().min(0).max(100_000).optional(),
+});
+
+selfServiceRouter.get('/me/w4', async (req, res) => {
+  const id = requireAssociate(req);
+  const w4 = await prisma.w4Submission.findUnique({
+    where: { associateId: id },
+    select: {
+      filingStatus: true,
+      multipleJobs: true,
+      dependentsAmount: true,
+      otherIncome: true,
+      deductions: true,
+      extraWithholding: true,
+      signedAt: true,
+      updatedAt: true,
+    },
   });
+  if (!w4) throw new HttpError(404, 'no_w4', 'No W-4 on file yet — complete onboarding first.');
+  res.json({
+    filingStatus: w4.filingStatus,
+    multipleJobs: w4.multipleJobs,
+    dependentsAmount: Number(w4.dependentsAmount),
+    otherIncome: Number(w4.otherIncome),
+    deductions: Number(w4.deductions),
+    extraWithholding: Number(w4.extraWithholding),
+    signedAt: w4.signedAt?.toISOString() ?? null,
+    updatedAt: w4.updatedAt.toISOString(),
+  });
+});
+
+/**
+ * POST /me/w4 — a life change (marriage, new dependent) shouldn't require
+ * an HR ticket to adjust withholding. Updates the election fields only;
+ * the SSN captured at onboarding never changes here. Takes effect on the
+ * next payroll run. Audited.
+ */
+selfServiceRouter.post('/me/w4', async (req, res) => {
+  const id = requireAssociate(req);
+  const input = W4UpdateSchema.parse(req.body ?? {});
+  const existing = await prisma.w4Submission.findUnique({ where: { associateId: id } });
+  if (!existing) {
+    throw new HttpError(
+      409,
+      'no_w4',
+      'No W-4 on file — the onboarding W-4 (with SSN) must be completed first.',
+    );
+  }
+  await prisma.w4Submission.update({
+    where: { associateId: id },
+    data: {
+      filingStatus: input.filingStatus,
+      ...(input.multipleJobs !== undefined ? { multipleJobs: input.multipleJobs } : {}),
+      ...(input.dependentsAmount !== undefined ? { dependentsAmount: input.dependentsAmount } : {}),
+      ...(input.otherIncome !== undefined ? { otherIncome: input.otherIncome } : {}),
+      ...(input.deductions !== undefined ? { deductions: input.deductions } : {}),
+      ...(input.extraWithholding !== undefined ? { extraWithholding: input.extraWithholding } : {}),
+      signedAt: new Date(),
+    },
+  });
+  enqueueAudit(
+    {
+      actorUserId: req.user!.id,
+      action: 'self.w4_updated',
+      entityType: 'Associate',
+      entityId: id,
+      metadata: { fields: Object.keys(input) },
+    },
+    'self.w4_updated',
+  );
+  res.json({ ok: true, effectiveNote: 'Applies from the next payroll run.' });
+});
+
+// ----- Payout method (Tier-3 self-service) --------------------------------
+
+/** ABA routing checksum (3-7-1 weighting). */
+function isValidRoutingNumber(rtn: string): boolean {
+  if (!/^\d{9}$/.test(rtn)) return false;
+  const d = rtn.split('').map(Number);
+  const sum =
+    3 * (d[0] + d[3] + d[6]) + 7 * (d[1] + d[4] + d[7]) + (d[2] + d[5] + d[8]);
+  return sum % 10 === 0;
+}
+
+const PayoutUpdateSchema = z.object({
+  routingNumber: z.string().regex(/^\d{9}$/),
+  accountNumber: z.string().regex(/^\d{4,17}$/),
+  accountType: z.enum(['CHECKING', 'SAVINGS']),
+});
+
+selfServiceRouter.get('/me/payout-method', async (req, res) => {
+  const id = requireAssociate(req);
+  const pm = await prisma.payoutMethod.findFirst({
+    where: { associateId: id, isPrimary: true },
+  });
+  if (!pm) {
+    res.json({ method: null });
+    return;
+  }
+  const account = pm.accountNumberEnc ? decryptString(pm.accountNumberEnc) : null;
+  res.json({
+    method: {
+      type: pm.type,
+      accountType: pm.accountType,
+      accountLast4: account ? account.slice(-4) : null,
+      branchCard: pm.branchCardId !== null,
+      verifiedAt: pm.verifiedAt?.toISOString() ?? null,
+      updatedAt: pm.updatedAt.toISOString(),
+    },
+  });
+});
+
+/**
+ * POST /me/payout-method — replace the primary direct-deposit account.
+ * Routing number is checksum-validated; the change clears verifiedAt and
+ * fires a confirmation email to the associate's address on file (the
+ * standard bank-change fraud tripwire: if you didn't make this change,
+ * you hear about it immediately). Audited as a critical-adjacent event.
+ */
+selfServiceRouter.post('/me/payout-method', async (req, res) => {
+  const associateId = requireAssociate(req);
+  const input = PayoutUpdateSchema.parse(req.body ?? {});
+  if (!isValidRoutingNumber(input.routingNumber)) {
+    throw new HttpError(400, 'invalid_routing', 'That routing number fails the ABA checksum — double-check it.');
+  }
+  const associate = await prisma.associate.findUnique({
+    where: { id: associateId },
+    select: { email: true, firstName: true },
+  });
+  const existing = await prisma.payoutMethod.findFirst({
+    where: { associateId, isPrimary: true },
+  });
+  const data = {
+    type: 'BANK_ACCOUNT' as const,
+    routingNumberEnc: encryptString(input.routingNumber),
+    accountNumberEnc: encryptString(input.accountNumber),
+    accountType: input.accountType,
+    verifiedAt: null,
+    isPrimary: true,
+  };
+  if (existing) {
+    await prisma.payoutMethod.update({ where: { id: existing.id }, data });
+  } else {
+    await prisma.payoutMethod.create({ data: { associateId, ...data } });
+  }
+  enqueueAudit(
+    {
+      actorUserId: req.user!.id,
+      action: 'self.payout_method_updated',
+      entityType: 'Associate',
+      entityId: associateId,
+      metadata: { accountLast4: input.accountNumber.slice(-4) },
+    },
+    'self.payout_method_updated',
+  );
+  if (associate?.email) {
+    void send({
+      channel: 'EMAIL',
+      recipient: { userId: req.user!.id, phone: null, email: associate.email },
+      subject: 'Your direct deposit account was changed',
+      body:
+        `Hi ${associate.firstName},\n\nThe bank account for your paychecks was just updated ` +
+        `(account ending ${input.accountNumber.slice(-4)}). If you made this change, no action is needed. ` +
+        `If you did NOT make this change, contact your manager immediately.`,
+    }).catch(() => {});
+  }
+  res.json({ ok: true, accountLast4: input.accountNumber.slice(-4) });
 });

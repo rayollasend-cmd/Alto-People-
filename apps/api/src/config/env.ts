@@ -164,8 +164,23 @@ const EnvSchema = z.object({
   // synthetic refs; WISE / BRANCH attempt the real provider when the
   // matching API key is also set. Falls back to STUB if the chosen
   // provider's key is missing.
-  PAYROLL_DISBURSEMENT_PROVIDER: z.enum(['STUB', 'WISE', 'BRANCH']).default('STUB'),
+  PAYROLL_DISBURSEMENT_PROVIDER: z.enum(['STUB', 'WISE', 'BRANCH', 'CHECK']).default('STUB'),
   WISE_API_KEY: z.string().optional(),
+  // Wise profile that owns the USD balance transfers fund from. Required
+  // (with the API key) before the WISE provider makes real calls.
+  WISE_PROFILE_ID: z.string().optional(),
+  WISE_API_BASE_URL: z.string().url().default('https://api.wise.com'),
+  // Tier-1 honesty guard: in production the STUB adapter refuses to mark
+  // items paid unless this is explicitly true. A run that "disbursed" via
+  // stub moves no money — that must be an opt-in, never a silent default.
+  PAYROLL_ALLOW_STUB_DISBURSEMENT: z.coerce.boolean().default(false),
+  // Tier-3 — four-eyes control: when true, a FINALIZED run must be
+  // approved by someone other than its creator before it can disburse.
+  PAYROLL_REQUIRE_SECOND_APPROVAL: z.coerce.boolean().default(false),
+  // When the electronic provider reports no_payout_rail for an associate
+  // (no Branch card, no bank account), fall back to issuing a paper check
+  // from the check register instead of HELDing the item.
+  PAYROLL_CHECK_FALLBACK: z.coerce.boolean().default(false),
   BRANCH_API_KEY: z.string().optional(),
   // Phase 45 — Branch payments rail. BRANCH_API_BASE_URL lets ops point
   // at sandbox vs production without a code change; BRANCH_WEBHOOK_SECRET
@@ -277,6 +292,17 @@ if (parsed.data.NODE_ENV === 'production') {
       'FATAL: NODE_ENV=production but KIOSK_PIN_SECRET is not configured. ' +
         'It cannot silently fall back to PAYOUT_ENCRYPTION_KEY in prod — one leaked secret ' +
         'would let an attacker forge every existing kiosk PIN HMAC. Generate with `openssl rand -base64 48`.',
+    );
+    process.exit(1);
+  }
+}
+
+if (parsed.data.PAYROLL_DISBURSEMENT_PROVIDER === 'WISE') {
+  if (!parsed.data.WISE_API_KEY || !parsed.data.WISE_PROFILE_ID) {
+    console.error(
+      'FATAL: PAYROLL_DISBURSEMENT_PROVIDER is set to WISE but WISE_API_KEY and/or ' +
+        'WISE_PROFILE_ID are not configured. The system will not start to prevent ' +
+        'silent payment failures.',
     );
     process.exit(1);
   }

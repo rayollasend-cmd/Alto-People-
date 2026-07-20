@@ -359,6 +359,10 @@ model User {
   emailChangeRequests               EmailChangeRequest[]
   createdEsignAgreements            EsignAgreement[]              @relation("EsignAgreementCreator")
   payrollDisbursementAttempts       PayrollDisbursementAttempt[]  @relation("PayrollDisbursementAttemptActor")
+  taxDepositsPaid                   TaxDeposit[]                  @relation("TaxDepositPayer")
+  garnishmentRemittancesSent        GarnishmentRemittance[]       @relation("GarnishmentRemittanceSender")
+  payrollRunAddOnsCreated           PayrollRunAddOn[]             @relation("PayrollRunAddOnCreator")
+  approvedPayrollRuns               PayrollRun[]                  @relation("PayrollRunApprover")
   timeOffLedgerEntriesAuthored      TimeOffLedgerEntry[]
   timeOffReviews                    TimeOffRequest[]              @relation("TimeOffReviewer")
   associateHistoryEntries           AssociateHistory[]            @relation("AssociateHistoryActor")
@@ -472,6 +476,11 @@ model Client {
   // week-ahead digest (sent the evening before this day) and future
   // per-client week math.
   weekStartsOn Int          @default(0)
+  // Tier-2 — this employer's actual SUTA experience rate + wage base
+  // from the state agency's annual notice. Null = the new-employer
+  // defaults baked into the engine's per-state table.
+  sutaRateOverride     Decimal? @db.Decimal(6, 5)
+  sutaWageBaseOverride Decimal? @db.Decimal(12, 2)
   // Gap 1 — Employer identity used on tax forms (W-2, 941, 1099-NEC).
   // legalName is the IRS-registered name shown on the W-2 employer block;
   // it can differ from `name` (the brand / display name). ein is the EIN
@@ -683,6 +692,17 @@ model Associate {
   // *planned* start at invitation time, which can differ if HR changes
   // their mind during review).
   hireDate          DateTime?      @db.Date
+  // Tier-1 — when this hire was reported to the state new-hire directory
+  // (federally required within ~20 days of hire). Null = not yet
+  // reported; the new-hire report endpoints surface and stamp this.
+  newHireReportedAt DateTime?      @db.Timestamptz(6)
+  // Tier-2 — city/county withholding rule for this associate (null =
+  // no local tax). Withheld into PayrollItem.localWithholding.
+  localTaxRuleId    String?        @db.Uuid
+  localTaxRule      LocalTaxRule?  @relation(fields: [localTaxRuleId], references: [id], onDelete: SetNull)
+  // Tier-3 — workers-comp classification for the premium accrual report.
+  wcClassCodeId     String?        @db.Uuid
+  wcClassCode       WcClassCode?   @relation(fields: [wcClassCodeId], references: [id], onDelete: SetNull)
   // Profile photo. photoS3Key is the storage path under uploads/profile-photos/;
   // photoUpdatedAt is the cache-buster the API stamps onto the photo URL so
   // the browser refetches after an upload. Null when no photo on file —
@@ -823,6 +843,8 @@ model Associate {
   // Phase 131 — location-assignment history. The open row (endedAt IS
   // NULL) is the associate's current work site.
   assignments              AssociateAssignment[]
+  // Tier-2 — manual earning lines attached to draft runs.
+  payrollRunAddOns         PayrollRunAddOn[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -1585,6 +1607,11 @@ model PayrollRun {
   notes                    String?
   createdById              String?                   @db.Uuid
   finalizedAt              DateTime?                 @db.Timestamptz(6)
+  // Tier-3 — four-eyes approval: a second person (not the run creator)
+  // signs off between FINALIZED and disbursement. Enforced only when
+  // PAYROLL_REQUIRE_SECOND_APPROVAL is on.
+  approvedById             String?                   @db.Uuid
+  approvedAt               DateTime?                 @db.Timestamptz(6)
   disbursedAt              DateTime?                 @db.Timestamptz(6)
   cancelledAt              DateTime?                 @db.Timestamptz(6)
   // Gap 3 — void metadata. cancelledById = HR Admin who voided. cancelReason
@@ -1607,6 +1634,7 @@ model PayrollRun {
   qboSyncError             String?
   client                   Client?                   @relation(fields: [clientId], references: [id], onDelete: SetNull)
   createdBy                User?                     @relation("PayrollRunCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  approvedBy               User?                     @relation("PayrollRunApprover", fields: [approvedById], references: [id], onDelete: SetNull)
   cancelledBy              User?                     @relation("PayrollRunCanceller", fields: [cancelledById], references: [id], onDelete: SetNull)
   amendsRun                PayrollRun?               @relation("PayrollRunAmendments", fields: [amendsRunId], references: [id], onDelete: Restrict)
   amendments               PayrollRun[]              @relation("PayrollRunAmendments")
@@ -1617,6 +1645,13 @@ model PayrollRun {
   reimbursementsPaid       Reimbursement[]
   // Gap 3 — pending deductions consumed by this run (overpayment clawbacks).
   pendingDeductionsApplied PendingPayrollDeduction[] @relation("PendingDeductionAppliedRun")
+  // Tier-1 — the FED_941 deposit obligation this run's disbursement accrued.
+  taxDeposit               TaxDeposit?
+  // Tier-1 — per-payee garnishment remittances accrued at disbursement.
+  garnishmentRemittances   GarnishmentRemittance[]
+  // Tier-2 — manual earning lines (bonus/commission/tips/holiday/PTO
+  // payout) attached to a DRAFT run; folded into items at aggregation.
+  addOns                   PayrollRunAddOn[]
   createdAt                DateTime                  @default(now()) @db.Timestamptz(6)
   updatedAt                DateTime                  @updatedAt @db.Timestamptz(6)
 
@@ -1678,6 +1713,9 @@ model PayrollItem {
   // time). Lets the paystub label the SIT line and the auditor see why a
   // CA-rate was applied to someone who later moved to TX.
   taxState            String?
+  // Tier-2 — city/county withholding (W-2 Box 19). Zero unless the
+  // associate carries a LocalTaxRule.
+  localWithholding    Decimal           @default(0) @db.Decimal(12, 2)
   status              PayrollItemStatus @default(PENDING)
   // sha256 of the rendered paystub PDF the FIRST time it was downloaded.
   // Subsequent downloads must produce the same hash; verifies immutability.
@@ -1735,12 +1773,60 @@ model PayrollItem {
   // so the row can't be double-folded.
   reimbursementsPaid Reimbursement[] @relation("ReimbursementPaidItem")
 
+  // Tier-1 — paper check issued for this item (CHECK rail or electronic
+  // fallback). One check per item; reissue voids and re-creates.
+  payCheck PayCheck?
+
   // One paystub per (run, associate) — re-aggregating updates in place
   // rather than duplicating.
   @@unique([payrollRunId, associateId])
   @@index([associateId])
   @@index([status])
   @@index([amendsItemId])
+}
+
+// Tier-2 — manual earning lines on a DRAFT run. The aggregator folds
+// these into the associate's item as PayrollItemEarning rows of the
+// stated kind: BONUS / COMMISSION are supplemental wages (22% flat FIT,
+// Pub 15 §7); TIPS / HOLIDAY / SICK / VACATION are regular wages taxed
+// by the percentage method. An associate with add-ons but no hours
+// still gets an item — which is exactly how an OFF_CYCLE bonus run
+// works: empty period + add-ons.
+model PayrollRunAddOn {
+  id           String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  payrollRunId String             @db.Uuid
+  associateId  String             @db.Uuid
+  kind         PayrollEarningKind
+  amount       Decimal            @db.Decimal(12, 2)
+  hours        Decimal?           @db.Decimal(8, 2)
+  note         String?
+  createdById  String?            @db.Uuid
+  createdAt    DateTime           @default(now()) @db.Timestamptz(6)
+
+  payrollRun PayrollRun @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  associate  Associate  @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  createdBy  User?      @relation("PayrollRunAddOnCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([payrollRunId])
+  @@index([associateId])
+}
+
+// Tier-1 — the paper-check register. checkNumber is a global SERIAL so
+// numbers are strictly increasing across runs (what a physical checkbook
+// does). Items paid by check reference their entry here; the register PDF
+// for a run is rendered from these rows.
+model PayCheck {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  checkNumber   Int         @unique @default(autoincrement())
+  payrollItemId String      @unique @db.Uuid
+  payeeName     String
+  amount        Decimal     @db.Decimal(12, 2)
+  memo          String?
+  issuedAt      DateTime    @default(now()) @db.Timestamptz(6)
+  voidedAt      DateTime?   @db.Timestamptz(6)
+  payrollItem   PayrollItem @relation(fields: [payrollItemId], references: [id], onDelete: Cascade)
+
+  @@index([issuedAt])
 }
 
 // Wave 1.2 — One row per earning line on a paystub. The sum of all
@@ -3108,6 +3194,10 @@ model TipPool {
   notes       String?
   closedAt    DateTime?     @db.Timestamptz(6)
   paidOutAt   DateTime?     @db.Timestamptz(6)
+  // Tier-2 — the payroll run that folded this pool's allocations into
+  // paychecks as TIPS earnings. Lets re-aggregation of the same run stay
+  // idempotent while blocking a second run from double-paying the pool.
+  paidPayrollRunId String? @db.Uuid
   createdById String?       @db.Uuid
   createdAt   DateTime      @default(now()) @db.Timestamptz(6)
   updatedAt   DateTime      @updatedAt @db.Timestamptz(6)
@@ -3356,6 +3446,10 @@ model WcClassCode {
   effectiveFrom DateTime  @db.Date
   effectiveTo   DateTime? @db.Date
   createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+
+  // Tier-3 — associates classified under this code; drives the per-run
+  // workers-comp premium accrual report.
+  associates Associate[]
 
   @@unique([stateCode, code, effectiveFrom])
   @@index([stateCode])
@@ -3662,11 +3756,53 @@ model GarnishmentDeduction {
   amount        Decimal  @db.Decimal(10, 2)
   deductedOn    DateTime @default(now()) @db.Timestamptz(6)
   createdAt     DateTime @default(now()) @db.Timestamptz(6)
+  // Tier-1 — the remittance batch this deduction was rolled into. Null
+  // until the run disburses and remittances accrue.
+  remittanceId  String?  @db.Uuid
 
-  garnishment Garnishment @relation(fields: [garnishmentId], references: [id], onDelete: Cascade)
-  payrollRun  PayrollRun? @relation(fields: [payrollRunId], references: [id], onDelete: SetNull)
+  garnishment Garnishment            @relation(fields: [garnishmentId], references: [id], onDelete: Cascade)
+  payrollRun  PayrollRun?            @relation(fields: [payrollRunId], references: [id], onDelete: SetNull)
+  remittance  GarnishmentRemittance? @relation(fields: [remittanceId], references: [id], onDelete: SetNull)
 
   @@index([garnishmentId])
+  @@index([remittanceId])
+}
+
+// Tier-1 — money withheld from paychecks under a court/agency order must
+// actually reach the payee (state disbursement unit, IRS, creditor).
+// One remittance per (run, payee) groups every deduction bound for the
+// same address; finance sends the payment out-of-band (check or agency
+// portal) and marks it SENT with the payment reference. Deducting
+// without remitting is a compliance violation — PENDING rows here are
+// the queue that prevents it.
+enum GarnishmentRemittanceStatus {
+  PENDING
+  SENT
+}
+
+model GarnishmentRemittance {
+  id           String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  payrollRunId String                      @db.Uuid
+  // Payee identity — snapshot of Garnishment.remitTo/remitAddress at
+  // accrual time (orders can be edited later; the remittance shouldn't
+  // drift).
+  payeeName    String
+  payeeAddress String?
+  amount       Decimal                     @db.Decimal(12, 2)
+  status       GarnishmentRemittanceStatus @default(PENDING)
+  sentAt       DateTime?                   @db.Timestamptz(6)
+  sentById     String?                     @db.Uuid
+  // Check number / agency portal confirmation keyed in at mark-sent.
+  reference    String?
+  createdAt    DateTime                    @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime                    @updatedAt @db.Timestamptz(6)
+
+  payrollRun PayrollRun             @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  sentBy     User?                  @relation("GarnishmentRemittanceSender", fields: [sentById], references: [id], onDelete: SetNull)
+  deductions GarnishmentDeduction[]
+
+  @@unique([payrollRunId, payeeName])
+  @@index([status])
 }
 
 model TaxForm {
@@ -3689,6 +3825,11 @@ model TaxForm {
   // enforced at the migration). The original is flipped to AMENDED at
   // W-2c create time so the UI hides it from the active list.
   amendsTaxFormId String?       @db.Uuid
+  // Tier-1 — when the recipient copy (employee W-2 Copy B, contractor
+  // 1099) was emailed to the associate. Filing isn't done until the
+  // worker has their copy; this makes distribution auditable instead of
+  // a UI checkbox nobody can verify.
+  recipientCopySentAt DateTime? @db.Timestamptz(6)
   createdAt       DateTime      @default(now()) @db.Timestamptz(6)
   updatedAt       DateTime      @updatedAt @db.Timestamptz(6)
 
@@ -5466,10 +5607,32 @@ model PayrollConfig {
   // Has held at $200,000 since 2013; lives here so the engine reads
   // every parameter from one source.
   medicareSurchargeThreshold Decimal  @db.Decimal(12, 2)
+  // Tier-2 — {"HI": 0.045, ...}: flat withholding rates for states not
+  // covered by the code tables. Consulted before the 4% blanket
+  // fallback, so finance can tune the long tail without a deploy.
+  stateFlatRates             Json?
   createdAt                  DateTime @default(now()) @db.Timestamptz(6)
   updatedAt                  DateTime @updatedAt @db.Timestamptz(6)
 
   @@map("payroll_config")
+}
+
+// Tier-2 — city/county income tax rules (Philadelphia wage tax, Ohio
+// municipal, NYC resident, Indiana counties). Flat-rate on gross;
+// assigned per-associate. Kept minimal — a locality with a wage base or
+// progressive schedule needs a code table like the states.
+model LocalTaxRule {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  state     String   @db.VarChar(2)
+  name      String
+  rate      Decimal  @db.Decimal(6, 5)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  associates Associate[]
+
+  @@index([state, isActive])
 }
 
 // Gap 1 — Singleton row carrying the SSA BSO submitter block used at the
@@ -5497,7 +5660,59 @@ model SubmitterProfile {
   // Required for 1099-NEC e-file via FIRE; null when the transmitter
   // only does W-2 SSA filings.
   irsTcc       String?  @db.VarChar(5)
+  // Tier-1 — the employer's IRS 941 deposit schedule, from the lookback
+  // rule (Pub 15 §11): MONTHLY (≤$50k liability in the lookback period,
+  // deposits due the 15th of the following month) or SEMIWEEKLY
+  // (Wed–Fri paydays due next Wednesday, Sat–Tue due next Friday).
+  depositSchedule String @default("MONTHLY") @db.VarChar(12)
   updatedAt    DateTime @updatedAt @db.Timestamptz(6)
+}
+
+// Tier-1 — federal tax deposit ledger. Every disbursed run accrues a
+// FED_941 deposit obligation (FIT + employee & employer FICA/Medicare)
+// with a due date computed from the employer's deposit schedule; FUTA
+// accrues per quarter (due end of month after quarter once > $500).
+// The system tracks and reminds — the actual EFTPS payment is made by
+// finance (worksheet PDF) and marked paid here with the EFTPS
+// acknowledgment number.
+enum TaxDepositKind {
+  FED_941
+  FUTA
+}
+
+enum TaxDepositStatus {
+  PENDING
+  PAID
+}
+
+model TaxDeposit {
+  id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kind               TaxDepositKind
+  // Deposit schedule in force when this obligation was computed.
+  scheduleUsed       String           @db.VarChar(12)
+  // Human label: the payday for FED_941 ("2026-07-18 payday"), the
+  // quarter for FUTA ("2026-Q3").
+  periodLabel        String
+  // FED_941 deposits tie to the run whose disbursement created the
+  // liability; unique so re-disbursement can't double-accrue.
+  payrollRunId       String?          @unique @db.Uuid
+  liabilityDate      DateTime         @db.Date
+  dueDate            DateTime         @db.Date
+  amount             Decimal          @db.Decimal(12, 2)
+  // {fit, ssEmployee, ssEmployer, medEmployee, medEmployer} or {futa}.
+  breakdown          Json
+  status             TaxDepositStatus @default(PENDING)
+  paidAt             DateTime?        @db.Timestamptz(6)
+  paidById           String?          @db.Uuid
+  // EFTPS acknowledgment number keyed in by finance when marking paid.
+  confirmationNumber String?
+  createdAt          DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime         @updatedAt @db.Timestamptz(6)
+  payrollRun         PayrollRun?      @relation(fields: [payrollRunId], references: [id], onDelete: SetNull)
+  paidBy             User?            @relation("TaxDepositPayer", fields: [paidById], references: [id], onDelete: SetNull)
+
+  @@index([status, dueDate])
+  @@index([kind, periodLabel])
 }
 
 // Status of OUR processing of a Branch webhook delivery — distinct from

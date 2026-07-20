@@ -78,6 +78,13 @@ export async function aggregateW2Wages(
   tx: Tx,
   associateId: string,
   taxYear: number,
+  /**
+   * Tier-2 — multi-EIN split. `undefined` aggregates across every run
+   * (legacy single-W-2 behavior); a client id (or explicit null for
+   * cross-client internal runs) scopes the boxes to wages paid under
+   * that employer's EIN, so a worker paid by two clients gets two W-2s.
+   */
+  employerClientId?: string | null,
 ): Promise<W2Boxes> {
   const yearStart = new Date(Date.UTC(taxYear, 0, 1));
   const yearEndExclusive = new Date(Date.UTC(taxYear + 1, 0, 1));
@@ -93,6 +100,7 @@ export async function aggregateW2Wages(
       payrollRun: {
         status: { not: 'CANCELLED' },
         disbursedAt: { gte: yearStart, lt: yearEndExclusive },
+        ...(employerClientId !== undefined ? { clientId: employerClientId } : {}),
       },
     },
     select: {
@@ -173,6 +181,29 @@ export async function aggregateW2Wages(
  * scoped to one client (or all clients if clientId is null). Used by the
  * generate route to know whom to build W-2s for.
  */
+/**
+ * Tier-2 — the distinct employers (run clientIds, null = cross-client
+ * internal) that paid this associate in the year. One W-2 per entry.
+ */
+export async function listEmployerClientIds(
+  tx: Tx,
+  associateId: string,
+  taxYear: number,
+): Promise<Array<string | null>> {
+  const yearStart = new Date(Date.UTC(taxYear, 0, 1));
+  const yearEndExclusive = new Date(Date.UTC(taxYear + 1, 0, 1));
+  const runs = await tx.payrollRun.findMany({
+    where: {
+      status: { not: 'CANCELLED' },
+      disbursedAt: { gte: yearStart, lt: yearEndExclusive },
+      items: { some: { associateId, status: { not: 'VOIDED' } } },
+    },
+    select: { clientId: true },
+    distinct: ['clientId'],
+  });
+  return runs.map((r) => r.clientId);
+}
+
 export async function listW2EligibleAssociates(
   tx: Tx,
   taxYear: number,
