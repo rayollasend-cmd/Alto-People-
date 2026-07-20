@@ -682,6 +682,7 @@ async function aggregateAndPersistRun(
     periodEndExclusive,
     clientId: run.clientId,
     defaultRate,
+    runId: run.id,
     addOns: addOnRows.map((a) => ({
       associateId: a.associateId,
       kind: a.kind as AddOnKind,
@@ -689,6 +690,15 @@ async function aggregateAndPersistRun(
       hours: a.hours !== null ? Number(a.hours) : null,
     })),
   });
+
+  // Tier-2 — stamp consumed tip pools so no other run can double-pay
+  // them; re-aggregation of THIS run keeps seeing them via runId.
+  if (projection.consumedTipPoolIds.length > 0) {
+    await tx.tipPool.updateMany({
+      where: { id: { in: projection.consumedTipPoolIds }, paidPayrollRunId: null },
+      data: { status: 'PAID_OUT', paidOutAt: new Date(), paidPayrollRunId: run.id },
+    });
+  }
 
       for (const p of projection.items) {
         const upserted = await tx.payrollItem.upsert({
@@ -772,6 +782,7 @@ async function aggregateAndPersistRun(
               rate: e.rate !== null ? new Prisma.Decimal(e.rate) : null,
               amount: new Prisma.Decimal(e.amount),
               isTaxable: e.isTaxable,
+              notes: e.note ?? null,
             })),
           });
         }

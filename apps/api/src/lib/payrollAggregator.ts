@@ -87,6 +87,14 @@ export interface AggregatorInput {
     amount: number;
     hours: number | null;
   }>;
+  /**
+   * Tier-2 — the run being (re-)aggregated, when persisting. Lets the
+   * tip-pool consumption stay idempotent: pools already stamped with this
+   * run id keep contributing on re-aggregation, while pools consumed by a
+   * DIFFERENT run never double-pay. Preview passes nothing and sees only
+   * unconsumed CLOSED pools.
+   */
+  runId?: string;
 }
 
 export type AddOnKind =
@@ -117,6 +125,44 @@ export interface ProjectedEarning {
   rate: number | null;
   amount: number;
   isTaxable: true;
+  /** Paystub line label (premium-rule name, "Tip pool allocation", …). */
+  note?: string;
+}
+
+/**
+ * Hours of [start, end) overlapping a rule's daily minute window /
+ * day-of-week mask (bit N = UTC day N, Sunday=0). A null window means
+ * the whole day; an end minute at or before the start minute wraps past
+ * midnight.
+ */
+function windowOverlapHours(
+  start: Date,
+  end: Date,
+  rule: { startMinute: number | null; endMinute: number | null; dowMask: number | null },
+): number {
+  const DAY_MS = 86_400_000;
+  const overlap = (aStart: number, aEnd: number, bStart: number, bEnd: number) =>
+    Math.max(0, Math.min(aEnd, bEnd) - Math.max(aStart, bStart));
+  let totalMs = 0;
+  const firstDay = Date.UTC(
+    start.getUTCFullYear(),
+    start.getUTCMonth(),
+    start.getUTCDate(),
+  );
+  for (let dayStart = firstDay; dayStart < end.getTime(); dayStart += DAY_MS) {
+    const dow = new Date(dayStart).getUTCDay();
+    if (rule.dowMask !== null && !((rule.dowMask >> dow) & 1)) continue;
+    const s = rule.startMinute ?? 0;
+    const e = rule.endMinute ?? 1440;
+    if (rule.startMinute !== null && rule.endMinute !== null && e <= s) {
+      // Wraps midnight: [s..24:00) tonight + [00:00..e) tomorrow morning.
+      totalMs += overlap(start.getTime(), end.getTime(), dayStart + s * 60_000, dayStart + DAY_MS);
+      totalMs += overlap(start.getTime(), end.getTime(), dayStart, dayStart + e * 60_000);
+    } else {
+      totalMs += overlap(start.getTime(), end.getTime(), dayStart + s * 60_000, dayStart + e * 60_000);
+    }
+  }
+  return totalMs / 3_600_000;
 }
 
 export interface ProjectedGarnishment {
@@ -187,6 +233,9 @@ export interface ProjectedTotals {
 export interface AggregatorResult {
   items: ProjectedItem[];
   totals: ProjectedTotals;
+  /** Tier-2 — CLOSED tip pools whose allocations were folded into items.
+   *  The persisting caller stamps them PAID_OUT + paidPayrollRunId. */
+  consumedTipPoolIds: string[];
 }
 
 /**
@@ -270,12 +319,40 @@ export async function aggregatePayrollProjection(
     addOnsByAssociate.set(a.associateId, arr);
   }
 
+  // Tier-2 — tip pools. Allocations from CLOSED, not-yet-consumed pools
+  // whose shift date falls in the period fold into paychecks as TIPS
+  // earnings (regular wages, not supplemental). Pools already stamped
+  // with THIS run keep contributing so re-aggregation is idempotent.
+  const tipAllocations = await tx.tipPoolAllocation.findMany({
+    where: {
+      tipPool: {
+        shiftDate: { gte: periodStart, lt: periodEndExclusive },
+        ...(clientId ? { clientId } : {}),
+        OR: [
+          { status: 'CLOSED', paidPayrollRunId: null },
+          ...(input.runId ? [{ paidPayrollRunId: input.runId }] : []),
+        ],
+      },
+    },
+    select: { associateId: true, amount: true, tipPoolId: true },
+  });
+  const tipsByAssociate = new Map<string, number>();
+  const consumedTipPoolIds = new Set<string>();
+  for (const t of tipAllocations) {
+    tipsByAssociate.set(
+      t.associateId,
+      round2((tipsByAssociate.get(t.associateId) ?? 0) + Number(t.amount)),
+    );
+    consumedTipPoolIds.add(t.tipPoolId);
+  }
+
   // The associate universe: everyone with approved hours, an active
-  // salary, or a manual add-on line.
+  // salary, a manual add-on line, or a tip allocation.
   const universe = new Set<string>([
     ...byAssociate.keys(),
     ...annualSalaryByAssociate.keys(),
     ...addOnsByAssociate.keys(),
+    ...tipsByAssociate.keys(),
   ]);
 
   // Associates in the universe with no time entries still need their W-4 /
@@ -324,7 +401,13 @@ export async function aggregatePayrollProjection(
     const hoursWorked = group.length > 0 ? sumApprovedHours(group) : 0;
     const annualSalary = annualSalaryByAssociate.get(associateId);
     const myAddOns = addOnsByAssociate.get(associateId) ?? [];
-    if (hoursWorked === 0 && annualSalary === undefined && myAddOns.length === 0) {
+    const tipsGross = tipsByAssociate.get(associateId) ?? 0;
+    if (
+      hoursWorked === 0 &&
+      annualSalary === undefined &&
+      myAddOns.length === 0 &&
+      tipsGross === 0
+    ) {
       continue;
     }
 
@@ -355,6 +438,73 @@ export async function aggregatePayrollProjection(
       overtimePay = round2(otSplit.overtimeHours * hourlyRate * 1.5);
     }
 
+    // Tier-2 — client premium-pay rules applied to this associate's
+    // entries: daily overtime past a threshold, and time-window / day-of-
+    // week differentials. Weekly OT stays with the FLSA split above;
+    // HOLIDAY / CALL_BACK / ON_CALL rules need a trigger source (holiday
+    // calendar, call-out log) and are not auto-applied. Daily-OT premium
+    // can stack with weekly OT on the same hours — conservative in the
+    // employee's favor.
+    const premiumEarnings: ProjectedEarning[] = [];
+    let premiumPay = 0;
+    if (annualSalary === undefined && group.length > 0) {
+      const entryClientIds = [
+        ...new Set(group.map((e) => e.clientId).filter((c): c is string => c !== null)),
+      ];
+      if (entryClientIds.length > 0) {
+        const rules = await tx.premiumPayRule.findMany({
+          where: { isActive: true, clientId: { in: entryClientIds } },
+        });
+        for (const rule of rules) {
+          const ruleEntries = group.filter(
+            (e) => e.clientId === rule.clientId && e.status === 'APPROVED' && e.clockOutAt,
+          );
+          if (ruleEntries.length === 0) continue;
+          let qualifyingHours = 0;
+          if (rule.kind === 'OVERTIME_DAILY') {
+            const threshold = rule.thresholdHours ? Number(rule.thresholdHours) : 8;
+            for (const e of ruleEntries) {
+              const h = (e.clockOutAt!.getTime() - e.clockInAt.getTime()) / 3_600_000;
+              qualifyingHours += Math.max(0, h - threshold);
+            }
+          } else if (
+            rule.kind === 'NIGHT_DIFFERENTIAL' ||
+            rule.kind === 'WEEKEND_DIFFERENTIAL' ||
+            rule.kind === 'SHIFT_DIFFERENTIAL'
+          ) {
+            for (const e of ruleEntries) {
+              qualifyingHours += windowOverlapHours(e.clockInAt, e.clockOutAt!, {
+                startMinute: rule.startMinute,
+                endMinute: rule.endMinute,
+                dowMask: rule.dowMask,
+              });
+            }
+          } else {
+            continue;
+          }
+          qualifyingHours = round2(qualifyingHours);
+          if (qualifyingHours <= 0) continue;
+          const perHour =
+            rule.addPerHour !== null
+              ? Number(rule.addPerHour)
+              : rule.multiplier !== null
+                ? round2((Number(rule.multiplier) - 1) * hourlyRate)
+                : 0;
+          if (perHour <= 0) continue;
+          const amount = round2(qualifyingHours * perHour);
+          premiumPay = round2(premiumPay + amount);
+          premiumEarnings.push({
+            kind: rule.kind === 'OVERTIME_DAILY' ? 'DOUBLE_TIME' : 'REGULAR',
+            hours: qualifyingHours,
+            rate: perHour,
+            amount,
+            isTaxable: true,
+            note: rule.name,
+          });
+        }
+      }
+    }
+
     const salaryPay =
       annualSalary !== undefined
         ? round2(annualSalary / PERIODS_PER_YEAR[payFrequency])
@@ -370,7 +520,13 @@ export async function aggregatePayrollProjection(
     regularAddOnGross = round2(regularAddOnGross);
 
     const grossPay = round2(
-      regularPay + overtimePay + salaryPay + supplementalGross + regularAddOnGross,
+      regularPay +
+        overtimePay +
+        premiumPay +
+        salaryPay +
+        tipsGross +
+        supplementalGross +
+        regularAddOnGross,
     );
 
     // Gap 8 — live YTD aggregation. Excludes CANCELLED (voided) runs and
@@ -554,6 +710,7 @@ export async function aggregatePayrollProjection(
         isTaxable: true,
       });
     }
+    earnings.push(...premiumEarnings);
     if (salaryPay > 0) {
       // Flat per-period salary — REGULAR with no hours/rate (the enum
       // has no SALARY member; hours-null is the salaried signature).
@@ -563,6 +720,16 @@ export async function aggregatePayrollProjection(
         rate: null,
         amount: salaryPay,
         isTaxable: true,
+      });
+    }
+    if (tipsGross > 0) {
+      earnings.push({
+        kind: 'TIPS',
+        hours: null,
+        rate: null,
+        amount: tipsGross,
+        isTaxable: true,
+        note: 'Tip pool allocation',
       });
     }
     for (const a of myAddOns) {
@@ -629,5 +796,6 @@ export async function aggregatePayrollProjection(
       totalGarnishments: round2(totalGarnishments),
       itemCount: items.length,
     },
+    consumedTipPoolIds: [...consumedTipPoolIds],
   };
 }

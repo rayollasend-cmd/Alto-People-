@@ -3172,6 +3172,10 @@ model TipPool {
   notes       String?
   closedAt    DateTime?     @db.Timestamptz(6)
   paidOutAt   DateTime?     @db.Timestamptz(6)
+  // Tier-2 — the payroll run that folded this pool's allocations into
+  // paychecks as TIPS earnings. Lets re-aggregation of the same run stay
+  // idempotent while blocking a second run from double-paying the pool.
+  paidPayrollRunId String? @db.Uuid
   createdById String?       @db.Uuid
   createdAt   DateTime      @default(now()) @db.Timestamptz(6)
   updatedAt   DateTime      @updatedAt @db.Timestamptz(6)
