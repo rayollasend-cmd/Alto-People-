@@ -7,6 +7,7 @@ import { requireCapability } from '../middleware/auth.js';
 import { decryptString, encryptString } from '../lib/crypto.js';
 import {
   aggregateW2Wages,
+  listEmployerClientIds,
   listW2EligibleAssociates,
   type W2Boxes,
 } from '../lib/w2Aggregator.js';
@@ -689,33 +690,60 @@ payrollTax91Router.post('/tax-forms/w2/generate', MANAGE, async (req, res) => {
   const created: { id: string; associateId: string }[] = [];
 
   for (const associateId of associateIds) {
-    const existing = await prisma.taxForm.findFirst({
-      where: {
-        kind: 'W2',
-        taxYear: input.taxYear,
+    // Tier-2 — one W-2 per employer EIN. A worker paid by two clients in
+    // the year gets a separate W-2 for each; wages under each EIN
+    // aggregate independently (the first-run single-EIN heuristic is
+    // retired). Legacy rows with a null ein still block regeneration so
+    // re-running never duplicates a pre-split form.
+    const employerClientIds = await listEmployerClientIds(
+      prisma,
+      associateId,
+      input.taxYear,
+    );
+    for (const employerClientId of employerClientIds) {
+      const employer = employerClientId
+        ? await prisma.client.findUnique({
+            where: { id: employerClientId },
+            select: { ein: true },
+          })
+        : null;
+      const ein = employer?.ein ?? null;
+      const existing = await prisma.taxForm.findFirst({
+        where: {
+          kind: 'W2',
+          taxYear: input.taxYear,
+          associateId,
+          status: { not: 'VOIDED' },
+          OR: [{ ein }, { ein: null }],
+        },
+        select: { id: true },
+      });
+      if (existing) {
+        skippedCount += 1;
+        continue;
+      }
+
+      const boxes = await aggregateW2Wages(
+        prisma,
         associateId,
-        status: { not: 'VOIDED' },
-      },
-      select: { id: true },
-    });
-    if (existing) {
-      skippedCount += 1;
-      continue;
+        input.taxYear,
+        employerClientId,
+      );
+      if (boxes.sourceItemCount === 0) continue;
+
+      const row = await prisma.taxForm.create({
+        data: {
+          kind: 'W2',
+          taxYear: input.taxYear,
+          associateId,
+          ein,
+          amounts: boxes as unknown as Prisma.InputJsonValue,
+          status: 'DRAFT',
+        },
+      });
+      created.push({ id: row.id, associateId });
+      createdCount += 1;
     }
-
-    const boxes = await aggregateW2Wages(prisma, associateId, input.taxYear);
-
-    const row = await prisma.taxForm.create({
-      data: {
-        kind: 'W2',
-        taxYear: input.taxYear,
-        associateId,
-        amounts: boxes as unknown as Prisma.InputJsonValue,
-        status: 'DRAFT',
-      },
-    });
-    created.push({ id: row.id, associateId });
-    createdCount += 1;
   }
 
   res.json({
@@ -1049,12 +1077,16 @@ async function renderW2ForForm(
 
   const yearStart = new Date(Date.UTC(form.taxYear, 0, 1));
   const yearEndExclusive = new Date(Date.UTC(form.taxYear + 1, 0, 1));
+  // Tier-2 — a form stamped with an EIN resolves its employer block from
+  // the client carrying that EIN; legacy null-EIN forms keep the
+  // first-disbursed-run heuristic.
   const sampleItem = await prisma.payrollItem.findFirst({
     where: {
       associateId: form.associateId,
       payrollRun: {
         status: { not: 'CANCELLED' },
         disbursedAt: { gte: yearStart, lt: yearEndExclusive },
+        ...(form.ein ? { client: { ein: form.ein } } : {}),
       },
     },
     include: { payrollRun: { include: { client: true } } },
@@ -1066,6 +1098,15 @@ async function renderW2ForForm(
       400,
       'missing_employer_info',
       'Cannot render W-2: client is missing legalName or EIN. HR must fill these in on the client record before generating tax forms.',
+    );
+  }
+
+  // Tier-2 sanity: a multi-EIN form must render under its own employer.
+  if (form.ein && client.ein !== form.ein) {
+    throw new HttpError(
+      409,
+      'employer_mismatch',
+      `Form is stamped for EIN ${form.ein} but resolved client carries ${client.ein}.`,
     );
   }
 

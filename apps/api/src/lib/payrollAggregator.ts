@@ -394,11 +394,17 @@ export async function aggregatePayrollProjection(
   // notice) beats the new-employer default. Client-scoped runs only;
   // cross-client runs keep the per-state defaults.
   let sutaOverride: { rate: number; wageBase: number | null } | null = null;
+  // Tier-2 — client-scoped runs tax by the WORK-SITE state (where the
+  // labor happened), not the associate's home-address state. Overridable
+  // by input.stateOverride as before; cross-client runs keep per-
+  // associate states.
+  let clientWorkState: string | null = null;
   if (clientId) {
     const client = await tx.client.findUnique({
       where: { id: clientId },
-      select: { sutaRateOverride: true, sutaWageBaseOverride: true },
+      select: { sutaRateOverride: true, sutaWageBaseOverride: true, state: true },
     });
+    clientWorkState = client?.state ?? null;
     if (client?.sutaRateOverride) {
       sutaOverride = {
         rate: Number(client.sutaRateOverride),
@@ -562,7 +568,7 @@ export async function aggregatePayrollProjection(
     const associateState =
       input.stateOverride !== undefined
         ? input.stateOverride
-        : meta.state ?? null;
+        : clientWorkState ?? meta.state ?? null;
     const employmentType = meta.employmentType;
 
     let preTaxDeductions = 0;
