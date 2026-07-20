@@ -361,6 +361,7 @@ model User {
   payrollDisbursementAttempts       PayrollDisbursementAttempt[]  @relation("PayrollDisbursementAttemptActor")
   taxDepositsPaid                   TaxDeposit[]                  @relation("TaxDepositPayer")
   garnishmentRemittancesSent        GarnishmentRemittance[]       @relation("GarnishmentRemittanceSender")
+  payrollRunAddOnsCreated           PayrollRunAddOn[]             @relation("PayrollRunAddOnCreator")
   timeOffLedgerEntriesAuthored      TimeOffLedgerEntry[]
   timeOffReviews                    TimeOffRequest[]              @relation("TimeOffReviewer")
   associateHistoryEntries           AssociateHistory[]            @relation("AssociateHistoryActor")
@@ -829,6 +830,8 @@ model Associate {
   // Phase 131 — location-assignment history. The open row (endedAt IS
   // NULL) is the associate's current work site.
   assignments              AssociateAssignment[]
+  // Tier-2 — manual earning lines attached to draft runs.
+  payrollRunAddOns         PayrollRunAddOn[]
 
   @@index([deletedAt])
   @@index([managerId])
@@ -1627,6 +1630,9 @@ model PayrollRun {
   taxDeposit               TaxDeposit?
   // Tier-1 — per-payee garnishment remittances accrued at disbursement.
   garnishmentRemittances   GarnishmentRemittance[]
+  // Tier-2 — manual earning lines (bonus/commission/tips/holiday/PTO
+  // payout) attached to a DRAFT run; folded into items at aggregation.
+  addOns                   PayrollRunAddOn[]
   createdAt                DateTime                  @default(now()) @db.Timestamptz(6)
   updatedAt                DateTime                  @updatedAt @db.Timestamptz(6)
 
@@ -1755,6 +1761,32 @@ model PayrollItem {
   @@index([associateId])
   @@index([status])
   @@index([amendsItemId])
+}
+
+// Tier-2 — manual earning lines on a DRAFT run. The aggregator folds
+// these into the associate's item as PayrollItemEarning rows of the
+// stated kind: BONUS / COMMISSION are supplemental wages (22% flat FIT,
+// Pub 15 §7); TIPS / HOLIDAY / SICK / VACATION are regular wages taxed
+// by the percentage method. An associate with add-ons but no hours
+// still gets an item — which is exactly how an OFF_CYCLE bonus run
+// works: empty period + add-ons.
+model PayrollRunAddOn {
+  id           String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  payrollRunId String             @db.Uuid
+  associateId  String             @db.Uuid
+  kind         PayrollEarningKind
+  amount       Decimal            @db.Decimal(12, 2)
+  hours        Decimal?           @db.Decimal(8, 2)
+  note         String?
+  createdById  String?            @db.Uuid
+  createdAt    DateTime           @default(now()) @db.Timestamptz(6)
+
+  payrollRun PayrollRun @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  associate  Associate  @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  createdBy  User?      @relation("PayrollRunAddOnCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([payrollRunId])
+  @@index([associateId])
 }
 
 // Tier-1 — the paper-check register. checkNumber is a global SERIAL so

@@ -35,7 +35,8 @@ import { scopePayrollRuns, scopePayrollSchedules } from '../lib/scope.js';
 import { getCurrentPeriod, getNextPeriod } from '../lib/payrollSchedule.js';
 import { round2 } from '../lib/payroll.js';
 import { isStateTaxSupported } from '../lib/payrollTax.js';
-import { aggregatePayrollProjection } from '../lib/payrollAggregator.js';
+import { aggregatePayrollProjection, type AddOnKind } from '../lib/payrollAggregator.js';
+import { z } from 'zod';
 import { consumePendingDeductions } from '../lib/payrollYtd.js';
 import { computePayrollExceptions } from '../lib/payrollExceptions.js';
 import { hashPdf, renderPaystubPdf, type PaystubData } from '../lib/paystub.js';
@@ -619,9 +620,10 @@ payrollRouter.post('/runs', PROCESS, async (req, res, next) => {
     const defaultRate = input.defaultHourlyRate ?? 15;
 
     // Wave 6.1 — Pure-ish aggregation lifted into payrollAggregator.
-    // POST /runs creates the run row, then asks the aggregator for the
-    // projected per-associate items, then persists. POST /runs/preview
-    // calls the same aggregator without creating a run row.
+    // POST /runs creates the run row, then hands off to the shared
+    // aggregate-and-persist helper (also used by the add-on routes to
+    // re-aggregate a DRAFT run). POST /runs/preview calls the aggregator
+    // without creating a run row.
     const result = await prisma.$transaction(async (tx) => {
       const run = await tx.payrollRun.create({
         data: {
@@ -633,13 +635,60 @@ payrollRouter.post('/runs', PROCESS, async (req, res, next) => {
           createdById: req.user!.id,
         },
       });
+      await aggregateAndPersistRun(tx, run, defaultRate);
+      return run;
+    }, TX_OPTS);
 
-      const projection = await aggregatePayrollProjection(tx, {
-        periodStart,
-        periodEndExclusive,
-        clientId: input.clientId ?? null,
-        defaultRate,
-      });
+    await recordPayrollEvent({
+      actorUserId: req.user!.id,
+      action: 'payroll.run_created',
+      payrollRunId: result.id,
+      clientId: result.clientId,
+      metadata: { periodStart: input.periodStart, periodEnd: input.periodEnd },
+      req,
+    });
+
+    const fullRun = await prisma.payrollRun.findUniqueOrThrow({
+      where: { id: result.id },
+      include: RUN_INCLUDE,
+    });
+    res.status(201).json(toDetail(fullRun));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Shared aggregate-and-persist for a DRAFT run — used by POST /runs at
+ * creation and by the add-on routes to re-aggregate after a manual
+ * earning line changes. Loads the run's PayrollRunAddOn rows, projects,
+ * persists items/earnings/garnishments/reimbursements, prunes items whose
+ * associate fell out of the projection, and refreshes run totals.
+ */
+async function aggregateAndPersistRun(
+  tx: Prisma.TransactionClient,
+  run: { id: string; clientId: string | null; periodStart: Date; periodEnd: Date },
+  defaultRate: number,
+): Promise<void> {
+  const periodStart = run.periodStart;
+  const periodEndExclusive = new Date(run.periodEnd);
+  periodEndExclusive.setUTCDate(periodEndExclusive.getUTCDate() + 1);
+
+  const addOnRows = await tx.payrollRunAddOn.findMany({
+    where: { payrollRunId: run.id },
+  });
+  const projection = await aggregatePayrollProjection(tx, {
+    periodStart,
+    periodEndExclusive,
+    clientId: run.clientId,
+    defaultRate,
+    addOns: addOnRows.map((a) => ({
+      associateId: a.associateId,
+      kind: a.kind as AddOnKind,
+      amount: Number(a.amount),
+      hours: a.hours !== null ? Number(a.hours) : null,
+    })),
+  });
 
       for (const p of projection.items) {
         const upserted = await tx.payrollItem.upsert({
@@ -719,8 +768,8 @@ payrollRouter.post('/runs', PROCESS, async (req, res, next) => {
             data: p.earnings.map((e) => ({
               payrollItemId: upserted.id,
               kind: e.kind,
-              hours: new Prisma.Decimal(e.hours),
-              rate: new Prisma.Decimal(e.rate),
+              hours: e.hours !== null ? new Prisma.Decimal(e.hours) : null,
+              rate: e.rate !== null ? new Prisma.Decimal(e.rate) : null,
               amount: new Prisma.Decimal(e.amount),
               isTaxable: e.isTaxable,
             })),
@@ -800,6 +849,28 @@ payrollRouter.post('/runs', PROCESS, async (req, res, next) => {
         }
       }
 
+      // Tier-2 — prune items whose associate fell out of the projection
+      // (e.g. their only add-on was deleted, or a salary ended). PENDING
+      // rows only, and never one that folded reimbursements (those are
+      // stamped PAID and must stay attached).
+      const keepIds = projection.items.map((i) => i.associateId);
+      const prunable = await tx.payrollItem.findMany({
+        where: {
+          payrollRunId: run.id,
+          status: 'PENDING',
+          associateId: { notIn: keepIds },
+          reimbursementsPaid: { none: {} },
+        },
+        select: { id: true },
+      });
+      if (prunable.length > 0) {
+        const pruneIds = prunable.map((i) => i.id);
+        await tx.payrollItemEarning.deleteMany({
+          where: { payrollItemId: { in: pruneIds } },
+        });
+        await tx.payrollItem.deleteMany({ where: { id: { in: pruneIds } } });
+      }
+
       // Re-read totals from the persisted items so any deduction-consumer
       // adjustments are reflected at the run level (the projection was
       // computed before pending overpayment clawbacks were drained).
@@ -846,23 +917,133 @@ payrollRouter.post('/runs', PROCESS, async (req, res, next) => {
         },
       });
 
-      return run;
-    }, TX_OPTS);
+}
 
+/* ===== Tier-2 — manual earning lines on a DRAFT run ===================== */
+
+const AddOnBodySchema = z.object({
+  associateId: z.string().uuid(),
+  kind: z.enum(['BONUS', 'COMMISSION', 'TIPS', 'HOLIDAY', 'SICK', 'VACATION']),
+  amount: z.number().positive().max(1_000_000),
+  hours: z.number().positive().max(10_000).nullable().optional(),
+  note: z.string().max(500).nullable().optional(),
+});
+
+async function loadDraftRun(user: NonNullable<import('express').Request['user']>, runId: string) {
+  const run = await prisma.payrollRun.findFirst({
+    where: { id: runId, ...scopePayrollRuns(user) },
+  });
+  if (!run) throw new HttpError(404, 'run_not_found', 'Payroll run not found');
+  if (run.status !== 'DRAFT') {
+    throw new HttpError(409, 'not_draft', 'Manual earning lines can only change on a DRAFT run.');
+  }
+  return run;
+}
+
+/** GET /payroll/runs/:id/add-ons */
+payrollRouter.get('/runs/:id/add-ons', PROCESS, async (req, res, next) => {
+  try {
+    const run = await prisma.payrollRun.findFirst({
+      where: { id: req.params.id, ...scopePayrollRuns(req.user!) },
+    });
+    if (!run) throw new HttpError(404, 'run_not_found', 'Payroll run not found');
+    const addOns = await prisma.payrollRunAddOn.findMany({
+      where: { payrollRunId: run.id },
+      orderBy: { createdAt: 'asc' },
+      include: { associate: { select: { firstName: true, lastName: true } } },
+    });
+    res.json({
+      addOns: addOns.map((a) => ({
+        id: a.id,
+        associateId: a.associateId,
+        associateName: `${a.associate.firstName} ${a.associate.lastName}`,
+        kind: a.kind,
+        amount: Number(a.amount),
+        hours: a.hours !== null ? Number(a.hours) : null,
+        note: a.note,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /payroll/runs/:id/add-ons — attach a bonus/commission/tips/
+ * holiday/PTO line and re-aggregate the run. BONUS and COMMISSION
+ * withhold FIT at the flat 22% supplemental rate; the rest are regular
+ * wages. Works on an empty-period OFF_CYCLE run — that's the bonus-run
+ * flow.
+ */
+payrollRouter.post('/runs/:id/add-ons', PROCESS, async (req, res, next) => {
+  try {
+    const parsed = AddOnBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const run = await loadDraftRun(req.user!, req.params.id);
+    const associate = await prisma.associate.findFirst({
+      where: { id: parsed.data.associateId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!associate) throw new HttpError(404, 'associate_not_found', 'Associate not found');
+
+    const addOn = await prisma.payrollRunAddOn.create({
+      data: {
+        payrollRunId: run.id,
+        associateId: parsed.data.associateId,
+        kind: parsed.data.kind,
+        amount: parsed.data.amount,
+        hours: parsed.data.hours ?? null,
+        note: parsed.data.note ?? null,
+        createdById: req.user!.id,
+      },
+    });
+    await prisma.$transaction(
+      (tx) => aggregateAndPersistRun(tx, run, 15),
+      TX_OPTS,
+    );
     await recordPayrollEvent({
       actorUserId: req.user!.id,
-      action: 'payroll.run_created',
-      payrollRunId: result.id,
-      clientId: result.clientId,
-      metadata: { periodStart: input.periodStart, periodEnd: input.periodEnd },
+      action: 'payroll.add_on_added',
+      payrollRunId: run.id,
+      clientId: run.clientId,
+      metadata: {
+        addOnId: addOn.id,
+        associateId: parsed.data.associateId,
+        kind: parsed.data.kind,
+        amount: parsed.data.amount,
+      },
       req,
     });
+    res.status(201).json({ ok: true, addOnId: addOn.id });
+  } catch (err) {
+    next(err);
+  }
+});
 
-    const full = await prisma.payrollRun.findUniqueOrThrow({
-      where: { id: result.id },
-      include: RUN_INCLUDE,
+/** DELETE /payroll/runs/:id/add-ons/:addOnId — remove and re-aggregate. */
+payrollRouter.delete('/runs/:id/add-ons/:addOnId', PROCESS, async (req, res, next) => {
+  try {
+    const run = await loadDraftRun(req.user!, req.params.id);
+    const addOn = await prisma.payrollRunAddOn.findFirst({
+      where: { id: req.params.addOnId, payrollRunId: run.id },
     });
-    res.status(201).json(toDetail(full));
+    if (!addOn) throw new HttpError(404, 'add_on_not_found', 'Add-on not found');
+    await prisma.payrollRunAddOn.delete({ where: { id: addOn.id } });
+    await prisma.$transaction(
+      (tx) => aggregateAndPersistRun(tx, run, 15),
+      TX_OPTS,
+    );
+    await recordPayrollEvent({
+      actorUserId: req.user!.id,
+      action: 'payroll.add_on_removed',
+      payrollRunId: run.id,
+      clientId: run.clientId,
+      metadata: { addOnId: addOn.id, kind: addOn.kind, amount: Number(addOn.amount) },
+      req,
+    });
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }
