@@ -359,6 +359,7 @@ model User {
   emailChangeRequests               EmailChangeRequest[]
   createdEsignAgreements            EsignAgreement[]              @relation("EsignAgreementCreator")
   payrollDisbursementAttempts       PayrollDisbursementAttempt[]  @relation("PayrollDisbursementAttemptActor")
+  taxDepositsPaid                   TaxDeposit[]                  @relation("TaxDepositPayer")
   timeOffLedgerEntriesAuthored      TimeOffLedgerEntry[]
   timeOffReviews                    TimeOffRequest[]              @relation("TimeOffReviewer")
   associateHistoryEntries           AssociateHistory[]            @relation("AssociateHistoryActor")
@@ -1617,6 +1618,8 @@ model PayrollRun {
   reimbursementsPaid       Reimbursement[]
   // Gap 3 — pending deductions consumed by this run (overpayment clawbacks).
   pendingDeductionsApplied PendingPayrollDeduction[] @relation("PendingDeductionAppliedRun")
+  // Tier-1 — the FED_941 deposit obligation this run's disbursement accrued.
+  taxDeposit               TaxDeposit?
   createdAt                DateTime                  @default(now()) @db.Timestamptz(6)
   updatedAt                DateTime                  @updatedAt @db.Timestamptz(6)
 
@@ -5519,7 +5522,59 @@ model SubmitterProfile {
   // Required for 1099-NEC e-file via FIRE; null when the transmitter
   // only does W-2 SSA filings.
   irsTcc       String?  @db.VarChar(5)
+  // Tier-1 — the employer's IRS 941 deposit schedule, from the lookback
+  // rule (Pub 15 §11): MONTHLY (≤$50k liability in the lookback period,
+  // deposits due the 15th of the following month) or SEMIWEEKLY
+  // (Wed–Fri paydays due next Wednesday, Sat–Tue due next Friday).
+  depositSchedule String @default("MONTHLY") @db.VarChar(12)
   updatedAt    DateTime @updatedAt @db.Timestamptz(6)
+}
+
+// Tier-1 — federal tax deposit ledger. Every disbursed run accrues a
+// FED_941 deposit obligation (FIT + employee & employer FICA/Medicare)
+// with a due date computed from the employer's deposit schedule; FUTA
+// accrues per quarter (due end of month after quarter once > $500).
+// The system tracks and reminds — the actual EFTPS payment is made by
+// finance (worksheet PDF) and marked paid here with the EFTPS
+// acknowledgment number.
+enum TaxDepositKind {
+  FED_941
+  FUTA
+}
+
+enum TaxDepositStatus {
+  PENDING
+  PAID
+}
+
+model TaxDeposit {
+  id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kind               TaxDepositKind
+  // Deposit schedule in force when this obligation was computed.
+  scheduleUsed       String           @db.VarChar(12)
+  // Human label: the payday for FED_941 ("2026-07-18 payday"), the
+  // quarter for FUTA ("2026-Q3").
+  periodLabel        String
+  // FED_941 deposits tie to the run whose disbursement created the
+  // liability; unique so re-disbursement can't double-accrue.
+  payrollRunId       String?          @unique @db.Uuid
+  liabilityDate      DateTime         @db.Date
+  dueDate            DateTime         @db.Date
+  amount             Decimal          @db.Decimal(12, 2)
+  // {fit, ssEmployee, ssEmployer, medEmployee, medEmployer} or {futa}.
+  breakdown          Json
+  status             TaxDepositStatus @default(PENDING)
+  paidAt             DateTime?        @db.Timestamptz(6)
+  paidById           String?          @db.Uuid
+  // EFTPS acknowledgment number keyed in by finance when marking paid.
+  confirmationNumber String?
+  createdAt          DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime         @updatedAt @db.Timestamptz(6)
+  payrollRun         PayrollRun?      @relation(fields: [payrollRunId], references: [id], onDelete: SetNull)
+  paidBy             User?            @relation("TaxDepositPayer", fields: [paidById], references: [id], onDelete: SetNull)
+
+  @@index([status, dueDate])
+  @@index([kind, periodLabel])
 }
 
 // Status of OUR processing of a Branch webhook delivery — distinct from

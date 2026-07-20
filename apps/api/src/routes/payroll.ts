@@ -42,6 +42,8 @@ import { hashPdf, renderPaystubPdf, type PaystubData } from '../lib/paystub.js';
 import { sendPaystubEmail } from '../lib/sendPaystubEmail.js';
 import { checkAdapter, pickAdapter, type DisbursementInput } from '../lib/disbursement.js';
 import { renderCheckRegisterPdf } from '../lib/checkRegister.js';
+import { accrueDepositsForRun } from '../lib/taxDeposits.js';
+import { renderEftpsWorksheetPdf } from '../lib/eftpsWorksheet.js';
 import { decryptString } from '../lib/crypto.js';
 import type { PayoutMethod } from '@prisma/client';
 import { enqueueAudit, recordPayrollEvent } from '../lib/audit.js';
@@ -1034,6 +1036,15 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
       include: RUN_INCLUDE,
     });
 
+    // Tier-1 — the withheld taxes just became trust-fund money on an IRS
+    // deadline. Accrue the deposit obligation now (fire-and-forget:
+    // bookkeeping must never fail a disbursement).
+    if (allSucceeded) {
+      void accrueDepositsForRun(prisma, run.id).catch((err) =>
+        console.warn('[payroll] tax-deposit accrual failed (advisory):', err),
+      );
+    }
+
     await recordPayrollEvent({
       actorUserId: req.user!.id,
       action: 'payroll.run_disbursed',
@@ -1148,6 +1159,120 @@ payrollRouter.get('/runs/:id/check-register.pdf', PROCESS, async (req, res, next
     res.setHeader(
       'Content-Disposition',
       `attachment; filename="check-register-${ymd(run.periodStart)}-${ymd(run.periodEnd)}.pdf"`,
+    );
+    res.send(pdf);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Tier-1 — federal tax deposit ledger ============================== */
+
+/**
+ * GET /payroll/tax-deposits?year=2026 — the deposit obligations ledger.
+ * `overdue` is computed server-side so the UI badge and any notification
+ * sweep agree on the definition (PENDING and past due date).
+ */
+payrollRouter.get('/tax-deposits', PROCESS, async (req, res, next) => {
+  try {
+    const year = Number(req.query.year) || new Date().getUTCFullYear();
+    const from = new Date(Date.UTC(year, 0, 1));
+    const to = new Date(Date.UTC(year + 1, 0, 1));
+    const deposits = await prisma.taxDeposit.findMany({
+      where: { liabilityDate: { gte: from, lt: to } },
+      orderBy: [{ status: 'asc' }, { dueDate: 'asc' }],
+      include: { paidBy: { select: { email: true } } },
+    });
+    const today = new Date().toISOString().slice(0, 10);
+    res.json({
+      deposits: deposits.map((d) => ({
+        id: d.id,
+        kind: d.kind,
+        scheduleUsed: d.scheduleUsed,
+        periodLabel: d.periodLabel,
+        payrollRunId: d.payrollRunId,
+        liabilityDate: ymd(d.liabilityDate),
+        dueDate: ymd(d.dueDate),
+        amount: Number(d.amount),
+        breakdown: d.breakdown,
+        status: d.status,
+        overdue: d.status === 'PENDING' && ymd(d.dueDate) < today,
+        paidAt: d.paidAt?.toISOString() ?? null,
+        paidByEmail: d.paidBy?.email ?? null,
+        confirmationNumber: d.confirmationNumber,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /payroll/tax-deposits/:id/mark-paid — finance paid through EFTPS
+ * out-of-band; record the acknowledgment number here. Audited: this is
+ * the trust-fund money trail.
+ */
+payrollRouter.post('/tax-deposits/:id/mark-paid', PROCESS, async (req, res, next) => {
+  try {
+    const confirmationNumber =
+      typeof req.body?.confirmationNumber === 'string'
+        ? req.body.confirmationNumber.trim() || null
+        : null;
+    const deposit = await prisma.taxDeposit.findUnique({ where: { id: req.params.id } });
+    if (!deposit) throw new HttpError(404, 'deposit_not_found', 'Tax deposit not found');
+    if (deposit.status === 'PAID') {
+      throw new HttpError(409, 'already_paid', 'This deposit is already marked paid.');
+    }
+    const updated = await prisma.taxDeposit.update({
+      where: { id: deposit.id },
+      data: {
+        status: 'PAID',
+        paidAt: new Date(),
+        paidById: req.user!.id,
+        confirmationNumber,
+      },
+    });
+    await recordPayrollEvent({
+      actorUserId: req.user!.id,
+      action: 'payroll.tax_deposit_paid',
+      payrollRunId: deposit.payrollRunId ?? deposit.id,
+      clientId: null,
+      metadata: {
+        taxDepositId: deposit.id,
+        kind: deposit.kind,
+        amount: Number(deposit.amount),
+        confirmationNumber,
+      },
+      req,
+    });
+    res.json({ ok: true, id: updated.id, status: updated.status });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** GET /payroll/tax-deposits/:id/worksheet.pdf — the EFTPS keying sheet. */
+payrollRouter.get('/tax-deposits/:id/worksheet.pdf', PROCESS, async (req, res, next) => {
+  try {
+    const deposit = await prisma.taxDeposit.findUnique({ where: { id: req.params.id } });
+    if (!deposit) throw new HttpError(404, 'deposit_not_found', 'Tax deposit not found');
+    const profile = await prisma.submitterProfile.findUnique({ where: { id: 'singleton' } });
+    const pdf = await renderEftpsWorksheetPdf({
+      ein: profile?.ein ?? '—',
+      companyName: profile?.name ?? 'Alto HR',
+      kind: deposit.kind,
+      periodLabel: deposit.periodLabel,
+      liabilityDate: ymd(deposit.liabilityDate),
+      dueDate: ymd(deposit.dueDate),
+      amount: Number(deposit.amount),
+      breakdown: (deposit.breakdown ?? {}) as Record<string, unknown>,
+      status: deposit.status,
+      confirmationNumber: deposit.confirmationNumber,
+    });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="tax-deposit-${ymd(deposit.dueDate)}-${deposit.kind}.pdf"`,
     );
     res.send(pdf);
   } catch (err) {
