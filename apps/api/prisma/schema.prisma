@@ -362,6 +362,7 @@ model User {
   taxDepositsPaid                   TaxDeposit[]                  @relation("TaxDepositPayer")
   garnishmentRemittancesSent        GarnishmentRemittance[]       @relation("GarnishmentRemittanceSender")
   payrollRunAddOnsCreated           PayrollRunAddOn[]             @relation("PayrollRunAddOnCreator")
+  approvedPayrollRuns               PayrollRun[]                  @relation("PayrollRunApprover")
   timeOffLedgerEntriesAuthored      TimeOffLedgerEntry[]
   timeOffReviews                    TimeOffRequest[]              @relation("TimeOffReviewer")
   associateHistoryEntries           AssociateHistory[]            @relation("AssociateHistoryActor")
@@ -699,6 +700,9 @@ model Associate {
   // no local tax). Withheld into PayrollItem.localWithholding.
   localTaxRuleId    String?        @db.Uuid
   localTaxRule      LocalTaxRule?  @relation(fields: [localTaxRuleId], references: [id], onDelete: SetNull)
+  // Tier-3 — workers-comp classification for the premium accrual report.
+  wcClassCodeId     String?        @db.Uuid
+  wcClassCode       WcClassCode?   @relation(fields: [wcClassCodeId], references: [id], onDelete: SetNull)
   // Profile photo. photoS3Key is the storage path under uploads/profile-photos/;
   // photoUpdatedAt is the cache-buster the API stamps onto the photo URL so
   // the browser refetches after an upload. Null when no photo on file —
@@ -1603,6 +1607,11 @@ model PayrollRun {
   notes                    String?
   createdById              String?                   @db.Uuid
   finalizedAt              DateTime?                 @db.Timestamptz(6)
+  // Tier-3 — four-eyes approval: a second person (not the run creator)
+  // signs off between FINALIZED and disbursement. Enforced only when
+  // PAYROLL_REQUIRE_SECOND_APPROVAL is on.
+  approvedById             String?                   @db.Uuid
+  approvedAt               DateTime?                 @db.Timestamptz(6)
   disbursedAt              DateTime?                 @db.Timestamptz(6)
   cancelledAt              DateTime?                 @db.Timestamptz(6)
   // Gap 3 — void metadata. cancelledById = HR Admin who voided. cancelReason
@@ -1625,6 +1634,7 @@ model PayrollRun {
   qboSyncError             String?
   client                   Client?                   @relation(fields: [clientId], references: [id], onDelete: SetNull)
   createdBy                User?                     @relation("PayrollRunCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  approvedBy               User?                     @relation("PayrollRunApprover", fields: [approvedById], references: [id], onDelete: SetNull)
   cancelledBy              User?                     @relation("PayrollRunCanceller", fields: [cancelledById], references: [id], onDelete: SetNull)
   amendsRun                PayrollRun?               @relation("PayrollRunAmendments", fields: [amendsRunId], references: [id], onDelete: Restrict)
   amendments               PayrollRun[]              @relation("PayrollRunAmendments")
@@ -3436,6 +3446,10 @@ model WcClassCode {
   effectiveFrom DateTime  @db.Date
   effectiveTo   DateTime? @db.Date
   createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+
+  // Tier-3 — associates classified under this code; drives the per-run
+  // workers-comp premium accrual report.
+  associates Associate[]
 
   @@unique([stateCode, code, effectiveFrom])
   @@index([stateCode])

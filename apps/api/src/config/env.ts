@@ -174,6 +174,9 @@ const EnvSchema = z.object({
   // items paid unless this is explicitly true. A run that "disbursed" via
   // stub moves no money — that must be an opt-in, never a silent default.
   PAYROLL_ALLOW_STUB_DISBURSEMENT: z.coerce.boolean().default(false),
+  // Tier-3 — four-eyes control: when true, a FINALIZED run must be
+  // approved by someone other than its creator before it can disburse.
+  PAYROLL_REQUIRE_SECOND_APPROVAL: z.coerce.boolean().default(false),
   // When the electronic provider reports no_payout_rail for an associate
   // (no Branch card, no bank account), fall back to issuing a paper check
   // from the check register instead of HELDing the item.

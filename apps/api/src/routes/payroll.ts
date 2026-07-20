@@ -1092,6 +1092,113 @@ payrollRouter.post('/runs/:id/finalize', PROCESS, async (req, res, next) => {
 });
 
 /**
+ * POST /payroll/runs/:id/approve — Tier-3 four-eyes sign-off. The
+ * approver must be a different person than the run's creator; the stamp
+ * is what the disburse gate checks when PAYROLL_REQUIRE_SECOND_APPROVAL
+ * is on (the route works regardless, so orgs can adopt the habit before
+ * flipping the enforcement flag).
+ */
+payrollRouter.post('/runs/:id/approve', PROCESS, async (req, res, next) => {
+  try {
+    const run = await prisma.payrollRun.findFirst({
+      where: { id: req.params.id, ...scopePayrollRuns(req.user!) },
+    });
+    if (!run) throw new HttpError(404, 'run_not_found', 'Payroll run not found');
+    if (run.status !== 'FINALIZED') {
+      throw new HttpError(409, 'not_finalized', 'Only FINALIZED runs can be approved.');
+    }
+    if (run.approvedAt) {
+      throw new HttpError(409, 'already_approved', 'This run is already approved.');
+    }
+    if (run.createdById === req.user!.id) {
+      throw new HttpError(
+        409,
+        'self_approval',
+        'Four-eyes control: the run creator cannot be its approver.',
+      );
+    }
+    const updated = await prisma.payrollRun.update({
+      where: { id: run.id },
+      data: { approvedById: req.user!.id, approvedAt: new Date() },
+      include: RUN_INCLUDE,
+    });
+    await recordPayrollEvent({
+      actorUserId: req.user!.id,
+      action: 'payroll.run_approved',
+      payrollRunId: run.id,
+      clientId: run.clientId,
+      req,
+    });
+    res.json(toDetail(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /payroll/runs/:id/wc-premium — workers-comp premium accrual: the
+ * run's gross wages grouped by each associate's WC class code, premium =
+ * gross / 100 × ratePer100. Unclassified wages surface as their own
+ * bucket so the report never silently under-accrues.
+ */
+payrollRouter.get('/runs/:id/wc-premium', PROCESS, async (req, res, next) => {
+  try {
+    const run = await prisma.payrollRun.findFirst({
+      where: { id: req.params.id, ...scopePayrollRuns(req.user!) },
+    });
+    if (!run) throw new HttpError(404, 'run_not_found', 'Payroll run not found');
+    const items = await prisma.payrollItem.findMany({
+      where: { payrollRunId: run.id, status: { not: 'VOIDED' } },
+      select: {
+        grossPay: true,
+        associate: {
+          select: {
+            wcClassCode: {
+              select: { id: true, code: true, description: true, ratePer100: true, stateCode: true },
+            },
+          },
+        },
+      },
+    });
+    const buckets = new Map<
+      string,
+      { code: string; description: string; stateCode: string | null; ratePer100: number; wages: number }
+    >();
+    let unclassifiedWages = 0;
+    for (const item of items) {
+      const cc = item.associate.wcClassCode;
+      if (!cc) {
+        unclassifiedWages += Number(item.grossPay);
+        continue;
+      }
+      const b = buckets.get(cc.id) ?? {
+        code: cc.code,
+        description: cc.description,
+        stateCode: cc.stateCode,
+        ratePer100: Number(cc.ratePer100),
+        wages: 0,
+      };
+      b.wages += Number(item.grossPay);
+      buckets.set(cc.id, b);
+    }
+    const classes = [...buckets.values()].map((b) => ({
+      ...b,
+      wages: round2(b.wages),
+      premium: round2((b.wages / 100) * b.ratePer100),
+    }));
+    res.json({
+      runId: run.id,
+      period: { start: ymd(run.periodStart), end: ymd(run.periodEnd) },
+      classes,
+      unclassifiedWages: round2(unclassifiedWages),
+      totalPremium: round2(classes.reduce((s, c) => s + c.premium, 0)),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * Disbursement runs each PENDING item through the configured provider
  * adapter (Phase 22: STUB by default; WISE/BRANCH stubbed-but-wired). Each
  * call appends a PayrollDisbursementAttempt row regardless of outcome so
@@ -1107,6 +1214,15 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
     if (!run) throw new HttpError(404, 'run_not_found', 'Payroll run not found');
     if (run.status !== 'FINALIZED') {
       throw new HttpError(409, 'not_finalized', 'Run must be FINALIZED before disbursement');
+    }
+    // Tier-3 — four-eyes control. When on, no single person can carry a
+    // run from creation to money-out alone.
+    if (env.PAYROLL_REQUIRE_SECOND_APPROVAL && !run.approvedAt) {
+      throw new HttpError(
+        409,
+        'approval_required',
+        'This run needs a second approval (POST /payroll/runs/:id/approve by someone other than its creator) before disbursement.',
+      );
     }
 
     const adapter = pickAdapter();
