@@ -21,6 +21,7 @@ import {
   Badge,
   Button,
   Card,
+  Select,
   CardContent,
   EmptyState,
   PageHeader,
@@ -140,9 +141,9 @@ function TaxDepositsTab() {
             <label htmlFor="deposit-year" className="font-medium">
               Year
             </label>
-            <select
+            <Select
               id="deposit-year"
-              className="rounded-md border border-navy-secondary bg-navy px-2 py-1.5 text-white"
+              className="w-28"
               value={year}
               onChange={(e) => setYear(Number(e.target.value))}
             >
@@ -154,7 +155,7 @@ function TaxDepositsTab() {
                   </option>
                 );
               })}
-            </select>
+            </Select>
             {deposits && (
               <span>
                 {money(pendingTotal)} pending

@@ -25,6 +25,7 @@ import { cn } from '@/lib/cn';
 import { dayHeading, groupByDayBy } from '@/lib/dayGroup';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
+import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ChevronDown, ChevronRight, Download, Settings, Wallet } from 'lucide-react';
@@ -282,8 +283,7 @@ function W4Card() {
       )}
       {editing && form && (
         <div className="space-y-2">
-          <select
-            className="w-full rounded-md border border-navy-secondary bg-navy px-2 py-2 text-sm text-white"
+          <Select
             value={form.filingStatus}
             onChange={(e) =>
               setForm({ ...form, filingStatus: e.target.value as MyW4['filingStatus'] })
@@ -294,7 +294,7 @@ function W4Card() {
                 {l}
               </option>
             ))}
-          </select>
+          </Select>
           <NumField
             label="Dependents credit (W-4 step 3)"
             value={form.dependentsAmount}
@@ -414,14 +414,10 @@ function PayoutMethodCard() {
             value={account}
             onChange={(e) => setAccount(e.target.value.replace(/\D/g, '').slice(0, 17))}
           />
-          <select
-            className="w-full rounded-md border border-navy-secondary bg-navy px-2 py-2 text-sm text-white"
-            value={type}
-            onChange={(e) => setType(e.target.value as 'CHECKING' | 'SAVINGS')}
-          >
+          <Select value={type} onChange={(e) => setType(e.target.value as 'CHECKING' | 'SAVINGS')}>
             <option value="CHECKING">Checking</option>
             <option value="SAVINGS">Savings</option>
-          </select>
+          </Select>
           <p className="text-xs text-silver/70">
             We&rsquo;ll email you a confirmation whenever this changes — a heads-up in case it
             wasn&rsquo;t you.

@@ -48,6 +48,8 @@ import { useAuth } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
+  AssociatePicker,
+  type PickedAssociate,
   Badge,
   Button,
   Card,
@@ -317,7 +319,7 @@ function NewGarnishmentDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [associateId, setAssociateId] = useState('');
+  const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
   const [kind, setKind] = useState<GarnishmentKind>('CHILD_SUPPORT');
   const [caseNumber, setCaseNumber] = useState('');
   const [agencyName, setAgencyName] = useState('');
@@ -330,7 +332,7 @@ function NewGarnishmentDrawer({
   const [saving, setSaving] = useState(false);
 
   const onSubmit = async () => {
-    if (!associateId || !startDate) {
+    if (!assoc || !startDate) {
       toast.error('Associate and start date required.');
       return;
     }
@@ -345,7 +347,7 @@ function NewGarnishmentDrawer({
     setSaving(true);
     try {
       await createGarnishment({
-        associateId: associateId.trim(),
+        associateId: assoc.id,
         kind,
         caseNumber: caseNumber.trim() || null,
         agencyName: agencyName.trim() || null,
@@ -370,12 +372,10 @@ function NewGarnishmentDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate ID</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={associateId}
-            onChange={(e) => setAssociateId(e.target.value)}
-          />
+          <Label>Associate</Label>
+          <div className="mt-1">
+            <AssociatePicker value={assoc} onChange={setAssoc} />
+          </div>
         </div>
         <div>
           <Label>Kind</Label>
@@ -1175,7 +1175,8 @@ function W2GenerateDrawer({
  * keeps us from clobbering a TIN already on file by accident.
  */
 function TinCaptureBlock() {
-  const [associateId, setAssociateId] = useState('');
+  const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
+  const associateId = assoc?.id ?? '';
   const [tin, setTin] = useState('');
   const [summary, setSummary] = useState<{
     employmentType: string;
@@ -1252,20 +1253,23 @@ function TinCaptureBlock() {
       <div className="mt-3 space-y-2">
         <p className="text-xs text-silver">
           Required before the 1099-NEC PDF or IRS FIRE e-file can render
-          for a contractor. Copy the contractor's ID from the People
-          Directory; the TIN is stored encrypted (AES-GCM via
+          for a contractor. The TIN is stored encrypted (AES-GCM via
           PAYOUT_ENCRYPTION_KEY).
         </p>
         <div>
-          <Label>Contractor associate ID (UUID)</Label>
-          <div className="flex gap-2 mt-1">
-            <Input
-              className="font-mono text-xs"
-              value={associateId}
-              onChange={(e) => setAssociateId(e.target.value)}
-              placeholder="00000000-0000-0000-0000-000000000000"
-            />
-            <Button variant="ghost" size="sm" onClick={onLookup} disabled={working}>
+          <Label>Contractor</Label>
+          <div className="mt-1 flex gap-2">
+            <div className="flex-1">
+              <AssociatePicker
+                value={assoc}
+                onChange={(v) => {
+                  setAssoc(v);
+                  setSummary(null);
+                }}
+                placeholder="Search contractor…"
+              />
+            </div>
+            <Button variant="ghost" size="sm" onClick={onLookup} disabled={working || !assoc}>
               Look up
             </Button>
           </div>
@@ -1602,7 +1606,7 @@ function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
   const [kind, setKind] = useState<TaxFormKind>('F941');
   const [taxYear, setTaxYear] = useState(String(new Date().getFullYear() - 1));
   const [quarter, setQuarter] = useState('1');
-  const [associateId, setAssociateId] = useState('');
+  const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
   const [amountsJson, setAmountsJson] = useState('{\n}');
   const [ein, setEin] = useState('');
   const [saving, setSaving] = useState(false);
@@ -1618,8 +1622,8 @@ function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
       toast.error('Amounts must be valid JSON.');
       return;
     }
-    if (needsAssociate && !associateId) {
-      toast.error('Associate ID required for W-2/1099.');
+    if (needsAssociate && !assoc) {
+      toast.error('Pick an associate for W-2/1099.');
       return;
     }
     setSaving(true);
@@ -1628,7 +1632,7 @@ function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
         kind,
         taxYear: Number(taxYear),
         quarter: needsQuarter ? Number(quarter) : null,
-        associateId: needsAssociate ? associateId.trim() : null,
+        associateId: needsAssociate ? assoc!.id : null,
         amounts,
         ein: ein.trim() || null,
       });
@@ -1689,12 +1693,10 @@ function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
         </div>
         {needsAssociate && (
           <div>
-            <Label>Associate ID</Label>
-            <Input
-              className="mt-1 font-mono text-xs"
-              value={associateId}
-              onChange={(e) => setAssociateId(e.target.value)}
-            />
+            <Label>Associate</Label>
+            <div className="mt-1">
+              <AssociatePicker value={assoc} onChange={setAssoc} />
+            </div>
           </div>
         )}
         <div>

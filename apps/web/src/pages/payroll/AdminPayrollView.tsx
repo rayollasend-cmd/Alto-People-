@@ -49,7 +49,8 @@ import {
   type WcPremiumReport,
 } from '@/lib/payrollApi';
 import { syncRun as syncRunToQbo } from '@/lib/quickbooksApi';
-import { listDirectory } from '@/lib/directoryApi';
+import { AssociatePicker } from '@/components/ui/AssociatePicker';
+import { Select } from '@/components/ui/Select';
 import { AmendPayrollWizard } from './AmendPayrollWizard';
 import { BranchEnrollmentDialog } from './BranchEnrollmentDialog';
 import { RunPayrollWizard } from './RunPayrollWizard';
@@ -1692,92 +1693,6 @@ function DrawerStat({
  *  the helper text so HR isn't surprised.
  * -------------------------------------------------------------------------- */
 
-/** Compact directory typeahead → resolves to an associate {id, name}. */
-function AssociateSearchField({
-  value,
-  onChange,
-}: {
-  value: { id: string; name: string } | null;
-  onChange: (v: { id: string; name: string } | null) => void;
-}) {
-  const [term, setTerm] = useState('');
-  const [results, setResults] = useState<{ id: string; name: string }[]>([]);
-  const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    if (value || term.trim().length < 2) {
-      setResults([]);
-      return;
-    }
-    let live = true;
-    const t = setTimeout(() => {
-      listDirectory({ q: term.trim() })
-        .then((r) => {
-          if (!live) return;
-          setResults(
-            r.associates.slice(0, 8).map((a) => ({
-              id: a.id,
-              name: `${a.firstName} ${a.lastName}`.trim(),
-            })),
-          );
-          setOpen(true);
-        })
-        .catch(() => setResults([]));
-    }, 250);
-    return () => {
-      live = false;
-      clearTimeout(t);
-    };
-  }, [term, value]);
-
-  if (value) {
-    return (
-      <div className="flex items-center justify-between rounded-md border border-navy-secondary bg-navy px-3 py-2 text-sm">
-        <span className="text-white">{value.name}</span>
-        <button
-          type="button"
-          onClick={() => {
-            onChange(null);
-            setTerm('');
-          }}
-          className="text-silver/60 hover:text-white"
-          aria-label="Clear associate"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="relative">
-      <Input
-        placeholder="Search associate…"
-        value={term}
-        onChange={(e) => setTerm(e.target.value)}
-        onFocus={() => results.length > 0 && setOpen(true)}
-      />
-      {open && results.length > 0 && (
-        <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-navy-secondary bg-navy shadow-lg">
-          {results.map((r) => (
-            <button
-              key={r.id}
-              type="button"
-              className="block w-full px-3 py-2 text-left text-sm text-silver hover:bg-navy-secondary hover:text-white"
-              onClick={() => {
-                onChange(r);
-                setOpen(false);
-              }}
-            >
-              {r.name}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 const ADD_ON_KINDS: { value: RunAddOnKind; label: string }[] = [
   { value: 'BONUS', label: 'Bonus' },
   { value: 'COMMISSION', label: 'Commission' },
@@ -1887,10 +1802,10 @@ function DraftAddOnsSection({
 
       {open && (
         <div className="space-y-2 border-t border-navy-secondary pt-2">
-          <AssociateSearchField value={assoc} onChange={setAssoc} />
+          <AssociatePicker value={assoc} onChange={setAssoc} />
           <div className="flex gap-2">
-            <select
-              className="flex-1 rounded-md border border-navy-secondary bg-navy px-2 py-2 text-sm text-white"
+            <Select
+              className="flex-1"
               value={kind}
               onChange={(e) => setKind(e.target.value as RunAddOnKind)}
             >
@@ -1899,7 +1814,7 @@ function DraftAddOnsSection({
                   {k.label}
                 </option>
               ))}
-            </select>
+            </Select>
             <Input
               type="number"
               min="0"
