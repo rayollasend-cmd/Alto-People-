@@ -1822,7 +1822,7 @@ async function loadPayrollSheet(
     ...(input.locationId ? { locationId: input.locationId } : {}),
     ...(input.associateId ? { associateId: input.associateId } : {}),
   };
-  const [rows, pendingCount] = await Promise.all([
+  const [rows, pendingCount, noClientCount] = await Promise.all([
     prisma.timeEntry.findMany({
       where,
       orderBy: { clockInAt: 'asc' },
@@ -1833,6 +1833,22 @@ async function loadPayrollSheet(
       take: TIME_SUMMARY_MAX_ROWS,
     }),
     prisma.timeEntry.count({ where: { ...where, status: 'COMPLETED' } }),
+    // Approved time with no client is invisible to every client-scoped
+    // sheet — a manually added entry lands clientless when the associate
+    // has no open assignment and no job was picked. Count them so the
+    // caller can say "N approved entries were left out" instead of the
+    // sheet silently reading as complete.
+    input.clientId
+      ? prisma.timeEntry.count({
+          where: {
+            ...scopeTimeEntries(user),
+            status: 'APPROVED',
+            clockInAt: { gte: from, lt: to },
+            clientId: null,
+            ...(input.associateId ? { associateId: input.associateId } : {}),
+          },
+        })
+      : Promise.resolve(0),
   ]);
 
   const inputRows: PayrollSheetInputRow[] = rows.map((r) => ({
@@ -1929,6 +1945,7 @@ async function loadPayrollSheet(
     from,
     to,
     pendingCount,
+    noClientCount,
     truncated: rows.length === TIME_SUMMARY_MAX_ROWS,
   };
 }
@@ -1944,10 +1961,11 @@ timeRouter.post('/admin/payroll-sheet.pdf', MANAGE, async (req, res, next) => {
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
-    const { sheet, clientName, from, to, pendingCount, truncated } =
+    const { sheet, clientName, from, to, pendingCount, noClientCount, truncated } =
       await loadPayrollSheet(req.user!, parsed.data);
     if (truncated) res.setHeader('X-Truncated', 'true');
     if (pendingCount > 0) res.setHeader('X-Pending', String(pendingCount));
+    if (noClientCount > 0) res.setHeader('X-No-Client', String(noClientCount));
 
     const pdf = await renderPayrollSheetPdf({
       sheet,
@@ -1974,10 +1992,11 @@ timeRouter.post('/admin/payroll-sheet.xlsx', MANAGE, async (req, res, next) => {
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
-    const { sheet, clientName, from, to, pendingCount, truncated } =
+    const { sheet, clientName, from, to, pendingCount, noClientCount, truncated } =
       await loadPayrollSheet(req.user!, parsed.data);
     if (truncated) res.setHeader('X-Truncated', 'true');
     if (pendingCount > 0) res.setHeader('X-Pending', String(pendingCount));
+    if (noClientCount > 0) res.setHeader('X-No-Client', String(noClientCount));
 
     const xlsx = await renderPayrollSheetXlsx({
       sheet,

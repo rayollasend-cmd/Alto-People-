@@ -1808,16 +1808,26 @@ function TimeEntryFormDrawer({
     setBusy(true);
     try {
       if (mode === 'create') {
-        await adminCreateTimeEntry({
+        const created = await adminCreateTimeEntry({
           associateId: assoc!.id,
           clockInAt: localInputToIso(clockInLocal),
           clockOutAt: clockOutLocal ? localInputToIso(clockOutLocal) : null,
           payRate: payRateVal,
           notes: notes.trim() || null,
         });
-        toast.success(
-          clockOutLocal ? 'Shift logged.' : `Clocked in ${assoc!.name}.`,
-        );
+        // No job picked and no open assignment to resolve one from — the
+        // entry saved clientless, which keeps it out of every client-scoped
+        // payroll export. Say so now, not at export time.
+        if (!created.clientId) {
+          toast.warning(
+            `Saved, but no client could be resolved for ${assoc!.name} — this entry won't appear in client-scoped payroll sheets. Assign them to a client (or pick a job) and edit the entry.`,
+            { duration: 10000 },
+          );
+        } else {
+          toast.success(
+            clockOutLocal ? 'Shift logged.' : `Clocked in ${assoc!.name}.`,
+          );
+        }
       } else if (entry) {
         await adminEditTimeEntry(entry.id, {
           clockInAt: localInputToIso(clockInLocal),
@@ -2106,11 +2116,17 @@ function PayrollSheetDialog({
     setBusy(format);
     setErr(null);
     try {
-      await exportPayrollSheet(format, {
+      const { noClientCount } = await exportPayrollSheet(format, {
         from: ymdToIsoStart(fromYmd),
         to: ymdToIsoEndExclusive(toYmd),
         clientId,
       });
+      if (noClientCount > 0) {
+        toast.warning(
+          `${noClientCount} approved ${noClientCount === 1 ? 'entry' : 'entries'} in this period ${noClientCount === 1 ? 'has' : 'have'} no client attached and ${noClientCount === 1 ? 'was' : 'were'} left out of the sheet. Find ${noClientCount === 1 ? 'it' : 'them'} under the Approved filter and attach the client.`,
+          { duration: 12000 },
+        );
+      }
       onOpenChange(false);
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Export failed.');

@@ -198,7 +198,7 @@ async function downloadExportPost(
   url: string,
   body: unknown,
   fallbackName: string
-): Promise<void> {
+): Promise<Headers> {
   const res = await fetch(url, {
     method: 'POST',
     credentials: 'include',
@@ -228,13 +228,14 @@ async function downloadExportPost(
   a.click();
   a.remove();
   URL.revokeObjectURL(objUrl);
+  return res.headers;
 }
 
-export function exportTimeEntries(
+export async function exportTimeEntries(
   format: 'csv' | 'pdf',
   body: TimeExportInput
 ): Promise<void> {
-  return downloadExportPost(
+  await downloadExportPost(
     `/api/time/admin/export.${format}`,
     body,
     `time-export.${format}`
@@ -243,8 +244,8 @@ export function exportTimeEntries(
 
 /** Per-associate summary CSV: regular vs overtime hours + pay rate, scoped
  *  to a facility (Location), APPROVED time only. */
-export function exportTimeSummary(body: TimeExportInput): Promise<void> {
-  return downloadExportPost(
+export async function exportTimeSummary(body: TimeExportInput): Promise<void> {
+  await downloadExportPost(
     '/api/time/admin/export-summary.csv',
     body,
     'time-summary.csv'
@@ -252,14 +253,20 @@ export function exportTimeSummary(body: TimeExportInput): Promise<void> {
 }
 
 /** Payroll-ready sheet: per-associate dates worked + duration + regular/OT
- *  totals for a client and date range, APPROVED time only. PDF or .xlsx. */
-export function exportPayrollSheet(
+ *  totals for a client and date range, APPROVED time only. PDF or .xlsx.
+ *  `noClientCount` is approved time in the range with no client attached —
+ *  invisible to this client-scoped sheet, so the caller should surface it. */
+export async function exportPayrollSheet(
   format: 'pdf' | 'xlsx',
   body: TimeExportInput
-): Promise<void> {
-  return downloadExportPost(
+): Promise<{ noClientCount: number; pendingCount: number }> {
+  const headers = await downloadExportPost(
     `/api/time/admin/payroll-sheet.${format}`,
     body,
     `payroll-sheet.${format}`
   );
+  return {
+    noClientCount: Number(headers.get('X-No-Client') ?? 0),
+    pendingCount: Number(headers.get('X-Pending') ?? 0),
+  };
 }
