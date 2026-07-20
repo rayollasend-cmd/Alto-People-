@@ -50,7 +50,7 @@ import {
 } from '../lib/garnishmentRemittance.js';
 import { decryptString } from '../lib/crypto.js';
 import type { PayoutMethod } from '@prisma/client';
-import { enqueueAudit, recordPayrollEvent } from '../lib/audit.js';
+import { enqueueAudit, recordCriticalAudit, recordPayrollEvent } from '../lib/audit.js';
 import {
   isStubMode as qboIsStubMode,
   postPayrollJournalEntry,
@@ -1282,6 +1282,155 @@ payrollRouter.get('/tax-deposits/:id/worksheet.pdf', PROCESS, async (req, res, n
       `attachment; filename="tax-deposit-${ymd(deposit.dueDate)}-${deposit.kind}.pdf"`,
     );
     res.send(pdf);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Tier-1 — state new-hire reporting ================================ */
+// Federal law (42 USC §653a) requires reporting every new hire to the
+// state directory within ~20 days. These endpoints surface who hasn't
+// been reported, produce the standard multistate CSV for upload to the
+// state portal, and stamp the report date.
+
+const NEW_HIRE_DEADLINE_DAYS = 20;
+
+/** GET /payroll/new-hire-report — unreported hires with overdue flags. */
+payrollRouter.get('/new-hire-report', PROCESS, async (_req, res, next) => {
+  try {
+    const associates = await prisma.associate.findMany({
+      where: { deletedAt: null, newHireReportedAt: null, hireDate: { not: null } },
+      orderBy: { hireDate: 'asc' },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        hireDate: true,
+        state: true,
+        employmentType: true,
+        addressLine1: true,
+        w4Submission: { select: { ssnEncrypted: true } },
+      },
+    });
+    const deadline = new Date(Date.now() - NEW_HIRE_DEADLINE_DAYS * 86_400_000);
+    res.json({
+      unreported: associates.map((a) => ({
+        associateId: a.id,
+        name: `${a.firstName} ${a.lastName}`,
+        hireDate: a.hireDate ? ymd(a.hireDate) : null,
+        state: a.state,
+        employmentType: a.employmentType,
+        overdue: !!a.hireDate && a.hireDate < deadline,
+        // The state can't match a report without an SSN + address.
+        reportable: !!a.w4Submission?.ssnEncrypted && !!a.addressLine1 && !!a.state,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /payroll/new-hire-report.csv?state=FL — the multistate-registry CSV
+ * for upload to the state portal. Only reportable associates (SSN +
+ * address + state on file) are included; the JSON endpoint above shows
+ * who was excluded and why.
+ */
+payrollRouter.get('/new-hire-report.csv', PROCESS, async (req, res, next) => {
+  try {
+    const stateFilter =
+      typeof req.query.state === 'string' && /^[A-Za-z]{2}$/.test(req.query.state)
+        ? req.query.state.toUpperCase()
+        : null;
+    const profile = await prisma.submitterProfile.findUnique({ where: { id: 'singleton' } });
+    if (!profile) {
+      throw new HttpError(409, 'no_submitter_profile', 'Fill in the employer profile (EIN, address) first.');
+    }
+    const associates = await prisma.associate.findMany({
+      where: {
+        deletedAt: null,
+        newHireReportedAt: null,
+        hireDate: { not: null },
+        ...(stateFilter ? { state: stateFilter } : {}),
+      },
+      orderBy: { hireDate: 'asc' },
+      include: { w4Submission: { select: { ssnEncrypted: true } } },
+    });
+    const esc = (v: string) => (/[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+    const rows: string[] = [
+      [
+        'Employer EIN', 'Employer Name', 'Employer Address', 'Employer City', 'Employer State', 'Employer Zip',
+        'Employee SSN', 'Employee First Name', 'Employee Last Name',
+        'Employee Address', 'Employee City', 'Employee State', 'Employee Zip',
+        'Date of Hire', 'State of Hire',
+      ].join(','),
+    ];
+    let included = 0;
+    for (const a of associates) {
+      if (!a.w4Submission?.ssnEncrypted || !a.addressLine1 || !a.state || !a.hireDate) continue;
+      const ssn = decryptString(a.w4Submission.ssnEncrypted).replace(/\D/g, '');
+      rows.push(
+        [
+          profile.ein, profile.name,
+          `${profile.addressLine1}${profile.addressLine2 ? ' ' + profile.addressLine2 : ''}`,
+          profile.city, profile.state, profile.zip5,
+          ssn, a.firstName.trim(), a.lastName.trim(),
+          a.addressLine1, a.city ?? '', a.state, a.zip ?? '',
+          ymd(a.hireDate), a.state,
+        ]
+          .map((v) => esc(String(v)))
+          .join(','),
+      );
+      included++;
+    }
+    if (included === 0) {
+      throw new HttpError(404, 'nothing_to_report', 'No reportable unreported hires (check SSN/address/state on file).');
+    }
+    // This CSV is full of SSNs — same audit posture as the census export.
+    await recordCriticalAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'payroll.new_hire_report_exported',
+        entityType: 'Associate',
+        entityId: req.user!.id,
+        metadata: { included, stateFilter },
+      },
+      'payroll.new_hire_report_exported',
+    );
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="new-hire-report${stateFilter ? `-${stateFilter}` : ''}-${new Date().toISOString().slice(0, 10)}.csv"`,
+    );
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(rows.join('\r\n') + '\r\n');
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** POST /payroll/new-hire-report/mark-reported {associateIds} */
+payrollRouter.post('/new-hire-report/mark-reported', PROCESS, async (req, res, next) => {
+  try {
+    const ids: unknown = req.body?.associateIds;
+    if (!Array.isArray(ids) || ids.length === 0 || !ids.every((v) => typeof v === 'string')) {
+      throw new HttpError(400, 'invalid_body', 'associateIds must be a non-empty string array.');
+    }
+    const updated = await prisma.associate.updateMany({
+      where: { id: { in: ids as string[] }, newHireReportedAt: null },
+      data: { newHireReportedAt: new Date() },
+    });
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'payroll.new_hires_marked_reported',
+        entityType: 'Associate',
+        entityId: req.user!.id,
+        metadata: { count: updated.count, associateIds: ids },
+      },
+      'payroll.new_hires_marked_reported',
+    );
+    res.json({ ok: true, marked: updated.count });
   } catch (err) {
     next(err);
   }

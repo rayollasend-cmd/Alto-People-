@@ -685,6 +685,10 @@ model Associate {
   // *planned* start at invitation time, which can differ if HR changes
   // their mind during review).
   hireDate          DateTime?      @db.Date
+  // Tier-1 — when this hire was reported to the state new-hire directory
+  // (federally required within ~20 days of hire). Null = not yet
+  // reported; the new-hire report endpoints surface and stamp this.
+  newHireReportedAt DateTime?      @db.Timestamptz(6)
   // Profile photo. photoS3Key is the storage path under uploads/profile-photos/;
   // photoUpdatedAt is the cache-buster the API stamps onto the photo URL so
   // the browser refetches after an upload. Null when no photo on file —
