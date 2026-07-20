@@ -360,6 +360,7 @@ model User {
   createdEsignAgreements            EsignAgreement[]              @relation("EsignAgreementCreator")
   payrollDisbursementAttempts       PayrollDisbursementAttempt[]  @relation("PayrollDisbursementAttemptActor")
   taxDepositsPaid                   TaxDeposit[]                  @relation("TaxDepositPayer")
+  garnishmentRemittancesSent        GarnishmentRemittance[]       @relation("GarnishmentRemittanceSender")
   timeOffLedgerEntriesAuthored      TimeOffLedgerEntry[]
   timeOffReviews                    TimeOffRequest[]              @relation("TimeOffReviewer")
   associateHistoryEntries           AssociateHistory[]            @relation("AssociateHistoryActor")
@@ -1620,6 +1621,8 @@ model PayrollRun {
   pendingDeductionsApplied PendingPayrollDeduction[] @relation("PendingDeductionAppliedRun")
   // Tier-1 — the FED_941 deposit obligation this run's disbursement accrued.
   taxDeposit               TaxDeposit?
+  // Tier-1 — per-payee garnishment remittances accrued at disbursement.
+  garnishmentRemittances   GarnishmentRemittance[]
   createdAt                DateTime                  @default(now()) @db.Timestamptz(6)
   updatedAt                DateTime                  @updatedAt @db.Timestamptz(6)
 
@@ -3687,11 +3690,53 @@ model GarnishmentDeduction {
   amount        Decimal  @db.Decimal(10, 2)
   deductedOn    DateTime @default(now()) @db.Timestamptz(6)
   createdAt     DateTime @default(now()) @db.Timestamptz(6)
+  // Tier-1 — the remittance batch this deduction was rolled into. Null
+  // until the run disburses and remittances accrue.
+  remittanceId  String?  @db.Uuid
 
-  garnishment Garnishment @relation(fields: [garnishmentId], references: [id], onDelete: Cascade)
-  payrollRun  PayrollRun? @relation(fields: [payrollRunId], references: [id], onDelete: SetNull)
+  garnishment Garnishment            @relation(fields: [garnishmentId], references: [id], onDelete: Cascade)
+  payrollRun  PayrollRun?            @relation(fields: [payrollRunId], references: [id], onDelete: SetNull)
+  remittance  GarnishmentRemittance? @relation(fields: [remittanceId], references: [id], onDelete: SetNull)
 
   @@index([garnishmentId])
+  @@index([remittanceId])
+}
+
+// Tier-1 — money withheld from paychecks under a court/agency order must
+// actually reach the payee (state disbursement unit, IRS, creditor).
+// One remittance per (run, payee) groups every deduction bound for the
+// same address; finance sends the payment out-of-band (check or agency
+// portal) and marks it SENT with the payment reference. Deducting
+// without remitting is a compliance violation — PENDING rows here are
+// the queue that prevents it.
+enum GarnishmentRemittanceStatus {
+  PENDING
+  SENT
+}
+
+model GarnishmentRemittance {
+  id           String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  payrollRunId String                      @db.Uuid
+  // Payee identity — snapshot of Garnishment.remitTo/remitAddress at
+  // accrual time (orders can be edited later; the remittance shouldn't
+  // drift).
+  payeeName    String
+  payeeAddress String?
+  amount       Decimal                     @db.Decimal(12, 2)
+  status       GarnishmentRemittanceStatus @default(PENDING)
+  sentAt       DateTime?                   @db.Timestamptz(6)
+  sentById     String?                     @db.Uuid
+  // Check number / agency portal confirmation keyed in at mark-sent.
+  reference    String?
+  createdAt    DateTime                    @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime                    @updatedAt @db.Timestamptz(6)
+
+  payrollRun PayrollRun             @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  sentBy     User?                  @relation("GarnishmentRemittanceSender", fields: [sentById], references: [id], onDelete: SetNull)
+  deductions GarnishmentDeduction[]
+
+  @@unique([payrollRunId, payeeName])
+  @@index([status])
 }
 
 model TaxForm {

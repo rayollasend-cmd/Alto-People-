@@ -44,6 +44,10 @@ import { checkAdapter, pickAdapter, type DisbursementInput } from '../lib/disbur
 import { renderCheckRegisterPdf } from '../lib/checkRegister.js';
 import { accrueDepositsForRun } from '../lib/taxDeposits.js';
 import { renderEftpsWorksheetPdf } from '../lib/eftpsWorksheet.js';
+import {
+  accrueRemittancesForRun,
+  renderRemittanceAdvicePdf,
+} from '../lib/garnishmentRemittance.js';
 import { decryptString } from '../lib/crypto.js';
 import type { PayoutMethod } from '@prisma/client';
 import { enqueueAudit, recordPayrollEvent } from '../lib/audit.js';
@@ -1043,6 +1047,9 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
       void accrueDepositsForRun(prisma, run.id).catch((err) =>
         console.warn('[payroll] tax-deposit accrual failed (advisory):', err),
       );
+      void accrueRemittancesForRun(prisma, run.id).catch((err) =>
+        console.warn('[payroll] garnishment-remittance accrual failed (advisory):', err),
+      );
     }
 
     await recordPayrollEvent({
@@ -1273,6 +1280,132 @@ payrollRouter.get('/tax-deposits/:id/worksheet.pdf', PROCESS, async (req, res, n
     res.setHeader(
       'Content-Disposition',
       `attachment; filename="tax-deposit-${ymd(deposit.dueDate)}-${deposit.kind}.pdf"`,
+    );
+    res.send(pdf);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Tier-1 — garnishment remittance queue ============================ */
+
+/** GET /payroll/garnishment-remittances?status=PENDING — the send queue. */
+payrollRouter.get('/garnishment-remittances', PROCESS, async (req, res, next) => {
+  try {
+    const status =
+      req.query.status === 'PENDING' || req.query.status === 'SENT'
+        ? req.query.status
+        : undefined;
+    const remittances = await prisma.garnishmentRemittance.findMany({
+      where: status ? { status } : {},
+      orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
+      take: 500,
+      include: {
+        payrollRun: { select: { periodStart: true, periodEnd: true } },
+        sentBy: { select: { email: true } },
+        deductions: { select: { id: true } },
+      },
+    });
+    res.json({
+      remittances: remittances.map((r) => ({
+        id: r.id,
+        payrollRunId: r.payrollRunId,
+        period: {
+          start: ymd(r.payrollRun.periodStart),
+          end: ymd(r.payrollRun.periodEnd),
+        },
+        payeeName: r.payeeName,
+        payeeAddress: r.payeeAddress,
+        amount: Number(r.amount),
+        deductionCount: r.deductions.length,
+        status: r.status,
+        sentAt: r.sentAt?.toISOString() ?? null,
+        sentByEmail: r.sentBy?.email ?? null,
+        reference: r.reference,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** POST /payroll/garnishment-remittances/:id/mark-sent {reference} */
+payrollRouter.post('/garnishment-remittances/:id/mark-sent', PROCESS, async (req, res, next) => {
+  try {
+    const reference =
+      typeof req.body?.reference === 'string' ? req.body.reference.trim() || null : null;
+    const remittance = await prisma.garnishmentRemittance.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!remittance) throw new HttpError(404, 'not_found', 'Remittance not found');
+    if (remittance.status === 'SENT') {
+      throw new HttpError(409, 'already_sent', 'This remittance is already marked sent.');
+    }
+    await prisma.garnishmentRemittance.update({
+      where: { id: remittance.id },
+      data: { status: 'SENT', sentAt: new Date(), sentById: req.user!.id, reference },
+    });
+    await recordPayrollEvent({
+      actorUserId: req.user!.id,
+      action: 'payroll.garnishment_remitted',
+      payrollRunId: remittance.payrollRunId,
+      clientId: null,
+      metadata: {
+        remittanceId: remittance.id,
+        payeeName: remittance.payeeName,
+        amount: Number(remittance.amount),
+        reference,
+      },
+      req,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** GET /payroll/garnishment-remittances/:id/advice.pdf — the sheet that
+ *  accompanies the payment so the agency posts each case correctly. */
+payrollRouter.get('/garnishment-remittances/:id/advice.pdf', PROCESS, async (req, res, next) => {
+  try {
+    const remittance = await prisma.garnishmentRemittance.findUnique({
+      where: { id: req.params.id },
+      include: {
+        payrollRun: { select: { periodStart: true, periodEnd: true } },
+        deductions: {
+          include: {
+            garnishment: {
+              include: { associate: { select: { firstName: true, lastName: true } } },
+            },
+          },
+        },
+      },
+    });
+    if (!remittance) throw new HttpError(404, 'not_found', 'Remittance not found');
+    const profile = await prisma.submitterProfile.findUnique({ where: { id: 'singleton' } });
+    const pdf = await renderRemittanceAdvicePdf({
+      companyName: profile?.name ?? 'Alto HR',
+      ein: profile?.ein ?? '—',
+      payeeName: remittance.payeeName,
+      payeeAddress: remittance.payeeAddress,
+      period: {
+        start: ymd(remittance.payrollRun.periodStart),
+        end: ymd(remittance.payrollRun.periodEnd),
+      },
+      status: remittance.status,
+      reference: remittance.reference,
+      lines: remittance.deductions.map((d) => ({
+        employeeName: `${d.garnishment.associate.firstName} ${d.garnishment.associate.lastName}`,
+        caseNumber: d.garnishment.caseNumber,
+        kind: d.garnishment.kind,
+        amount: Number(d.amount),
+      })),
+      generatedAt: new Date().toISOString(),
+    });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="remittance-${remittance.payeeName.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.pdf"`,
     );
     res.send(pdf);
   } catch (err) {

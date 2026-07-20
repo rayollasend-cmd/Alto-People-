@@ -9,6 +9,7 @@ import { describeBranchFailure } from '../lib/achReturnCodes.js';
 import { notifyHrOfPaymentFailure } from '../lib/payrollFailureNotify.js';
 import { sendPaystubEmail } from '../lib/sendPaystubEmail.js';
 import { accrueDepositsForRun } from '../lib/taxDeposits.js';
+import { accrueRemittancesForRun } from '../lib/garnishmentRemittance.js';
 
 export const branchWebhookRouter = Router();
 
@@ -259,6 +260,9 @@ branchWebhookRouter.post(
       if (result.runFlippedToDisbursed) {
         void accrueDepositsForRun(prisma, result.item.payrollRunId).catch((err) =>
           console.warn('[branch-webhook] tax-deposit accrual failed (advisory):', err),
+        );
+        void accrueRemittancesForRun(prisma, result.item.payrollRunId).catch((err) =>
+          console.warn('[branch-webhook] garnishment-remittance accrual failed (advisory):', err),
         );
       }
 
