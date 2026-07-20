@@ -1,14 +1,25 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CheckCircle2, XCircle } from 'lucide-react';
+import { CheckCircle2, Download, XCircle } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
   getPayrollReadiness,
   type PayrollReadinessResponse,
   type PayrollReadinessRow,
 } from '@/lib/payrollApi';
+import { downloadPayrollCensus } from '@/lib/orgApi';
 import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/Dialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -20,6 +31,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/Table';
+import { toast } from '@/components/ui/Toaster';
 
 /**
  * Payroll readiness dashboard. Read-only.
@@ -51,6 +63,7 @@ export function PayrollReadiness() {
         title="Payroll readiness"
         subtitle="Every active associate, with the five data points payroll needs. Fix any red flags before creating a run."
         breadcrumbs={[{ label: 'Payroll' }, { label: 'Readiness' }]}
+        secondaryActions={<CensusExportDialog />}
       />
 
       {error && (
@@ -227,6 +240,108 @@ function Flag({
         <XCircle className="h-5 w-5 text-alert" />
       </Link>
     </TableCell>
+  );
+}
+
+/**
+ * Bulk census export for onboarding a new payroll provider. The button lives
+ * here because this page is already the "is everyone ready to be paid" surface
+ * and is gated on process:payroll — the same capability the export requires.
+ *
+ * The dialog forces a written reason before the download because the file it
+ * produces holds every active associate's full SSN + bank account. The server
+ * logs that reason and the exact roster to /audit; the copy here makes the
+ * sensitivity explicit so nobody pulls it casually.
+ */
+function CensusExportDialog() {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const reasonOk = reason.trim().length >= 8;
+
+  async function handleExport() {
+    if (!reasonOk || busy) return;
+    setBusy(true);
+    try {
+      const { rowCount, decryptFailures } = await downloadPayrollCensus(reason.trim());
+      if (decryptFailures > 0) {
+        toast.warning(
+          `Exported ${rowCount} associate${rowCount === 1 ? '' : 's'}, but ${decryptFailures} record${
+            decryptFailures === 1 ? '' : 's'
+          } could not be decrypted (marked DECRYPT_ERROR). Have those associates re-enter their details.`,
+        );
+      } else {
+        toast.success(
+          `Exported ${rowCount} active associate${rowCount === 1 ? '' : 's'}. Upload it to your provider's secure portal, then delete the file.`,
+        );
+      }
+      setOpen(false);
+      setReason('');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Export failed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)}>
+      <Button variant="secondary" size="sm" onClick={() => setOpen(true)}>
+        <Download className="h-4 w-4" aria-hidden="true" />
+        Export census
+      </Button>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Export payroll census</DialogTitle>
+          <DialogDescription>
+            Downloads a CSV of every <strong>active</strong> associate&rsquo;s full SSN,
+            address, and bank routing/account number — for handing to a payroll provider.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-xs text-warning">
+          This file contains unencrypted SSNs and bank accounts. Upload it to the
+          provider&rsquo;s secure portal — never email it — and delete your copy once the
+          import is confirmed. This export is logged to the audit trail with your reason
+          and the full list of associates included.
+        </div>
+
+        <div className="space-y-1.5">
+          <label htmlFor="census-reason" className="text-sm font-medium text-white">
+            Reason for this export
+          </label>
+          <textarea
+            id="census-reason"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            rows={3}
+            placeholder="e.g. Trial import for Acme Payroll — new provider evaluation"
+            className="w-full rounded-md border border-navy-secondary bg-navy px-3 py-2 text-sm text-white placeholder:text-silver/50 focus:outline-none focus:ring-2 focus:ring-gold-bright"
+          />
+          <p className="text-xs text-silver">
+            Recorded in the audit log. Minimum 8 characters.
+          </p>
+        </div>
+
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button variant="secondary" size="sm" disabled={busy}>
+              Cancel
+            </Button>
+          </DialogClose>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={handleExport}
+            disabled={!reasonOk || busy}
+            loading={busy}
+          >
+            Download CSV
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

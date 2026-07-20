@@ -105,6 +105,55 @@ export function revealAssociateSsn(
   });
 }
 
+/**
+ * Bulk payroll-provider census export. Streams a CSV of every ACTIVE
+ * associate's decrypted SSN + bank details and triggers a browser download.
+ *
+ * This is the most sensitive export in the app: it requires process:payroll,
+ * a written reason (min 8 chars), and the server writes one audit row naming
+ * the actor, the reason, and every associate in the file BEFORE the download
+ * streams. Returns the row count so the caller can confirm what was pulled.
+ *
+ * Hand the file to the provider's secure portal — never email it — and delete
+ * the local copy once the import is confirmed.
+ */
+export async function downloadPayrollCensus(
+  reason: string,
+): Promise<{ rowCount: number; decryptFailures: number }> {
+  const res = await fetch('/api/org/associates/payroll-census-export', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason }),
+  });
+  if (!res.ok) {
+    let message = `Could not export census (${res.status}).`;
+    try {
+      const body = await res.json();
+      if (body?.error?.message) message = body.error.message;
+    } catch {
+      /* non-JSON error body — keep the default */
+    }
+    throw new Error(message);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const cd = res.headers.get('content-disposition') ?? '';
+  const m = /filename="([^"]+)"/.exec(cd);
+  const filename = m?.[1] ?? 'payroll-census.csv';
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  return {
+    rowCount: Number(res.headers.get('x-row-count') ?? 0),
+    decryptFailures: Number(res.headers.get('x-decrypt-failures') ?? 0),
+  };
+}
+
 export function listDepartments(clientId?: string): Promise<DepartmentListResponse> {
   const q = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
   return apiFetch<DepartmentListResponse>(`/org/departments${q}`);

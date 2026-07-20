@@ -1068,6 +1068,205 @@ orgRouter.post(
   },
 );
 
+// ----- Payroll-provider census export ------------------------------------
+//
+// POST /associates/payroll-census-export  → text/csv, active associates only
+//
+// The one legitimate path to a bulk sheet of full SSNs + bank accounts:
+// handing your workforce to a new payroll processor. This is the most
+// sensitive export in the product, so it carries every safeguard the
+// single-record reveals do, and then some:
+//
+//   - process:payroll capability (belt-and-braces, like the reveals);
+//   - a written reason (min 8 chars) — WHY this dump exists, who it's for;
+//   - ONE critical audit row, persisted BEFORE the plaintext streams, that
+//     names the actor, reason, IP/UA, row count, AND every associateId in
+//     the file. If that dump ever leaks, /audit answers "who pulled it, when,
+//     why, and exactly whose data was in it."
+//
+// Scope is active associates only: not soft-deleted, and no COMPLETED
+// Separation. Terminated staff don't belong in a new provider's census.
+//
+// Delivery note (not enforceable in code): upload this to the provider's
+// secure portal — never email it — and delete the local copy once the
+// import is confirmed.
+
+const CENSUS_HEADERS = [
+  'Employee ID',
+  'First Name',
+  'Last Name',
+  'SSN',
+  'Date of Birth',
+  'Email',
+  'Phone',
+  'Address Line 1',
+  'Address Line 2',
+  'City',
+  'State',
+  'Zip',
+  'Hire Date',
+  'Employment Type',
+  'Bank Account Type',
+  'Routing Number',
+  'Account Number',
+] as const;
+
+// RFC-4180 quoting: wrap in double-quotes and double any embedded quote
+// whenever the value carries a comma, quote, or newline. null/undefined → "".
+function csvCell(value: string | null | undefined): string {
+  const s = value == null ? '' : String(value);
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function isoDate(d: Date | null | undefined): string {
+  return d ? d.toISOString().slice(0, 10) : '';
+}
+
+orgRouter.post(
+  '/associates/payroll-census-export',
+  PAYROLL_OR_HR,
+  async (req: Request, res: Response) => {
+    // Same belt-and-braces double check as the single-record reveals.
+    if (!hasCapability(req.user!.role, 'process:payroll')) {
+      throw new HttpError(403, 'forbidden', 'Missing capability: process:payroll');
+    }
+
+    const { reason } = RevealReasonSchema.parse(req.body);
+
+    // Active = not soft-deleted AND no completed separation. We pull the
+    // completed-separation flag as a lightweight relation filter rather than
+    // a second query.
+    const associates = await prisma.associate.findMany({
+      where: {
+        deletedAt: null,
+        separations: { none: { status: 'COMPLETE' } },
+      },
+      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        dob: true,
+        email: true,
+        phone: true,
+        addressLine1: true,
+        addressLine2: true,
+        city: true,
+        state: true,
+        zip: true,
+        hireDate: true,
+        employmentType: true,
+        tinEncrypted: true,
+        w4Submission: { select: { ssnEncrypted: true } },
+        payoutMethods: {
+          where: { isPrimary: true },
+          take: 1,
+          select: {
+            accountType: true,
+            routingNumberEnc: true,
+            accountNumberEnc: true,
+          },
+        },
+      },
+    });
+
+    // Decrypt per-row. A single bad row (usually a key rotated out from under
+    // an old record) must NOT 500 the whole export — mark that cell so the
+    // operator can chase the one associate instead of losing the file.
+    let decryptFailures = 0;
+    const rows = associates.map((a) => {
+      let ssn = '';
+      const ssnCipher = a.w4Submission?.ssnEncrypted ?? a.tinEncrypted ?? null;
+      if (ssnCipher) {
+        try {
+          ssn = formatTaxId(decryptString(ssnCipher), 'SSN');
+        } catch {
+          ssn = 'DECRYPT_ERROR';
+          decryptFailures += 1;
+        }
+      }
+
+      const payout = a.payoutMethods[0];
+      let routing = '';
+      let account = '';
+      if (payout) {
+        try {
+          // Routing is stored as plain UTF-8 (see the onboarding POST + the
+          // masked GET above); the account number is AES-GCM encrypted.
+          if (payout.routingNumberEnc) {
+            routing = payout.routingNumberEnc.toString('utf8');
+          }
+          if (payout.accountNumberEnc) {
+            account = decryptString(payout.accountNumberEnc);
+          }
+        } catch {
+          routing = routing || 'DECRYPT_ERROR';
+          account = 'DECRYPT_ERROR';
+          decryptFailures += 1;
+        }
+      }
+
+      return [
+        a.id,
+        a.firstName,
+        a.lastName,
+        ssn,
+        isoDate(a.dob),
+        a.email,
+        a.phone,
+        a.addressLine1,
+        a.addressLine2,
+        a.city,
+        a.state,
+        a.zip,
+        isoDate(a.hireDate),
+        a.employmentType,
+        payout?.accountType ?? '',
+        routing,
+        account,
+      ]
+        .map(csvCell)
+        .join(',');
+    });
+
+    // Critical audit MUST land before the plaintext streams. This row is the
+    // whole justification for allowing a bulk dump: it records the reason, the
+    // actor, and the exact roster of people whose SSN/bank data left the system.
+    await recordCriticalAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'associate.payroll_census_exported',
+        entityType: 'Associate',
+        entityId: req.user!.id, // no single entity — anchor to the actor
+        metadata: {
+          ip: req.ip ?? null,
+          userAgent: req.headers['user-agent'] ?? null,
+          reason,
+          scope: 'active',
+          rowCount: associates.length,
+          decryptFailures,
+          associateIds: associates.map((a) => a.id),
+        },
+      },
+      'org.associate.payroll_census_exported',
+    );
+
+    const csv = [CENSUS_HEADERS.join(','), ...rows].join('\r\n') + '\r\n';
+    const stamp = new Date().toISOString().slice(0, 10);
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="payroll-census-${stamp}.csv"`,
+    );
+    res.setHeader('X-Row-Count', String(associates.length));
+    res.setHeader('X-Decrypt-Failures', String(decryptFailures));
+    // Never let a proxy or the browser cache a file full of SSNs.
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(csv);
+  },
+);
+
 // ----- Phase 131 — transfer to a new Location ----------------------------
 //
 // Closes the associate's open AssociateAssignment (sets endedAt = the
