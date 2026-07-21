@@ -63,16 +63,29 @@ export async function truncateAll(): Promise<void> {
   // Quote each identifier so PascalCase table names are preserved. CASCADE
   // handles the FK graph; RESTART IDENTITY isn't required (UUIDs everywhere).
   const quoted = TABLES.map((t) => `"alto_test"."${t}"`).join(', ');
-  // Neon's serverless Postgres spins down on idle; the first query after a
-  // pause sometimes errors with "Can't reach database server". One retry
-  // after a short wait reliably succeeds.
-  try {
-    await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${quoted} CASCADE`);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (!/Can't reach database server|connection/i.test(msg)) throw err;
-    await new Promise((r) => setTimeout(r, 1500));
-    await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${quoted} CASCADE`);
+  const sql = `TRUNCATE TABLE ${quoted} CASCADE`;
+  // Retry two transient failures against the shared test schema:
+  //   - Neon serverless cold-start ("Can't reach database server") — the
+  //     first query after idle spin-down sometimes errors.
+  //   - Deadlock (40P01) when parallel test files TRUNCATE concurrently:
+  //     CASCADE expands the lock set, two workers grab table locks in a
+  //     conflicting order, and Postgres aborts one. Retrying the loser is
+  //     the documented fix; a small jittered backoff stops them re-colliding
+  //     in lockstep.
+  const MAX_ATTEMPTS = 5;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await prisma.$executeRawUnsafe(sql);
+      return;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const transient =
+        /Can't reach database server|connection/i.test(msg) ||
+        /deadlock detected|40P01/i.test(msg);
+      if (!transient || attempt >= MAX_ATTEMPTS) throw err;
+      const backoff = 200 * attempt + Math.floor(Math.random() * 150);
+      await new Promise((r) => setTimeout(r, backoff));
+    }
   }
 }
 

@@ -475,9 +475,64 @@ export function TimesheetsView() {
                 </table>
               </div>
 
+              <div className="space-y-2">
+                <h3 className="text-sm font-semibold text-white">Accounting (USD)</h3>
+                <div className="overflow-x-auto rounded-md border border-navy-secondary">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-navy-secondary/40 text-silver/70">
+                        <th className="p-2 text-left font-medium">Rates</th>
+                        <th className="p-2 text-right font-medium">Pay Rate</th>
+                        <th className="p-2 text-right font-medium">Rate</th>
+                        <th className="p-2 text-right font-medium">Quantity</th>
+                        <th className="p-2 text-right font-medium">Days</th>
+                        <th className="p-2 text-right font-medium">Amount (USD)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="border-t border-navy-secondary">
+                        <td className="p-2 text-silver whitespace-nowrap">{detail.rateLabel}</td>
+                        <td className="p-2 text-right tabular-nums text-silver">
+                          {detail.payRate.toFixed(2)}
+                        </td>
+                        <td className="p-2 text-right tabular-nums text-silver">
+                          {detail.billRate != null ? detail.billRate.toFixed(2) : '—'}
+                        </td>
+                        <td className="p-2 text-right tabular-nums text-silver">
+                          {detail.totalHours.toFixed(2)}
+                        </td>
+                        <td className="p-2 text-right text-silver/60">—</td>
+                        <td className="p-2 text-right tabular-nums text-white">
+                          {detail.amount != null ? detail.amount.toFixed(2) : '—'}
+                        </td>
+                      </tr>
+                      <tr className="border-t border-navy-secondary bg-navy-secondary/30 font-medium">
+                        <td className="p-2 text-white">Subtotal</td>
+                        <td className="p-2" />
+                        <td className="p-2" />
+                        <td className="p-2 text-right tabular-nums text-white">
+                          {detail.totalHours.toFixed(2)}
+                        </td>
+                        <td className="p-2 text-right text-silver/60">—</td>
+                        <td className="p-2 text-right tabular-nums text-white">
+                          {detail.amount != null ? detail.amount.toFixed(2) : '—'}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                {detail.billRate == null && (
+                  <p className="text-xs text-gold/80">
+                    Set this client&rsquo;s <strong>Fieldglass bill rate</strong> (client → Basics)
+                    to compute the Amount.
+                  </p>
+                )}
+              </div>
+
               <p className="text-xs text-silver/60">
                 Times shown in {detail.timeZone}. Overnight shifts appear under their clock-in day.
-                Meal breaks are unpaid and excluded from Total Worked.
+                Meal breaks are unpaid and excluded from Total Worked. Pay Rate is what Alto pays the
+                associate; Rate is the client bill rate.
               </p>
             </div>
           )}

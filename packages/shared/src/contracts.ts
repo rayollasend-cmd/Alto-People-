@@ -81,6 +81,9 @@ export const ClientSummarySchema = z.object({
   /** Verbatim Fieldglass "Site" label (e.g. "1 - Onsite - FL - Destin")
    *  used on the Timesheets export. Optional/nullable for backward compat. */
   fieldglassSiteName: z.string().nullable().optional(),
+  /** Fieldglass client bill rate ($/hr) — the "Rate" on the timesheet
+   *  accounting block (Amount = rate × hours). Not the associate pay rate. */
+  fieldglassBillRate: z.number().nullable().optional(),
 });
 export type ClientSummary = z.infer<typeof ClientSummarySchema>;
 
@@ -120,6 +123,7 @@ export const ClientCreateInputSchema = z.object({
   contactEmail: z.string().trim().email().max(254).nullable().optional(),
   state: z.string().length(2).nullable().optional(),
   fieldglassSiteName: z.string().trim().max(255).nullable().optional(),
+  fieldglassBillRate: z.number().nonnegative().max(100000).nullable().optional(),
 });
 export type ClientCreateInput = z.infer<typeof ClientCreateInputSchema>;
 
@@ -133,6 +137,7 @@ export const ClientUpdateInputSchema = z.object({
   contactEmail: z.string().trim().email().max(254).nullable().optional(),
   weekStartsOn: z.number().int().min(0).max(6).optional(),
   fieldglassSiteName: z.string().trim().max(255).nullable().optional(),
+  fieldglassBillRate: z.number().nonnegative().max(100000).nullable().optional(),
 });
 export type ClientUpdateInput = z.infer<typeof ClientUpdateInputSchema>;
 
@@ -1213,6 +1218,15 @@ export const TimesheetAssociateDetailResponseSchema = z.object({
   totalHours: z.number().nonnegative(),
   status: TimesheetRowStatusSchema,
   pendingCount: z.number().int().nonnegative(),
+  /* Accounting block (Fieldglass "Accounting (USD)"). */
+  /** Rate label, e.g. "Standard Hourly Rate /Hr". */
+  rateLabel: z.string(),
+  /** Associate's hourly pay rate (comp record; $15 default). */
+  payRate: z.number().nonnegative(),
+  /** Client bill rate ($/hr); null when the client has none set. */
+  billRate: z.number().nonnegative().nullable(),
+  /** billRate × totalHours; null when no bill rate is set. */
+  amount: z.number().nonnegative().nullable(),
   timeZone: z.string(),
   generatedAt: z.string(),
 });

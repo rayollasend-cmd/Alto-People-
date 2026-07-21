@@ -174,7 +174,14 @@ function BasicsEditor({
   const [fieldglassSiteName, setFieldglassSiteName] = useState(
     client.fieldglassSiteName ?? '',
   );
+  const [fieldglassBillRate, setFieldglassBillRate] = useState(
+    client.fieldglassBillRate != null ? String(client.fieldglassBillRate) : '',
+  );
   const [saving, setSaving] = useState(false);
+
+  // Empty string → null; otherwise the parsed number (NaN if the field is junk).
+  const billRateParsed =
+    fieldglassBillRate.trim() === '' ? null : Number(fieldglassBillRate);
 
   // Re-sync local state when the parent reloads the client (e.g. after a
   // sibling section's save flips status from PROSPECT to ACTIVE).
@@ -185,6 +192,9 @@ function BasicsEditor({
     setContactEmail(client.contactEmail ?? '');
     setWeekStartsOn(client.weekStartsOn ?? 0);
     setFieldglassSiteName(client.fieldglassSiteName ?? '');
+    setFieldglassBillRate(
+      client.fieldglassBillRate != null ? String(client.fieldglassBillRate) : '',
+    );
   }, [
     client.name,
     client.industry,
@@ -192,6 +202,7 @@ function BasicsEditor({
     client.contactEmail,
     client.weekStartsOn,
     client.fieldglassSiteName,
+    client.fieldglassBillRate,
   ]);
 
   const dirty =
@@ -200,12 +211,17 @@ function BasicsEditor({
     status !== client.status ||
     (contactEmail.trim() || null) !== (client.contactEmail || null) ||
     weekStartsOn !== (client.weekStartsOn ?? 0) ||
-    (fieldglassSiteName.trim() || null) !== (client.fieldglassSiteName || null);
+    (fieldglassSiteName.trim() || null) !== (client.fieldglassSiteName || null) ||
+    billRateParsed !== (client.fieldglassBillRate ?? null);
 
   const submit = async () => {
     const trimmed = name.trim();
     if (trimmed.length === 0) {
       toast.error('Name required.');
+      return;
+    }
+    if (billRateParsed !== null && !(billRateParsed >= 0)) {
+      toast.error('Fieldglass bill rate must be a number ≥ 0.');
       return;
     }
     setSaving(true);
@@ -217,6 +233,7 @@ function BasicsEditor({
         contactEmail: contactEmail.trim() || null,
         weekStartsOn,
         fieldglassSiteName: fieldglassSiteName.trim() || null,
+        fieldglassBillRate: billRateParsed,
       });
       onSaved(updated);
       toast.success('Client saved.');
@@ -324,6 +341,24 @@ function BasicsEditor({
                 onChange={(e) => setFieldglassSiteName(e.target.value)}
                 maxLength={255}
                 placeholder="1 - Onsite - FL - Destin"
+                disabled={!canManage}
+                {...p}
+              />
+            )}
+          </Field>
+          <Field
+            label="Fieldglass bill rate ($/hr)"
+            hint='Client-billed rate on the Fieldglass timesheet accounting block (Amount = rate × hours). Not the associate pay rate. Leave blank if you bill a different way.'
+          >
+            {(p) => (
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                inputMode="decimal"
+                value={fieldglassBillRate}
+                onChange={(e) => setFieldglassBillRate(e.target.value)}
+                placeholder="21.21"
                 disabled={!canManage}
                 {...p}
               />
