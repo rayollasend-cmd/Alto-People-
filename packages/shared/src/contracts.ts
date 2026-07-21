@@ -1234,6 +1234,23 @@ export type TimesheetAssociateDetailResponse = z.infer<
   typeof TimesheetAssociateDetailResponseSchema
 >;
 
+/* Pre-file validation — problems worth fixing before a week is filed into
+ * Fieldglass. Surfaced on the grid so bad/incomplete data never ships. */
+export const TimesheetIssueKindSchema = z.enum([
+  'MISSING_CLOCKOUT', // an entry never clocked out (still ACTIVE)
+  'PENDING_APPROVAL', // approved-only hours ship; these await approval
+  'OVER_HOURS', // implausibly high weekly total — review before filing
+]);
+export type TimesheetIssueKind = z.infer<typeof TimesheetIssueKindSchema>;
+
+export const TimesheetIssueSchema = z.object({
+  kind: TimesheetIssueKindSchema,
+  associateId: z.string().nullable(),
+  worker: z.string(),
+  detail: z.string(),
+});
+export type TimesheetIssue = z.infer<typeof TimesheetIssueSchema>;
+
 export const TimesheetWeekResponseSchema = z.object({
   /** Saturday that starts the week, YYYY-MM-DD (store-local). */
   weekStart: z.string(),
@@ -1246,6 +1263,8 @@ export const TimesheetWeekResponseSchema = z.object({
   totalHours: z.number().nonnegative(),
   /** COMPLETED-but-unapproved entries in the week — the sheet is provisional. */
   pendingCount: z.number().int().nonnegative(),
+  /** Pre-file problems (missing clock-out, pending approval, over-hours). */
+  issues: z.array(TimesheetIssueSchema),
   timeZone: z.string(),
   generatedAt: z.string(),
 });

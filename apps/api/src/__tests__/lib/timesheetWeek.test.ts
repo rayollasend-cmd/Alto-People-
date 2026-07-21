@@ -3,6 +3,7 @@ import {
   saturdayWeek,
   aggregateTimesheetRows,
   buildAssociateDays,
+  computeTimesheetIssues,
   toUsDate,
   type TimesheetSourceEntry,
 } from '../../lib/timesheetWeek.js';
@@ -175,6 +176,46 @@ describe('aggregateTimesheetRows', () => {
     expect(days[1].timeIn).toBeNull();
     expect(days[1].netHours).toBe(0);
     expect(totalHours).toBe(8);
+  });
+
+  it('computeTimesheetIssues flags missing clock-out, pending approval, and over-hours', () => {
+    const approved = entry({
+      clockInAt: new Date('2026-07-13T13:00:00Z'),
+      clockOutAt: new Date('2026-07-13T21:00:00Z'),
+      status: 'APPROVED',
+    });
+    const stillIn = entry({
+      firstName: 'Ana',
+      lastName: 'Ramirez',
+      clockInAt: new Date('2026-07-14T13:00:00Z'),
+      clockOutAt: null,
+      status: 'ACTIVE',
+    });
+    const pending = entry({
+      firstName: 'Jayda',
+      lastName: 'Wright',
+      clockInAt: new Date('2026-07-15T13:00:00Z'),
+      clockOutAt: new Date('2026-07-15T21:00:00Z'),
+      status: 'COMPLETED',
+    });
+    const { rows } = aggregateTimesheetRows([approved], KEYS, TZ);
+    // A synthetic over-hours row (net > 60) alongside the real one.
+    const over = { ...rows[0], worker: 'Doe, Big', total: 65 };
+
+    const issues = computeTimesheetIssues(
+      [approved, stillIn, pending],
+      [...rows, over],
+      KEYS,
+      TZ,
+    );
+    const kinds = issues.map((i) => i.kind);
+    expect(kinds).toContain('MISSING_CLOCKOUT');
+    expect(kinds).toContain('PENDING_APPROVAL');
+    expect(kinds).toContain('OVER_HOURS');
+    // Missing clock-out is listed first (most blocking).
+    expect(issues[0].kind).toBe('MISSING_CLOCKOUT');
+    expect(issues.find((i) => i.kind === 'MISSING_CLOCKOUT')?.worker).toBe('Ramirez, Ana');
+    expect(issues.find((i) => i.kind === 'OVER_HOURS')?.worker).toBe('Doe, Big');
   });
 
   it('separates the same associate at different clients into two rows', () => {

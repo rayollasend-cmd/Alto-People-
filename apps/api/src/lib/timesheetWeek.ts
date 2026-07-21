@@ -19,6 +19,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import type {
   TimesheetAssociateDetailResponse,
   TimesheetDay,
+  TimesheetIssue,
   TimesheetRow,
   TimesheetWeekResponse,
 } from '@alto-people/shared';
@@ -187,7 +188,9 @@ export async function buildTimesheetWeek(
   const rawEntries = await db.timeEntry.findMany({
     where: {
       ...(input.scopeWhere ?? {}),
-      status: { in: ['APPROVED', 'COMPLETED'] },
+      // ACTIVE is included only for the missing-clock-out validation; it
+      // contributes no hours (aggregateTimesheetRows counts APPROVED only).
+      status: { in: ['APPROVED', 'COMPLETED', 'ACTIVE'] },
       clockInAt: { gte: windowStart, lt: windowEnd },
       ...(input.clientId ? { clientId: input.clientId } : {}),
     },
@@ -246,6 +249,8 @@ export async function buildTimesheetWeek(
     timeZone,
   );
 
+  const issues = computeTimesheetIssues(entries, rows, dateKeySet, timeZone);
+
   return {
     weekStart: week.weekStart,
     weekEndIso: week.weekEnd,
@@ -253,9 +258,70 @@ export async function buildTimesheetWeek(
     rows,
     totalHours,
     pendingCount,
+    issues,
     timeZone,
     generatedAt: new Date().toISOString(),
   };
+}
+
+/** Weekly total above this (net hours) is flagged for review before filing. */
+const OVER_HOURS_THRESHOLD = 60;
+
+/**
+ * Pre-file validation over the week's entries: missing clock-outs (ACTIVE
+ * entries that never closed), workers with time still pending approval (their
+ * hours won't ship), and implausibly high weekly totals. Pure — sorted most
+ * blocking first. Only in-week entries (by local clock-in day) count.
+ */
+export function computeTimesheetIssues(
+  entries: TimesheetSourceEntry[],
+  rows: TimesheetRow[],
+  weekDateKeys: Set<string>,
+  timeZone: string,
+): TimesheetIssue[] {
+  const nameById = new Map<string, string>();
+  const missingClockout = new Set<string>();
+  const pendingByAssoc = new Map<string, number>();
+
+  for (const e of entries) {
+    if (!weekDateKeys.has(localDateKey(e.clockInAt, timeZone))) continue;
+    const id = e.associateId;
+    nameById.set(id, `${e.lastName}, ${e.firstName}`.trim());
+    if (!e.clockOutAt) missingClockout.add(id);
+    if (e.status === 'COMPLETED') {
+      pendingByAssoc.set(id, (pendingByAssoc.get(id) ?? 0) + 1);
+    }
+  }
+
+  const issues: TimesheetIssue[] = [];
+  // Most blocking first: a missing clock-out means the day has no hours at all.
+  for (const id of missingClockout) {
+    issues.push({
+      kind: 'MISSING_CLOCKOUT',
+      associateId: id,
+      worker: nameById.get(id) ?? '—',
+      detail: 'Still clocked in / no clock-out — that shift has no hours yet.',
+    });
+  }
+  for (const [id, count] of pendingByAssoc) {
+    issues.push({
+      kind: 'PENDING_APPROVAL',
+      associateId: id,
+      worker: nameById.get(id) ?? '—',
+      detail: `${count} entr${count === 1 ? 'y' : 'ies'} pending approval — not included until approved.`,
+    });
+  }
+  for (const r of rows) {
+    if (r.total > OVER_HOURS_THRESHOLD) {
+      issues.push({
+        kind: 'OVER_HOURS',
+        associateId: r.associateId,
+        worker: r.worker,
+        detail: `${r.total.toFixed(2)}h this week — over ${OVER_HOURS_THRESHOLD}h, worth a look.`,
+      });
+    }
+  }
+  return issues;
 }
 
 const WEEKDAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];

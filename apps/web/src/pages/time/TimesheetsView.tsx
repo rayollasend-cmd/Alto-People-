@@ -8,9 +8,11 @@ import {
   RefreshCw,
   CheckCircle2,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import type {
   TimesheetWeekResponse,
   TimesheetAssociateDetailResponse,
+  TimesheetIssueKind,
 } from '@alto-people/shared';
 import {
   getTimesheetWeek,
@@ -77,8 +79,15 @@ const fmtDay = (d: Date) =>
 
 const hoursCell = (n: number) => (n === 0 ? '0.00' : n.toFixed(2));
 
+const ISSUE_LABEL: Record<TimesheetIssueKind, string> = {
+  MISSING_CLOCKOUT: 'Missing clock-out',
+  PENDING_APPROVAL: 'Pending approval',
+  OVER_HOURS: 'Over hours',
+};
+
 export function TimesheetsView() {
   const { can } = useAuth();
+  const navigate = useNavigate();
   const canAttest = can('manage:compliance');
 
   const [weekStart, setWeekStart] = useState<Date>(() => lastCompletedWeekStart(new Date()));
@@ -275,17 +284,36 @@ export function TimesheetsView() {
         </div>
       </div>
 
-      {data && data.pendingCount > 0 && (
-        <div className="flex items-start gap-2 rounded-md border border-gold/40 bg-gold/10 p-3 text-sm text-gold">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>
-            Provisional — {data.pendingCount} time{' '}
-            {data.pendingCount === 1 ? 'entry is' : 'entries are'} still pending approval this
-            week and are <strong>not</strong> included below. Approve them, then refresh before
-            filing.
-          </span>
+      {data && data.issues.length > 0 ? (
+        <div className="rounded-md border border-gold/40 bg-gold/10 p-3">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm font-medium text-gold">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              {data.issues.length} {data.issues.length === 1 ? 'issue' : 'issues'} to review before
+              filing
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => navigate('/time-attendance')}>
+              Review in Time &amp; Attendance
+            </Button>
+          </div>
+          <ul className="space-y-1 text-xs">
+            {data.issues.map((iss, i) => (
+              <li key={`${iss.associateId ?? i}-${iss.kind}`} className="flex flex-wrap gap-x-2">
+                <span className="shrink-0 font-semibold text-gold/90">
+                  {ISSUE_LABEL[iss.kind]}
+                </span>
+                <span className="font-medium text-white">{iss.worker}</span>
+                <span className="text-silver/70">— {iss.detail}</span>
+              </li>
+            ))}
+          </ul>
         </div>
-      )}
+      ) : data && rows.length > 0 ? (
+        <div className="flex items-center gap-2 rounded-md border border-navy-secondary bg-navy/40 p-2.5 text-sm text-silver">
+          <CheckCircle2 className="h-4 w-4 text-gold" />
+          No issues — this week looks ready to file.
+        </div>
+      ) : null}
 
       <Card>
         <CardContent className="p-0">
