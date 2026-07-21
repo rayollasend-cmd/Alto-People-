@@ -62,11 +62,14 @@ import { nudgeApplicant } from '@/lib/onboardingApi';
 import {
   getAssociatePayoutMethod,
   getAssociateSsn,
+  getAssociateW4,
   listDepartments,
   patchAssociateProfile,
   revealAssociatePayoutMethod,
   revealAssociateSsn,
   transferAssociate,
+  updateAssociateW4,
+  type AssociateW4,
   type PayoutMethodReveal,
   type SsnReveal,
 } from '@/lib/orgApi';
@@ -1139,6 +1142,8 @@ function ProfileTab({
 
       <SsnSection associateId={a.id} />
 
+      <W4Section associateId={a.id} />
+
       <Section title="On record">
         <InfoRow
           label="In Alto HR since"
@@ -1963,6 +1968,161 @@ function SsnSection({ associateId }: { associateId: string }) {
         />
       )}
     </>
+  );
+}
+
+// HR-facing W-4 elections — view the withholding a W-2 employee elected at
+// onboarding and edit it on their behalf (a called-in change, a
+// correction). Never the SSN. Gated on process:payroll; edits are audited
+// server-side and take effect on the next run.
+const W4_FILING_LABEL: Record<string, string> = {
+  SINGLE: 'Single / married filing separately',
+  MARRIED_FILING_JOINTLY: 'Married filing jointly',
+  HEAD_OF_HOUSEHOLD: 'Head of household',
+};
+
+function W4Section({ associateId }: { associateId: string }) {
+  const { user } = useAuth();
+  const canSee = user ? hasCapability(user.role, 'process:payroll') : false;
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState<{
+    filingStatus: NonNullable<AssociateW4['filingStatus']>;
+    multipleJobs: boolean;
+    dependentsAmount: number;
+    otherIncome: number;
+    deductions: number;
+    extraWithholding: number;
+  } | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['associate-w4', associateId],
+    queryFn: () => getAssociateW4(associateId),
+    enabled: canSee,
+    staleTime: 30_000,
+  });
+
+  if (!canSee) return null;
+  if (data && data.employmentType !== 'W2_EMPLOYEE') return null; // 1099 → no W-4
+
+  const money = (n: number | null) =>
+    n == null ? '—' : n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+
+  const startEdit = () => {
+    if (!data) return;
+    setForm({
+      filingStatus: data.filingStatus ?? 'SINGLE',
+      multipleJobs: data.multipleJobs,
+      dependentsAmount: data.dependentsAmount ?? 0,
+      otherIncome: data.otherIncome ?? 0,
+      deductions: data.deductions ?? 0,
+      extraWithholding: data.extraWithholding ?? 0,
+    });
+    setEditing(true);
+  };
+
+  const save = async () => {
+    if (!form) return;
+    setSaving(true);
+    try {
+      await updateAssociateW4(associateId, form);
+      toast.success('W-4 updated — applies from the next payroll run.');
+      setEditing(false);
+      qc.invalidateQueries({ queryKey: ['associate-w4', associateId] });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to update W-4.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section title="Federal W-4">
+      {isLoading ? (
+        <div className="text-xs text-silver">Loading…</div>
+      ) : !data || !data.hasSubmission ? (
+        <InfoRow
+          label="W-4"
+          value={<span className="text-silver">Not on file — collected during onboarding</span>}
+        />
+      ) : editing && form ? (
+        <div className="space-y-2">
+          <Select
+            value={form.filingStatus}
+            onChange={(e) =>
+              setForm({ ...form, filingStatus: e.target.value as typeof form.filingStatus })
+            }
+          >
+            {Object.entries(W4_FILING_LABEL).map(([v, l]) => (
+              <option key={v} value={v}>
+                {l}
+              </option>
+            ))}
+          </Select>
+          {(
+            [
+              ['dependentsAmount', 'Dependents credit (step 3)'],
+              ['otherIncome', 'Other income (4a)'],
+              ['deductions', 'Deductions (4b)'],
+              ['extraWithholding', 'Extra withholding / check (4c)'],
+            ] as const
+          ).map(([key, label]) => (
+            <label key={key} className="block text-xs text-silver">
+              {label}
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                inputMode="decimal"
+                className="mt-1"
+                value={form[key]}
+                onChange={(e) => setForm({ ...form, [key]: Number(e.target.value) || 0 })}
+              />
+            </label>
+          ))}
+          <label className="flex items-center gap-2 text-xs text-silver">
+            <input
+              type="checkbox"
+              checked={form.multipleJobs}
+              onChange={(e) => setForm({ ...form, multipleJobs: e.target.checked })}
+            />
+            Multiple jobs / spouse works (step 2)
+          </label>
+          <div className="flex justify-end gap-2 pt-1">
+            <Button size="sm" variant="ghost" onClick={() => setEditing(false)} disabled={saving}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={save} loading={saving} disabled={saving}>
+              Save
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <InfoRow
+            label="Filing status"
+            value={data.filingStatus ? W4_FILING_LABEL[data.filingStatus] : '—'}
+          />
+          <InfoRow label="Dependents credit" value={money(data.dependentsAmount)} />
+          <InfoRow label="Other income" value={money(data.otherIncome)} />
+          <InfoRow label="Deductions" value={money(data.deductions)} />
+          <InfoRow label="Extra withholding / check" value={money(data.extraWithholding)} />
+          {data.signedAt && (
+            <InfoRow
+              label="Last signed"
+              value={<span className="text-silver">{fmtDate(data.signedAt)}</span>}
+            />
+          )}
+          <div className="pt-2">
+            <Button variant="ghost" size="sm" onClick={startEdit}>
+              <Pencil className="mr-2 h-3.5 w-3.5" />
+              Edit W-4
+            </Button>
+          </div>
+        </>
+      )}
+    </Section>
   );
 }
 
