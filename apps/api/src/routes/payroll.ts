@@ -39,7 +39,12 @@ import { aggregatePayrollProjection, type AddOnKind } from '../lib/payrollAggreg
 import { z } from 'zod';
 import { consumePendingDeductions } from '../lib/payrollYtd.js';
 import { computePayrollExceptions } from '../lib/payrollExceptions.js';
-import { hashPdf, renderPaystubPdf, type PaystubData } from '../lib/paystub.js';
+import { hashPdf, renderPaystubPdf } from '../lib/paystub.js';
+import {
+  buildPaystubDataById,
+  buildPaystubDataFromItem,
+  paystubItemInclude,
+} from '../lib/paystubData.js';
 import { sendPaystubEmail } from '../lib/sendPaystubEmail.js';
 import { checkAdapter, pickAdapter, type DisbursementInput } from '../lib/disbursement.js';
 import { renderCheckRegisterPdf } from '../lib/checkRegister.js';
@@ -2609,7 +2614,7 @@ payrollRouter.get('/runs/:runId/paystubs.zip', async (req, res, next) => {
     const items = await prisma.payrollItem.findMany({
       take: 100,
       where: { payrollRunId: run.id },
-      include: { associate: true },
+      include: paystubItemInclude(),
       orderBy: { associate: { lastName: 'asc' } },
     });
     if (items.length === 0) {
@@ -2617,7 +2622,6 @@ payrollRouter.get('/runs/:runId/paystubs.zip', async (req, res, next) => {
     }
 
     const periodStart = ymd(run.periodStart);
-    const periodEnd = ymd(run.periodEnd);
     const filename = `paystubs-${periodStart}-${run.id.slice(0, 8)}.zip`;
 
     res.setHeader('Content-Type', 'application/zip');
@@ -2629,74 +2633,9 @@ payrollRouter.get('/runs/:runId/paystubs.zip', async (req, res, next) => {
     });
     archive.pipe(res);
 
-    const issuedAt = new Date().toISOString();
+    const issuedAt = new Date();
     for (const item of items) {
-      const stateLabel = item.taxState
-        ? `${item.taxState} state withholding`
-        : 'State withholding';
-      const data: PaystubData = {
-        company: { name: run.client?.name ?? 'Alto Etho LLC' },
-        associate: {
-          firstName: item.associate.firstName,
-          lastName: item.associate.lastName,
-          email: item.associate.email,
-          addressLine1: item.associate.addressLine1,
-          city: item.associate.city,
-          state: item.associate.state,
-          zip: item.associate.zip,
-        },
-        period: { start: periodStart, end: periodEnd },
-        earnings: {
-          hours: Number(item.hoursWorked),
-          rate: Number(item.hourlyRate),
-          gross: Number(item.grossPay),
-        },
-        taxes: {
-          federalIncomeTax: Number(item.federalWithholding),
-          socialSecurity: Number(item.fica),
-          medicare: Number(item.medicare),
-          stateIncomeTax: Number(item.stateWithholding),
-          stateLabel,
-        },
-        totals: {
-          totalEmployeeTax: round2(
-            Number(item.federalWithholding) +
-              Number(item.fica) +
-              Number(item.medicare) +
-              Number(item.stateWithholding)
-          ),
-          netPay: Number(item.netPay),
-        },
-        ytd: { wages: Number(item.ytdWages), medicareWages: Number(item.ytdMedicareWages) },
-        employer: {
-          fica: Number(item.employerFica),
-          medicare: Number(item.employerMedicare),
-          futa: Number(item.employerFuta),
-          suta: Number(item.employerSuta),
-        },
-        meta: { runId: run.id, itemId: item.id, issuedAt },
-        // Gap 10 — non-taxable reimbursements rolled into this paycheck.
-        ...(Number(item.reimbursementsTotal) > 0
-          ? { reimbursements: { total: Number(item.reimbursementsTotal) } }
-          : {}),
-        // Gap 3 — amendment banner + voided watermark for the audit trail.
-        ...(run.kind === 'AMENDMENT' && run.amendsRunId
-          ? {
-              amendment: {
-                reason: run.amendmentReason ?? '',
-                sourceRunId: run.amendsRunId,
-              },
-            }
-          : {}),
-        ...(run.status === 'CANCELLED' || item.status === 'VOIDED'
-          ? {
-              voided: {
-                voidedAt: (run.cancelledAt ?? item.voidedAt ?? new Date()).toISOString(),
-                reason: run.cancelReason,
-              },
-            }
-          : {}),
-      };
+      const data = await buildPaystubDataFromItem(prisma, item, issuedAt);
       const pdf = await renderPaystubPdf(data);
       const hash = hashPdf(pdf);
       // Stamp the per-item hash on first generation, exactly like the
@@ -2739,14 +2678,9 @@ payrollRouter.get('/runs/:runId/paystubs.zip', async (req, res, next) => {
 // finance gets a verifiable signal that the immutable record drifted.
 payrollRouter.get('/items/:itemId/paystub.pdf', async (req, res, next) => {
   try {
-    const item = await prisma.payrollItem.findUnique({
-      where: { id: req.params.itemId },
-      include: {
-        payrollRun: { include: { client: { select: { name: true } } } },
-        associate: true,
-      },
-    });
-    if (!item) throw new HttpError(404, 'item_not_found', 'Paystub not found');
+    const built = await buildPaystubDataById(prisma, req.params.itemId);
+    if (!built) throw new HttpError(404, 'item_not_found', 'Paystub not found');
+    const { item, data } = built;
 
     const user = req.user!;
     const isOwner = user.associateId && user.associateId === item.associateId;
@@ -2754,85 +2688,6 @@ payrollRouter.get('/items/:itemId/paystub.pdf', async (req, res, next) => {
     if (!isOwner && !canManage) {
       throw new HttpError(404, 'item_not_found', 'Paystub not found');
     }
-
-    const stateCode = item.taxState ?? null;
-    const stateLabel = stateCode ? `${stateCode} state withholding` : 'State withholding';
-
-    const data: PaystubData = {
-      company: { name: item.payrollRun.client?.name ?? 'Alto Etho LLC' },
-      associate: {
-        firstName: item.associate.firstName,
-        lastName: item.associate.lastName,
-        email: item.associate.email,
-        addressLine1: item.associate.addressLine1,
-        city: item.associate.city,
-        state: item.associate.state,
-        zip: item.associate.zip,
-      },
-      period: {
-        start: ymd(item.payrollRun.periodStart),
-        end: ymd(item.payrollRun.periodEnd),
-      },
-      earnings: {
-        hours: Number(item.hoursWorked),
-        rate: Number(item.hourlyRate),
-        gross: Number(item.grossPay),
-      },
-      taxes: {
-        federalIncomeTax: Number(item.federalWithholding),
-        socialSecurity: Number(item.fica),
-        medicare: Number(item.medicare),
-        stateIncomeTax: Number(item.stateWithholding),
-        stateLabel,
-      },
-      totals: {
-        totalEmployeeTax: round2(
-          Number(item.federalWithholding) +
-            Number(item.fica) +
-            Number(item.medicare) +
-            Number(item.stateWithholding)
-        ),
-        netPay: Number(item.netPay),
-      },
-      ytd: {
-        wages: Number(item.ytdWages),
-        medicareWages: Number(item.ytdMedicareWages),
-      },
-      employer: {
-        fica: Number(item.employerFica),
-        medicare: Number(item.employerMedicare),
-        futa: Number(item.employerFuta),
-        suta: Number(item.employerSuta),
-      },
-      meta: {
-        runId: item.payrollRunId,
-        itemId: item.id,
-        issuedAt: new Date().toISOString(),
-      },
-      // Gap 10 — non-taxable reimbursements rolled into this paycheck.
-      ...(Number(item.reimbursementsTotal) > 0
-        ? { reimbursements: { total: Number(item.reimbursementsTotal) } }
-        : {}),
-      // Gap 3 — amendment banner + voided watermark for the audit trail.
-      ...(item.payrollRun.kind === 'AMENDMENT' && item.payrollRun.amendsRunId
-        ? {
-            amendment: {
-              reason: item.payrollRun.amendmentReason ?? '',
-              sourceRunId: item.payrollRun.amendsRunId,
-            },
-          }
-        : {}),
-      ...(item.payrollRun.status === 'CANCELLED' || item.status === 'VOIDED'
-        ? {
-            voided: {
-              voidedAt: (
-                item.payrollRun.cancelledAt ?? item.voidedAt ?? new Date()
-              ).toISOString(),
-              reason: item.payrollRun.cancelReason,
-            },
-          }
-        : {}),
-    };
 
     const pdf = await renderPaystubPdf(data);
     const hash = hashPdf(pdf);
