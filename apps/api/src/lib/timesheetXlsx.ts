@@ -124,7 +124,7 @@ export async function renderTimesheetXlsx(
   for (const row of data.rows) {
     const xl = ws.getRow(r);
     xl.values = [
-      row.status === 'PENDING' ? 'Pending Approval' : 'Ready',
+      row.status === 'PENDING' ? 'Pending Approval' : 'Ready to submit',
       '', // ID — Fieldglass-generated
       0, // Revision
       row.worker,

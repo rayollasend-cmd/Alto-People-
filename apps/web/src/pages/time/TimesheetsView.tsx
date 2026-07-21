@@ -254,6 +254,8 @@ export function TimesheetsView() {
             <TableHeader>
               <TableRow>
                 <TableHead>Status</TableHead>
+                <TableHead>ID</TableHead>
+                <TableHead className="text-right">Revision</TableHead>
                 <TableHead>Worker</TableHead>
                 <TableHead>Site</TableHead>
                 <TableHead>End</TableHead>
@@ -268,13 +270,13 @@ export function TimesheetsView() {
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={10} className="p-0">
+                  <TableCell colSpan={12} className="p-0">
                     <SkeletonRows count={8} />
                   </TableCell>
                 </TableRow>
               ) : rows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={10}>
+                  <TableCell colSpan={12}>
                     <EmptyState
                       title="No approved hours this week"
                       description="Nothing to report to Fieldglass for the selected week. Approve time in the queue, then refresh."
@@ -286,9 +288,13 @@ export function TimesheetsView() {
                   <TableRow key={`${r.associateId}-${r.site}`}>
                     <TableCell>
                       <Badge variant={r.status === 'PENDING' ? 'pending' : 'success'}>
-                        {r.status === 'PENDING' ? 'Pending' : 'Ready'}
+                        {r.status === 'PENDING' ? 'Pending Approval' : 'Ready to submit'}
                       </Badge>
                     </TableCell>
+                    {/* ID + Revision are Fieldglass-assigned on entry — shown to keep
+                        the columns aligned with the Fieldglass list for eyeballing. */}
+                    <TableCell className="text-silver/50">—</TableCell>
+                    <TableCell className="text-right tabular-nums text-silver/60">0</TableCell>
                     <TableCell className="font-medium text-white">{r.worker}</TableCell>
                     <TableCell className="text-silver">{r.site}</TableCell>
                     <TableCell className="tabular-nums text-silver">{data?.weekEnding}</TableCell>
