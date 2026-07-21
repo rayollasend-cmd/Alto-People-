@@ -21,6 +21,7 @@ import type {
   TimesheetDay,
   TimesheetIssue,
   TimesheetRow,
+  TimesheetScheduleRow,
   TimesheetWeekResponse,
 } from '@alto-people/shared';
 import { localDateKey, formatTimeInZone, DEFAULT_TIMEZONE } from './timezone.js';
@@ -166,7 +167,7 @@ export function aggregateTimesheetRows(
  * don't clip a shift.
  */
 export async function buildTimesheetWeek(
-  db: Pick<PrismaClient, 'timeEntry' | 'client'>,
+  db: Pick<PrismaClient, 'timeEntry' | 'client' | 'shift'>,
   input: {
     weekStart: Date;
     clientId?: string;
@@ -251,6 +252,38 @@ export async function buildTimesheetWeek(
 
   const issues = computeTimesheetIssues(entries, rows, dateKeySet, timeZone);
 
+  // Scheduled-vs-actual — published assigned shifts (ASSIGNED/COMPLETED, not
+  // DRAFT scratch) starting in the week, by local day, summed per associate.
+  const shifts = await db.shift.findMany({
+    where: {
+      status: { in: ['ASSIGNED', 'COMPLETED'] },
+      assignedAssociateId: { not: null },
+      startsAt: { gte: windowStart, lt: windowEnd },
+      ...(input.clientId ? { clientId: input.clientId } : {}),
+    },
+    select: {
+      assignedAssociateId: true,
+      startsAt: true,
+      endsAt: true,
+      assignedAssociate: { select: { firstName: true, lastName: true } },
+    },
+  });
+  const scheduled = new Map<string, { hours: number; worker: string }>();
+  for (const s of shifts) {
+    if (!s.assignedAssociateId) continue;
+    if (!dateKeySet.has(localDateKey(s.startsAt, timeZone))) continue;
+    const mins = Math.max(0, (s.endsAt.getTime() - s.startsAt.getTime()) / 60000);
+    const worker = s.assignedAssociate
+      ? `${s.assignedAssociate.lastName}, ${s.assignedAssociate.firstName}`.trim()
+      : '—';
+    const cur = scheduled.get(s.assignedAssociateId);
+    scheduled.set(s.assignedAssociateId, {
+      hours: (cur?.hours ?? 0) + mins / 60,
+      worker: cur?.worker ?? worker,
+    });
+  }
+  const scheduleComparison = buildScheduleComparison(rows, scheduled);
+
   return {
     weekStart: week.weekStart,
     weekEndIso: week.weekEnd,
@@ -259,9 +292,43 @@ export async function buildTimesheetWeek(
     totalHours,
     pendingCount,
     issues,
+    scheduleComparison,
     timeZone,
     generatedAt: new Date().toISOString(),
   };
+}
+
+/**
+ * Pair each worker's scheduled hours (from assigned shifts) with hours
+ * actually worked (approved rows). Union of both sets — a no-show has
+ * scheduled > 0 and actual 0; unscheduled work has scheduled 0 and actual > 0.
+ * Pure and unit-testable. Sorted by worker.
+ */
+export function buildScheduleComparison(
+  rows: TimesheetRow[],
+  scheduled: Map<string, { hours: number; worker: string }>,
+): TimesheetScheduleRow[] {
+  const actualById = new Map<string, { hours: number; worker: string }>();
+  for (const r of rows) actualById.set(r.associateId, { hours: r.total, worker: r.worker });
+
+  const ids = new Set<string>([...actualById.keys(), ...scheduled.keys()]);
+  const out: TimesheetScheduleRow[] = [];
+  for (const id of ids) {
+    const a = actualById.get(id);
+    const s = scheduled.get(id);
+    const scheduledHours = round2(s?.hours ?? 0);
+    const actualHours = round2(a?.hours ?? 0);
+    if (scheduledHours === 0 && actualHours === 0) continue;
+    out.push({
+      associateId: id,
+      worker: a?.worker ?? s?.worker ?? '—',
+      scheduledHours,
+      actualHours,
+      delta: round2(actualHours - scheduledHours),
+    });
+  }
+  out.sort((x, y) => x.worker.localeCompare(y.worker));
+  return out;
 }
 
 /** Weekly total above this (net hours) is flagged for review before filing. */
