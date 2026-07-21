@@ -1170,6 +1170,56 @@ export const TimesheetRowSchema = z.object({
 });
 export type TimesheetRow = z.infer<typeof TimesheetRowSchema>;
 
+/* Per-associate day detail — the "Time in / time out" grid a Fieldglass
+ * individual timesheet shows when you click a worker: one column per day
+ * (Sat→Fri) with the clock-in, meal breaks, clock-out, and net total. */
+export const TimesheetAssociateDetailInputSchema = z.object({
+  associateId: UuidSchema,
+  weekStart: z.string().datetime(),
+  clientId: UuidSchema.optional(),
+});
+export type TimesheetAssociateDetailInput = z.infer<
+  typeof TimesheetAssociateDetailInputSchema
+>;
+
+export const TimesheetDaySchema = z.object({
+  /** YYYY-MM-DD (store-local). */
+  date: z.string(),
+  /** "Sat", "Sun", … */
+  weekday: z.string(),
+  /** "7/11" — month/day, no leading zeros. */
+  monthDay: z.string(),
+  /** Earliest clock-in that day, store-local ("10:00 PM"); null = no work. */
+  timeIn: z.string().nullable(),
+  /** Latest clock-out that day, store-local ("7:00 AM"); null = still open/none. */
+  timeOut: z.string().nullable(),
+  /** Meal/rest breaks, pre-formatted ("3:00 AM – 4:00 AM (1h)"). */
+  breaks: z.array(z.string()),
+  /** Net worked hours for the day (breaks excluded). */
+  netHours: z.number().nonnegative(),
+});
+export type TimesheetDay = z.infer<typeof TimesheetDaySchema>;
+
+export const TimesheetAssociateDetailResponseSchema = z.object({
+  associateId: UuidSchema,
+  worker: z.string(),
+  site: z.string(),
+  weekStart: z.string(),
+  weekEndIso: z.string(),
+  weekEnding: z.string(),
+  /** "07/11/2026 to 07/17/2026" — matches the Fieldglass Period field. */
+  periodLabel: z.string(),
+  days: z.array(TimesheetDaySchema).length(7),
+  totalHours: z.number().nonnegative(),
+  status: TimesheetRowStatusSchema,
+  pendingCount: z.number().int().nonnegative(),
+  timeZone: z.string(),
+  generatedAt: z.string(),
+});
+export type TimesheetAssociateDetailResponse = z.infer<
+  typeof TimesheetAssociateDetailResponseSchema
+>;
+
 export const TimesheetWeekResponseSchema = z.object({
   /** Saturday that starts the week, YYYY-MM-DD (store-local). */
   weekStart: z.string(),

@@ -19,6 +19,8 @@ import type {
   TimeRejectInput,
   TimesheetWeekInput,
   TimesheetWeekResponse,
+  TimesheetAssociateDetailInput,
+  TimesheetAssociateDetailResponse,
 } from '@alto-people/shared';
 import { apiFetch } from './api';
 
@@ -334,4 +336,15 @@ export async function exportTimesheetXlsx(
     'fieldglass-timesheets.xlsx'
   );
   return { pendingCount: Number(headers.get('X-Pending') ?? 0) };
+}
+
+/** One associate's Fieldglass individual timesheet: the day-by-day
+ *  Time In / Meal Break / Time Out / Total grid for a Sat→Fri week. */
+export function getAssociateTimesheetDetail(
+  body: TimesheetAssociateDetailInput
+): Promise<TimesheetAssociateDetailResponse> {
+  return apiFetch<TimesheetAssociateDetailResponse>(
+    '/time/admin/timesheets/associate',
+    { method: 'POST', body }
+  );
 }
