@@ -14,6 +14,7 @@ import {
   TimeApproveInputSchema,
   TimeEntryListResponseSchema,
   TimeExportInputSchema,
+  TimesheetWeekInputSchema,
   TimeRejectInputSchema,
   type ActiveDashboardEntry,
   type ActiveTimeEntryResponse,
@@ -58,6 +59,8 @@ import { aggregatePayrollProjection } from '../lib/payrollAggregator.js';
 import { renderPayrollSheetPdf } from '../lib/payrollSheetPdf.js';
 import { renderPayrollSheetXlsx } from '../lib/payrollSheetXlsx.js';
 import { listPayPeriods } from '../lib/payPeriods.js';
+import { buildTimesheetWeek } from '../lib/timesheetWeek.js';
+import { renderTimesheetXlsx, timesheetFilename } from '../lib/timesheetXlsx.js';
 
 export const timeRouter = Router();
 
@@ -2314,6 +2317,63 @@ timeRouter.post('/admin/payroll-sheet.xlsx', MANAGE, async (req, res, next) => {
     res.setHeader(
       'Content-Disposition',
       `attachment; filename="${payrollSheetFilename(from, to, 'xlsx')}"`,
+    );
+    res.send(xlsx);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /time/admin/timesheets
+ * Body: { weekStart: ISO, clientId? }
+ *
+ * Fieldglass-shaped weekly timesheet (Saturday→Friday) — one row per worker
+ * per week, net approved hours in the "Others" bucket, keyed by the week-
+ * ending Friday. Powers the Timesheets page HR reads/copies into Fieldglass.
+ */
+timeRouter.post('/admin/timesheets', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = TimesheetWeekInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const result = await buildTimesheetWeek(prisma, {
+      weekStart: new Date(parsed.data.weekStart),
+      clientId: parsed.data.clientId,
+      scopeWhere: scopeTimeEntries(req.user!),
+    });
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /time/admin/timesheets.xlsx
+ * Same input as above; streams the Fieldglass-mirroring workbook.
+ */
+timeRouter.post('/admin/timesheets.xlsx', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = TimesheetWeekInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const result = await buildTimesheetWeek(prisma, {
+      weekStart: new Date(parsed.data.weekStart),
+      clientId: parsed.data.clientId,
+      scopeWhere: scopeTimeEntries(req.user!),
+    });
+    if (result.pendingCount > 0) res.setHeader('X-Pending', String(result.pendingCount));
+
+    const xlsx = await renderTimesheetXlsx(result);
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${timesheetFilename(result.weekEndIso)}"`,
     );
     res.send(xlsx);
   } catch (err) {

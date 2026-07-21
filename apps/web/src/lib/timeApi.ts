@@ -17,6 +17,8 @@ import type {
   TimeEntryStatus,
   TimeExportInput,
   TimeRejectInput,
+  TimesheetWeekInput,
+  TimesheetWeekResponse,
 } from '@alto-people/shared';
 import { apiFetch } from './api';
 
@@ -309,4 +311,27 @@ export async function exportPayrollSheet(
     noClientCount: Number(headers.get('X-No-Client') ?? 0),
     pendingCount: Number(headers.get('X-Pending') ?? 0),
   };
+}
+
+/** Fieldglass-shaped weekly timesheet (Saturday→Friday), one row per worker,
+ *  net approved hours in the "Others" bucket, keyed by the week-ending Friday. */
+export function getTimesheetWeek(
+  body: TimesheetWeekInput
+): Promise<TimesheetWeekResponse> {
+  return apiFetch<TimesheetWeekResponse>('/time/admin/timesheets', {
+    method: 'POST',
+    body,
+  });
+}
+
+/** Download the same week as an .xlsx that mirrors the Fieldglass list view. */
+export async function exportTimesheetXlsx(
+  body: TimesheetWeekInput
+): Promise<{ pendingCount: number }> {
+  const headers = await downloadExportPost(
+    '/api/time/admin/timesheets.xlsx',
+    body,
+    'fieldglass-timesheets.xlsx'
+  );
+  return { pendingCount: Number(headers.get('X-Pending') ?? 0) };
 }

@@ -661,6 +661,13 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
               </Button>
               <Button
                 variant="outline"
+                onClick={() => navigate('/time-attendance/timesheets')}
+              >
+                <FileSpreadsheet className="mr-2 h-4 w-4" />
+                Timesheets
+              </Button>
+              <Button
+                variant="outline"
                 onClick={() => navigate('/time-attendance/kiosk')}
               >
                 <Smartphone className="mr-2 h-4 w-4" />

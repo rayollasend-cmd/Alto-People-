@@ -65,6 +65,10 @@ const StubTask = lazyNamed(() => import('@/pages/onboarding/tasks/StubTask'), 'S
 
 // Time / scheduling / payroll
 const TimeHome = lazyNamed(() => import('@/pages/time/TimeHome'), 'TimeHome');
+const TimesheetsView = lazyNamed(
+  () => import('@/pages/time/TimesheetsView'),
+  'TimesheetsView',
+);
 const TimeOffHome = lazyNamed(() => import('@/pages/timeoff/TimeOffHome'), 'TimeOffHome');
 const SchedulingHome = lazyNamed(() => import('@/pages/scheduling/SchedulingHome'), 'SchedulingHome');
 const ApprovalsHome = lazyNamed(() => import('@/pages/approvals/ApprovalsHome'), 'ApprovalsHome');
@@ -384,6 +388,7 @@ const LAYOUT_ROUTES = [
   { path: 'reports', element: <RequireCapability cap="view:analytics"><ReportsHome /></RequireCapability> },
   { path: 'reimbursements', element: <RequireCapability cap="view:dashboard"><ReimbursementsHome /></RequireCapability> },
   { path: 'time-attendance/kiosk', element: <RequireCapability cap="manage:time"><KioskAdmin /></RequireCapability> },
+  { path: 'time-attendance/timesheets', element: <RequireCapability cap="manage:time"><TimesheetsView /></RequireCapability> },
 ];
 
 // Modules whose key has no explicit route above get a generic
