@@ -179,6 +179,7 @@ clientsRouter.post('/', MANAGE, async (req, res, next) => {
         contactEmail: parsed.data.contactEmail ?? null,
         state: parsed.data.state ? parsed.data.state.toUpperCase() : null,
         fieldglassSiteName: parsed.data.fieldglassSiteName ?? null,
+        fieldglassBillRate: parsed.data.fieldglassBillRate ?? null,
       },
     });
     // Seed the default shift-position catalog so the scheduling dropdown
@@ -224,6 +225,8 @@ clientsRouter.patch('/:id', MANAGE, async (req, res, next) => {
     if (parsed.data.weekStartsOn !== undefined) data.weekStartsOn = parsed.data.weekStartsOn;
     if (parsed.data.fieldglassSiteName !== undefined)
       data.fieldglassSiteName = parsed.data.fieldglassSiteName;
+    if (parsed.data.fieldglassBillRate !== undefined)
+      data.fieldglassBillRate = parsed.data.fieldglassBillRate;
     if (Object.keys(data).length === 0) {
       res.json(toSummary(existing));
       return;
@@ -485,6 +488,7 @@ function toSummary(row: {
   state: string | null;
   weekStartsOn: number;
   fieldglassSiteName: string | null;
+  fieldglassBillRate: Prisma.Decimal | null;
 }): ClientSummary {
   return {
     id: row.id,
@@ -495,6 +499,8 @@ function toSummary(row: {
     state: row.state,
     weekStartsOn: row.weekStartsOn,
     fieldglassSiteName: row.fieldglassSiteName,
+    fieldglassBillRate:
+      row.fieldglassBillRate == null ? null : Number(row.fieldglassBillRate),
   };
 }
 

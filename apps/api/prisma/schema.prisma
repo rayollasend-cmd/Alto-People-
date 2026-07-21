@@ -498,6 +498,10 @@ model Client {
   // Site column matches Fieldglass character-for-character. Null = fall back
   // to the worksite/client name.
   fieldglassSiteName String? @db.VarChar(255)
+  // Fieldglass bill rate ($/hr) for this SOW — the client-billed "Rate" on
+  // the Fieldglass timesheet accounting block (Amount = rate × hours). Not
+  // the associate pay rate. Null = accounting Amount can't be computed.
+  fieldglassBillRate Decimal? @db.Decimal(8, 2)
   // Two-letter USPS code of the work site. Drives Phase 23 OT/meal-break
   // policy AND Phase 25 predictive-scheduling enforcement (NY, IL, WA, PA,
   // OR demand 14-day notice). Null = federal default = no state-specific

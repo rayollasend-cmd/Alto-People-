@@ -342,8 +342,14 @@ export function buildAssociateDays(
  * a worker row on the Timesheets grid. Mirrors the Fieldglass individual sheet
  * header (Worker / Period / Site) plus the day-by-day punch grid.
  */
+/** Default hourly pay rate when an associate has no open HOURLY comp record. */
+const DEFAULT_HOURLY_RATE = 15;
+
 export async function buildAssociateTimesheetDetail(
-  db: Pick<PrismaClient, 'timeEntry' | 'client' | 'associate'>,
+  db: Pick<
+    PrismaClient,
+    'timeEntry' | 'client' | 'associate' | 'compensationRecord'
+  >,
   input: {
     associateId: string;
     weekStart: Date;
@@ -383,21 +389,33 @@ export async function buildAssociateTimesheetDetail(
   const clientIds = [
     ...new Set(raw.map((e) => e.clientId).filter((id): id is string => !!id)),
   ];
-  const clientSiteById = new Map<string, { name: string; fieldglass: string | null }>();
+  const clientById = new Map<
+    string,
+    { name: string; fieldglass: string | null; billRate: number | null }
+  >();
   if (clientIds.length > 0) {
     const clients = await db.client.findMany({
       where: { id: { in: clientIds } },
-      select: { id: true, name: true, fieldglassSiteName: true },
+      select: {
+        id: true,
+        name: true,
+        fieldglassSiteName: true,
+        fieldglassBillRate: true,
+      },
     });
     for (const c of clients) {
-      clientSiteById.set(c.id, { name: c.name, fieldglass: c.fieldglassSiteName });
+      clientById.set(c.id, {
+        name: c.name,
+        fieldglass: c.fieldglassSiteName,
+        billRate: c.fieldglassBillRate == null ? null : Number(c.fieldglassBillRate),
+      });
     }
   }
 
   const entries: TimesheetSourceEntry[] = raw
     .filter((e) => dateKeySet.has(localDateKey(e.clockInAt, timeZone)))
     .map((e) => {
-      const client = e.clientId ? clientSiteById.get(e.clientId) : undefined;
+      const client = e.clientId ? clientById.get(e.clientId) : undefined;
       return {
         associateId: e.associateId,
         firstName: e.associate.firstName,
@@ -434,6 +452,19 @@ export async function buildAssociateTimesheetDetail(
   const { days, totalHours } = buildAssociateDays(entries, week.dateKeys, timeZone);
   const pendingCount = entries.filter((e) => e.status === 'COMPLETED').length;
 
+  // Accounting block — the associate's pay rate (their open HOURLY comp
+  // record, else the $15 default) and the client-billed rate → Amount.
+  const comp = await db.compensationRecord.findFirst({
+    where: { associateId: input.associateId, payType: 'HOURLY', effectiveTo: null },
+    orderBy: { effectiveFrom: 'desc' },
+    select: { amount: true },
+  });
+  const payRate = comp ? Number(comp.amount) : DEFAULT_HOURLY_RATE;
+  const billRate = first?.clientId
+    ? clientById.get(first.clientId)?.billRate ?? null
+    : null;
+  const amount = billRate != null ? round2(billRate * totalHours) : null;
+
   return {
     associateId: input.associateId,
     worker,
@@ -446,6 +477,10 @@ export async function buildAssociateTimesheetDetail(
     totalHours,
     status: pendingCount > 0 ? 'PENDING' : 'READY',
     pendingCount,
+    rateLabel: 'Standard Hourly Rate /Hr',
+    payRate: round2(payRate),
+    billRate: billRate != null ? round2(billRate) : null,
+    amount,
     timeZone,
     generatedAt: new Date().toISOString(),
   };
