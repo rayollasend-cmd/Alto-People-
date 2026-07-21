@@ -110,6 +110,7 @@ export interface TaxForm {
   status: TaxFormStatus;
   filedAt: string | null;
   ein: string | null;
+  recipientCopySentAt: string | null;
   createdAt: string;
 }
 
@@ -147,6 +148,25 @@ export const build941 = (taxYear: number, quarter: number) =>
     periodStart: string;
     periodEnd: string;
   }>(`/tax-forms/build/941?taxYear=${taxYear}&quarter=${quarter}`);
+
+export const build940 = (taxYear: number) =>
+  apiFetch<{
+    suggestedAmounts: Record<string, string | number>;
+    taxYear: number;
+    note: string;
+  }>(`/tax-forms/build/940?taxYear=${taxYear}`);
+
+/** Direct URL — W-3 transmittal totals PDF for the year's W-2s. */
+export const w3PdfUrl = (taxYear: number): string =>
+  `/api/tax-forms/w3.pdf?taxYear=${taxYear}`;
+
+/** Email the worker their W-2 Copy B / W-2c / 1099 PDF; stamps
+ *  recipientCopySentAt so distribution is auditable. */
+export const sendRecipientCopy = (id: string, force = false) =>
+  apiFetch<{ ok: boolean; sentTo: string }>(`/tax-forms/${id}/send-recipient-copy`, {
+    method: 'POST',
+    body: { force },
+  });
 
 // ----- W-2 generation (Gap 1) -------------------------------------------
 

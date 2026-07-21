@@ -5,20 +5,30 @@
 // the page. Associates can also download their own paystub as a PDF —
 // the backend authorizes the item owner on GET /payroll/items/:id/paystub.pdf.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { PayrollItem, PayrollItemEarning } from '@alto-people/shared';
-import { downloadMyPaystub, listMyPayrollItems } from '@/lib/payrollApi';
+import {
+  downloadMyPaystub,
+  getMyPayoutMethod,
+  getMyW4,
+  listMyPayrollItems,
+  updateMyPayoutMethod,
+  updateMyW4,
+  type MyPayoutMethod,
+  type MyW4,
+} from '@/lib/payrollApi';
 import { ApiError } from '@/lib/api';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import { dayHeading, groupByDayBy } from '@/lib/dayGroup';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
+import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { ChevronDown, ChevronRight, Download, Wallet } from 'lucide-react';
+import { ChevronDown, ChevronRight, Download, Settings, Wallet } from 'lucide-react';
 
 const fmtMoney = (n: number) =>
   n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
@@ -103,6 +113,8 @@ export function AssociatePayrollView() {
         subtitle={t('pay.subtitle')}
       />
 
+      <TaxAndPaySettings />
+
       {error && (
         <p role="alert" className="text-sm text-alert mb-4">
           {error}
@@ -151,6 +163,310 @@ export function AssociatePayrollView() {
         );
       })()}
     </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- *
+ *  Tax & pay settings — associate self-service for W-4 elections and the
+ *  direct-deposit account. Both were HR-ticket-only before; the endpoints
+ *  (/me/w4, /me/payout-method) now let the associate manage them.
+ * -------------------------------------------------------------------------- */
+
+const FILING_STATUS_LABEL: Record<MyW4['filingStatus'], string> = {
+  SINGLE: 'Single or married filing separately',
+  MARRIED_FILING_JOINTLY: 'Married filing jointly',
+  HEAD_OF_HOUSEHOLD: 'Head of household',
+};
+
+function TaxAndPaySettings() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mb-4 rounded-lg border border-navy-secondary bg-navy-secondary/20">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between px-4 py-3 text-left"
+      >
+        <span className="flex items-center gap-2 text-sm font-medium text-white">
+          <Settings className="h-4 w-4 text-gold" />
+          Tax &amp; pay settings
+        </span>
+        {open ? (
+          <ChevronDown className="h-4 w-4 text-silver" />
+        ) : (
+          <ChevronRight className="h-4 w-4 text-silver" />
+        )}
+      </button>
+      {open && (
+        <div className="grid gap-4 border-t border-navy-secondary p-4 md:grid-cols-2">
+          <W4Card />
+          <PayoutMethodCard />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function W4Card() {
+  const [w4, setW4] = useState<MyW4 | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState<MyW4 | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [missing, setMissing] = useState(false);
+
+  const load = () =>
+    getMyW4()
+      .then((r) => {
+        setW4(r);
+        setMissing(false);
+      })
+      .catch((err) => {
+        if (err instanceof ApiError && err.code === 'no_w4') setMissing(true);
+      });
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const save = async () => {
+    if (!form) return;
+    setBusy(true);
+    try {
+      await updateMyW4({
+        filingStatus: form.filingStatus,
+        multipleJobs: form.multipleJobs,
+        dependentsAmount: form.dependentsAmount,
+        otherIncome: form.otherIncome,
+        deductions: form.deductions,
+        extraWithholding: form.extraWithholding,
+      });
+      toast.success('W-4 updated — applies from your next paycheck.');
+      setEditing(false);
+      await load();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to update W-4.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-md border border-navy-secondary bg-navy p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="text-sm font-medium text-white">Federal W-4</h3>
+        {w4 && !editing && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setForm(w4);
+              setEditing(true);
+            }}
+          >
+            Edit
+          </Button>
+        )}
+      </div>
+      {missing && (
+        <p className="text-xs text-silver">
+          No W-4 on file yet — it&rsquo;s captured during onboarding.
+        </p>
+      )}
+      {w4 && !editing && (
+        <dl className="space-y-1 text-xs">
+          <Row label="Filing status" value={FILING_STATUS_LABEL[w4.filingStatus]} />
+          <Row label="Dependents credit" value={fmtMoney(w4.dependentsAmount)} />
+          <Row label="Other income" value={fmtMoney(w4.otherIncome)} />
+          <Row label="Deductions" value={fmtMoney(w4.deductions)} />
+          <Row label="Extra withholding / check" value={fmtMoney(w4.extraWithholding)} />
+        </dl>
+      )}
+      {editing && form && (
+        <div className="space-y-2">
+          <Select
+            value={form.filingStatus}
+            onChange={(e) =>
+              setForm({ ...form, filingStatus: e.target.value as MyW4['filingStatus'] })
+            }
+          >
+            {Object.entries(FILING_STATUS_LABEL).map(([v, l]) => (
+              <option key={v} value={v}>
+                {l}
+              </option>
+            ))}
+          </Select>
+          <NumField
+            label="Dependents credit (W-4 step 3)"
+            value={form.dependentsAmount}
+            onChange={(n) => setForm({ ...form, dependentsAmount: n })}
+          />
+          <NumField
+            label="Other income (4a)"
+            value={form.otherIncome}
+            onChange={(n) => setForm({ ...form, otherIncome: n })}
+          />
+          <NumField
+            label="Deductions (4b)"
+            value={form.deductions}
+            onChange={(n) => setForm({ ...form, deductions: n })}
+          />
+          <NumField
+            label="Extra withholding per check (4c)"
+            value={form.extraWithholding}
+            onChange={(n) => setForm({ ...form, extraWithholding: n })}
+          />
+          <label className="flex items-center gap-2 text-xs text-silver">
+            <input
+              type="checkbox"
+              checked={form.multipleJobs}
+              onChange={(e) => setForm({ ...form, multipleJobs: e.target.checked })}
+            />
+            Multiple jobs / spouse works (step 2)
+          </label>
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="ghost" onClick={() => setEditing(false)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={save} loading={busy} disabled={busy}>
+              Save
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PayoutMethodCard() {
+  const [method, setMethod] = useState<MyPayoutMethod | null | undefined>(undefined);
+  const [editing, setEditing] = useState(false);
+  const [routing, setRouting] = useState('');
+  const [account, setAccount] = useState('');
+  const [type, setType] = useState<'CHECKING' | 'SAVINGS'>('CHECKING');
+  const [busy, setBusy] = useState(false);
+
+  const load = () =>
+    getMyPayoutMethod()
+      .then((r) => setMethod(r.method))
+      .catch(() => setMethod(null));
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const save = async () => {
+    if (!/^\d{9}$/.test(routing) || !/^\d{4,17}$/.test(account)) {
+      toast.error('Enter a 9-digit routing number and a valid account number.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await updateMyPayoutMethod({ routingNumber: routing, accountNumber: account, accountType: type });
+      toast.success(`Direct deposit updated (account ending ${r.accountLast4}).`);
+      setEditing(false);
+      setRouting('');
+      setAccount('');
+      await load();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to update direct deposit.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-md border border-navy-secondary bg-navy p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="text-sm font-medium text-white">Direct deposit</h3>
+        {method !== undefined && !editing && (
+          <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
+            {method ? 'Change' : 'Add'}
+          </Button>
+        )}
+      </div>
+      {!editing && (
+        <div className="text-xs text-silver">
+          {method === undefined && 'Loading…'}
+          {method === null && 'No direct-deposit account on file.'}
+          {method && method.branchCard && 'Paid to your Branch card.'}
+          {method && !method.branchCard && (
+            <span>
+              {method.accountType ?? 'Bank'} account ending{' '}
+              <span className="text-white">{method.accountLast4 ?? '••••'}</span>
+              {method.verifiedAt ? ' · verified' : ' · pending verification'}
+            </span>
+          )}
+        </div>
+      )}
+      {editing && (
+        <div className="space-y-2">
+          <input
+            className="w-full rounded-md border border-navy-secondary bg-navy px-2 py-2 text-sm text-white"
+            placeholder="Routing number (9 digits)"
+            inputMode="numeric"
+            value={routing}
+            onChange={(e) => setRouting(e.target.value.replace(/\D/g, '').slice(0, 9))}
+          />
+          <input
+            className="w-full rounded-md border border-navy-secondary bg-navy px-2 py-2 text-sm text-white"
+            placeholder="Account number"
+            inputMode="numeric"
+            value={account}
+            onChange={(e) => setAccount(e.target.value.replace(/\D/g, '').slice(0, 17))}
+          />
+          <Select value={type} onChange={(e) => setType(e.target.value as 'CHECKING' | 'SAVINGS')}>
+            <option value="CHECKING">Checking</option>
+            <option value="SAVINGS">Savings</option>
+          </Select>
+          <p className="text-xs text-silver/70">
+            We&rsquo;ll email you a confirmation whenever this changes — a heads-up in case it
+            wasn&rsquo;t you.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="ghost" onClick={() => setEditing(false)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={save} loading={busy} disabled={busy}>
+              Save
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between">
+      <dt className="text-silver">{label}</dt>
+      <dd className="tabular-nums text-white">{value}</dd>
+    </div>
+  );
+}
+
+function NumField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (n: number) => void;
+}) {
+  return (
+    <label className="block text-xs text-silver">
+      {label}
+      <input
+        type="number"
+        min="0"
+        step="0.01"
+        inputMode="decimal"
+        className="mt-1 w-full rounded-md border border-navy-secondary bg-navy px-2 py-1.5 text-sm text-white"
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value) || 0)}
+      />
+    </label>
   );
 }
 

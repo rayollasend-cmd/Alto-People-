@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { ChevronDown, Download, FileText, Plus, Receipt, Scale } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
+  build940,
   build941,
   createGarnishment,
   createTaxForm,
@@ -19,8 +21,10 @@ import {
   listGarnishments,
   listTaxForms,
   saveSubmitterProfile,
+  sendRecipientCopy,
   setGarnishmentStatus,
   taxFormPdfUrl,
+  w3PdfUrl,
   voidTaxForm,
   w2BulkZipUrl,
   w2Efw2Url,
@@ -44,6 +48,8 @@ import { useAuth } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
+  AssociatePicker,
+  type PickedAssociate,
   Badge,
   Button,
   Card,
@@ -90,9 +96,14 @@ export function PayrollTaxHome() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Payroll tax"
-        subtitle="Garnishments and federal tax forms (941, 940, W-2, 1099-NEC)."
-        breadcrumbs={[{ label: 'Payroll' }, { label: 'Tax & withholdings' }]}
+        title="Tax forms & garnishments"
+        subtitle="Garnishment orders and federal tax forms (941, 940, W-2, 1099-NEC, W-3)."
+        breadcrumbs={[{ label: 'Payroll', to: '/payroll' }, { label: 'Tax forms' }]}
+        secondaryActions={
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/payroll/config">Tax rate tables</Link>
+          </Button>
+        }
       />
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
@@ -308,7 +319,7 @@ function NewGarnishmentDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [associateId, setAssociateId] = useState('');
+  const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
   const [kind, setKind] = useState<GarnishmentKind>('CHILD_SUPPORT');
   const [caseNumber, setCaseNumber] = useState('');
   const [agencyName, setAgencyName] = useState('');
@@ -321,7 +332,7 @@ function NewGarnishmentDrawer({
   const [saving, setSaving] = useState(false);
 
   const onSubmit = async () => {
-    if (!associateId || !startDate) {
+    if (!assoc || !startDate) {
       toast.error('Associate and start date required.');
       return;
     }
@@ -336,7 +347,7 @@ function NewGarnishmentDrawer({
     setSaving(true);
     try {
       await createGarnishment({
-        associateId: associateId.trim(),
+        associateId: assoc.id,
         kind,
         caseNumber: caseNumber.trim() || null,
         agencyName: agencyName.trim() || null,
@@ -361,12 +372,10 @@ function NewGarnishmentDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate ID</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={associateId}
-            onChange={(e) => setAssociateId(e.target.value)}
-          />
+          <Label>Associate</Label>
+          <div className="mt-1">
+            <AssociatePicker value={assoc} onChange={setAssoc} />
+          </div>
         </div>
         <div>
           <Label>Kind</Label>
@@ -722,6 +731,7 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
   const [rows, setRows] = useState<TaxForm[] | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [show941Builder, setShow941Builder] = useState(false);
+  const [show940Builder, setShow940Builder] = useState(false);
   const [showW2Generate, setShowW2Generate] = useState(false);
   const [showF1099NecGenerate, setShowF1099NecGenerate] = useState(false);
   const [showF1099MiscGenerate, setShowF1099MiscGenerate] = useState(false);
@@ -784,6 +794,33 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
     }
   };
 
+  const onSendCopy = async (id: string) => {
+    try {
+      const r = await sendRecipientCopy(id);
+      toast.success(`Recipient copy emailed to ${r.sentTo}.`);
+      refresh();
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'already_sent') {
+        if (
+          await confirm({
+            title: 'Copy already sent',
+            description: `${err.message} Send it again?`,
+          })
+        ) {
+          try {
+            const r = await sendRecipientCopy(id, true);
+            toast.success(`Recipient copy re-sent to ${r.sentTo}.`);
+            refresh();
+          } catch (e) {
+            toast.error(e instanceof ApiError ? e.message : "Couldn't re-send.");
+          }
+        }
+        return;
+      }
+      toast.error(err instanceof ApiError ? err.message : "Couldn't send recipient copy.");
+    }
+  };
+
   return (
     <div className="space-y-4">
       <TaxFormsWorkflowSteps rows={rows} />
@@ -794,6 +831,14 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
           </Button>
           <Button variant="ghost" onClick={() => setShow941Builder(true)}>
             Build 941
+          </Button>
+          <Button variant="ghost" onClick={() => setShow940Builder(true)}>
+            Build 940
+          </Button>
+          <Button asChild variant="ghost">
+            <a href={w3PdfUrl(new Date().getFullYear() - 1)} download>
+              <Download className="mr-2 h-4 w-4" /> W-3 totals
+            </a>
           </Button>
           <Button variant="ghost" onClick={() => setShowW2Generate(true)}>
             Generate W-2s
@@ -923,6 +968,25 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
                           File
                         </Button>
                       )}
+                      {canManage &&
+                        f.status !== 'VOIDED' &&
+                        (f.kind === 'W2' ||
+                          f.kind === 'W2C' ||
+                          f.kind === 'F1099_NEC' ||
+                          f.kind === 'F1099_MISC') && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => onSendCopy(f.id)}
+                            title={
+                              f.recipientCopySentAt
+                                ? `Recipient copy sent ${fmtDate(f.recipientCopySentAt)}`
+                                : 'Email the worker their copy'
+                            }
+                          >
+                            {f.recipientCopySentAt ? '✓ Copy sent' : 'Send copy'}
+                          </Button>
+                        )}
                       {canManage && f.status === 'FILED' && f.kind !== 'W2' && (
                         <Button size="sm" variant="ghost" onClick={() => onVoid(f.id)}>
                           Void
@@ -947,6 +1011,9 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
       )}
       {show941Builder && (
         <Form941BuilderDrawer onClose={() => setShow941Builder(false)} />
+      )}
+      {show940Builder && (
+        <Form940BuilderDrawer onClose={() => setShow940Builder(false)} />
       )}
       {showW2Generate && (
         <W2GenerateDrawer
@@ -1108,7 +1175,8 @@ function W2GenerateDrawer({
  * keeps us from clobbering a TIN already on file by accident.
  */
 function TinCaptureBlock() {
-  const [associateId, setAssociateId] = useState('');
+  const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
+  const associateId = assoc?.id ?? '';
   const [tin, setTin] = useState('');
   const [summary, setSummary] = useState<{
     employmentType: string;
@@ -1185,20 +1253,23 @@ function TinCaptureBlock() {
       <div className="mt-3 space-y-2">
         <p className="text-xs text-silver">
           Required before the 1099-NEC PDF or IRS FIRE e-file can render
-          for a contractor. Copy the contractor's ID from the People
-          Directory; the TIN is stored encrypted (AES-GCM via
+          for a contractor. The TIN is stored encrypted (AES-GCM via
           PAYOUT_ENCRYPTION_KEY).
         </p>
         <div>
-          <Label>Contractor associate ID (UUID)</Label>
-          <div className="flex gap-2 mt-1">
-            <Input
-              className="font-mono text-xs"
-              value={associateId}
-              onChange={(e) => setAssociateId(e.target.value)}
-              placeholder="00000000-0000-0000-0000-000000000000"
-            />
-            <Button variant="ghost" size="sm" onClick={onLookup} disabled={working}>
+          <Label>Contractor</Label>
+          <div className="mt-1 flex gap-2">
+            <div className="flex-1">
+              <AssociatePicker
+                value={assoc}
+                onChange={(v) => {
+                  setAssoc(v);
+                  setSummary(null);
+                }}
+                placeholder="Search contractor…"
+              />
+            </div>
+            <Button variant="ghost" size="sm" onClick={onLookup} disabled={working || !assoc}>
               Look up
             </Button>
           </div>
@@ -1535,7 +1606,7 @@ function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
   const [kind, setKind] = useState<TaxFormKind>('F941');
   const [taxYear, setTaxYear] = useState(String(new Date().getFullYear() - 1));
   const [quarter, setQuarter] = useState('1');
-  const [associateId, setAssociateId] = useState('');
+  const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
   const [amountsJson, setAmountsJson] = useState('{\n}');
   const [ein, setEin] = useState('');
   const [saving, setSaving] = useState(false);
@@ -1551,8 +1622,8 @@ function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
       toast.error('Amounts must be valid JSON.');
       return;
     }
-    if (needsAssociate && !associateId) {
-      toast.error('Associate ID required for W-2/1099.');
+    if (needsAssociate && !assoc) {
+      toast.error('Pick an associate for W-2/1099.');
       return;
     }
     setSaving(true);
@@ -1561,7 +1632,7 @@ function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
         kind,
         taxYear: Number(taxYear),
         quarter: needsQuarter ? Number(quarter) : null,
-        associateId: needsAssociate ? associateId.trim() : null,
+        associateId: needsAssociate ? assoc!.id : null,
         amounts,
         ein: ein.trim() || null,
       });
@@ -1622,12 +1693,10 @@ function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
         </div>
         {needsAssociate && (
           <div>
-            <Label>Associate ID</Label>
-            <Input
-              className="mt-1 font-mono text-xs"
-              value={associateId}
-              onChange={(e) => setAssociateId(e.target.value)}
-            />
+            <Label>Associate</Label>
+            <div className="mt-1">
+              <AssociatePicker value={assoc} onChange={setAssoc} />
+            </div>
           </div>
         )}
         <div>
@@ -1718,9 +1787,102 @@ function Form941BuilderDrawer({ onClose }: { onClose: () => void }) {
           {loading ? 'Building…' : 'Build'}
         </Button>
         {result && (
-          <pre className="mt-2 whitespace-pre-wrap text-xs text-white bg-navy-secondary/40 border border-navy-secondary rounded-md p-3">
-{JSON.stringify(result, null, 2)}
-          </pre>
+          <BuilderAmounts
+            amounts={result.suggestedAmounts}
+            caption={`Q${quarter} ${taxYear} · ${result.periodStart} – ${result.periodEnd}`}
+          />
+        )}
+      </DrawerBody>
+      <DrawerFooter>
+        <Button variant="ghost" onClick={onClose}>
+          Close
+        </Button>
+      </DrawerFooter>
+    </Drawer>
+  );
+}
+
+/** Renders a builder's suggested amounts as labeled rows (camelCase →
+ *  spaced words, numeric strings currency-formatted) — the transcribe
+ *  sheet, not a raw JSON dump. */
+function BuilderAmounts({
+  amounts,
+  caption,
+}: {
+  amounts: Record<string, string | number>;
+  caption: string;
+}) {
+  const fmt = (v: string | number) => {
+    const n = typeof v === 'number' ? v : Number(v);
+    if (Number.isFinite(n) && String(v).match(/^-?\d*\.?\d+$/)) {
+      return n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+    }
+    return String(v);
+  };
+  return (
+    <div className="mt-2 rounded-md border border-navy-secondary bg-navy-secondary/30 p-3">
+      <div className="mb-2 text-xs text-silver/70">{caption}</div>
+      <dl className="space-y-1">
+        {Object.entries(amounts).map(([key, v]) => (
+          <div key={key} className="flex justify-between text-sm">
+            <dt className="text-silver capitalize">
+              {key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase()}
+            </dt>
+            <dd className="tabular-nums text-white">{fmt(v)}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="mt-2 text-xs text-silver/60">
+        Transcribe these into a draft form (New form) or the official IRS form.
+      </p>
+    </div>
+  );
+}
+
+function Form940BuilderDrawer({ onClose }: { onClose: () => void }) {
+  const [taxYear, setTaxYear] = useState(String(new Date().getFullYear() - 1));
+  const [result, setResult] = useState<Awaited<ReturnType<typeof build940>> | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const onBuild = async () => {
+    setLoading(true);
+    try {
+      setResult(await build940(Number(taxYear)));
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Couldn't build the 940. Try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+      <DrawerHeader>
+        <DrawerTitle>940 builder (annual FUTA)</DrawerTitle>
+      </DrawerHeader>
+      <DrawerBody className="space-y-4">
+        <div className="text-sm text-silver">
+          Aggregates the year&rsquo;s disbursed runs into Form 940 line amounts —
+          $7,000 wage cap per employee, net 0.6% tax, and deposits already made
+          from the deposit ledger.
+        </div>
+        <div>
+          <Label>Tax year</Label>
+          <Input
+            type="number"
+            className="mt-1"
+            value={taxYear}
+            onChange={(e) => setTaxYear(e.target.value)}
+          />
+        </div>
+        <Button onClick={onBuild} disabled={loading}>
+          {loading ? 'Building…' : 'Build'}
+        </Button>
+        {result && (
+          <>
+            <BuilderAmounts amounts={result.suggestedAmounts} caption={`Tax year ${result.taxYear}`} />
+            <p className="text-xs text-silver/70">{result.note}</p>
+          </>
         )}
       </DrawerBody>
       <DrawerFooter>

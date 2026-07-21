@@ -2,6 +2,7 @@
 // Page code should import from '@/components/ui' rather than each file
 // individually so the surface stays small and easy to refactor.
 
+export * from './AssociatePicker';
 export * from './Avatar';
 export * from './Badge';
 export * from './Breadcrumb';

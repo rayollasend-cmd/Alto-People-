@@ -345,6 +345,7 @@ payrollTax91Router.get('/tax-forms', VIEW, async (req, res) => {
       status: f.status,
       filedAt: f.filedAt?.toISOString() ?? null,
       ein: f.ein,
+      recipientCopySentAt: f.recipientCopySentAt?.toISOString() ?? null,
       createdAt: f.createdAt.toISOString(),
     })),
   });

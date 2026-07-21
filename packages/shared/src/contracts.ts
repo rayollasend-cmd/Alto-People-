@@ -1741,6 +1741,10 @@ export const PayrollRunSummarySchema = z.object({
   cancelledById: UuidSchema.nullable(),
   cancelReason: z.string().nullable(),
   voidJournalEntryId: z.string().nullable(),
+  // Tier-3 — four-eyes approval stamp (optional so historical responses
+  // stay valid). Set when a second person approves a FINALIZED run.
+  approvedAt: z.string().datetime().nullable().optional(),
+  approverEmail: z.string().nullable().optional(),
 });
 export type PayrollRunSummary = z.infer<typeof PayrollRunSummarySchema>;
 

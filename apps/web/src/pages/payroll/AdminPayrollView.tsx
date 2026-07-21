@@ -20,7 +20,9 @@ import {
   RotateCw,
   Send,
   ShieldAlert,
+  ShieldCheck,
   Users,
+  X,
 } from 'lucide-react';
 import type {
   PayrollRunDetail,
@@ -29,15 +31,26 @@ import type {
   PayrollUpcomingSummary,
 } from '@alto-people/shared';
 import {
+  addRunAddOn,
+  approvePayrollRun,
+  deleteRunAddOn,
   disbursePayrollRun,
+  downloadCheckRegister,
   finalizePayrollRun,
   getPayrollRun,
   getPayrollUpcoming,
+  getWcPremium,
   listPayrollRuns,
+  listRunAddOns,
   retryRunFailures,
   voidPayrollRun,
+  type RunAddOn,
+  type RunAddOnKind,
+  type WcPremiumReport,
 } from '@/lib/payrollApi';
 import { syncRun as syncRunToQbo } from '@/lib/quickbooksApi';
+import { AssociatePicker } from '@/components/ui/AssociatePicker';
+import { Select } from '@/components/ui/Select';
 import { AmendPayrollWizard } from './AmendPayrollWizard';
 import { BranchEnrollmentDialog } from './BranchEnrollmentDialog';
 import { RunPayrollWizard } from './RunPayrollWizard';
@@ -146,6 +159,8 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
   const [voidPeriodInput, setVoidPeriodInput] = useState('');
   const [voidReasonInput, setVoidReasonInput] = useState('');
   const [amendOpen, setAmendOpen] = useState(false);
+  const [confirmFinalize, setConfirmFinalize] = useState(false);
+  const [wcReport, setWcReport] = useState<WcPremiumReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [enrollFor, setEnrollFor] = useState<{ id: string; name: string | null } | null>(null);
   // Wave 8 — hero summary card. One fetch, hydrates from /payroll/upcoming.
@@ -246,6 +261,8 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     try {
       const detail = await getPayrollRun(id);
       setSelected(detail);
+      setWcReport(null);
+      if (detail.status === 'DISBURSED') void loadWcReport(detail.id);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed to load run.');
     }
@@ -258,6 +275,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
       const updated = await finalizePayrollRun(selected.id);
       setSelected(updated);
       toast.success('Run finalized.');
+      setConfirmFinalize(false);
       refresh();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Finalize failed.');
@@ -265,6 +283,29 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
       setBusy(false);
     }
   };
+
+  const onApprove = async () => {
+    if (!selected || busy) return;
+    setBusy(true);
+    try {
+      const updated = await approvePayrollRun(selected.id);
+      setSelected(updated);
+      toast.success('Run approved — ready to disburse.');
+      refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Approve failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const loadWcReport = useCallback(async (runId: string) => {
+    try {
+      setWcReport(await getWcPremium(runId));
+    } catch {
+      setWcReport(null);
+    }
+  }, []);
 
   const onDisburse = async () => {
     if (!selected || busy) return;
@@ -396,6 +437,18 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                 <Link to="/payroll/ytd">
                   <FileText className="mr-1 h-4 w-4" />
                   YTD report
+                </Link>
+              </Button>
+              <Button asChild variant="ghost" size="sm">
+                <Link to="/payroll/tax">
+                  <FileText className="mr-1 h-4 w-4" />
+                  Tax forms
+                </Link>
+              </Button>
+              <Button asChild variant="ghost" size="sm">
+                <Link to="/payroll/compliance">
+                  <AlertTriangle className="mr-1 h-4 w-4" />
+                  Compliance
                 </Link>
               </Button>
               <Button asChild variant="ghost" size="sm">
@@ -770,6 +823,16 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                 </div>
               )}
 
+              {/* Four-eyes approval note — visible once a run is approved
+                  so the disburser knows a second person signed off. */}
+              {selected.approvedAt && (
+                <div className="mb-4 flex items-center gap-2 rounded border border-success/30 bg-success/5 p-2.5 text-xs text-success">
+                  <ShieldCheck className="h-4 w-4" />
+                  Approved {new Date(selected.approvedAt).toLocaleString()}
+                  {selected.approverEmail ? ` by ${selected.approverEmail}` : ''}
+                </div>
+              )}
+
               {/* Wave 9 — QBO-style status progress bar shown across the top
                   of the drawer. Tracks the run state through the four
                   human-meaningful checkpoints. */}
@@ -777,6 +840,49 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                 status={selected.status}
                 qboSynced={!!selected.qboJournalEntryId}
               />
+
+              {/* Draft add-on lines (bonus / commission / tips / PTO). */}
+              {selected.status === 'DRAFT' && canProcess && (
+                <DraftAddOnsSection
+                  runId={selected.id}
+                  onChanged={async () => {
+                    const updated = await getPayrollRun(selected.id);
+                    setSelected(updated);
+                    refresh();
+                  }}
+                />
+              )}
+
+              {/* Workers-comp premium accrual (disbursed runs). */}
+              {selected.status === 'DISBURSED' && wcReport && wcReport.totalPremium > 0 && (
+                <div className="mt-5 rounded-md border border-navy-secondary bg-navy-secondary/20 p-3">
+                  <div className="mb-2 flex items-center justify-between">
+                    <div className="text-xs uppercase tracking-wide text-silver">
+                      Workers-comp premium (accrual)
+                    </div>
+                    <div className="font-display text-lg tabular-nums text-white">
+                      {fmtMoney(wcReport.totalPremium)}
+                    </div>
+                  </div>
+                  <div className="space-y-1 text-xs">
+                    {wcReport.classes.map((c) => (
+                      <div key={c.code} className="flex justify-between text-silver">
+                        <span>
+                          {c.code} · {c.description}{' '}
+                          <span className="text-silver/60">@ {c.ratePer100}/100</span>
+                        </span>
+                        <span className="tabular-nums text-white">{fmtMoney(c.premium)}</span>
+                      </div>
+                    ))}
+                    {wcReport.unclassifiedWages > 0 && (
+                      <div className="flex justify-between text-warning">
+                        <span>Unclassified wages (no WC class code)</span>
+                        <span className="tabular-nums">{fmtMoney(wcReport.unclassifiedWages)}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5 mb-5 text-sm">
                 <DrawerStat label="Gross" value={fmtMoney(selected.totalGross)} />
@@ -864,9 +970,15 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
             {canProcess && (
               <DrawerFooter className="flex-wrap justify-start">
                 {selected.status === 'DRAFT' && (
-                  <Button onClick={onFinalize} loading={busy} disabled={busy}>
+                  <Button onClick={() => setConfirmFinalize(true)} disabled={busy}>
                     <CheckCircle2 className="h-4 w-4" />
                     Finalize
+                  </Button>
+                )}
+                {selected.status === 'FINALIZED' && !selected.approvedAt && (
+                  <Button variant="secondary" onClick={onApprove} loading={busy} disabled={busy}>
+                    <ShieldCheck className="h-4 w-4" />
+                    Approve
                   </Button>
                 )}
                 {selected.status === 'FINALIZED' && (
@@ -891,6 +1003,20 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                       </a>
                     </Button>
                   )}
+                {selected.status === 'DISBURSED' && (
+                  <Button
+                    variant="secondary"
+                    onClick={() =>
+                      downloadCheckRegister(selected.id).catch((err) =>
+                        toast.error(err instanceof Error ? err.message : 'No checks in this run.'),
+                      )
+                    }
+                    title="Printable register of paper checks issued for this run (if any)"
+                  >
+                    <FileText className="h-4 w-4" />
+                    Check register
+                  </Button>
+                )}
                 {(selected.status === 'FINALIZED' || selected.status === 'DISBURSED') &&
                   selected.items.some((it) => it.status === 'HELD') && (
                     <Button variant="secondary" onClick={onRetryFailures} loading={busy}>
@@ -917,6 +1043,18 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                     Void run
                   </Button>
                 )}
+                {canVoid &&
+                  selected.status === 'DISBURSED' &&
+                  !canShowVoidButton && (
+                    <Button
+                      variant="destructive"
+                      disabled
+                      title={`Runs can only be voided within ${VOID_WINDOW_DAYS} days of disbursement. This one is past that window — issue an amendment instead.`}
+                    >
+                      <Ban className="h-4 w-4" />
+                      Void window closed
+                    </Button>
+                  )}
               </DrawerFooter>
             )}
           </>
@@ -1025,6 +1163,38 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                     {busy ? 'Disbursing…' : `Disburse ${fmtMoney(selected.totalNet)}`}
                   </Button>
                 </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Finalize confirmation — advancing a run to FINALIZED locks the
+          projection and is the gate before money moves, so it earns a
+          confirm step (Disburse already has its ceremony). */}
+      <Dialog open={confirmFinalize} onOpenChange={(v) => !busy && setConfirmFinalize(v)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Finalize this run?</DialogTitle>
+          </DialogHeader>
+          {selected && (
+            <div className="space-y-3 text-sm text-silver">
+              <p>
+                Finalizing locks the projection for{' '}
+                <span className="text-white">
+                  {selected.periodStart} → {selected.periodEnd}
+                </span>{' '}
+                — {selected.itemCount} paystub{selected.itemCount === 1 ? '' : 's'},{' '}
+                {fmtMoney(selected.totalNet)} net. You can still disburse, approve, or
+                void afterward, but you can no longer add earning lines.
+              </p>
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" onClick={() => setConfirmFinalize(false)} disabled={busy}>
+                  Cancel
+                </Button>
+                <Button onClick={onFinalize} loading={busy} disabled={busy}>
+                  Finalize
+                </Button>
               </div>
             </div>
           )}
@@ -1511,6 +1681,172 @@ function DrawerStat({
       <div className={cn('mt-0.5 tabular-nums text-base', highlight ? 'text-gold' : 'text-white')}>
         {value}
       </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- *
+ *  Draft add-on lines — bonus / commission / tips / holiday / PTO payout
+ *  attached to a DRAFT run. Adding or removing one re-aggregates the run
+ *  server-side; the parent refetches so totals stay live. Supplemental
+ *  kinds (bonus/commission) withhold FIT at the flat 22% rate — noted in
+ *  the helper text so HR isn't surprised.
+ * -------------------------------------------------------------------------- */
+
+const ADD_ON_KINDS: { value: RunAddOnKind; label: string }[] = [
+  { value: 'BONUS', label: 'Bonus' },
+  { value: 'COMMISSION', label: 'Commission' },
+  { value: 'TIPS', label: 'Tips' },
+  { value: 'HOLIDAY', label: 'Holiday pay' },
+  { value: 'SICK', label: 'Sick payout' },
+  { value: 'VACATION', label: 'PTO / vacation payout' },
+];
+
+function DraftAddOnsSection({
+  runId,
+  onChanged,
+}: {
+  runId: string;
+  onChanged: () => Promise<void> | void;
+}) {
+  const [addOns, setAddOns] = useState<RunAddOn[] | null>(null);
+  const [open, setOpen] = useState(false);
+  const [assoc, setAssoc] = useState<{ id: string; name: string } | null>(null);
+  const [kind, setKind] = useState<RunAddOnKind>('BONUS');
+  const [amount, setAmount] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    listRunAddOns(runId)
+      .then((r) => setAddOns(r.addOns))
+      .catch(() => setAddOns([]));
+  }, [runId]);
+  useEffect(load, [load]);
+
+  const submit = async () => {
+    const amt = Number(amount);
+    if (!assoc || !Number.isFinite(amt) || amt <= 0) {
+      toast.error('Pick an associate and a positive amount.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await addRunAddOn(runId, { associateId: assoc.id, kind, amount: amt, note: note.trim() || null });
+      toast.success('Earning line added.');
+      setAssoc(null);
+      setAmount('');
+      setNote('');
+      setOpen(false);
+      load();
+      await onChanged();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to add earning line.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (addOnId: string) => {
+    setBusy(true);
+    try {
+      await deleteRunAddOn(runId, addOnId);
+      load();
+      await onChanged();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to remove line.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-5 rounded-md border border-navy-secondary bg-navy-secondary/20 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <div className="text-xs uppercase tracking-wide text-silver">
+          Extra earnings (bonus, commission, tips, PTO)
+        </div>
+        {!open && (
+          <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>
+            <Plus className="h-4 w-4" />
+            Add line
+          </Button>
+        )}
+      </div>
+
+      {addOns && addOns.length > 0 && (
+        <div className="mb-2 space-y-1">
+          {addOns.map((a) => (
+            <div key={a.id} className="flex items-center justify-between text-sm">
+              <span className="text-silver">
+                {a.associateName} ·{' '}
+                {ADD_ON_KINDS.find((k) => k.value === a.kind)?.label ?? a.kind}
+                {a.note ? ` — ${a.note}` : ''}
+              </span>
+              <span className="flex items-center gap-2">
+                <span className="tabular-nums text-white">{fmtMoney(a.amount)}</span>
+                <button
+                  type="button"
+                  onClick={() => remove(a.id)}
+                  disabled={busy}
+                  className="text-silver/60 hover:text-alert"
+                  aria-label="Remove earning line"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {open && (
+        <div className="space-y-2 border-t border-navy-secondary pt-2">
+          <AssociatePicker value={assoc} onChange={setAssoc} />
+          <div className="flex gap-2">
+            <Select
+              className="flex-1"
+              value={kind}
+              onChange={(e) => setKind(e.target.value as RunAddOnKind)}
+            >
+              {ADD_ON_KINDS.map((k) => (
+                <option key={k.value} value={k.value}>
+                  {k.label}
+                </option>
+              ))}
+            </Select>
+            <Input
+              type="number"
+              min="0"
+              step="0.01"
+              inputMode="decimal"
+              placeholder="Amount"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              className="w-32"
+            />
+          </div>
+          <Input
+            placeholder="Note (optional) — e.g. Q3 performance bonus"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            maxLength={200}
+          />
+          {(kind === 'BONUS' || kind === 'COMMISSION') && (
+            <p className="text-xs text-silver/70">
+              Supplemental wages — federal income tax withholds at the flat 22% rate.
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="ghost" onClick={() => setOpen(false)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={submit} loading={busy} disabled={busy}>
+              Add
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
