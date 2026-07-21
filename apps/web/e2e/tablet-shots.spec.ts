@@ -18,7 +18,11 @@ test('associate on iPad: dashboard + schedule', async ({ page }) => {
   await page.getByLabel(/email/i).fill('maria.lopez@example.com');
   await page.getByLabel(/password/i).fill('maria-dev-2026!');
   await page.getByRole('button', { name: /sign in/i }).click();
-  await expect(page.getByText(/hey maria/i)).toBeVisible({ timeout: 20_000 });
+  // The greeting renders twice — the large-title hero (h1) and the sticky
+  // app-shell header (h2). Target the hero so the match is unambiguous.
+  await expect(
+    page.getByRole('heading', { level: 1, name: /hey maria/i }),
+  ).toBeVisible({ timeout: 20_000 });
   await page.screenshot({ path: 'e2e-results/ipad-associate-dashboard.png' });
   await page.goto('/scheduling');
   await expect(page.getByText(/my schedule/i).first()).toBeVisible({ timeout: 15_000 });

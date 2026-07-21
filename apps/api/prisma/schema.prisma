@@ -493,6 +493,11 @@ model Client {
   addressLine2 String?      @db.VarChar(255)
   city         String?      @db.VarChar(120)
   zip          String?      @db.VarChar(10)
+  // Verbatim SAP Fieldglass "Site" label for this client engagement (e.g.
+  // "1 - Onsite - FL - Destin"), rendered on the Timesheets export so the
+  // Site column matches Fieldglass character-for-character. Null = fall back
+  // to the worksite/client name.
+  fieldglassSiteName String? @db.VarChar(255)
   // Two-letter USPS code of the work site. Drives Phase 23 OT/meal-break
   // policy AND Phase 25 predictive-scheduling enforcement (NY, IL, WA, PA,
   // OR demand 14-day notice). Null = federal default = no state-specific

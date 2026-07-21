@@ -178,6 +178,7 @@ clientsRouter.post('/', MANAGE, async (req, res, next) => {
         status: parsed.data.status ?? 'PROSPECT',
         contactEmail: parsed.data.contactEmail ?? null,
         state: parsed.data.state ? parsed.data.state.toUpperCase() : null,
+        fieldglassSiteName: parsed.data.fieldglassSiteName ?? null,
       },
     });
     // Seed the default shift-position catalog so the scheduling dropdown
@@ -221,6 +222,8 @@ clientsRouter.patch('/:id', MANAGE, async (req, res, next) => {
     if (parsed.data.status !== undefined) data.status = parsed.data.status;
     if (parsed.data.contactEmail !== undefined) data.contactEmail = parsed.data.contactEmail;
     if (parsed.data.weekStartsOn !== undefined) data.weekStartsOn = parsed.data.weekStartsOn;
+    if (parsed.data.fieldglassSiteName !== undefined)
+      data.fieldglassSiteName = parsed.data.fieldglassSiteName;
     if (Object.keys(data).length === 0) {
       res.json(toSummary(existing));
       return;
@@ -481,6 +484,7 @@ function toSummary(row: {
   contactEmail: string | null;
   state: string | null;
   weekStartsOn: number;
+  fieldglassSiteName: string | null;
 }): ClientSummary {
   return {
     id: row.id,
@@ -490,6 +494,7 @@ function toSummary(row: {
     contactEmail: row.contactEmail,
     state: row.state,
     weekStartsOn: row.weekStartsOn,
+    fieldglassSiteName: row.fieldglassSiteName,
   };
 }
 

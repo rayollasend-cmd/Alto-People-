@@ -78,6 +78,9 @@ export const ClientSummarySchema = z.object({
    *  the associate week-ahead digest (sent the evening before) and any
    *  future per-client week math. Optional for old clients of the API. */
   weekStartsOn: z.number().int().min(0).max(6).optional(),
+  /** Verbatim Fieldglass "Site" label (e.g. "1 - Onsite - FL - Destin")
+   *  used on the Timesheets export. Optional/nullable for backward compat. */
+  fieldglassSiteName: z.string().nullable().optional(),
 });
 export type ClientSummary = z.infer<typeof ClientSummarySchema>;
 
@@ -116,6 +119,7 @@ export const ClientCreateInputSchema = z.object({
   status: ClientStatusSchema.optional(),
   contactEmail: z.string().trim().email().max(254).nullable().optional(),
   state: z.string().length(2).nullable().optional(),
+  fieldglassSiteName: z.string().trim().max(255).nullable().optional(),
 });
 export type ClientCreateInput = z.infer<typeof ClientCreateInputSchema>;
 
@@ -128,6 +132,7 @@ export const ClientUpdateInputSchema = z.object({
   status: ClientStatusSchema.optional(),
   contactEmail: z.string().trim().email().max(254).nullable().optional(),
   weekStartsOn: z.number().int().min(0).max(6).optional(),
+  fieldglassSiteName: z.string().trim().max(255).nullable().optional(),
 });
 export type ClientUpdateInput = z.infer<typeof ClientUpdateInputSchema>;
 
@@ -1126,6 +1131,61 @@ export const TimeExportInputSchema = z.object({
   associateId: UuidSchema.optional(),
 });
 export type TimeExportInput = z.infer<typeof TimeExportInputSchema>;
+
+/* -------------------------------------------------------------------------- *
+ *  Timesheets — Fieldglass-shaped weekly export (Saturday → Friday)
+ *
+ *  Mirrors the SAP Fieldglass group timesheet list a buyer sees: one row per
+ *  worker per week, keyed by the week-ending Friday, hours split across the
+ *  ST / OT / DT / Others / NB buckets. Per the current SOW every worked hour
+ *  lands in "Others" with no overtime split; the other buckets are 0. Hours
+ *  are NET of unpaid breaks and approved-only.
+ * -------------------------------------------------------------------------- */
+
+export const TimesheetWeekInputSchema = z.object({
+  /** Any ISO instant inside the desired Sat–Fri week; the server snaps to it. */
+  weekStart: z.string().datetime(),
+  /** Restrict to one client for per-Fieldglass filing. Omit for all clients. */
+  clientId: UuidSchema.optional(),
+});
+export type TimesheetWeekInput = z.infer<typeof TimesheetWeekInputSchema>;
+
+export const TimesheetRowStatusSchema = z.enum(['READY', 'PENDING']);
+export type TimesheetRowStatus = z.infer<typeof TimesheetRowStatusSchema>;
+
+export const TimesheetRowSchema = z.object({
+  associateId: UuidSchema,
+  /** "Last, First" — matches the Fieldglass Worker column. */
+  worker: z.string(),
+  /** Worksite / client label, shown in the Fieldglass Site column. */
+  site: z.string(),
+  st: z.number().nonnegative(),
+  ot: z.number().nonnegative(),
+  dt: z.number().nonnegative(),
+  others: z.number().nonnegative(),
+  nb: z.number().nonnegative(),
+  total: z.number().nonnegative(),
+  /** READY = all of this worker's week is approved; PENDING = some awaits review. */
+  status: TimesheetRowStatusSchema,
+});
+export type TimesheetRow = z.infer<typeof TimesheetRowSchema>;
+
+export const TimesheetWeekResponseSchema = z.object({
+  /** Saturday that starts the week, YYYY-MM-DD (store-local). */
+  weekStart: z.string(),
+  /** Friday that ends the week, YYYY-MM-DD (store-local) — the Fieldglass "End". */
+  weekEndIso: z.string(),
+  /** Same Friday, MM/DD/YYYY for display/paste. */
+  weekEnding: z.string(),
+  rows: z.array(TimesheetRowSchema),
+  /** Approved rows total; how many worked hours across the week. */
+  totalHours: z.number().nonnegative(),
+  /** COMPLETED-but-unapproved entries in the week — the sheet is provisional. */
+  pendingCount: z.number().int().nonnegative(),
+  timeZone: z.string(),
+  generatedAt: z.string(),
+});
+export type TimesheetWeekResponse = z.infer<typeof TimesheetWeekResponseSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Scheduling — Phase 7

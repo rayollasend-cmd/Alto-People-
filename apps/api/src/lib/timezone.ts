@@ -114,6 +114,28 @@ export function formatDateInZone(date: Date, timeZone: string): string {
   }).format(date);
 }
 
+// ISO calendar-date formatters (en-CA renders YYYY-MM-DD), cached per zone.
+const isoDateCache = new Map<string, Intl.DateTimeFormat>();
+
+/**
+ * Store-local calendar date of a UTC instant as "YYYY-MM-DD". Used to bucket
+ * time entries into a local week (a 9pm-Eastern punch must land on its local
+ * day, not the next UTC day). en-CA is the locale that renders ISO order.
+ */
+export function localDateKey(date: Date, timeZone: string): string {
+  let fmt = isoDateCache.get(timeZone);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    isoDateCache.set(timeZone, fmt);
+  }
+  return fmt.format(date);
+}
+
 /** "9:00 AM" — store-local time of day. */
 export function formatTimeInZone(date: Date, timeZone: string): string {
   return displayFormatter(timeZone, {
