@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  CalendarClock,
   ChevronLeft,
   ChevronRight,
   ClipboardCopy,
@@ -101,7 +102,18 @@ export function TimesheetsView() {
   const [detail, setDetail] = useState<TimesheetAssociateDetailResponse | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
+  const [showSchedule, setShowSchedule] = useState(false);
+
   const weekEnd = useMemo(() => addDays(weekStart, 6), [weekStart]);
+
+  // No-show (scheduled but zero worked) or a delta of 2h+ either way.
+  const scheduleFlags = useMemo(
+    () =>
+      (data?.scheduleComparison ?? []).filter(
+        (s) => (s.scheduledHours > 0 && s.actualHours === 0) || Math.abs(s.delta) >= 2,
+      ),
+    [data],
+  );
 
   const openDetail = useCallback(
     async (associateId: string) => {
@@ -244,6 +256,21 @@ export function TimesheetsView() {
         </Button>
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          <Button
+            variant={showSchedule ? 'secondary' : 'ghost'}
+            size="sm"
+            onClick={() => setShowSchedule((v) => !v)}
+            disabled={!data || data.scheduleComparison.length === 0}
+            title="Compare published schedule vs hours actually worked"
+          >
+            <CalendarClock className="h-3.5 w-3.5" />
+            Scheduled vs actual
+            {scheduleFlags.length > 0 && (
+              <span className="ml-1 rounded-full bg-gold/20 px-1.5 text-[11px] text-gold">
+                {scheduleFlags.length}
+              </span>
+            )}
+          </Button>
           <Button variant="ghost" size="sm" onClick={() => void load()} loading={loading}>
             <RefreshCw className="h-3.5 w-3.5" />
             Refresh
@@ -387,6 +414,67 @@ export function TimesheetsView() {
           </Table>
         </CardContent>
       </Card>
+
+      {showSchedule && data && data.scheduleComparison.length > 0 && (
+        <Card>
+          <CardContent className="p-0">
+            <div className="flex items-center gap-2 border-b border-navy-secondary p-3 text-sm font-medium text-white">
+              <CalendarClock className="h-4 w-4 text-gold" />
+              Scheduled vs actual
+              <span className="text-xs font-normal text-silver/60">
+                (published assigned shifts vs approved hours worked)
+              </span>
+            </div>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Worker</TableHead>
+                    <TableHead className="text-right">Scheduled</TableHead>
+                    <TableHead className="text-right">Actual</TableHead>
+                    <TableHead className="text-right">Δ</TableHead>
+                    <TableHead>Flag</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.scheduleComparison.map((s) => {
+                    const noShow = s.scheduledHours > 0 && s.actualHours === 0;
+                    const notable = Math.abs(s.delta) >= 2;
+                    return (
+                      <TableRow key={s.associateId}>
+                        <TableCell className="font-medium text-white">{s.worker}</TableCell>
+                        <TableCell className="text-right tabular-nums text-silver">
+                          {s.scheduledHours.toFixed(2)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-silver">
+                          {s.actualHours.toFixed(2)}
+                        </TableCell>
+                        <TableCell
+                          className={`text-right tabular-nums ${notable ? 'font-semibold text-gold' : 'text-silver/70'}`}
+                        >
+                          {s.delta > 0 ? '+' : ''}
+                          {s.delta.toFixed(2)}
+                        </TableCell>
+                        <TableCell>
+                          {noShow ? (
+                            <Badge variant="destructive">No-show</Badge>
+                          ) : notable ? (
+                            <Badge variant="pending">
+                              {s.delta > 0 ? 'Over' : 'Under'}
+                            </Badge>
+                          ) : (
+                            <span className="text-silver/40">—</span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {data && rows.length > 0 && (
         <p className="text-xs text-silver/70">

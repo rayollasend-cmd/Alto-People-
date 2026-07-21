@@ -1251,6 +1251,18 @@ export const TimesheetIssueSchema = z.object({
 });
 export type TimesheetIssue = z.infer<typeof TimesheetIssueSchema>;
 
+/* Scheduled-vs-actual — published assigned-shift hours next to hours actually
+ * worked, so no-shows and big overages surface before they hit the bill. */
+export const TimesheetScheduleRowSchema = z.object({
+  associateId: z.string(),
+  worker: z.string(),
+  scheduledHours: z.number().nonnegative(),
+  actualHours: z.number().nonnegative(),
+  /** actualHours − scheduledHours (negative = under-worked / no-show). */
+  delta: z.number(),
+});
+export type TimesheetScheduleRow = z.infer<typeof TimesheetScheduleRowSchema>;
+
 export const TimesheetWeekResponseSchema = z.object({
   /** Saturday that starts the week, YYYY-MM-DD (store-local). */
   weekStart: z.string(),
@@ -1265,6 +1277,8 @@ export const TimesheetWeekResponseSchema = z.object({
   pendingCount: z.number().int().nonnegative(),
   /** Pre-file problems (missing clock-out, pending approval, over-hours). */
   issues: z.array(TimesheetIssueSchema),
+  /** Published-schedule vs actual-worked hours per worker (union of both). */
+  scheduleComparison: z.array(TimesheetScheduleRowSchema),
   timeZone: z.string(),
   generatedAt: z.string(),
 });

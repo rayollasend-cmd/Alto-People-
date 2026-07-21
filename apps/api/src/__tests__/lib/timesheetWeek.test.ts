@@ -3,10 +3,12 @@ import {
   saturdayWeek,
   aggregateTimesheetRows,
   buildAssociateDays,
+  buildScheduleComparison,
   computeTimesheetIssues,
   toUsDate,
   type TimesheetSourceEntry,
 } from '../../lib/timesheetWeek.js';
+import type { TimesheetRow } from '@alto-people/shared';
 
 const TZ = 'America/New_York';
 
@@ -218,6 +220,32 @@ describe('aggregateTimesheetRows', () => {
     expect(issues[0].kind).toBe('MISSING_CLOCKOUT');
     expect(issues.find((i) => i.kind === 'MISSING_CLOCKOUT')?.worker).toBe('Ramirez, Ana');
     expect(issues.find((i) => i.kind === 'OVER_HOURS')?.worker).toBe('Doe, Big');
+  });
+
+  it('buildScheduleComparison unions scheduled + actual, flagging a no-show', () => {
+    const row = (over: Partial<TimesheetRow> & Pick<TimesheetRow, 'associateId' | 'worker' | 'total'>): TimesheetRow => ({
+      st: 0, ot: 0, dt: 0, others: over.total, nb: 0, site: '—', status: 'READY', ...over,
+    });
+    const rows: TimesheetRow[] = [
+      row({ associateId: 'a1', worker: 'Nelson, Aaliyah', total: 40 }), // worked, matches sched
+      row({ associateId: 'a3', worker: 'Wright, Jayda', total: 12 }), // worked unscheduled
+    ];
+    const scheduled = new Map([
+      ['a1', { hours: 40, worker: 'Nelson, Aaliyah' }],
+      ['a2', { hours: 32, worker: 'Ramirez, Ana' }], // scheduled, never worked → no-show
+    ]);
+
+    const cmp = buildScheduleComparison(rows, scheduled);
+    // Sorted by worker: Nelson, Ramirez, Wright.
+    expect(cmp.map((c) => c.worker)).toEqual(['Nelson, Aaliyah', 'Ramirez, Ana', 'Wright, Jayda']);
+    const ana = cmp.find((c) => c.associateId === 'a2')!;
+    expect(ana.scheduledHours).toBe(32);
+    expect(ana.actualHours).toBe(0);
+    expect(ana.delta).toBe(-32); // no-show
+    const jayda = cmp.find((c) => c.associateId === 'a3')!;
+    expect(jayda.scheduledHours).toBe(0);
+    expect(jayda.delta).toBe(12); // worked unscheduled
+    expect(cmp.find((c) => c.associateId === 'a1')!.delta).toBe(0); // scheduled == actual
   });
 
   it('separates the same associate at different clients into two rows', () => {
