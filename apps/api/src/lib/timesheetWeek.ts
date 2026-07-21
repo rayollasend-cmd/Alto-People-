@@ -17,10 +17,12 @@
  */
 import type { Prisma, PrismaClient } from '@prisma/client';
 import type {
+  TimesheetAssociateDetailResponse,
+  TimesheetDay,
   TimesheetRow,
   TimesheetWeekResponse,
 } from '@alto-people/shared';
-import { localDateKey, DEFAULT_TIMEZONE } from './timezone.js';
+import { localDateKey, formatTimeInZone, DEFAULT_TIMEZONE } from './timezone.js';
 import { netWorkedMinutes, type BreakFacts } from './timeAnomalies.js';
 import { round2 } from './payroll.js';
 
@@ -250,6 +252,199 @@ export async function buildTimesheetWeek(
     weekEnding: toUsDate(week.weekEnd),
     rows,
     totalHours,
+    pendingCount,
+    timeZone,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+const WEEKDAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/** "1h", "45m", or "1h 30m". */
+function formatDuration(totalMinutes: number): string {
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  if (h > 0 && m > 0) return `${h}h ${m}m`;
+  if (h > 0) return `${h}h`;
+  return `${m}m`;
+}
+
+/**
+ * The Fieldglass "Time in / time out" grid for one associate: a cell per day
+ * (Sat→Fri) with the day's clock-in (earliest), meal breaks, clock-out
+ * (latest), and net hours. Buckets by the local clock-in day so an overnight
+ * shift (in 10pm Sat, out 7am Sun) sits under Saturday — matching Fieldglass.
+ * Pure and unit-testable.
+ */
+export function buildAssociateDays(
+  entries: TimesheetSourceEntry[],
+  dateKeys: string[],
+  timeZone: string,
+): { days: TimesheetDay[]; totalHours: number } {
+  const byDay = new Map<string, TimesheetSourceEntry[]>();
+  for (const e of entries) {
+    if (e.status !== 'APPROVED' || !e.clockOutAt) continue;
+    const key = localDateKey(e.clockInAt, timeZone);
+    const arr = byDay.get(key) ?? [];
+    arr.push(e);
+    byDay.set(key, arr);
+  }
+
+  let totalHours = 0;
+  const days = dateKeys.map((key) => {
+    const anchor = new Date(`${key}T12:00:00Z`);
+    const weekday = WEEKDAY_ABBR[anchor.getUTCDay()];
+    const monthDay = `${anchor.getUTCMonth() + 1}/${anchor.getUTCDate()}`;
+    const dayEntries = byDay.get(key) ?? [];
+
+    let netMin = 0;
+    let timeInAt: Date | null = null;
+    let timeOutAt: Date | null = null;
+    const breaks: string[] = [];
+    for (const e of dayEntries) {
+      netMin += netWorkedMinutes(
+        { clockInAt: e.clockInAt, clockOutAt: e.clockOutAt },
+        e.breaks,
+      );
+      if (!timeInAt || e.clockInAt < timeInAt) timeInAt = e.clockInAt;
+      if (e.clockOutAt && (!timeOutAt || e.clockOutAt > timeOutAt)) {
+        timeOutAt = e.clockOutAt;
+      }
+      for (const b of e.breaks) {
+        const start = formatTimeInZone(b.startedAt, timeZone);
+        if (b.endedAt) {
+          const mins = Math.round((b.endedAt.getTime() - b.startedAt.getTime()) / 60000);
+          breaks.push(`${start} – ${formatTimeInZone(b.endedAt, timeZone)} (${formatDuration(mins)})`);
+        } else {
+          breaks.push(`${start} – open`);
+        }
+      }
+    }
+
+    const netHours = round2(netMin / 60);
+    totalHours += netHours;
+    return {
+      date: key,
+      weekday,
+      monthDay,
+      timeIn: timeInAt ? formatTimeInZone(timeInAt, timeZone) : null,
+      timeOut: timeOutAt ? formatTimeInZone(timeOutAt, timeZone) : null,
+      breaks,
+      netHours,
+    };
+  });
+
+  return { days, totalHours: round2(totalHours) };
+}
+
+/**
+ * DB-backed per-associate detail for one Sat→Fri week — the drill-down behind
+ * a worker row on the Timesheets grid. Mirrors the Fieldglass individual sheet
+ * header (Worker / Period / Site) plus the day-by-day punch grid.
+ */
+export async function buildAssociateTimesheetDetail(
+  db: Pick<PrismaClient, 'timeEntry' | 'client' | 'associate'>,
+  input: {
+    associateId: string;
+    weekStart: Date;
+    clientId?: string;
+    scopeWhere?: Prisma.TimeEntryWhereInput;
+  },
+  timeZone: string = DEFAULT_TIMEZONE,
+): Promise<TimesheetAssociateDetailResponse> {
+  const week = saturdayWeek(input.weekStart, timeZone);
+  const dateKeySet = new Set(week.dateKeys);
+
+  const windowStart = new Date(`${week.dateKeys[0]}T00:00:00Z`);
+  windowStart.setUTCDate(windowStart.getUTCDate() - 1);
+  const windowEnd = new Date(`${week.dateKeys[6]}T00:00:00Z`);
+  windowEnd.setUTCDate(windowEnd.getUTCDate() + 2);
+
+  const raw = await db.timeEntry.findMany({
+    where: {
+      ...(input.scopeWhere ?? {}),
+      associateId: input.associateId,
+      status: { in: ['APPROVED', 'COMPLETED'] },
+      clockInAt: { gte: windowStart, lt: windowEnd },
+      ...(input.clientId ? { clientId: input.clientId } : {}),
+    },
+    select: {
+      associateId: true,
+      clientId: true,
+      clockInAt: true,
+      clockOutAt: true,
+      status: true,
+      associate: { select: { firstName: true, lastName: true } },
+      location: { select: { name: true } },
+      breaks: { select: { type: true, startedAt: true, endedAt: true } },
+    },
+  });
+
+  const clientIds = [
+    ...new Set(raw.map((e) => e.clientId).filter((id): id is string => !!id)),
+  ];
+  const clientSiteById = new Map<string, { name: string; fieldglass: string | null }>();
+  if (clientIds.length > 0) {
+    const clients = await db.client.findMany({
+      where: { id: { in: clientIds } },
+      select: { id: true, name: true, fieldglassSiteName: true },
+    });
+    for (const c of clients) {
+      clientSiteById.set(c.id, { name: c.name, fieldglass: c.fieldglassSiteName });
+    }
+  }
+
+  const entries: TimesheetSourceEntry[] = raw
+    .filter((e) => dateKeySet.has(localDateKey(e.clockInAt, timeZone)))
+    .map((e) => {
+      const client = e.clientId ? clientSiteById.get(e.clientId) : undefined;
+      return {
+        associateId: e.associateId,
+        firstName: e.associate.firstName,
+        lastName: e.associate.lastName,
+        clientId: e.clientId,
+        site: client?.fieldglass ?? e.location?.name ?? client?.name ?? null,
+        clockInAt: e.clockInAt,
+        clockOutAt: e.clockOutAt,
+        status: e.status,
+        breaks: e.breaks.map((b) => ({
+          type: b.type as BreakFacts['type'],
+          startedAt: b.startedAt,
+          endedAt: b.endedAt,
+        })),
+      };
+    });
+
+  // Worker name + site: from the entries if present, else fall back to the
+  // associate record (drawer opened for a worker with no in-week entries).
+  let worker = '';
+  let site = '—';
+  const first = entries[0];
+  if (first) {
+    worker = `${first.lastName}, ${first.firstName}`.trim();
+    site = first.site ?? '—';
+  } else {
+    const a = await db.associate.findUnique({
+      where: { id: input.associateId },
+      select: { firstName: true, lastName: true },
+    });
+    if (a) worker = `${a.lastName}, ${a.firstName}`.trim();
+  }
+
+  const { days, totalHours } = buildAssociateDays(entries, week.dateKeys, timeZone);
+  const pendingCount = entries.filter((e) => e.status === 'COMPLETED').length;
+
+  return {
+    associateId: input.associateId,
+    worker,
+    site,
+    weekStart: week.weekStart,
+    weekEndIso: week.weekEnd,
+    weekEnding: toUsDate(week.weekEnd),
+    periodLabel: `${toUsDate(week.weekStart)} to ${toUsDate(week.weekEnd)}`,
+    days,
+    totalHours,
+    status: pendingCount > 0 ? 'PENDING' : 'READY',
     pendingCount,
     timeZone,
     generatedAt: new Date().toISOString(),

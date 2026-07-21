@@ -15,6 +15,7 @@ import {
   TimeEntryListResponseSchema,
   TimeExportInputSchema,
   TimesheetWeekInputSchema,
+  TimesheetAssociateDetailInputSchema,
   TimeRejectInputSchema,
   type ActiveDashboardEntry,
   type ActiveTimeEntryResponse,
@@ -59,7 +60,10 @@ import { aggregatePayrollProjection } from '../lib/payrollAggregator.js';
 import { renderPayrollSheetPdf } from '../lib/payrollSheetPdf.js';
 import { renderPayrollSheetXlsx } from '../lib/payrollSheetXlsx.js';
 import { listPayPeriods } from '../lib/payPeriods.js';
-import { buildTimesheetWeek } from '../lib/timesheetWeek.js';
+import {
+  buildTimesheetWeek,
+  buildAssociateTimesheetDetail,
+} from '../lib/timesheetWeek.js';
 import { renderTimesheetXlsx, timesheetFilename } from '../lib/timesheetXlsx.js';
 
 export const timeRouter = Router();
@@ -2376,6 +2380,31 @@ timeRouter.post('/admin/timesheets.xlsx', MANAGE, async (req, res, next) => {
       `attachment; filename="${timesheetFilename(result.weekEndIso)}"`,
     );
     res.send(xlsx);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /time/admin/timesheets/associate
+ * Body: { associateId, weekStart: ISO, clientId? }
+ *
+ * The Fieldglass individual-timesheet drill-down: one associate's Sat→Fri
+ * week as a day-by-day Time In / Meal Break / Time Out / Total grid.
+ */
+timeRouter.post('/admin/timesheets/associate', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = TimesheetAssociateDetailInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const result = await buildAssociateTimesheetDetail(prisma, {
+      associateId: parsed.data.associateId,
+      weekStart: new Date(parsed.data.weekStart),
+      clientId: parsed.data.clientId,
+      scopeWhere: scopeTimeEntries(req.user!),
+    });
+    res.json(result);
   } catch (err) {
     next(err);
   }

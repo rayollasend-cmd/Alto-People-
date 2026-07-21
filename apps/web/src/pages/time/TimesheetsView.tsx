@@ -8,8 +8,15 @@ import {
   RefreshCw,
   CheckCircle2,
 } from 'lucide-react';
-import type { TimesheetWeekResponse } from '@alto-people/shared';
-import { getTimesheetWeek, exportTimesheetXlsx } from '@/lib/timeApi';
+import type {
+  TimesheetWeekResponse,
+  TimesheetAssociateDetailResponse,
+} from '@alto-people/shared';
+import {
+  getTimesheetWeek,
+  exportTimesheetXlsx,
+  getAssociateTimesheetDetail,
+} from '@/lib/timeApi';
 import { upsertAttestation } from '@/lib/complianceScorecardApi';
 import { useAuth } from '@/lib/auth';
 import { toast } from 'sonner';
@@ -19,8 +26,14 @@ import {
   Button,
   Card,
   CardContent,
+  Drawer,
+  DrawerBody,
+  DrawerDescription,
+  DrawerHeader,
+  DrawerTitle,
   EmptyState,
   PageHeader,
+  Skeleton,
   SkeletonRows,
   Table,
   TableBody,
@@ -74,7 +87,33 @@ export function TimesheetsView() {
   const [downloading, setDownloading] = useState(false);
   const [filing, setFiling] = useState(false);
 
+  // Fieldglass individual-timesheet drill-down.
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detail, setDetail] = useState<TimesheetAssociateDetailResponse | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
   const weekEnd = useMemo(() => addDays(weekStart, 6), [weekStart]);
+
+  const openDetail = useCallback(
+    async (associateId: string) => {
+      setDetailOpen(true);
+      setDetail(null);
+      setDetailLoading(true);
+      try {
+        const res = await getAssociateTimesheetDetail({
+          associateId,
+          weekStart: weekStart.toISOString(),
+        });
+        setDetail(res);
+      } catch (err) {
+        toast.error(err instanceof ApiError ? err.message : 'Could not load the timesheet.');
+        setDetailOpen(false);
+      } finally {
+        setDetailLoading(false);
+      }
+    },
+    [weekStart],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -295,7 +334,16 @@ export function TimesheetsView() {
                         the columns aligned with the Fieldglass list for eyeballing. */}
                     <TableCell className="text-silver/50">—</TableCell>
                     <TableCell className="text-right tabular-nums text-silver/60">0</TableCell>
-                    <TableCell className="font-medium text-white">{r.worker}</TableCell>
+                    <TableCell className="font-medium">
+                      <button
+                        type="button"
+                        onClick={() => void openDetail(r.associateId)}
+                        className="text-left text-gold hover:underline focus:underline focus:outline-none"
+                        title="Open this worker's daily timesheet"
+                      >
+                        {r.worker}
+                      </button>
+                    </TableCell>
                     <TableCell className="text-silver">{r.site}</TableCell>
                     <TableCell className="tabular-nums text-silver">{data?.weekEnding}</TableCell>
                     <TableCell className="text-right tabular-nums text-silver">{hoursCell(r.st)}</TableCell>
@@ -319,6 +367,122 @@ export function TimesheetsView() {
           &ldquo;Others&rdquo; per the SOW.
         </p>
       )}
+
+      {/* Fieldglass individual-timesheet drill-down */}
+      <Drawer
+        open={detailOpen}
+        onOpenChange={(o) => !o && setDetailOpen(false)}
+        width="max-w-3xl"
+      >
+        <DrawerHeader>
+          <DrawerTitle>{detail?.worker ?? 'Timesheet'}</DrawerTitle>
+          <DrawerDescription>
+            {detail ? `Period ${detail.periodLabel} · ${detail.site}` : 'Loading…'}
+          </DrawerDescription>
+        </DrawerHeader>
+        <DrawerBody>
+          {detailLoading || !detail ? (
+            <div className="space-y-3">
+              <Skeleton className="h-6 w-48" />
+              <Skeleton className="h-40 w-full" />
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+                <span>
+                  <span className="text-silver/60">Status: </span>
+                  <Badge variant={detail.status === 'PENDING' ? 'pending' : 'success'}>
+                    {detail.status === 'PENDING' ? 'Pending Approval' : 'Ready to submit'}
+                  </Badge>
+                </span>
+                <span>
+                  <span className="text-silver/60">Total worked: </span>
+                  <span className="font-semibold text-white tabular-nums">
+                    {detail.totalHours.toFixed(2)}h
+                  </span>
+                </span>
+              </div>
+
+              {detail.pendingCount > 0 && (
+                <div className="flex items-start gap-2 rounded-md border border-gold/40 bg-gold/10 p-2.5 text-xs text-gold">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    {detail.pendingCount}{' '}
+                    {detail.pendingCount === 1 ? 'entry is' : 'entries are'} still pending approval
+                    and excluded from the totals below.
+                  </span>
+                </div>
+              )}
+
+              <div className="overflow-x-auto rounded-md border border-navy-secondary">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-navy-secondary/40">
+                      <th className="p-2 text-left font-medium text-silver/70 whitespace-nowrap">
+                        Time in / time out
+                      </th>
+                      {detail.days.map((d) => (
+                        <th key={d.date} className="p-2 text-center whitespace-nowrap">
+                          <div className="font-semibold text-white">{d.weekday}</div>
+                          <div className="text-[11px] tabular-nums text-silver/60">{d.monthDay}</div>
+                        </th>
+                      ))}
+                      <th className="p-2 text-center font-semibold text-white">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-t border-navy-secondary">
+                      <td className="p-2 text-silver/70">Time In</td>
+                      {detail.days.map((d) => (
+                        <td key={d.date} className="p-2 text-center tabular-nums text-silver whitespace-nowrap">
+                          {d.timeIn ?? '—'}
+                        </td>
+                      ))}
+                      <td />
+                    </tr>
+                    <tr className="border-t border-navy-secondary">
+                      <td className="p-2 text-silver/70">Meal Break</td>
+                      {detail.days.map((d) => (
+                        <td key={d.date} className="p-2 text-center text-[11px] text-silver/80 whitespace-nowrap">
+                          {d.breaks.length > 0
+                            ? d.breaks.map((b, i) => <div key={i}>{b}</div>)
+                            : '—'}
+                        </td>
+                      ))}
+                      <td />
+                    </tr>
+                    <tr className="border-t border-navy-secondary">
+                      <td className="p-2 text-silver/70">Time Out</td>
+                      {detail.days.map((d) => (
+                        <td key={d.date} className="p-2 text-center tabular-nums text-silver whitespace-nowrap">
+                          {d.timeOut ?? '—'}
+                        </td>
+                      ))}
+                      <td />
+                    </tr>
+                    <tr className="border-t border-navy-secondary bg-navy-secondary/30">
+                      <td className="p-2 font-medium text-white">Total Worked</td>
+                      {detail.days.map((d) => (
+                        <td key={d.date} className="p-2 text-center tabular-nums font-medium text-white">
+                          {d.netHours.toFixed(2)}
+                        </td>
+                      ))}
+                      <td className="p-2 text-center tabular-nums font-semibold text-white">
+                        {detail.totalHours.toFixed(2)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <p className="text-xs text-silver/60">
+                Times shown in {detail.timeZone}. Overnight shifts appear under their clock-in day.
+                Meal breaks are unpaid and excluded from Total Worked.
+              </p>
+            </div>
+          )}
+        </DrawerBody>
+      </Drawer>
     </div>
   );
 }

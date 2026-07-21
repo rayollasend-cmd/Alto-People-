@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   saturdayWeek,
   aggregateTimesheetRows,
+  buildAssociateDays,
   toUsDate,
   type TimesheetSourceEntry,
 } from '../../lib/timesheetWeek.js';
@@ -140,6 +141,40 @@ describe('aggregateTimesheetRows', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].status).toBe('PENDING');
     expect(rows[0].others).toBe(8); // only the approved day counts
+  });
+
+  it('buildAssociateDays lays out an overnight shift under its clock-in day', () => {
+    // Overnight: in Sat 7/11 10pm ET, meal 3–4am, out Sun 7/12 7am ET → 8h net,
+    // all attributed to Saturday (the clock-in day), matching Fieldglass.
+    const { days, totalHours } = buildAssociateDays(
+      [
+        entry({
+          clockInAt: new Date('2026-07-12T02:00:00Z'), // Sat 10pm ET
+          clockOutAt: new Date('2026-07-12T11:00:00Z'), // Sun 7am ET
+          breaks: [
+            {
+              type: 'MEAL',
+              startedAt: new Date('2026-07-12T07:00:00Z'), // 3am ET
+              endedAt: new Date('2026-07-12T08:00:00Z'), // 4am ET
+            },
+          ],
+        }),
+      ],
+      WEEK.dateKeys,
+      TZ,
+    );
+
+    const sat = days[0];
+    expect(sat.weekday).toBe('Sat');
+    expect(sat.monthDay).toBe('7/11');
+    expect(sat.timeIn).toBe('10:00 PM');
+    expect(sat.timeOut).toBe('7:00 AM');
+    expect(sat.breaks).toEqual(['3:00 AM – 4:00 AM (1h)']);
+    expect(sat.netHours).toBe(8);
+    // Sunday (the clock-out day) shows nothing — the shift belongs to Saturday.
+    expect(days[1].timeIn).toBeNull();
+    expect(days[1].netHours).toBe(0);
+    expect(totalHours).toBe(8);
   });
 
   it('separates the same associate at different clients into two rows', () => {
