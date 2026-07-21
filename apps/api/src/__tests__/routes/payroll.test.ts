@@ -41,6 +41,19 @@ async function seedApprovedPeriod(opts: { rate?: number } = {}) {
   const associate = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
   const periodStart = new Date('2026-04-13T00:00:00.000Z');
 
+  // The associate's individual hourly rate lives on an open HOURLY
+  // compensation record — that's what payroll pays (the shift rate is no
+  // longer consulted).
+  await prisma.compensationRecord.create({
+    data: {
+      associateId: associate.id,
+      effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+      payType: 'HOURLY',
+      amount: rate,
+      reason: 'HIRE',
+    },
+  });
+
   // Two approved entries totaling 5h
   await prisma.timeEntry.create({
     data: {

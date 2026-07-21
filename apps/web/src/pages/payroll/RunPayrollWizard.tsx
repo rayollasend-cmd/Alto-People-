@@ -388,7 +388,10 @@ function Step1(props: {
           )}
         </Field>
       </div>
-      <Field label="Default hourly rate (used when a shift has none)">
+      <Field
+        label="Default hourly rate"
+        hint="Falls back to this only for associates without an hourly rate set on their Compensation record. Everyone with a rate on file is paid that rate."
+      >
         {(p) => (
           <Input
             type="number"

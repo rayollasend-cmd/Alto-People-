@@ -14,7 +14,6 @@
 
 import type { BenefitsPlanKind, Prisma, PrismaClient } from '@prisma/client';
 import {
-  pickHourlyRate,
   round2,
   splitWeeklyOvertime,
   sumApprovedHours,
@@ -315,6 +314,29 @@ export async function aggregatePayrollProjection(
     }
   }
 
+  // The associate's individual hourly rate comes from their open HOURLY
+  // compensation record (amount = $/hour) — NOT the shift rate. This is
+  // the contracted wage payroll should pay; the shift's rate was an MVP
+  // stand-in. Associates with no HOURLY comp record fall back to
+  // `defaultRate` (the wizard's editable default, 15), and the rate can
+  // be corrected by editing their Compensation record.
+  const hourlyComps = await tx.compensationRecord.findMany({
+    where: {
+      payType: 'HOURLY',
+      effectiveTo: null,
+      effectiveFrom: { lte: periodEndExclusive },
+      associate: { deletedAt: null },
+    },
+    orderBy: { effectiveFrom: 'desc' },
+    select: { associateId: true, amount: true },
+  });
+  const hourlyRateByAssociate = new Map<string, number>();
+  for (const c of hourlyComps) {
+    if (!hourlyRateByAssociate.has(c.associateId)) {
+      hourlyRateByAssociate.set(c.associateId, Number(c.amount));
+    }
+  }
+
   const addOnsByAssociate = new Map<string, NonNullable<AggregatorInput['addOns']>>();
   for (const a of input.addOns ?? []) {
     const arr = addOnsByAssociate.get(a.associateId) ?? [];
@@ -449,19 +471,14 @@ export async function aggregatePayrollProjection(
     let regularPay = 0;
     let overtimePay = 0;
     if (annualSalary === undefined && hoursWorked > 0) {
-      const overrideRate = input.hourlyRateOverride?.get(associateId);
-      if (overrideRate !== undefined) {
-        hourlyRate = overrideRate;
-      } else {
-        const shifts = await tx.shift.findMany({
-          where: {
-            assignedAssociateId: associateId,
-            startsAt: { gte: periodStart, lt: periodEndExclusive },
-          },
-          select: { hourlyRate: true },
-        });
-        hourlyRate = pickHourlyRate(shifts, defaultRate);
-      }
+      // Rate resolution: an explicit caller override wins (the payroll
+      // sheet passes one), then the associate's individual HOURLY comp
+      // record, then the editable default (15). The shift rate is no
+      // longer consulted — pay follows the person's contracted wage.
+      hourlyRate =
+        input.hourlyRateOverride?.get(associateId) ??
+        hourlyRateByAssociate.get(associateId) ??
+        defaultRate;
       otSplit = splitWeeklyOvertime(group);
       regularPay = round2(otSplit.regularHours * hourlyRate);
       overtimePay = round2(otSplit.overtimeHours * hourlyRate * 1.5);
