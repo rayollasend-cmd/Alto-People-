@@ -24,9 +24,10 @@
  * Callers should `void sendPaystubEmail(...)` and never await the result —
  * a Resend hiccup must not roll back a successful disbursement.
  */
-import { Prisma, type PrismaClient } from '@prisma/client';
+import { type PrismaClient } from '@prisma/client';
 import { send } from './notifications.js';
-import { renderPaystubPdf, type PaystubData } from './paystub.js';
+import { renderPaystubPdf } from './paystub.js';
+import { buildPaystubDataFromItem, paystubItemInclude } from './paystubData.js';
 import { env } from '../config/env.js';
 
 type PrismaSlice = Pick<
@@ -34,16 +35,7 @@ type PrismaSlice = Pick<
   'payrollItem' | 'notification' | 'user'
 >;
 
-const ITEM_INCLUDE = {
-  payrollRun: { include: { client: { select: { name: true } } } },
-  associate: true,
-} satisfies Prisma.PayrollItemInclude;
-
-type LoadedItem = Prisma.PayrollItemGetPayload<{ include: typeof ITEM_INCLUDE }>;
-
-function ymd(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
+const ITEM_INCLUDE = paystubItemInclude();
 
 function fmtMoney(n: number): string {
   return n.toLocaleString('en-US', {
@@ -51,98 +43,6 @@ function fmtMoney(n: number): string {
     currency: 'USD',
     maximumFractionDigits: 2,
   });
-}
-
-/**
- * Build the PaystubData payload for a fully-loaded PayrollItem. Pure —
- * no DB hits. Mirrors the inline builder in the GET /paystub.pdf route so
- * the on-demand download and the email-on-disburse PDF are byte-identical.
- */
-export function buildPaystubData(
-  item: LoadedItem,
-  issuedAt: Date = new Date(),
-): PaystubData {
-  const stateLabel = item.taxState
-    ? `${item.taxState} state withholding`
-    : 'State withholding';
-
-  const totalEmployeeTax =
-    Math.round(
-      (Number(item.federalWithholding) +
-        Number(item.fica) +
-        Number(item.medicare) +
-        Number(item.stateWithholding)) *
-        100,
-    ) / 100;
-
-  return {
-    company: { name: item.payrollRun.client?.name ?? 'Alto Etho LLC' },
-    associate: {
-      firstName: item.associate.firstName,
-      lastName: item.associate.lastName,
-      email: item.associate.email,
-      addressLine1: item.associate.addressLine1,
-      city: item.associate.city,
-      state: item.associate.state,
-      zip: item.associate.zip,
-    },
-    period: {
-      start: ymd(item.payrollRun.periodStart),
-      end: ymd(item.payrollRun.periodEnd),
-    },
-    earnings: {
-      hours: Number(item.hoursWorked),
-      rate: Number(item.hourlyRate),
-      gross: Number(item.grossPay),
-    },
-    taxes: {
-      federalIncomeTax: Number(item.federalWithholding),
-      socialSecurity: Number(item.fica),
-      medicare: Number(item.medicare),
-      stateIncomeTax: Number(item.stateWithholding),
-      stateLabel,
-    },
-    totals: {
-      totalEmployeeTax,
-      netPay: Number(item.netPay),
-    },
-    ytd: {
-      wages: Number(item.ytdWages),
-      medicareWages: Number(item.ytdMedicareWages),
-    },
-    employer: {
-      fica: Number(item.employerFica),
-      medicare: Number(item.employerMedicare),
-      futa: Number(item.employerFuta),
-      suta: Number(item.employerSuta),
-    },
-    meta: {
-      runId: item.payrollRunId,
-      itemId: item.id,
-      issuedAt: issuedAt.toISOString(),
-    },
-    ...(Number(item.reimbursementsTotal) > 0
-      ? { reimbursements: { total: Number(item.reimbursementsTotal) } }
-      : {}),
-    ...(item.payrollRun.kind === 'AMENDMENT' && item.payrollRun.amendsRunId
-      ? {
-          amendment: {
-            reason: item.payrollRun.amendmentReason ?? '',
-            sourceRunId: item.payrollRun.amendsRunId,
-          },
-        }
-      : {}),
-    ...(item.payrollRun.status === 'CANCELLED' || item.status === 'VOIDED'
-      ? {
-          voided: {
-            voidedAt: (
-              item.payrollRun.cancelledAt ?? item.voidedAt ?? new Date()
-            ).toISOString(),
-            reason: item.payrollRun.cancelReason,
-          },
-        }
-      : {}),
-  };
 }
 
 export interface SendPaystubEmailInput {
@@ -206,7 +106,7 @@ export async function sendPaystubEmail(
       return reasonOnly('no_recipient_email');
     }
 
-    const data = buildPaystubData(item);
+    const data = await buildPaystubDataFromItem(prisma, item);
     const pdf = await renderPaystubPdf(data);
 
     const period = `${data.period.start} → ${data.period.end}`;
