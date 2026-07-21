@@ -14,8 +14,12 @@ test('associate shell is app-shaped: tab bar, dashboard, schedule', async ({ pag
   await page.getByLabel(/password/i).fill('maria-dev-2026!');
   await page.getByRole('button', { name: /sign in/i }).click();
 
-  // Dashboard greets by name once auth + data land.
-  await expect(page.getByText(/hey maria/i)).toBeVisible({ timeout: 20_000 });
+  // Dashboard greets by name once auth + data land. The greeting renders
+  // twice — the large-title hero (h1) and the sticky app-shell header (h2);
+  // target the hero so the match is unambiguous.
+  await expect(
+    page.getByRole('heading', { level: 1, name: /hey maria/i }),
+  ).toBeVisible({ timeout: 20_000 });
 
   // The native-idiom bottom tab bar is the phone nav.
   const tabBar = page.getByRole('navigation', { name: /primary/i });
