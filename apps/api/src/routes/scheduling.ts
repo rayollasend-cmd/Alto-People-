@@ -3465,9 +3465,12 @@ schedulingRouter.post('/templates/:id/apply', MANAGE, async (req, res, next) => 
  * Body: { sourceWeekStart, targetWeekStart, clientId? }
  *
  * Duplicates every non-cancelled shift from the source week into the
- * target week, preserving day-of-week + time-of-day. New shifts land in
- * DRAFT with no assignee — HR re-publishes after review. Idempotency
- * is on the user; calling twice produces duplicates.
+ * target week, preserving day-of-week + time-of-day. By default each copy
+ * also keeps its associate assignment, so the whole roster carries forward
+ * (pass preserveAssignments:false for blank drafts). New shifts always land
+ * in DRAFT — publish-week is still the gate that flips them live and screens
+ * double-bookings. Idempotency is on the user; calling twice produces
+ * duplicates.
  */
 schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
   try {
@@ -3494,28 +3497,43 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
     };
     const sourceShifts = await prisma.shift.findMany({ take: 100, where });
     if (sourceShifts.length === 0) {
-      const empty: CopyWeekResponse = { created: 0, skipped: 0 };
+      const empty: CopyWeekResponse = { created: 0, skipped: 0, assigned: 0 };
       res.json(empty);
       return;
     }
 
     const offsetMs = target.getTime() - source.getTime();
+    // Default to carrying each shift's assignee into the target week so HR
+    // copies the whole roster in one click instead of re-assigning every
+    // shift by hand. Copies stay DRAFT (assigned-but-unpublished), so
+    // associates don't see them until publish-week — which is where
+    // double-bookings are screened.
+    const preserveAssignments = parsed.data.preserveAssignments ?? true;
+    const assignedAt = new Date();
+    let assigned = 0;
     // Phase 131 — preserve the source shift's locationId so copy-week
     // doesn't drop the FK. Source rows always have one (set by the PR
     // 1 backfill and by every writer since).
-    const data = sourceShifts.map((s) => ({
-      clientId: s.clientId,
-      locationId: s.locationId,
-      position: s.position,
-      startsAt: new Date(s.startsAt.getTime() + offsetMs),
-      endsAt: new Date(s.endsAt.getTime() + offsetMs),
-      location: s.location,
-      hourlyRate: s.hourlyRate,
-      payRate: s.payRate,
-      notes: s.notes,
-      status: 'DRAFT' as const,
-      createdById: req.user!.id,
-    }));
+    const data = sourceShifts.map((s) => {
+      const carry = preserveAssignments && s.assignedAssociateId != null;
+      if (carry) assigned += 1;
+      return {
+        clientId: s.clientId,
+        locationId: s.locationId,
+        position: s.position,
+        startsAt: new Date(s.startsAt.getTime() + offsetMs),
+        endsAt: new Date(s.endsAt.getTime() + offsetMs),
+        location: s.location,
+        hourlyRate: s.hourlyRate,
+        payRate: s.payRate,
+        notes: s.notes,
+        status: 'DRAFT' as const,
+        createdById: req.user!.id,
+        ...(carry
+          ? { assignedAssociateId: s.assignedAssociateId, assignedAt }
+          : {}),
+      };
+    });
     const result = await prisma.shift.createMany({ data });
 
     enqueueAudit(
@@ -3530,12 +3548,18 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
           source: source.toISOString(),
           target: target.toISOString(),
           createdCount: result.count,
+          assignedCount: assigned,
+          preserveAssignments,
         },
       },
       'scheduling.copied_week'
     );
 
-    const body: CopyWeekResponse = { created: result.count, skipped: 0 };
+    const body: CopyWeekResponse = {
+      created: result.count,
+      skipped: 0,
+      assigned,
+    };
     res.json(body);
   } catch (err) {
     next(err);
