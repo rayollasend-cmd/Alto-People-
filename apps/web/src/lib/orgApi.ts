@@ -105,6 +105,46 @@ export function revealAssociateSsn(
   });
 }
 
+// ----- HR-facing W-4 view / edit ------------------------------------------
+
+export interface AssociateW4 {
+  employmentType: string;
+  hasSubmission: boolean;
+  hasSsnOnFile: boolean;
+  ssnLast4: string | null;
+  filingStatus: 'SINGLE' | 'MARRIED_FILING_JOINTLY' | 'HEAD_OF_HOUSEHOLD' | null;
+  multipleJobs: boolean;
+  dependentsAmount: number | null;
+  otherIncome: number | null;
+  deductions: number | null;
+  extraWithholding: number | null;
+  signedAt: string | null;
+  updatedAt: string | null;
+}
+
+export function getAssociateW4(associateId: string): Promise<AssociateW4> {
+  return apiFetch(`/org/associates/${associateId}/w4`);
+}
+
+/** Edit an onboarded W-2 employee's W-4 on their behalf (audited). Never
+ *  touches the SSN. Applies from the next payroll run. */
+export function updateAssociateW4(
+  associateId: string,
+  body: {
+    filingStatus: NonNullable<AssociateW4['filingStatus']>;
+    multipleJobs?: boolean;
+    dependentsAmount?: number;
+    otherIncome?: number;
+    deductions?: number;
+    extraWithholding?: number;
+  },
+): Promise<{ ok: boolean; effectiveNote: string }> {
+  return apiFetch(`/org/associates/${associateId}/w4`, {
+    method: 'PATCH',
+    body,
+  });
+}
+
 /**
  * Bulk payroll-provider census export. Streams a CSV of every ACTIVE
  * associate's decrypted SSN + bank details and triggers a browser download.

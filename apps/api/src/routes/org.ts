@@ -12,6 +12,7 @@ import {
   JobProfileListResponseSchema,
   ShiftPositionInputSchema,
   ShiftPositionListResponseSchema,
+  W4FilingStatusSchema,
   type AssociateOrgListResponse,
   type AssociateTransferResponse,
   type CostCenter,
@@ -1065,6 +1066,123 @@ orgRouter.post(
       source,
       number: formatTaxId(plaintext, kind),
     });
+  },
+);
+
+// ----- HR-facing W-4 view / edit ------------------------------------------
+//
+// The associate's W-4 elections are captured at onboarding and editable by
+// the associate via /me/w4. This is the HR side: view the current
+// elections and edit them on behalf of an associate (a called-in change, a
+// correction) without routing through the onboarding application. Never
+// touches the SSN — that's set once at onboarding and only corrected via a
+// full W-4 resubmit. Gated on process:payroll; edits are audited because
+// they change tax withholding.
+
+const HrW4UpdateSchema = z.object({
+  filingStatus: W4FilingStatusSchema,
+  multipleJobs: z.boolean().optional(),
+  dependentsAmount: z.number().nonnegative().max(1_000_000).optional(),
+  otherIncome: z.number().nonnegative().max(10_000_000).optional(),
+  deductions: z.number().nonnegative().max(10_000_000).optional(),
+  extraWithholding: z.number().nonnegative().max(100_000).optional(),
+});
+
+orgRouter.get(
+  '/associates/:id/w4',
+  PAYROLL_OR_HR,
+  async (req: Request, res: Response) => {
+    const associate = await prisma.associate.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, deletedAt: true, employmentType: true, ssnLast4: true },
+    });
+    if (!associate || associate.deletedAt) {
+      throw new HttpError(404, 'not_found', 'Associate not found.');
+    }
+    const w4 = await prisma.w4Submission.findUnique({
+      where: { associateId: associate.id },
+      select: {
+        filingStatus: true,
+        multipleJobs: true,
+        dependentsAmount: true,
+        otherIncome: true,
+        deductions: true,
+        extraWithholding: true,
+        ssnEncrypted: true,
+        signedAt: true,
+        updatedAt: true,
+      },
+    });
+    res.json({
+      employmentType: associate.employmentType,
+      hasSubmission: w4 !== null,
+      hasSsnOnFile: w4?.ssnEncrypted != null,
+      ssnLast4: associate.ssnLast4,
+      filingStatus: w4?.filingStatus ?? null,
+      multipleJobs: w4?.multipleJobs ?? false,
+      dependentsAmount: w4 ? Number(w4.dependentsAmount) : null,
+      otherIncome: w4 ? Number(w4.otherIncome) : null,
+      deductions: w4 ? Number(w4.deductions) : null,
+      extraWithholding: w4 ? Number(w4.extraWithholding) : null,
+      signedAt: w4?.signedAt ? w4.signedAt.toISOString() : null,
+      updatedAt: w4?.updatedAt ? w4.updatedAt.toISOString() : null,
+    });
+  },
+);
+
+orgRouter.patch(
+  '/associates/:id/w4',
+  PAYROLL_OR_HR,
+  async (req: Request, res: Response) => {
+    const input = HrW4UpdateSchema.parse(req.body);
+    const associate = await prisma.associate.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, deletedAt: true, employmentType: true },
+    });
+    if (!associate || associate.deletedAt) {
+      throw new HttpError(404, 'not_found', 'Associate not found.');
+    }
+    if (associate.employmentType !== 'W2_EMPLOYEE') {
+      throw new HttpError(
+        409,
+        'not_w2',
+        'Only W-2 employees have a W-4. Contractors use a W-9 / TIN.',
+      );
+    }
+    const existing = await prisma.w4Submission.findUnique({
+      where: { associateId: associate.id },
+      select: { id: true },
+    });
+    if (!existing) {
+      throw new HttpError(
+        409,
+        'no_w4',
+        'This associate has no W-4 on file yet — it (with the SSN) must be completed during onboarding first.',
+      );
+    }
+    await prisma.w4Submission.update({
+      where: { associateId: associate.id },
+      data: {
+        filingStatus: input.filingStatus,
+        ...(input.multipleJobs !== undefined ? { multipleJobs: input.multipleJobs } : {}),
+        ...(input.dependentsAmount !== undefined ? { dependentsAmount: input.dependentsAmount } : {}),
+        ...(input.otherIncome !== undefined ? { otherIncome: input.otherIncome } : {}),
+        ...(input.deductions !== undefined ? { deductions: input.deductions } : {}),
+        ...(input.extraWithholding !== undefined ? { extraWithholding: input.extraWithholding } : {}),
+        signedAt: new Date(),
+      },
+    });
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'associate.w4_updated_by_hr',
+        entityType: 'Associate',
+        entityId: associate.id,
+        metadata: { fields: Object.keys(input), onBehalf: true },
+      },
+      'org.associate.w4_updated_by_hr',
+    );
+    res.json({ ok: true, effectiveNote: 'Applies from the next payroll run.' });
   },
 );
 
