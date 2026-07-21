@@ -33,6 +33,7 @@ import type {
 import {
   addRunAddOn,
   approvePayrollRun,
+  deletePayrollRun,
   deleteRunAddOn,
   disbursePayrollRun,
   downloadCheckRegister,
@@ -279,6 +280,31 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
       refresh();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Finalize failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onDeleteRun = async () => {
+    if (!selected || busy) return;
+    if (
+      !window.confirm(
+        `Delete this ${selected.status.toLowerCase()} run for ${selected.periodStart} → ${selected.periodEnd}? ` +
+          `Its ${selected.itemCount} paystub(s) will be removed. This can't be undone — but nothing has been ` +
+          `paid out, so you can re-run payroll for the correct period.`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    try {
+      await deletePayrollRun(selected.id);
+      toast.success('Run deleted.');
+      setSelected(null);
+      refresh();
+      refreshUpcoming();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Delete failed.');
     } finally {
       setBusy(false);
     }
@@ -1037,6 +1063,13 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                     Amend
                   </Button>
                 )}
+                {canVoid &&
+                  (selected.status === 'DRAFT' || selected.status === 'FINALIZED') && (
+                    <Button variant="destructive" onClick={onDeleteRun} disabled={busy}>
+                      <Ban className="h-4 w-4" />
+                      Delete run
+                    </Button>
+                  )}
                 {canShowVoidButton && (
                   <Button variant="destructive" onClick={openVoidModal} disabled={busy}>
                     <Ban className="h-4 w-4" />

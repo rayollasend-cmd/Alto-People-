@@ -1096,6 +1096,97 @@ payrollRouter.post('/runs/:id/finalize', PROCESS, async (req, res, next) => {
 });
 
 /**
+ * DELETE /payroll/runs/:id — discard a DRAFT or FINALIZED run that was
+ * created in error (wrong period, wrong scope). Only ever touches a run
+ * that has NOT disbursed: the guard refuses if the run is DISBURSED, has
+ * any DISBURSED item, or carries a disbursedAt stamp — a run that moved
+ * money must be voided/amended, never deleted. Reverses the run-creation
+ * side effects (garnishment withholding, folded reimbursements, consumed
+ * clawbacks) before removing items + the run so no ledger is left
+ * inconsistent.
+ */
+payrollRouter.delete('/runs/:id', VOID, async (req, res, next) => {
+  try {
+    const run = await prisma.payrollRun.findFirst({
+      where: { id: req.params.id, ...scopePayrollRuns(req.user!) },
+      include: { items: { select: { id: true, status: true } } },
+    });
+    if (!run) throw new HttpError(404, 'run_not_found', 'Payroll run not found');
+    if (run.status === 'DISBURSED' || run.disbursedAt !== null) {
+      throw new HttpError(409, 'already_disbursed', 'A disbursed run must be voided, not deleted.');
+    }
+    if (run.status === 'CANCELLED') {
+      throw new HttpError(409, 'already_cancelled', 'This run is already cancelled.');
+    }
+    if (run.items.some((i) => i.status === 'DISBURSED')) {
+      throw new HttpError(409, 'has_disbursed_items', 'Run has disbursed items — void instead of deleting.');
+    }
+
+    await prisma.$transaction(async (tx) => {
+      const itemIds = run.items.map((i) => i.id);
+
+      // Reverse garnishment withholding this run added at creation, and
+      // re-open any garnishment that this run's deduction pushed to
+      // COMPLETED (its cap).
+      const garnDeds = await tx.garnishmentDeduction.findMany({
+        where: { payrollRunId: run.id },
+        select: { garnishmentId: true },
+      });
+      await tx.garnishmentDeduction.deleteMany({ where: { payrollRunId: run.id } });
+      for (const gid of new Set(garnDeds.map((d) => d.garnishmentId))) {
+        const sum = await tx.garnishmentDeduction.aggregate({
+          where: { garnishmentId: gid },
+          _sum: { amount: true },
+        });
+        await tx.garnishment.update({
+          where: { id: gid },
+          data: {
+            amountWithheld: new Prisma.Decimal(Number(sum._sum.amount ?? 0)),
+            status: 'ACTIVE',
+          },
+        });
+      }
+
+      // Un-fold reimbursements: back to SETTLED so a future run pays them.
+      await tx.reimbursement.updateMany({
+        where: { payrollItemId: { in: itemIds } },
+        data: { status: 'SETTLED', payrollItemId: null, paidPayrollRunId: null, paidAt: null },
+      });
+
+      // Release consumed overpayment clawbacks so the next run re-drains.
+      await tx.pendingPayrollDeduction.updateMany({
+        where: { appliedRunId: run.id },
+        data: { appliedRunId: null, appliedItemId: null, appliedAt: null },
+      });
+
+      // Items + their earnings cascade on the run delete, but delete
+      // explicitly for clarity, then the run.
+      await tx.payrollItemEarning.deleteMany({ where: { payrollItemId: { in: itemIds } } });
+      await tx.payrollItem.deleteMany({ where: { payrollRunId: run.id } });
+      await tx.payrollRunAddOn.deleteMany({ where: { payrollRunId: run.id } });
+      await tx.payrollRun.delete({ where: { id: run.id } });
+    }, TX_OPTS);
+
+    await recordPayrollEvent({
+      actorUserId: req.user!.id,
+      action: 'payroll.run_deleted',
+      payrollRunId: run.id,
+      clientId: run.clientId,
+      metadata: {
+        fromStatus: run.status,
+        periodStart: ymd(run.periodStart),
+        periodEnd: ymd(run.periodEnd),
+        itemCount: run.items.length,
+      },
+      req,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * POST /payroll/runs/:id/approve — Tier-3 four-eyes sign-off. The
  * approver must be a different person than the run's creator; the stamp
  * is what the disburse gate checks when PAYROLL_REQUIRE_SECOND_APPROVAL
@@ -2836,8 +2927,19 @@ payrollRouter.get('/me/items', async (req, res, next) => {
       res.json(empty);
       return;
     }
+    // An associate only sees their paystub once it's actually DISBURSED —
+    // when their money has moved. A paystub the worker can see reads as
+    // "you've been paid", so surfacing PENDING items from a DRAFT/
+    // FINALIZED run leaks provisional numbers and lets a wrong or
+    // mis-dated run reach them before HR has disbursed (or caught) it.
+    // Filtering on the ITEM'S status (not the run's) means each associate
+    // sees their own stub the moment their payment succeeds, even if
+    // another associate's item in the same run is still HELD.
     const rows = await prisma.payrollItem.findMany({
-      where: { associateId: user.associateId },
+      where: {
+        associateId: user.associateId,
+        status: 'DISBURSED',
+      },
       orderBy: { createdAt: 'desc' },
       take: 50,
       include: {

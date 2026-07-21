@@ -85,6 +85,12 @@ export function voidPayrollRun(
   });
 }
 
+/** Discard a DRAFT / FINALIZED run created in error. Server refuses once
+ *  anything disbursed — those must be voided. */
+export function deletePayrollRun(id: string): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(`/payroll/runs/${id}`, { method: 'DELETE' });
+}
+
 export interface AmendCorrection {
   associateId: string;
   hoursWorked: number;
