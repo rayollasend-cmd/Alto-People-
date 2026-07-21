@@ -185,6 +185,7 @@ describe('aggregateTimesheetRows', () => {
       status: 'APPROVED',
     });
     const stillIn = entry({
+      associateId: 'a2',
       firstName: 'Ana',
       lastName: 'Ramirez',
       clockInAt: new Date('2026-07-14T13:00:00Z'),
@@ -192,6 +193,7 @@ describe('aggregateTimesheetRows', () => {
       status: 'ACTIVE',
     });
     const pending = entry({
+      associateId: 'a3',
       firstName: 'Jayda',
       lastName: 'Wright',
       clockInAt: new Date('2026-07-15T13:00:00Z'),
