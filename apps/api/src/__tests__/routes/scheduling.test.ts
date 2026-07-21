@@ -705,3 +705,93 @@ describe('GET /scheduling/shifts — range boundary + truncation', () => {
     expect(included.body.shifts).toHaveLength(1);
   });
 });
+
+describe('POST /scheduling/copy-week', () => {
+  // A DST-free window so the source→target offset is exactly 7×24h and clock
+  // times carry over cleanly regardless of the CI machine's timezone.
+  const SUN_SOURCE = new Date('2026-06-07T00:00:00'); // Sunday
+  const SUN_TARGET = new Date('2026-06-14T00:00:00'); // next Sunday
+  const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+  async function seedSourceWeek(clientId: string, associateId: string) {
+    // One assigned shift (Mon) and one open shift (Tue) in the source week.
+    const assigned = await prisma.shift.create({
+      data: {
+        clientId,
+        position: 'Server',
+        startsAt: new Date('2026-06-08T09:00:00'),
+        endsAt: new Date('2026-06-08T17:00:00'),
+        status: 'ASSIGNED',
+        assignedAssociateId: associateId,
+        assignedAt: new Date('2026-06-01T00:00:00'),
+      },
+    });
+    const open = await prisma.shift.create({
+      data: {
+        clientId,
+        position: 'Cook',
+        startsAt: new Date('2026-06-09T09:00:00'),
+        endsAt: new Date('2026-06-09T17:00:00'),
+        status: 'OPEN',
+      },
+    });
+    return { assigned, open };
+  }
+
+  async function targetWeekShifts() {
+    return prisma.shift.findMany({
+      where: { startsAt: { gte: SUN_TARGET, lt: new Date(SUN_TARGET.getTime() + WEEK_MS) } },
+      orderBy: { position: 'asc' },
+    });
+  }
+
+  it('copies the whole week and carries each associate assignment forward as DRAFT', async () => {
+    const client = await createClient();
+    const maria = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    const { assigned } = await seedSourceWeek(client.id, maria.id);
+
+    const res = await a.post('/scheduling/copy-week').send({
+      sourceWeekStart: SUN_SOURCE.toISOString(),
+      targetWeekStart: SUN_TARGET.toISOString(),
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.created).toBe(2);
+    expect(res.body.assigned).toBe(1);
+
+    const copies = await targetWeekShifts();
+    expect(copies).toHaveLength(2);
+    // Every copy is a reviewable draft — associates don't see it until publish.
+    for (const c of copies) expect(c.status).toBe('DRAFT');
+
+    const cook = copies.find((c) => c.position === 'Cook')!;
+    const server = copies.find((c) => c.position === 'Server')!;
+    // The previously-assigned shift keeps Maria; the open one stays unassigned.
+    expect(server.assignedAssociateId).toBe(maria.id);
+    expect(cook.assignedAssociateId).toBeNull();
+    // Same day-of-week + time, one week later.
+    expect(server.startsAt.getTime()).toBe(assigned.startsAt.getTime() + WEEK_MS);
+  });
+
+  it('preserveAssignments:false copies the week as blank, unassigned drafts', async () => {
+    const client = await createClient();
+    const maria = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    await seedSourceWeek(client.id, maria.id);
+
+    const res = await a.post('/scheduling/copy-week').send({
+      sourceWeekStart: SUN_SOURCE.toISOString(),
+      targetWeekStart: SUN_TARGET.toISOString(),
+      preserveAssignments: false,
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.created).toBe(2);
+    expect(res.body.assigned).toBe(0);
+
+    const copies = await targetWeekShifts();
+    expect(copies).toHaveLength(2);
+    for (const c of copies) expect(c.assignedAssociateId).toBeNull();
+  });
+});

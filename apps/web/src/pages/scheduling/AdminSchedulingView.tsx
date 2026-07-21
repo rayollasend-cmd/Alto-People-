@@ -634,18 +634,26 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
 
   const onCopyWeekToNext = async () => {
     if (copyingWeek) return;
-    if (!window.confirm('Copy every non-cancelled shift from this week into next week as drafts?')) return;
+    if (
+      !window.confirm(
+        "Copy every non-cancelled shift from this week into next week — keeping each shift's associate? Copies land as drafts you can review and edit before publishing."
+      )
+    )
+      return;
     setCopyingWeek(true);
     try {
       const target = shiftWeek(weekStart, 1);
       const result = await copyWeek({
         sourceWeekStart: weekStart.toISOString(),
         targetWeekStart: target.toISOString(),
+        preserveAssignments: true,
       });
       toast.success(
         result.created === 0
           ? 'Nothing to copy — this week is empty.'
-          : `Copied ${result.created} shift${result.created === 1 ? '' : 's'} to next week (DRAFT).`
+          : `Copied ${result.created} shift${result.created === 1 ? '' : 's'} to next week${
+              result.assigned ? `, ${result.assigned} pre-assigned` : ''
+            } (DRAFT).`
       );
       // Hop to the target week so HR can review the new drafts immediately.
       setWeekStart(target);
@@ -1652,7 +1660,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                 size="sm"
                 onClick={onCopyWeekToNext}
                 loading={copyingWeek}
-                title="Copy this week's shifts to next week (as drafts)"
+                title="Copy this week's shifts — associates and all — into next week as drafts"
               >
                 <Copy className="h-3.5 w-3.5" />
                 Copy to next week

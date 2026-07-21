@@ -1501,12 +1501,22 @@ export const CopyWeekInputSchema = z.object({
   targetWeekStart: z.string().datetime(),
   /** When set, only shifts for this client are copied. */
   clientId: UuidSchema.optional(),
+  /**
+   * When true (the default), each copied shift keeps the associate it was
+   * assigned to in the source week, so the whole roster lands pre-assigned
+   * in the target week. Copies still land in DRAFT — publish-week remains the
+   * double-booking gate. Pass false for the old behaviour: blank, unassigned
+   * drafts.
+   */
+  preserveAssignments: z.boolean().optional(),
 });
 export type CopyWeekInput = z.infer<typeof CopyWeekInputSchema>;
 
 export const CopyWeekResponseSchema = z.object({
   created: z.number().int().nonnegative(),
   skipped: z.number().int().nonnegative(),
+  /** How many of the copied shifts carried their associate assignment. */
+  assigned: z.number().int().nonnegative().optional(),
 });
 export type CopyWeekResponse = z.infer<typeof CopyWeekResponseSchema>;
 
