@@ -78,6 +78,9 @@ export const ClientSummarySchema = z.object({
    *  the associate week-ahead digest (sent the evening before) and any
    *  future per-client week math. Optional for old clients of the API. */
   weekStartsOn: z.number().int().min(0).max(6).optional(),
+  /** Verbatim Fieldglass "Site" label (e.g. "1 - Onsite - FL - Destin")
+   *  used on the Timesheets export. Optional/nullable for backward compat. */
+  fieldglassSiteName: z.string().nullable().optional(),
 });
 export type ClientSummary = z.infer<typeof ClientSummarySchema>;
 
@@ -116,6 +119,7 @@ export const ClientCreateInputSchema = z.object({
   status: ClientStatusSchema.optional(),
   contactEmail: z.string().trim().email().max(254).nullable().optional(),
   state: z.string().length(2).nullable().optional(),
+  fieldglassSiteName: z.string().trim().max(255).nullable().optional(),
 });
 export type ClientCreateInput = z.infer<typeof ClientCreateInputSchema>;
 
@@ -128,6 +132,7 @@ export const ClientUpdateInputSchema = z.object({
   status: ClientStatusSchema.optional(),
   contactEmail: z.string().trim().email().max(254).nullable().optional(),
   weekStartsOn: z.number().int().min(0).max(6).optional(),
+  fieldglassSiteName: z.string().trim().max(255).nullable().optional(),
 });
 export type ClientUpdateInput = z.infer<typeof ClientUpdateInputSchema>;
 

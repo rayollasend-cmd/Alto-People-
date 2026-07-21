@@ -171,6 +171,9 @@ function BasicsEditor({
   const [status, setStatus] = useState<ClientStatus>(client.status);
   const [contactEmail, setContactEmail] = useState(client.contactEmail ?? '');
   const [weekStartsOn, setWeekStartsOn] = useState(client.weekStartsOn ?? 0);
+  const [fieldglassSiteName, setFieldglassSiteName] = useState(
+    client.fieldglassSiteName ?? '',
+  );
   const [saving, setSaving] = useState(false);
 
   // Re-sync local state when the parent reloads the client (e.g. after a
@@ -181,14 +184,23 @@ function BasicsEditor({
     setStatus(client.status);
     setContactEmail(client.contactEmail ?? '');
     setWeekStartsOn(client.weekStartsOn ?? 0);
-  }, [client.name, client.industry, client.status, client.contactEmail, client.weekStartsOn]);
+    setFieldglassSiteName(client.fieldglassSiteName ?? '');
+  }, [
+    client.name,
+    client.industry,
+    client.status,
+    client.contactEmail,
+    client.weekStartsOn,
+    client.fieldglassSiteName,
+  ]);
 
   const dirty =
     name.trim() !== client.name ||
     (industry.trim() || null) !== (client.industry || null) ||
     status !== client.status ||
     (contactEmail.trim() || null) !== (client.contactEmail || null) ||
-    weekStartsOn !== (client.weekStartsOn ?? 0);
+    weekStartsOn !== (client.weekStartsOn ?? 0) ||
+    (fieldglassSiteName.trim() || null) !== (client.fieldglassSiteName || null);
 
   const submit = async () => {
     const trimmed = name.trim();
@@ -204,6 +216,7 @@ function BasicsEditor({
         status,
         contactEmail: contactEmail.trim() || null,
         weekStartsOn,
+        fieldglassSiteName: fieldglassSiteName.trim() || null,
       });
       onSaved(updated);
       toast.success('Client saved.');
@@ -299,6 +312,21 @@ function BasicsEditor({
                   </option>
                 ))}
               </Select>
+            )}
+          </Field>
+          <Field
+            label="Fieldglass site name"
+            hint='Verbatim SAP Fieldglass "Site" label (e.g. "1 - Onsite - FL - Destin"). Shown on the Timesheets export so the Site column matches Fieldglass. Blank falls back to the worksite/client name.'
+          >
+            {(p) => (
+              <Input
+                value={fieldglassSiteName}
+                onChange={(e) => setFieldglassSiteName(e.target.value)}
+                maxLength={255}
+                placeholder="1 - Onsite - FL - Destin"
+                disabled={!canManage}
+                {...p}
+              />
             )}
           </Field>
         </div>

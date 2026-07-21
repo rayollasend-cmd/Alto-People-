@@ -206,32 +206,37 @@ export async function buildTimesheetWeek(
   const clientIds = [
     ...new Set(rawEntries.map((e) => e.clientId).filter((id): id is string => !!id)),
   ];
-  const clientNameById = new Map<string, string>();
+  // Prefer the verbatim Fieldglass site label per client; fall back to the
+  // worksite (location) name, then the plain client name.
+  const clientSiteById = new Map<string, { name: string; fieldglass: string | null }>();
   if (clientIds.length > 0) {
     const clients = await db.client.findMany({
       where: { id: { in: clientIds } },
-      select: { id: true, name: true },
+      select: { id: true, name: true, fieldglassSiteName: true },
     });
-    for (const c of clients) clientNameById.set(c.id, c.name);
+    for (const c of clients) {
+      clientSiteById.set(c.id, { name: c.name, fieldglass: c.fieldglassSiteName });
+    }
   }
 
-  const entries: TimesheetSourceEntry[] = rawEntries.map((e) => ({
-    associateId: e.associateId,
-    firstName: e.associate.firstName,
-    lastName: e.associate.lastName,
-    clientId: e.clientId,
-    site:
-      e.location?.name ??
-      (e.clientId ? clientNameById.get(e.clientId) ?? null : null),
-    clockInAt: e.clockInAt,
-    clockOutAt: e.clockOutAt,
-    status: e.status,
-    breaks: e.breaks.map((b) => ({
-      type: b.type as BreakFacts['type'],
-      startedAt: b.startedAt,
-      endedAt: b.endedAt,
-    })),
-  }));
+  const entries: TimesheetSourceEntry[] = rawEntries.map((e) => {
+    const client = e.clientId ? clientSiteById.get(e.clientId) : undefined;
+    return {
+      associateId: e.associateId,
+      firstName: e.associate.firstName,
+      lastName: e.associate.lastName,
+      clientId: e.clientId,
+      site: client?.fieldglass ?? e.location?.name ?? client?.name ?? null,
+      clockInAt: e.clockInAt,
+      clockOutAt: e.clockOutAt,
+      status: e.status,
+      breaks: e.breaks.map((b) => ({
+        type: b.type as BreakFacts['type'],
+        startedAt: b.startedAt,
+        endedAt: b.endedAt,
+      })),
+    };
+  });
 
   const { rows, totalHours, pendingCount } = aggregateTimesheetRows(
     entries,
