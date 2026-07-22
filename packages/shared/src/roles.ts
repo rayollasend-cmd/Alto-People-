@@ -10,6 +10,7 @@ export const ROLES = {
   MANAGER: 'MANAGER',
   WORKFORCE_MANAGER: 'WORKFORCE_MANAGER',
   MARKETING_MANAGER: 'MARKETING_MANAGER',
+  SHIFT_SUPERVISOR: 'SHIFT_SUPERVISOR',
 } as const;
 
 export type Role = keyof typeof ROLES;
@@ -26,6 +27,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   MANAGER: 'Manager',
   WORKFORCE_MANAGER: 'Workforce Manager',
   MARKETING_MANAGER: 'Marketing Manager',
+  SHIFT_SUPERVISOR: 'Shift Supervisor',
 };
 
 export const ROLE_DESCRIPTIONS: Record<Role, string> = {
@@ -40,6 +42,8 @@ export const ROLE_DESCRIPTIONS: Record<Role, string> = {
   MANAGER: 'Full org-wide access (mirrors HR Administrator)',
   WORKFORCE_MANAGER: 'Full org-wide access (mirrors HR Administrator)',
   MARKETING_MANAGER: 'Full org-wide access (mirrors HR Administrator)',
+  SHIFT_SUPERVISOR:
+    'Scheduling + time & attendance for one client only — assign the client in Users & access',
 };
 
 export type Capability =
@@ -200,6 +204,16 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
   ]),
   WORKFORCE_MANAGER: new Set<Capability>(FULL_ADMIN),
   MARKETING_MANAGER: new Set<Capability>(FULL_ADMIN),
+  // Client-scoped floor supervisor: full manage of Scheduling + Time for
+  // their one client (the scope* helpers enforce the client boundary). No
+  // payroll/HR/onboarding/clients surface.
+  SHIFT_SUPERVISOR: new Set<Capability>([
+    'view:dashboard',
+    'view:time',
+    'manage:time',
+    'view:scheduling',
+    'manage:scheduling',
+  ]),
 };
 
 export function hasCapability(role: Role, capability: Capability): boolean {

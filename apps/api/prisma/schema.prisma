@@ -42,6 +42,10 @@ enum Role {
   // Marketing Manager — same admin surface as HR_ADMINISTRATOR; distinct
   // role label keeps audit attribution for marketing-driven actions.
   MARKETING_MANAGER
+  // Shift Supervisor — client-scoped floor supervisor. Manages scheduling
+  // and time & attendance for a single client's associates only (via
+  // User.clientId + the scope* helpers). No HR/payroll surface.
+  SHIFT_SUPERVISOR
 }
 
 enum UserStatus {

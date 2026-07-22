@@ -13,6 +13,7 @@ import {
   type AdminUser,
   type UserStatus,
 } from '@/lib/usersAdminApi';
+import { listClients } from '@/lib/clientsApi';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -37,6 +38,11 @@ const STATUS_OPTIONS: UserStatus[] = ['ACTIVE', 'INVITED', 'DISABLED'];
 const ROLE_OPTIONS: Role[] = (Object.keys(ROLES) as Role[]).filter(
   (r) => r !== 'LIVE_ASN',
 );
+
+// Roles that are pinned to a single client — show a client picker for them.
+const CLIENT_PICKER_ROLES = new Set<Role>(['SHIFT_SUPERVISOR', 'CLIENT_PORTAL']);
+// …and the subset that CANNOT run without a client (blocks clearing it).
+const CLIENT_REQUIRED_ROLES = new Set<Role>(['SHIFT_SUPERVISOR']);
 
 function statusVariant(status: UserStatus) {
   switch (status) {
@@ -67,6 +73,19 @@ export function UsersAdmin() {
   const [role, setRole] = useState<Role | ''>('');
   const [status, setStatus] = useState<UserStatus | ''>('');
 
+  const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
+  // A role change to a client-scoped role for a user with no client is held
+  // here until a client is picked, then applied together.
+  const [draftRole, setDraftRole] = useState<Record<string, Role>>({});
+
+  useEffect(() => {
+    listClients({ status: 'ACTIVE' })
+      .then((r) => setClients(r.clients.map((c) => ({ id: c.id, name: c.name }))))
+      .catch(() => {
+        /* picker just shows an empty list */
+      });
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -96,7 +115,15 @@ export function UsersAdmin() {
   }, [rows]);
 
   const onChangeRole = async (u: AdminUser, newRole: Role) => {
-    if (newRole === u.role) return;
+    if (newRole === (draftRole[u.id] ?? u.role)) return;
+    // Client-scoped role but no client yet → don't persist until a client is
+    // chosen. Reveal the picker (it renders whenever the effective role is
+    // client-scoped) and apply role + client together via onAssignClient.
+    if (CLIENT_REQUIRED_ROLES.has(newRole) && !u.clientId) {
+      setDraftRole((d) => ({ ...d, [u.id]: newRole }));
+      toast.message(`Pick a client to finish assigning ${ROLE_LABELS[newRole]}.`);
+      return;
+    }
     if (
       !(await confirm({
         title: `Change ${u.email}'s role?`,
@@ -108,7 +135,40 @@ export function UsersAdmin() {
     setPendingId(u.id);
     try {
       await patchAdminUser(u.id, { role: newRole });
+      setDraftRole((d) => {
+        const next = { ...d };
+        delete next[u.id];
+        return next;
+      });
       toast.success('Role updated.');
+      await load();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setPendingId(null);
+    }
+  };
+
+  const onAssignClient = async (u: AdminUser, newClientId: string) => {
+    const pendingRole = draftRole[u.id];
+    const effRole = pendingRole ?? u.role;
+    if (!newClientId && CLIENT_REQUIRED_ROLES.has(effRole)) {
+      toast.error(`${ROLE_LABELS[effRole]} must have a client.`);
+      return;
+    }
+    if (newClientId === (u.clientId ?? '') && !pendingRole) return;
+    setPendingId(u.id);
+    try {
+      await patchAdminUser(u.id, {
+        clientId: newClientId || null,
+        ...(pendingRole ? { role: pendingRole } : {}),
+      });
+      setDraftRole((d) => {
+        const next = { ...d };
+        delete next[u.id];
+        return next;
+      });
+      toast.success(pendingRole ? 'Role and client assigned.' : 'Client updated.');
       await load();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -310,7 +370,7 @@ export function UsersAdmin() {
                       <TableCell>
                         <Select
                           size="sm"
-                          value={u.role}
+                          value={draftRole[u.id] ?? u.role}
                           onChange={(e) => onChangeRole(u, e.target.value as Role)}
                           disabled={isMe || busy}
                         >
@@ -342,7 +402,24 @@ export function UsersAdmin() {
                         </div>
                       </TableCell>
                       <TableCell className="text-silver text-xs hidden md:table-cell">
-                        {u.clientName ?? '—'}
+                        {CLIENT_PICKER_ROLES.has(draftRole[u.id] ?? u.role) ? (
+                          <Select
+                            size="sm"
+                            value={u.clientId ?? ''}
+                            onChange={(e) => onAssignClient(u, e.target.value)}
+                            disabled={isMe || busy}
+                            aria-label="Assign client"
+                          >
+                            <option value="">— select client —</option>
+                            {clients.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name}
+                              </option>
+                            ))}
+                          </Select>
+                        ) : (
+                          (u.clientName ?? '—')
+                        )}
                       </TableCell>
                       <TableCell className="text-silver text-xs hidden lg:table-cell">
                         {fmtDate(u.createdAt)}

@@ -181,6 +181,8 @@ export async function buildTimesheetWeek(
     clientId?: string;
     /** Row-level scope fragment (e.g. from scopeTimeEntries) merged into the query. */
     scopeWhere?: Prisma.TimeEntryWhereInput;
+    /** Shift-side scope (from scopeShifts) for the scheduled-vs-actual query. */
+    shiftScopeWhere?: Prisma.ShiftWhereInput;
   },
   timeZone: string = DEFAULT_TIMEZONE,
 ): Promise<TimesheetWeekResponse> {
@@ -264,6 +266,7 @@ export async function buildTimesheetWeek(
   // DRAFT scratch) starting in the week, by local day, summed per associate.
   const shifts = await db.shift.findMany({
     where: {
+      ...(input.shiftScopeWhere ?? {}),
       status: { in: ['ASSIGNED', 'COMPLETED'] },
       assignedAssociateId: { not: null },
       startsAt: { gte: windowStart, lt: windowEnd },
@@ -375,6 +378,7 @@ export async function fileTimesheetWeek(
     weekStart: Date;
     clientId?: string;
     scopeWhere?: Prisma.TimeEntryWhereInput;
+    shiftScopeWhere?: Prisma.ShiftWhereInput;
   },
   filedById: string,
   timeZone: string = DEFAULT_TIMEZONE,
