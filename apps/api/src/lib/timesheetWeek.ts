@@ -19,6 +19,8 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import type {
   TimesheetAssociateDetailResponse,
   TimesheetDay,
+  TimesheetDriftRow,
+  TimesheetFilingInfo,
   TimesheetIssue,
   TimesheetRow,
   TimesheetScheduleRow,
@@ -166,8 +168,14 @@ export function aggregateTimesheetRows(
  * padded UTC window and filters by local calendar day so timezone/DST edges
  * don't clip a shift.
  */
+/** Snapshot shape stored on TimesheetFiling.snapshot (per associate). */
+export type TimesheetSnapshot = Record<string, { worker: string; hours: number }>;
+
 export async function buildTimesheetWeek(
-  db: Pick<PrismaClient, 'timeEntry' | 'client' | 'shift'>,
+  db: Pick<
+    PrismaClient,
+    'timeEntry' | 'client' | 'shift' | 'timesheetFiling' | 'user'
+  >,
   input: {
     weekStart: Date;
     clientId?: string;
@@ -284,6 +292,31 @@ export async function buildTimesheetWeek(
   }
   const scheduleComparison = buildScheduleComparison(rows, scheduled);
 
+  // Lock/drift — if this week (and client scope) was filed, surface the
+  // filing plus any drift between the snapshot and the current hours.
+  const weekStartDate = new Date(`${week.weekStart}T00:00:00Z`);
+  const filingRow = await db.timesheetFiling.findFirst({
+    where: { weekStart: weekStartDate, clientId: input.clientId ?? null },
+  });
+  let filing: TimesheetFilingInfo | null = null;
+  if (filingRow) {
+    const snapshot = (filingRow.snapshot as TimesheetSnapshot | null) ?? {};
+    let filedBy: string | null = null;
+    if (filingRow.filedById) {
+      const u = await db.user.findUnique({
+        where: { id: filingRow.filedById },
+        select: { email: true },
+      });
+      filedBy = u?.email ?? null;
+    }
+    filing = {
+      filedAt: filingRow.filedAt.toISOString(),
+      filedBy,
+      filedTotalHours: Number(filingRow.totalHours),
+      drift: computeDrift(snapshot, rows),
+    };
+  }
+
   return {
     weekStart: week.weekStart,
     weekEndIso: week.weekEnd,
@@ -293,8 +326,104 @@ export async function buildTimesheetWeek(
     pendingCount,
     issues,
     scheduleComparison,
+    filing,
     timeZone,
     generatedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Drift between a filing snapshot and the current rows: any worker whose
+ * hours changed (or was added/removed) since filing. Pure; sorted by worker.
+ */
+export function computeDrift(
+  snapshot: TimesheetSnapshot,
+  rows: TimesheetRow[],
+): TimesheetDriftRow[] {
+  const currentById = new Map(
+    rows.map((r) => [r.associateId, { worker: r.worker, hours: r.total }]),
+  );
+  const ids = new Set<string>([...Object.keys(snapshot), ...currentById.keys()]);
+  const drift: TimesheetDriftRow[] = [];
+  for (const id of ids) {
+    const filed = round2(snapshot[id]?.hours ?? 0);
+    const current = round2(currentById.get(id)?.hours ?? 0);
+    if (filed === current) continue;
+    drift.push({
+      associateId: id,
+      worker: currentById.get(id)?.worker ?? snapshot[id]?.worker ?? '—',
+      filedHours: filed,
+      currentHours: current,
+      delta: round2(current - filed),
+    });
+  }
+  drift.sort((a, b) => a.worker.localeCompare(b.worker));
+  return drift;
+}
+
+/**
+ * Record (or re-record) a filing for the week: snapshots each worker's hours
+ * + the total, stamped with who filed it. Returns the freshly-filed week
+ * response (filing set, drift empty).
+ */
+export async function fileTimesheetWeek(
+  db: Pick<
+    PrismaClient,
+    'timeEntry' | 'client' | 'shift' | 'timesheetFiling' | 'user'
+  >,
+  input: {
+    weekStart: Date;
+    clientId?: string;
+    scopeWhere?: Prisma.TimeEntryWhereInput;
+  },
+  filedById: string,
+  timeZone: string = DEFAULT_TIMEZONE,
+): Promise<TimesheetWeekResponse> {
+  const response = await buildTimesheetWeek(db, input, timeZone);
+
+  const snapshot: TimesheetSnapshot = {};
+  for (const r of response.rows) {
+    snapshot[r.associateId] = { worker: r.worker, hours: r.total };
+  }
+
+  const weekStartDate = new Date(`${response.weekStart}T00:00:00Z`);
+  const clientId = input.clientId ?? null;
+  const existing = await db.timesheetFiling.findFirst({
+    where: { weekStart: weekStartDate, clientId },
+  });
+  const row = existing
+    ? await db.timesheetFiling.update({
+        where: { id: existing.id },
+        data: {
+          filedById,
+          filedAt: new Date(),
+          totalHours: response.totalHours,
+          snapshot,
+        },
+      })
+    : await db.timesheetFiling.create({
+        data: {
+          weekStart: weekStartDate,
+          clientId,
+          filedById,
+          totalHours: response.totalHours,
+          snapshot,
+        },
+      });
+
+  const u = await db.user.findUnique({
+    where: { id: filedById },
+    select: { email: true },
+  });
+
+  return {
+    ...response,
+    filing: {
+      filedAt: row.filedAt.toISOString(),
+      filedBy: u?.email ?? null,
+      filedTotalHours: Number(row.totalHours),
+      drift: [],
+    },
   };
 }
 

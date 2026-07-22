@@ -1263,6 +1263,29 @@ export const TimesheetScheduleRowSchema = z.object({
 });
 export type TimesheetScheduleRow = z.infer<typeof TimesheetScheduleRowSchema>;
 
+/* Lock + drift — a recorded filing snapshots per-worker hours; if the
+ * underlying time changes afterward, the difference surfaces as drift. */
+export const TimesheetDriftRowSchema = z.object({
+  associateId: z.string(),
+  worker: z.string(),
+  filedHours: z.number().nonnegative(),
+  currentHours: z.number().nonnegative(),
+  /** currentHours − filedHours. */
+  delta: z.number(),
+});
+export type TimesheetDriftRow = z.infer<typeof TimesheetDriftRowSchema>;
+
+export const TimesheetFilingInfoSchema = z.object({
+  filedAt: z.string(),
+  /** Who filed it (email/name); null if the user record is gone. */
+  filedBy: z.string().nullable(),
+  /** Total hours captured at filing time. */
+  filedTotalHours: z.number().nonnegative(),
+  /** Workers whose hours changed since filing (empty = still in sync). */
+  drift: z.array(TimesheetDriftRowSchema),
+});
+export type TimesheetFilingInfo = z.infer<typeof TimesheetFilingInfoSchema>;
+
 export const TimesheetWeekResponseSchema = z.object({
   /** Saturday that starts the week, YYYY-MM-DD (store-local). */
   weekStart: z.string(),
@@ -1279,6 +1302,8 @@ export const TimesheetWeekResponseSchema = z.object({
   issues: z.array(TimesheetIssueSchema),
   /** Published-schedule vs actual-worked hours per worker (union of both). */
   scheduleComparison: z.array(TimesheetScheduleRowSchema),
+  /** Filing record for this week, with drift since — null if never filed. */
+  filing: TimesheetFilingInfoSchema.nullable(),
   timeZone: z.string(),
   generatedAt: z.string(),
 });

@@ -4,11 +4,26 @@ import {
   aggregateTimesheetRows,
   buildAssociateDays,
   buildScheduleComparison,
+  computeDrift,
   computeTimesheetIssues,
   toUsDate,
   type TimesheetSourceEntry,
+  type TimesheetSnapshot,
 } from '../../lib/timesheetWeek.js';
 import type { TimesheetRow } from '@alto-people/shared';
+
+const mkRow = (
+  over: Partial<TimesheetRow> & Pick<TimesheetRow, 'associateId' | 'worker' | 'total'>,
+): TimesheetRow => ({
+  st: 0,
+  ot: 0,
+  dt: 0,
+  others: over.total,
+  nb: 0,
+  site: '—',
+  status: 'READY',
+  ...over,
+});
 
 const TZ = 'America/New_York';
 
@@ -246,6 +261,39 @@ describe('aggregateTimesheetRows', () => {
     expect(jayda.scheduledHours).toBe(0);
     expect(jayda.delta).toBe(12); // worked unscheduled
     expect(cmp.find((c) => c.associateId === 'a1')!.delta).toBe(0); // scheduled == actual
+  });
+
+  it('computeDrift reports changed, added, and removed workers since filing', () => {
+    const snapshot: TimesheetSnapshot = {
+      a1: { worker: 'Nelson, Aaliyah', hours: 40 },
+      a2: { worker: 'Ramirez, Ana', hours: 32 },
+      a4: { worker: 'Byfield, Kerryan', hours: 20 }, // unchanged → no drift
+    };
+    const rows: TimesheetRow[] = [
+      mkRow({ associateId: 'a1', worker: 'Nelson, Aaliyah', total: 42 }), // +2
+      mkRow({ associateId: 'a4', worker: 'Byfield, Kerryan', total: 20 }), // same
+      mkRow({ associateId: 'a3', worker: 'Wright, Jayda', total: 10 }), // added since filing
+      // a2 removed since filing → now 0
+    ];
+
+    const drift = computeDrift(snapshot, rows);
+    // Unchanged a4 is excluded; sorted by worker.
+    expect(drift.map((d) => d.worker)).toEqual([
+      'Nelson, Aaliyah',
+      'Ramirez, Ana',
+      'Wright, Jayda',
+    ]);
+    expect(drift.find((d) => d.associateId === 'a1')?.delta).toBe(2);
+    expect(drift.find((d) => d.associateId === 'a2')).toMatchObject({
+      filedHours: 32,
+      currentHours: 0,
+      delta: -32,
+    });
+    expect(drift.find((d) => d.associateId === 'a3')).toMatchObject({
+      filedHours: 0,
+      currentHours: 10,
+      delta: 10,
+    });
   });
 
   it('separates the same associate at different clients into two rows', () => {
