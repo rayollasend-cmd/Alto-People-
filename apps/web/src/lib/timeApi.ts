@@ -326,6 +326,17 @@ export function getTimesheetWeek(
   });
 }
 
+/** Record (or re-record) a Fieldglass filing for the week — snapshots hours
+ *  so later edits surface as drift. Returns the filed week. */
+export function fileTimesheetWeek(
+  body: TimesheetWeekInput
+): Promise<TimesheetWeekResponse> {
+  return apiFetch<TimesheetWeekResponse>('/time/admin/timesheets/file', {
+    method: 'POST',
+    body,
+  });
+}
+
 /** Download the same week as an .xlsx that mirrors the Fieldglass list view. */
 export async function exportTimesheetXlsx(
   body: TimesheetWeekInput

@@ -6,6 +6,7 @@ import {
   ChevronRight,
   ClipboardCopy,
   FileSpreadsheet,
+  Lock,
   RefreshCw,
   CheckCircle2,
 } from 'lucide-react';
@@ -19,6 +20,7 @@ import {
   getTimesheetWeek,
   exportTimesheetXlsx,
   getAssociateTimesheetDetail,
+  fileTimesheetWeek,
 } from '@/lib/timeApi';
 import { upsertAttestation } from '@/lib/complianceScorecardApi';
 import { useAuth } from '@/lib/auth';
@@ -95,7 +97,7 @@ export function TimesheetsView() {
   const [data, setData] = useState<TimesheetWeekResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
-  const [filing, setFiling] = useState(false);
+  const [filingBusy, setFilingBusy] = useState(false);
 
   // Fieldglass individual-timesheet drill-down.
   const [detailOpen, setDetailOpen] = useState(false);
@@ -187,28 +189,41 @@ export function TimesheetsView() {
   };
 
   const onMarkFiled = async () => {
-    if (!data || filing) return;
+    if (!data || filingBusy) return;
+    const already = !!data.filing;
     if (
       !window.confirm(
-        `Mark the Fieldglass timesheet for the week ending ${data.weekEnding} as filed? This ticks the weekly compliance attestation.`,
+        already
+          ? `Re-file the week ending ${data.weekEnding}? This updates the recorded snapshot to the current hours.`
+          : `Mark the Fieldglass timesheet for the week ending ${data.weekEnding} as filed? This records a snapshot of the current hours${canAttest ? ' and ticks the weekly compliance attestation' : ''}.`,
       )
     )
       return;
-    setFiling(true);
+    setFilingBusy(true);
     try {
-      await upsertAttestation({
-        key: 'FIELDGLASS_TIMESHEET',
-        periodStart: mondayOfIsoWeek(data.weekEndIso),
-        outcome: 'YES',
-        actionTakenAt: new Date().toISOString(),
-        notes: `Filed via Timesheets for week ending ${data.weekEnding}`,
-        evidenceDocumentId: null,
-      });
-      toast.success('Marked filed — compliance attestation recorded.');
+      const updated = await fileTimesheetWeek({ weekStart: weekStart.toISOString() });
+      setData(updated);
+      // Attestation is best-effort and only for compliance-managers; the
+      // filing snapshot is already recorded regardless.
+      if (canAttest) {
+        try {
+          await upsertAttestation({
+            key: 'FIELDGLASS_TIMESHEET',
+            periodStart: mondayOfIsoWeek(updated.weekEndIso),
+            outcome: 'YES',
+            actionTakenAt: new Date().toISOString(),
+            notes: `Filed via Timesheets for week ending ${updated.weekEnding}`,
+            evidenceDocumentId: null,
+          });
+        } catch {
+          /* filing recorded; attestation can be re-ticked on the scorecard */
+        }
+      }
+      toast.success(already ? 'Re-filed — snapshot updated.' : 'Marked filed.');
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not record attestation.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not record the filing.');
     } finally {
-      setFiling(false);
+      setFilingBusy(false);
     }
   };
 
@@ -295,21 +310,56 @@ export function TimesheetsView() {
             <FileSpreadsheet className="h-3.5 w-3.5" />
             Download .xlsx
           </Button>
-          {canAttest && (
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={onMarkFiled}
-              loading={filing}
-              disabled={!data}
-              title="Record that this week's Fieldglass timesheet was filed"
-            >
-              <CheckCircle2 className="h-3.5 w-3.5" />
-              Mark filed
-            </Button>
-          )}
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={onMarkFiled}
+            loading={filingBusy}
+            disabled={!data || rows.length === 0}
+            title="Record a snapshot of this week's hours as filed into Fieldglass"
+          >
+            {data?.filing ? <RefreshCw className="h-3.5 w-3.5" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+            {data?.filing ? 'Re-file' : 'Mark filed'}
+          </Button>
         </div>
       </div>
+
+      {data?.filing &&
+        (data.filing.drift.length > 0 ? (
+          <div className="rounded-md border border-gold/40 bg-gold/10 p-3">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-sm font-medium text-gold">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                Filed {new Date(data.filing.filedAt).toLocaleDateString()} — {data.filing.drift.length}{' '}
+                worker{data.filing.drift.length === 1 ? '' : 's'} changed since. Re-file to match
+                Fieldglass.
+              </div>
+              <Button variant="secondary" size="sm" onClick={onMarkFiled} loading={filingBusy}>
+                <RefreshCw className="h-3.5 w-3.5" />
+                Re-file
+              </Button>
+            </div>
+            <ul className="space-y-1 text-xs">
+              {data.filing.drift.map((d) => (
+                <li key={d.associateId} className="flex flex-wrap gap-x-2">
+                  <span className="font-medium text-white">{d.worker}</span>
+                  <span className="text-silver/70">
+                    filed {d.filedHours.toFixed(2)}h → now {d.currentHours.toFixed(2)}h (
+                    {d.delta > 0 ? '+' : ''}
+                    {d.delta.toFixed(2)})
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 rounded-md border border-navy-secondary bg-navy/40 p-2.5 text-sm text-silver">
+            <Lock className="h-4 w-4 text-gold" />
+            Filed{data.filing.filedBy ? ` by ${data.filing.filedBy}` : ''} ·{' '}
+            {new Date(data.filing.filedAt).toLocaleString()} ·{' '}
+            {data.filing.filedTotalHours.toFixed(2)}h — in sync.
+          </div>
+        ))}
 
       {data && data.issues.length > 0 ? (
         <div className="rounded-md border border-gold/40 bg-gold/10 p-3">

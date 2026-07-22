@@ -63,6 +63,7 @@ import { listPayPeriods } from '../lib/payPeriods.js';
 import {
   buildTimesheetWeek,
   buildAssociateTimesheetDetail,
+  fileTimesheetWeek,
 } from '../lib/timesheetWeek.js';
 import { renderTimesheetXlsx, timesheetFilename } from '../lib/timesheetXlsx.js';
 
@@ -2380,6 +2381,34 @@ timeRouter.post('/admin/timesheets.xlsx', MANAGE, async (req, res, next) => {
       `attachment; filename="${timesheetFilename(result.weekEndIso)}"`,
     );
     res.send(xlsx);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /time/admin/timesheets/file
+ * Body: { weekStart: ISO, clientId? }
+ *
+ * Records (or re-records) a Fieldglass filing for the week — snapshots each
+ * worker's hours so later edits show up as drift. Returns the filed week.
+ */
+timeRouter.post('/admin/timesheets/file', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = TimesheetWeekInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const result = await fileTimesheetWeek(
+      prisma,
+      {
+        weekStart: new Date(parsed.data.weekStart),
+        clientId: parsed.data.clientId,
+        scopeWhere: scopeTimeEntries(req.user!),
+      },
+      req.user!.id,
+    );
+    res.json(result);
   } catch (err) {
     next(err);
   }

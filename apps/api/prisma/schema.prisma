@@ -5801,3 +5801,21 @@ model ManualComplianceAttestation {
   @@unique([key, periodStart])
   @@index([key, periodEnd])
 }
+
+/// A recorded Fieldglass filing for one Sat→Fri week (optionally one client).
+/// Snapshots the per-worker hours + total at filing time so later edits to
+/// the underlying time entries surface as drift on the Timesheets page.
+model TimesheetFiling {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  weekStart  DateTime @db.Date // the Saturday that starts the week (store-local)
+  clientId   String?  @db.Uuid // null = all-clients filing
+  filedById  String?  @db.Uuid // no relation — resolved by lookup like other actor ids
+  filedAt    DateTime @default(now()) @db.Timestamptz(6)
+  totalHours Decimal  @db.Decimal(10, 2)
+  snapshot   Json // { [associateId]: { worker: string, hours: number } }
+  createdAt  DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(6)
+
+  @@unique([weekStart, clientId])
+  @@index([weekStart])
+}
