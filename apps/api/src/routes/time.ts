@@ -28,7 +28,7 @@ import {
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
-import { scopeTimeEntries } from '../lib/scope.js';
+import { scopeTimeEntries, scopeShifts } from '../lib/scope.js';
 import { z } from 'zod';
 import { recordTimeEvent } from '../lib/audit.js';
 import { recomputeEntryAnomalies } from '../lib/recomputeEntryAnomalies.js';
@@ -2347,6 +2347,7 @@ timeRouter.post('/admin/timesheets', MANAGE, async (req, res, next) => {
       weekStart: new Date(parsed.data.weekStart),
       clientId: parsed.data.clientId,
       scopeWhere: scopeTimeEntries(req.user!),
+      shiftScopeWhere: scopeShifts(req.user!),
     });
     res.json(result);
   } catch (err) {
@@ -2368,6 +2369,7 @@ timeRouter.post('/admin/timesheets.xlsx', MANAGE, async (req, res, next) => {
       weekStart: new Date(parsed.data.weekStart),
       clientId: parsed.data.clientId,
       scopeWhere: scopeTimeEntries(req.user!),
+      shiftScopeWhere: scopeShifts(req.user!),
     });
     if (result.pendingCount > 0) res.setHeader('X-Pending', String(result.pendingCount));
 
@@ -2405,6 +2407,7 @@ timeRouter.post('/admin/timesheets/file', MANAGE, async (req, res, next) => {
         weekStart: new Date(parsed.data.weekStart),
         clientId: parsed.data.clientId,
         scopeWhere: scopeTimeEntries(req.user!),
+        shiftScopeWhere: scopeShifts(req.user!),
       },
       req.user!.id,
     );

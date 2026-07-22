@@ -36,7 +36,7 @@ export function listAdminUsers(
 
 export function patchAdminUser(
   id: string,
-  body: { role?: Role; status?: UserStatus },
+  body: { role?: Role; status?: UserStatus; clientId?: string | null },
 ): Promise<void> {
   return apiFetch<void>(`/admin/users/${id}`, { method: 'PATCH', body });
 }

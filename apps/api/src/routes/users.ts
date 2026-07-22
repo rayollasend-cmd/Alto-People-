@@ -106,10 +106,17 @@ const PatchInputSchema = z
   .object({
     role: ROLE_FILTER.optional(),
     status: STATUS_FILTER.optional(),
+    // Client scope for client-bounded roles (SHIFT_SUPERVISOR, CLIENT_PORTAL).
+    // null clears it; omitted leaves it unchanged.
+    clientId: z.string().uuid().nullable().optional(),
   })
-  .refine((v) => v.role !== undefined || v.status !== undefined, {
-    message: 'At least one of role or status is required',
-  });
+  .refine(
+    (v) => v.role !== undefined || v.status !== undefined || v.clientId !== undefined,
+    { message: 'At least one of role, status, or clientId is required' },
+  );
+
+// Roles that must be pinned to a single client to function.
+const CLIENT_SCOPED_ROLES: Role[] = ['SHIFT_SUPERVISOR'];
 
 usersRouter.patch(
   '/admin/users/:id',
@@ -143,11 +150,44 @@ usersRouter.patch(
       );
     }
 
-    const data: { role?: Role; status?: 'ACTIVE' | 'DISABLED' | 'INVITED'; tokenVersion?: { increment: number } } = {};
+    // Validate the client (if one was provided and not being cleared).
+    if (input.clientId) {
+      const client = await prisma.client.findFirst({
+        where: { id: input.clientId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!client) {
+        throw new HttpError(400, 'client_not_found', 'That client does not exist.');
+      }
+    }
+
+    // A client-scoped role (e.g. SHIFT_SUPERVISOR) must end up with a client,
+    // or its scope fails closed and the account can't see anything.
+    const effectiveRole = input.role ?? target.role;
+    const effectiveClientId =
+      input.clientId !== undefined ? input.clientId : target.clientId;
+    if (CLIENT_SCOPED_ROLES.includes(effectiveRole) && !effectiveClientId) {
+      throw new HttpError(
+        400,
+        'client_required',
+        `${effectiveRole} must be assigned to a client.`,
+      );
+    }
+
+    const data: {
+      role?: Role;
+      status?: 'ACTIVE' | 'DISABLED' | 'INVITED';
+      clientId?: string | null;
+      tokenVersion?: { increment: number };
+    } = {};
     if (input.role && input.role !== target.role) data.role = input.role;
     if (input.status && input.status !== target.status) data.status = input.status;
-    // Any role change OR a flip into DISABLED kills existing sessions.
-    if (data.role || data.status === 'DISABLED') {
+    if (input.clientId !== undefined && input.clientId !== target.clientId) {
+      data.clientId = input.clientId;
+    }
+    // A role change, a client-scope change, or a flip into DISABLED kills
+    // existing sessions so the new access takes effect immediately.
+    if (data.role || data.clientId !== undefined || data.status === 'DISABLED') {
       data.tokenVersion = { increment: 1 };
     }
 
@@ -176,6 +216,9 @@ usersRouter.patch(
           changes: {
             ...(data.role ? { role: { from: target.role, to: data.role } } : {}),
             ...(data.status ? { status: { from: target.status, to: data.status } } : {}),
+            ...(data.clientId !== undefined
+              ? { clientId: { from: target.clientId, to: data.clientId } }
+              : {}),
           },
         },
       },

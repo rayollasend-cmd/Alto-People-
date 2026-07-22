@@ -4,7 +4,9 @@ import {
   effectiveClientIdFilter,
   scopeApplications,
   scopeClients,
+  scopeShifts,
   scopeTemplates,
+  scopeTimeEntries,
 } from '../../lib/scope.js';
 import type { SessionUser } from '../../types/express.js';
 
@@ -129,5 +131,47 @@ describe('effectiveClientIdFilter', () => {
     expect(
       effectiveClientIdFilter(baseUser('HR_ADMINISTRATOR'), undefined),
     ).toBeUndefined();
+  });
+});
+
+const NO_CLIENT = '00000000-0000-0000-0000-000000000000';
+
+describe('SHIFT_SUPERVISOR scoping', () => {
+  it('scopeClients pins to its client, fails closed when unset', () => {
+    expect(scopeClients(baseUser('SHIFT_SUPERVISOR', { clientId: 'client-A' }))).toEqual({
+      deletedAt: null,
+      id: 'client-A',
+    });
+    expect(scopeClients(baseUser('SHIFT_SUPERVISOR', { clientId: null }))).toEqual({
+      deletedAt: null,
+      id: NO_CLIENT,
+    });
+  });
+
+  it('scopeShifts limits to its client, fails closed when unset', () => {
+    expect(scopeShifts(baseUser('SHIFT_SUPERVISOR', { clientId: 'client-A' }))).toEqual({
+      clientId: 'client-A',
+    });
+    expect(scopeShifts(baseUser('SHIFT_SUPERVISOR', { clientId: null }))).toEqual({
+      clientId: NO_CLIENT,
+    });
+  });
+
+  it('scopeTimeEntries limits to its client, fails closed when unset', () => {
+    expect(scopeTimeEntries(baseUser('SHIFT_SUPERVISOR', { clientId: 'client-A' }))).toEqual({
+      clientId: 'client-A',
+    });
+    expect(scopeTimeEntries(baseUser('SHIFT_SUPERVISOR', { clientId: null }))).toEqual({
+      clientId: NO_CLIENT,
+    });
+  });
+
+  it('effectiveClientIdFilter clamps to its client, ignoring any requested id', () => {
+    expect(
+      effectiveClientIdFilter(baseUser('SHIFT_SUPERVISOR', { clientId: 'client-A' }), 'client-B'),
+    ).toBe('client-A');
+    expect(
+      effectiveClientIdFilter(baseUser('SHIFT_SUPERVISOR', { clientId: null }), 'client-B'),
+    ).toBeNull();
   });
 });

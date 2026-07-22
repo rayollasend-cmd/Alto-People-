@@ -396,6 +396,8 @@ export type HealthResponse = z.infer<typeof HealthResponseSchema>;
  *  Auth
  * -------------------------------------------------------------------------- */
 
+// Keep in lockstep with ROLES in roles.ts — AuthUserSchema.role validates
+// every /auth/me and login response against this enum.
 export const RoleSchema = z.enum([
   'EXECUTIVE_CHAIRMAN',
   'HR_ADMINISTRATOR',
@@ -406,6 +408,9 @@ export const RoleSchema = z.enum([
   'FINANCE_ACCOUNTANT',
   'INTERNAL_RECRUITER',
   'MANAGER',
+  'WORKFORCE_MANAGER',
+  'MARKETING_MANAGER',
+  'SHIFT_SUPERVISOR',
 ]);
 
 export const UserStatusSchema = z.enum(['ACTIVE', 'DISABLED', 'INVITED']);

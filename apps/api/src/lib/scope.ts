@@ -4,6 +4,11 @@ import { HttpError } from '../middleware/error.js';
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
+// A client id that cannot exist, used to fail a client-scoped role CLOSED
+// when it has no clientId on file — so a mis-provisioned SHIFT_SUPERVISOR
+// (who holds manage caps) sees nothing rather than everything.
+const NO_CLIENT = '00000000-0000-0000-0000-000000000000';
+
 /**
  * Centralized multi-tenant + role scoping for Prisma queries.
  *
@@ -19,6 +24,10 @@ export function scopeClients(user: SessionUser): Prisma.ClientWhereInput {
   const base: Prisma.ClientWhereInput = { deletedAt: null };
   if (user.role === 'CLIENT_PORTAL' && user.clientId) {
     return { ...base, id: user.clientId };
+  }
+  // SHIFT_SUPERVISOR only ever sees its own client (fail closed if unset).
+  if (user.role === 'SHIFT_SUPERVISOR') {
+    return { ...base, id: user.clientId ?? NO_CLIENT };
   }
   return base;
 }
@@ -103,6 +112,10 @@ export function scopeShifts(user: SessionUser): Prisma.ShiftWhereInput {
   if (user.role === 'CLIENT_PORTAL' && user.clientId) {
     return { clientId: user.clientId };
   }
+  // SHIFT_SUPERVISOR manages only its own client's shifts (fail closed).
+  if (user.role === 'SHIFT_SUPERVISOR') {
+    return { clientId: user.clientId ?? NO_CLIENT };
+  }
   return {};
 }
 
@@ -116,6 +129,10 @@ export function scopeTimeEntries(user: SessionUser): Prisma.TimeEntryWhereInput 
   // it ever does, scope to its own client's entries via denormalized clientId.
   if (user.role === 'CLIENT_PORTAL' && user.clientId) {
     return { clientId: user.clientId };
+  }
+  // SHIFT_SUPERVISOR manages only its own client's time (fail closed).
+  if (user.role === 'SHIFT_SUPERVISOR') {
+    return { clientId: user.clientId ?? NO_CLIENT };
   }
   return {};
 }
@@ -139,7 +156,11 @@ export function effectiveClientIdFilter(
   user: SessionUser,
   requested: string | undefined,
 ): string | null | undefined {
-  if (user.role === 'CLIENT_PORTAL' || user.role === 'ASSOCIATE') {
+  if (
+    user.role === 'CLIENT_PORTAL' ||
+    user.role === 'ASSOCIATE' ||
+    user.role === 'SHIFT_SUPERVISOR'
+  ) {
     return user.clientId ?? null;
   }
   return requested;
