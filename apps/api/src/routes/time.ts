@@ -28,7 +28,7 @@ import {
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
-import { scopeTimeEntries, scopeShifts } from '../lib/scope.js';
+import { scopeTimeEntries, scopeShifts, effectiveClientIdFilter } from '../lib/scope.js';
 import { z } from 'zod';
 import { recordTimeEvent } from '../lib/audit.js';
 import { recomputeEntryAnomalies } from '../lib/recomputeEntryAnomalies.js';
@@ -1018,6 +1018,13 @@ timeRouter.post('/admin/entries', MANAGE, async (req, res, next) => {
     // clock-in (history + scoping stay correct).
     const resolved = await resolveAssociateGeofence(prisma, associateId, clientId);
     if (resolved.clientId && !clientId) clientId = resolved.clientId;
+
+    // Client-bounded roles (SHIFT_SUPERVISOR) can only add time tied to their
+    // own client — the entry's resolved clientId must match theirs.
+    const bounded = effectiveClientIdFilter(user, undefined);
+    if (bounded !== undefined && clientId !== bounded) {
+      throw new HttpError(403, 'forbidden', 'You can only add time for your assigned client.');
+    }
 
     const status: 'ACTIVE' | 'COMPLETED' = clockOutAt ? 'COMPLETED' : 'ACTIVE';
     const anomalies: TimeAnomaly[] = clockOutAt

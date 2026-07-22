@@ -52,7 +52,7 @@ import {
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
-import { scopeShifts } from '../lib/scope.js';
+import { scopeShifts, effectiveClientIdFilter } from '../lib/scope.js';
 import { firstLocationForClient } from '../lib/firstLocationForClient.js';
 import { enqueueAudit, recordShiftEvent } from '../lib/audit.js';
 import { formatShiftLine, notifyShift } from '../lib/notifyShift.js';
@@ -482,8 +482,21 @@ schedulingRouter.get('/kpis', MANAGE, async (req, res, next) => {
  */
 schedulingRouter.get('/associates', MANAGE, async (req, res, next) => {
   try {
-    const clientId = req.query.clientId?.toString();
-    const locationId = req.query.locationId?.toString();
+    let clientId = req.query.clientId?.toString();
+    let locationId = req.query.locationId?.toString();
+
+    // Client-bounded roles (SHIFT_SUPERVISOR) can only ever see their own
+    // client's roster: clamp clientId to theirs and drop any location filter
+    // that could reach across the boundary. Fail closed if unassigned.
+    const bounded = effectiveClientIdFilter(req.user!, undefined);
+    if (bounded !== undefined) {
+      if (!bounded) {
+        res.json(AssociateListResponseSchema.parse({ associates: [] }));
+        return;
+      }
+      clientId = bounded;
+      locationId = undefined;
+    }
 
     // Scope the roster to the selected work-site so the grid rows + the
     // create-dialog picker show only people who actually work there. An
@@ -533,6 +546,14 @@ schedulingRouter.post('/shifts', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
     const input = parsed.data;
+
+    // Client-bounded roles (SHIFT_SUPERVISOR) can only create shifts for their
+    // own client — the read scopes don't cover create (clientId comes from the
+    // body, not a scoped query).
+    const bounded = effectiveClientIdFilter(req.user!, undefined);
+    if (bounded !== undefined && input.clientId !== bounded) {
+      throw new HttpError(403, 'forbidden', 'You can only manage shifts for your assigned client.');
+    }
 
     const client = await prisma.client.findFirst({
       where: { id: input.clientId, deletedAt: null },
@@ -634,6 +655,14 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
     const input = parsed.data;
+
+    // Client-bounded roles (SHIFT_SUPERVISOR) can only create shifts for their
+    // own client — the read scopes don't cover create (clientId comes from the
+    // body, not a scoped query).
+    const bounded = effectiveClientIdFilter(req.user!, undefined);
+    if (bounded !== undefined && input.clientId !== bounded) {
+      throw new HttpError(403, 'forbidden', 'You can only manage shifts for your assigned client.');
+    }
 
     const client = await prisma.client.findFirst({
       where: { id: input.clientId, deletedAt: null },
