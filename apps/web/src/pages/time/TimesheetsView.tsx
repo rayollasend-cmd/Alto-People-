@@ -15,7 +15,9 @@ import type {
   TimesheetWeekResponse,
   TimesheetAssociateDetailResponse,
   TimesheetIssueKind,
+  ClientListItem,
 } from '@alto-people/shared';
+import { listClients } from '@/lib/clientsApi';
 import {
   getTimesheetWeek,
   exportTimesheetXlsx,
@@ -38,6 +40,7 @@ import {
   DrawerTitle,
   EmptyState,
   PageHeader,
+  Select,
   Skeleton,
   SkeletonRows,
   Table,
@@ -106,6 +109,24 @@ export function TimesheetsView() {
 
   const [showSchedule, setShowSchedule] = useState(false);
 
+  // Per-client filter — file one Fieldglass SOW at a time. '' = all clients.
+  const [clientId, setClientId] = useState('');
+  const [clients, setClients] = useState<ClientListItem[]>([]);
+
+  useEffect(() => {
+    let live = true;
+    listClients({ status: 'ACTIVE' })
+      .then((r) => live && setClients(r.clients))
+      .catch(() => {
+        /* dropdown just stays at "All clients" */
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const clientArg = clientId || undefined;
+
   const weekEnd = useMemo(() => addDays(weekStart, 6), [weekStart]);
 
   // No-show (scheduled but zero worked) or a delta of 2h+ either way.
@@ -126,6 +147,7 @@ export function TimesheetsView() {
         const res = await getAssociateTimesheetDetail({
           associateId,
           weekStart: weekStart.toISOString(),
+          clientId: clientArg,
         });
         setDetail(res);
       } catch (err) {
@@ -135,13 +157,13 @@ export function TimesheetsView() {
         setDetailLoading(false);
       }
     },
-    [weekStart],
+    [weekStart, clientArg],
   );
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await getTimesheetWeek({ weekStart: weekStart.toISOString() });
+      const res = await getTimesheetWeek({ weekStart: weekStart.toISOString(), clientId: clientArg });
       setData(res);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not load timesheets.');
@@ -149,7 +171,7 @@ export function TimesheetsView() {
     } finally {
       setLoading(false);
     }
-  }, [weekStart]);
+  }, [weekStart, clientArg]);
 
   useEffect(() => {
     void load();
@@ -159,7 +181,7 @@ export function TimesheetsView() {
     if (downloading) return;
     setDownloading(true);
     try {
-      await exportTimesheetXlsx({ weekStart: weekStart.toISOString() });
+      await exportTimesheetXlsx({ weekStart: weekStart.toISOString(), clientId: clientArg });
       toast.success('Downloaded the Fieldglass timesheet workbook.');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Download failed.');
@@ -201,7 +223,7 @@ export function TimesheetsView() {
       return;
     setFilingBusy(true);
     try {
-      const updated = await fileTimesheetWeek({ weekStart: weekStart.toISOString() });
+      const updated = await fileTimesheetWeek({ weekStart: weekStart.toISOString(), clientId: clientArg });
       setData(updated);
       // Attestation is best-effort and only for compliance-managers; the
       // filing snapshot is already recorded regardless.
@@ -269,6 +291,20 @@ export function TimesheetsView() {
         >
           Last completed week
         </Button>
+        <Select
+          value={clientId}
+          onChange={(e) => setClientId(e.target.value)}
+          className="h-8 w-auto text-sm"
+          title="File one Fieldglass client/SOW at a time"
+          aria-label="Client filter"
+        >
+          <option value="">All clients</option>
+          {clients.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </Select>
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Button
