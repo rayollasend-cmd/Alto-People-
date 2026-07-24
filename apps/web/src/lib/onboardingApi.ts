@@ -299,6 +299,9 @@ export interface W4Status {
   deductions: string | null;
   extraWithholding: string | null;
   hasSsnOnFile: boolean;
+  /** An SSN was stored but no longer decrypts (key-rotation incident) —
+   *  the form must require the number again. */
+  ssnNeedsResubmit: boolean;
   ssnLast4: string | null;
   submittedAt: string | null;
 }

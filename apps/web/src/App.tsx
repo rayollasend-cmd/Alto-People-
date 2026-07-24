@@ -86,6 +86,10 @@ const PayrollYearEndClose = lazyNamed(
   () => import('@/pages/payroll/PayrollYearEndClose'),
   'PayrollYearEndClose',
 );
+const W4SsnRecollection = lazyNamed(
+  () => import('@/pages/payroll/W4SsnRecollection'),
+  'W4SsnRecollection',
+);
 const PayrollTaxHome = lazyNamed(() => import('@/pages/payrollTax/PayrollTaxHome'), 'PayrollTaxHome');
 const PayrollCompliance = lazyNamed(
   () => import('@/pages/payroll/PayrollCompliance'),
@@ -381,6 +385,7 @@ const LAYOUT_ROUTES = [
   { path: 'payroll/readiness', element: <RequireCapability cap="process:payroll"><PayrollReadiness /></RequireCapability> },
   { path: 'payroll/ytd', element: <RequireCapability cap="process:payroll"><PayrollYtd /></RequireCapability> },
   { path: 'payroll/year-end-close', element: <RequireCapability cap="process:payroll"><PayrollYearEndClose /></RequireCapability> },
+  { path: 'payroll/w4-recollection', element: <RequireCapability cap="process:payroll"><W4SsnRecollection /></RequireCapability> },
   { path: 'benefits/lifecycle', element: <RequireCapability cap="view:hr-admin"><BenefitsLifecycle /></RequireCapability> },
   { path: 'integrations', element: <RequireCapability cap="view:integrations"><IntegrationsHome /></RequireCapability> },
   { path: 'learning', element: <RequireCapability cap="view:dashboard"><LearningHome /></RequireCapability> },
