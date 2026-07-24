@@ -1062,6 +1062,51 @@ export function mfaEnabledTemplate(opts: MfaEventOpts): EmailTemplate {
   };
 }
 
+/* ---------------- W-4 SSN RE-COLLECTION ---------------------- */
+
+export interface W4SsnRecollectionOpts {
+  firstName: string;
+  /** Absolute URL to the associate's W-4 onboarding task. */
+  taskUrl: string;
+}
+export function w4SsnRecollectionTemplate(
+  opts: W4SsnRecollectionOpts,
+): EmailTemplate {
+  const refId = formatRef();
+  const subject = `[Action Required] Please re-enter your Social Security number`;
+  const heading = `Please re-submit your W-4`;
+  const intro = `Due to an encryption-key fault in our HR system, the Social Security number you entered during onboarding can no longer be read. Your number was not exposed — it was stored encrypted and stayed encrypted — but we need you to enter it again so it can be used for payroll and required government filings.`;
+  const dataBlock: DataRow[] = [
+    { label: 'What we need', value: 'Re-enter your SSN on the W-4 step' },
+    { label: 'Time required', value: 'About 2 minutes' },
+    { label: 'Who can see it', value: 'No one — it is encrypted on submit' },
+  ];
+  const why = `Until it is re-entered, we cannot include you in state new-hire reporting or year-end tax forms (W-2), which are required by law.`;
+  const how = `Sign in, open the W-4 step, and type your 9-digit Social Security number. Your other W-4 answers are already saved — you only need the number.`;
+  const caution = `We will never ask for your SSN by email or phone. Enter it only on the secure page linked below.`;
+  return {
+    subject,
+    text: composeText({
+      greeting: `${opts.firstName},`,
+      intro,
+      dataBlock,
+      body: [why, how, caution],
+      cta: { label: 'Re-enter my SSN', url: opts.taskUrl },
+      signatory: { kind: 'system' },
+      refId,
+    }),
+    html: wrapHtml({
+      heading,
+      intro: `${escapeHtml(opts.firstName)}, ${escapeHtml(intro)}`,
+      dataBlock,
+      body: [escapeHtml(why), escapeHtml(how), escapeHtml(caution)],
+      cta: { label: 'Re-enter my SSN', url: opts.taskUrl },
+      signatory: { kind: 'system' },
+      refId,
+    }),
+  };
+}
+
 export function mfaDisabledTemplate(opts: MfaEventOpts): EmailTemplate {
   const refId = formatRef();
   const subject = `[Security] Two-step sign-in turned off`;

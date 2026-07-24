@@ -20,6 +20,7 @@ import { timeOffRouter } from './routes/timeOff.js';
 import { schedulingRouter } from './routes/scheduling.js';
 import { calendarFeedRouter } from './routes/calendarFeed.js';
 import { payrollRouter } from './routes/payroll.js';
+import { w4RecollectionRouter } from './routes/w4Recollection.js';
 import { documentsRouter } from './routes/documents.js';
 import { complianceRouter } from './routes/compliance.js';
 import { complianceScorecardRouter } from './routes/complianceScorecard.js';
@@ -213,6 +214,14 @@ export function createApp() {
     schedulingRouter
   );
   app.use('/payroll', requireCapability('view:payroll'), payrollRouter);
+  // W-4 SSN re-collection campaign (2026-06-11 key-rotation remediation).
+  // Same capability as the SSN reveal endpoint — this surface names who
+  // has an unreadable SSN, which is payroll-admin territory.
+  app.use(
+    '/w4-recollection',
+    requireCapability('process:payroll'),
+    w4RecollectionRouter
+  );
   app.use(
     '/documents',
     requireCapability('view:documents'),

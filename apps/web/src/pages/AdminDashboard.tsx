@@ -28,6 +28,7 @@ import type {
 import { useAuth } from '@/lib/auth';
 import { ROLE_LABELS, type Role } from '@/lib/roles';
 import { getDashboardKPIs } from '@/lib/analyticsApi';
+import { getW4RecollectionSummary } from '@/lib/w4RecollectionApi';
 import { searchAuditLogs } from '@/lib/auditApi';
 import { ApiError } from '@/lib/api';
 import { fmtDateTz } from '@/lib/format';
@@ -153,6 +154,18 @@ export function AdminDashboard() {
     queryKey: ['dashboard', 'kpis'],
     queryFn: () => getDashboardKPIs(),
   });
+  // Key-rotation remediation counter — separate from the KPI payload so
+  // the shared DashboardKPIs contract stays untouched; the card (and the
+  // query) disappear once the campaign drains to zero.
+  const canProcessPayroll = can('process:payroll');
+  const ssnRecollectionQuery = useQuery({
+    queryKey: ['w4-recollection', 'summary'],
+    queryFn: () => getW4RecollectionSummary(),
+    enabled: canProcessPayroll,
+  });
+  const ssnRecollectionOutstanding = canProcessPayroll
+    ? (ssnRecollectionQuery.data?.outstanding ?? 0)
+    : 0;
   const activityQuery = useQuery({
     queryKey: ['audit', 'recent', 15],
     queryFn: () => searchAuditLogs({ limit: 15 }),
@@ -212,7 +225,8 @@ export function AdminDashboard() {
         canManageOnboarding={can('manage:onboarding')}
         canManageCompliance={can('manage:compliance')}
         canManageDocuments={can('manage:documents')}
-        canProcessPayroll={can('process:payroll')}
+        canProcessPayroll={canProcessPayroll}
+        ssnRecollectionOutstanding={ssnRecollectionOutstanding}
       />
 
       <KpiSection kpis={kpis} />
@@ -308,12 +322,14 @@ function ActionRequiredSection({
   canManageCompliance,
   canManageDocuments,
   canProcessPayroll,
+  ssnRecollectionOutstanding,
 }: {
   kpis: DashboardKPIs | null;
   canManageOnboarding: boolean;
   canManageCompliance: boolean;
   canManageDocuments: boolean;
   canProcessPayroll: boolean;
+  ssnRecollectionOutstanding: number;
 }) {
   const hasAnyActionCapability =
     canManageOnboarding ||
@@ -374,6 +390,20 @@ function ActionRequiredSection({
         severity: 'attention',
       });
     }
+    if (canProcessPayroll && ssnRecollectionOutstanding > 0) {
+      xs.push({
+        count: ssnRecollectionOutstanding,
+        label:
+          ssnRecollectionOutstanding === 1
+            ? 'SSN needs re-collection'
+            : 'SSNs need re-collection',
+        hint: 'Stored W-4 SSNs unreadable since the June 11 key incident — blocks new-hire reporting and W-2s.',
+        to: '/payroll/w4-recollection',
+        cta: 'Open campaign',
+        icon: ShieldCheck,
+        severity: 'urgent',
+      });
+    }
     return xs;
   }, [
     kpis,
@@ -381,6 +411,7 @@ function ActionRequiredSection({
     canManageCompliance,
     canManageDocuments,
     canProcessPayroll,
+    ssnRecollectionOutstanding,
   ]);
 
   // Roles with no manage capabilities at all (EXECUTIVE_CHAIRMAN,
