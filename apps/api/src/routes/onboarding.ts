@@ -57,7 +57,7 @@ import {
   markTaskSkippedById,
 } from '../lib/checklist.js';
 import multer from 'multer';
-import { decryptString, encryptString } from '../lib/crypto.js';
+import { decryptString, encryptString, tryDecryptString } from '../lib/crypto.js';
 import { recordOnboardingEvent } from '../lib/audit.js';
 import {
   notifyAllAdmins,
@@ -1537,6 +1537,12 @@ onboardingRouter.get('/applications/:id/w4', async (req, res, next) => {
         select: { ssnLast4: true },
       }),
     ]);
+    // A stored SSN only counts as "on file" when it decrypts under the
+    // current key. Rows encrypted before the 2026-06-11 key rotation are
+    // unreadable — the form must ask for the number again instead of
+    // showing "•••-••-1234" and silently keeping a broken blob.
+    const ssnReadable =
+      w4?.ssnEncrypted != null && tryDecryptString(w4.ssnEncrypted) !== null;
     res.json({
       hasSubmission: w4 !== null,
       filingStatus: w4?.filingStatus ?? null,
@@ -1545,7 +1551,8 @@ onboardingRouter.get('/applications/:id/w4', async (req, res, next) => {
       otherIncome: w4 ? w4.otherIncome.toString() : null,
       deductions: w4 ? w4.deductions.toString() : null,
       extraWithholding: w4 ? w4.extraWithholding.toString() : null,
-      hasSsnOnFile: w4?.ssnEncrypted != null,
+      hasSsnOnFile: ssnReadable,
+      ssnNeedsResubmit: w4?.ssnEncrypted != null && !ssnReadable,
       ssnLast4: associate.ssnLast4,
       submittedAt: w4?.signedAt ? w4.signedAt.toISOString() : null,
     });
@@ -1570,7 +1577,14 @@ onboardingRouter.post('/applications/:id/w4', async (req, res, next) => {
       where: { associateId: app.associateId },
       select: { ssnEncrypted: true },
     });
-    const alreadyHasSsn = existing?.ssnEncrypted != null;
+    // "Already has an SSN" means a blob that still decrypts. A row from
+    // before the 2026-06-11 key rotation is present but unreadable, and
+    // accepting an SSN-less resubmit would keep the broken blob while
+    // marking the task done — the exact failure the re-collection
+    // campaign exists to fix.
+    const alreadyHasSsn =
+      existing?.ssnEncrypted != null &&
+      tryDecryptString(existing.ssnEncrypted) !== null;
     if (!input.ssn && !alreadyHasSsn) {
       throw new HttpError(
         400,

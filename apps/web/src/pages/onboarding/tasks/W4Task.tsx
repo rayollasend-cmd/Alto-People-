@@ -49,6 +49,7 @@ export function W4Task() {
   }, [applicationId]);
 
   const ssnOnFile = !!status?.hasSsnOnFile;
+  const ssnNeedsResubmit = !!status?.ssnNeedsResubmit;
   const showSsnInput = !ssnOnFile || replaceSsn;
 
   const handleSubmit = async (e: FormEvent) => {
@@ -88,6 +89,18 @@ export function W4Task() {
         Federal W-4. Required for U.S. tax withholding on your wages. Your SSN
         is encrypted at rest the moment you submit it.
       </p>
+
+      {ssnNeedsResubmit && (
+        <div
+          role="alert"
+          className="mb-4 px-3 py-2 rounded-md border border-warning/40 bg-warning/[0.07] text-warning text-xs"
+        >
+          We need your Social Security number again. The copy you entered
+          before can no longer be read after a system encryption-key change —
+          it was never exposed, but it must be re-entered before payroll and
+          tax filings can include you.
+        </div>
+      )}
 
       {status?.submittedAt && (
         <div className="mb-4 flex items-center gap-2 px-3 py-2 rounded-md border border-success/30 bg-success/[0.05] text-success text-xs">

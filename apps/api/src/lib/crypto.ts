@@ -69,3 +69,17 @@ export function encryptString(plaintext: string): Buffer {
 export function decryptString(blob: Buffer): string {
   return decryptBytes(blob).toString('utf8');
 }
+
+/**
+ * Non-throwing decrypt. Null means the blob cannot be read under the
+ * current PAYOUT_ENCRYPTION_KEY — e.g. rows encrypted before the
+ * 2026-06-11 key-rotation incident. Callers use this to distinguish
+ * "SSN on file" from "SSN on file but unreadable, needs re-collection".
+ */
+export function tryDecryptString(blob: Buffer): string | null {
+  try {
+    return decryptString(blob);
+  } catch {
+    return null;
+  }
+}
