@@ -1,13 +1,19 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, Trash2, Upload } from 'lucide-react';
+import { toast } from 'sonner';
+import type { DocumentRecord } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { getW4, submitW4, type W4Status } from '@/lib/onboardingApi';
+import { deleteMyDocument, uploadMyDocument } from '@/lib/documentsApi';
 import { ApiError } from '@/lib/api';
 import { Select } from '@/components/ui/Select';
 import { Field, SubmitRow, TaskShell, inputCls } from './ProfileInfoTask';
 
 const SSN_PATTERN = /^\d{3}-?\d{2}-?\d{4}$/;
+
+const CARD_MAX_BYTES = 10 * 1024 * 1024;
+const CARD_ACCEPT = 'image/png,image/jpeg,image/webp,application/pdf';
 
 export function W4Task() {
   const { applicationId } = useParams<{ applicationId: string }>();
@@ -27,6 +33,9 @@ export function W4Task() {
   const [replaceSsn, setReplaceSsn] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [cardDocs, setCardDocs] = useState<DocumentRecord[]>([]);
+  const [cardUploading, setCardUploading] = useState(false);
+  const cardInputRef = useRef<HTMLInputElement | null>(null);
 
   const isAssociate = user?.role === 'ASSOCIATE';
   const backTo = isAssociate
@@ -51,6 +60,44 @@ export function W4Task() {
   const ssnOnFile = !!status?.hasSsnOnFile;
   const ssnNeedsResubmit = !!status?.ssnNeedsResubmit;
   const showSsnInput = !ssnOnFile || replaceSsn;
+  // Card-photo upload only exists for the associate themselves — the
+  // upload lands on /documents/me, and the server only gates their own
+  // re-collection resubmit on it.
+  const showCardUpload = isAssociate && showSsnInput;
+  const cardRequired = isAssociate && ssnNeedsResubmit;
+  const hasCard = !!status?.hasSsnCardOnFile || cardDocs.length > 0;
+
+  const onCardFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow same-file re-selection
+    if (!file) return;
+    if (file.size > CARD_MAX_BYTES) {
+      setError('Card photo is too large (max 10 MB).');
+      return;
+    }
+    setError(null);
+    setCardUploading(true);
+    try {
+      const doc = await uploadMyDocument(file, 'SSN_CARD');
+      setCardDocs((prev) => [...prev, doc]);
+      toast.success(`Uploaded ${file.name}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload failed.');
+    } finally {
+      setCardUploading(false);
+    }
+  };
+
+  const onRemoveCard = async (doc: DocumentRecord) => {
+    try {
+      await deleteMyDocument(doc.id);
+      setCardDocs((prev) => prev.filter((d) => d.id !== doc.id));
+    } catch (err) {
+      toast.error('Could not remove', {
+        description: err instanceof ApiError ? err.message : undefined,
+      });
+    }
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -60,6 +107,10 @@ export function W4Task() {
     if (showSsnInput) {
       if (!ssn || !SSN_PATTERN.test(ssn)) {
         setError('SSN is required and must be 9 digits.');
+        return;
+      }
+      if (cardRequired && !hasCard) {
+        setError('Please upload a photo of your Social Security card.');
         return;
       }
     }
@@ -98,7 +149,8 @@ export function W4Task() {
           We need your Social Security number again. The copy you entered
           before can no longer be read after a system encryption-key change —
           it was never exposed, but it must be re-entered before payroll and
-          tax filings can include you.
+          tax filings can include you. Please also upload a clear photo of
+          your Social Security card so payroll can verify the number.
         </div>
       )}
 
@@ -229,6 +281,66 @@ export function W4Task() {
               </button>
             )}
           </Field>
+        )}
+
+        {showCardUpload && (
+          <div className="rounded-md border border-navy-secondary bg-navy-secondary/30 p-3 space-y-2">
+            <div className="text-xs uppercase tracking-widest text-silver">
+              Social Security card photo
+              {cardRequired ? '' : ' (optional)'}
+            </div>
+            <p className="text-xs text-silver">
+              {cardRequired
+                ? 'Upload a clear photo of your card so payroll can verify the number you re-entered. '
+                : 'A clear photo of your card helps payroll verify the number. '}
+              PNG, JPG, WebP, or PDF — up to 10 MB.
+            </p>
+            {status?.hasSsnCardOnFile && cardDocs.length === 0 && (
+              <p className="text-xs text-success">
+                A card image is already on file — upload again only if you
+                want to replace it with a clearer photo.
+              </p>
+            )}
+            <input
+              ref={cardInputRef}
+              type="file"
+              accept={CARD_ACCEPT}
+              onChange={onCardFileChange}
+              className="hidden"
+              aria-label="Social Security card photo file"
+            />
+            <button
+              type="button"
+              onClick={() => cardInputRef.current?.click()}
+              disabled={cardUploading}
+              className="w-full px-4 py-3 rounded-md border-2 border-dashed border-navy-secondary text-silver hover:border-gold/60 hover:text-gold transition-colors disabled:cursor-wait disabled:text-silver/70"
+            >
+              <Upload className="h-4 w-4 inline-block mr-2 -mt-0.5" />
+              {cardUploading ? 'Uploading…' : 'Upload card photo'}
+            </button>
+            {cardDocs.length > 0 && (
+              <ul className="space-y-1.5">
+                {cardDocs.map((d) => (
+                  <li
+                    key={d.id}
+                    className="flex items-center gap-2 text-xs text-white"
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />
+                    <span className="truncate flex-1">{d.filename}</span>
+                    <button
+                      type="button"
+                      onClick={() => onRemoveCard(d)}
+                      className="text-alert hover:opacity-80"
+                      aria-label={`Remove ${d.filename}`}
+                      title="Remove"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         )}
 
         {error && (

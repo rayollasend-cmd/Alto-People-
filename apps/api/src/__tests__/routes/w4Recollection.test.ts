@@ -225,6 +225,9 @@ describe('W-4 resubmission gate (key-rotation aware)', () => {
     expect(noSsn.body.error?.code).toBe('ssn_required');
 
     // With the SSN retyped, the resubmit lands and the roster drains.
+    // No card photo needed here: the actor is an admin re-keying on the
+    // associate's behalf, and the card gate only applies to the
+    // associate's own resubmit.
     const withSsn = await a.post(`/onboarding/applications/${broken.application.id}/w4`).send({
       filingStatus: 'SINGLE',
       multipleJobs: false,
@@ -240,6 +243,68 @@ describe('W-4 resubmission gate (key-rotation aware)', () => {
     expect(roster.body.summary.outstanding).toBe(0);
 
     const after = await a.get(`/onboarding/applications/${broken.application.id}/w4`);
+    expect(after.body.hasSsnOnFile).toBe(true);
+    expect(after.body.ssnNeedsResubmit).toBe(false);
+  });
+
+  it('requires an SSN-card photo when the associate themselves resubmits after the key rotation', async () => {
+    const client = await createClient();
+    const broken = await seedAssociate({ clientId: client.id, ssnBlob: unreadableBlob() });
+    const a = await loginAs(broken.user!.email);
+    const w4Path = `/onboarding/applications/${broken.application.id}/w4`;
+    const body = {
+      filingStatus: 'SINGLE',
+      multipleJobs: false,
+      dependentsAmount: 0,
+      otherIncome: 0,
+      deductions: 0,
+      extraWithholding: 0,
+      ssn: '123-45-6789',
+    };
+
+    const before = await a.get(w4Path);
+    expect(before.status).toBe(200);
+    expect(before.body.ssnNeedsResubmit).toBe(true);
+    expect(before.body.hasSsnCardOnFile).toBe(false);
+
+    const noCard = await a.post(w4Path).send(body);
+    expect(noCard.status).toBe(400);
+    expect(noCard.body.error?.code).toBe('ssn_card_required');
+
+    // A rejected upload doesn't satisfy the gate — the associate was told
+    // that file is no good.
+    await prisma.documentRecord.create({
+      data: {
+        associateId: broken.associate.id,
+        kind: 'SSN_CARD',
+        filename: 'blurry.jpg',
+        mimeType: 'image/jpeg',
+        size: 100,
+        status: 'REJECTED',
+      },
+    });
+    const rejectedOnly = await a.post(w4Path).send(body);
+    expect(rejectedOnly.status).toBe(400);
+    expect(rejectedOnly.body.error?.code).toBe('ssn_card_required');
+
+    // With a usable card image on file the resubmit lands.
+    await prisma.documentRecord.create({
+      data: {
+        associateId: broken.associate.id,
+        kind: 'SSN_CARD',
+        filename: 'card.jpg',
+        mimeType: 'image/jpeg',
+        size: 100,
+        status: 'UPLOADED',
+      },
+    });
+    const midway = await a.get(w4Path);
+    expect(midway.body.hasSsnCardOnFile).toBe(true);
+
+    const withCard = await a.post(w4Path).send(body);
+    expect(withCard.status).toBe(204);
+
+    const after = await a.get(w4Path);
     expect(after.body.hasSsnOnFile).toBe(true);
     expect(after.body.ssnNeedsResubmit).toBe(false);
   });

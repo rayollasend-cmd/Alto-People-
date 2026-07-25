@@ -1524,18 +1524,33 @@ onboardingRouter.post('/applications/:id/profile', async (req, res, next) => {
 
 /* W4 -------------------------------------------------------------------- */
 
+// A usable Social Security card image: uploaded or verified, not soft-
+// deleted. Rejected uploads don't count — the associate was told that
+// file is no good.
+function countSsnCardDocs(associateId: string): Promise<number> {
+  return prisma.documentRecord.count({
+    where: {
+      associateId,
+      kind: 'SSN_CARD',
+      status: { in: ['UPLOADED', 'VERIFIED'] },
+      deletedAt: null,
+    },
+  });
+}
+
 // GET — what's on file (redacted). Lets the W-4 form show "•••-••-1234"
 // instead of demanding the associate retype their SSN every time they
 // re-open the page.
 onboardingRouter.get('/applications/:id/w4', async (req, res, next) => {
   try {
     const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
-    const [w4, associate] = await Promise.all([
+    const [w4, associate, ssnCardCount] = await Promise.all([
       prisma.w4Submission.findUnique({ where: { associateId: app.associateId } }),
       prisma.associate.findUniqueOrThrow({
         where: { id: app.associateId },
         select: { ssnLast4: true },
       }),
+      countSsnCardDocs(app.associateId),
     ]);
     // A stored SSN only counts as "on file" when it decrypts under the
     // current key. Rows encrypted before the 2026-06-11 key rotation are
@@ -1553,6 +1568,7 @@ onboardingRouter.get('/applications/:id/w4', async (req, res, next) => {
       extraWithholding: w4 ? w4.extraWithholding.toString() : null,
       hasSsnOnFile: ssnReadable,
       ssnNeedsResubmit: w4?.ssnEncrypted != null && !ssnReadable,
+      hasSsnCardOnFile: ssnCardCount > 0,
       ssnLast4: associate.ssnLast4,
       submittedAt: w4?.signedAt ? w4.signedAt.toISOString() : null,
     });
@@ -1591,6 +1607,24 @@ onboardingRouter.post('/applications/:id/w4', async (req, res, next) => {
         'ssn_required',
         'Social Security Number is required to submit a W-4.'
       );
+    }
+    // Re-collection case (blob on file but unreadable after the 2026-06-11
+    // key rotation): when the associate themselves re-enters the number,
+    // also require a photo of their Social Security card on file so
+    // payroll can verify the re-keyed digits against the document. Admins
+    // re-keying on the associate's behalf are not gated — the roster
+    // already points them at the card image when one exists.
+    const isRecollectionResubmit =
+      existing?.ssnEncrypted != null && !alreadyHasSsn && input.ssn != null;
+    if (isRecollectionResubmit && req.user!.associateId === app.associateId) {
+      const cardCount = await countSsnCardDocs(app.associateId);
+      if (cardCount === 0) {
+        throw new HttpError(
+          400,
+          'ssn_card_required',
+          'Please upload a photo of your Social Security card before resubmitting your SSN.'
+        );
+      }
     }
     const ssnDigits = input.ssn ? input.ssn.replace(/-/g, '') : null;
     const ssnCipher = ssnDigits ? encryptString(ssnDigits) : null;

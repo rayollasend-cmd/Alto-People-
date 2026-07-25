@@ -22,12 +22,37 @@ vi.mock('@/lib/onboardingApi', () => ({
     deductions: null,
     extraWithholding: null,
     hasSsnOnFile: true,
+    ssnNeedsResubmit: false,
+    hasSsnCardOnFile: false,
     ssnLast4: '6789',
     submittedAt: null,
   })),
 }));
 
+vi.mock('@/lib/documentsApi', () => ({
+  uploadMyDocument: vi.fn(async (file: File) => ({
+    id: 'doc-1',
+    associateId: 'a',
+    associateName: null,
+    clientId: null,
+    kind: 'SSN_CARD',
+    filename: file.name,
+    mimeType: file.type,
+    size: file.size,
+    status: 'UPLOADED',
+    expiresAt: null,
+    rejectionReason: null,
+    verifiedById: null,
+    verifierEmail: null,
+    verifiedAt: null,
+    createdAt: '2026-07-24T00:00:00.000Z',
+    fileAvailable: true,
+  })),
+  deleteMyDocument: vi.fn(async () => {}),
+}));
+
 import { submitW4, getW4 } from '@/lib/onboardingApi';
+import { uploadMyDocument } from '@/lib/documentsApi';
 import { W4Task } from '@/pages/onboarding/tasks/W4Task';
 
 const APP_ID = '00000000-0000-4000-8000-00000000bbbb';
@@ -93,11 +118,12 @@ describe('<W4Task>', () => {
     vi.mocked(getW4).mockResolvedValueOnce({
       hasSubmission: false, filingStatus: null, multipleJobs: false,
       dependentsAmount: null, otherIncome: null, deductions: null,
-      extraWithholding: null, hasSsnOnFile: false, ssnLast4: null, submittedAt: null,
+      extraWithholding: null, hasSsnOnFile: false, ssnNeedsResubmit: false,
+      hasSsnCardOnFile: false, ssnLast4: null, submittedAt: null,
     });
     const user = userEvent.setup();
     renderTask();
-    const ssnField = await screen.findByLabelText(/social security/i);
+    const ssnField = await screen.findByLabelText(/social security number/i);
     await user.type(ssnField, '123-45-6789');
 
     await user.click(screen.getByRole('button', { name: /submit w-4/i }));
@@ -109,13 +135,14 @@ describe('<W4Task>', () => {
     vi.mocked(getW4).mockResolvedValueOnce({
       hasSubmission: false, filingStatus: null, multipleJobs: false,
       dependentsAmount: null, otherIncome: null, deductions: null,
-      extraWithholding: null, hasSsnOnFile: false, ssnLast4: null, submittedAt: null,
+      extraWithholding: null, hasSsnOnFile: false, ssnNeedsResubmit: false,
+      hasSsnCardOnFile: false, ssnLast4: null, submittedAt: null,
     });
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const user = userEvent.setup();
     renderTask();
-    await user.type(await screen.findByLabelText(/social security/i), '123456789');
+    await user.type(await screen.findByLabelText(/social security number/i), '123456789');
     await user.click(screen.getByRole('button', { name: /submit w-4/i }));
     await waitFor(() => expect(submitW4).toHaveBeenCalled());
 
@@ -123,6 +150,59 @@ describe('<W4Task>', () => {
     expect(allCalls).not.toContain('123456789');
     spy.mockRestore();
     errSpy.mockRestore();
+  });
+
+  it('blocks the re-collection resubmit until a card photo is uploaded', async () => {
+    vi.mocked(getW4).mockResolvedValueOnce({
+      hasSubmission: true, filingStatus: 'SINGLE', multipleJobs: false,
+      dependentsAmount: '0', otherIncome: '0', deductions: '0',
+      extraWithholding: '0', hasSsnOnFile: false, ssnNeedsResubmit: true,
+      hasSsnCardOnFile: false, ssnLast4: '6789', submittedAt: null,
+    });
+    const user = userEvent.setup();
+    renderTask();
+    await user.type(
+      await screen.findByLabelText(/social security number/i),
+      '123-45-6789'
+    );
+
+    // Submitting without the card photo is blocked client-side.
+    await user.click(screen.getByRole('button', { name: /submit w-4/i }));
+    expect(
+      await screen.findByText(/upload a photo of your social security card/i)
+    ).toBeInTheDocument();
+    expect(submitW4).not.toHaveBeenCalled();
+
+    // Upload the card, then the submit goes through.
+    const file = new File(['img'], 'card.jpg', { type: 'image/jpeg' });
+    await user.upload(
+      screen.getByLabelText(/social security card photo file/i),
+      file
+    );
+    await waitFor(() =>
+      expect(uploadMyDocument).toHaveBeenCalledWith(file, 'SSN_CARD')
+    );
+
+    await user.click(screen.getByRole('button', { name: /submit w-4/i }));
+    await waitFor(() => expect(submitW4).toHaveBeenCalledTimes(1));
+    expect(submitW4.mock.calls[0][1]).toMatchObject({ ssn: '123-45-6789' });
+  });
+
+  it('does not demand a fresh photo when a card image is already on file', async () => {
+    vi.mocked(getW4).mockResolvedValueOnce({
+      hasSubmission: true, filingStatus: 'SINGLE', multipleJobs: false,
+      dependentsAmount: '0', otherIncome: '0', deductions: '0',
+      extraWithholding: '0', hasSsnOnFile: false, ssnNeedsResubmit: true,
+      hasSsnCardOnFile: true, ssnLast4: '6789', submittedAt: null,
+    });
+    const user = userEvent.setup();
+    renderTask();
+    await user.type(
+      await screen.findByLabelText(/social security number/i),
+      '123-45-6789'
+    );
+    await user.click(screen.getByRole('button', { name: /submit w-4/i }));
+    await waitFor(() => expect(submitW4).toHaveBeenCalledTimes(1));
   });
 
   it('changes filing status when the select is updated', async () => {

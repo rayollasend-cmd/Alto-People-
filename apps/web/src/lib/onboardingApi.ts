@@ -302,6 +302,9 @@ export interface W4Status {
   /** An SSN was stored but no longer decrypts (key-rotation incident) —
    *  the form must require the number again. */
   ssnNeedsResubmit: boolean;
+  /** A usable SSN-card image (uploaded/verified, not deleted) exists —
+   *  the re-collection resubmit doesn't need a fresh photo. */
+  hasSsnCardOnFile: boolean;
   ssnLast4: string | null;
   submittedAt: string | null;
 }

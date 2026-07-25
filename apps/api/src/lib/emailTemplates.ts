@@ -1077,12 +1077,15 @@ export function w4SsnRecollectionTemplate(
   const heading = `Please re-submit your W-4`;
   const intro = `Due to an encryption-key fault in our HR system, the Social Security number you entered during onboarding can no longer be read. Your number was not exposed — it was stored encrypted and stayed encrypted — but we need you to enter it again so it can be used for payroll and required government filings.`;
   const dataBlock: DataRow[] = [
-    { label: 'What we need', value: 'Re-enter your SSN on the W-4 step' },
-    { label: 'Time required', value: 'About 2 minutes' },
-    { label: 'Who can see it', value: 'No one — it is encrypted on submit' },
+    {
+      label: 'What we need',
+      value: 'Re-enter your SSN and upload a photo of your Social Security card',
+    },
+    { label: 'Time required', value: 'About 3 minutes' },
+    { label: 'Who can see it', value: 'Only payroll — it is encrypted on submit' },
   ];
   const why = `Until it is re-entered, we cannot include you in state new-hire reporting or year-end tax forms (W-2), which are required by law.`;
-  const how = `Sign in, open the W-4 step, and type your 9-digit Social Security number. Your other W-4 answers are already saved — you only need the number.`;
+  const how = `Sign in, open the W-4 step, type your 9-digit Social Security number, and attach a clear photo of your Social Security card so payroll can verify the number. Your other W-4 answers are already saved.`;
   const caution = `We will never ask for your SSN by email or phone. Enter it only on the secure page linked below.`;
   return {
     subject,
