@@ -1068,22 +1068,47 @@ export interface W4SsnRecollectionOpts {
   firstName: string;
   /** Absolute URL to the associate's W-4 onboarding task. */
   taskUrl: string;
+  /** The stored number no longer decrypts — must be retyped. */
+  needsNumber: boolean;
+  /** No SSN card image on file — a photo must be uploaded. */
+  needsCard: boolean;
 }
 export function w4SsnRecollectionTemplate(
   opts: W4SsnRecollectionOpts,
 ): EmailTemplate {
   const refId = formatRef();
-  const subject = `[Action Required] Please re-enter your Social Security number`;
-  const heading = `Please re-submit your W-4`;
-  const intro = `Due to an encryption-key fault in our HR system, the Social Security number you entered during onboarding can no longer be read. Your number was not exposed — it was stored encrypted and stayed encrypted — but we need you to enter it again so it can be used for payroll and required government filings.`;
+  const cardOnly = !opts.needsNumber && opts.needsCard;
+  const subject = cardOnly
+    ? `[Action Required] Please upload a photo of your Social Security card`
+    : `[Action Required] Please re-enter your Social Security number`;
+  const heading = cardOnly
+    ? `Please upload your Social Security card`
+    : `Please re-submit your W-4`;
+  const intro = cardOnly
+    ? `Thank you for re-entering your Social Security number. To complete your record, we also need a photo of your Social Security card on file for payroll verification.`
+    : `Due to an encryption-key fault in our HR system, the Social Security number you entered during onboarding can no longer be read. Your number was not exposed — it was stored encrypted and stayed encrypted — but we need you to enter it again so it can be used for payroll and required government filings.`;
+  const whatWeNeed =
+    opts.needsNumber && opts.needsCard
+      ? 'Re-enter your SSN and upload a photo of your Social Security card'
+      : opts.needsNumber
+        ? 'Re-enter your SSN on the W-4 step'
+        : 'Upload a photo of your Social Security card';
   const dataBlock: DataRow[] = [
-    { label: 'What we need', value: 'Re-enter your SSN on the W-4 step' },
+    { label: 'What we need', value: whatWeNeed },
     { label: 'Time required', value: 'About 2 minutes' },
-    { label: 'Who can see it', value: 'No one — it is encrypted on submit' },
+    { label: 'Who can see it', value: 'Only payroll staff — it is encrypted on submit' },
   ];
-  const why = `Until it is re-entered, we cannot include you in state new-hire reporting or year-end tax forms (W-2), which are required by law.`;
-  const how = `Sign in, open the W-4 step, and type your 9-digit Social Security number. Your other W-4 answers are already saved — you only need the number.`;
-  const caution = `We will never ask for your SSN by email or phone. Enter it only on the secure page linked below.`;
+  const why = cardOnly
+    ? `The card image lets payroll verify the number on file and is required to complete this remediation.`
+    : `Until it is re-entered, we cannot include you in state new-hire reporting or year-end tax forms (W-2), which are required by law.`;
+  const how =
+    opts.needsNumber && opts.needsCard
+      ? `Sign in, open the W-4 step, upload a clear photo or scan of your Social Security card, and type your 9-digit Social Security number. Your other W-4 answers are already saved.`
+      : opts.needsNumber
+        ? `Sign in, open the W-4 step, and type your 9-digit Social Security number. Your other W-4 answers are already saved — you only need the number.`
+        : `Sign in, open the W-4 step, and upload a clear photo or scan of your Social Security card. Nothing else needs to change.`;
+  const caution = `We will never ask for your SSN by email or phone. Provide it only on the secure page linked below.`;
+  const ctaLabel = cardOnly ? 'Upload my card' : 'Re-enter my SSN';
   return {
     subject,
     text: composeText({
@@ -1091,7 +1116,7 @@ export function w4SsnRecollectionTemplate(
       intro,
       dataBlock,
       body: [why, how, caution],
-      cta: { label: 'Re-enter my SSN', url: opts.taskUrl },
+      cta: { label: ctaLabel, url: opts.taskUrl },
       signatory: { kind: 'system' },
       refId,
     }),
@@ -1100,7 +1125,7 @@ export function w4SsnRecollectionTemplate(
       intro: `${escapeHtml(opts.firstName)}, ${escapeHtml(intro)}`,
       dataBlock,
       body: [escapeHtml(why), escapeHtml(how), escapeHtml(caution)],
-      cta: { label: 'Re-enter my SSN', url: opts.taskUrl },
+      cta: { label: ctaLabel, url: opts.taskUrl },
       signatory: { kind: 'system' },
       refId,
     }),

@@ -22,12 +22,26 @@ vi.mock('@/lib/onboardingApi', () => ({
     deductions: null,
     extraWithholding: null,
     hasSsnOnFile: true,
+    ssnNeedsResubmit: false,
+    hasSsnCardOnFile: true,
     ssnLast4: '6789',
     submittedAt: null,
   })),
 }));
 
+vi.mock('@/lib/i9Api', () => ({
+  uploadI9Document: vi.fn(async () => ({
+    documentId: 'd1',
+    kind: 'SSN_CARD',
+    side: null,
+    size: 100,
+    mimeType: 'image/jpeg',
+    sha256: 'x',
+  })),
+}));
+
 import { submitW4, getW4 } from '@/lib/onboardingApi';
+import { uploadI9Document } from '@/lib/i9Api';
 import { W4Task } from '@/pages/onboarding/tasks/W4Task';
 
 const APP_ID = '00000000-0000-4000-8000-00000000bbbb';
@@ -93,7 +107,8 @@ describe('<W4Task>', () => {
     vi.mocked(getW4).mockResolvedValueOnce({
       hasSubmission: false, filingStatus: null, multipleJobs: false,
       dependentsAmount: null, otherIncome: null, deductions: null,
-      extraWithholding: null, hasSsnOnFile: false, ssnLast4: null, submittedAt: null,
+      extraWithholding: null, hasSsnOnFile: false, ssnNeedsResubmit: false,
+      hasSsnCardOnFile: false, ssnLast4: null, submittedAt: null,
     });
     const user = userEvent.setup();
     renderTask();
@@ -109,7 +124,8 @@ describe('<W4Task>', () => {
     vi.mocked(getW4).mockResolvedValueOnce({
       hasSubmission: false, filingStatus: null, multipleJobs: false,
       dependentsAmount: null, otherIncome: null, deductions: null,
-      extraWithholding: null, hasSsnOnFile: false, ssnLast4: null, submittedAt: null,
+      extraWithholding: null, hasSsnOnFile: false, ssnNeedsResubmit: false,
+      hasSsnCardOnFile: false, ssnLast4: null, submittedAt: null,
     });
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -123,6 +139,56 @@ describe('<W4Task>', () => {
     expect(allCalls).not.toContain('123456789');
     spy.mockRestore();
     errSpy.mockRestore();
+  });
+
+  it('blocks a recollection resubmit until the card photo is uploaded', async () => {
+    vi.mocked(getW4).mockResolvedValueOnce({
+      hasSubmission: true, filingStatus: 'SINGLE', multipleJobs: false,
+      dependentsAmount: null, otherIncome: null, deductions: null,
+      extraWithholding: null, hasSsnOnFile: false, ssnNeedsResubmit: true,
+      hasSsnCardOnFile: false, ssnLast4: '6789', submittedAt: null,
+    });
+    const user = userEvent.setup();
+    const { container } = renderTask();
+    await user.type(await screen.findByLabelText(/social security number/i), '123-45-6789');
+
+    // No card yet — submit must be refused client-side.
+    await user.click(screen.getByRole('button', { name: /submit w-4/i }));
+    expect(
+      await screen.findByText(/upload a photo of your social security card before submitting/i)
+    ).toBeInTheDocument();
+    expect(submitW4).not.toHaveBeenCalled();
+
+    // Upload the card, then the submit goes through.
+    const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+    await user.upload(fileInput, new File(['img'], 'card.jpg', { type: 'image/jpeg' }));
+    await waitFor(() =>
+      expect(uploadI9Document).toHaveBeenCalledWith(
+        APP_ID,
+        expect.any(File),
+        'SSN_CARD'
+      )
+    );
+    await user.click(screen.getByRole('button', { name: /submit w-4/i }));
+    await waitFor(() => expect(submitW4).toHaveBeenCalledTimes(1));
+  });
+
+  it('offers an optional card upload when a W-4 exists without a card image', async () => {
+    vi.mocked(getW4).mockResolvedValueOnce({
+      hasSubmission: true, filingStatus: 'SINGLE', multipleJobs: false,
+      dependentsAmount: null, otherIncome: null, deductions: null,
+      extraWithholding: null, hasSsnOnFile: true, ssnNeedsResubmit: false,
+      hasSsnCardOnFile: false, ssnLast4: '6789', submittedAt: null,
+    });
+    const user = userEvent.setup();
+    renderTask();
+    expect(
+      await screen.findByText(/social security card photo \(optional\)/i)
+    ).toBeInTheDocument();
+
+    // Optional means submit is not blocked.
+    await user.click(screen.getByRole('button', { name: /submit w-4/i }));
+    await waitFor(() => expect(submitW4).toHaveBeenCalledTimes(1));
   });
 
   it('changes filing status when the select is updated', async () => {

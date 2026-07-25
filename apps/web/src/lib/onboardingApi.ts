@@ -302,6 +302,9 @@ export interface W4Status {
   /** An SSN was stored but no longer decrypts (key-rotation incident) —
    *  the form must require the number again. */
   ssnNeedsResubmit: boolean;
+  /** A photo/scan of the Social Security card is on file. Required (along
+   *  with the retyped number) to complete a re-collection resubmit. */
+  hasSsnCardOnFile: boolean;
   ssnLast4: string | null;
   submittedAt: string | null;
 }
