@@ -1,6 +1,7 @@
 import { apiFetch } from './api';
 
-/** One associate whose stored W-4 SSN no longer decrypts. */
+/** One associate the campaign still needs something from — an unreadable
+ *  stored SSN, a missing SSN-card photo, or both. */
 export interface W4RecollectionRow {
   associateId: string;
   firstName: string;
@@ -12,6 +13,10 @@ export interface W4RecollectionRow {
   hireDate: string | null;
   w4SubmittedAt: string | null;
   ssnLast4: string | null;
+  /** The stored number still doesn't decrypt — must be re-entered. */
+  needsNumber: boolean;
+  /** No SSN card image on file — a photo must be uploaded. */
+  needsCard: boolean;
   /** An SSN card / I-9 doc image is on file — an admin can re-key from it. */
   hasSsnDocument: boolean;
   emailCount: number;

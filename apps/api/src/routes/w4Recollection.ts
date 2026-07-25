@@ -11,20 +11,31 @@ import { w4SsnRecollectionTemplate } from '../lib/emailTemplates.js';
 /**
  * W-4 SSN re-collection campaign — remediation surface for the 2026-06-11
  * key-rotation incident. W4Submission rows encrypted under the lost key
- * are intact but unreadable; the only fix is the associate re-entering
- * their SSN on the (already resubmittable) W-4 onboarding step.
+ * are intact but unreadable; the fix is the associate re-entering their
+ * SSN on the (already resubmittable) W-4 onboarding step AND uploading a
+ * photo of their Social Security card so payroll holds both the number
+ * and the document image.
  *
  * This router lets payroll admins see who is still outstanding, email
- * them a re-entry request, and watch the list drain as resubmissions
- * land — an associate drops off the moment their blob decrypts again,
- * with no explicit "done" bookkeeping to forget.
+ * them a request, and watch the list drain. An associate is outstanding
+ * while their number is unreadable — and, once we've contacted them,
+ * also while no SSN-card image is on file. The number half is derived
+ * straight from the blob (no bookkeeping to forget); the card half uses
+ * the campaign's own send history as the "in the campaign" marker, since
+ * a readable blob alone can't tell us the associate was ever affected.
  */
 export const w4RecollectionRouter = Router();
 
 export const W4_RECOLLECTION_CATEGORY = 'w4.ssn_recollection';
 
-interface AffectedRow {
+interface CampaignRow {
   submittedAt: Date | null;
+  /** Stored SSN blob does not decrypt under the current key. */
+  needsNumber: boolean;
+  /** A non-deleted SSN_CARD document image is on file. */
+  hasSsnCard: boolean;
+  /** SSN card OR I-9 supporting image — enough for an admin to re-key from. */
+  hasRekeyDoc: boolean;
   associate: {
     id: string;
     firstName: string;
@@ -34,17 +45,16 @@ interface AffectedRow {
     ssnLast4: string | null;
     user: { id: string; status: string } | null;
     applications: { id: string }[];
-    documents: { id: string }[];
   };
 }
 
 /**
- * Every associate whose stored W-4 SSN does not decrypt under the current
- * key. ~200 rows org-wide, so decrypt-testing all of them per request is
- * a few milliseconds — the blob itself is the source of truth, which
- * beats maintaining a parallel "affected" flag that could drift.
+ * Every W-4 row with a stored SSN, annotated with what the campaign still
+ * needs from it. ~200 rows org-wide, so decrypt-testing all of them per
+ * request is a few milliseconds — the blob itself is the source of truth,
+ * which beats maintaining a parallel "affected" flag that could drift.
  */
-async function loadAffected(): Promise<AffectedRow[]> {
+async function loadCampaignRows(): Promise<CampaignRow[]> {
   const rows = await prisma.w4Submission.findMany({
     where: { ssnEncrypted: { not: null }, associate: { deletedAt: null } },
     orderBy: { createdAt: 'asc' },
@@ -66,20 +76,24 @@ async function loadAffected(): Promise<AffectedRow[]> {
             take: 1,
             select: { id: true },
           },
-          // An SSN card or I-9 supporting image on file means an admin can
-          // re-key the number from the document without waiting on the
-          // associate — surfaced as a per-row shortcut in the roster.
           documents: {
             where: { kind: { in: ['SSN_CARD', 'I9_SUPPORTING'] }, deletedAt: null },
-            select: { id: true },
+            select: { id: true, kind: true },
           },
         },
       },
     },
   });
-  return rows
-    .filter((r) => tryDecryptString(r.ssnEncrypted!) === null)
-    .map((r) => ({ submittedAt: r.signedAt, associate: r.associate }));
+  return rows.map((r) => {
+    const { documents, ...associate } = r.associate;
+    return {
+      submittedAt: r.signedAt,
+      needsNumber: tryDecryptString(r.ssnEncrypted!) === null,
+      hasSsnCard: documents.some((d) => d.kind === 'SSN_CARD'),
+      hasRekeyDoc: documents.length > 0,
+      associate,
+    };
+  });
 }
 
 /** Per-user send history for the campaign category: count + latest. */
@@ -107,8 +121,26 @@ async function loadSendHistory(): Promise<
   return byUser;
 }
 
-/** How many previously-notified associates have since resubmitted. */
-async function countResolved(affectedIds: Set<string>): Promise<number> {
+interface Campaign {
+  /** Rows the campaign still needs something from, oldest submission first. */
+  outstanding: CampaignRow[];
+  history: Map<string, { count: number; lastSentAt: Date | null }>;
+}
+
+async function loadCampaign(): Promise<Campaign> {
+  const [rows, history] = await Promise.all([loadCampaignRows(), loadSendHistory()]);
+  const outstanding = rows.filter((r) => {
+    const notified = r.associate.user ? history.has(r.associate.user.id) : false;
+    // Card-only rows are held open only for associates we've contacted —
+    // otherwise every pre-campaign associate without a card image would
+    // flood the roster.
+    return r.needsNumber || (notified && !r.hasSsnCard);
+  });
+  return { outstanding, history };
+}
+
+/** How many previously-notified associates have since fully resolved. */
+async function countResolved(outstandingIds: Set<string>): Promise<number> {
   const notifiedUserIds = await prisma.notification.findMany({
     where: {
       category: W4_RECOLLECTION_CATEGORY,
@@ -124,30 +156,28 @@ async function countResolved(affectedIds: Set<string>): Promise<number> {
     where: { id: { in: notifiedUserIds.map((n) => n.recipientUserId!) } },
     select: { associateId: true },
   });
-  return users.filter((u) => u.associateId && !affectedIds.has(u.associateId)).length;
+  return users.filter((u) => u.associateId && !outstandingIds.has(u.associateId)).length;
 }
 
 // Light payload for the admin-dashboard action card — counts only.
 w4RecollectionRouter.get('/summary', async (_req, res) => {
-  const affected = await loadAffected();
-  const affectedIds = new Set(affected.map((r) => r.associate.id));
-  const history = await loadSendHistory();
-  const notified = affected.filter(
+  const { outstanding, history } = await loadCampaign();
+  const outstandingIds = new Set(outstanding.map((r) => r.associate.id));
+  const notified = outstanding.filter(
     (r) => r.associate.user && history.has(r.associate.user.id),
   ).length;
   res.json({
-    outstanding: affected.length,
+    outstanding: outstanding.length,
     notified,
-    resolved: await countResolved(affectedIds),
+    resolved: await countResolved(outstandingIds),
   });
 });
 
 w4RecollectionRouter.get('/', async (_req, res) => {
-  const affected = await loadAffected();
-  const affectedIds = new Set(affected.map((r) => r.associate.id));
-  const history = await loadSendHistory();
+  const { outstanding, history } = await loadCampaign();
+  const outstandingIds = new Set(outstanding.map((r) => r.associate.id));
 
-  const rows = affected.map((r) => {
+  const rows = outstanding.map((r) => {
     const a = r.associate;
     const hasAccount = a.user?.status === 'ACTIVE';
     const sends = a.user ? history.get(a.user.id) : undefined;
@@ -161,8 +191,12 @@ w4RecollectionRouter.get('/', async (_req, res) => {
       hireDate: a.hireDate ? a.hireDate.toISOString() : null,
       w4SubmittedAt: r.submittedAt ? r.submittedAt.toISOString() : null,
       ssnLast4: a.ssnLast4,
+      /** The stored number still doesn't decrypt — must be re-entered. */
+      needsNumber: r.needsNumber,
+      /** No SSN card image on file — must be uploaded. */
+      needsCard: !r.hasSsnCard,
       /** True when an SSN card / I-9 doc image is on file to re-key from. */
-      hasSsnDocument: a.documents.length > 0,
+      hasSsnDocument: r.hasRekeyDoc,
       emailCount: sends?.count ?? 0,
       lastEmailedAt: sends?.lastSentAt ? sends.lastSentAt.toISOString() : null,
     };
@@ -173,7 +207,7 @@ w4RecollectionRouter.get('/', async (_req, res) => {
     summary: {
       outstanding: rows.length,
       notified: rows.filter((r) => r.emailCount > 0).length,
-      resolved: await countResolved(affectedIds),
+      resolved: await countResolved(outstandingIds),
     },
   });
 });
@@ -186,8 +220,8 @@ export type W4RecollectionSkipReason = 'not_affected' | 'no_account' | 'no_appli
 
 w4RecollectionRouter.post('/email', async (req, res) => {
   const { associateIds } = BulkEmailSchema.parse(req.body);
-  const affected = await loadAffected();
-  const byId = new Map(affected.map((r) => [r.associate.id, r]));
+  const { outstanding } = await loadCampaign();
+  const byId = new Map(outstanding.map((r) => [r.associate.id, r]));
 
   const skipped: { associateId: string; reason: W4RecollectionSkipReason }[] = [];
   const queued: string[] = [];
@@ -195,7 +229,7 @@ w4RecollectionRouter.post('/email', async (req, res) => {
   for (const id of new Set(associateIds)) {
     const row = byId.get(id);
     if (!row) {
-      // Already resubmitted (or never affected) — nothing to ask for.
+      // Already fully resolved (or never affected) — nothing to ask for.
       skipped.push({ associateId: id, reason: 'not_affected' });
       continue;
     }
@@ -215,6 +249,8 @@ w4RecollectionRouter.post('/email', async (req, res) => {
     const tpl = w4SsnRecollectionTemplate({
       firstName: a.firstName,
       taskUrl: `${env.APP_BASE_URL}${taskPath}`,
+      needsNumber: row.needsNumber,
+      needsCard: !row.hasSsnCard,
     });
     // Bell + email + push in one call; each email lands a Notification row
     // under this category, which is what the roster's "last emailed" and

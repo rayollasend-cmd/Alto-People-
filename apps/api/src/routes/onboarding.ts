@@ -1530,11 +1530,14 @@ onboardingRouter.post('/applications/:id/profile', async (req, res, next) => {
 onboardingRouter.get('/applications/:id/w4', async (req, res, next) => {
   try {
     const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
-    const [w4, associate] = await Promise.all([
+    const [w4, associate, ssnCardCount] = await Promise.all([
       prisma.w4Submission.findUnique({ where: { associateId: app.associateId } }),
       prisma.associate.findUniqueOrThrow({
         where: { id: app.associateId },
         select: { ssnLast4: true },
+      }),
+      prisma.documentRecord.count({
+        where: { associateId: app.associateId, kind: 'SSN_CARD', deletedAt: null },
       }),
     ]);
     // A stored SSN only counts as "on file" when it decrypts under the
@@ -1553,6 +1556,7 @@ onboardingRouter.get('/applications/:id/w4', async (req, res, next) => {
       extraWithholding: w4 ? w4.extraWithholding.toString() : null,
       hasSsnOnFile: ssnReadable,
       ssnNeedsResubmit: w4?.ssnEncrypted != null && !ssnReadable,
+      hasSsnCardOnFile: ssnCardCount > 0,
       ssnLast4: associate.ssnLast4,
       submittedAt: w4?.signedAt ? w4.signedAt.toISOString() : null,
     });
@@ -1591,6 +1595,25 @@ onboardingRouter.post('/applications/:id/w4', async (req, res, next) => {
         'ssn_required',
         'Social Security Number is required to submit a W-4.'
       );
+    }
+    // Re-collection resubmits (unreadable blob on file) must also land a
+    // photo of the SSN card — the campaign needs the number AND the image.
+    // The client uploads the card before submitting, so a compliant flow
+    // never hits this. Only enforced on the associate themselves: admins
+    // re-keying a number from a phone call or an existing I-9 image would
+    // otherwise be blocked.
+    const isRecollectionResubmit = existing?.ssnEncrypted != null && !alreadyHasSsn;
+    if (isRecollectionResubmit && req.user!.role === 'ASSOCIATE') {
+      const ssnCardCount = await prisma.documentRecord.count({
+        where: { associateId: app.associateId, kind: 'SSN_CARD', deletedAt: null },
+      });
+      if (ssnCardCount === 0) {
+        throw new HttpError(
+          400,
+          'ssn_card_required',
+          'A photo of your Social Security card must be uploaded before re-submitting your SSN.'
+        );
+      }
     }
     const ssnDigits = input.ssn ? input.ssn.replace(/-/g, '') : null;
     const ssnCipher = ssnDigits ? encryptString(ssnDigits) : null;
