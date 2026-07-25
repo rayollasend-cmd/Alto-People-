@@ -213,16 +213,41 @@ function fmt(iso: string): string {
   return fmtDateTime(iso);
 }
 
+/** "8h", "7h 30m", "45m" — the live duration hint under the time fields. */
+function fmtDurShort(min: number): string {
+  const whole = Math.round(min);
+  const h = Math.floor(whole / 60);
+  const m = whole % 60;
+  if (h === 0) return `${m}m`;
+  return m === 0 ? `${h}h` : `${h}h ${String(m).padStart(2, '0')}m`;
+}
+
 /**
- * <input type="datetime-local"> wants "YYYY-MM-DDTHH:MM" in *local* time.
- * `toISOString()` gives UTC and breaks the form. This builds the local
- * representation manually.
+ * Wall-clock duration + overnight hint for a date + two time-only fields.
+ * end <= start reads as "rolls past midnight", matching how both shift
+ * dialogs (and template apply) compose the final timestamps.
  */
-function toLocalDatetimeInput(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
+function ShiftTimesHint({
+  startTime,
+  endTime,
+  extraDays = 0,
+}: {
+  startTime: string;
+  endTime: string;
+  extraDays?: number;
+}) {
+  if (!startTime || !endTime) return null;
+  const [sh, sm] = startTime.split(':').map(Number);
+  const [eh, em] = endTime.split(':').map(Number);
+  const overnight = endTime <= startTime;
+  const offset = overnight ? Math.max(1, extraDays) : extraDays;
+  const dur = eh * 60 + em + offset * 1440 - (sh * 60 + sm);
+  if (!Number.isFinite(dur) || dur <= 0) return null;
   return (
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
-    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+    <p className="md:col-span-2 -mt-1 text-xs text-silver">
+      Duration {fmtDurShort(dur)}
+      {offset > 0 && <span className="text-gold"> · ends the next day</span>}
+    </p>
   );
 }
 
@@ -3152,8 +3177,13 @@ function EditShiftDialog({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [startsAt, setStartsAt] = useState('');
-  const [endsAt, setEndsAt] = useState('');
+  const [dateStr, setDateStr] = useState('');
+  const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime] = useState('');
+  // Calendar days between start and end beyond what the wall-clock times
+  // imply — preserves a rare 24h+ shift on load; the common overnight case
+  // is derived from end <= start.
+  const [extraDays, setExtraDays] = useState(0);
   const [position, setPosition] = useState('');
   const positionOptions = useShiftPositionNames(target?.clientId);
   const [subzone, setSubzone] = useState('');
@@ -3164,11 +3194,22 @@ function EditShiftDialog({
 
   // Pre-fill from the shift each time a new one is opened. Times show in the
   // WORK SITE's zone (same as the calendar grid), so editing a FL store from
-  // CA shows—and saves—the store's wall-clock, not the browser's.
+  // CA shows—and saves—the store's wall-clock, not the browser's. The date
+  // is edited ONCE; the end time rolls past midnight on its own.
   useEffect(() => {
     if (!target) return;
-    setStartsAt(utcToZonedDatetimeInput(target.startsAt, target.timezone));
-    setEndsAt(utcToZonedDatetimeInput(target.endsAt, target.timezone));
+    const [startDay, startClock] = utcToZonedDatetimeInput(
+      target.startsAt,
+      target.timezone,
+    ).split('T');
+    const [endDay, endClock] = utcToZonedDatetimeInput(
+      target.endsAt,
+      target.timezone,
+    ).split('T');
+    setDateStr(startDay!);
+    setStartTime(startClock!);
+    setEndTime(endClock!);
+    setExtraDays(daysBetweenLocal(fromYmd(startDay!), fromYmd(endDay!)));
     setPosition(target.position);
     setSubzone(target.location ?? '');
     setHourlyRate(target.hourlyRate != null ? String(target.hourlyRate) : '');
@@ -3176,6 +3217,9 @@ function EditShiftDialog({
     setNotes(target.notes ?? '');
     setSubmitting(false);
   }, [target]);
+
+  const overnight = !!startTime && !!endTime && endTime <= startTime;
+  const endOffset = overnight ? Math.max(1, extraDays) : extraDays;
 
   const tzHint =
     target && target.timezone && target.timezone !== browserTimeZone()
@@ -3187,10 +3231,20 @@ function EditShiftDialog({
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
+    if (!dateStr || !startTime || !endTime) {
+      toast.error('Enter the day plus start and end times.');
+      return;
+    }
     // Inputs are wall-clock at the work site → convert back through the
-    // shift's zone (symmetric with the pre-fill above).
-    const start = new Date(localInputToUtcIso(startsAt, target.timezone));
-    const end = new Date(localInputToUtcIso(endsAt, target.timezone));
+    // shift's zone (symmetric with the pre-fill above). The end lands on
+    // dateStr + endOffset days (overnight rolls past midnight).
+    const endDay = ymd(addDaysLocal(fromYmd(dateStr), endOffset));
+    const start = new Date(
+      localInputToUtcIso(`${dateStr}T${startTime}`, target.timezone),
+    );
+    const end = new Date(
+      localInputToUtcIso(`${endDay}T${endTime}`, target.timezone),
+    );
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
       toast.error('Enter a valid start and end.');
       return;
@@ -3258,26 +3312,41 @@ function EditShiftDialog({
                 <Input value={subzone} onChange={(e) => setSubzone(e.target.value)} {...p} />
               )}
             </Field>
-            <Field label="Starts at" required hint={tzHint}>
+            <Field label="Day" required className="md:col-span-2">
               {(p) => (
                 <Input
-                  type="datetime-local"
-                  value={startsAt}
-                  onChange={(e) => setStartsAt(e.target.value)}
+                  type="date"
+                  value={dateStr}
+                  onChange={(e) => setDateStr(e.target.value)}
                   {...p}
                 />
               )}
             </Field>
-            <Field label="Ends at" required>
+            <Field label="Start time" required hint={tzHint}>
               {(p) => (
                 <Input
-                  type="datetime-local"
-                  value={endsAt}
-                  onChange={(e) => setEndsAt(e.target.value)}
+                  type="time"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
                   {...p}
                 />
               )}
             </Field>
+            <Field label="End time" required>
+              {(p) => (
+                <Input
+                  type="time"
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
+            <ShiftTimesHint
+              startTime={startTime}
+              endTime={endTime}
+              extraDays={extraDays}
+            />
             <Field label="Bill rate /hr (optional)">
               {(p) => (
                 <Input
@@ -3350,15 +3419,12 @@ function CreateShiftDialog({
   const [scopedAssociates, setScopedAssociates] = useState<AssociateLite[]>(associates);
   const [position, setPosition] = useState('');
   const positionOptions = useShiftPositionNames(clientId);
-  // When opened from a calendar cell we know the day → switch to time-only
-  // inputs (`HH:MM`) and show the date as a header label. When opened from
-  // the toolbar the day is unknown, so fall back to full datetime-local.
+  // One Date field + time-only start/end. Opened from a calendar cell the
+  // date is the clicked day; from the toolbar it defaults to today. An end
+  // at or before the start rolls past midnight — no second date to type.
+  const [dateStr, setDateStr] = useState('');
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
-  const [startsAt, setStartsAt] = useState('');
-  const [endsAt, setEndsAt] = useState('');
-  // The "anchor day" for time-only mode. null means full datetime mode.
-  const [anchorDay, setAnchorDay] = useState<Date | null>(null);
   const [location, setLocation] = useState('');
   const [hourlyRate, setHourlyRate] = useState('');
   const [payRate, setPayRate] = useState('');
@@ -3433,12 +3499,11 @@ function CreateShiftDialog({
     if (open) {
       setClientId(clients[0]?.id ?? '');
       setPosition('');
-      // When opened from a calendar cell, pre-fill 9am–5pm on that day —
-      // the most common shift shape for hourly workforce, easy to edit.
+      // Pre-fill 9am–5pm — the most common shift shape for hourly
+      // workforce, easy to edit. A calendar-cell open pins the clicked day
+      // (and clicked hour, if any); a toolbar open defaults to today.
       if (initialDate) {
-        const day = new Date(initialDate);
-        day.setHours(0, 0, 0, 0);
-        setAnchorDay(day);
+        setDateStr(ymd(initialDate));
         // initialDate may include a clicked time-of-day (TimeGridWeekView
         // passes the snapped hour); honor it when set, else default 9–5.
         const initHasTime =
@@ -3453,14 +3518,10 @@ function CreateShiftDialog({
           setStartTime('09:00');
           setEndTime('17:00');
         }
-        setStartsAt('');
-        setEndsAt('');
       } else {
-        setAnchorDay(null);
-        setStartTime('');
-        setEndTime('');
-        setStartsAt('');
-        setEndsAt('');
+        setDateStr(ymd(new Date()));
+        setStartTime('09:00');
+        setEndTime('17:00');
       }
       setLocation('');
       setHourlyRate('');
@@ -3480,32 +3541,30 @@ function CreateShiftDialog({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
-    // Compose final ISO timestamps from whichever input mode is active. The
-    // times the admin types are wall-clock at the WORK SITE — interpret them
-    // in the selected location's zone (the grid renders shifts in that zone
-    // too), not the admin's browser zone. siteTz null → browser-local, which
-    // matches the old behavior for location-less / full-org shifts.
+    if (!dateStr || !startTime || !endTime) {
+      toast.error('Enter the day plus start and end times.');
+      return;
+    }
+    // Compose final ISO timestamps. The times the admin types are wall-clock
+    // at the WORK SITE — interpret them in the selected location's zone (the
+    // grid renders shifts in that zone too), not the admin's browser zone.
+    // siteTz null → browser-local, which matches the old behavior for
+    // location-less / full-org shifts.
     const siteTz =
       locations?.find((l) => l.id === locationId)?.timezone ?? null;
-    let startISO: string;
-    let endISO: string;
-    if (anchorDay) {
-      const [sh, sm] = startTime.split(':').map(Number);
-      const [eh, em] = endTime.split(':').map(Number);
-      const y = anchorDay.getFullYear();
-      const mo = anchorDay.getMonth() + 1;
-      const d = anchorDay.getDate();
-      const start = zonedWallTimeToUtc(y, mo, d, sh, sm, siteTz);
-      let end = zonedWallTimeToUtc(y, mo, d, eh, em, siteTz);
-      // Overnight: end <= start rolls end to the next site-local day (re-convert
-      // so a DST boundary that night is handled). Matches template-apply.
-      if (end <= start) end = zonedWallTimeToUtc(y, mo, d + 1, eh, em, siteTz);
-      startISO = start.toISOString();
-      endISO = end.toISOString();
-    } else {
-      startISO = localInputToUtcIso(startsAt, siteTz);
-      endISO = localInputToUtcIso(endsAt, siteTz);
-    }
+    const [sh, sm] = startTime.split(':').map(Number);
+    const [eh, em] = endTime.split(':').map(Number);
+    const day = fromYmd(dateStr);
+    const y = day.getFullYear();
+    const mo = day.getMonth() + 1;
+    const d = day.getDate();
+    const start = zonedWallTimeToUtc(y, mo, d, sh, sm, siteTz);
+    let end = zonedWallTimeToUtc(y, mo, d, eh, em, siteTz);
+    // Overnight: end <= start rolls end to the next site-local day (re-convert
+    // so a DST boundary that night is handled). Matches template-apply.
+    if (end <= start) end = zonedWallTimeToUtc(y, mo, d + 1, eh, em, siteTz);
+    const startISO = start.toISOString();
+    const endISO = end.toISOString();
     const assignList = [...assignIds];
     const open = Math.max(0, Math.trunc(Number(openSlots)) || 0);
     const shared = {
@@ -3637,90 +3696,37 @@ function CreateShiftDialog({
                 />
               )}
             </Field>
-            {anchorDay ? (
-              <>
-                <div className="md:col-span-2 -mb-1">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-[10px] uppercase tracking-wider text-silver/70">
-                        Day
-                      </div>
-                      <div className="text-sm text-white tabular-nums">
-                        {anchorDay.toLocaleDateString(undefined, {
-                          weekday: 'long',
-                          month: 'short',
-                          day: 'numeric',
-                          year: 'numeric',
-                        })}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        // Drop into full datetime-local mode if the user
-                        // wants to span multiple days or pick a different
-                        // date. Pre-seed from the current time-only values.
-                        const [sh, sm] = startTime.split(':').map(Number);
-                        const [eh, em] = endTime.split(':').map(Number);
-                        const start = new Date(anchorDay);
-                        start.setHours(sh || 9, sm || 0, 0, 0);
-                        const end = new Date(anchorDay);
-                        end.setHours(eh || 17, em || 0, 0, 0);
-                        setStartsAt(toLocalDatetimeInput(start));
-                        setEndsAt(toLocalDatetimeInput(end));
-                        setAnchorDay(null);
-                      }}
-                      className="text-[11px] text-silver/70 hover:text-gold underline underline-offset-2"
-                    >
-                      Different day?
-                    </button>
-                  </div>
-                </div>
-                <Field label="Start time" required hint={tzHint}>
-                  {(p) => (
-                    <Input
-                      type="time"
-                      value={startTime}
-                      onChange={(e) => setStartTime(e.target.value)}
-                      {...p}
-                    />
-                  )}
-                </Field>
-                <Field label="End time" required>
-                  {(p) => (
-                    <Input
-                      type="time"
-                      value={endTime}
-                      onChange={(e) => setEndTime(e.target.value)}
-                      {...p}
-                    />
-                  )}
-                </Field>
-              </>
-            ) : (
-              <>
-                <Field label="Starts at" required hint={tzHint}>
-                  {(p) => (
-                    <Input
-                      type="datetime-local"
-                      value={startsAt}
-                      onChange={(e) => setStartsAt(e.target.value)}
-                      {...p}
-                    />
-                  )}
-                </Field>
-                <Field label="Ends at" required>
-                  {(p) => (
-                    <Input
-                      type="datetime-local"
-                      value={endsAt}
-                      onChange={(e) => setEndsAt(e.target.value)}
-                      {...p}
-                    />
-                  )}
-                </Field>
-              </>
-            )}
+            <Field label="Day" required className="md:col-span-2">
+              {(p) => (
+                <Input
+                  type="date"
+                  value={dateStr}
+                  onChange={(e) => setDateStr(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label="Start time" required hint={tzHint}>
+              {(p) => (
+                <Input
+                  type="time"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label="End time" required>
+              {(p) => (
+                <Input
+                  type="time"
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
+            <ShiftTimesHint startTime={startTime} endTime={endTime} />
             <Field
               label="Sub-zone (optional)"
               hint='Free-text label within the Location (e.g. "Bar", "Patio", "Floor 2").'
