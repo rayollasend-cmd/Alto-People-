@@ -173,7 +173,7 @@ describe('<W4Task>', () => {
     await waitFor(() => expect(submitW4).toHaveBeenCalledTimes(1));
   });
 
-  it('offers an optional card upload when a W-4 exists without a card image', async () => {
+  it('requires the card upload for any resubmit missing a card image', async () => {
     vi.mocked(getW4).mockResolvedValueOnce({
       hasSubmission: true, filingStatus: 'SINGLE', multipleJobs: false,
       dependentsAmount: null, otherIncome: null, deductions: null,
@@ -181,12 +181,21 @@ describe('<W4Task>', () => {
       hasSsnCardOnFile: false, ssnLast4: '6789', submittedAt: null,
     });
     const user = userEvent.setup();
-    renderTask();
+    const { container } = renderTask();
     expect(
-      await screen.findByText(/social security card photo \(optional\)/i)
+      await screen.findByText(/^social security card photo$/i)
     ).toBeInTheDocument();
 
-    // Optional means submit is not blocked.
+    // Mandatory even outside the re-collection state — submit is blocked.
+    await user.click(screen.getByRole('button', { name: /submit w-4/i }));
+    expect(
+      await screen.findByText(/upload a photo of your social security card before submitting/i)
+    ).toBeInTheDocument();
+    expect(submitW4).not.toHaveBeenCalled();
+
+    const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+    await user.upload(fileInput, new File(['img'], 'card.jpg', { type: 'image/jpeg' }));
+    await waitFor(() => expect(uploadI9Document).toHaveBeenCalled());
     await user.click(screen.getByRole('button', { name: /submit w-4/i }));
     await waitFor(() => expect(submitW4).toHaveBeenCalledTimes(1));
   });

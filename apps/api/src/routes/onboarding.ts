@@ -1596,14 +1596,13 @@ onboardingRouter.post('/applications/:id/w4', async (req, res, next) => {
         'Social Security Number is required to submit a W-4.'
       );
     }
-    // Re-collection resubmits (unreadable blob on file) must also land a
-    // photo of the SSN card — the campaign needs the number AND the image.
-    // The client uploads the card before submitting, so a compliant flow
-    // never hits this. Only enforced on the associate themselves: admins
-    // re-keying a number from a phone call or an existing I-9 image would
-    // otherwise be blocked.
-    const isRecollectionResubmit = existing?.ssnEncrypted != null && !alreadyHasSsn;
-    if (isRecollectionResubmit && req.user!.role === 'ASSOCIATE') {
+    // Any associate resubmit must also have a photo of the SSN card on
+    // file — payroll needs the number AND the image. The client uploads
+    // the card before submitting, so a compliant flow never hits this.
+    // First-time submissions are exempt (the I-9 step collects the card
+    // during onboarding), and so are admins: re-keying a number from a
+    // phone call or an existing I-9 image would otherwise be blocked.
+    if (existing !== null && req.user!.role === 'ASSOCIATE') {
       const ssnCardCount = await prisma.documentRecord.count({
         where: { associateId: app.associateId, kind: 'SSN_CARD', deletedAt: null },
       });
