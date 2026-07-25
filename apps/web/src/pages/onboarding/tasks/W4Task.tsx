@@ -61,12 +61,12 @@ export function W4Task() {
   const ssnOnFile = !!status?.hasSsnOnFile;
   const ssnNeedsResubmit = !!status?.ssnNeedsResubmit;
   const showSsnInput = !ssnOnFile || replaceSsn;
-  // Card upload is required for a re-collection resubmit; for anyone else
-  // with a W-4 on file but no card image it's offered as an optional catch-up
-  // (the I-9 step is where first-time onboarding collects it).
+  // A card image is mandatory for any resubmit without one on file —
+  // re-collection or otherwise. First-time onboarding (no submission yet)
+  // collects it on the I-9 step instead.
   const showCardSection =
     !!status && !cardOnFile && (ssnNeedsResubmit || status.hasSubmission);
-  const cardRequired = ssnNeedsResubmit && !cardOnFile;
+  const cardRequired = showCardSection;
 
   const onCardFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -228,12 +228,8 @@ export function W4Task() {
 
         {(showCardSection || (cardFilename && cardOnFile)) && (
           <Field
-            label={
-              cardRequired
-                ? 'Social Security card photo'
-                : 'Social Security card photo (optional)'
-            }
-            hint="A clear photo or scan — PDF, PNG, JPG, or WebP, up to 10 MB. Uploads immediately and is visible only to HR."
+            label="Social Security card photo"
+            hint="Required — a clear photo or scan, PDF, PNG, JPG, or WebP, up to 10 MB. Uploads immediately and is visible only to HR."
           >
             <input
               ref={cardInputRef}

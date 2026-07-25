@@ -357,6 +357,36 @@ describe('W-4 resubmission gate (key-rotation aware)', () => {
     expect(status.body.hasSsnCardOnFile).toBe(true);
   });
 
+  it('requires a card even when the stored number is readable (associate resubmit)', async () => {
+    const client = await createClient();
+    const readable = await seedAssociate({
+      clientId: client.id,
+      ssnBlob: encryptString('123456789'),
+    });
+    const a = await loginAs(readable.user!.email);
+
+    const body = {
+      filingStatus: 'MARRIED_FILING_JOINTLY',
+      multipleJobs: false,
+      dependentsAmount: 0,
+      otherIncome: 0,
+      deductions: 0,
+      extraWithholding: 0,
+    };
+
+    const noCard = await a
+      .post(`/onboarding/applications/${readable.application.id}/w4`)
+      .send(body);
+    expect(noCard.status).toBe(400);
+    expect(noCard.body.error?.code).toBe('ssn_card_required');
+
+    await seedSsnCard(readable.associate.id);
+    const withCard = await a
+      .post(`/onboarding/applications/${readable.application.id}/w4`)
+      .send(body);
+    expect(withCard.status).toBe(204);
+  });
+
   it('does not demand a card from an admin re-keying the number', async () => {
     const client = await createClient();
     const broken = await seedAssociate({ clientId: client.id, ssnBlob: unreadableBlob() });
