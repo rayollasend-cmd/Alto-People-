@@ -44,6 +44,8 @@ import {
   type TaxForm,
   type TaxFormKind,
 } from '@/lib/payrollTax91Api';
+import { listClients } from '@/lib/clientsApi';
+import type { ClientListItem } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
@@ -1049,6 +1051,27 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
   );
 }
 
+/**
+ * Client list for the W-2 / 1099 generator drawers' scope select. One
+ * fetch per drawer open; a load failure just leaves "All clients" as the
+ * only option (the generators accept a null clientId anyway).
+ */
+function useClientOptions(): ClientListItem[] {
+  const [clients, setClients] = useState<ClientListItem[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    listClients()
+      .then((r) => {
+        if (!cancelled) setClients(r.clients);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return clients;
+}
+
 function W2GenerateDrawer({
   onClose,
   onDone,
@@ -1058,6 +1081,7 @@ function W2GenerateDrawer({
 }) {
   const [taxYear, setTaxYear] = useState(String(new Date().getFullYear() - 1));
   const [clientId, setClientId] = useState('');
+  const clients = useClientOptions();
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<Awaited<ReturnType<typeof generateW2s>> | null>(null);
 
@@ -1100,13 +1124,19 @@ function W2GenerateDrawer({
           />
         </div>
         <div>
-          <Label>Client ID (optional — leave blank for all clients)</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
+          <Label>Client (optional — "All clients" runs org-wide)</Label>
+          <Select
+            className="mt-1"
             value={clientId}
             onChange={(e) => setClientId(e.target.value)}
-            placeholder="UUID"
-          />
+          >
+            <option value="">All clients</option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </Select>
         </div>
         <Button onClick={onGenerate} disabled={running}>
           {running ? 'Generating…' : 'Generate'}
@@ -1330,6 +1360,7 @@ function F1099NecGenerateDrawer({
 }) {
   const [taxYear, setTaxYear] = useState(String(new Date().getFullYear() - 1));
   const [clientId, setClientId] = useState('');
+  const clients = useClientOptions();
   const [cfsfStates, setCfsfStates] = useState('');
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<Awaited<ReturnType<typeof generate1099Necs>> | null>(null);
@@ -1381,13 +1412,19 @@ function F1099NecGenerateDrawer({
           />
         </div>
         <div>
-          <Label>Client ID (optional — leave blank for all clients)</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
+          <Label>Client (optional — "All clients" runs org-wide)</Label>
+          <Select
+            className="mt-1"
             value={clientId}
             onChange={(e) => setClientId(e.target.value)}
-            placeholder="UUID"
-          />
+          >
+            <option value="">All clients</option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </Select>
         </div>
         <div>
           <Label>
@@ -1445,8 +1482,8 @@ function F1099NecGenerateDrawer({
             )}
             {result.createdCount > 0 && !clientId.trim() && (
               <div className="text-xs text-silver">
-                IRS FIRE e-file requires a per-client scope. Re-open this
-                drawer with a single Client ID to generate that download.
+                IRS FIRE e-file requires a per-client scope. Pick a single
+                client above and re-generate to enable that download.
               </div>
             )}
           </div>
@@ -1471,6 +1508,7 @@ function F1099MiscGenerateDrawer({
 }) {
   const [taxYear, setTaxYear] = useState(String(new Date().getFullYear() - 1));
   const [clientId, setClientId] = useState('');
+  const clients = useClientOptions();
   const [cfsfStates, setCfsfStates] = useState('');
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<Awaited<ReturnType<typeof generate1099Miscs>> | null>(
@@ -1523,13 +1561,19 @@ function F1099MiscGenerateDrawer({
           />
         </div>
         <div>
-          <Label>Client ID (optional — leave blank for all clients)</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
+          <Label>Client (optional — "All clients" runs org-wide)</Label>
+          <Select
+            className="mt-1"
             value={clientId}
             onChange={(e) => setClientId(e.target.value)}
-            placeholder="UUID"
-          />
+          >
+            <option value="">All clients</option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </Select>
         </div>
         <div>
           <Label>
@@ -1585,8 +1629,8 @@ function F1099MiscGenerateDrawer({
             )}
             {result.createdCount > 0 && !clientId.trim() && (
               <div className="text-xs text-silver">
-                IRS FIRE e-file requires a per-client scope. Re-open this
-                drawer with a single Client ID to generate that download.
+                IRS FIRE e-file requires a per-client scope. Pick a single
+                client above and re-generate to enable that download.
               </div>
             )}
           </div>

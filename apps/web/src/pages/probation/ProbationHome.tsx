@@ -13,8 +13,11 @@ import {
   type ProbationSummary,
 } from '@/lib/probation116Api';
 import { useAuth } from '@/lib/auth';
+import { fmtDate } from '@/lib/format';
 import { hasCapability } from '@/lib/roles';
 import {
+  AssociatePicker,
+  type PickedAssociate,
   Badge,
   Button,
   Card,
@@ -47,6 +50,15 @@ const STATUS_VARIANT: Record<
   EXTENDED: 'outline',
   FAILED: 'destructive',
 };
+
+/** Parse a YYYY-MM-DD string as a local date (no timezone shift). */
+function parseLocalDate(s: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 export function ProbationHome() {
   const { user } = useAuth();
@@ -294,7 +306,7 @@ function NewProbationDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [associateId, setAssociateId] = useState('');
+  const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
   const [startDate, setStartDate] = useState(
     new Date().toISOString().slice(0, 10),
   );
@@ -303,15 +315,22 @@ function NewProbationDrawer({
   );
   const [saving, setSaving] = useState(false);
 
+  const start = parseLocalDate(startDate);
+  const end = parseLocalDate(endDate);
+  const durationDays =
+    start && end
+      ? Math.round((end.getTime() - start.getTime()) / MS_PER_DAY)
+      : null;
+
   const submit = async () => {
-    if (!associateId.trim()) {
-      toast.error('Associate ID required.');
+    if (!assoc) {
+      toast.error('Pick an associate.');
       return;
     }
     setSaving(true);
     try {
       await startProbation({
-        associateId: associateId.trim(),
+        associateId: assoc.id,
         startDate,
         endDate,
       });
@@ -331,12 +350,10 @@ function NewProbationDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate ID</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={associateId}
-            onChange={(e) => setAssociateId(e.target.value)}
-          />
+          <Label>Associate</Label>
+          <div className="mt-1">
+            <AssociatePicker value={assoc} onChange={setAssoc} />
+          </div>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -358,6 +375,11 @@ function NewProbationDrawer({
             />
           </div>
         </div>
+        {end && durationDays !== null && durationDays > 0 && (
+          <div className="text-xs text-silver">
+            {durationDays} days, ends {fmtDate(end)}
+          </div>
+        )}
         <div className="text-xs text-silver">
           Default is 90 days. Adjust to your company's policy.
         </div>
@@ -465,6 +487,13 @@ function ExtendDrawer({
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const origEnd = parseLocalDate(row.endDate);
+  const newEnd = parseLocalDate(newEndDate);
+  const deltaDays =
+    origEnd && newEnd
+      ? Math.round((newEnd.getTime() - origEnd.getTime()) / MS_PER_DAY)
+      : null;
+
   const submit = async () => {
     setSaving(true);
     try {
@@ -495,6 +524,11 @@ function ExtendDrawer({
             value={newEndDate}
             onChange={(e) => setNewEndDate(e.target.value)}
           />
+          {deltaDays !== null && deltaDays !== 0 && (
+            <div className="mt-1 text-xs text-silver">
+              {deltaDays > 0 ? `+${deltaDays}` : deltaDays} days vs. original end
+            </div>
+          )}
         </div>
         <div>
           <Label>Reason</Label>

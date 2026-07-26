@@ -17,6 +17,7 @@ import {
   type Level,
   type SkillLevel,
 } from '@/lib/career126Api';
+import { listSkills, type SkillCatalogEntry } from '@/lib/skills111Api';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
@@ -549,17 +550,24 @@ function AddSkillDrawer({
   onSaved: () => void;
 }) {
   const [skillId, setSkillId] = useState('');
+  const [skills, setSkills] = useState<SkillCatalogEntry[]>([]);
   const [minLevel, setMinLevel] = useState<SkillLevel>('INTERMEDIATE');
   const [saving, setSaving] = useState(false);
 
+  useEffect(() => {
+    listSkills()
+      .then((r) => setSkills(r.skills))
+      .catch(() => setSkills([]));
+  }, []);
+
   const submit = async () => {
-    if (!skillId.trim()) {
-      toast.error('Skill ID required.');
+    if (!skillId) {
+      toast.error('Pick a skill.');
       return;
     }
     setSaving(true);
     try {
-      await addLevelSkill(level.id, { skillId: skillId.trim(), minLevel });
+      await addLevelSkill(level.id, { skillId, minLevel });
       toast.success('Requirement added.');
       onSaved();
     } catch (err) {
@@ -578,12 +586,18 @@ function AddSkillDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Skill ID</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
+          <Label htmlFor="career-skill">Skill</Label>
+          <Select
+            id="career-skill"
+            className="mt-1"
             value={skillId}
             onChange={(e) => setSkillId(e.target.value)}
-          />
+          >
+            <option value="">Select a skill…</option>
+            {skills.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </Select>
         </div>
         <div>
           <Label htmlFor="career-min-level">Minimum level</Label>

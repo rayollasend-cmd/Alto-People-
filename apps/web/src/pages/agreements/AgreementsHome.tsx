@@ -43,6 +43,7 @@ import {
   TableRow,
   Textarea,
 } from '@/components/ui';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { FormHint, Label } from '@/components/ui/Label';
 
 const STATUS_VARIANT: Record<
@@ -362,7 +363,7 @@ function NewAgreementDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [associateId, setAssociateId] = useState('');
+  const [associate, setAssociate] = useState<PickedAssociate | null>(null);
   const [kind, setKind] = useState<AgreementKind>('NDA');
   const [customLabel, setCustomLabel] = useState('');
   const [documentUrl, setDocumentUrl] = useState('');
@@ -372,8 +373,8 @@ function NewAgreementDrawer({
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
-    if (!associateId.trim()) {
-      toast.error('Associate ID required.');
+    if (!associate) {
+      toast.error('Pick an associate.');
       return;
     }
     if (kind === 'OTHER' && !customLabel.trim()) {
@@ -383,7 +384,7 @@ function NewAgreementDrawer({
     setSaving(true);
     try {
       await issueAgreement({
-        associateId: associateId.trim(),
+        associateId: associate.id,
         kind,
         customLabel: kind === 'OTHER' ? customLabel.trim() : null,
         documentUrl: documentUrl.trim() || null,
@@ -407,16 +408,12 @@ function NewAgreementDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label htmlFor="issue-agreement-associate">Associate ID</Label>
-          <Input
-            id="issue-agreement-associate"
-            className="mt-1 font-mono text-xs"
-            value={associateId}
-            onChange={(e) => setAssociateId(e.target.value)}
-            aria-describedby="issue-agreement-associate-hint"
-          />
+          <Label>Associate</Label>
+          <div className="mt-1">
+            <AssociatePicker value={associate} onChange={setAssociate} />
+          </div>
           <FormHint id="issue-agreement-associate-hint">
-            Paste the associate's UUID from the directory.
+            Search the directory by name.
           </FormHint>
         </div>
         <div>

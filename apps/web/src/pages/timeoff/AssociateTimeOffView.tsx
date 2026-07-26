@@ -57,6 +57,31 @@ function fmtHours(minutes: number): string {
   return `${h.toFixed(h % 1 === 0 ? 0 : 1)}h`;
 }
 
+function todayYmd(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** Mon–Fri days in the inclusive range; 0 when the range is invalid. */
+function businessDays(startYmd: string, endYmd: string): number {
+  const [sy, sm, sd] = startYmd.split('-').map(Number);
+  const [ey, em, ed] = endYmd.split('-').map(Number);
+  const start = new Date(sy, (sm ?? 1) - 1, sd ?? 1);
+  const end = new Date(ey, (em ?? 1) - 1, ed ?? 1);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
+    return 0;
+  }
+  let count = 0;
+  const cur = new Date(start);
+  for (let i = 0; i < 366 && cur <= end; i++) {
+    const dow = cur.getDay();
+    if (dow !== 0 && dow !== 6) count++;
+    cur.setDate(cur.getDate() + 1);
+  }
+  return count;
+}
+
 function fmtDate(iso: string): string {
   const [y, m, d] = iso.split('-');
   return `${m}/${d}/${y.slice(2)}`;
@@ -236,6 +261,7 @@ export function AssociateTimeOffView() {
       <CreateRequestDialog
         open={openCreate}
         onOpenChange={setOpenCreate}
+        balances={balances}
         onCreated={() => {
           setOpenCreate(false);
           refresh();
@@ -302,25 +328,49 @@ function StatusBadge({ status }: { status: TimeOffRequest['status'] }) {
 interface CreateProps {
   open: boolean;
   onOpenChange: (v: boolean) => void;
+  balances: TimeOffBalance[] | null;
   onCreated: () => void;
 }
 
-function CreateRequestDialog({ open, onOpenChange, onCreated }: CreateProps) {
+function CreateRequestDialog({ open, onOpenChange, balances, onCreated }: CreateProps) {
   const { t } = useI18n();
   const [category, setCategory] = useState<Category>('VACATION');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  const [startDate, setStartDate] = useState(todayYmd());
+  const [endDate, setEndDate] = useState(todayYmd());
   const [hours, setHours] = useState('8');
+  // Once the associate types their own hours, stop auto-computing from the
+  // date range — their number wins.
+  const [hoursTouched, setHoursTouched] = useState(false);
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const reset = () => {
     setCategory('VACATION');
-    setStartDate('');
-    setEndDate('');
+    setStartDate(todayYmd());
+    setEndDate(todayYmd());
     setHours('8');
+    setHoursTouched(false);
     setReason('');
   };
+
+  const setDates = (nextStart: string, nextEnd: string) => {
+    setStartDate(nextStart);
+    // Keep the range valid instead of erroring later: dragging the start
+    // past the end pulls the end along.
+    const effEnd = nextEnd && nextEnd < nextStart ? nextStart : nextEnd;
+    setEndDate(effEnd);
+    if (!hoursTouched && nextStart && effEnd) {
+      const days = businessDays(nextStart, effEnd);
+      if (days > 0) setHours(String(days * 8));
+    }
+  };
+
+  const balance = balances?.find((b) => b.category === category) ?? null;
+  const hoursNum = Number(hours);
+  const afterMinutes =
+    balance && Number.isFinite(hoursNum) && hoursNum > 0
+      ? balance.balanceMinutes - Math.round(hoursNum * 60)
+      : null;
 
   const submit = async () => {
     if (!startDate || !endDate) {
@@ -388,7 +438,7 @@ function CreateRequestDialog({ open, onOpenChange, onCreated }: CreateProps) {
                 <Input
                   type="date"
                   value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
+                  onChange={(e) => setDates(e.target.value, endDate)}
                   {...p}
                 />
               )}
@@ -399,7 +449,7 @@ function CreateRequestDialog({ open, onOpenChange, onCreated }: CreateProps) {
                   type="date"
                   value={endDate}
                   min={startDate || undefined}
-                  onChange={(e) => setEndDate(e.target.value)}
+                  onChange={(e) => setDates(startDate, e.target.value)}
                   {...p}
                 />
               )}
@@ -417,11 +467,31 @@ function CreateRequestDialog({ open, onOpenChange, onCreated }: CreateProps) {
                 step="0.5"
                 min="0.5"
                 value={hours}
-                onChange={(e) => setHours(e.target.value)}
+                onChange={(e) => {
+                  setHours(e.target.value);
+                  setHoursTouched(true);
+                }}
                 {...p}
               />
             )}
           </Field>
+
+          {balance && afterMinutes !== null && (
+            <p
+              className={
+                afterMinutes < 0 ? 'text-xs text-alert' : 'text-xs text-silver'
+              }
+            >
+              {afterMinutes < 0
+                ? t('timeoff.balanceOver', {
+                    over: fmtHours(-afterMinutes),
+                  })
+                : t('timeoff.balanceLine', {
+                    avail: fmtHours(balance.balanceMinutes),
+                    after: fmtHours(afterMinutes),
+                  })}
+            </p>
+          )}
 
           <Field label={t('timeoff.reasonOptional')}>
             {(p) => (

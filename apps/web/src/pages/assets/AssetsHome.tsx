@@ -39,6 +39,7 @@ import {
   TableRow,
   Textarea,
 } from '@/components/ui';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { FormHint, Label } from '@/components/ui/Label';
 
 const KIND_OPTIONS: AssetKind[] = [
@@ -498,17 +499,17 @@ function AssignDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [associateId, setAssociateId] = useState('');
+  const [associate, setAssociate] = useState<PickedAssociate | null>(null);
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
-    if (!associateId.trim()) {
-      toast.error('Associate ID required.');
+    if (!associate) {
+      toast.error('Pick an associate.');
       return;
     }
     setSaving(true);
     try {
-      await assignAsset({ assetId: asset.id, associateId: associateId.trim() });
+      await assignAsset({ assetId: asset.id, associateId: associate.id });
       toast.success('Assigned.');
       onSaved();
     } catch (err) {
@@ -528,16 +529,12 @@ function AssignDrawer({
           {asset.kind} • {asset.serial ?? 'no serial'}
         </div>
         <div>
-          <Label htmlFor="assign-asset-associate">Associate ID</Label>
-          <Input
-            id="assign-asset-associate"
-            className="mt-1 font-mono text-xs"
-            value={associateId}
-            onChange={(e) => setAssociateId(e.target.value)}
-            aria-describedby="assign-asset-associate-hint"
-          />
+          <Label>Associate</Label>
+          <div className="mt-1">
+            <AssociatePicker value={associate} onChange={setAssociate} />
+          </div>
           <FormHint id="assign-asset-associate-hint">
-            Paste the associate's UUID from the directory.
+            Search the directory by name.
           </FormHint>
         </div>
       </DrawerBody>

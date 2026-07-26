@@ -20,6 +20,8 @@ import {
   type Qle,
   type QleKind,
 } from '@/lib/benefitsLifecycle92Api';
+import { listClients } from '@/lib/clientsApi';
+import { fmtDate } from '@/lib/format';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import {
@@ -50,9 +52,26 @@ import {
   Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { toast } from 'sonner';
 
 type Tab = 'oe' | 'qle' | 'cobra' | 'aca';
+
+// Today as YYYY-MM-DD in LOCAL time — toISOString() would shift the date
+// for evening users west of UTC.
+function todayYmd(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Parse an <input type="date"> value into a LOCAL Date. new Date('YYYY-MM-DD')
+// parses as UTC midnight and can render a day off in fmtDate.
+function parseYmd(s: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
 
 export function BenefitsLifecycle() {
   const { user } = useAuth();
@@ -209,11 +228,20 @@ function OeTab({ canManage }: { canManage: boolean }) {
 
 function NewOeDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [clientId, setClientId] = useState('');
+  const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
   const [name, setName] = useState('');
-  const [startsOn, setStartsOn] = useState('');
+  const [startsOn, setStartsOn] = useState(todayYmd());
   const [endsOn, setEndsOn] = useState('');
   const [effectiveOn, setEffectiveOn] = useState('');
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    listClients()
+      .then((r) => setClients(r.clients.map((c) => ({ id: c.id, name: c.name }))))
+      .catch(() => {
+        // Silent — the field falls back to raw UUID entry.
+      });
+  }, []);
 
   const onSubmit = async () => {
     if (!clientId || !name || !startsOn || !endsOn || !effectiveOn) {
@@ -244,12 +272,30 @@ function NewOeDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Client ID</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
-          />
+          <Label htmlFor="bl-oe-client">Client</Label>
+          {clients.length > 0 ? (
+            <Select
+              id="bl-oe-client"
+              className="mt-1"
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+            >
+              <option value="">Select a client…</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+          ) : (
+            <Input
+              id="bl-oe-client"
+              className="mt-1 font-mono text-xs"
+              placeholder="Client UUID"
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+            />
+          )}
         </div>
         <div>
           <Label>Window name</Label>
@@ -433,22 +479,34 @@ function QleTab({ canManage }: { canManage: boolean }) {
 }
 
 function NewQleDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const [associateId, setAssociateId] = useState('');
+  const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
   const [kind, setKind] = useState<QleKind>('MARRIAGE');
-  const [eventDate, setEventDate] = useState('');
+  const [eventDate, setEventDate] = useState(todayYmd());
   const [evidenceUrl, setEvidenceUrl] = useState('');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // Live deadline hint: standard 30-day special-enrollment window from the
+  // event date. Pure client-side math — the server computes the canonical
+  // allowedUntil on create.
+  const eventParsed = parseYmd(eventDate);
+  const electionCloses = eventParsed
+    ? new Date(eventParsed.getFullYear(), eventParsed.getMonth(), eventParsed.getDate() + 30)
+    : null;
+
   const onSubmit = async () => {
-    if (!associateId || !eventDate) {
-      toast.error('Associate and event date required.');
+    if (!assoc) {
+      toast.error('Pick an associate.');
+      return;
+    }
+    if (!eventDate) {
+      toast.error('Event date required.');
       return;
     }
     setSaving(true);
     try {
       await createQle({
-        associateId: associateId.trim(),
+        associateId: assoc.id,
         kind,
         eventDate,
         evidenceUrl: evidenceUrl.trim() || null,
@@ -469,12 +527,10 @@ function NewQleDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate ID</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={associateId}
-            onChange={(e) => setAssociateId(e.target.value)}
-          />
+          <Label>Associate</Label>
+          <div className="mt-1">
+            <AssociatePicker value={assoc} onChange={setAssoc} />
+          </div>
         </div>
         <div>
           <Label htmlFor="bl-event-kind">Event kind</Label>
@@ -499,6 +555,11 @@ function NewQleDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =
             value={eventDate}
             onChange={(e) => setEventDate(e.target.value)}
           />
+          {electionCloses && (
+            <p className="mt-1 text-xs text-silver">
+              Election window closes {fmtDate(electionCloses)}
+            </p>
+          )}
         </div>
         <div>
           <Label>Evidence URL (optional)</Label>
@@ -662,21 +723,32 @@ function NewCobraDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [associateId, setAssociateId] = useState('');
+  const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
   const [qualifyingEvent, setQualifyingEvent] = useState('TERMINATION');
-  const [qeDate, setQeDate] = useState('');
+  const [qeDate, setQeDate] = useState(todayYmd());
   const [premium, setPremium] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // Live hint: standard COBRA continuation runs 18 months from the
+  // qualifying event. Display-only — the server owns the real dates.
+  const qeParsed = parseYmd(qeDate);
+  const coverageThrough = qeParsed
+    ? new Date(qeParsed.getFullYear(), qeParsed.getMonth() + 18, qeParsed.getDate())
+    : null;
+
   const onSubmit = async () => {
-    if (!associateId || !qeDate) {
-      toast.error('Associate and QE date required.');
+    if (!assoc) {
+      toast.error('Pick an associate.');
+      return;
+    }
+    if (!qeDate) {
+      toast.error('QE date required.');
       return;
     }
     setSaving(true);
     try {
       await createCobra({
-        associateId: associateId.trim(),
+        associateId: assoc.id,
         qualifyingEvent: qualifyingEvent.trim(),
         qeDate,
         premiumPerMonth: premium ? Number(premium) : null,
@@ -696,12 +768,10 @@ function NewCobraDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate ID</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={associateId}
-            onChange={(e) => setAssociateId(e.target.value)}
-          />
+          <Label>Associate</Label>
+          <div className="mt-1">
+            <AssociatePicker value={assoc} onChange={setAssoc} />
+          </div>
         </div>
         <div>
           <Label htmlFor="bl-qualifying-event">Qualifying event</Label>
@@ -726,6 +796,11 @@ function NewCobraDrawer({
             value={qeDate}
             onChange={(e) => setQeDate(e.target.value)}
           />
+          {coverageThrough && (
+            <p className="mt-1 text-xs text-silver">
+              Coverage can run through {fmtDate(coverageThrough)}
+            </p>
+          )}
         </div>
         <div>
           <Label>Monthly premium ($) — optional</Label>

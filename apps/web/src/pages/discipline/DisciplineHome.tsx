@@ -13,8 +13,11 @@ import {
   type DisciplineStatus,
 } from '@/lib/discipline118Api';
 import { useAuth } from '@/lib/auth';
+import { fmtDate } from '@/lib/format';
 import { hasCapability } from '@/lib/roles';
 import {
+  AssociatePicker,
+  type PickedAssociate,
   Badge,
   Button,
   Card,
@@ -58,6 +61,13 @@ const STATUS_VARIANT: Record<
   ACKNOWLEDGED: 'success',
   RESCINDED: 'outline',
 };
+
+/** Parse a YYYY-MM-DD string as a local date (no timezone shift). */
+function parseLocalDate(s: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
 
 export function DisciplineHome() {
   const { user } = useAuth();
@@ -222,7 +232,7 @@ function NewActionDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [associateId, setAssociateId] = useState('');
+  const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
   const [kind, setKind] = useState<DisciplineKind>('VERBAL_WARNING');
   const today = new Date().toISOString().slice(0, 10);
   const [incidentDate, setIncidentDate] = useState(today);
@@ -232,15 +242,30 @@ function NewActionDrawer({
   const [expected, setExpected] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const effective = parseLocalDate(effectiveDate);
+  const days = parseInt(suspensionDays, 10);
+  const returnDate =
+    kind === 'SUSPENSION' && effective && days > 0
+      ? new Date(
+          effective.getFullYear(),
+          effective.getMonth(),
+          effective.getDate() + days,
+        )
+      : null;
+
   const submit = async () => {
-    if (!associateId.trim() || !description.trim()) {
-      toast.error('Associate ID and description required.');
+    if (!assoc) {
+      toast.error('Pick an associate.');
+      return;
+    }
+    if (!description.trim()) {
+      toast.error('Description required.');
       return;
     }
     setSaving(true);
     try {
       await issueDisciplinaryAction({
-        associateId: associateId.trim(),
+        associateId: assoc.id,
         kind,
         incidentDate,
         effectiveDate,
@@ -265,12 +290,10 @@ function NewActionDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate ID</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={associateId}
-            onChange={(e) => setAssociateId(e.target.value)}
-          />
+          <Label>Associate</Label>
+          <div className="mt-1">
+            <AssociatePicker value={assoc} onChange={setAssoc} />
+          </div>
         </div>
         <div>
           <Label htmlFor="discipline-kind">Kind</Label>
@@ -320,6 +343,11 @@ function NewActionDrawer({
             />
           </div>
         </div>
+        {returnDate && (
+          <div className="text-xs text-silver">
+            Returns to work {fmtDate(returnDate)}
+          </div>
+        )}
         <div>
           <Label>What happened</Label>
           <Textarea

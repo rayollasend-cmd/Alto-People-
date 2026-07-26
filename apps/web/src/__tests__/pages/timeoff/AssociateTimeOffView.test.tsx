@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -101,9 +101,15 @@ describe('<AssociateTimeOffView>', () => {
     await waitFor(() => expect(getMyBalance).toHaveBeenCalled());
 
     await user.click(screen.getByRole('button', { name: /request time off/i }));
-    await user.type(screen.getByLabelText(/start date/i), '2026-05-04');
-    await user.type(screen.getByLabelText(/end date/i), '2026-05-04');
-    // hours defaults to 8.
+    // The dates prefill to today; fireEvent.change replaces the whole value
+    // (user.type appends segment-wise into a filled date input in jsdom).
+    fireEvent.change(screen.getByLabelText(/start date/i), {
+      target: { value: '2026-05-04' },
+    });
+    fireEvent.change(screen.getByLabelText(/end date/i), {
+      target: { value: '2026-05-04' },
+    });
+    // hours auto-computes: one business day = 8.
     await user.click(screen.getByRole('button', { name: /^submit$/i }));
 
     await waitFor(() => {

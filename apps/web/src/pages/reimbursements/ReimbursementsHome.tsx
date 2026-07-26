@@ -460,9 +460,11 @@ function ReimbursementDrawer({
       {showAddLine && data && (
         <AddLineDrawer
           reimbursementId={data.id}
+          existingTotal={Number(data.totalAmount)}
+          existingLineCount={data.lines.length}
           onClose={() => setShowAddLine(false)}
-          onSaved={() => {
-            setShowAddLine(false);
+          onSaved={(keepOpen) => {
+            if (!keepOpen) setShowAddLine(false);
             refresh();
             onChanged();
           }}
@@ -575,18 +577,30 @@ function SettleDialog({
   );
 }
 
+/** Today as YYYY-MM-DD in the user's local timezone. */
+const todayLocal = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+    d.getDate(),
+  ).padStart(2, '0')}`;
+};
+
 function AddLineDrawer({
   reimbursementId,
+  existingTotal,
+  existingLineCount,
   onClose,
   onSaved,
 }: {
   reimbursementId: string;
+  existingTotal: number;
+  existingLineCount: number;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (keepOpen?: boolean) => void;
 }) {
   const [kind, setKind] = useState<ExpenseLineKind>('RECEIPT');
   const [description, setDescription] = useState('');
-  const [incurredOn, setIncurredOn] = useState('');
+  const [incurredOn, setIncurredOn] = useState(todayLocal());
   const [amount, setAmount] = useState('');
   const [miles, setMiles] = useState('');
   const [ratePerMile, setRatePerMile] = useState('0.67');
@@ -595,7 +609,27 @@ function AddLineDrawer({
   const [receiptUrl, setReceiptUrl] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const onSubmit = async () => {
+  // Live amount of the in-progress line: miles × rate for mileage,
+  // otherwise the amount field. NaN / non-positive means "not yet valid".
+  const milesNum = Number(miles);
+  const rateNum = Number(ratePerMile);
+  const mileageValid =
+    miles !== '' &&
+    ratePerMile !== '' &&
+    Number.isFinite(milesNum) &&
+    milesNum > 0 &&
+    Number.isFinite(rateNum) &&
+    rateNum > 0;
+  const lineAmount =
+    kind === 'MILEAGE'
+      ? mileageValid
+        ? milesNum * rateNum
+        : NaN
+      : amount !== '' && Number.isFinite(Number(amount)) && Number(amount) > 0
+      ? Number(amount)
+      : NaN;
+
+  const onSubmit = async (addAnother: boolean) => {
     if (!description.trim() || !incurredOn) {
       toast.error('Description and date required.');
       return;
@@ -622,7 +656,17 @@ function AddLineDrawer({
         receiptUrl: receiptUrl.trim() || null,
       });
       toast.success('Line added.');
-      onSaved();
+      if (addAnother) {
+        // Reset the form but keep the drawer open and the date (and the
+        // kind + mileage rate, which usually repeat across lines).
+        setDescription('');
+        setAmount('');
+        setMiles('');
+        setMerchant('');
+        setCategory('');
+        setReceiptUrl('');
+      }
+      onSaved(addAnother);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
     } finally {
@@ -668,27 +712,34 @@ function AddLineDrawer({
           />
         </div>
         {kind === 'MILEAGE' ? (
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label>Miles</Label>
-              <Input
-                type="number"
-                step="0.01"
-                className="mt-1"
-                value={miles}
-                onChange={(e) => setMiles(e.target.value)}
-              />
+          <div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Miles</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  className="mt-1"
+                  value={miles}
+                  onChange={(e) => setMiles(e.target.value)}
+                />
+              </div>
+              <div>
+                <Label>Rate / mile ($)</Label>
+                <Input
+                  type="number"
+                  step="0.0001"
+                  className="mt-1"
+                  value={ratePerMile}
+                  onChange={(e) => setRatePerMile(e.target.value)}
+                />
+              </div>
             </div>
-            <div>
-              <Label>Rate / mile ($)</Label>
-              <Input
-                type="number"
-                step="0.0001"
-                className="mt-1"
-                value={ratePerMile}
-                onChange={(e) => setRatePerMile(e.target.value)}
-              />
-            </div>
+            {mileageValid && (
+              <div className="mt-1 text-xs text-silver/70">
+                {milesNum} mi × ${rateNum}/mi = ${(milesNum * rateNum).toFixed(2)}
+              </div>
+            )}
           </div>
         ) : (
           <div>
@@ -735,12 +786,25 @@ function AddLineDrawer({
             onChange={(e) => setReceiptUrl(e.target.value)}
           />
         </div>
+        <div className="text-xs text-silver border-t border-navy-secondary pt-2">
+          Report total: ${existingTotal.toFixed(2)} across {existingLineCount}{' '}
+          line{existingLineCount === 1 ? '' : 's'}
+          {Number.isFinite(lineAmount) &&
+            ` — $${(existingTotal + lineAmount).toFixed(2)} with this line`}
+        </div>
       </DrawerBody>
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>
           Cancel
         </Button>
-        <Button onClick={onSubmit} disabled={saving}>
+        <Button
+          variant="secondary"
+          onClick={() => onSubmit(true)}
+          disabled={saving}
+        >
+          {saving ? 'Saving…' : 'Save & add another'}
+        </Button>
+        <Button onClick={() => onSubmit(false)} disabled={saving}>
           {saving ? 'Saving…' : 'Add'}
         </Button>
       </DrawerFooter>

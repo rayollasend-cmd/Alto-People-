@@ -215,6 +215,8 @@ const en = {
   'timeoff.reasonOptional': 'Reason (optional)',
   'timeoff.reasonPlaceholder': 'Family event, doctor visit, etc.',
   'timeoff.submit': 'Submit',
+  'timeoff.balanceLine': '{avail} available · {after} left after this request',
+  'timeoff.balanceOver': 'This request exceeds your available balance by {over}.',
 
   // Pay — associate paystub list
   'pay.title': 'My pay',
@@ -473,6 +475,8 @@ const es: Record<MessageKey, string> = {
   'timeoff.reasonOptional': 'Motivo (opcional)',
   'timeoff.reasonPlaceholder': 'Evento familiar, cita médica, etc.',
   'timeoff.submit': 'Enviar',
+  'timeoff.balanceLine': '{avail} disponibles · {after} restantes después de esta solicitud',
+  'timeoff.balanceOver': 'Esta solicitud excede tu saldo disponible por {over}.',
 
   'pay.title': 'Mi pago',
   'pay.subtitle': 'Recibos de pago recientes con totales acumulados del año.',

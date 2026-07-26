@@ -37,6 +37,7 @@ import {
   TableRow,
   Textarea,
 } from '@/components/ui';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
 
@@ -248,7 +249,7 @@ function TemplateDrawer({
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [renderPreview, setRenderPreview] = useState<string | null>(null);
-  const [renderTargetId, setRenderTargetId] = useState('');
+  const [renderTarget, setRenderTarget] = useState<PickedAssociate | null>(null);
   const [saving, setSaving] = useState(false);
 
   const refresh = () => {
@@ -302,7 +303,7 @@ function TemplateDrawer({
   const onRender = async () => {
     try {
       const r = await renderTemplate(template.id, {
-        associateId: renderTargetId.trim() || null,
+        associateId: renderTarget?.id ?? null,
       });
       setRenderPreview(r.renderedBody);
       onChanged();
@@ -403,13 +404,10 @@ function TemplateDrawer({
           <CardContent className="p-4 space-y-3">
             <div className="text-sm font-medium text-white">Render</div>
             <div>
-              <Label>Associate ID (optional)</Label>
-              <Input
-                className="mt-1 font-mono text-xs"
-                value={renderTargetId}
-                onChange={(e) => setRenderTargetId(e.target.value)}
-                placeholder="UUID"
-              />
+              <Label>Associate (optional)</Label>
+              <div className="mt-1">
+                <AssociatePicker value={renderTarget} onChange={setRenderTarget} />
+              </div>
             </div>
             <Button onClick={onRender}>Render preview</Button>
             {renderPreview !== null && (

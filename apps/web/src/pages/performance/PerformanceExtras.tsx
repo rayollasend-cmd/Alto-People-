@@ -27,6 +27,8 @@ import { useAuth } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
+  AssociatePicker,
+  type PickedAssociate,
   Badge,
   Button,
   Card,
@@ -57,6 +59,21 @@ import { Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
 
 type Tab = 'goals' | 'kudos' | 'one-on-ones' | 'pips' | 'reviews360' | 'timeline';
+
+function ymd(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function todayYmd() {
+  return ymd(new Date());
+}
+
+function planDaysHint(start: string, end: string) {
+  if (!start || !end) return null;
+  const days = Math.round((Date.parse(end) - Date.parse(start)) / 86400000);
+  if (!Number.isFinite(days) || days <= 0) return null;
+  return <p className="mt-1 text-xs text-silver">{days}-day plan</p>;
+}
 
 // Each tab's data sits behind a tuple key so a single mutation can
 // invalidate one tab without flushing the others — except timeline,
@@ -108,7 +125,7 @@ export function PerformanceExtras() {
 // ============ Goals ============
 
 type GoalDraft = {
-  associateId: string;
+  associate: PickedAssociate | null;
   kind: 'GOAL' | 'OBJECTIVE';
   title: string;
   description: string;
@@ -167,12 +184,12 @@ function GoalsTab() {
         <Button
           onClick={() =>
             setDraft({
-              associateId: '',
+              associate: null,
               kind: 'GOAL',
               title: '',
               description: '',
-              periodStart: '',
-              periodEnd: '',
+              periodStart: todayYmd(),
+              periodEnd: `${new Date().getFullYear()}-12-31`,
             })
           }
         >
@@ -331,22 +348,22 @@ function GoalDrawer({
 }) {
   const [saving, setSaving] = useState(false);
   const onSubmit = async () => {
-    if (!draft.associateId) {
-      toast.error('Associate ID required (paste UUID).');
+    if (!draft.associate) {
+      toast.error('Pick an associate.');
       return;
     }
     if (!draft.title.trim()) {
       toast.error('Title required.');
       return;
     }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.periodStart) || !/^\d{4}-\d{2}-\d{2}$/.test(draft.periodEnd)) {
-      toast.error('Dates must be YYYY-MM-DD.');
+    if (!draft.periodStart || !draft.periodEnd) {
+      toast.error('Period start and end required.');
       return;
     }
     setSaving(true);
     try {
       await createGoal({
-        associateId: draft.associateId,
+        associateId: draft.associate.id,
         kind: draft.kind,
         title: draft.title.trim(),
         description: draft.description.trim() || null,
@@ -368,13 +385,13 @@ function GoalDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate ID</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={draft.associateId}
-            onChange={(e) => setDraft({ ...draft, associateId: e.target.value })}
-            placeholder="UUID"
-          />
+          <Label>Associate</Label>
+          <div className="mt-1">
+            <AssociatePicker
+              value={draft.associate}
+              onChange={(a) => setDraft({ ...draft, associate: a })}
+            />
+          </div>
         </div>
         <div>
           <Label>Kind</Label>
@@ -408,18 +425,18 @@ function GoalDrawer({
             <Label>Period start</Label>
             <Input
               className="mt-1"
+              type="date"
               value={draft.periodStart}
               onChange={(e) => setDraft({ ...draft, periodStart: e.target.value })}
-              placeholder="2026-01-01"
             />
           </div>
           <div>
             <Label>Period end</Label>
             <Input
               className="mt-1"
+              type="date"
               value={draft.periodEnd}
               onChange={(e) => setDraft({ ...draft, periodEnd: e.target.value })}
-              placeholder="2026-12-31"
             />
           </div>
         </div>
@@ -497,23 +514,28 @@ function PipFromGoalDrawer({
             performance timeline.
           </p>
         )}
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <Label>Start date</Label>
-            <Input
-              className="mt-1"
-              value={draft.startDate}
-              onChange={(e) => setDraft({ ...draft, startDate: e.target.value })}
-            />
+        <div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Start date</Label>
+              <Input
+                className="mt-1"
+                type="date"
+                value={draft.startDate}
+                onChange={(e) => setDraft({ ...draft, startDate: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label>End date</Label>
+              <Input
+                className="mt-1"
+                type="date"
+                value={draft.endDate}
+                onChange={(e) => setDraft({ ...draft, endDate: e.target.value })}
+              />
+            </div>
           </div>
-          <div>
-            <Label>End date</Label>
-            <Input
-              className="mt-1"
-              value={draft.endDate}
-              onChange={(e) => setDraft({ ...draft, endDate: e.target.value })}
-            />
-          </div>
+          {planDaysHint(draft.startDate, draft.endDate)}
         </div>
         <div>
           <Label>Reason</Label>
@@ -556,7 +578,7 @@ function PipFromGoalDrawer({
 function KudosTab() {
   const qc = useQueryClient();
   const [showCompose, setShowCompose] = useState(false);
-  const [toAssociateId, setToAssociateId] = useState('');
+  const [toAssociate, setToAssociate] = useState<PickedAssociate | null>(null);
   const [message, setMessage] = useState('');
   const [tags, setTags] = useState('');
 
@@ -573,7 +595,7 @@ function KudosTab() {
       setShowCompose(false);
       setMessage('');
       setTags('');
-      setToAssociateId('');
+      setToAssociate(null);
       qc.invalidateQueries({ queryKey: perfKeys.kudos(true) });
     },
     onError: (err) =>
@@ -581,12 +603,12 @@ function KudosTab() {
   });
 
   const onSend = () => {
-    if (!toAssociateId.trim() || !message.trim()) {
+    if (!toAssociate || !message.trim()) {
       toast.error('Recipient and message required.');
       return;
     }
     sendM.mutate({
-      toAssociateId: toAssociateId.trim(),
+      toAssociateId: toAssociate.id,
       message: message.trim(),
       tags: tags
         .split(',')
@@ -644,13 +666,10 @@ function KudosTab() {
         </DrawerHeader>
         <DrawerBody className="space-y-4">
           <div>
-            <Label>Recipient associate ID</Label>
-            <Input
-              className="mt-1 font-mono text-xs"
-              value={toAssociateId}
-              onChange={(e) => setToAssociateId(e.target.value)}
-              placeholder="UUID"
-            />
+            <Label>Recipient</Label>
+            <div className="mt-1">
+              <AssociatePicker value={toAssociate} onChange={setToAssociate} />
+            </div>
           </div>
           <div>
             <Label>Message</Label>
@@ -846,23 +865,31 @@ function PipsTab({ canManage }: { canManage: boolean }) {
 }
 
 function PipDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const [associateId, setAssociateId] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  const [associate, setAssociate] = useState<PickedAssociate | null>(null);
+  const [startDate, setStartDate] = useState(todayYmd());
+  const [endDate, setEndDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 90);
+    return ymd(d);
+  });
   const [reason, setReason] = useState('');
   const [expectations, setExpectations] = useState('');
   const [supportPlan, setSupportPlan] = useState('');
   const [saving, setSaving] = useState(false);
 
   const onSubmit = async () => {
-    if (!associateId.trim() || !reason.trim() || !expectations.trim()) {
-      toast.error('Associate, reason, and expectations are required.');
+    if (!associate) {
+      toast.error('Pick an associate.');
+      return;
+    }
+    if (!reason.trim() || !expectations.trim()) {
+      toast.error('Reason and expectations are required.');
       return;
     }
     setSaving(true);
     try {
       await createPip({
-        associateId: associateId.trim(),
+        associateId: associate.id,
         startDate,
         endDate,
         reason: reason.trim(),
@@ -884,22 +911,23 @@ function PipDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate ID</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={associateId}
-            onChange={(e) => setAssociateId(e.target.value)}
-          />
+          <Label>Associate</Label>
+          <div className="mt-1">
+            <AssociatePicker value={associate} onChange={setAssociate} />
+          </div>
         </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <Label>Start</Label>
-            <Input className="mt-1" value={startDate} onChange={(e) => setStartDate(e.target.value)} placeholder="2026-04-27" />
+        <div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Start</Label>
+              <Input className="mt-1" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            </div>
+            <div>
+              <Label>End</Label>
+              <Input className="mt-1" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+            </div>
           </div>
-          <div>
-            <Label>End</Label>
-            <Input className="mt-1" value={endDate} onChange={(e) => setEndDate(e.target.value)} placeholder="2026-07-27" />
-          </div>
+          {planDaysHint(startDate, endDate)}
         </div>
         <div>
           <Label>Reason</Label>
@@ -1033,19 +1061,22 @@ function Reviews360Tab({ canManage }: { canManage: boolean }) {
 }
 
 function NewReview360Drawer({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const [subjectAssociateId, setSubject] = useState('');
-  const [periodStart, setStart] = useState('');
-  const [periodEnd, setEnd] = useState('');
+  const [subject, setSubject] = useState<PickedAssociate | null>(null);
+  const [periodStart, setStart] = useState(() => {
+    const d = new Date();
+    return ymd(new Date(d.getFullYear(), Math.floor(d.getMonth() / 3) * 3, 1));
+  });
+  const [periodEnd, setEnd] = useState(todayYmd());
   const [saving, setSaving] = useState(false);
   const onSubmit = async () => {
-    if (!subjectAssociateId.trim()) {
-      toast.error('Subject required.');
+    if (!subject) {
+      toast.error('Pick an associate.');
       return;
     }
     setSaving(true);
     try {
       await createReview360({
-        subjectAssociateId: subjectAssociateId.trim(),
+        subjectAssociateId: subject.id,
         periodStart,
         periodEnd,
       });
@@ -1064,21 +1095,19 @@ function NewReview360Drawer({ onClose, onSaved }: { onClose: () => void; onSaved
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Subject associate ID</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={subjectAssociateId}
-            onChange={(e) => setSubject(e.target.value)}
-          />
+          <Label>Subject</Label>
+          <div className="mt-1">
+            <AssociatePicker value={subject} onChange={setSubject} />
+          </div>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
             <Label>Period start</Label>
-            <Input className="mt-1" value={periodStart} onChange={(e) => setStart(e.target.value)} placeholder="2026-01-01" />
+            <Input className="mt-1" type="date" value={periodStart} onChange={(e) => setStart(e.target.value)} />
           </div>
           <div>
             <Label>Period end</Label>
-            <Input className="mt-1" value={periodEnd} onChange={(e) => setEnd(e.target.value)} placeholder="2026-12-31" />
+            <Input className="mt-1" type="date" value={periodEnd} onChange={(e) => setEnd(e.target.value)} />
           </div>
         </div>
       </DrawerBody>
@@ -1106,7 +1135,7 @@ const TIMELINE_KIND_META: Record<
 };
 
 function TimelineTab() {
-  const [associateId, setAssociateId] = useState('');
+  const [associate, setAssociate] = useState<PickedAssociate | null>(null);
   // Locked-in associate id we last loaded for. Lets the input keep
   // changing without re-firing the query on every keystroke — the
   // useQuery only enables when the user clicks "Load timeline".
@@ -1125,13 +1154,12 @@ function TimelineTab() {
   const loading = q.isFetching && q.fetchStatus !== 'idle';
 
   const load = () => {
-    const trimmed = associateId.trim();
-    if (!trimmed) {
-      setLocalError('Paste an associate ID.');
+    if (!associate) {
+      setLocalError('Pick an associate.');
       return;
     }
     setLocalError(null);
-    setLoadedId(trimmed);
+    setLoadedId(associate.id);
   };
 
   return (
@@ -1139,13 +1167,10 @@ function TimelineTab() {
       <Card>
         <CardContent className="p-4 flex items-end gap-3">
           <div className="flex-1">
-            <Label>Associate ID</Label>
-            <Input
-              className="mt-1"
-              value={associateId}
-              onChange={(e) => setAssociateId(e.target.value)}
-              placeholder="UUID"
-            />
+            <Label>Associate</Label>
+            <div className="mt-1">
+              <AssociatePicker value={associate} onChange={setAssociate} />
+            </div>
           </div>
           <Button onClick={load} disabled={loading}>
             {loading ? 'Loading…' : 'Load timeline'}

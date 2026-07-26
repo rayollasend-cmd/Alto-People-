@@ -16,6 +16,7 @@ import {
   listTemplates,
 } from '@/lib/onboardingApi';
 import { listClientLocations } from '@/lib/clientsApi';
+import { listShiftPositions } from '@/lib/orgApi';
 import { Button } from '@/components/ui/Button';
 import {
   Dialog,
@@ -110,6 +111,19 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
     setInviteLink(null);
   };
 
+  // Default the start date to next Monday — the usual first day for a new
+  // hire — instead of opening blank. HR can still change or clear it.
+  useEffect(() => {
+    if (!open) return;
+    setStartDate((prev) => {
+      if (prev) return prev;
+      const d = new Date();
+      d.setDate(d.getDate() + ((8 - d.getDay()) % 7 || 7));
+      const pad = (n: number) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    });
+  }, [open]);
+
   // Load pickers once when the dialog opens. Keep cached for subsequent
   // opens within the same session — clients/templates don't change often.
   useEffect(() => {
@@ -144,6 +158,27 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
     listClientLocations(clientId)
       .then((r) => !cancelled && setLocations(r.locations))
       .catch(() => !cancelled && setLocations([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId]);
+
+  // The client's position catalog feeds the Position field as typeahead
+  // suggestions — free text still allowed for one-off titles.
+  const [positionNames, setPositionNames] = useState<string[]>([]);
+  useEffect(() => {
+    if (!clientId) {
+      setPositionNames([]);
+      return;
+    }
+    let cancelled = false;
+    listShiftPositions(clientId)
+      .then((r) => {
+        if (!cancelled) {
+          setPositionNames(r.shiftPositions.map((sp) => sp.name));
+        }
+      })
+      .catch(() => !cancelled && setPositionNames([]));
     return () => {
       cancelled = true;
     };
@@ -408,17 +443,32 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
             </Field>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Field label="Position">
+              <Field
+                label="Position"
+                hint={
+                  positionNames.length > 0
+                    ? "Suggestions come from the client's position catalog."
+                    : undefined
+                }
+              >
                 {(p) => (
-                  <Input
-                    value={position}
-                    onChange={(e) => setPosition(e.target.value)}
-                    placeholder="Server"
-                    {...p}
-                  />
+                  <>
+                    <Input
+                      value={position}
+                      onChange={(e) => setPosition(e.target.value)}
+                      placeholder="Server"
+                      list="new-app-position-options"
+                      {...p}
+                    />
+                    <datalist id="new-app-position-options">
+                      {positionNames.map((n) => (
+                        <option key={n} value={n} />
+                      ))}
+                    </datalist>
+                  </>
                 )}
               </Field>
-              <Field label="Start date">
+              <Field label="Start date" hint="Defaults to next Monday.">
                 {(p) => (
                   <Input
                     type="date"

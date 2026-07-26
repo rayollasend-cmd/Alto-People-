@@ -358,9 +358,20 @@ function NewRequestDrawer({
   const [schoolName, setSchoolName] = useState('');
   const [programName, setProgramName] = useState('');
   const [courseName, setCourseName] = useState('');
-  const today = new Date().toISOString().slice(0, 10);
+  const ymd = (d: Date) => {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  };
+  const plusMonths = (fromYmd: string, months: number) => {
+    const [y, m, d] = fromYmd.split('-').map(Number);
+    return ymd(new Date(y, (m ?? 1) - 1 + months, d ?? 1));
+  };
+  const today = ymd(new Date());
   const [termStartDate, setTermStartDate] = useState(today);
-  const [termEndDate, setTermEndDate] = useState(today);
+  // A term isn't one day long — default the end ~4 months out and keep it
+  // tracking the start until the associate edits it themselves.
+  const [termEndDate, setTermEndDate] = useState(plusMonths(today, 4));
+  const [endTouched, setEndTouched] = useState(false);
   const [amount, setAmount] = useState('');
   const [receiptUrl, setReceiptUrl] = useState('');
   const [saving, setSaving] = useState(false);
@@ -428,7 +439,12 @@ function NewRequestDrawer({
               type="date"
               className="mt-1"
               value={termStartDate}
-              onChange={(e) => setTermStartDate(e.target.value)}
+              onChange={(e) => {
+                setTermStartDate(e.target.value);
+                if (!endTouched && e.target.value) {
+                  setTermEndDate(plusMonths(e.target.value, 4));
+                }
+              }}
             />
           </div>
           <div>
@@ -437,7 +453,11 @@ function NewRequestDrawer({
               type="date"
               className="mt-1"
               value={termEndDate}
-              onChange={(e) => setTermEndDate(e.target.value)}
+              min={termStartDate || undefined}
+              onChange={(e) => {
+                setTermEndDate(e.target.value);
+                setEndTouched(true);
+              }}
             />
           </div>
         </div>
