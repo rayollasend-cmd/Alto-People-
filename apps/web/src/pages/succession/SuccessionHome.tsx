@@ -41,6 +41,7 @@ import {
   TableRow,
   Textarea,
 } from '@/components/ui';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Label } from '@/components/ui/Label';
 
 const READINESS_VARIANT: Record<
@@ -403,21 +404,21 @@ function AddCandidateDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [associateId, setAssociateId] = useState('');
+  const [associate, setAssociate] = useState<PickedAssociate | null>(null);
   const [readiness, setReadiness] = useState<SuccessionReadiness>('READY_1_2_YEARS');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
-    if (!associateId.trim()) {
-      toast.error('Associate ID required.');
+    if (!associate) {
+      toast.error('Pick an associate.');
       return;
     }
     setSaving(true);
     try {
       await createSuccessionCandidate({
         positionId,
-        associateId: associateId.trim(),
+        associateId: associate.id,
         readiness,
         notes: notes.trim() || null,
       });
@@ -437,12 +438,10 @@ function AddCandidateDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate ID</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={associateId}
-            onChange={(e) => setAssociateId(e.target.value)}
-          />
+          <Label>Associate</Label>
+          <div className="mt-1">
+            <AssociatePicker value={associate} onChange={setAssociate} />
+          </div>
         </div>
         <div>
           <Label>Readiness</Label>

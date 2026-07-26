@@ -10,6 +10,7 @@ import {
   type Mentorship,
   type MentorshipCandidate,
 } from '@/lib/mentorship112Api';
+import { listSkills, type SkillCatalogEntry } from '@/lib/skills111Api';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import {
@@ -24,8 +25,8 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
-  Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -35,6 +36,7 @@ import {
   TableRow,
   Textarea,
 } from '@/components/ui';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Label } from '@/components/ui/Label';
 import { fmtDate } from '@/lib/format';
 
@@ -226,23 +228,30 @@ function NewPairingDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [mentor, setMentor] = useState('');
-  const [mentee, setMentee] = useState('');
+  const [mentor, setMentor] = useState<PickedAssociate | null>(null);
+  const [mentee, setMentee] = useState<PickedAssociate | null>(null);
   const [skillId, setSkillId] = useState('');
+  const [skills, setSkills] = useState<SkillCatalogEntry[]>([]);
   const [goals, setGoals] = useState('');
   const [saving, setSaving] = useState(false);
 
+  useEffect(() => {
+    listSkills()
+      .then((r) => setSkills(r.skills))
+      .catch(() => setSkills([]));
+  }, []);
+
   const submit = async () => {
-    if (!mentor.trim() || !mentee.trim()) {
-      toast.error('Mentor and mentee IDs required.');
+    if (!mentor || !mentee) {
+      toast.error('Pick an associate.');
       return;
     }
     setSaving(true);
     try {
       await proposeMentorship({
-        mentorAssociateId: mentor.trim(),
-        menteeAssociateId: mentee.trim(),
-        focusSkillId: skillId.trim() || null,
+        mentorAssociateId: mentor.id,
+        menteeAssociateId: mentee.id,
+        focusSkillId: skillId || null,
         goals: goals.trim() || null,
       });
       toast.success('Pairing proposed.');
@@ -261,16 +270,25 @@ function NewPairingDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Mentor associate ID</Label>
-          <Input className="mt-1 font-mono text-xs" value={mentor} onChange={(e) => setMentor(e.target.value)} />
+          <Label>Mentor</Label>
+          <div className="mt-1">
+            <AssociatePicker value={mentor} onChange={setMentor} />
+          </div>
         </div>
         <div>
-          <Label>Mentee associate ID</Label>
-          <Input className="mt-1 font-mono text-xs" value={mentee} onChange={(e) => setMentee(e.target.value)} />
+          <Label>Mentee</Label>
+          <div className="mt-1">
+            <AssociatePicker value={mentee} onChange={setMentee} />
+          </div>
         </div>
         <div>
-          <Label>Focus skill ID (optional)</Label>
-          <Input className="mt-1 font-mono text-xs" value={skillId} onChange={(e) => setSkillId(e.target.value)} />
+          <Label>Focus skill (optional)</Label>
+          <Select className="mt-1" value={skillId} onChange={(e) => setSkillId(e.target.value)}>
+            <option value="">None</option>
+            {skills.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </Select>
         </div>
         <div>
           <Label>Goals (optional)</Label>
@@ -292,21 +310,32 @@ function NewPairingDrawer({
 }
 
 function SuggestDrawer({ onClose }: { onClose: () => void }) {
-  const [menteeId, setMenteeId] = useState('');
+  const [mentee, setMentee] = useState<PickedAssociate | null>(null);
   const [skillId, setSkillId] = useState('');
+  const [skills, setSkills] = useState<SkillCatalogEntry[]>([]);
   const [results, setResults] = useState<MentorshipCandidate[] | null>(null);
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    listSkills()
+      .then((r) => setSkills(r.skills))
+      .catch(() => setSkills([]));
+  }, []);
+
   const submit = async () => {
-    if (!menteeId.trim() || !skillId.trim()) {
-      toast.error('Mentee and skill IDs required.');
+    if (!mentee) {
+      toast.error('Pick an associate.');
+      return;
+    }
+    if (!skillId) {
+      toast.error('Pick a skill.');
       return;
     }
     setLoading(true);
     try {
       const r = await suggestMentors({
-        menteeAssociateId: menteeId.trim(),
-        skillId: skillId.trim(),
+        menteeAssociateId: mentee.id,
+        skillId,
       });
       setResults(r.candidates);
     } catch (err) {
@@ -323,12 +352,19 @@ function SuggestDrawer({ onClose }: { onClose: () => void }) {
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Mentee associate ID</Label>
-          <Input className="mt-1 font-mono text-xs" value={menteeId} onChange={(e) => setMenteeId(e.target.value)} />
+          <Label>Mentee</Label>
+          <div className="mt-1">
+            <AssociatePicker value={mentee} onChange={setMentee} />
+          </div>
         </div>
         <div>
-          <Label>Skill ID</Label>
-          <Input className="mt-1 font-mono text-xs" value={skillId} onChange={(e) => setSkillId(e.target.value)} />
+          <Label>Skill</Label>
+          <Select className="mt-1" value={skillId} onChange={(e) => setSkillId(e.target.value)}>
+            <option value="">Select a skill…</option>
+            {skills.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </Select>
         </div>
         <Button onClick={submit} disabled={loading}>
           {loading ? 'Searching…' : 'Find candidates'}

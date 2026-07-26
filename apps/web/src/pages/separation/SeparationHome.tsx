@@ -17,6 +17,8 @@ import {
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import {
+  AssociatePicker,
+  type PickedAssociate,
   Badge,
   Button,
   Card,
@@ -241,7 +243,7 @@ function NewSeparationDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [associateId, setAssociateId] = useState('');
+  const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
   const [reason, setReason] = useState<SeparationReason>(
     'VOLUNTARY_OTHER_OPPORTUNITY',
   );
@@ -253,14 +255,14 @@ function NewSeparationDrawer({
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
-    if (!associateId.trim()) {
-      toast.error('Associate ID required.');
+    if (!assoc) {
+      toast.error('Pick an associate.');
       return;
     }
     setSaving(true);
     try {
       await initiateSeparation({
-        associateId: associateId.trim(),
+        associateId: assoc.id,
         reason,
         noticeDate,
         lastDayWorked,
@@ -281,12 +283,10 @@ function NewSeparationDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate ID</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={associateId}
-            onChange={(e) => setAssociateId(e.target.value)}
-          />
+          <Label>Associate</Label>
+          <div className="mt-1">
+            <AssociatePicker value={assoc} onChange={setAssoc} />
+          </div>
         </div>
         <div>
           <Label>Reason</Label>

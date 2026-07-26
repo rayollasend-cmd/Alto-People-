@@ -14,6 +14,7 @@ import {
   type VaccinationKind,
   type VaccinationRecord,
 } from '@/lib/vaccination121Api';
+import { fmtDate } from '@/lib/format';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
@@ -41,6 +42,26 @@ import {
   Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
+
+// Format a Date as YYYY-MM-DD in LOCAL time — toISOString() would shift the
+// date for evening users west of UTC.
+function ymdLocal(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function todayYmd(): string {
+  return ymdLocal(new Date());
+}
+
+// Parse an <input type="date"> value into a LOCAL Date. new Date('YYYY-MM-DD')
+// parses as UTC midnight and can render a day off.
+function parseYmd(s: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
 
 export function VaccinationsHome() {
   const { user } = useAuth();
@@ -325,14 +346,13 @@ function NewRecordDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [associateId, setAssociateId] = useState('');
+  const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
   const [kind, setKind] = useState<VaccinationKind>('COVID19');
   const [customLabel, setCustomLabel] = useState('');
   const [doseNumber, setDoseNumber] = useState('1');
+  const [doseTouched, setDoseTouched] = useState(false);
   const [totalDoses, setTotalDoses] = useState('');
-  const [administeredOn, setAdministeredOn] = useState(
-    new Date().toISOString().slice(0, 10),
-  );
+  const [administeredOn, setAdministeredOn] = useState(todayYmd());
   const [administeredBy, setAdministeredBy] = useState('');
   const [manufacturer, setManufacturer] = useState('');
   const [lotNumber, setLotNumber] = useState('');
@@ -341,9 +361,40 @@ function NewRecordDrawer({
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // Prefill dose = (max existing dose for this associate + kind) + 1, but only
+  // while the user hasn't touched the field. Skipped for OTHER — custom labels
+  // don't form one dose series.
+  useEffect(() => {
+    if (doseTouched || !assoc || kind === 'OTHER') return;
+    let live = true;
+    listVaccinations({ associateId: assoc.id, kind })
+      .then((r) => {
+        if (!live) return;
+        const maxDose = r.records.reduce((m, rec) => Math.max(m, rec.doseNumber), 0);
+        setDoseNumber(String(maxDose + 1));
+      })
+      .catch(() => {
+        // Silent — the field keeps its current value.
+      });
+    return () => {
+      live = false;
+    };
+  }, [assoc, kind, doseTouched]);
+
+  // Expiry hint only — never auto-filled. Most records here (flu, TB test)
+  // are re-verified annually.
+  const administeredParsed = parseYmd(administeredOn);
+  const suggestedExpiry = administeredParsed
+    ? new Date(
+        administeredParsed.getFullYear(),
+        administeredParsed.getMonth() + 12,
+        administeredParsed.getDate(),
+      )
+    : null;
+
   const submit = async () => {
-    if (!associateId.trim()) {
-      toast.error('Associate ID required.');
+    if (!assoc) {
+      toast.error('Pick an associate.');
       return;
     }
     if (kind === 'OTHER' && !customLabel.trim()) {
@@ -353,7 +404,7 @@ function NewRecordDrawer({
     setSaving(true);
     try {
       await createVaccination({
-        associateId: associateId.trim(),
+        associateId: assoc.id,
         kind,
         customLabel: kind === 'OTHER' ? customLabel.trim() : null,
         doseNumber: parseInt(doseNumber, 10) || 1,
@@ -382,12 +433,10 @@ function NewRecordDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate ID</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={associateId}
-            onChange={(e) => setAssociateId(e.target.value)}
-          />
+          <Label>Associate</Label>
+          <div className="mt-1">
+            <AssociatePicker value={assoc} onChange={setAssoc} />
+          </div>
         </div>
         <div>
           <Label>Kind</Label>
@@ -423,7 +472,10 @@ function NewRecordDrawer({
               max="20"
               className="mt-1"
               value={doseNumber}
-              onChange={(e) => setDoseNumber(e.target.value)}
+              onChange={(e) => {
+                setDoseTouched(true);
+                setDoseNumber(e.target.value);
+              }}
             />
           </div>
           <div>
@@ -485,6 +537,18 @@ function NewRecordDrawer({
               value={expiresOn}
               onChange={(e) => setExpiresOn(e.target.value)}
             />
+            {!expiresOn && suggestedExpiry && (
+              <p className="mt-1 text-xs text-silver">
+                Commonly 12 months after administration —{' '}
+                <button
+                  type="button"
+                  className="underline hover:text-white"
+                  onClick={() => setExpiresOn(ymdLocal(suggestedExpiry))}
+                >
+                  use {fmtDate(suggestedExpiry)}
+                </button>
+              </p>
+            )}
           </div>
         </div>
         <div>

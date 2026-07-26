@@ -432,6 +432,18 @@ function CreateGarnishmentDialog({
     [associates]
   );
 
+  // Live preview of the configured deduction. Purely presentational — the
+  // real cap math (CCPA %, Pub 1494) happens server-side at run creation.
+  const previewFlat = amountMode === 'flat' ? Number(amountPerRun) : NaN;
+  const previewPct = amountMode === 'percent' ? Number(percentOfDisp) : NaN;
+  const previewCap = totalCap === '' ? null : Number(totalCap);
+  const previewText =
+    amountMode === 'flat' && amountPerRun !== '' && Number.isFinite(previewFlat) && previewFlat > 0
+      ? `${fmtMoney(previewFlat)} withheld per pay run`
+      : amountMode === 'percent' && percentOfDisp !== '' && Number.isFinite(previewPct) && previewPct > 0 && previewPct <= 100
+      ? `${previewPct}% of disposable pay each run`
+      : null;
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
@@ -555,6 +567,14 @@ function CreateGarnishmentDialog({
                 />
               )}
             </div>
+            {previewText && (
+              <p className="mt-1.5 text-xs text-silver/70">
+                {previewText}
+                {previewCap !== null && Number.isFinite(previewCap) && previewCap > 0 &&
+                  ` — stops once ${fmtMoney(previewCap)} total is withheld`}
+                {` · ${KIND_HINT[kind]}`}
+              </p>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">

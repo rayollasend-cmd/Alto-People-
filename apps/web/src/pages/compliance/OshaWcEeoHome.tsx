@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Plus } from 'lucide-react';
 import { ApiError } from '@/lib/api';
-import { listClients } from '@/lib/clientsApi';
-import type { ClientListItem } from '@alto-people/shared';
+import { listClients, listClientLocations } from '@/lib/clientsApi';
+import type { ClientListItem, LocationSummary } from '@alto-people/shared';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import {
   createOshaIncident,
   createWcClassCode,
@@ -255,14 +256,37 @@ function NewIncidentDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [associateId, setAssociateId] = useState('');
-  const [occurredAt, setOccurredAt] = useState('');
+  const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
+  // Default to "now" in LOCAL wall-clock time — incidents are almost always
+  // logged right after they happen, and datetime-local wants no timezone.
+  const [occurredAt, setOccurredAt] = useState(() => {
+    const d = new Date();
+    const p = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  });
   const [location, setLocation] = useState('');
+  // Client's site list for the Location select; null while loading, [] when
+  // the client has none (falls back to free text).
+  const [locations, setLocations] = useState<LocationSummary[] | null>(null);
   const [description, setDescription] = useState('');
   const [bodyPart, setBodyPart] = useState('');
   const [severity, setSeverity] = useState<OshaSeverity>('FIRST_AID');
   const [daysAway, setDaysAway] = useState('0');
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    listClientLocations(clientId)
+      .then((r) => {
+        if (!cancelled) setLocations(r.locations);
+      })
+      .catch(() => {
+        if (!cancelled) setLocations([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId]);
 
   const onSubmit = async () => {
     if (!description.trim()) {
@@ -277,7 +301,7 @@ function NewIncidentDrawer({
     try {
       await createOshaIncident({
         clientId,
-        associateId: associateId.trim() || null,
+        associateId: assoc?.id ?? null,
         occurredAt: new Date(occurredAt).toISOString(),
         location: location.trim() || null,
         description: description.trim(),
@@ -300,12 +324,10 @@ function NewIncidentDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate ID (optional)</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={associateId}
-            onChange={(e) => setAssociateId(e.target.value)}
-          />
+          <Label>Associate (optional)</Label>
+          <div className="mt-1">
+            <AssociatePicker value={assoc} onChange={setAssoc} />
+          </div>
         </div>
         <div>
           <Label>Occurred at</Label>
@@ -317,8 +339,30 @@ function NewIncidentDrawer({
           />
         </div>
         <div>
-          <Label>Location</Label>
-          <Input className="mt-1" value={location} onChange={(e) => setLocation(e.target.value)} />
+          <Label htmlFor="osha-location">Location</Label>
+          {locations && locations.length > 0 ? (
+            <Select
+              id="osha-location"
+              className="mt-1"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+            >
+              <option value="">—</option>
+              {locations.map((l) => (
+                <option key={l.id} value={l.name}>
+                  {l.name}
+                </option>
+              ))}
+            </Select>
+          ) : (
+            // Client has no sites on file (or the lookup failed) — free text.
+            <Input
+              id="osha-location"
+              className="mt-1"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+            />
+          )}
         </div>
         <div>
           <Label>Description</Label>

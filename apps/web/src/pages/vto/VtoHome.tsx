@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import {
   decideVolunteerEntry,
+  getVtoPolicy,
   getVolunteerSummary,
   listMyVolunteer,
   listVolunteerQueue,
@@ -576,6 +577,36 @@ function QueueDetailDrawer({
   const [notes, setNotes] = useState(row.reviewerNotes ?? '');
   const [matchAmount, setMatchAmount] = useState('');
   const [busy, setBusy] = useState(false);
+  // What "blank = use policy ratio" would actually pay — fetched so the
+  // reviewer isn't left doing hours × ratio in their head. Uses the org
+  // default policy; the server applies the entry's client policy if one
+  // overrides it.
+  const [policyRatio, setPolicyRatio] = useState<{
+    ratio: number;
+    currency: string;
+  } | null>(null);
+  const showMatchForm =
+    row.status === 'APPROVED' && row.matchRequested && !row.matchAmount;
+  useEffect(() => {
+    if (!showMatchForm) return;
+    let cancelled = false;
+    getVtoPolicy()
+      .then((p) => {
+        if (cancelled) return;
+        const ratio = Number(p.effective.matchRatio);
+        if (Number.isFinite(ratio) && ratio > 0) {
+          setPolicyRatio({ ratio, currency: p.effective.matchCurrency });
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [showMatchForm]);
+  const policyEstimate =
+    policyRatio && Number.isFinite(Number(row.hours))
+      ? Number(row.hours) * policyRatio.ratio
+      : null;
 
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
@@ -677,7 +708,7 @@ function QueueDetailDrawer({
           </div>
         )}
 
-        {row.status === 'APPROVED' && row.matchRequested && !row.matchAmount && (
+        {showMatchForm && (
           <div className="space-y-2 pt-2 border-t border-navy-secondary">
             <Label>Match amount (USD, blank = use policy ratio)</Label>
             <Input
@@ -688,6 +719,15 @@ function QueueDetailDrawer({
               onChange={(e) => setMatchAmount(e.target.value)}
               placeholder="Auto from policy if blank"
             />
+            {policyEstimate !== null && matchAmount === '' && (
+              <p className="text-xs text-silver">
+                Policy would pay {row.hours}h × {policyRatio!.ratio} ≈{' '}
+                <span className="text-gold">
+                  {policyRatio!.currency} {policyEstimate.toFixed(2)}
+                </span>
+                {' '}(org default ratio; a client-specific policy may differ).
+              </p>
+            )}
             <Button
               size="sm"
               onClick={async () => {

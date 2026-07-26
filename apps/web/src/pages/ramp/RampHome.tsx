@@ -35,6 +35,7 @@ import {
   SkeletonRows,
   Textarea,
 } from '@/components/ui';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { fmtDate } from '@/lib/format';
 import { Label } from '@/components/ui/Label';
 
@@ -173,7 +174,7 @@ function NewPlanDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [associateId, setAssociateId] = useState('');
+  const [associate, setAssociate] = useState<PickedAssociate | null>(null);
   const [startDate, setStartDate] = useState(
     new Date().toISOString().slice(0, 10),
   );
@@ -181,14 +182,14 @@ function NewPlanDrawer({
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
-    if (!associateId.trim()) {
-      toast.error('Associate ID required.');
+    if (!associate) {
+      toast.error('Pick an associate.');
       return;
     }
     setSaving(true);
     try {
       await createRampPlan({
-        associateId: associateId.trim(),
+        associateId: associate.id,
         startDate,
         notes: notes.trim() || null,
       });
@@ -208,12 +209,10 @@ function NewPlanDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate ID</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={associateId}
-            onChange={(e) => setAssociateId(e.target.value)}
-          />
+          <Label>Associate</Label>
+          <div className="mt-1">
+            <AssociatePicker value={associate} onChange={setAssociate} />
+          </div>
         </div>
         <div>
           <Label>Start date</Label>

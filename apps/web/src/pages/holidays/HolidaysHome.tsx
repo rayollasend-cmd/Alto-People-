@@ -5,11 +5,12 @@ import { ApiError } from '@/lib/api';
 import {
   createHoliday,
   deleteHoliday,
-  importUsFederalHolidays2026,
   listHolidays,
   type HolidayRow,
   type HolidayType,
 } from '@/lib/holiday117Api';
+import { listClients } from '@/lib/clientsApi';
+import type { ClientListItem } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
@@ -57,6 +58,48 @@ const MONTH_NAMES = [
   'December',
 ];
 
+/**
+ * Day-of-month of the nth WEEKDAY in a month. `nth` >= 1 counts from the
+ * start ("3rd Monday"); `nth` === -1 means the LAST such weekday.
+ * `month` is 0-based, `weekday` is 0=Sun … 6=Sat.
+ */
+function nthWeekdayOfMonth(
+  year: number,
+  month: number,
+  weekday: number,
+  nth: number,
+): number {
+  if (nth > 0) {
+    const firstDow = new Date(year, month, 1).getDay();
+    return 1 + ((weekday - firstDow + 7) % 7) + (nth - 1) * 7;
+  }
+  const last = new Date(year, month + 1, 0); // last day of month
+  return last.getDate() - ((last.getDay() - weekday + 7) % 7);
+}
+
+/** The 11 US federal holidays for a year, as {name, date: 'YYYY-MM-DD'}. */
+export function usFederalHolidays(
+  year: number,
+): { name: string; date: string }[] {
+  const ymd = (month0: number, day: number) =>
+    `${year}-${String(month0 + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const MON = 1;
+  const THU = 4;
+  return [
+    { name: "New Year's Day", date: ymd(0, 1) },
+    { name: 'Martin Luther King Jr. Day', date: ymd(0, nthWeekdayOfMonth(year, 0, MON, 3)) },
+    { name: "Presidents' Day", date: ymd(1, nthWeekdayOfMonth(year, 1, MON, 3)) },
+    { name: 'Memorial Day', date: ymd(4, nthWeekdayOfMonth(year, 4, MON, -1)) },
+    { name: 'Juneteenth', date: ymd(5, 19) },
+    { name: 'Independence Day', date: ymd(6, 4) },
+    { name: 'Labor Day', date: ymd(8, nthWeekdayOfMonth(year, 8, MON, 1)) },
+    { name: 'Columbus Day', date: ymd(9, nthWeekdayOfMonth(year, 9, MON, 2)) },
+    { name: 'Veterans Day', date: ymd(10, 11) },
+    { name: 'Thanksgiving', date: ymd(10, nthWeekdayOfMonth(year, 10, THU, 4)) },
+    { name: 'Christmas Day', date: ymd(11, 25) },
+  ];
+}
+
 export function HolidaysHome() {
   const { user } = useAuth();
   const confirm = useConfirm();
@@ -64,6 +107,7 @@ export function HolidaysHome() {
   const [year, setYear] = useState(new Date().getFullYear());
   const [rows, setRows] = useState<HolidayRow[] | null>(null);
   const [showNew, setShowNew] = useState(false);
+  const [seeding, setSeeding] = useState(false);
 
   const refresh = () => {
     setRows(null);
@@ -74,6 +118,43 @@ export function HolidaysHome() {
   useEffect(() => {
     refresh();
   }, [year]);
+
+  // Bulk-create the standard US federal calendar for the selected year,
+  // skipping any already on the list by (date, name). Sequential creates —
+  // 11 small POSTs — with one summary toast at the end.
+  const seedFederal = async () => {
+    if (!rows || seeding) return;
+    setSeeding(true);
+    const key = (date: string, name: string) =>
+      `${date}|${name.trim().toLowerCase()}`;
+    const existing = new Set(rows.map((h) => key(h.date, h.name)));
+    let added = 0;
+    let skipped = 0;
+    try {
+      for (const h of usFederalHolidays(year)) {
+        if (existing.has(key(h.date, h.name))) {
+          skipped += 1;
+          continue;
+        }
+        await createHoliday({
+          clientId: null,
+          name: h.name,
+          date: h.date,
+          type: 'FEDERAL',
+          state: null,
+          paid: true,
+          notes: null,
+        });
+        added += 1;
+      }
+      toast.success(`Added ${added}, skipped ${skipped} already present.`);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setSeeding(false);
+      refresh();
+    }
+  };
 
   const grouped = useMemo(() => {
     if (!rows) return null;
@@ -106,25 +187,15 @@ export function HolidaysHome() {
         </div>
         {canManage && (
           <div className="flex gap-2">
-            {year === 2026 && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={async () => {
-                  try {
-                    const r = await importUsFederalHolidays2026();
-                    toast.success(
-                      `Imported ${r.inserted}, skipped ${r.skipped} duplicates.`,
-                    );
-                    refresh();
-                  } catch (err) {
-                    toast.error(err instanceof ApiError ? err.message : 'Failed.');
-                  }
-                }}
-              >
-                <Download className="mr-1 h-3 w-3" /> Import US federal
-              </Button>
-            )}
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={rows === null || seeding}
+              onClick={seedFederal}
+            >
+              <Download className="mr-1 h-3 w-3" />
+              {seeding ? 'Seeding…' : `Seed US federal holidays ${year}`}
+            </Button>
             <Button onClick={() => setShowNew(true)}>
               <Plus className="mr-2 h-4 w-4" /> New holiday
             </Button>
@@ -253,9 +324,22 @@ function NewHolidayDrawer({
   const [type, setType] = useState<HolidayType>('COMPANY');
   const [state, setState] = useState('');
   const [clientId, setClientId] = useState('');
+  const [clients, setClients] = useState<ClientListItem[]>([]);
   const [paid, setPaid] = useState(true);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    listClients()
+      .then((r) => {
+        if (!cancelled) setClients(r.clients);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const submit = async () => {
     if (!name.trim()) {
@@ -337,12 +421,22 @@ function NewHolidayDrawer({
         )}
         {type === 'CLIENT_SPECIFIC' && (
           <div>
-            <Label>Client ID</Label>
-            <Input
-              className="mt-1 font-mono text-xs"
+            <Label htmlFor="holiday-client">Client</Label>
+            <Select
+              id="holiday-client"
+              className="mt-1"
               value={clientId}
               onChange={(e) => setClientId(e.target.value)}
-            />
+            >
+              {/* clientId is optional server-side — blank stores NULL, i.e.
+                  the holiday applies org-wide despite the CLIENT_SPECIFIC type. */}
+              <option value="">Org-wide (no client)</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
           </div>
         )}
         <div className="flex items-center gap-2">

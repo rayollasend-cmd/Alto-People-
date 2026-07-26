@@ -44,6 +44,29 @@ import {
   TableRow,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import {
+  AssociatePicker,
+  type PickedAssociate,
+} from '@/components/ui/AssociatePicker';
+
+/** Today as YYYY-MM-DD in the user's local timezone. */
+const todayLocal = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+    d.getDate(),
+  ).padStart(2, '0')}`;
+};
+
+/** Add n months to a YYYY-MM-DD string, returning YYYY-MM-DD (local). */
+const addMonths = (iso: string, months: number): string | null => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1 + months, Number(m[3]));
+  if (Number.isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+    d.getDate(),
+  ).padStart(2, '0')}`;
+};
 
 const GRANT_TYPE_LABELS: Record<EquityGrantType, string> = {
   RSU: 'RSU',
@@ -353,11 +376,11 @@ function NewGrantDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [associateId, setAssociateId] = useState('');
+  const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
   const [grantType, setGrantType] = useState<EquityGrantType>('RSU');
   const [totalShares, setTotalShares] = useState('');
   const [strikePrice, setStrikePrice] = useState('');
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayLocal();
   const [grantDate, setGrantDate] = useState(today);
   const [vestingStartDate, setVestingStartDate] = useState(today);
   const [cliffMonths, setCliffMonths] = useState('12');
@@ -367,9 +390,38 @@ function NewGrantDrawer({
 
   const isOption = grantType === 'NSO' || grantType === 'ISO';
 
+  // Live vesting preview — purely derived from the current inputs.
+  const previewShares = parseInt(totalShares, 10);
+  const previewCliff = parseInt(cliffMonths, 10);
+  const previewMonths = parseInt(vestingMonths, 10);
+  const previewValid =
+    Number.isFinite(previewShares) &&
+    previewShares > 0 &&
+    Number.isFinite(previewCliff) &&
+    previewCliff >= 0 &&
+    Number.isFinite(previewMonths) &&
+    previewMonths > 0 &&
+    previewCliff <= previewMonths;
+  const cliffDate = previewValid
+    ? addMonths(vestingStartDate, previewCliff)
+    : null;
+  const vestEndDate = previewValid
+    ? addMonths(vestingStartDate, previewMonths)
+    : null;
+  const cliffShares = previewValid
+    ? Math.floor((previewShares * previewCliff) / previewMonths)
+    : 0;
+  const monthlyShares = previewValid
+    ? Math.round(previewShares / previewMonths)
+    : 0;
+
   const submit = async () => {
-    if (!associateId.trim() || !totalShares) {
-      toast.error('Associate ID and total shares required.');
+    if (!assoc) {
+      toast.error('Pick an associate.');
+      return;
+    }
+    if (!totalShares) {
+      toast.error('Total shares required.');
       return;
     }
     if (isOption && !strikePrice) {
@@ -379,7 +431,7 @@ function NewGrantDrawer({
     setBusy(true);
     try {
       await createEquityGrant({
-        associateId: associateId.trim(),
+        associateId: assoc.id,
         grantType,
         totalShares: parseInt(totalShares, 10),
         strikePrice: isOption ? parseFloat(strikePrice) : null,
@@ -405,13 +457,10 @@ function NewGrantDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate ID</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={associateId}
-            onChange={(e) => setAssociateId(e.target.value)}
-            placeholder="UUID from /clients/:id team list"
-          />
+          <Label>Associate</Label>
+          <div className="mt-1">
+            <AssociatePicker value={assoc} onChange={setAssoc} />
+          </div>
         </div>
         <div>
           <Label htmlFor="equity-grant-type">Type</Label>
@@ -495,6 +544,13 @@ function NewGrantDrawer({
             />
           </div>
         </div>
+        {previewValid && cliffDate && vestEndDate && (
+          <div className="text-xs text-silver border border-navy-secondary rounded-md p-3">
+            {previewCliff > 0
+              ? `${cliffShares.toLocaleString()} shares vest at cliff on ${cliffDate}; then ~${monthlyShares.toLocaleString()}/month through ${vestEndDate}.`
+              : `No cliff — ~${monthlyShares.toLocaleString()} shares/month through ${vestEndDate}.`}
+          </div>
+        )}
         <div>
           <Label>Notes</Label>
           <Textarea

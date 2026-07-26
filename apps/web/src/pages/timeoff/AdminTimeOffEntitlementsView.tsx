@@ -31,6 +31,7 @@ import {
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import {
@@ -195,7 +196,9 @@ interface DialogProps {
 }
 
 function EntitlementDialog({ open, onOpenChange, existing, onSaved }: DialogProps) {
-  const [associateId, setAssociateId] = useState(existing?.associateId ?? '');
+  const [assoc, setAssoc] = useState<PickedAssociate | null>(
+    existing ? { id: existing.associateId, name: existing.associateName } : null
+  );
   const [category, setCategory] = useState<TimeOffCategory>(
     existing?.category ?? 'VACATION'
   );
@@ -214,7 +217,9 @@ function EntitlementDialog({ open, onOpenChange, existing, onSaved }: DialogProp
   // Re-seed every time the dialog opens for a different row.
   useEffect(() => {
     if (!open) return;
-    setAssociateId(existing?.associateId ?? '');
+    setAssoc(
+      existing ? { id: existing.associateId, name: existing.associateName } : null
+    );
     setCategory(existing?.category ?? 'VACATION');
     setAnnualHours(existing ? (existing.annualMinutes / 60).toString() : '80');
     setCarryoverHours(
@@ -225,9 +230,9 @@ function EntitlementDialog({ open, onOpenChange, existing, onSaved }: DialogProp
   }, [open, existing]);
 
   const submit = async () => {
-    const aId = associateId.trim();
+    const aId = assoc?.id ?? '';
     if (!aId) {
-      toast.error('Associate ID is required');
+      toast.error('Pick an associate');
       return;
     }
     const annual = Number(annualHours);
@@ -275,21 +280,16 @@ function EntitlementDialog({ open, onOpenChange, existing, onSaved }: DialogProp
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          <Field
-            label="Associate ID (UUID)"
-            required
-            hint="Find on the associate's onboarding application detail page."
-          >
-            {(p) => (
-              <Input
-                value={associateId}
-                onChange={(e) => setAssociateId(e.target.value)}
-                disabled={!!existing}
-                placeholder="e.g. 8a3f…"
-                autoFocus={!existing}
-                {...p}
-              />
-            )}
+          <Field label="Associate" required>
+            {() =>
+              existing ? (
+                <div className="rounded-md border border-navy-secondary bg-navy px-3 py-2 text-sm text-white">
+                  {existing.associateName}
+                </div>
+              ) : (
+                <AssociatePicker value={assoc} onChange={setAssoc} />
+              )
+            }
           </Field>
           <Field label="Category" required>
             {(p) => (
@@ -367,6 +367,22 @@ function EntitlementDialog({ open, onOpenChange, existing, onSaved }: DialogProp
               )}
             </Field>
           </div>
+          {Number.isFinite(Number(annualHours)) &&
+            Number.isFinite(Number(carryoverHours)) &&
+            anchorMonth >= 1 &&
+            anchorMonth <= 12 && (
+              <p className="text-xs text-silver">
+                Renews every{' '}
+                {new Date(2000, anchorMonth - 1, 1).toLocaleString('en-US', {
+                  month: 'long',
+                })}{' '}
+                {anchorDay} · up to{' '}
+                <span className="text-gold">
+                  {Number(annualHours) + Number(carryoverHours)}h
+                </span>{' '}
+                available right after a reset (annual grant + max carryover).
+              </p>
+            )}
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>

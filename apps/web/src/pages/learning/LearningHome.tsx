@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, BookOpen, GraduationCap, Plus } from 'lucide-react';
+import { AlertTriangle, BookOpen, GraduationCap, Plus, X } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { fmtDate } from '@/lib/format';
 import {
@@ -48,6 +48,7 @@ import {
   TabsTrigger,
   Textarea,
 } from '@/components/ui';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
 
@@ -331,16 +332,17 @@ function EnrollDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [ids, setIds] = useState('');
+  // Multi-pick built on the single-value AssociatePicker: the picker's own
+  // value stays null so it never collapses into its "selected" chip; each
+  // onChange appends to this list (deduped) and selections render as
+  // removable chips below.
+  const [picked, setPicked] = useState<PickedAssociate[]>([]);
   const [saving, setSaving] = useState(false);
 
   const onSubmit = async () => {
-    const associateIds = ids
-      .split(/[\s,;]+/)
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const associateIds = picked.map((p) => p.id);
     if (associateIds.length === 0) {
-      toast.error('Paste at least one associate ID.');
+      toast.error('Pick at least one associate.');
       return;
     }
     setSaving(true);
@@ -361,13 +363,41 @@ function EnrollDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate IDs</Label>
-          <Textarea
-            className="mt-1 min-h-32 font-mono text-xs"
-            value={ids}
-            onChange={(e) => setIds(e.target.value)}
-            placeholder="UUID per line, comma-separated, or whitespace-separated."
-          />
+          <Label>Associates</Label>
+          <div className="mt-1">
+            <AssociatePicker
+              value={null}
+              onChange={(a) => {
+                if (!a) return;
+                setPicked((prev) =>
+                  prev.some((p) => p.id === a.id) ? prev : [...prev, a],
+                );
+              }}
+              placeholder="Search to add an associate…"
+            />
+          </div>
+          {picked.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {picked.map((p) => (
+                <span
+                  key={p.id}
+                  className="inline-flex items-center gap-1 rounded-full border border-navy-secondary bg-navy px-2.5 py-1 text-xs text-white"
+                >
+                  {p.name}
+                  <button
+                    type="button"
+                    aria-label={`Remove ${p.name}`}
+                    className="text-silver/60 hover:text-white"
+                    onClick={() =>
+                      setPicked((prev) => prev.filter((x) => x.id !== p.id))
+                    }
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       </DrawerBody>
       <DrawerFooter>
