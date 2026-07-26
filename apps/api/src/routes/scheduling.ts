@@ -27,6 +27,11 @@ import {
   ShiftCreateInputSchema,
   ShiftListResponseSchema,
   ShiftSwapListResponseSchema,
+  ShiftTeamCreateInputSchema,
+  ShiftTeamDetailResponseSchema,
+  ShiftTeamListResponseSchema,
+  ShiftTeamMemberInputSchema,
+  ShiftTeamUpdateInputSchema,
   ShiftTemplateApplyInputSchema,
   ShiftTemplateCreateInputSchema,
   ShiftTemplateListResponseSchema,
@@ -47,6 +52,7 @@ import {
   type ShiftConflict,
   type ShiftListResponse,
   type ShiftSwapRequest as ShiftSwapRequestDTO,
+  type ShiftTeam as ShiftTeamDTO,
   type ShiftTemplate as ShiftTemplateDTO,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
@@ -485,6 +491,7 @@ schedulingRouter.get('/associates', MANAGE, async (req, res, next) => {
   try {
     let clientId = req.query.clientId?.toString();
     let locationId = req.query.locationId?.toString();
+    const teamId = req.query.teamId?.toString();
 
     // Client-bounded roles (SHIFT_SUPERVISOR) can only ever see their own
     // client's roster: clamp clientId to theirs and drop any location filter
@@ -506,7 +513,28 @@ schedulingRouter.get('/associates', MANAGE, async (req, res, next) => {
     // set when nothing is selected.
     const userActive = { is: { status: 'ACTIVE', role: 'ASSOCIATE' } } as const;
     let where: Prisma.AssociateWhereInput;
-    if (locationId) {
+    if (teamId) {
+      // Tightest scope: a standing shift crew. Membership already implies
+      // the client/location, but the team must sit inside the caller's
+      // client boundary.
+      const team = await prisma.shiftTeam.findFirst({
+        where: {
+          id: teamId,
+          deletedAt: null,
+          ...(bounded ? { clientId: bounded } : {}),
+        },
+        select: { id: true },
+      });
+      if (!team) {
+        res.json(AssociateListResponseSchema.parse({ associates: [] }));
+        return;
+      }
+      where = {
+        deletedAt: null,
+        user: userActive,
+        teamMemberships: { some: { teamId } },
+      };
+    } else if (locationId) {
       where = {
         deletedAt: null,
         user: userActive,
@@ -3310,6 +3338,267 @@ schedulingRouter.post('/swap-requests/:id/manager-reject', MANAGE, async (req, r
     next(err);
   }
 });
+
+/* ===== Shift teams ======================================================= */
+
+type RawTeam = Prisma.ShiftTeamGetPayload<{
+  include: {
+    location: { select: { name: true } };
+    _count: { select: { members: true } };
+  };
+}>;
+
+const TEAM_INCLUDE = {
+  location: { select: { name: true } },
+  _count: { select: { members: true } },
+} as const;
+
+function toShiftTeam(row: RawTeam): ShiftTeamDTO {
+  return {
+    id: row.id,
+    clientId: row.clientId,
+    locationId: row.locationId,
+    locationName: row.location?.name ?? null,
+    name: row.name,
+    startMinute: row.startMinute,
+    endMinute: row.endMinute,
+    memberCount: row._count.members,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+/** Load a team the caller may act on, or throw 404 (client-bounded). */
+async function teamInScope(
+  user: Parameters<typeof effectiveClientIdFilter>[0],
+  id: string,
+) {
+  const bounded = effectiveClientIdFilter(user, undefined);
+  // Client-bounded caller with no client → fail closed.
+  if (bounded === null) {
+    throw new HttpError(404, 'team_not_found', 'Shift team not found');
+  }
+  const team = await prisma.shiftTeam.findFirst({
+    where: {
+      id,
+      deletedAt: null,
+      ...(bounded ? { clientId: bounded } : {}),
+    },
+    include: TEAM_INCLUDE,
+  });
+  if (!team) throw new HttpError(404, 'team_not_found', 'Shift team not found');
+  return team;
+}
+
+// GET /scheduling/teams?clientId=&locationId= — list standing crews.
+schedulingRouter.get('/teams', MANAGE, async (req, res, next) => {
+  try {
+    let clientId = req.query.clientId?.toString();
+    const locationId = req.query.locationId?.toString();
+    const bounded = effectiveClientIdFilter(req.user!, undefined);
+    if (bounded !== undefined) {
+      if (!bounded) {
+        res.json(ShiftTeamListResponseSchema.parse({ teams: [] }));
+        return;
+      }
+      clientId = bounded;
+    }
+    const rows = await prisma.shiftTeam.findMany({
+      where: {
+        deletedAt: null,
+        ...(clientId ? { clientId } : {}),
+        ...(locationId ? { locationId } : {}),
+      },
+      orderBy: [{ name: 'asc' }],
+      include: TEAM_INCLUDE,
+      take: 500,
+    });
+    res.json(
+      ShiftTeamListResponseSchema.parse({ teams: rows.map(toShiftTeam) }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+schedulingRouter.post('/teams', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = ShiftTeamCreateInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const i = parsed.data;
+    const bounded = effectiveClientIdFilter(req.user!, undefined);
+    if (bounded !== undefined && i.clientId !== bounded) {
+      throw new HttpError(403, 'client_forbidden', 'Cannot create a team for another client');
+    }
+    const location = await prisma.location.findFirst({
+      where: { id: i.locationId, clientId: i.clientId, deletedAt: null },
+    });
+    if (!location) {
+      throw new HttpError(404, 'location_not_found', 'Location not found under this client');
+    }
+    const created = await prisma.shiftTeam.create({
+      data: {
+        clientId: i.clientId,
+        locationId: i.locationId,
+        name: i.name.trim(),
+        startMinute: i.startMinute ?? null,
+        endMinute: i.endMinute ?? null,
+      },
+      include: TEAM_INCLUDE,
+    });
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'scheduling.team_created',
+        entityType: 'ShiftTeam',
+        entityId: created.id,
+        metadata: { name: created.name, clientId: created.clientId, locationId: created.locationId },
+      },
+      'scheduling.team_created',
+    );
+    res.status(201).json(toShiftTeam(created));
+  } catch (err) {
+    next(err);
+  }
+});
+
+schedulingRouter.patch('/teams/:id', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = ShiftTeamUpdateInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const team = await teamInScope(req.user!, req.params.id);
+    const updated = await prisma.shiftTeam.update({
+      where: { id: team.id },
+      data: {
+        ...(parsed.data.name !== undefined ? { name: parsed.data.name.trim() } : {}),
+        ...(parsed.data.startMinute !== undefined ? { startMinute: parsed.data.startMinute } : {}),
+        ...(parsed.data.endMinute !== undefined ? { endMinute: parsed.data.endMinute } : {}),
+      },
+      include: TEAM_INCLUDE,
+    });
+    res.json(toShiftTeam(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+schedulingRouter.delete('/teams/:id', MANAGE, async (req, res, next) => {
+  try {
+    const team = await teamInScope(req.user!, req.params.id);
+    await prisma.shiftTeam.update({
+      where: { id: team.id },
+      data: { deletedAt: new Date() },
+    });
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'scheduling.team_deleted',
+        entityType: 'ShiftTeam',
+        entityId: team.id,
+        metadata: { name: team.name },
+      },
+      'scheduling.team_deleted',
+    );
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /scheduling/teams/:id — team + members, flagging any member who no
+// longer works at the team's location (stale membership).
+schedulingRouter.get('/teams/:id', MANAGE, async (req, res, next) => {
+  try {
+    const team = await teamInScope(req.user!, req.params.id);
+    const members = await prisma.shiftTeamMember.findMany({
+      where: { teamId: team.id },
+      include: {
+        associate: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            applications: {
+              where: { status: 'APPROVED', locationId: team.locationId, deletedAt: null },
+              take: 1,
+              select: { id: true },
+            },
+            assignments: {
+              where: { endedAt: null, locationId: team.locationId },
+              take: 1,
+              select: { id: true },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    res.json(
+      ShiftTeamDetailResponseSchema.parse({
+        team: toShiftTeam(team),
+        members: members.map((m) => ({
+          associateId: m.associate.id,
+          firstName: m.associate.firstName,
+          lastName: m.associate.lastName,
+          email: m.associate.email,
+          atLocation:
+            m.associate.applications.length > 0 ||
+            m.associate.assignments.length > 0,
+        })),
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+schedulingRouter.post('/teams/:id/members', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = ShiftTeamMemberInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const team = await teamInScope(req.user!, req.params.id);
+    const associate = await prisma.associate.findFirst({
+      where: { id: parsed.data.associateId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!associate) {
+      throw new HttpError(404, 'associate_not_found', 'Associate not found');
+    }
+    // Idempotent: re-adding an existing member is a no-op, not an error.
+    await prisma.shiftTeamMember.upsert({
+      where: {
+        teamId_associateId: { teamId: team.id, associateId: associate.id },
+      },
+      create: { teamId: team.id, associateId: associate.id },
+      update: {},
+    });
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+schedulingRouter.delete(
+  '/teams/:id/members/:associateId',
+  MANAGE,
+  async (req, res, next) => {
+    try {
+      const team = await teamInScope(req.user!, req.params.id);
+      await prisma.shiftTeamMember.deleteMany({
+        where: { teamId: team.id, associateId: req.params.associateId },
+      });
+      res.status(204).end();
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 /* ===== Phase 51 — shift templates + copy-week ============================ */
 

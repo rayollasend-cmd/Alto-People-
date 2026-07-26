@@ -30,8 +30,10 @@ import type {
   LocationSummary,
   Shift,
   ShiftStatus,
+  ShiftTeam as ShiftTeamData,
   ShiftTemplate,
 } from '@alto-people/shared';
+import { ShiftTeamsDialog } from './ShiftTeamsDialog';
 import { listClientLocations } from '@/lib/clientsApi';
 import { listShiftPositions } from '@/lib/orgApi';
 import {
@@ -48,6 +50,7 @@ import {
   getShiftConflicts,
   listSchedulingAssociates,
   listShifts,
+  listShiftTeams,
   listShiftTemplates,
   autoScheduleWeek,
   deleteShift,
@@ -541,6 +544,30 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // null = loading; [] = client has none (or no client selected).
   const [clientLocations, setClientLocations] = useState<LocationSummary[]>([]);
   const [showAllAssociates, setShowAllAssociates] = useState<boolean>(true);
+  // Standing shift crews at the selected location — the third level of the
+  // Client → Location → Shift cascade. Picking one narrows the roster (grid
+  // rows, assign + create pickers) to that crew's members.
+  const [teams, setTeams] = useState<ShiftTeamData[]>([]);
+  const [teamFilter, setTeamFilter] = useState<string>('');
+  const [teamsOpen, setTeamsOpen] = useState(false);
+  const refreshTeams = useCallback(() => {
+    if (!clientFilter || !locationFilter) {
+      setTeams([]);
+      return;
+    }
+    listShiftTeams({ locationId: locationFilter })
+      .then((r) => setTeams(r.teams))
+      .catch(() => setTeams([]));
+  }, [clientFilter, locationFilter]);
+  useEffect(() => {
+    refreshTeams();
+  }, [refreshTeams]);
+  // A team belongs to one location — clear the selection when the site (or
+  // client) changes so a stale crew can't silently keep filtering.
+  useEffect(() => {
+    setTeamFilter('');
+  }, [clientFilter, locationFilter]);
+  const selectedTeam = teams.find((t) => t.id === teamFilter) ?? null;
 
   // Week-view range. weekStart is the FIRST day shown (any day, not forced
   // to Monday) and weekDayCount is how many days the grid spans — so the
@@ -806,10 +833,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     listSchedulingAssociates({
       clientId: clientFilter || undefined,
       locationId: (clientFilter && locationFilter) || undefined,
+      teamId: (clientFilter && locationFilter && teamFilter) || undefined,
     })
       .then((res) => setAssociates(res.associates))
       .catch(() => setAssociates([]));
-  }, [canManage, clientFilter, locationFilter]);
+  }, [canManage, clientFilter, locationFilter, teamFilter]);
 
   // Cascade: when the client narrows, load THAT client's locations for the
   // location dropdown and clear any stale location selection. Selecting
@@ -1575,6 +1603,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           associates={associates}
           initialDate={createInitialDate}
           initialAssociateId={createInitialAssociateId}
+          team={selectedTeam}
           onOpenChange={(o) => {
             setShowCreate(o);
             if (!o) {
@@ -1883,6 +1912,10 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             setLocationFilter={setLocationFilter}
             clientLocations={clientLocations}
             clients={clients}
+            teams={teams}
+            teamFilter={teamFilter}
+            setTeamFilter={setTeamFilter}
+            onManageTeams={canManage ? () => setTeamsOpen(true) : undefined}
             showAllAssociates={showAllAssociates}
             setShowAllAssociates={setShowAllAssociates}
             showAssociateToggle={view === 'week' || view === 'day'}
@@ -2302,6 +2335,20 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           refresh();
         }}
       />
+
+      {/* Manage the standing crews at the selected work site. */}
+      {clientFilter && locationFilter && (
+        <ShiftTeamsDialog
+          open={teamsOpen}
+          onOpenChange={setTeamsOpen}
+          clientId={clientFilter}
+          locationId={locationFilter}
+          locationName={
+            clientLocations.find((l) => l.id === locationFilter)?.name ?? null
+          }
+          onChanged={refreshTeams}
+        />
+      )}
 
       {/* Edit date/time/position/rates/notes */}
       <EditShiftDialog
@@ -3404,6 +3451,7 @@ function CreateShiftDialog({
   associates,
   initialDate,
   initialAssociateId,
+  team,
   onOpenChange,
   onCreated,
 }: {
@@ -3414,6 +3462,8 @@ function CreateShiftDialog({
   initialDate?: Date | null;
   /** When set, the created shift is auto-assigned to this associate. */
   initialAssociateId?: string | null;
+  /** Selected shift team — scopes the picker and prefills default times. */
+  team?: ShiftTeamData | null;
   onOpenChange: (open: boolean) => void;
   onCreated: () => void;
 }) {
@@ -3490,7 +3540,12 @@ function CreateShiftDialog({
       return;
     }
     let cancelled = false;
-    listSchedulingAssociates({ clientId })
+    // When a shift team is selected (and the dialog is still on that
+    // team's client), the multi-assign picker narrows to the crew.
+    listSchedulingAssociates({
+      clientId,
+      ...(team && team.clientId === clientId ? { teamId: team.id } : {}),
+    })
       .then((r) => {
         if (!cancelled) setScopedAssociates(r.associates);
       })
@@ -3500,19 +3555,27 @@ function CreateShiftDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, clientId, associates]);
+  }, [open, clientId, associates, team]);
 
   useEffect(() => {
     if (open) {
       setClientId(clients[0]?.id ?? '');
       setPosition('');
-      // Pre-fill 9am–5pm — the most common shift shape for hourly
-      // workforce, easy to edit. A calendar-cell open pins the clicked day
-      // (and clicked hour, if any); a toolbar open defaults to today.
+      // Pre-fill times: the selected shift team's defaults win (that's the
+      // shift being scheduled), else 9–5 — the most common shape for hourly
+      // workforce. A calendar-cell open pins the clicked day (and clicked
+      // hour, if any); a toolbar open defaults to today.
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const minuteToTime = (m: number) =>
+        `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
+      const defStart =
+        team?.startMinute != null ? minuteToTime(team.startMinute) : '09:00';
+      const defEnd =
+        team?.endMinute != null ? minuteToTime(team.endMinute) : '17:00';
       if (initialDate) {
         setDateStr(ymd(initialDate));
         // initialDate may include a clicked time-of-day (TimeGridWeekView
-        // passes the snapped hour); honor it when set, else default 9–5.
+        // passes the snapped hour); honor it when set, else use the defaults.
         const initHasTime =
           initialDate.getHours() !== 0 || initialDate.getMinutes() !== 0;
         if (initHasTime) {
@@ -3522,13 +3585,13 @@ function CreateShiftDialog({
           setStartTime(toLocalTimeInput(start));
           setEndTime(toLocalTimeInput(end));
         } else {
-          setStartTime('09:00');
-          setEndTime('17:00');
+          setStartTime(defStart);
+          setEndTime(defEnd);
         }
       } else {
         setDateStr(ymd(new Date()));
-        setStartTime('09:00');
-        setEndTime('17:00');
+        setStartTime(defStart);
+        setEndTime(defEnd);
       }
       setLocation('');
       setHourlyRate('');
@@ -3543,7 +3606,7 @@ function CreateShiftDialog({
       setOpenSlots('0');
       setEmpSearch('');
     }
-  }, [open, clients, initialDate, initialAssociateId]);
+  }, [open, clients, initialDate, initialAssociateId, team]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -4333,6 +4396,10 @@ function FilterBar({
   setLocationFilter,
   clientLocations,
   clients,
+  teams,
+  teamFilter,
+  setTeamFilter,
+  onManageTeams,
   showAllAssociates,
   setShowAllAssociates,
   showAssociateToggle,
@@ -4346,14 +4413,22 @@ function FilterBar({
   setLocationFilter: (v: string) => void;
   clientLocations: LocationSummary[];
   clients: ClientSummary[];
+  teams: ShiftTeamData[];
+  teamFilter: string;
+  setTeamFilter: (v: string) => void;
+  onManageTeams?: () => void;
   showAllAssociates: boolean;
   setShowAllAssociates: (v: boolean) => void;
   showAssociateToggle: boolean;
 }) {
   const anyActive =
-    posFilter.trim() !== '' || clientFilter !== '' || locationFilter !== '';
+    posFilter.trim() !== '' ||
+    clientFilter !== '' ||
+    locationFilter !== '' ||
+    teamFilter !== '';
   const clientName = clients.find((c) => c.id === clientFilter)?.name;
   const locationName = clientLocations.find((l) => l.id === locationFilter)?.name;
+  const teamName = teams.find((t) => t.id === teamFilter)?.name;
   // Location only makes sense once a client is chosen (a Location belongs to
   // one client). With "All clients" selected this stays disabled.
   const locationDisabled = !clientFilter;
@@ -4373,6 +4448,12 @@ function FilterBar({
               <>
                 <span className="text-silver/50">›</span>
                 <span className="font-medium text-white">{locationName}</span>
+                {teamName && (
+                  <>
+                    <span className="text-silver/50">›</span>
+                    <span className="font-medium text-gold">{teamName}</span>
+                  </>
+                )}
               </>
             ) : (
               <span className="text-silver/60">· all locations</span>
@@ -4424,6 +4505,37 @@ function FilterBar({
         </div>
         <div className="min-w-[10rem]">
           <Select
+            value={teamFilter}
+            onChange={(e) => setTeamFilter(e.target.value)}
+            size="sm"
+            aria-label="Filter by shift team"
+            disabled={!locationFilter}
+          >
+            <option value="">
+              {!locationFilter
+                ? 'Select a location first'
+                : teams.length === 0
+                  ? 'No shifts defined here'
+                  : 'All associates'}
+            </option>
+            {teams.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </Select>
+        </div>
+        {onManageTeams && locationFilter && (
+          <button
+            type="button"
+            onClick={onManageTeams}
+            className="text-[10px] text-silver/70 hover:text-gold underline underline-offset-2"
+          >
+            Shift teams…
+          </button>
+        )}
+        <div className="min-w-[10rem]">
+          <Select
             value={posFilter}
             onChange={(e) => setPosFilter(e.target.value)}
             size="sm"
@@ -4447,6 +4559,7 @@ function FilterBar({
               setPosFilter('');
               setClientFilter('');
               setLocationFilter('');
+              setTeamFilter('');
             }}
             className="text-[10px] text-silver/70 hover:text-gold underline underline-offset-2 ml-1"
           >
