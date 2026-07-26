@@ -64,11 +64,15 @@ export function disbursePayrollRun(id: string): Promise<PayrollRunDetail> {
 }
 
 export function retryRunFailures(
-  id: string
+  id: string,
+  itemIds?: string[],
 ): Promise<{ retried: number; succeeded: number }> {
   return apiFetch<{ retried: number; succeeded: number }>(
     `/payroll/runs/${id}/retry-failures`,
-    { method: 'POST' }
+    {
+      method: 'POST',
+      ...(itemIds && itemIds.length > 0 ? { body: { itemIds } } : {}),
+    }
   );
 }
 
@@ -87,8 +91,14 @@ export function voidPayrollRun(
 
 /** Discard a DRAFT / FINALIZED run created in error. Server refuses once
  *  anything disbursed — those must be voided. */
-export function deletePayrollRun(id: string): Promise<{ ok: boolean }> {
-  return apiFetch<{ ok: boolean }>(`/payroll/runs/${id}`, { method: 'DELETE' });
+export function deletePayrollRun(
+  id: string,
+  reason?: string,
+): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(`/payroll/runs/${id}`, {
+    method: 'DELETE',
+    ...(reason?.trim() ? { body: { reason: reason.trim() } } : {}),
+  });
 }
 
 export interface AmendCorrection {

@@ -38,6 +38,7 @@ import {
   disbursePayrollRun,
   downloadCheckRegister,
   finalizePayrollRun,
+  getPayrollConfig,
   getPayrollRun,
   getPayrollUpcoming,
   getWcPremium,
@@ -50,7 +51,8 @@ import {
   type WcPremiumReport,
 } from '@/lib/payrollApi';
 import { syncRun as syncRunToQbo } from '@/lib/quickbooksApi';
-import { AssociatePicker } from '@/components/ui/AssociatePicker';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
+import { useConfirm, usePrompt } from '@/lib/confirm';
 import { Select } from '@/components/ui/Select';
 import { AmendPayrollWizard } from './AmendPayrollWizard';
 import { BranchEnrollmentDialog } from './BranchEnrollmentDialog';
@@ -170,6 +172,23 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
   // Wave 9 — sortable runs table.
   const [sortKey, setSortKey] = useState<SortKey>('periodEnd');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
+  // Four-eyes config flag — when true, Disburse is gated on approvedAt.
+  // Fetched once; a fetch failure just leaves the gate off (server still
+  // enforces it with a 409).
+  const [requireSecondApproval, setRequireSecondApproval] = useState(false);
+  // Bulk actions over the runs table.
+  const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const confirm = useConfirm();
+  const prompt = usePrompt();
+
+  useEffect(() => {
+    getPayrollConfig()
+      .then((cfg) => setRequireSecondApproval(!!cfg.requireSecondApproval))
+      .catch(() => {
+        // Non-fatal — the UI gate stays off; the server still refuses.
+      });
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -214,6 +233,85 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
       setSortKey(key);
       setSortDir(key === 'periodEnd' || key === 'totalGross' || key === 'totalNet' || key === 'itemCount' ? 'desc' : 'asc');
     }
+  };
+
+  // Bulk selection — clear when the status filter changes so the action
+  // bar never advertises runs that are no longer visible.
+  useEffect(() => {
+    setBulkSelected(new Set());
+  }, [filter]);
+
+  const toggleBulk = (id: string) =>
+    setBulkSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  // Eligibility mirrors the drawer's footer buttons: Finalize on DRAFT,
+  // Approve on FINALIZED (not yet approved), Disburse on FINALIZED. The
+  // second-approval gate is applied at execution time so skipped runs can
+  // be counted honestly in the toast.
+  const bulkEligible = useMemo(() => {
+    const sel = (runs ?? []).filter((r) => bulkSelected.has(r.id));
+    return {
+      finalize: sel.filter((r) => r.status === 'DRAFT'),
+      approve: sel.filter((r) => r.status === 'FINALIZED' && !r.approvedAt),
+      disburse: sel.filter((r) => r.status === 'FINALIZED'),
+    };
+  }, [runs, bulkSelected]);
+
+  const runBulk = async (action: 'finalize' | 'approve' | 'disburse') => {
+    if (bulkBusy) return;
+    const label =
+      action === 'finalize' ? 'Finalize' : action === 'approve' ? 'Approve' : 'Disburse';
+    let targets = bulkEligible[action];
+    let skippedApproval = 0;
+    if (action === 'disburse' && requireSecondApproval) {
+      skippedApproval = targets.filter((r) => !r.approvedAt).length;
+      targets = targets.filter((r) => !!r.approvedAt);
+    }
+    if (targets.length === 0) {
+      toast.error(
+        skippedApproval > 0
+          ? `All ${skippedApproval} eligible run${skippedApproval === 1 ? '' : 's'} need a second approval before disbursing.`
+          : `No selected runs are eligible to ${action}.`,
+      );
+      return;
+    }
+    const ok = await confirm({
+      title: `${label} ${targets.length} run${targets.length === 1 ? '' : 's'}?`,
+      description:
+        `${targets.length} of ${bulkSelected.size} selected run${bulkSelected.size === 1 ? ' is' : 's are'} eligible and will be processed one at a time.` +
+        (skippedApproval > 0
+          ? ` ${skippedApproval} will be skipped — ${skippedApproval === 1 ? 'it needs' : 'they need'} a second approval first.`
+          : ''),
+      confirmLabel: `${label} (${targets.length})`,
+      destructive: action === 'disburse',
+    });
+    if (!ok) return;
+    setBulkBusy(true);
+    let succeeded = 0;
+    let failed = 0;
+    for (const r of targets) {
+      try {
+        if (action === 'finalize') await finalizePayrollRun(r.id);
+        else if (action === 'approve') await approvePayrollRun(r.id);
+        else await disbursePayrollRun(r.id);
+        succeeded += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    setBulkBusy(false);
+    setBulkSelected(new Set());
+    refresh();
+    const parts = [`${succeeded} succeeded`];
+    if (failed > 0) parts.push(`${failed} failed`);
+    if (skippedApproval > 0)
+      parts.push(`${skippedApproval} skipped (needs second approval)`);
+    (failed > 0 ? toast.error : toast.success)(`${label}: ${parts.join(' · ')}.`);
   };
 
   const refreshUpcoming = useCallback(async () => {
@@ -287,18 +385,22 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
 
   const onDeleteRun = async () => {
     if (!selected || busy) return;
-    if (
-      !window.confirm(
-        `Delete this ${selected.status.toLowerCase()} run for ${selected.periodStart} → ${selected.periodEnd}? ` +
-          `Its ${selected.itemCount} paystub(s) will be removed. This can't be undone — but nothing has been ` +
-          `paid out, so you can re-run payroll for the correct period.`,
-      )
-    ) {
-      return;
-    }
+    const reason = await prompt({
+      title: `Delete this ${selected.status.toLowerCase()} run?`,
+      description:
+        `${selected.periodStart} → ${selected.periodEnd} — its ${selected.itemCount} ` +
+        `paystub${selected.itemCount === 1 ? '' : 's'} will be removed. This can't be undone — but nothing ` +
+        `has been paid out, so you can re-run payroll for the correct period.`,
+      confirmLabel: 'Delete run',
+      destructive: true,
+      reasonLabel: 'Reason (optional)',
+      reasonPlaceholder: 'e.g. Created against the wrong pay period.',
+      required: false,
+    });
+    if (reason === null) return;
     setBusy(true);
     try {
-      await deletePayrollRun(selected.id);
+      await deletePayrollRun(selected.id, reason.trim() || undefined);
       toast.success('Run deleted.');
       setSelected(null);
       refresh();
@@ -357,11 +459,14 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     }
   };
 
-  const onRetryFailures = async () => {
+  // Retries all failed/held items when itemIds is omitted, or just the
+  // given items (single-item and per-reason-group retries in the failed
+  // payments card).
+  const onRetryFailures = async (itemIds?: string[]) => {
     if (!selected || busy) return;
     setBusy(true);
     try {
-      const result = await retryRunFailures(selected.id);
+      const result = await retryRunFailures(selected.id, itemIds);
       const updated = await getPayrollRun(selected.id);
       setSelected(updated);
       refresh();
@@ -562,6 +667,52 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
         ))}
       </div>
 
+      {/* Bulk action bar — appears once any run is checked. Counts on the
+          buttons are the ELIGIBLE subset of the selection, mirroring the
+          drawer's per-run affordances. */}
+      {canProcess && bulkSelected.size > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-gold/30 bg-gold/5 px-3 py-2">
+          <span className="text-xs text-silver">
+            {bulkSelected.size} selected
+          </span>
+          <Button
+            size="xs"
+            variant="secondary"
+            onClick={() => runBulk('finalize')}
+            disabled={bulkBusy || bulkEligible.finalize.length === 0}
+          >
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            Finalize ({bulkEligible.finalize.length})
+          </Button>
+          <Button
+            size="xs"
+            variant="secondary"
+            onClick={() => runBulk('approve')}
+            disabled={bulkBusy || bulkEligible.approve.length === 0}
+          >
+            <ShieldCheck className="h-3.5 w-3.5" />
+            Approve ({bulkEligible.approve.length})
+          </Button>
+          <Button
+            size="xs"
+            variant="secondary"
+            onClick={() => runBulk('disburse')}
+            disabled={bulkBusy || bulkEligible.disburse.length === 0}
+          >
+            <Send className="h-3.5 w-3.5" />
+            Disburse ({bulkEligible.disburse.length})
+          </Button>
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={() => setBulkSelected(new Set())}
+            disabled={bulkBusy}
+          >
+            Clear
+          </Button>
+        </div>
+      )}
+
       {/* Wave 9 — runs presented as a sortable table. Clicking a row
           opens the detail drawer; columns mirror QBO's Run history list. */}
       <Card>
@@ -614,6 +765,26 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                 <Table>
                   <TableHeader>
                     <TableRow className="hover:bg-transparent">
+                      {canProcess && (
+                        <TableHead className="w-8">
+                          <input
+                            type="checkbox"
+                            aria-label="Select all runs"
+                            className="h-4 w-4 cursor-pointer accent-gold"
+                            checked={
+                              sortedRuns.length > 0 &&
+                              sortedRuns.every((r) => bulkSelected.has(r.id))
+                            }
+                            onChange={(e) =>
+                              setBulkSelected(
+                                e.target.checked
+                                  ? new Set(sortedRuns.map((r) => r.id))
+                                  : new Set(),
+                              )
+                            }
+                          />
+                        </TableHead>
+                      )}
                       <SortableTh
                         label="Period"
                         sortKey="periodEnd"
@@ -672,6 +843,21 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                           selected?.id === r.id && 'bg-gold/5'
                         )}
                       >
+                        {canProcess && (
+                          <TableCell
+                            className="w-8"
+                            onClick={(e) => e.stopPropagation()}
+                            onKeyDown={(e) => e.stopPropagation()}
+                          >
+                            <input
+                              type="checkbox"
+                              aria-label={`Select run ${r.periodStart} → ${r.periodEnd}`}
+                              className="h-4 w-4 cursor-pointer accent-gold"
+                              checked={bulkSelected.has(r.id)}
+                              onChange={() => toggleBulk(r.id)}
+                            />
+                          </TableCell>
+                        )}
                         <TableCell>
                           <div className="text-white tabular-nums">
                             {r.periodStart} → {r.periodEnd}
@@ -871,6 +1057,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
               {selected.status === 'DRAFT' && canProcess && (
                 <DraftAddOnsSection
                   runId={selected.id}
+                  runItems={selected.items}
                   onChanged={async () => {
                     const updated = await getPayrollRun(selected.id);
                     setSelected(updated);
@@ -1007,16 +1194,29 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                     Approve
                   </Button>
                 )}
-                {selected.status === 'FINALIZED' && (
-                  <Button
-                    variant="primary"
-                    onClick={() => setConfirmDisburse(true)}
-                    disabled={busy}
-                  >
-                    <Send className="h-4 w-4" />
-                    Disburse
-                  </Button>
-                )}
+                {selected.status === 'FINALIZED' &&
+                  (requireSecondApproval && !selected.approvedAt ? (
+                    // Honesty gate — the server would 409 the disbursement
+                    // anyway; don't let the admin walk the whole ceremony
+                    // into it. The Approve button renders right beside this.
+                    <Button
+                      variant="primary"
+                      disabled
+                      title="Needs a second approval first"
+                    >
+                      <Send className="h-4 w-4" />
+                      Needs a second approval first
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="primary"
+                      onClick={() => setConfirmDisburse(true)}
+                      disabled={busy}
+                    >
+                      <Send className="h-4 w-4" />
+                      Disburse
+                    </Button>
+                  ))}
                 {(selected.status === 'FINALIZED' || selected.status === 'DISBURSED') &&
                   selected.items.length > 0 && (
                     <Button asChild variant="secondary">
@@ -1045,7 +1245,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                 )}
                 {(selected.status === 'FINALIZED' || selected.status === 'DISBURSED') &&
                   selected.items.some((it) => it.status === 'HELD') && (
-                    <Button variant="secondary" onClick={onRetryFailures} loading={busy}>
+                    <Button variant="secondary" onClick={() => onRetryFailures()} loading={busy}>
                       <RotateCw className="h-4 w-4" />
                       Retry failed disbursements
                     </Button>
@@ -1737,18 +1937,38 @@ const ADD_ON_KINDS: { value: RunAddOnKind; label: string }[] = [
 
 function DraftAddOnsSection({
   runId,
+  runItems,
   onChanged,
 }: {
   runId: string;
+  runItems: import('@alto-people/shared').PayrollItem[];
   onChanged: () => Promise<void> | void;
 }) {
   const [addOns, setAddOns] = useState<RunAddOn[] | null>(null);
   const [open, setOpen] = useState(false);
-  const [assoc, setAssoc] = useState<{ id: string; name: string } | null>(null);
+  // Multi-associate: chips accumulate via repeated pick-and-add; the
+  // "everyone" toggle instead targets every associate in the run.
+  const [assocs, setAssocs] = useState<PickedAssociate[]>([]);
+  const [everyone, setEveryone] = useState(false);
   const [kind, setKind] = useState<RunAddOnKind>('BONUS');
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+
+  // Unique associates in this run (a run has one item per associate, but
+  // dedupe defensively for amendment edge cases).
+  const runAssociates = useMemo(() => {
+    const seen = new Map<string, PickedAssociate>();
+    for (const it of runItems) {
+      if (!seen.has(it.associateId)) {
+        seen.set(it.associateId, {
+          id: it.associateId,
+          name: it.associateName ?? 'Unnamed associate',
+        });
+      }
+    }
+    return [...seen.values()];
+  }, [runItems]);
 
   const load = useCallback(() => {
     listRunAddOns(runId)
@@ -1759,24 +1979,50 @@ function DraftAddOnsSection({
 
   const submit = async () => {
     const amt = Number(amount);
-    if (!assoc || !Number.isFinite(amt) || amt <= 0) {
-      toast.error('Pick an associate and a positive amount.');
+    const targets = everyone ? runAssociates : assocs;
+    if (targets.length === 0 || !Number.isFinite(amt) || amt <= 0) {
+      toast.error('Pick at least one associate and a positive amount.');
       return;
     }
     setBusy(true);
-    try {
-      await addRunAddOn(runId, { associateId: assoc.id, kind, amount: amt, note: note.trim() || null });
-      toast.success('Earning line added.');
-      setAssoc(null);
+    // Sequential on purpose — each add re-aggregates the run server-side;
+    // parallel writes would race. One refresh at the end, not per line.
+    let added = 0;
+    const failures: string[] = [];
+    for (const a of targets) {
+      try {
+        await addRunAddOn(runId, {
+          associateId: a.id,
+          kind,
+          amount: amt,
+          note: note.trim() || null,
+        });
+        added += 1;
+      } catch {
+        failures.push(a.name);
+      }
+    }
+    load();
+    await onChanged();
+    setBusy(false);
+    const kindLabel =
+      ADD_ON_KINDS.find((k) => k.value === kind)?.label.toLowerCase() ?? kind.toLowerCase();
+    if (failures.length === 0) {
+      toast.success(
+        `Added ${kindLabel} for ${added} associate${added === 1 ? '' : 's'}.`,
+      );
+      setAssocs([]);
+      setEveryone(false);
       setAmount('');
       setNote('');
       setOpen(false);
-      load();
-      await onChanged();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to add earning line.');
-    } finally {
-      setBusy(false);
+    } else {
+      // Keep the form open so HR can retry the stragglers.
+      toast.error(
+        `Added for ${added} of ${targets.length} — failed: ${failures.slice(0, 3).join(', ')}` +
+          (failures.length > 3 ? ` +${failures.length - 3} more` : '') +
+          '.',
+      );
     }
   };
 
@@ -1835,7 +2081,61 @@ function DraftAddOnsSection({
 
       {open && (
         <div className="space-y-2 border-t border-navy-secondary pt-2">
-          <AssociatePicker value={assoc} onChange={setAssoc} />
+          <label className="flex items-center gap-2 text-sm text-silver cursor-pointer">
+            <input
+              type="checkbox"
+              className="h-4 w-4 cursor-pointer accent-gold"
+              checked={everyone}
+              onChange={(e) => setEveryone(e.target.checked)}
+              disabled={busy}
+            />
+            Everyone in this run ({runAssociates.length})
+          </label>
+          {!everyone && (
+            <>
+              {assocs.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {assocs.map((a) => (
+                    <span
+                      key={a.id}
+                      className="inline-flex items-center gap-1 rounded-full border border-gold/30 bg-gold/10 px-2 py-0.5 text-xs text-white"
+                    >
+                      {a.name}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setAssocs((prev) => prev.filter((x) => x.id !== a.id))
+                        }
+                        disabled={busy}
+                        className="text-silver/60 hover:text-alert"
+                        aria-label={`Remove ${a.name}`}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              {/* key remounts the picker after each add so its search term
+                  clears and the next pick starts fresh. */}
+              <AssociatePicker
+                key={assocs.length}
+                value={null}
+                onChange={(v) => {
+                  if (v) {
+                    setAssocs((prev) =>
+                      prev.some((x) => x.id === v.id) ? prev : [...prev, v],
+                    );
+                  }
+                }}
+                placeholder={
+                  assocs.length === 0
+                    ? 'Search associate…'
+                    : 'Add another associate…'
+                }
+              />
+            </>
+          )}
           <div className="flex gap-2">
             <Select
               className="flex-1"
@@ -1859,23 +2159,26 @@ function DraftAddOnsSection({
               className="w-32"
             />
           </div>
+          <p className="text-xs text-silver/70">
+            Bonuses and commissions are supplemental wages — federal income tax
+            withholds at the flat 22% supplemental rate.
+          </p>
           <Input
             placeholder="Note (optional) — e.g. Q3 performance bonus"
             value={note}
             onChange={(e) => setNote(e.target.value)}
             maxLength={200}
           />
-          {(kind === 'BONUS' || kind === 'COMMISSION') && (
-            <p className="text-xs text-silver/70">
-              Supplemental wages — federal income tax withholds at the flat 22% rate.
-            </p>
-          )}
           <div className="flex justify-end gap-2">
             <Button size="sm" variant="ghost" onClick={() => setOpen(false)} disabled={busy}>
               Cancel
             </Button>
             <Button size="sm" onClick={submit} loading={busy} disabled={busy}>
-              Add
+              {everyone
+                ? `Add for all (${runAssociates.length})`
+                : assocs.length > 1
+                  ? `Add (${assocs.length})`
+                  : 'Add'}
             </Button>
           </div>
         </div>
@@ -1901,11 +2204,23 @@ function FailedPaymentsSummary({
 }: {
   items: import('@alto-people/shared').PayrollItem[];
   canProcess: boolean;
-  onRetry: () => void;
+  /** Omit itemIds to retry everything failed/held in the run. */
+  onRetry: (itemIds?: string[]) => void | Promise<void>;
   busy: boolean;
 }) {
   const failed = items.filter((it) => it.status === 'HELD' || it.status === 'FAILED');
   if (failed.length === 0) return null;
+
+  // Group by failure reason so five identical "no_payout_rail" rows read
+  // as one problem, not five. Map preserves first-seen order.
+  const groups = new Map<string, typeof failed>();
+  for (const it of failed) {
+    const key = it.failureReason ?? 'Held by HR';
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(it);
+    else groups.set(key, [it]);
+  }
+
   return (
     <Card className="mb-4 border-alert/40 bg-alert/5">
       <CardHeader className="pb-2">
@@ -1914,43 +2229,83 @@ function FailedPaymentsSummary({
           {failed.length} payment{failed.length === 1 ? '' : 's'} need attention
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-1.5">
-        <ul className="space-y-1">
-          {failed.map((it) => (
-            <li
-              key={it.id}
-              className="flex items-start justify-between gap-3 text-sm rounded border border-alert/20 bg-black/30 px-2.5 py-1.5"
-            >
-              <div className="min-w-0 flex-1">
-                <div className="text-white truncate">
-                  {it.associateName ? (
-                    <Link
-                      to={`/people?associateId=${it.associateId}`}
-                      className="hover:text-gold-bright"
-                      title="Open this associate's record"
-                    >
-                      {it.associateName}
-                    </Link>
-                  ) : (
-                    '—'
-                  )}
-                </div>
-                <div className="text-[11px] text-silver/70">
-                  {it.failureReason ?? 'Held by HR'}
-                </div>
+      <CardContent className="space-y-3">
+        {[...groups.entries()].map(([reason, group]) => (
+          <div key={reason}>
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <div className="min-w-0 flex items-center gap-1.5 text-[11px] text-silver">
+                <span className="truncate" title={reason}>
+                  {reason}
+                </span>
+                <Badge variant="destructive" className="text-[10px] shrink-0">
+                  {group.length}
+                </Badge>
               </div>
-              <div className="text-right shrink-0">
-                <div className="tabular-nums text-gold">{fmtMoney(it.netPay)}</div>
-                <div className="text-[10px] uppercase tracking-widest text-alert/80">
-                  {it.status}
-                </div>
-              </div>
-            </li>
-          ))}
-        </ul>
+              {canProcess && (
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => onRetry(group.map((it) => it.id))}
+                  disabled={busy}
+                  className="shrink-0"
+                >
+                  <RotateCw className="h-3 w-3" />
+                  Retry these ({group.length})
+                </Button>
+              )}
+            </div>
+            {reason.startsWith('no_payout_rail') && (
+              <p className="mb-1 text-[11px] text-warning">
+                Retrying will fail again until a payout method exists — fix
+                enrollment/bank first.
+              </p>
+            )}
+            <ul className="space-y-1">
+              {group.map((it) => (
+                <li
+                  key={it.id}
+                  className="flex items-start justify-between gap-3 text-sm rounded border border-alert/20 bg-black/30 px-2.5 py-1.5"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="text-white truncate">
+                      {it.associateName ? (
+                        <Link
+                          to={`/people?associateId=${it.associateId}`}
+                          className="hover:text-gold-bright"
+                          title="Open this associate's record"
+                        >
+                          {it.associateName}
+                        </Link>
+                      ) : (
+                        '—'
+                      )}
+                    </div>
+                    <div className="text-[10px] uppercase tracking-widest text-alert/80">
+                      {it.status}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="tabular-nums text-gold">{fmtMoney(it.netPay)}</div>
+                    {canProcess && (
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        onClick={() => onRetry([it.id])}
+                        disabled={busy}
+                      >
+                        <RotateCw className="h-3 w-3" />
+                        Retry
+                      </Button>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
         {canProcess && (
           <div className="pt-1">
-            <Button variant="secondary" size="sm" onClick={onRetry} loading={busy}>
+            <Button variant="secondary" size="sm" onClick={() => onRetry()} loading={busy}>
               <RotateCw className="h-3.5 w-3.5" />
               Retry failed disbursements
             </Button>

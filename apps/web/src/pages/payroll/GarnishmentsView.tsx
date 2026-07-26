@@ -5,7 +5,7 @@
 // page is the only place a garnishment can be created without hitting
 // the API directly.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Pause, Play, Plus, Square } from 'lucide-react';
 import {
   createGarnishment,
@@ -15,8 +15,8 @@ import {
   listGarnishments,
   setGarnishmentStatus,
 } from '@/lib/payrollTax91Api';
-import { listOrgAssociates } from '@/lib/orgApi';
 import { ApiError } from '@/lib/api';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import {
@@ -31,7 +31,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
-import { Label } from '@/components/ui/Label';
+import { FormHint, Label } from '@/components/ui/Label';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip';
@@ -381,8 +381,8 @@ function CreateGarnishmentDialog({
   onOpenChange: (v: boolean) => void;
   onCreated: () => void;
 }) {
-  const [associates, setAssociates] = useState<Array<{ id: string; firstName: string; lastName: string }> | null>(null);
-  const [associateId, setAssociateId] = useState('');
+  const [associate, setAssociate] = useState<PickedAssociate | null>(null);
+  const [associateError, setAssociateError] = useState<string | null>(null);
   const [kind, setKind] = useState<GarnishmentKind>('CREDITOR');
   const [amountMode, setAmountMode] = useState<'flat' | 'percent'>('flat');
   const [amountPerRun, setAmountPerRun] = useState('');
@@ -400,7 +400,8 @@ function CreateGarnishmentDialog({
 
   useEffect(() => {
     if (!open) return;
-    setAssociateId('');
+    setAssociate(null);
+    setAssociateError(null);
     setKind('CREDITOR');
     setAmountMode('flat');
     setAmountPerRun('');
@@ -415,22 +416,7 @@ function CreateGarnishmentDialog({
     setPriority('100');
     setNotes('');
     setSubmitting(false);
-    listOrgAssociates()
-      .then((res) =>
-        setAssociates(
-          res.associates.map((a) => ({ id: a.id, firstName: a.firstName, lastName: a.lastName }))
-        )
-      )
-      .catch(() => setAssociates([]));
   }, [open]);
-
-  const sortedAssociates = useMemo(
-    () =>
-      [...(associates ?? [])].sort((a, b) =>
-        `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`)
-      ),
-    [associates]
-  );
 
   // Live preview of the configured deduction. Purely presentational — the
   // real cap math (CCPA %, Pub 1494) happens server-side at run creation.
@@ -447,10 +433,14 @@ function CreateGarnishmentDialog({
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
+    if (!associate) {
+      setAssociateError('Pick an associate.');
+      return;
+    }
     setSubmitting(true);
     try {
       await createGarnishment({
-        associateId,
+        associateId: associate.id,
         kind,
         caseNumber: caseNumber || null,
         agencyName: agencyName || null,
@@ -484,22 +474,23 @@ function CreateGarnishmentDialog({
         </DialogHeader>
         <form onSubmit={submit} className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Field label="Associate" required>
-              {(p) => (
-                <Select
-                  value={associateId}
-                  onChange={(e) => setAssociateId(e.target.value)}
-                  {...p}
-                >
-                  <option value="">— Select —</option>
-                  {sortedAssociates.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.lastName}, {a.firstName}
-                    </option>
-                  ))}
-                </Select>
+            <div>
+              <Label required>Associate</Label>
+              <div className="mt-1">
+                <AssociatePicker
+                  value={associate}
+                  onChange={(v) => {
+                    setAssociate(v);
+                    if (v) setAssociateError(null);
+                  }}
+                />
+              </div>
+              {associateError && (
+                <FormHint id="garnishment-associate-error" variant="error">
+                  {associateError}
+                </FormHint>
               )}
-            </Field>
+            </div>
             <Field label="Kind" required hint={KIND_HINT[kind]}>
               {(p) => (
                 <Select

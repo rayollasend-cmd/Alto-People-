@@ -5,6 +5,8 @@ import { ApiError } from '@/lib/api';
 import {
   build940,
   build941,
+  bulkFileTaxForms,
+  bulkSendTaxFormCopies,
   createGarnishment,
   createTaxForm,
   createW2c,
@@ -43,6 +45,7 @@ import {
   type SubmitterProfileInput,
   type TaxForm,
   type TaxFormKind,
+  type TaxFormStatus,
 } from '@/lib/payrollTax91Api';
 import { listClients } from '@/lib/clientsApi';
 import type { ClientListItem } from '@alto-people/shared';
@@ -144,6 +147,7 @@ const GARN_KIND_LABEL: Record<GarnishmentKind, string> = {
 };
 
 function GarnishmentsTab({ canManage }: { canManage: boolean }) {
+  const confirm = useConfirm();
   const [rows, setRows] = useState<Garnishment[] | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [historyTarget, setHistoryTarget] = useState<Garnishment | null>(null);
@@ -162,9 +166,23 @@ function GarnishmentsTab({ canManage }: { canManage: boolean }) {
     refresh();
   }, []);
 
-  const onStatus = async (id: string, status: GarnishmentStatus) => {
+  const onStatus = async (g: Garnishment, status: GarnishmentStatus) => {
+    if (status === g.status) return;
+    const ok = await confirm({
+      title: `Change status to ${status}?`,
+      description:
+        `${g.associateName}'s garnishment moves from ${g.status} to ${status}. ` +
+        'The change takes effect immediately and is recorded.' +
+        (status === 'TERMINATED'
+          ? ' Terminated garnishments stop withholding entirely.'
+          : ''),
+      confirmLabel: `Change to ${status}`,
+      destructive: status === 'TERMINATED',
+    });
+    if (!ok) return; // controlled select re-renders back to g.status
     try {
-      await setGarnishmentStatus(id, status);
+      await setGarnishmentStatus(g.id, status);
+      toast.success(`Garnishment status changed to ${status}.`);
       refresh();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Couldn't update garnishment status. Try again.");
@@ -269,7 +287,7 @@ function GarnishmentsTab({ canManage }: { canManage: boolean }) {
                           <Select
                             size="sm"
                             value={g.status}
-                            onChange={(e) => onStatus(g.id, e.target.value as GarnishmentStatus)}
+                            onChange={(e) => onStatus(g, e.target.value as GarnishmentStatus)}
                           >
                             <option value="ACTIVE">ACTIVE</option>
                             <option value="SUSPENDED">SUSPENDED</option>
@@ -738,9 +756,15 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
   const [showF1099NecGenerate, setShowF1099NecGenerate] = useState(false);
   const [showF1099MiscGenerate, setShowF1099MiscGenerate] = useState(false);
   const [showSubmitter, setShowSubmitter] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [yearFilter, setYearFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | TaxFormStatus>('all');
+  const [kindFilter, setKindFilter] = useState<'all' | TaxFormKind>('all');
 
   const refresh = () => {
     setRows(null);
+    setSelected(new Set());
     listTaxForms()
       .then((r) => setRows(r.forms))
       .catch((err) => {
@@ -751,6 +775,83 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
   useEffect(() => {
     refresh();
   }, []);
+
+  const years = rows
+    ? Array.from(new Set(rows.map((r) => r.taxYear))).sort((a, b) => b - a)
+    : [];
+  const filtered = rows
+    ? rows.filter(
+        (f) =>
+          (yearFilter === 'all' || f.taxYear === Number(yearFilter)) &&
+          (statusFilter === 'all' || f.status === statusFilter) &&
+          (kindFilter === 'all' || f.kind === kindFilter),
+      )
+    : null;
+
+  const toggleRow = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const allVisibleSelected =
+    !!filtered && filtered.length > 0 && filtered.every((f) => selected.has(f.id));
+  const toggleAllVisible = () => {
+    if (!filtered) return;
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) filtered.forEach((f) => next.delete(f.id));
+      else filtered.forEach((f) => next.add(f.id));
+      return next;
+    });
+  };
+
+  /** "· 20 skipped (already filed)" — deduped reasons from the bulk endpoints. */
+  const skippedSummary = (skipped: { id: string; reason: string }[]) =>
+    skipped.length === 0
+      ? ''
+      : ` · ${skipped.length} skipped (${Array.from(new Set(skipped.map((s) => s.reason))).join('; ')})`;
+
+  const onBulkFile = async () => {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    const ok = await confirm({
+      title: `File ${ids.length} selected form${ids.length === 1 ? '' : 's'}?`,
+      description:
+        'Filing is recorded and filed forms are immutable. Forms that are already filed ' +
+        'or otherwise ineligible are skipped automatically — nothing is double-filed.',
+      confirmLabel: `File ${ids.length}`,
+    });
+    if (!ok) return;
+    setBulkBusy(true);
+    try {
+      const r = await bulkFileTaxForms(ids);
+      toast.success(`Filed ${r.filed}${skippedSummary(r.skipped)}`);
+      refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Couldn't file the selected forms. Try again.");
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const onBulkSendCopies = async () => {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    setBulkBusy(true);
+    try {
+      const r = await bulkSendTaxFormCopies(ids);
+      toast.success(
+        `Sent ${r.sent} recipient cop${r.sent === 1 ? 'y' : 'ies'}${skippedSummary(r.skipped)}`,
+      );
+      refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Couldn't send the selected copies. Try again.");
+    } finally {
+      setBulkBusy(false);
+    }
+  };
 
   const onFile = async (id: string) => {
     if (!(await confirm({ title: 'File this form?', description: 'Filed forms are immutable.' }))) return;
@@ -856,9 +957,84 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
           </Button>
         </div>
       )}
+      {rows !== null && rows.length > 0 && (
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <Label htmlFor="taxform-filter-year">Year</Label>
+            <Select
+              id="taxform-filter-year"
+              size="sm"
+              className="mt-1"
+              value={yearFilter}
+              onChange={(e) => setYearFilter(e.target.value)}
+            >
+              <option value="all">All years</option>
+              {years.map((y) => (
+                <option key={y} value={String(y)}>
+                  {y}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <Label htmlFor="taxform-filter-status">Status</Label>
+            <Select
+              id="taxform-filter-status"
+              size="sm"
+              className="mt-1"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as 'all' | TaxFormStatus)}
+            >
+              <option value="all">All statuses</option>
+              <option value="DRAFT">DRAFT</option>
+              <option value="FILED">FILED</option>
+              <option value="AMENDED">AMENDED</option>
+              <option value="VOIDED">VOIDED</option>
+            </Select>
+          </div>
+          <div>
+            <Label htmlFor="taxform-filter-kind">Kind</Label>
+            <Select
+              id="taxform-filter-kind"
+              size="sm"
+              className="mt-1"
+              value={kindFilter}
+              onChange={(e) => setKindFilter(e.target.value as 'all' | TaxFormKind)}
+            >
+              <option value="all">All kinds</option>
+              {(Object.keys(FORM_KIND_LABEL) as TaxFormKind[]).map((k) => (
+                <option key={k} value={k}>
+                  {FORM_KIND_LABEL[k]}
+                </option>
+              ))}
+            </Select>
+          </div>
+        </div>
+      )}
+      {canManage && selected.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-navy-secondary bg-navy-secondary/40 p-2">
+          <span className="text-sm text-white">
+            {selected.size} selected
+          </span>
+          <Button size="sm" onClick={onBulkFile} disabled={bulkBusy}>
+            {bulkBusy ? 'Working…' : `File selected (${selected.size})`}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={onBulkSendCopies} disabled={bulkBusy}>
+            {bulkBusy ? 'Working…' : `Send copies (${selected.size})`}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setSelected(new Set())}
+            disabled={bulkBusy}
+          >
+            Clear selection
+          </Button>
+        </div>
+      )}
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {rows === null || filtered === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
@@ -866,10 +1042,25 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
               title="No tax forms"
               description="Drafted and filed federal tax forms appear here."
             />
+          ) : filtered.length === 0 ? (
+            <div className="p-6 text-sm text-silver">
+              No forms match the current filters.
+            </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
+                  {canManage && (
+                    <TableHead className="w-8">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 align-middle"
+                        aria-label="Select all visible forms"
+                        checked={allVisibleSelected}
+                        onChange={toggleAllVisible}
+                      />
+                    </TableHead>
+                  )}
                   <TableHead>Kind</TableHead>
                   <TableHead>Year / Q</TableHead>
                   <TableHead className="hidden md:table-cell">Recipient</TableHead>
@@ -879,8 +1070,19 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((f) => (
+                {filtered.map((f) => (
                   <TableRow key={f.id}>
+                    {canManage && (
+                      <TableCell className="w-8">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 align-middle"
+                          aria-label={`Select ${FORM_KIND_LABEL[f.kind]} ${f.taxYear}${f.quarter ? ` Q${f.quarter}` : ''} — ${f.associateName ?? 'Aggregate'}`}
+                          checked={selected.has(f.id)}
+                          onChange={() => toggleRow(f.id)}
+                        />
+                      </TableCell>
+                    )}
                     <TableCell className="font-medium text-white">
                       <div className="min-w-0">
                         <div className="truncate">{FORM_KIND_LABEL[f.kind]}</div>
@@ -1012,10 +1214,10 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
         />
       )}
       {show941Builder && (
-        <Form941BuilderDrawer onClose={() => setShow941Builder(false)} />
+        <Form941BuilderDrawer onClose={() => setShow941Builder(false)} onCreated={refresh} />
       )}
       {show940Builder && (
-        <Form940BuilderDrawer onClose={() => setShow940Builder(false)} />
+        <Form940BuilderDrawer onClose={() => setShow940Builder(false)} onCreated={refresh} />
       )}
       {showW2Generate && (
         <W2GenerateDrawer
@@ -1205,6 +1407,7 @@ function W2GenerateDrawer({
  * keeps us from clobbering a TIN already on file by accident.
  */
 function TinCaptureBlock() {
+  const confirm = useConfirm();
   const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
   const associateId = assoc?.id ?? '';
   const [tin, setTin] = useState('');
@@ -1252,13 +1455,14 @@ function TinCaptureBlock() {
   };
   const onClear = async () => {
     if (!associateId.trim()) return;
-    if (
-      !window.confirm(
-        'Remove the encrypted TIN from this associate? This is destructive — the next 1099-NEC generation will fail until a new TIN is captured. Continue?',
-      )
-    ) {
-      return;
-    }
+    const ok = await confirm({
+      title: 'Clear this TIN?',
+      description:
+        'Removes the encrypted TIN from this associate. This is destructive — the next 1099-NEC generation will fail until a new TIN is captured.',
+      confirmLabel: 'Clear TIN',
+      destructive: true,
+    });
+    if (!ok) return;
     setWorking(true);
     try {
       await clearAssociateTin(associateId.trim());
@@ -1646,25 +1850,104 @@ function F1099MiscGenerateDrawer({
   );
 }
 
+/**
+ * Known amount keys per form kind, used to render labeled number fields in
+ * the New form drawer instead of a raw-JSON textarea (a silently typo'd key
+ * used to yield a federal filing missing a line). The keys mirror what the
+ * rest of the system reads/writes:
+ * - F941/F940 — the builders' suggestedAmounts objects (build941/build940);
+ * - W2 — the W2Boxes aggregate the W-2 generator persists (box1Wages…box6MedicareTax);
+ * - F1099_NEC / F1099_MISC — the 1099 aggregators' box fields.
+ * Anything else goes through the "Add custom line" escape hatch.
+ */
+const KNOWN_AMOUNT_FIELDS: Record<TaxFormKind, { key: string; label: string }[]> = {
+  F941: [
+    { key: 'employeeCount', label: 'Employee count' },
+    { key: 'totalWages', label: 'Total wages' },
+    { key: 'totalFederalWithheld', label: 'Total federal income tax withheld' },
+    { key: 'totalEmployerTax', label: 'Total employer tax' },
+    { key: 'ficaMedicareWages', label: 'FICA / Medicare wages' },
+  ],
+  F940: [
+    { key: 'employeeCount', label: 'Employee count' },
+    { key: 'totalPayments', label: 'Total payments to all employees' },
+    { key: 'exemptPayments', label: 'Exempt payments' },
+    { key: 'excessPayments', label: 'Payments exceeding $7,000' },
+    { key: 'futaTaxableWages', label: 'FUTA taxable wages' },
+    { key: 'futaTaxNet', label: 'FUTA tax (net 0.6%)' },
+    { key: 'futaTaxAccrued', label: 'FUTA tax accrued' },
+    { key: 'depositsMade', label: 'Deposits made' },
+    { key: 'balanceDue', label: 'Balance due' },
+  ],
+  W2: [
+    { key: 'box1Wages', label: 'Box 1 — Wages, tips, other compensation' },
+    { key: 'box2FitWithheld', label: 'Box 2 — Federal income tax withheld' },
+    { key: 'box3SsWages', label: 'Box 3 — Social Security wages' },
+    { key: 'box4SsTax', label: 'Box 4 — Social Security tax withheld' },
+    { key: 'box5MedicareWages', label: 'Box 5 — Medicare wages and tips' },
+    { key: 'box6MedicareTax', label: 'Box 6 — Medicare tax withheld' },
+  ],
+  // W-2c drafts are normally created via "Correct (W-2c)" on a filed W-2
+  // (which computes previous/corrected pairs); manual ones are custom lines.
+  W2C: [],
+  F1099_NEC: [
+    { key: 'box1NonemployeeCompensation', label: 'Box 1 — Nonemployee compensation' },
+    { key: 'box4FitWithheld', label: 'Box 4 — Federal income tax withheld' },
+  ],
+  F1099_MISC: [
+    { key: 'box1Rents', label: 'Box 1 — Rents' },
+    { key: 'box2Royalties', label: 'Box 2 — Royalties' },
+    { key: 'box3OtherIncome', label: 'Box 3 — Other income' },
+    { key: 'box4FitWithheld', label: 'Box 4 — Federal income tax withheld' },
+    { key: 'box5FishingBoatProceeds', label: 'Box 5 — Fishing boat proceeds' },
+    { key: 'box6MedicalHealthcarePayments', label: 'Box 6 — Medical and health care payments' },
+    { key: 'box8SubstitutePayments', label: 'Box 8 — Substitute payments' },
+    { key: 'box9CropInsuranceProceeds', label: 'Box 9 — Crop insurance proceeds' },
+    { key: 'box10GrossProceedsAttorney', label: 'Box 10 — Gross proceeds paid to an attorney' },
+    { key: 'box11FishForResale', label: 'Box 11 — Fish purchased for resale' },
+    { key: 'box12Section409ADeferrals', label: 'Box 12 — Section 409A deferrals' },
+    { key: 'box13ExcessGoldenParachute', label: 'Box 13 — Excess golden parachute payments' },
+    { key: 'box14NonqualifiedDeferred', label: 'Box 14 — Nonqualified deferred compensation' },
+  ],
+};
+
 function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [kind, setKind] = useState<TaxFormKind>('F941');
   const [taxYear, setTaxYear] = useState(String(new Date().getFullYear() - 1));
   const [quarter, setQuarter] = useState('1');
   const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
-  const [amountsJson, setAmountsJson] = useState('{\n}');
+  const [amountValues, setAmountValues] = useState<Record<string, string>>({});
+  const [customLines, setCustomLines] = useState<{ key: string; value: string }[]>([]);
   const [ein, setEin] = useState('');
   const [saving, setSaving] = useState(false);
 
   const needsQuarter = kind === 'F941';
   const needsAssociate = kind === 'W2' || kind === 'F1099_NEC' || kind === 'F1099_MISC';
+  const knownFields = KNOWN_AMOUNT_FIELDS[kind];
 
   const onSubmit = async () => {
-    let amounts: Record<string, unknown>;
-    try {
-      amounts = JSON.parse(amountsJson);
-    } catch {
-      toast.error('Amounts must be valid JSON.');
-      return;
+    const amounts: Record<string, unknown> = {};
+    for (const f of knownFields) {
+      const raw = (amountValues[f.key] ?? '').trim();
+      if (!raw) continue; // blank = omit the line
+      const n = Number(raw);
+      if (!Number.isFinite(n)) {
+        toast.error(`"${f.label}" must be a number.`);
+        return;
+      }
+      amounts[f.key] = n;
+    }
+    for (const line of customLines) {
+      const key = line.key.trim();
+      if (!key) continue;
+      const raw = line.value.trim();
+      if (!raw) continue;
+      const n = Number(raw);
+      if (!Number.isFinite(n)) {
+        toast.error(`Custom line "${key}" must be a number.`);
+        return;
+      }
+      amounts[key] = n;
     }
     if (needsAssociate && !assoc) {
       toast.error('Pick an associate for W-2/1099.');
@@ -1700,7 +1983,13 @@ function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
           <Select
             className="mt-1"
             value={kind}
-            onChange={(e) => setKind(e.target.value as TaxFormKind)}
+            onChange={(e) => {
+              setKind(e.target.value as TaxFormKind);
+              // Known keys differ per kind — drop stale values so a W-2 box
+              // can't silently ride along into a 941 draft. Custom lines are
+              // kind-agnostic and kept.
+              setAmountValues({});
+            }}
           >
             {(Object.keys(FORM_KIND_LABEL) as TaxFormKind[]).map((k) => (
               <option key={k} value={k}>
@@ -1753,12 +2042,79 @@ function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
           />
         </div>
         <div>
-          <Label>Amounts (JSON)</Label>
-          <Textarea
-            className="mt-1 min-h-40 font-mono text-xs"
-            value={amountsJson}
-            onChange={(e) => setAmountsJson(e.target.value)}
-          />
+          <Label>Amounts</Label>
+          <p className="mt-1 text-xs text-silver">
+            Leave a line blank to omit it. Use "Add custom line" for anything
+            not listed.
+          </p>
+          <div className="mt-2 space-y-2">
+            {knownFields.map((f) => (
+              <div key={f.key} className="grid grid-cols-[1fr_10rem] items-center gap-2">
+                <Label
+                  htmlFor={`amount-${f.key}`}
+                  className="mb-0 normal-case tracking-normal"
+                >
+                  {f.label}
+                </Label>
+                <Input
+                  id={`amount-${f.key}`}
+                  type="number"
+                  step="0.01"
+                  className="text-right tabular-nums"
+                  value={amountValues[f.key] ?? ''}
+                  onChange={(e) =>
+                    setAmountValues((prev) => ({ ...prev, [f.key]: e.target.value }))
+                  }
+                />
+              </div>
+            ))}
+            {knownFields.length === 0 && customLines.length === 0 && (
+              <p className="text-xs text-silver">
+                No preset lines for this kind — add custom lines below.
+              </p>
+            )}
+            {customLines.map((line, i) => (
+              <div key={i} className="grid grid-cols-[1fr_10rem_auto] items-center gap-2">
+                <Input
+                  className="font-mono text-xs"
+                  placeholder="key (e.g. box8AllocatedTips)"
+                  aria-label={`Custom line ${i + 1} key`}
+                  value={line.key}
+                  onChange={(e) =>
+                    setCustomLines((prev) =>
+                      prev.map((l, j) => (j === i ? { ...l, key: e.target.value } : l)),
+                    )
+                  }
+                />
+                <Input
+                  type="number"
+                  step="0.01"
+                  className="text-right tabular-nums"
+                  aria-label={`Custom line ${i + 1} value`}
+                  value={line.value}
+                  onChange={(e) =>
+                    setCustomLines((prev) =>
+                      prev.map((l, j) => (j === i ? { ...l, value: e.target.value } : l)),
+                    )
+                  }
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setCustomLines((prev) => prev.filter((_, j) => j !== i))}
+                >
+                  Remove
+                </Button>
+              </div>
+            ))}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setCustomLines((prev) => [...prev, { key: '', value: '' }])}
+            >
+              <Plus className="mr-1 h-3 w-3" /> Add custom line
+            </Button>
+          </div>
         </div>
       </DrawerBody>
       <DrawerFooter>
@@ -1773,23 +2129,55 @@ function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
   );
 }
 
-function Form941BuilderDrawer({ onClose }: { onClose: () => void }) {
+function Form941BuilderDrawer({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: () => void;
+}) {
   const [taxYear, setTaxYear] = useState(String(new Date().getFullYear() - 1));
   const [quarter, setQuarter] = useState('1');
-  const [result, setResult] = useState<Awaited<ReturnType<typeof build941>> | null>(
-    null,
-  );
+  // Snapshot of year/quarter at build time so a later input tweak can't
+  // mismatch the draft's period against the suggested amounts.
+  const [result, setResult] = useState<
+    (Awaited<ReturnType<typeof build941>> & { builtYear: number; builtQuarter: number }) | null
+  >(null);
   const [loading, setLoading] = useState(false);
+  const [creating, setCreating] = useState(false);
 
   const onBuild = async () => {
     setLoading(true);
     try {
       const r = await build941(Number(taxYear), Number(quarter));
-      setResult(r);
+      setResult({ ...r, builtYear: Number(taxYear), builtQuarter: Number(quarter) });
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Couldn't build the 941. Try again.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const onCreateDraft = async () => {
+    if (!result) return;
+    setCreating(true);
+    try {
+      await createTaxForm({
+        kind: 'F941',
+        taxYear: result.builtYear,
+        quarter: result.builtQuarter,
+        associateId: null,
+        amounts: result.suggestedAmounts,
+        ein: null,
+      });
+      toast.success(
+        `Draft 941 created for Q${result.builtQuarter} ${result.builtYear}. Review and edit it from the forms list before filing.`,
+      );
+      onCreated();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Couldn't create the draft 941. Try again.");
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -1831,10 +2219,15 @@ function Form941BuilderDrawer({ onClose }: { onClose: () => void }) {
           {loading ? 'Building…' : 'Build'}
         </Button>
         {result && (
-          <BuilderAmounts
-            amounts={result.suggestedAmounts}
-            caption={`Q${quarter} ${taxYear} · ${result.periodStart} – ${result.periodEnd}`}
-          />
+          <>
+            <BuilderAmounts
+              amounts={result.suggestedAmounts}
+              caption={`Q${result.builtQuarter} ${result.builtYear} · ${result.periodStart} – ${result.periodEnd}`}
+            />
+            <Button onClick={onCreateDraft} disabled={creating}>
+              {creating ? 'Creating…' : 'Create draft from these amounts'}
+            </Button>
+          </>
         )}
       </DrawerBody>
       <DrawerFooter>
@@ -1877,16 +2270,25 @@ function BuilderAmounts({
         ))}
       </dl>
       <p className="mt-2 text-xs text-silver/60">
-        Transcribe these into a draft form (New form) or the official IRS form.
+        Use "Create draft from these amounts" to save these as a DRAFT form —
+        you can still review and edit the draft before filing — or transcribe
+        them into the official IRS form.
       </p>
     </div>
   );
 }
 
-function Form940BuilderDrawer({ onClose }: { onClose: () => void }) {
+function Form940BuilderDrawer({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: () => void;
+}) {
   const [taxYear, setTaxYear] = useState(String(new Date().getFullYear() - 1));
   const [result, setResult] = useState<Awaited<ReturnType<typeof build940>> | null>(null);
   const [loading, setLoading] = useState(false);
+  const [creating, setCreating] = useState(false);
 
   const onBuild = async () => {
     setLoading(true);
@@ -1896,6 +2298,31 @@ function Form940BuilderDrawer({ onClose }: { onClose: () => void }) {
       toast.error(err instanceof ApiError ? err.message : "Couldn't build the 940. Try again.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const onCreateDraft = async () => {
+    if (!result) return;
+    setCreating(true);
+    try {
+      await createTaxForm({
+        kind: 'F940',
+        // result.taxYear is the year the amounts were built for, immune to
+        // the input being edited after Build.
+        taxYear: result.taxYear,
+        quarter: null,
+        associateId: null,
+        amounts: result.suggestedAmounts,
+        ein: null,
+      });
+      toast.success(
+        `Draft 940 created for ${result.taxYear}. Review and edit it from the forms list before filing.`,
+      );
+      onCreated();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Couldn't create the draft 940. Try again.");
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -1926,6 +2353,9 @@ function Form940BuilderDrawer({ onClose }: { onClose: () => void }) {
           <>
             <BuilderAmounts amounts={result.suggestedAmounts} caption={`Tax year ${result.taxYear}`} />
             <p className="text-xs text-silver/70">{result.note}</p>
+            <Button onClick={onCreateDraft} disabled={creating}>
+              {creating ? 'Creating…' : 'Create draft from these amounts'}
+            </Button>
           </>
         )}
       </DrawerBody>

@@ -29,7 +29,9 @@ export type ExceptionKind =
   | 'MISSING_BANK_ACCOUNT'
   | 'TERMINATED_IN_RUN'
   | 'OT_SPIKE'
-  | 'UNSUPPORTED_STATE';
+  | 'UNSUPPORTED_STATE'
+  | 'UNAPPROVED_TIME'
+  | 'MISSING_COMP_RECORD';
 
 export type ExceptionSeverity = 'BLOCKING' | 'WARNING' | 'INFO';
 
@@ -48,6 +50,8 @@ const SEVERITY: Record<ExceptionKind, ExceptionSeverity> = {
   TERMINATED_IN_RUN: 'WARNING',
   OT_SPIKE: 'INFO',
   UNSUPPORTED_STATE: 'INFO',
+  UNAPPROVED_TIME: 'WARNING',
+  MISSING_COMP_RECORD: 'WARNING',
 };
 
 export interface ExceptionsResult {
@@ -64,6 +68,20 @@ export async function computePayrollExceptions(
   input: ExceptionsInput
 ): Promise<ExceptionsResult> {
   const { periodStart, periodEndExclusive, clientId } = input;
+
+  // Unapproved (clocked-out but not yet reviewed) time in the same window.
+  // These hours will NOT be paid — historically the #1 cause of a silent
+  // short paycheck, because the associate simply wasn't in the run.
+  const unapproved = await tx.timeEntry.findMany({
+    where: {
+      status: 'COMPLETED',
+      clockInAt: { gte: periodStart, lt: periodEndExclusive },
+      ...(clientId ? { clientId } : {}),
+    },
+    include: {
+      associate: { select: { id: true, firstName: true, lastName: true } },
+    },
+  });
 
   const entries = await tx.timeEntry.findMany({
     where: {
@@ -171,6 +189,58 @@ export async function computePayrollExceptions(
           ? `${a.state} is not in the bracketed/flat-rate tables — using a 4% fallback.`
           : 'No state on file — using a 4% fallback for state withholding.',
         detail: { state: a.state ?? null },
+      });
+    }
+  }
+
+  // 6. UNAPPROVED_TIME — clocked-out but unreviewed hours, per associate.
+  // Not in `byAssociate` (that's APPROVED-only, by design): these people
+  // may not be in the run AT ALL, which is exactly the problem.
+  const unapprovedByAssoc = new Map<
+    string,
+    { name: string; ms: number }
+  >();
+  for (const e of unapproved) {
+    if (!e.clockOutAt) continue;
+    const cur = unapprovedByAssoc.get(e.associateId) ?? {
+      name: `${e.associate.firstName} ${e.associate.lastName}`.trim(),
+      ms: 0,
+    };
+    cur.ms += e.clockOutAt.getTime() - e.clockInAt.getTime();
+    unapprovedByAssoc.set(e.associateId, cur);
+  }
+  for (const [associateId, g] of unapprovedByAssoc) {
+    const hours = g.ms / 3_600_000;
+    if (hours <= 0) continue;
+    exceptions.push({
+      associateId,
+      associateName: g.name,
+      kind: 'UNAPPROVED_TIME',
+      severity: SEVERITY.UNAPPROVED_TIME,
+      message: `${hours.toFixed(1)} unapproved hour${hours === 1 ? '' : 's'} in this period — they will NOT be paid until approved in Time & Attendance.`,
+      detail: { unapprovedHours: Math.round(hours * 10) / 10 },
+    });
+  }
+
+  // 7. MISSING_COMP_RECORD — an associate in the run with no open comp
+  // record silently falls back to the wizard's default hourly rate.
+  const inRunIds = [...byAssociate.keys()];
+  if (inRunIds.length > 0) {
+    const comps = await tx.compensationRecord.findMany({
+      where: { associateId: { in: inRunIds }, effectiveTo: null },
+      select: { associateId: true },
+    });
+    const withComp = new Set(comps.map((c) => c.associateId));
+    for (const [associateId, group] of byAssociate) {
+      if (withComp.has(associateId)) continue;
+      const a = group[0].associate;
+      exceptions.push({
+        associateId,
+        associateName: `${a.firstName} ${a.lastName}`.trim(),
+        kind: 'MISSING_COMP_RECORD',
+        severity: SEVERITY.MISSING_COMP_RECORD,
+        message:
+          'No compensation record on file — this run would pay the default hourly rate. Set their rate in People → Compensation.',
       });
     }
   }

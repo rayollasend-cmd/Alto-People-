@@ -1986,6 +1986,12 @@ export const PayrollItemSchema = z.object({
   employerFuta: z.number().nonnegative(),
   employerSuta: z.number().nonnegative(),
   netPay: z.number(),
+  /** Pre-tax benefit deductions taken this period. Serialized so the amend
+   *  wizard can seed the REAL value — omitting it made every amendment
+   *  zero the deduction and silently overpay. Optional for back-compat. */
+  preTaxDeductions: z.number().nonnegative().optional(),
+  /** 401(k)/403(b) sub-bucket of preTaxDeductions. */
+  preTaxRetirement: z.number().nonnegative().optional(),
   // Wave 4.2 — post-tax deductions (garnishments etc.) taken this period.
   // Subtracted from net AFTER taxes; does not affect taxable wages.
   postTaxDeductions: z.number().nonnegative(),
@@ -2096,6 +2102,9 @@ export const PayrollRunCreateInputSchema = z
     /** Default hourly rate when an associate's shifts in the period have none. */
     defaultHourlyRate: z.number().nonnegative().optional(),
     notes: z.string().max(1000).optional(),
+    /** OFF_CYCLE = bonus/terminal-pay run: no time aggregation, paychecks
+     *  come entirely from add-on earning lines. Default REGULAR. */
+    kind: z.enum(['REGULAR', 'OFF_CYCLE']).optional(),
   })
   .refine((v) => v.periodEnd >= v.periodStart, {
     message: 'periodEnd must be on or after periodStart',
@@ -2111,6 +2120,9 @@ export const PayrollRunPreviewItemSchema = z.object({
   associateName: z.string(),
   hoursWorked: z.number().nonnegative(),
   hourlyRate: z.number().nonnegative(),
+  /** Where the rate came from — DEFAULT means the editable $15 fallback
+   *  because the associate has NO compensation record (flag it!). */
+  rateSource: z.enum(['OVERRIDE', 'COMP', 'DEFAULT', 'SALARY']).optional(),
   regularHours: z.number().nonnegative(),
   overtimeHours: z.number().nonnegative(),
   grossPay: z.number().nonnegative(),
@@ -2253,6 +2265,8 @@ export const PayrollExceptionKindSchema = z.enum([
   'TERMINATED_IN_RUN',   // WARNING  — terminated <= periodEnd but has hours
   'OT_SPIKE',            // INFO     — > 20 OT hours in this period
   'UNSUPPORTED_STATE',   // INFO     — state has no real SIT table; using fallback
+  'UNAPPROVED_TIME',     // WARNING  — unapproved hours will NOT be paid this run
+  'MISSING_COMP_RECORD', // WARNING  — no comp record; the default rate would apply
 ]);
 export type PayrollExceptionKind = z.infer<typeof PayrollExceptionKindSchema>;
 
@@ -2349,6 +2363,10 @@ export const PayrollConfigSchema = z.object({
   fedBracketsSingle: z.array(PayrollConfigBracketSchema),
   fedBracketsMfj: z.array(PayrollConfigBracketSchema),
   fedBracketsHoh: z.array(PayrollConfigBracketSchema),
+  /** When true, Disburse requires a second approver (not the run's
+   *  creator). Surfaced so the UI can disable the button instead of
+   *  letting the admin walk the full ceremony into a 409. */
+  requireSecondApproval: z.boolean().optional(),
   updatedAt: z.string().datetime(),
 });
 export type PayrollConfigBracket = z.infer<typeof PayrollConfigBracketSchema>;
