@@ -645,7 +645,7 @@ model ShiftTeam {
   clientId    String    @db.Uuid
   locationId  String    @db.Uuid
   name        String    @db.VarChar(80)
-  /** Wall-clock minutes since local midnight at the site; null = no default. */
+  /// Wall-clock minutes since local midnight at the site; null = no default.
   startMinute Int?
   endMinute   Int?
   createdAt   DateTime  @default(now()) @db.Timestamptz(6)
