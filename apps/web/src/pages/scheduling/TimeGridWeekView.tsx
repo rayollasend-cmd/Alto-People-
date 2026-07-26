@@ -114,6 +114,11 @@ function snap(min: number): number {
   return Math.round(min / SNAP_MIN) * SNAP_MIN;
 }
 
+/** Minutes → hours label with at most one decimal ("38.5", "40"). */
+function fmtHours(min: number): string {
+  return String(Math.round((min / 60) * 10) / 10);
+}
+
 interface Props {
   shifts: Shift[];
   associates: AssociateLite[];
@@ -126,6 +131,9 @@ interface Props {
   canManage: boolean;
   onShiftClick: (s: Shift, e: React.MouseEvent) => void;
   onCellCreate: (start: Date, associateId: string | null) => void;
+  /** Drag a vertical range in an empty cell → create with those exact
+   *  times prefilled (no 4h-guess to fix afterwards). */
+  onCellCreateRange?: (start: Date, end: Date, associateId: string | null) => void;
   selectedIds: Set<string>;
   onShiftMove: (
     s: Shift,
@@ -136,6 +144,11 @@ interface Props {
   /** Apply a dragged-from-rail template to a specific cell. */
   onTemplateDrop: (templateId: string, dayStart: Date, associateId: string | null) => void;
   showAllAssociates: boolean;
+  /** Per-associate availability fit, keyed by associateId. `dows` = weekday
+   *  numbers (0=Sun) with ANY weekly availability window; `blocked` = local
+   *  "YYYY-MM-DD" day keys vetoed by approved PTO / one-off exceptions.
+   *  Absent map or absent associate entry → no shading (unknown ≠ unavailable). */
+  availabilityFit?: Map<string, { dows: Set<number>; blocked: Set<string> }> | null;
 }
 
 export function TimeGridWeekView({
@@ -147,12 +160,14 @@ export function TimeGridWeekView({
   canManage,
   onShiftClick,
   onCellCreate,
+  onCellCreateRange,
   onShiftMove,
   onShiftResize,
   quickActions,
   selectedIds,
   onTemplateDrop,
   showAllAssociates,
+  availabilityFit = null,
 }: Props) {
   const hover = useShiftHoverCard();
   const ctxMenu = useShiftContextMenu();
@@ -172,6 +187,40 @@ export function TimeGridWeekView({
       const list = map.get(key) ?? [];
       list.push(s);
       map.set(key, list);
+    }
+    return map;
+  }, [shifts, displayTimeZone]);
+
+  // Scheduled minutes per associate across the visible range — same bucketing
+  // rule as byCell (day key in the grid's zone must fall inside `days`), so the
+  // rail total always agrees with what the cells actually show.
+  const minutesByAssociate = useMemo(() => {
+    const dayKeys = new Set(days.map(ymd));
+    const map = new Map<string, number>();
+    for (const s of shifts) {
+      if (s.status === 'CANCELLED') continue;
+      if (!s.assignedAssociateId) continue;
+      if (!dayKeys.has(zonedDayKey(s.startsAt, displayTimeZone))) continue;
+      map.set(
+        s.assignedAssociateId,
+        (map.get(s.assignedAssociateId) ?? 0) + shiftMinutes(s),
+      );
+    }
+    return map;
+  }, [shifts, days, displayTimeZone]);
+
+  // Per-day footer totals: shift count + scheduled minutes (CANCELLED
+  // excluded) and how many of them are unassigned OPEN shifts.
+  const dayTotals = useMemo(() => {
+    const map = new Map<string, { count: number; minutes: number; open: number }>();
+    for (const s of shifts) {
+      if (s.status === 'CANCELLED') continue;
+      const key = zonedDayKey(s.startsAt, displayTimeZone);
+      const t = map.get(key) ?? { count: 0, minutes: 0, open: 0 };
+      t.count += 1;
+      t.minutes += shiftMinutes(s);
+      if (!s.assignedAssociateId && s.status === 'OPEN') t.open += 1;
+      map.set(key, t);
     }
     return map;
   }, [shifts, displayTimeZone]);
@@ -332,6 +381,7 @@ export function TimeGridWeekView({
               canManage={canManage}
               onShiftClick={onShiftClick}
               onCreate={onCellCreate}
+              onCreateRange={onCellCreateRange}
               onShiftResize={onShiftResize}
               hoverBind={hover.bind}
               onContextMenu={ctxMenu.openFor}
@@ -355,32 +405,81 @@ export function TimeGridWeekView({
           )}
           {visibleAssociates.map((a) => {
             const initials = `${a.firstName[0] ?? ''}${a.lastName[0] ?? ''}`.toUpperCase();
+            const fit = availabilityFit?.get(a.id);
             return (
-              <Row key={a.id} initials={initials} firstName={a.firstName} lastName={a.lastName}>
+              <Row
+                key={a.id}
+                initials={initials}
+                firstName={a.firstName}
+                lastName={a.lastName}
+                scheduledMinutes={minutesByAssociate.get(a.id) ?? 0}
+              >
                 <HourGutter />
-                {days.map((d) => (
-                  <TimeCell
-                    key={`${a.id}_${d.getTime()}`}
-                    cellId={`tg-cell:${a.id}:${d.getTime()}`}
-                    shifts={byCell.get(`${a.id}_${ymd(d)}`) ?? []}
-                    dayStart={d}
-                    displayTimeZone={displayTimeZone}
-                    isToday={sameDay(d, today)}
-                    canManage={canManage}
-                    onShiftClick={onShiftClick}
-                    onCreate={onCellCreate}
-                    onShiftResize={onShiftResize}
-                    hoverBind={hover.bind}
-                    onContextMenu={ctxMenu.openFor}
-                    movingShiftId={movingShiftId}
-                    selectedIds={selectedIds}
-                    isConflictTarget={conflictCellKeys.has(`${a.id}_${ymd(d)}`)}
-                    variant="default"
-                    associateId={a.id}
-                    onTemplateDrop={(tplId) => onTemplateDrop(tplId, d, a.id)}
-                  />
-                ))}
+                {days.map((d) => {
+                  // Availability fit for this cell. PTO/exception veto beats
+                  // the weekly-pattern miss; an associate with NO windows at
+                  // all gets no shading (absence of data ≠ unavailable).
+                  let fitStatus: 'blocked' | 'unavailable' | null = null;
+                  if (fit) {
+                    if (fit.blocked.has(ymd(d))) fitStatus = 'blocked';
+                    else if (fit.dows.size > 0 && !fit.dows.has(d.getDay())) {
+                      fitStatus = 'unavailable';
+                    }
+                  }
+                  return (
+                    <TimeCell
+                      key={`${a.id}_${d.getTime()}`}
+                      cellId={`tg-cell:${a.id}:${d.getTime()}`}
+                      shifts={byCell.get(`${a.id}_${ymd(d)}`) ?? []}
+                      dayStart={d}
+                      displayTimeZone={displayTimeZone}
+                      isToday={sameDay(d, today)}
+                      canManage={canManage}
+                      onShiftClick={onShiftClick}
+                      onCreate={onCellCreate}
+                      onCreateRange={onCellCreateRange}
+                      onShiftResize={onShiftResize}
+                      hoverBind={hover.bind}
+                      onContextMenu={ctxMenu.openFor}
+                      movingShiftId={movingShiftId}
+                      selectedIds={selectedIds}
+                      isConflictTarget={conflictCellKeys.has(`${a.id}_${ymd(d)}`)}
+                      variant="default"
+                      associateId={a.id}
+                      onTemplateDrop={(tplId) => onTemplateDrop(tplId, d, a.id)}
+                      fitStatus={fitStatus}
+                    />
+                  );
+                })}
               </Row>
+            );
+          })}
+
+          {/* Daily totals footer */}
+          <div className="sticky left-0 z-10 bg-navy/95 backdrop-blur border-t border-b border-r border-navy-secondary px-3 py-1.5 text-[10px] uppercase tracking-wider text-silver/70 flex items-center">
+            Daily totals
+          </div>
+          <div className="border-t border-b border-r border-navy-secondary bg-navy/95" />
+          {days.map((d) => {
+            const t = dayTotals.get(ymd(d));
+            return (
+              <div
+                key={`total_${d.getTime()}`}
+                className="border-t border-b border-r border-navy-secondary px-1 py-1.5 text-center text-[10px] tabular-nums text-silver/70"
+              >
+                {t ? (
+                  <>
+                    <span>
+                      {t.count} · {fmtHours(t.minutes)}h
+                    </span>
+                    {t.open > 0 && (
+                      <span className="text-warning"> · {t.open} open</span>
+                    )}
+                  </>
+                ) : (
+                  <span>—</span>
+                )}
+              </div>
             );
           })}
         </div>
@@ -436,13 +535,21 @@ function Row({
   initials,
   firstName,
   lastName,
+  scheduledMinutes,
   children,
 }: {
   initials: string;
   firstName: string;
   lastName: string;
+  /** Scheduled (non-CANCELLED) minutes within the visible range. */
+  scheduledMinutes: number;
   children: React.ReactNode;
 }) {
+  const hours = scheduledMinutes / 60;
+  // Weekly-hours tone: at/over 40h reads as overtime, 36h+ as approaching it.
+  const tone =
+    hours >= 40 ? 'text-alert' : hours >= 36 ? 'text-warning' : 'text-silver/70';
+  const otLabel = hours >= 40 ? 'OT' : hours >= 36 ? 'near OT' : null;
   return (
     <>
       <div className="sticky left-0 z-10 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-3 py-2 flex items-center gap-2.5">
@@ -452,6 +559,12 @@ function Row({
         <div className="min-w-0 flex-1">
           <div className="text-xs text-white truncate">
             {firstName} {lastName}
+          </div>
+          <div className={cn('text-[10px] tabular-nums truncate', tone)}>
+            {fmtHours(scheduledMinutes)}h
+            {otLabel && (
+              <span className="ml-1 uppercase tracking-wider">{otLabel}</span>
+            )}
           </div>
         </div>
       </div>
@@ -524,6 +637,7 @@ function TimeCell({
   onShiftClick,
   onContextMenu,
   onCreate,
+  onCreateRange,
   onShiftResize,
   hoverBind,
   movingShiftId,
@@ -532,6 +646,7 @@ function TimeCell({
   variant,
   associateId,
   onTemplateDrop,
+  fitStatus = null,
 }: {
   cellId: string;
   shifts: Shift[];
@@ -542,6 +657,7 @@ function TimeCell({
   onShiftClick: (s: Shift, e: React.MouseEvent) => void;
   onContextMenu: (s: Shift, e: React.MouseEvent) => void;
   onCreate: (start: Date, associateId: string | null) => void;
+  onCreateRange?: (start: Date, end: Date, associateId: string | null) => void;
   onShiftResize: (s: Shift, newEndsAt: Date) => Promise<void>;
   hoverBind: (s: Shift) => {
     onPointerEnter: (e: React.PointerEvent<HTMLElement>) => void;
@@ -553,9 +669,66 @@ function TimeCell({
   variant: 'default' | 'unassigned';
   associateId: string | null;
   onTemplateDrop: (templateId: string) => void;
+  /** Availability shading: 'blocked' = approved PTO/exception vetoes the day,
+   *  'unavailable' = outside the associate's weekly windows. Lowest-priority
+   *  background — never shown over drag/conflict/template tints. */
+  fitStatus?: 'blocked' | 'unavailable' | null;
 }) {
   const { isOver, setNodeRef } = useDroppable({ id: cellId });
   const [tplOver, setTplOver] = useState(false);
+  // Mouse drag-a-range → create a shift with those exact times. Anchor
+  // lives in a ref (no re-render per move); the highlight rect is state.
+  const dragAnchor = useRef<number | null>(null);
+  const dragHandled = useRef(false);
+  const [dragRange, setDragRange] = useState<{ a: number; b: number } | null>(null);
+
+  const minuteAtPointer = (e: React.PointerEvent<HTMLDivElement>): number => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    const raw = snap(y / PX_PER_MIN + DAY_START_HOUR * 60);
+    return Math.min(DAY_END_HOUR * 60, Math.max(DAY_START_HOUR * 60, raw));
+  };
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!canManage || !onCreateRange) return;
+    if (e.pointerType !== 'mouse' || e.button !== 0) return;
+    if (e.target !== e.currentTarget) return;
+    dragAnchor.current = minuteAtPointer(e);
+    dragHandled.current = false;
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (dragAnchor.current === null) return;
+    const cur = minuteAtPointer(e);
+    if (cur !== dragAnchor.current || dragRange) {
+      setDragRange({
+        a: Math.min(dragAnchor.current, cur),
+        b: Math.max(dragAnchor.current, cur),
+      });
+    }
+  };
+
+  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (dragAnchor.current === null) return;
+    const anchor = dragAnchor.current;
+    const cur = minuteAtPointer(e);
+    dragAnchor.current = null;
+    setDragRange(null);
+    const lo = Math.min(anchor, cur);
+    const hi = Math.max(anchor, cur);
+    if (hi - lo >= SNAP_MIN && onCreateRange) {
+      // A real drag — suppress the click that follows pointerup.
+      dragHandled.current = true;
+      const start = new Date(dayStart);
+      start.setHours(0, 0, 0, 0);
+      start.setMinutes(start.getMinutes() + lo);
+      const end = new Date(dayStart);
+      end.setHours(0, 0, 0, 0);
+      end.setMinutes(end.getMinutes() + hi);
+      onCreateRange(start, end, associateId);
+    }
+  };
   const onNativeDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     if (!canManage) return;
     if (!e.dataTransfer.types.includes(TEMPLATE_MIME)) return;
@@ -574,6 +747,11 @@ function TimeCell({
 
   const onClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!canManage) return;
+    if (dragHandled.current) {
+      // The pointerup of a drag-create already handled this gesture.
+      dragHandled.current = false;
+      return;
+    }
     if (e.target !== e.currentTarget) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const y = e.clientY - rect.top;
@@ -588,12 +766,26 @@ function TimeCell({
     <div
       ref={setNodeRef}
       onClick={onClick}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
       onDragOver={onNativeDragOver}
       onDragLeave={onNativeDragLeave}
       onDrop={onNativeDrop}
+      title={
+        fitStatus === 'blocked'
+          ? 'Approved time off / unavailable this day'
+          : fitStatus === 'unavailable'
+            ? 'Outside weekly availability'
+            : undefined
+      }
       className={cn(
         'relative border-b border-r border-navy-secondary cursor-pointer',
         isToday && 'bg-gold/[0.03]',
+        // Availability fit — lowest-priority tint. Listed before (and gated
+        // against) the drag/conflict/template backgrounds so those always win.
+        fitStatus === 'blocked' && !isOver && !isConflictTarget && !tplOver && 'bg-alert/[0.07]',
+        fitStatus === 'unavailable' && !isOver && !isConflictTarget && !tplOver && 'bg-silver/[0.05]',
         isConflictTarget && !isOver && 'bg-alert/15',
         isConflictTarget && isOver && 'bg-alert/30 outline outline-1 outline-alert/60 -outline-offset-1',
         !isConflictTarget && isOver && 'bg-gold/15 outline outline-1 outline-gold/40 -outline-offset-1',
@@ -607,6 +799,16 @@ function TimeCell({
         backgroundSize: `100% ${PX_PER_HOUR}px`,
       }}
     >
+      {dragRange && (
+        <div
+          aria-hidden
+          className="absolute left-0.5 right-0.5 z-10 rounded-sm border border-gold/60 bg-gold/20 pointer-events-none"
+          style={{
+            top: (dragRange.a - DAY_START_HOUR * 60) * PX_PER_MIN,
+            height: Math.max(2, (dragRange.b - dragRange.a) * PX_PER_MIN),
+          }}
+        />
+      )}
       {shifts.map((s) => (
         <TimeChip
           key={s.id}

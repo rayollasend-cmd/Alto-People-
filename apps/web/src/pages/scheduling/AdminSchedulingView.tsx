@@ -19,6 +19,7 @@ import {
   Printer,
   Send,
   Sparkles,
+  Pencil,
   UserPlus,
   Wand2,
   X,
@@ -46,6 +47,7 @@ import {
   createShiftTemplate,
   deleteShiftTemplate,
   getAutoFillCandidates,
+  getAvailabilityOverview,
   getSchedulingKpis,
   getShiftConflicts,
   listSchedulingAssociates,
@@ -508,6 +510,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const [associates, setAssociates] = useState<AssociateLite[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [createInitialDate, setCreateInitialDate] = useState<Date | null>(null);
+  // End of a drag-created range (time-grid drag-to-create); null = default.
+  const [createInitialEnd, setCreateInitialEnd] = useState<Date | null>(null);
   const [createInitialAssociateId, setCreateInitialAssociateId] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
@@ -684,52 +688,69 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   }, []);
   const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
-  const onCopyWeekToNext = async () => {
+  // "Repeat this week" — copies the visible week forward 1..12 weeks in one
+  // action, so staffing a month/quarter isn't a click-per-week grind.
+  const [copyWeeksOpen, setCopyWeeksOpen] = useState(false);
+  const [copyWeekCount, setCopyWeekCount] = useState('1');
+  const onRepeatWeeks = async () => {
     if (copyingWeek) return;
-    if (
-      !window.confirm(
-        "Copy every non-cancelled shift from this week into next week — keeping each shift's associate? Copies land as drafts you can review and edit before publishing."
-      )
-    )
+    const n = Math.trunc(Number(copyWeekCount));
+    if (!Number.isFinite(n) || n < 1 || n > 12) {
+      toast.error('Enter how many weeks to repeat into (1–12).');
       return;
+    }
     setCopyingWeek(true);
     try {
-      const target = shiftWeek(weekStart, 1);
-      const result = await copyWeek({
-        sourceWeekStart: weekStart.toISOString(),
-        targetWeekStart: target.toISOString(),
-        preserveAssignments: true,
-      });
+      let created = 0;
+      let assigned = 0;
+      let skippedTotal = 0;
+      for (let i = 1; i <= n; i++) {
+        const target = shiftWeek(weekStart, i);
+        const r = await copyWeek({
+          sourceWeekStart: weekStart.toISOString(),
+          targetWeekStart: target.toISOString(),
+          preserveAssignments: true,
+        });
+        created += r.created;
+        assigned += r.assigned ?? 0;
+        skippedTotal += r.skipped;
+      }
       toast.success(
-        result.created === 0
+        created === 0
           ? 'Nothing to copy — this week is empty.'
-          : `Copied ${result.created} shift${result.created === 1 ? '' : 's'} to next week${
-              result.assigned ? `, ${result.assigned} pre-assigned` : ''
-            } (DRAFT).${
-              result.skipped
-                ? ` ${result.skipped} shift${result.skipped === 1 ? '' : 's'} exceeded the batch cap and did NOT copy.`
+          : `Copied ${created} shift${created === 1 ? '' : 's'} across the next ${n} week${
+              n === 1 ? '' : 's'
+            }${assigned ? `, ${assigned} pre-assigned` : ''} (DRAFT).${
+              skippedTotal
+                ? ` ${skippedTotal} shift${skippedTotal === 1 ? '' : 's'} exceeded the batch cap and did NOT copy.`
                 : ''
-            }`
+            }`,
       );
-      // Hop to the target week so HR can review the new drafts immediately.
-      setWeekStart(target);
+      setCopyWeeksOpen(false);
+      // Hop to the first target week so HR can review the new drafts.
+      setWeekStart(shiftWeek(weekStart, 1));
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Copy failed.');
     } finally {
       setCopyingWeek(false);
     }
   };
-  // The KPI strip is always "this week" stats. `shifts` changing is a proxy for
-  // "something happened" — but it also fires on every week/day navigation
-  // (which doesn't change this-week data) and on every keystroke-free filter
-  // change, so naively it double-fetched on every action. Debounce so a burst
-  // (bulk action, rapid paging) collapses to one request, and guard with a
-  // sequence id so a slow earlier response can't overwrite a newer one.
+  // The KPI strip follows the RANGE BEING PLANNED (the visible week), not
+  // the calendar's current week — stats about a week you're not looking at
+  // are dead weight while building a future one. `shifts` changing is a
+  // proxy for "something happened"; debounce so a burst (bulk action, rapid
+  // paging) collapses to one request, and guard with a sequence id so a
+  // slow earlier response can't overwrite a newer one.
   const kpiSeq = useRef(0);
   useEffect(() => {
     const seq = ++kpiSeq.current;
     const t = window.setTimeout(() => {
-      getSchedulingKpis()
+      getSchedulingKpis({
+        ...(view === 'week'
+          ? { from: weekStart.toISOString(), to: weekEnd.toISOString() }
+          : {}),
+        ...(clientFilter ? { clientId: clientFilter } : {}),
+      })
         .then((k) => {
           if (seq === kpiSeq.current) setKpis(k);
         })
@@ -738,7 +759,53 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         });
     }, 300);
     return () => window.clearTimeout(t);
-  }, [shifts]);
+  }, [shifts, view, weekStart, weekEnd, clientFilter]);
+
+  // Last position used in the create dialog this session — most weeks
+  // schedule one role at a time, so it prefills the next create.
+  const lastPositionRef = useRef('');
+
+  // Mobile action sheet — a tapped row on the phone list gets the full
+  // action set (edit/assign/publish/cancel/delete), not just Assign.
+  const [mobileAction, setMobileAction] = useState<Shift | null>(null);
+
+  // Availability/PTO fit for the visible range — shades grid cells where
+  // an associate is on approved time off or outside their weekly windows,
+  // BEFORE a shift gets dropped on them.
+  const [availabilityFit, setAvailabilityFit] = useState<Map<
+    string,
+    { dows: Set<number>; blocked: Set<string> }
+  > | null>(null);
+  useEffect(() => {
+    if (!canManage || (view !== 'week' && view !== 'day')) {
+      setAvailabilityFit(null);
+      return;
+    }
+    let cancelled = false;
+    const from = view === 'week' ? weekStart : dayAnchor;
+    const to = view === 'week' ? weekEnd : addDaysLocal(dayAnchor, 1);
+    getAvailabilityOverview(from.toISOString(), to.toISOString())
+      .then((r) => {
+        if (cancelled) return;
+        setAvailabilityFit(
+          new Map(
+            r.associates.map((a) => [
+              a.associateId,
+              {
+                dows: new Set(a.windows.map((w) => w.dayOfWeek)),
+                blocked: new Set(a.blockedDays),
+              },
+            ]),
+          ),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setAvailabilityFit(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canManage, view, weekStart, weekEnd, dayAnchor]);
 
   // Dialog state — replaces window.prompt + window.confirm.
   const [assignTarget, setAssignTarget] = useState<Shift | null>(null);
@@ -970,13 +1037,17 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     setView('week');
   }, [allDrafts]);
 
-  // Unassigned OPEN shifts in the visible week (powers the auto-schedule ribbon).
+  // Unassigned OPEN *or DRAFT* shifts in the visible week (powers the
+  // auto-schedule ribbon). Drafts are the normal state of a week being
+  // built, so excluding them meant the ribbon never appeared in the
+  // build → auto-fill → publish flow.
   const openInWeek = useMemo(() => {
     if (!shifts || view === 'list') return 0;
     const startMs = weekStart.getTime();
     const endMs = weekEnd.getTime();
     return shifts.filter((s) => {
-      if (s.status !== 'OPEN' || s.assignedAssociateId) return false;
+      if (s.assignedAssociateId) return false;
+      if (s.status !== 'OPEN' && s.status !== 'DRAFT') return false;
       const t = new Date(s.startsAt).getTime();
       return t >= startMs && t < endMs;
     }).length;
@@ -1075,7 +1146,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     if (publishing) return;
     const ok = await confirm({
       title: `Publish ${draftsInWeek} draft shift${draftsInWeek === 1 ? '' : 's'}?`,
-      description: `Assigned associates will be notified. Drafts inside a fair-workweek state's 14-day notice window will be skipped — open those individually to add a late-notice reason before publishing.`,
+      description: `Assigned associates will be notified. Drafts inside a fair-workweek state's 14-day notice window will be skipped — open those individually (Edit) to add a late-notice reason before publishing.${
+        listTruncated
+          ? ' WARNING: this range is showing a truncated shift list — narrow the range first so you can see everything you are publishing.'
+          : ''
+      }`,
       confirmLabel: 'Publish week',
     });
     if (!ok) return;
@@ -1107,9 +1182,9 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const onAutoScheduleWeek = async () => {
     if (autoScheduling) return;
     const ok = await confirm({
-      title: `Auto-schedule ${openInWeek} open shift${openInWeek === 1 ? '' : 's'}?`,
+      title: `Auto-schedule ${openInWeek} unassigned shift${openInWeek === 1 ? '' : 's'}?`,
       description:
-        'Picks the best-scoring associate for each open shift this week (availability, no conflicts, under 40h, not on PTO). Earlier shifts get first pick. Assignments stay private until you publish the week.',
+        'Picks the best-scoring associate for each unassigned shift this week (availability, no conflicts, under 40h, not on PTO). Earlier shifts get first pick. Drafts stay drafts — nothing is visible to associates until you publish the week.',
       confirmLabel: 'Auto-schedule',
     });
     if (!ok) return;
@@ -1251,11 +1326,28 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const onShiftResize = useCallback(
     async (s: Shift, newEndsAt: Date) => {
       const endsAt = newEndsAt.toISOString();
+      const prevEndsAt = s.endsAt;
       patchShift(s.id, { endsAt }); // optimistic — chip resizes instantly
       try {
         const updated = await updateShift(s.id, { endsAt });
         replaceShift(updated);
-        toast.success('Shift duration updated.');
+        toast.success('Shift duration updated.', {
+          action: {
+            label: 'Undo',
+            onClick: () => {
+              void updateShift(s.id, { endsAt: prevEndsAt })
+                .then(async () => {
+                  toast.success('Resize undone.');
+                  await refresh();
+                })
+                .catch((err) =>
+                  toast.error(
+                    err instanceof ApiError ? err.message : 'Undo failed.',
+                  ),
+                );
+            },
+          },
+        });
       } catch (err) {
         toast.error(err instanceof ApiError ? err.message : 'Resize failed.');
         await refresh(); // roll back to server truth
@@ -1337,6 +1429,12 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       }
       patchShift(s.id, patch);
 
+      // Snapshot for undo BEFORE anything is written.
+      const undoSnapshot = {
+        startsAt: s.startsAt,
+        endsAt: s.endsAt,
+        assignedAssociateId: s.assignedAssociateId,
+      };
       try {
         let updated = s;
         if (dateChanged) {
@@ -1352,7 +1450,40 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               : await assignShift(s.id, { associateId: target.associateId });
         }
         replaceShift(updated); // reconcile with server truth
-        toast.success('Shift moved.');
+        // A mis-drop is one click away from undone — no Edit-dialog round
+        // trip to put a chip back where it was.
+        toast.success('Shift moved.', {
+          action: {
+            label: 'Undo',
+            onClick: () => {
+              void (async () => {
+                try {
+                  if (dateChanged) {
+                    await updateShift(s.id, {
+                      startsAt: undoSnapshot.startsAt,
+                      endsAt: undoSnapshot.endsAt,
+                    });
+                  }
+                  if (assigneeChanged) {
+                    if (undoSnapshot.assignedAssociateId === null) {
+                      await unassignShift(s.id);
+                    } else {
+                      await assignShift(s.id, {
+                        associateId: undoSnapshot.assignedAssociateId,
+                      });
+                    }
+                  }
+                  toast.success('Move undone.');
+                  await refresh();
+                } catch (err) {
+                  toast.error(
+                    err instanceof ApiError ? err.message : 'Undo failed.',
+                  );
+                }
+              })();
+            },
+          },
+        });
       } catch (err) {
         toast.error(err instanceof ApiError ? err.message : 'Move failed.');
         await refresh(); // roll back — a partial write may have stuck
@@ -1602,18 +1733,27 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           clients={clients}
           associates={associates}
           initialDate={createInitialDate}
+          initialEnd={createInitialEnd}
           initialAssociateId={createInitialAssociateId}
+          initialClientId={clientFilter || null}
+          initialLocationId={locationFilter || null}
+          initialPosition={lastPositionRef.current || null}
+          onPositionUsed={(p) => {
+            lastPositionRef.current = p;
+          }}
           team={selectedTeam}
           onOpenChange={(o) => {
             setShowCreate(o);
             if (!o) {
               setCreateInitialDate(null);
+              setCreateInitialEnd(null);
               setCreateInitialAssociateId(null);
             }
           }}
           onCreated={() => {
             setShowCreate(false);
             setCreateInitialDate(null);
+            setCreateInitialEnd(null);
             setCreateInitialAssociateId(null);
             toast.success('Shift created.');
             refresh();
@@ -1719,12 +1859,12 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={onCopyWeekToNext}
+                onClick={() => setCopyWeeksOpen(true)}
                 loading={copyingWeek}
-                title="Copy this week's shifts — associates and all — into next week as drafts"
+                title="Repeat this week's shifts — associates and all — into the next N weeks as drafts"
               >
                 <Copy className="h-3.5 w-3.5" />
-                Copy to next week
+                Repeat week…
               </Button>
             )}
             <div className="ml-auto inline-flex rounded-md border border-navy-secondary p-0.5 bg-navy-secondary/30">
@@ -2047,11 +2187,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             dayAnchor={dayAnchor}
             displayTimeZone={gridTimeZone}
             canManage={canManage}
-            onShiftClick={(s) => {
-              if (s.status === 'OPEN' || s.status === 'DRAFT' || s.status === 'ASSIGNED') {
-                setAssignTarget(s);
-              }
-            }}
+            onShiftClick={(s) => setMobileAction(s)}
             onPrevDay={() =>
               setDayAnchor(new Date(dayAnchor.getTime() - 24 * 60 * 60 * 1000))
             }
@@ -2090,6 +2226,13 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           }}
           onCellCreate={(start, associateId) => {
             setCreateInitialDate(start);
+            setCreateInitialEnd(null);
+            setCreateInitialAssociateId(associateId);
+            setShowCreate(true);
+          }}
+          onCellCreateRange={(start, end, associateId) => {
+            setCreateInitialDate(start);
+            setCreateInitialEnd(end);
             setCreateInitialAssociateId(associateId);
             setShowCreate(true);
           }}
@@ -2098,6 +2241,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           quickActions={quickActions}
           selectedIds={selectedIds}
           onTemplateDrop={onTemplateDrop}
+          availabilityFit={availabilityFit}
         />
         </div>
       )}
@@ -2111,6 +2255,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           displayTimeZone={gridTimeZone}
           canManage={canManage}
           showAllAssociates={showAllAssociates}
+          availabilityFit={availabilityFit}
           onShiftClick={(s, e) => {
             if (e.shiftKey || e.metaKey || e.ctrlKey) {
               toggleSelection(s.id);
@@ -2208,10 +2353,12 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         />
       )}
 
-      {view === 'list' && listTruncated && (
-        <ErrorBanner severity="warning" className="mb-3">
-          Showing the first 200 shifts — more match this filter than fit. Narrow
-          the date range, client, or status to see the rest.
+      {listTruncated && (
+        <ErrorBanner severity="warning" className="mb-3 no-print">
+          Showing only the first 500 shifts — more match this range than fit,
+          so days may look emptier than they are and totals are incomplete.
+          Narrow the range or filter by client/location before trusting counts
+          or publishing.
         </ErrorBanner>
       )}
 
@@ -2336,6 +2483,123 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         }}
       />
 
+      {/* Mobile action sheet — every desktop quick action, one tap away. */}
+      <Dialog open={mobileAction !== null} onOpenChange={(o) => !o && setMobileAction(null)}>
+        <DialogContent className="max-w-sm">
+          {mobileAction && (
+            <>
+              <DialogHeader>
+                <DialogTitle>{mobileAction.position}</DialogTitle>
+                <DialogDescription>
+                  {mobileAction.clientName ?? '—'} · {fmt(mobileAction.startsAt)} ·{' '}
+                  {mobileAction.status}
+                  {mobileAction.assignedAssociateName
+                    ? ` · ${mobileAction.assignedAssociateName}`
+                    : ''}
+                </DialogDescription>
+              </DialogHeader>
+              {(() => {
+                const s = mobileAction;
+                const terminal = s.status === 'COMPLETED' || s.status === 'CANCELLED';
+                const act = (fn: (shift: Shift) => Promise<void> | void) => () => {
+                  setMobileAction(null);
+                  void fn(s);
+                };
+                return (
+                  <div className="grid grid-cols-2 gap-2">
+                    {!terminal && (
+                      <Button variant="secondary" onClick={act(quickActions.onEdit)}>
+                        <Pencil className="h-3.5 w-3.5" />
+                        Edit
+                      </Button>
+                    )}
+                    {!terminal && (
+                      <Button variant="secondary" onClick={act(quickActions.onAssign)}>
+                        <UserPlus className="h-3.5 w-3.5" />
+                        {s.assignedAssociateId ? 'Reassign' : 'Assign'}
+                      </Button>
+                    )}
+                    {!terminal && s.assignedAssociateId && (
+                      <Button variant="ghost" onClick={act(quickActions.onUnassign)}>
+                        Unassign
+                      </Button>
+                    )}
+                    {s.status === 'DRAFT' && (
+                      <Button variant="ghost" onClick={act(quickActions.onPublish)}>
+                        Publish
+                      </Button>
+                    )}
+                    {(s.status === 'OPEN' || s.status === 'ASSIGNED') && (
+                      <Button variant="ghost" onClick={act(quickActions.onUnpublish)}>
+                        Move to draft
+                      </Button>
+                    )}
+                    {!terminal && (
+                      <Button variant="ghost" onClick={act(quickActions.onDuplicate)}>
+                        <Copy className="h-3.5 w-3.5" />
+                        Duplicate
+                      </Button>
+                    )}
+                    {!terminal && (
+                      <Button
+                        variant="ghost"
+                        className="text-alert hover:text-alert"
+                        onClick={act(quickActions.onCancel)}
+                      >
+                        Cancel shift
+                      </Button>
+                    )}
+                    <Button
+                      variant="ghost"
+                      className="text-alert hover:text-alert"
+                      onClick={act(quickActions.onDelete)}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                );
+              })()}
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Repeat-this-week dialog — 1..12 weeks forward as drafts. */}
+      <Dialog open={copyWeeksOpen} onOpenChange={setCopyWeeksOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Repeat this week</DialogTitle>
+            <DialogDescription>
+              Copies every non-cancelled shift from the visible week — keeping
+              each shift&rsquo;s associate — into the following weeks as
+              drafts you review and publish. Running it twice for the same
+              weeks creates duplicates.
+            </DialogDescription>
+          </DialogHeader>
+          <Field label="Repeat into the next … weeks" required>
+            {(p) => (
+              <Input
+                type="number"
+                min={1}
+                max={12}
+                step={1}
+                value={copyWeekCount}
+                onChange={(e) => setCopyWeekCount(e.target.value)}
+                {...p}
+              />
+            )}
+          </Field>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setCopyWeeksOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={onRepeatWeeks} loading={copyingWeek}>
+              Copy shifts
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Manage the standing crews at the selected work site. */}
       {clientFilter && locationFilter && (
         <ShiftTeamsDialog
@@ -2400,6 +2664,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           open={showTemplates}
           onOpenChange={setShowTemplates}
           clients={clients}
+          activeClientId={clientFilter || null}
           weekStart={weekStart}
           onApplied={() => {
             toast.success('Template applied as a draft shift.');
@@ -2554,6 +2819,32 @@ function AssignDialog({
     }
   }, [target]);
 
+  // Ranked fit for THIS shift — availability, conflicts, PTO, weekly hours.
+  // Shown as the default list so assigning starts from "who fits" instead
+  // of a blind name search.
+  const [candidates, setCandidates] = useState<AutoFillCandidate[] | null>(null);
+  useEffect(() => {
+    setCandidates(null);
+    if (!target) return;
+    let cancelled = false;
+    getAutoFillCandidates(target.id)
+      .then((r) => {
+        if (!cancelled) {
+          setCandidates([...r.candidates].sort((a, b) => b.score - a.score));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setCandidates([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [target]);
+  const candidateById = useMemo(
+    () => new Map((candidates ?? []).map((c) => [c.associateId, c])),
+    [candidates],
+  );
+
   // Live conflict check on the picked associate — debounced.
   useEffect(() => {
     if (!target || !picked) {
@@ -2624,10 +2915,21 @@ function AssignDialog({
   };
 
   // Substring match across "first last" and email. Lowercase once per
-  // query so we're not normalizing per-row on every keystroke.
+  // query so we're not normalizing per-row on every keystroke. With no
+  // query, the ranked fit list leads (best candidates first); typing
+  // searches the whole roster.
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return associates.slice(0, 10);
+    if (!q) {
+      if (candidates && candidates.length > 0) {
+        const byId = new Map(associates.map((a) => [a.id, a]));
+        const ranked = candidates
+          .map((c) => byId.get(c.associateId))
+          .filter((a): a is AssociateLite => !!a);
+        if (ranked.length > 0) return ranked.slice(0, 10);
+      }
+      return associates.slice(0, 10);
+    }
     return associates
       .filter((a) => {
         const full = `${a.firstName} ${a.lastName}`.toLowerCase();
@@ -2638,7 +2940,7 @@ function AssignDialog({
         );
       })
       .slice(0, 12);
-  }, [query, associates]);
+  }, [query, associates, candidates]);
 
   // Keep highlight in range when results change.
   useEffect(() => {
@@ -2770,9 +3072,45 @@ function AssignDialog({
                             {a.email}
                           </div>
                         </div>
+                        {(() => {
+                          const c = candidateById.get(a.id);
+                          if (!c) return null;
+                          const hrs =
+                            Math.round((c.weeklyMinutesScheduled / 60) * 10) / 10;
+                          return (
+                            <div className="shrink-0 text-right leading-tight">
+                              <div className="text-[10px] tabular-nums text-silver/80">
+                                {hrs}h wk
+                              </div>
+                              {c.onApprovedTimeOff ? (
+                                <span className="text-[9px] uppercase tracking-wide text-alert">
+                                  PTO
+                                </span>
+                              ) : !c.noConflict ? (
+                                <span className="text-[9px] uppercase tracking-wide text-warning">
+                                  conflict
+                                </span>
+                              ) : c.matchesAvailability ? (
+                                <span className="text-[9px] uppercase tracking-wide text-success">
+                                  fits
+                                </span>
+                              ) : (
+                                <span className="text-[9px] uppercase tracking-wide text-silver/60">
+                                  outside avail.
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </li>
                     ))}
                   </ul>
+                )}
+                {!query.trim() && candidates && candidates.length > 0 && (
+                  <p className="mt-1 text-[10px] text-silver/60">
+                    Best fits first — availability, conflicts, PTO, and weekly
+                    hours considered. Type to search everyone.
+                  </p>
                 )}
                 {query.trim() && matches.length === 0 && (
                   <div className="mt-1 px-3 py-2 text-xs text-silver/70 rounded-md border border-navy-secondary bg-navy">
@@ -3244,6 +3582,11 @@ function EditShiftDialog({
   const [hourlyRate, setHourlyRate] = useState('');
   const [payRate, setPayRate] = useState('');
   const [notes, setNotes] = useState('');
+  // Fair-workweek documentation for changes inside the 14-day notice
+  // window. Hidden until the server demands it (or one is already on
+  // file) so the common case stays uncluttered.
+  const [lateNotice, setLateNotice] = useState('');
+  const [showLateNotice, setShowLateNotice] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   // Pre-fill from the shift each time a new one is opened. Times show in the
@@ -3269,6 +3612,8 @@ function EditShiftDialog({
     setHourlyRate(target.hourlyRate != null ? String(target.hourlyRate) : '');
     setPayRate(target.payRate != null ? String(target.payRate) : '');
     setNotes(target.notes ?? '');
+    setLateNotice(target.lateNoticeReason ?? '');
+    setShowLateNotice(!!target.lateNoticeReason);
     setSubmitting(false);
   }, [target]);
 
@@ -3321,18 +3666,27 @@ function EditShiftDialog({
         hourlyRate: hourlyRate ? Number(hourlyRate) : null,
         payRate: payRate ? Number(payRate) : null,
         notes: notes.trim() || null,
+        ...(lateNotice.trim() ? { lateNoticeReason: lateNotice.trim() } : {}),
       });
       toast.success('Shift updated.');
       onSaved();
     } catch (err) {
+      if (err instanceof ApiError && err.code === 'late_notice_reason_required') {
+        // Reveal the reason field right here instead of dead-ending the
+        // manager — documenting the late change is all the server wants.
+        setShowLateNotice(true);
+        toast.error(
+          'This change lands inside the 14-day fair-workweek notice window — add a late-notice reason below and save again.',
+        );
+        setSubmitting(false);
+        return;
+      }
       const msg =
-        err instanceof ApiError && err.code === 'late_notice_reason_required'
-          ? 'This is a published shift moving inside the 14-day notice window — un-publish it (Move to draft) before re-timing, or keep it outside the window.'
-          : err instanceof ApiError && err.code === 'shift_not_editable'
-            ? 'A completed or cancelled shift can’t be edited.'
-            : err instanceof ApiError
-              ? err.message
-              : 'Update failed.';
+        err instanceof ApiError && err.code === 'shift_not_editable'
+          ? 'A completed or cancelled shift can’t be edited.'
+          : err instanceof ApiError
+            ? err.message
+            : 'Update failed.';
       toast.error(msg);
       setSubmitting(false);
     }
@@ -3429,6 +3783,23 @@ function EditShiftDialog({
           <Field label="Notes (optional)">
             {(p) => <Input value={notes} onChange={(e) => setNotes(e.target.value)} {...p} />}
           </Field>
+          {showLateNotice && (
+            <Field
+              label="Late-notice reason"
+              required
+              hint="Recorded for fair-workweek compliance — why this shift is changing inside the 14-day notice window."
+            >
+              {(p) => (
+                <Input
+                  value={lateNotice}
+                  onChange={(e) => setLateNotice(e.target.value)}
+                  maxLength={500}
+                  placeholder="e.g. Unplanned absence — coverage swap"
+                  {...p}
+                />
+              )}
+            </Field>
+          )}
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose}>
               Cancel
@@ -3450,22 +3821,38 @@ function CreateShiftDialog({
   clients,
   associates,
   initialDate,
+  initialEnd,
   initialAssociateId,
+  initialClientId,
+  initialLocationId,
+  initialPosition,
   team,
   onOpenChange,
   onCreated,
+  onPositionUsed,
 }: {
   open: boolean;
   clients: ClientSummary[];
   /** Schedulable employees, for the multi-assign picker. */
   associates: AssociateLite[];
   initialDate?: Date | null;
+  /** End of a drag-created time range — used instead of the 4h default. */
+  initialEnd?: Date | null;
   /** When set, the created shift is auto-assigned to this associate. */
   initialAssociateId?: string | null;
+  /** The page's active client/location filter — the dialog opens already
+   *  scoped to what the manager is looking at instead of resetting to the
+   *  first client in the org. */
+  initialClientId?: string | null;
+  initialLocationId?: string | null;
+  /** Last position used this session — most weeks schedule one role at a
+   *  time, so re-typing it per shift was pure friction. */
+  initialPosition?: string | null;
   /** Selected shift team — scopes the picker and prefills default times. */
   team?: ShiftTeamData | null;
   onOpenChange: (open: boolean) => void;
   onCreated: () => void;
+  onPositionUsed?: (position: string) => void;
 }) {
   const [clientId, setClientId] = useState(clients[0]?.id ?? '');
   const [locationId, setLocationId] = useState('');
@@ -3519,7 +3906,14 @@ function CreateShiftDialog({
       .then((r) => {
         if (cancelled) return;
         setLocations(r.locations);
-        if (r.locations.length > 0) setLocationId(r.locations[0]!.id);
+        // Honor the page's location filter when it belongs to this client;
+        // otherwise auto-pick the first so single-site clients need no click.
+        const preferred =
+          initialLocationId && clientId === initialClientId
+            ? r.locations.find((l) => l.id === initialLocationId)
+            : undefined;
+        if (preferred) setLocationId(preferred.id);
+        else if (r.locations.length > 0) setLocationId(r.locations[0]!.id);
       })
       .catch(() => {
         if (!cancelled) setLocations([]);
@@ -3527,7 +3921,7 @@ function CreateShiftDialog({
     return () => {
       cancelled = true;
     };
-  }, [clientId, open]);
+  }, [clientId, open, initialClientId, initialLocationId]);
 
   // Scope the multi-assign picker to the chosen client's employees. Without
   // a client we fall back to the page roster prop. (Scoped by client, not
@@ -3559,8 +3953,8 @@ function CreateShiftDialog({
 
   useEffect(() => {
     if (open) {
-      setClientId(clients[0]?.id ?? '');
-      setPosition('');
+      setClientId(initialClientId || clients[0]?.id || '');
+      setPosition(initialPosition ?? '');
       // Pre-fill times: the selected shift team's defaults win (that's the
       // shift being scheduled), else 9–5 — the most common shape for hourly
       // workforce. A calendar-cell open pins the clicked day (and clicked
@@ -3580,8 +3974,12 @@ function CreateShiftDialog({
           initialDate.getHours() !== 0 || initialDate.getMinutes() !== 0;
         if (initHasTime) {
           const start = new Date(initialDate);
-          const end = new Date(initialDate);
-          end.setHours(end.getHours() + 4); // 4h default block off the click
+          // A drag-created range carries its own end; a bare click gets a
+          // 4h default block off the clicked hour.
+          const end = initialEnd
+            ? new Date(initialEnd)
+            : new Date(initialDate);
+          if (!initialEnd) end.setHours(end.getHours() + 4);
           setStartTime(toLocalTimeInput(start));
           setEndTime(toLocalTimeInput(end));
         } else {
@@ -3606,7 +4004,7 @@ function CreateShiftDialog({
       setOpenSlots('0');
       setEmpSearch('');
     }
-  }, [open, clients, initialDate, initialAssociateId, team]);
+  }, [open, clients, initialDate, initialEnd, initialAssociateId, initialClientId, initialPosition, team]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -3673,6 +4071,7 @@ function CreateShiftDialog({
         await createShift(shared);
         toast.success('Shift created.');
       }
+      onPositionUsed?.(position);
       onCreated();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Create failed.');
@@ -4035,18 +4434,22 @@ function TemplatesDialog({
   open,
   onOpenChange,
   clients,
+  activeClientId,
   weekStart,
   onApplied,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   clients: ClientSummary[];
+  /** The page's client filter — global templates apply to THIS client. */
+  activeClientId: string | null;
   weekStart: Date;
   onApplied: () => void;
 }) {
   const [templates, setTemplates] = useState<ShiftTemplate[] | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const confirmDialog = useConfirm();
 
   const refresh = useCallback(async () => {
     try {
@@ -4064,12 +4467,16 @@ function TemplatesDialog({
   const onApply = async (id: string, requiresClient: boolean) => {
     let clientId: string | undefined;
     if (requiresClient) {
-      const fallback = clients[0]?.id;
-      if (!fallback) {
-        toast.error('Create a client first to apply a global template.');
+      // A global template needs a target client: use the one the page is
+      // filtered to — silently defaulting to the first client in the org
+      // created shifts against the wrong company.
+      if (!activeClientId) {
+        toast.error(
+          'Pick a client in the schedule filter first, then apply the global template.',
+        );
         return;
       }
-      clientId = fallback;
+      clientId = activeClientId;
     }
     setPendingId(id);
     try {
@@ -4086,7 +4493,12 @@ function TemplatesDialog({
   };
 
   const onDelete = async (id: string) => {
-    if (!confirm('Delete this template? Existing shifts created from it are not affected.')) return;
+    const ok = await confirmDialog({
+      title: 'Delete this template?',
+      description: 'Existing shifts created from it are not affected.',
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
     setPendingId(id);
     try {
       await deleteShiftTemplate(id);

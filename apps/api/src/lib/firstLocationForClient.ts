@@ -14,11 +14,11 @@ import { HttpError } from '../middleware/error.js';
 export async function firstLocationForClient(
   prisma: PrismaClient,
   clientId: string,
-): Promise<{ id: string }> {
+): Promise<{ id: string; timezone: string }> {
   const loc = await prisma.location.findFirst({
     where: { clientId, deletedAt: null, isActive: true },
     orderBy: { createdAt: 'asc' },
-    select: { id: true },
+    select: { id: true, timezone: true },
   });
   if (!loc) {
     throw new HttpError(

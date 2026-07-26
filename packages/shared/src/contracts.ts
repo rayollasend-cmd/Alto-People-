@@ -1794,6 +1794,32 @@ export const AssociateListResponseSchema = z.object({
 });
 export type AssociateListResponse = z.infer<typeof AssociateListResponseSchema>;
 
+/**
+ * Week-at-a-glance fit data for the scheduling grid: each associate's
+ * weekly availability windows plus the specific days blocked by approved
+ * time off or one-off "can't work" exceptions. Lets the grid shade cells
+ * BEFORE the manager drops a shift on someone who can't take it.
+ */
+export const AvailabilityOverviewResponseSchema = z.object({
+  associates: z.array(
+    z.object({
+      associateId: UuidSchema,
+      windows: z.array(
+        z.object({
+          dayOfWeek: z.number().int().min(0).max(6),
+          startMinute: z.number().int().min(0).max(1439),
+          endMinute: z.number().int().min(0).max(1440),
+        }),
+      ),
+      /** Calendar days (YYYY-MM-DD) vetoed by approved PTO or exceptions. */
+      blockedDays: z.array(z.string()),
+    }),
+  ),
+});
+export type AvailabilityOverviewResponse = z.infer<
+  typeof AvailabilityOverviewResponseSchema
+>;
+
 export const PublishWeekInputSchema = z.object({
   /** ISO; server snaps to local Monday 00:00 of that week. */
   weekStart: z.string().datetime(),

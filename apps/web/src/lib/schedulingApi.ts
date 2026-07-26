@@ -8,6 +8,7 @@ import type {
   AvailabilityExceptionListResponse,
   AvailabilityException,
   AvailabilityListResponse,
+  AvailabilityOverviewResponse,
   AvailabilityReplaceInput,
   MyShiftHistoryResponse,
   OpenShiftClaim,
@@ -361,6 +362,17 @@ export function listSchedulingAssociates(
   const qs = p.toString();
   return apiFetch<AssociateListResponse>(
     `/scheduling/associates${qs ? `?${qs}` : ''}`,
+  );
+}
+
+/** Fit data (availability windows + PTO-blocked days) for the visible range. */
+export function getAvailabilityOverview(
+  from: string,
+  to: string,
+): Promise<AvailabilityOverviewResponse> {
+  const p = new URLSearchParams({ from, to });
+  return apiFetch<AvailabilityOverviewResponse>(
+    `/scheduling/availability-overview?${p.toString()}`,
   );
 }
 

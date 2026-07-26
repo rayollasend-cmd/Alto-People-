@@ -890,6 +890,116 @@ describe('POST /scheduling/copy-week', () => {
   });
 });
 
+describe('POST /scheduling/auto-schedule-week — drafts', () => {
+  it('assigns an unassigned DRAFT and keeps it DRAFT (publish-week stays the gate)', async () => {
+    const client = await createClient();
+    const maria = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    await createUser({ role: 'ASSOCIATE', associateId: maria.id });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    // A DST-free week; the shift is a Monday 9–17.
+    const draft = await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        position: 'Server',
+        startsAt: new Date('2026-06-08T13:00:00Z'),
+        endsAt: new Date('2026-06-08T21:00:00Z'),
+        status: 'DRAFT',
+      },
+    });
+
+    const res = await a.post('/scheduling/auto-schedule-week').send({
+      weekStart: '2026-06-08T00:00:00Z',
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.assigned).toBe(1);
+
+    const after = await prisma.shift.findUniqueOrThrow({ where: { id: draft.id } });
+    expect(after.assignedAssociateId).toBe(maria.id);
+    // Auto-filled drafts must stay invisible to associates until publish.
+    expect(after.status).toBe('DRAFT');
+  });
+});
+
+describe('GET /scheduling/availability-overview', () => {
+  it('returns weekly windows and PTO/exception-blocked days per associate', async () => {
+    const maria = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    await createUser({ role: 'ASSOCIATE', associateId: maria.id });
+    await prisma.associateAvailability.create({
+      data: { associateId: maria.id, dayOfWeek: 1, startMinute: 480, endMinute: 1020 },
+    });
+    await prisma.timeOffRequest.create({
+      data: {
+        associateId: maria.id,
+        category: 'VACATION',
+        startDate: new Date('2026-06-10'),
+        endDate: new Date('2026-06-11'),
+        requestedMinutes: 960,
+        status: 'APPROVED',
+      },
+    });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const res = await a.get(
+      '/scheduling/availability-overview?from=2026-06-08T00:00:00Z&to=2026-06-15T00:00:00Z',
+    );
+    expect(res.status).toBe(200);
+    const row = res.body.associates.find(
+      (x: { associateId: string }) => x.associateId === maria.id,
+    );
+    expect(row).toBeTruthy();
+    expect(row.windows).toEqual([
+      { dayOfWeek: 1, startMinute: 480, endMinute: 1020 },
+    ]);
+    expect(row.blockedDays).toEqual(
+      expect.arrayContaining(['2026-06-10', '2026-06-11']),
+    );
+  });
+
+  it('rejects a missing or oversized range', async () => {
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    expect((await a.get('/scheduling/availability-overview')).status).toBe(400);
+    const wide = await a.get(
+      '/scheduling/availability-overview?from=2026-01-01T00:00:00Z&to=2026-06-01T00:00:00Z',
+    );
+    expect(wide.status).toBe(400);
+  });
+});
+
+describe('POST /scheduling/templates/:id/apply — site-timezone times', () => {
+  it('stamps template minutes as wall-clock at the site, not server-local', async () => {
+    const client = await createClient();
+    // Default Location timezone is America/New_York.
+    await prisma.location.create({
+      data: { clientId: client.id, name: 'Front Beach' },
+    });
+    const tpl = await prisma.shiftTemplate.create({
+      data: {
+        clientId: client.id,
+        name: 'Wed opener',
+        position: 'Server',
+        dayOfWeek: 3, // Wednesday
+        startMinute: 540, // 9:00
+        endMinute: 1020, // 17:00
+      },
+    });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const res = await a.post(`/scheduling/templates/${tpl.id}/apply`).send({
+      weekStart: '2026-06-08T00:00:00Z',
+    });
+    expect(res.status).toBe(201);
+    // Week containing Jun 8 00:00Z (= Jun 7 EDT evening → site-local week of
+    // Sun Jun 7); Wednesday = Jun 10. 9:00 EDT = 13:00Z, machine-tz-agnostic.
+    expect(new Date(res.body.startsAt).toISOString()).toBe('2026-06-10T13:00:00.000Z');
+    expect(new Date(res.body.endsAt).toISOString()).toBe('2026-06-10T21:00:00.000Z');
+  });
+});
+
 describe('Shift teams', () => {
   async function seedSite() {
     const client = await createClient();

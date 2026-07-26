@@ -164,6 +164,14 @@ interface Props {
   onTemplateDrop: (templateId: string, dayStart: Date, associateId: string | null) => void;
   /** When true, render every associate as a row (Sling default); otherwise only those with shifts. */
   showAllAssociates: boolean;
+  /**
+   * Availability/PTO shading per associate.
+   *  - `dows`: day-of-week numbers (0=Sun) where the associate has ANY
+   *    weekly availability window. Empty set = no data → no shading.
+   *  - `blocked`: local "YYYY-MM-DD" day keys vetoed by approved PTO /
+   *    availability exceptions.
+   */
+  availabilityFit?: Map<string, { dows: Set<number>; blocked: Set<string> }> | null;
 }
 
 /**
@@ -197,6 +205,7 @@ export function WeekCalendarView({
   selectedIds,
   onTemplateDrop,
   showAllAssociates,
+  availabilityFit = null,
 }: Props) {
   const hover = useShiftHoverCard();
   const ctxMenu = useShiftContextMenu();
@@ -459,28 +468,49 @@ export function WeekCalendarView({
           {visibleAssociates.map((a) => {
             const mins = weeklyMinutes.get(a.id) ?? 0;
             const overTime = mins > 40 * 60;
+            const nearOT = !overTime && mins >= 36 * 60;
+            const fit = availabilityFit?.get(a.id);
             return (
-              <Row key={a.id} associate={a} minutes={mins} overTime={overTime}>
-                {days.map((d) => (
-                  <Cell
-                    key={`${a.id}_${d.getTime()}`}
-                    cellId={`cell:${a.id}:${d.getTime()}`}
-                    shifts={byCell.get(`${a.id}_${ymd(d)}`) ?? []}
-                    dayStart={d}
-                    isToday={sameDay(d, today)}
-                    canManage={canManage}
-                    onShiftClick={onShiftClick}
-                    onCreate={() => onCellCreate(d, a.id)}
-                    onShiftResize={onShiftResize}
-                    hoverBind={hover.bind}
-                    onContextMenu={ctxMenu.openFor}
-                    movingShiftId={movingShiftId}
-                    selectedIds={selectedIds}
-                    isConflictTarget={conflictCellKeys.has(`${a.id}_${ymd(d)}`)}
-                    variant="default"
-                    onTemplateDrop={(tplId) => onTemplateDrop(tplId, d, a.id)}
-                  />
-                ))}
+              <Row
+                key={a.id}
+                associate={a}
+                minutes={mins}
+                overTime={overTime}
+                nearOT={nearOT}
+              >
+                {days.map((d) => {
+                  // Availability shading: PTO-blocked days beat
+                  // outside-weekly-availability days. Zero windows = no
+                  // data, not "unavailable everywhere" → no shading.
+                  const shade: 'blocked' | 'outside' | null = fit
+                    ? fit.blocked.has(ymd(d))
+                      ? 'blocked'
+                      : fit.dows.size > 0 && !fit.dows.has(d.getDay())
+                        ? 'outside'
+                        : null
+                    : null;
+                  return (
+                    <Cell
+                      key={`${a.id}_${d.getTime()}`}
+                      cellId={`cell:${a.id}:${d.getTime()}`}
+                      shifts={byCell.get(`${a.id}_${ymd(d)}`) ?? []}
+                      dayStart={d}
+                      isToday={sameDay(d, today)}
+                      canManage={canManage}
+                      onShiftClick={onShiftClick}
+                      onCreate={() => onCellCreate(d, a.id)}
+                      onShiftResize={onShiftResize}
+                      hoverBind={hover.bind}
+                      onContextMenu={ctxMenu.openFor}
+                      movingShiftId={movingShiftId}
+                      selectedIds={selectedIds}
+                      isConflictTarget={conflictCellKeys.has(`${a.id}_${ymd(d)}`)}
+                      variant="default"
+                      onTemplateDrop={(tplId) => onTemplateDrop(tplId, d, a.id)}
+                      availabilityShade={shade}
+                    />
+                  );
+                })}
               </Row>
             );
           })}
@@ -573,11 +603,14 @@ function Row({
   associate,
   minutes,
   overTime,
+  nearOT,
   children,
 }: {
   associate: AssociateLite;
   minutes: number;
   overTime: boolean;
+  /** 36h ≤ weekly hours ≤ 40h — approaching overtime. */
+  nearOT: boolean;
   children: React.ReactNode;
 }) {
   const initials = `${associate.firstName[0] ?? ''}${associate.lastName[0] ?? ''}`.toUpperCase();
@@ -592,7 +625,12 @@ function Row({
             {associate.firstName} {associate.lastName}
           </div>
           <div className="text-[10px] tabular-nums">
-            <span className={overTime ? 'text-warning' : 'text-silver/70'}>
+            <span
+              className={
+                overTime || nearOT ? 'text-warning' : 'text-silver/70'
+              }
+              title={nearOT ? 'Near OT — 36–40h scheduled this week' : undefined}
+            >
               {(minutes / 60).toFixed(1)}h
               {overTime && ' • OT'}
             </span>
@@ -653,6 +691,7 @@ function Cell({
   isConflictTarget,
   variant,
   onTemplateDrop,
+  availabilityShade = null,
 }: {
   cellId: string;
   shifts: Shift[];
@@ -672,6 +711,8 @@ function Cell({
   isConflictTarget: boolean;
   variant: 'default' | 'unassigned';
   onTemplateDrop: (templateId: string) => void;
+  /** Availability tint (associate rows only): PTO-blocked or outside windows. */
+  availabilityShade?: 'blocked' | 'outside' | null;
 }) {
   const { isOver, setNodeRef } = useDroppable({ id: cellId });
   // Native HTML5 drag from the templates rail. Independent of dnd-kit's
@@ -699,10 +740,27 @@ function Cell({
       onDragOver={onNativeDragOver}
       onDragLeave={onNativeDragLeave}
       onDrop={onNativeDrop}
+      title={
+        availabilityShade === 'blocked'
+          ? 'Approved time off / unavailable this day'
+          : availabilityShade === 'outside'
+            ? 'Outside weekly availability'
+            : undefined
+      }
       className={cn(
         'group relative border-b border-r border-navy-secondary p-1 min-h-[44px]',
         'flex flex-col gap-1',
         isToday && 'bg-gold/[0.03]',
+        // Availability/PTO tint — a passive background layer. Wins over the
+        // faint "today" tint but is suppressed whenever a hover/drop/conflict
+        // highlight is active so interaction states keep visual priority
+        // (cn's tailwind-merge lets the last bg-* utility win).
+        availabilityShade === 'blocked' &&
+          !isOver && !isConflictTarget && !tplOver &&
+          'bg-alert/[0.07]',
+        availabilityShade === 'outside' &&
+          !isOver && !isConflictTarget && !tplOver &&
+          'bg-silver/[0.05]',
         // Conflict tint shows under the hover/drop highlight so the manager
         // can still see the gold "you're hovering here" outline on top.
         isConflictTarget && !isOver && 'bg-alert/15',

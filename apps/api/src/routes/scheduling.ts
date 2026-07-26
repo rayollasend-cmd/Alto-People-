@@ -6,6 +6,7 @@ import {
   AutoFillResponseSchema,
   AutoScheduleWeekInputSchema,
   AutoScheduleWeekResponseSchema,
+  AvailabilityOverviewResponseSchema,
   AvailabilityExceptionCreateInputSchema,
   AvailabilityExceptionListResponseSchema,
   AvailabilityListResponseSchema,
@@ -68,8 +69,10 @@ import { netWorkedMinutes, startOfWeekUTC, endOfWeekUTC } from '../lib/timeAnoma
 import {
   DEFAULT_TIMEZONE,
   addDaysInZone,
+  localDateKey,
   zonedDayOfWeek,
   zonedMinutes,
+  zonedWallTimeToUtcInstant,
 } from '../lib/timezone.js';
 import {
   evaluateShiftNotice,
@@ -351,7 +354,9 @@ schedulingRouter.get('/shifts', MANAGE, async (req, res, next) => {
 
     // Fetch one past the cap so we can tell the client the list was truncated
     // (more shifts match than we returned) without an extra count query.
-    const SHIFT_PAGE_CAP = 200;
+    // 500 comfortably covers a large site's week (40 people × 7 shifts);
+    // the calendar views render a warning banner when even this trips.
+    const SHIFT_PAGE_CAP = 500;
     const rows = await prisma.shift.findMany({
       where,
       orderBy: { startsAt: 'asc' },
@@ -3339,6 +3344,84 @@ schedulingRouter.post('/swap-requests/:id/manager-reject', MANAGE, async (req, r
   }
 });
 
+/**
+ * GET /scheduling/availability-overview?from=&to=
+ * Fit data for the visible scheduling range: every ACTIVE associate's
+ * weekly availability windows plus the calendar days blocked by approved
+ * time off or one-off exceptions. The grid uses it to shade cells before
+ * a shift is dropped on someone who can't work it.
+ */
+schedulingRouter.get('/availability-overview', MANAGE, async (req, res, next) => {
+  try {
+    const from = parseDateParam(req.query.from?.toString(), 'from');
+    const to = parseDateParam(req.query.to?.toString(), 'to');
+    if (!from || !to) {
+      throw new HttpError(400, 'range_required', '`from` and `to` are required');
+    }
+    const spanDays = Math.ceil((to.getTime() - from.getTime()) / 86_400_000);
+    if (spanDays <= 0 || spanDays > 62) {
+      throw new HttpError(400, 'range_too_wide', 'Range must be 1–62 days');
+    }
+
+    const [associates, ptoRows, exceptionRows] = await Promise.all([
+      prisma.associate.findMany({
+        where: ACTIVE_ASSOCIATE_FILTER,
+        select: {
+          id: true,
+          availability: {
+            select: { dayOfWeek: true, startMinute: true, endMinute: true },
+          },
+        },
+        take: 1000,
+      }),
+      prisma.timeOffRequest.findMany({
+        take: 2000,
+        where: { status: 'APPROVED', startDate: { lte: to }, endDate: { gte: from } },
+        select: { associateId: true, startDate: true, endDate: true },
+      }),
+      prisma.availabilityException.findMany({
+        take: 2000,
+        where: { date: { gte: from, lte: to } },
+        select: { associateId: true, date: true },
+      }),
+    ]);
+
+    const dayKey = (d: Date): string => d.toISOString().slice(0, 10);
+    const blocked = new Map<string, Set<string>>();
+    const block = (associateId: string, key: string) => {
+      const set = blocked.get(associateId) ?? new Set<string>();
+      set.add(key);
+      blocked.set(associateId, set);
+    };
+    for (const r of ptoRows) {
+      // Expand the (date-only) PTO range into day keys, clamped to the
+      // requested window so a 3-month leave doesn't explode the payload.
+      const start = r.startDate < from ? from : r.startDate;
+      const end = r.endDate > to ? to : r.endDate;
+      for (
+        let t = Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate());
+        t <= end.getTime();
+        t += 86_400_000
+      ) {
+        block(r.associateId, dayKey(new Date(t)));
+      }
+    }
+    for (const x of exceptionRows) block(x.associateId, dayKey(x.date));
+
+    res.json(
+      AvailabilityOverviewResponseSchema.parse({
+        associates: associates.map((a) => ({
+          associateId: a.id,
+          windows: a.availability,
+          blockedDays: [...(blocked.get(a.id) ?? [])],
+        })),
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
 /* ===== Shift teams ======================================================= */
 
 type RawTeam = Prisma.ShiftTeamGetPayload<{
@@ -3731,21 +3814,38 @@ schedulingRouter.post('/templates/:id/apply', MANAGE, async (req, res, next) => 
     // Phase 131 — derive locationId from the resolved client.
     const location = await firstLocationForClient(prisma, clientId);
 
-    // Snap the supplied weekStart to local Sunday at 00:00, then advance
-    // by `dayOfWeek` days. Local time keeps templates intuitive — "9am
-    // Friday" is whatever 9am means in the user's timezone.
-    const anchor = new Date(parsed.data.weekStart);
-    anchor.setHours(0, 0, 0, 0);
-    anchor.setDate(anchor.getDate() - anchor.getDay());
-    const target = new Date(anchor);
-    target.setDate(target.getDate() + tpl.dayOfWeek);
-    const startsAt = new Date(target);
-    startsAt.setHours(0, tpl.startMinute, 0, 0);
-    const endsAt = new Date(target);
-    endsAt.setHours(0, tpl.endMinute, 0, 0);
-    // Overnight templates: endMinute <= startMinute means roll endsAt to
-    // the next day so duration is positive.
-    if (endsAt <= startsAt) endsAt.setDate(endsAt.getDate() + 1);
+    // Template minutes are wall-clock AT THE WORK SITE (same rule as the
+    // drag-drop apply path in the UI). The old server-local setHours() put
+    // shifts at the wrong wall time whenever the server's zone differed
+    // from the site's. Find the site-local Sunday of the week containing
+    // weekStart, advance to the template's dayOfWeek, then build the UTC
+    // instants from site-local wall time.
+    const siteTz = location.timezone ?? DEFAULT_TIMEZONE;
+    const anchorKey = localDateKey(new Date(parsed.data.weekStart), siteTz);
+    const [ay, am, ad] = anchorKey.split('-').map(Number);
+    const anchorUtcMidnight = Date.UTC(ay!, (am ?? 1) - 1, ad ?? 1);
+    // Calendar weekday of a plain date is timezone-independent.
+    const anchorDow = new Date(anchorUtcMidnight).getUTCDay();
+    const targetMs =
+      anchorUtcMidnight + (tpl.dayOfWeek - anchorDow) * 86_400_000;
+    const t = new Date(targetMs);
+    const ty = t.getUTCFullYear();
+    const tm = t.getUTCMonth() + 1;
+    const td = t.getUTCDate();
+    const startsAt = zonedWallTimeToUtcInstant(ty, tm, td, tpl.startMinute, siteTz);
+    let endsAt = zonedWallTimeToUtcInstant(ty, tm, td, tpl.endMinute, siteTz);
+    // Overnight templates: endMinute <= startMinute means the shift ends
+    // the next site-local day.
+    if (endsAt <= startsAt) {
+      const n = new Date(targetMs + 86_400_000);
+      endsAt = zonedWallTimeToUtcInstant(
+        n.getUTCFullYear(),
+        n.getUTCMonth() + 1,
+        n.getUTCDate(),
+        tpl.endMinute,
+        siteTz,
+      );
+    }
 
     const created = await prisma.shift.create({
       data: {
@@ -4160,7 +4260,12 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
 
     const where: Prisma.ShiftWhereInput = {
       ...scopeShifts(req.user!),
-      status: 'OPEN',
+      // Unassigned DRAFTs are the normal state of a week being built (the
+      // create dialog, copy-week, and template-apply all produce drafts) —
+      // auto-schedule must see them or the build→auto-fill→publish flow
+      // never has an auto-fill step. Assigned drafts stay private until
+      // publish-week, which remains the double-booking gate.
+      status: { in: ['OPEN', 'DRAFT'] },
       assignedAssociateId: null,
       startsAt: { gte: start, lt: end },
       ...(parsed.data.clientId ? { clientId: parsed.data.clientId } : {}),
@@ -4364,13 +4469,15 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
       scored.sort((a, b) => b.score - a.score);
       const winner = scored[0].state;
 
-      // Guarded claim: only assign if the shift is STILL open + unassigned.
-      // A concurrent manual assign/cancel between the initial fetch and now
-      // would otherwise be silently overwritten (TOCTOU).
+      // Guarded claim: only assign if the shift is STILL unassigned in its
+      // original status. A concurrent manual assign/cancel between the
+      // initial fetch and now would otherwise be silently overwritten
+      // (TOCTOU). A DRAFT stays DRAFT (assigned-but-unpublished); an OPEN
+      // shift flips to ASSIGNED as before.
       const claim = await prisma.shift.updateMany({
-        where: { id: shift.id, status: 'OPEN', assignedAssociateId: null },
+        where: { id: shift.id, status: shift.status, assignedAssociateId: null },
         data: {
-          status: 'ASSIGNED',
+          status: shift.status === 'DRAFT' ? 'DRAFT' : 'ASSIGNED',
           assignedAssociateId: winner.id,
           assignedAt: new Date(),
         },
