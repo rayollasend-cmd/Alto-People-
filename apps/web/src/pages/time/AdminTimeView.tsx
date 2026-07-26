@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Activity,
   AlertTriangle,
+  CalendarClock,
   CheckCircle2,
   Coffee,
   Download,
@@ -19,6 +20,7 @@ import {
 import type {
   ActiveDashboardEntry,
   PayPeriod,
+  Shift,
   TimeEntry,
   TimeEntryStatus,
 } from '@alto-people/shared';
@@ -43,6 +45,7 @@ import {
 } from '@/lib/timeApi';
 import { listDirectory } from '@/lib/directoryApi';
 import { listClients, listClientLocations } from '@/lib/clientsApi';
+import { listShifts } from '@/lib/schedulingApi';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
@@ -1677,17 +1680,37 @@ function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }
 
-// ISO → value for <input type="datetime-local"> (local wall-clock).
-function isoToLocalInput(iso: string | null): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(
-    d.getHours(),
-  )}:${pad2(d.getMinutes())}`;
+// The drawer edits ONE calendar date plus separate wall-clock times, so the
+// admin never types the same date twice. These helpers split a Date into
+// those pieces and recombine them (local time throughout, matching how the
+// old datetime-local inputs behaved).
+function dateOf(d: Date): string {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 
-function localInputToIso(local: string): string {
-  return new Date(local).toISOString();
+function timeOf(d: Date): string {
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+// dayOffset shifts the calendar day — how an overnight clock-out ("ends
+// next day") is represented without asking for a second date.
+function combineLocal(dateStr: string, timeStr: string, dayOffset = 0): Date {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const [hh, mm] = timeStr.split(':').map(Number);
+  return new Date(y, m - 1, d + dayOffset, hh, mm);
+}
+
+function calendarDayDiff(a: Date, b: Date): number {
+  const a0 = new Date(a.getFullYear(), a.getMonth(), a.getDate()).getTime();
+  const b0 = new Date(b.getFullYear(), b.getMonth(), b.getDate()).getTime();
+  return Math.round((b0 - a0) / 86_400_000);
+}
+
+function fmtDurMin(min: number): string {
+  const whole = Math.round(min);
+  const h = Math.floor(whole / 60);
+  const m = whole % 60;
+  return h > 0 ? `${h}h ${pad2(m)}m` : `${m}m`;
 }
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
@@ -1812,11 +1835,17 @@ function TimeEntryFormDrawer({
       ? { id: entry.associateId, name: entry.associateName ?? '—' }
       : null,
   );
-  const [clockInLocal, setClockInLocal] = useState(
-    mode === 'edit' && entry ? isoToLocalInput(entry.clockInAt) : '',
-  );
-  const [clockOutLocal, setClockOutLocal] = useState(
-    mode === 'edit' && entry ? isoToLocalInput(entry.clockOutAt) : '',
+  const editIn = mode === 'edit' && entry ? new Date(entry.clockInAt) : null;
+  const editOut =
+    mode === 'edit' && entry?.clockOutAt ? new Date(entry.clockOutAt) : null;
+  const [dateStr, setDateStr] = useState(dateOf(editIn ?? new Date()));
+  const [startTime, setStartTime] = useState(editIn ? timeOf(editIn) : '');
+  const [endTime, setEndTime] = useState(editOut ? timeOf(editOut) : '');
+  // Calendar days between clock-in and clock-out. The common overnight case
+  // (end < start) is derived automatically; this only preserves rarer spans
+  // loaded from an existing entry.
+  const [extraDays, setExtraDays] = useState(
+    editIn && editOut ? calendarDayDiff(editIn, editOut) : 0,
   );
   const [notes, setNotes] = useState(
     mode === 'edit' && entry ? entry.notes ?? '' : '',
@@ -1824,18 +1853,18 @@ function TimeEntryFormDrawer({
   const [payRate, setPayRate] = useState(
     mode === 'edit' && entry?.payRate != null ? String(entry.payRate) : '',
   );
-  // Breaks, editable inline like the clock times. Rows with an id mirror
-  // existing BreakEntry rows; id=null rows are new and created on save.
-  // An empty end is only legal on a pre-existing open break (associate
-  // is on it right now).
+  // Breaks, editable inline as wall-clock times on the shift's timeline.
+  // Rows with an id mirror existing BreakEntry rows; id=null rows are new
+  // and created on save. An empty end is only legal on a pre-existing open
+  // break (associate is on it right now).
   const [breakRows, setBreakRows] = useState<
-    Array<{ id: string | null; startLocal: string; endLocal: string }>
+    Array<{ id: string | null; startTime: string; endTime: string }>
   >(
     mode === 'edit' && entry?.breaks
       ? entry.breaks.map((b) => ({
           id: b.id,
-          startLocal: isoToLocalInput(b.startedAt),
-          endLocal: b.endedAt ? isoToLocalInput(b.endedAt) : '',
+          startTime: timeOf(new Date(b.startedAt)),
+          endTime: b.endedAt ? timeOf(new Date(b.endedAt)) : '',
         }))
       : [],
   );
@@ -1845,17 +1874,123 @@ function TimeEntryFormDrawer({
   const isActive = mode === 'edit' && entry?.status === 'ACTIVE';
   const clockOutOptional = mode === 'create' || isActive;
 
+  // End earlier than start means the shift runs past midnight — "+1 day" is
+  // implied, never asked for as a second date.
+  const overnight = !!startTime && !!endTime && endTime < startTime;
+  const endOffset = overnight ? Math.max(1, extraDays) : extraDays;
+  const startDate =
+    dateStr && startTime ? combineLocal(dateStr, startTime) : null;
+  const endDate =
+    dateStr && startTime && endTime
+      ? combineLocal(dateStr, endTime, endOffset)
+      : null;
+
+  // A break time earlier than clock-in belongs to the next calendar day
+  // (overnight shifts).
+  const breakDate = (t: string): Date =>
+    combineLocal(dateStr, t, startTime && t < startTime ? 1 : 0);
+
+  // The associate's rostered shift for the picked day — one click prefills
+  // the times instead of retyping what scheduling already knows.
+  const [schedShift, setSchedShift] = useState<Shift | null>(null);
+  useEffect(() => {
+    if (mode !== 'create' || !assoc || !dateStr) {
+      setSchedShift(null);
+      return;
+    }
+    let cancelled = false;
+    listShifts({
+      from: combineLocal(dateStr, '00:00').toISOString(),
+      to: combineLocal(dateStr, '00:00', 1).toISOString(),
+    })
+      .then((r) => {
+        if (cancelled) return;
+        setSchedShift(
+          r.shifts.find(
+            (s) =>
+              s.assignedAssociateId === assoc.id &&
+              s.status !== 'CANCELLED' &&
+              s.status !== 'DRAFT',
+          ) ?? null,
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setSchedShift(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, assoc, dateStr]);
+
+  const applySchedule = () => {
+    if (!schedShift) return;
+    const s = new Date(schedShift.startsAt);
+    const e = new Date(schedShift.endsAt);
+    setDateStr(dateOf(s));
+    setStartTime(timeOf(s));
+    setEndTime(timeOf(e));
+    setExtraDays(calendarDayDiff(s, e));
+  };
+
+  const setEndNow = () => {
+    const now = new Date();
+    setEndTime(timeOf(now));
+    if (dateStr) {
+      setExtraDays(
+        Math.max(0, calendarDayDiff(combineLocal(dateStr, '00:00'), now)),
+      );
+    }
+  };
+
+  // Drop a break of the given length into the middle of the shift (about
+  // 4 hours in while the associate is still on the clock), snapped to 5
+  // minutes — the admin only adjusts the times if the guess is off.
+  const addQuickBreak = (minutes: number) => {
+    if (!startDate) return;
+    const dur = minutes * 60_000;
+    const s = startDate.getTime();
+    let bs = endDate ? (s + endDate.getTime() - dur) / 2 : s + 4 * 3_600_000;
+    bs = Math.round(bs / 300_000) * 300_000;
+    if (endDate) bs = Math.min(bs, endDate.getTime() - dur);
+    bs = Math.max(bs, s);
+    setBreakRows((rows) => [
+      ...rows,
+      {
+        id: null,
+        startTime: timeOf(new Date(bs)),
+        endTime: timeOf(new Date(bs + dur)),
+      },
+    ]);
+  };
+
+  const totalMin =
+    startDate && endDate
+      ? (endDate.getTime() - startDate.getTime()) / 60_000
+      : null;
+  const breakMin = breakRows.reduce((acc, r) => {
+    if (!r.startTime || !r.endTime || !dateStr || !startTime) return acc;
+    const bs = breakDate(r.startTime).getTime();
+    const be = breakDate(r.endTime).getTime();
+    return be > bs ? acc + (be - bs) / 60_000 : acc;
+  }, 0);
+
   const submit = async () => {
     setErr(null);
     if (mode === 'create' && !assoc) {
       setErr('Pick an associate.');
       return;
     }
-    if (!clockInLocal) {
+    if (!dateStr) {
+      setErr('Date is required.');
+      return;
+    }
+    if (!startTime) {
       setErr('Clock-in time is required.');
       return;
     }
-    if (clockOutLocal && new Date(clockOutLocal) <= new Date(clockInLocal)) {
+    const inDate = combineLocal(dateStr, startTime);
+    const outDate = endTime ? combineLocal(dateStr, endTime, endOffset) : null;
+    if (outDate && outDate.getTime() <= inDate.getTime()) {
       setErr('Clock-out must be after clock-in.');
       return;
     }
@@ -1870,17 +2005,17 @@ function TimeEntryFormDrawer({
     }
     // Validate breaks up front — the entry itself saves first, so a break
     // the server would reject must be caught before anything is written.
-    const inMs = new Date(clockInLocal).getTime();
-    const outMs = clockOutLocal ? new Date(clockOutLocal).getTime() : Date.now();
+    const inMs = inDate.getTime();
+    const outMs = outDate ? outDate.getTime() : Date.now();
     for (const [i, r] of breakRows.entries()) {
       const orig = r.id ? entry?.breaks?.find((b) => b.id === r.id) : undefined;
-      const openBreak = !!orig && orig.endedAt === null && r.endLocal === '';
-      if (!r.startLocal || (!r.endLocal && !openBreak)) {
+      const openBreak = !!orig && orig.endedAt === null && r.endTime === '';
+      if (!r.startTime || (!r.endTime && !openBreak)) {
         setErr(`Break ${i + 1} needs both a start and an end time.`);
         return;
       }
-      const s = new Date(r.startLocal).getTime();
-      const e = r.endLocal ? new Date(r.endLocal).getTime() : outMs;
+      const s = breakDate(r.startTime).getTime();
+      const e = r.endTime ? breakDate(r.endTime).getTime() : outMs;
       if (e <= s) {
         setErr(`Break ${i + 1} must end after it starts.`);
         return;
@@ -1890,9 +2025,9 @@ function TimeEntryFormDrawer({
         return;
       }
       for (const [j, other] of breakRows.entries()) {
-        if (j >= i || !other.startLocal) continue;
-        const os = new Date(other.startLocal).getTime();
-        const oe = other.endLocal ? new Date(other.endLocal).getTime() : outMs;
+        if (j >= i || !other.startTime) continue;
+        const os = breakDate(other.startTime).getTime();
+        const oe = other.endTime ? breakDate(other.endTime).getTime() : outMs;
         if (s < oe && e > os) {
           setErr(`Breaks ${j + 1} and ${i + 1} overlap.`);
           return;
@@ -1905,8 +2040,8 @@ function TimeEntryFormDrawer({
       if (mode === 'create') {
         const created = await adminCreateTimeEntry({
           associateId: assoc!.id,
-          clockInAt: localInputToIso(clockInLocal),
-          clockOutAt: clockOutLocal ? localInputToIso(clockOutLocal) : null,
+          clockInAt: inDate.toISOString(),
+          clockOutAt: outDate ? outDate.toISOString() : null,
           payRate: payRateVal,
           notes: notes.trim() || null,
         });
@@ -1921,19 +2056,19 @@ function TimeEntryFormDrawer({
           );
         } else {
           toast.success(
-            clockOutLocal ? 'Shift logged.' : `Clocked in ${assoc!.name}.`,
+            outDate ? 'Shift logged.' : `Clocked in ${assoc!.name}.`,
           );
         }
       } else {
         entryId = entry!.id;
         await adminEditTimeEntry(entry!.id, {
-          clockInAt: localInputToIso(clockInLocal),
-          clockOutAt: clockOutLocal ? localInputToIso(clockOutLocal) : null,
+          clockInAt: inDate.toISOString(),
+          clockOutAt: outDate ? outDate.toISOString() : null,
           payRate: payRateVal,
           notes: notes.trim() || null,
         });
         toast.success(
-          isActive && clockOutLocal
+          isActive && outDate
             ? `Clocked out ${entry!.associateName ?? 'associate'}.`
             : 'Entry updated.',
         );
@@ -1951,21 +2086,26 @@ function TimeEntryFormDrawer({
         for (const r of breakRows) {
           if (!r.id) {
             await addTimeEntryBreak(entryId, {
-              startedAt: localInputToIso(r.startLocal),
-              endedAt: localInputToIso(r.endLocal),
+              startedAt: breakDate(r.startTime).toISOString(),
+              endedAt: breakDate(r.endTime).toISOString(),
             });
             continue;
           }
           const orig = origBreaks.find((b) => b.id === r.id);
           if (!orig) continue;
-          const startChanged = isoToLocalInput(orig.startedAt) !== r.startLocal;
-          const origEndLocal = orig.endedAt ? isoToLocalInput(orig.endedAt) : '';
-          const endChanged = origEndLocal !== r.endLocal;
+          const startChanged =
+            new Date(orig.startedAt).getTime() !==
+            breakDate(r.startTime).getTime();
+          const endChanged =
+            (orig.endedAt ? new Date(orig.endedAt).getTime() : null) !==
+            (r.endTime ? breakDate(r.endTime).getTime() : null);
           if (!startChanged && !endChanged) continue;
           await updateTimeEntryBreak(r.id, {
-            ...(startChanged ? { startedAt: localInputToIso(r.startLocal) } : {}),
-            ...(endChanged && r.endLocal
-              ? { endedAt: localInputToIso(r.endLocal) }
+            ...(startChanged
+              ? { startedAt: breakDate(r.startTime).toISOString() }
+              : {}),
+            ...(endChanged && r.endTime
+              ? { endedAt: breakDate(r.endTime).toISOString() }
               : {}),
           });
         }
@@ -2014,40 +2154,74 @@ function TimeEntryFormDrawer({
           </div>
         )}
         <div>
-          <FieldLabel>Clock in</FieldLabel>
+          <FieldLabel>Date</FieldLabel>
           <Input
-            type="datetime-local"
-            value={clockInLocal}
-            onChange={(e) => setClockInLocal(e.target.value)}
+            type="date"
+            aria-label="Shift date"
+            value={dateStr}
+            onChange={(e) => setDateStr(e.target.value)}
           />
         </div>
-        <div>
-          <FieldLabel>Clock out{clockOutOptional ? ' (optional)' : ''}</FieldLabel>
-          <div className="flex gap-2">
+        {schedShift && (
+          <button
+            type="button"
+            onClick={applySchedule}
+            className="inline-flex items-center gap-1.5 rounded-full border border-gold/40 bg-gold/10 px-3 py-1.5 text-xs text-gold hover:bg-gold/20"
+          >
+            <CalendarClock className="h-3.5 w-3.5" aria-hidden="true" />
+            Use scheduled shift {fmtTime(schedShift.startsAt)} –{' '}
+            {fmtTime(schedShift.endsAt)}
+          </button>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <FieldLabel>Clock in</FieldLabel>
             <Input
-              type="datetime-local"
-              value={clockOutLocal}
-              onChange={(e) => setClockOutLocal(e.target.value)}
-              className="flex-1"
+              type="time"
+              aria-label="Clock-in time"
+              value={startTime}
+              onChange={(e) => setStartTime(e.target.value)}
             />
-            {clockOutOptional && (
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() =>
-                  setClockOutLocal(isoToLocalInput(new Date().toISOString()))
-                }
-              >
-                Now
-              </Button>
-            )}
           </div>
-          {isActive && (
-            <p className="mt-1 text-xs text-silver">
-              Setting a clock-out clocks this associate out.
-            </p>
-          )}
+          <div>
+            <FieldLabel>
+              Clock out{clockOutOptional ? ' (optional)' : ''}
+            </FieldLabel>
+            <div className="flex items-center gap-2">
+              <Input
+                type="time"
+                aria-label="Clock-out time"
+                value={endTime}
+                onChange={(e) => setEndTime(e.target.value)}
+                className="flex-1"
+              />
+              {clockOutOptional && (
+                <Button type="button" variant="ghost" onClick={setEndNow}>
+                  Now
+                </Button>
+              )}
+            </div>
+          </div>
         </div>
+        {endTime && endOffset > 0 && (
+          <p className="-mt-2 text-xs text-gold">
+            Ends the next day (+{endOffset === 1 ? '1 day' : `${endOffset} days`})
+            {!overnight && extraDays > 0 && (
+              <button
+                type="button"
+                onClick={() => setExtraDays(0)}
+                className="ml-2 underline hover:text-gold-bright"
+              >
+                make it same-day
+              </button>
+            )}
+          </p>
+        )}
+        {isActive && (
+          <p className="-mt-2 text-xs text-silver">
+            Setting a clock-out clocks this associate out.
+          </p>
+        )}
         <div>
           <FieldLabel>Breaks (unpaid)</FieldLabel>
           {breakRows.length === 0 && (
@@ -2057,13 +2231,13 @@ function TimeEntryFormDrawer({
             {breakRows.map((r, i) => (
               <div key={r.id ?? `new-${i}`} className="flex items-center gap-2">
                 <Input
-                  type="datetime-local"
+                  type="time"
                   aria-label={`Break ${i + 1} start`}
-                  value={r.startLocal}
+                  value={r.startTime}
                   onChange={(e) =>
                     setBreakRows((rows) =>
                       rows.map((row, j) =>
-                        j === i ? { ...row, startLocal: e.target.value } : row,
+                        j === i ? { ...row, startTime: e.target.value } : row,
                       ),
                     )
                   }
@@ -2071,13 +2245,13 @@ function TimeEntryFormDrawer({
                 />
                 <span className="text-silver" aria-hidden="true">–</span>
                 <Input
-                  type="datetime-local"
+                  type="time"
                   aria-label={`Break ${i + 1} end`}
-                  value={r.endLocal}
+                  value={r.endTime}
                   onChange={(e) =>
                     setBreakRows((rows) =>
                       rows.map((row, j) =>
-                        j === i ? { ...row, endLocal: e.target.value } : row,
+                        j === i ? { ...row, endTime: e.target.value } : row,
                       ),
                     )
                   }
@@ -2097,25 +2271,54 @@ function TimeEntryFormDrawer({
               </div>
             ))}
           </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="mt-2"
-            onClick={() =>
-              setBreakRows((rows) => [
-                ...rows,
-                { id: null, startLocal: '', endLocal: '' },
-              ])
-            }
-          >
-            <Plus className="h-4 w-4" />
-            Add break
-          </Button>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {[15, 30, 60].map((min) => (
+              <Button
+                key={min}
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={!startTime}
+                title={
+                  startTime
+                    ? `Add a ${min}-minute break in the middle of the shift`
+                    : 'Set the clock-in time first'
+                }
+                onClick={() => addQuickBreak(min)}
+              >
+                <Coffee className="h-3.5 w-3.5" />
+                {min === 60 ? '1h' : `${min}m`}
+              </Button>
+            ))}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                setBreakRows((rows) => [
+                  ...rows,
+                  { id: null, startTime: '', endTime: '' },
+                ])
+              }
+            >
+              <Plus className="h-4 w-4" />
+              Add break
+            </Button>
+          </div>
           <p className="mt-1 text-xs text-silver">
             Unpaid time inside the shift — subtracted from paid hours.
           </p>
         </div>
+        {totalMin !== null && totalMin > 0 && (
+          <div className="rounded-md border border-navy-secondary bg-navy-secondary/30 px-3 py-2 text-sm text-silver">
+            Total {fmtDurMin(totalMin)}
+            {breakMin > 0 && <> · Breaks {fmtDurMin(breakMin)}</>}
+            {' · '}
+            <span className="text-gold">
+              Paid {fmtDurMin(Math.max(0, totalMin - breakMin))}
+            </span>
+          </div>
+        )}
         <div>
           <FieldLabel>Pay rate ($/hr)</FieldLabel>
           <Input
