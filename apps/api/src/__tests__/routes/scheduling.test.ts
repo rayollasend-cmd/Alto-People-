@@ -890,11 +890,24 @@ describe('POST /scheduling/copy-week', () => {
   });
 });
 
+/** ACTIVE_ASSOCIATE_FILTER needs an approved application OR an open
+ *  assignment — give the fixture associate an open assignment at a site. */
+async function placeAtSite(associateId: string, clientId: string) {
+  const location = await prisma.location.create({
+    data: { clientId, name: `Site ${Math.random().toString(36).slice(2, 8)}` },
+  });
+  await prisma.associateAssignment.create({
+    data: { associateId, locationId: location.id, startedAt: new Date('2026-01-01') },
+  });
+  return location;
+}
+
 describe('POST /scheduling/auto-schedule-week — drafts', () => {
   it('assigns an unassigned DRAFT and keeps it DRAFT (publish-week stays the gate)', async () => {
     const client = await createClient();
     const maria = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
     await createUser({ role: 'ASSOCIATE', associateId: maria.id });
+    await placeAtSite(maria.id, client.id);
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(hr.email);
 
@@ -924,8 +937,10 @@ describe('POST /scheduling/auto-schedule-week — drafts', () => {
 
 describe('GET /scheduling/availability-overview', () => {
   it('returns weekly windows and PTO/exception-blocked days per associate', async () => {
+    const client = await createClient();
     const maria = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
     await createUser({ role: 'ASSOCIATE', associateId: maria.id });
+    await placeAtSite(maria.id, client.id);
     await prisma.associateAvailability.create({
       data: { associateId: maria.id, dayOfWeek: 1, startMinute: 480, endMinute: 1020 },
     });
