@@ -794,4 +794,98 @@ describe('POST /scheduling/copy-week', () => {
     expect(copies).toHaveLength(2);
     for (const c of copies) expect(c.assignedAssociateId).toBeNull();
   });
+
+  it('uses the sent window verbatim — a Monday-anchored week copies ITS Sunday, not the previous one', async () => {
+    // Regression: the old handler re-snapped both dates to the preceding
+    // server-local Sunday, so a Monday-anchored week's own Sunday never
+    // copied while the PREVIOUS week's Sunday copied into the visible week.
+    const client = await createClient();
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const MON_SOURCE = new Date('2026-06-08T00:00:00'); // Monday
+    const MON_TARGET = new Date('2026-06-15T00:00:00'); // next Monday
+    // Inside the Monday week — its last day (Sunday Jun 14).
+    const inWindow = await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        position: 'Server',
+        startsAt: new Date('2026-06-14T09:00:00'),
+        endsAt: new Date('2026-06-14T17:00:00'),
+        status: 'OPEN',
+      },
+    });
+    // The day BEFORE the window (Sunday Jun 7) — the old snap wrongly
+    // included this one.
+    await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        position: 'Cook',
+        startsAt: new Date('2026-06-07T09:00:00'),
+        endsAt: new Date('2026-06-07T17:00:00'),
+        status: 'OPEN',
+      },
+    });
+
+    const res = await a.post('/scheduling/copy-week').send({
+      sourceWeekStart: MON_SOURCE.toISOString(),
+      targetWeekStart: MON_TARGET.toISOString(),
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.created).toBe(1);
+
+    const copies = await prisma.shift.findMany({
+      where: {
+        startsAt: { gte: MON_TARGET, lt: new Date(MON_TARGET.getTime() + WEEK_MS) },
+      },
+    });
+    expect(copies).toHaveLength(1);
+    expect(copies[0]!.position).toBe('Server');
+    expect(copies[0]!.startsAt.getTime()).toBe(
+      inWindow.startsAt.getTime() + WEEK_MS,
+    );
+  });
+
+  it('keeps wall-clock time at the site across a DST boundary', async () => {
+    // US DST ends Sun Nov 1 2026. A 2pm Eastern shift copied from the week
+    // before must land at 2pm Eastern (19:00Z, not 18:00Z) the week after.
+    const client = await createClient();
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        position: 'Server',
+        startsAt: new Date('2026-10-28T18:00:00Z'), // Wed 2pm EDT
+        endsAt: new Date('2026-10-28T22:00:00Z'), // Wed 6pm EDT
+        status: 'OPEN',
+      },
+    });
+
+    const res = await a.post('/scheduling/copy-week').send({
+      sourceWeekStart: '2026-10-26T00:00:00Z',
+      targetWeekStart: '2026-11-02T00:00:00Z',
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.created).toBe(1);
+
+    const copy = await prisma.shift.findFirstOrThrow({
+      where: { startsAt: { gte: new Date('2026-11-02T00:00:00Z') }, status: 'DRAFT' },
+    });
+    // 2pm EST = 19:00Z (one hour MORE than a raw +7×24h offset).
+    expect(copy.startsAt.toISOString()).toBe('2026-11-04T19:00:00.000Z');
+    expect(copy.endsAt.toISOString()).toBe('2026-11-04T23:00:00.000Z');
+  });
+
+  it('rejects a copy where source and target are the same week', async () => {
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    const res = await a.post('/scheduling/copy-week').send({
+      sourceWeekStart: SUN_SOURCE.toISOString(),
+      targetWeekStart: SUN_SOURCE.toISOString(),
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error?.code).toBe('same_week');
+  });
 });

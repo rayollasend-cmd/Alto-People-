@@ -61,6 +61,7 @@ import { shiftSwapManagerTemplate } from '../lib/emailTemplates.js';
 import { netWorkedMinutes, startOfWeekUTC, endOfWeekUTC } from '../lib/timeAnomalies.js';
 import {
   DEFAULT_TIMEZONE,
+  addDaysInZone,
   zonedDayOfWeek,
   zonedMinutes,
 } from '../lib/timezone.js';
@@ -3507,16 +3508,25 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
-    const snap = (iso: string): Date => {
-      const d = new Date(iso);
-      d.setHours(0, 0, 0, 0);
-      d.setDate(d.getDate() - d.getDay());
-      return d;
-    };
-    const source = snap(parsed.data.sourceWeekStart);
-    const target = snap(parsed.data.targetWeekStart);
-    const sourceEnd = new Date(source);
-    sourceEnd.setDate(sourceEnd.getDate() + 7);
+    // Use the client's window VERBATIM. The UI sends local midnight of the
+    // first day it is showing — its week can be anchored on any weekday
+    // (the range picker allows it). The old server-side "snap to Sunday in
+    // server-local time" re-alignment shifted the window by up to a day
+    // against what the manager was looking at: their week's tail never
+    // copied, and the previous week's tail copied INTO the visible week.
+    const source = new Date(parsed.data.sourceWeekStart);
+    const target = new Date(parsed.data.targetWeekStart);
+    const dayOffset = Math.round(
+      (target.getTime() - source.getTime()) / 86_400_000,
+    );
+    if (dayOffset === 0) {
+      throw new HttpError(
+        400,
+        'same_week',
+        'Target week must differ from the source week.',
+      );
+    }
+    const sourceEnd = new Date(source.getTime() + 7 * 86_400_000);
 
     const where: Prisma.ShiftWhereInput = {
       ...scopeShifts(req.user!),
@@ -3524,14 +3534,25 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
       status: { not: 'CANCELLED' },
       ...(parsed.data.clientId ? { clientId: parsed.data.clientId } : {}),
     };
-    const sourceShifts = await prisma.shift.findMany({ take: 100, where });
+    // Cap the batch but SAY so — the old take:100 silently dropped the rest
+    // of a big week while reporting skipped: 0.
+    const COPY_CAP = 1000;
+    const [sourceShifts, totalMatching] = await Promise.all([
+      prisma.shift.findMany({
+        take: COPY_CAP,
+        where,
+        orderBy: { startsAt: 'asc' },
+        include: { locationRel: { select: { timezone: true } } },
+      }),
+      prisma.shift.count({ where }),
+    ]);
+    const skipped = Math.max(0, totalMatching - sourceShifts.length);
     if (sourceShifts.length === 0) {
       const empty: CopyWeekResponse = { created: 0, skipped: 0, assigned: 0 };
       res.json(empty);
       return;
     }
 
-    const offsetMs = target.getTime() - source.getTime();
     // Default to carrying each shift's assignee into the target week so HR
     // copies the whole roster in one click instead of re-assigning every
     // shift by hand. Copies stay DRAFT (assigned-but-unpublished), so
@@ -3546,12 +3567,15 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
     const data = sourceShifts.map((s) => {
       const carry = preserveAssignments && s.assignedAssociateId != null;
       if (carry) assigned += 1;
+      // Calendar-day shift in the WORK SITE's zone so a copy across a DST
+      // boundary keeps its wall-clock time (9am stays 9am).
+      const tz = s.locationRel?.timezone ?? DEFAULT_TIMEZONE;
       return {
         clientId: s.clientId,
         locationId: s.locationId,
         position: s.position,
-        startsAt: new Date(s.startsAt.getTime() + offsetMs),
-        endsAt: new Date(s.endsAt.getTime() + offsetMs),
+        startsAt: addDaysInZone(s.startsAt, dayOffset, tz),
+        endsAt: addDaysInZone(s.endsAt, dayOffset, tz),
         location: s.location,
         hourlyRate: s.hourlyRate,
         payRate: s.payRate,
@@ -3578,6 +3602,7 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
           target: target.toISOString(),
           createdCount: result.count,
           assignedCount: assigned,
+          skippedCount: skipped,
           preserveAssignments,
         },
       },
@@ -3586,7 +3611,7 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
 
     const body: CopyWeekResponse = {
       created: result.count,
-      skipped: 0,
+      skipped,
       assigned,
     };
     res.json(body);

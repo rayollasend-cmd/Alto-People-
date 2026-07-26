@@ -83,6 +83,24 @@ export function zonedDayOfWeek(date: Date, timeZone: string): number {
   return zonedWallClock(date, timeZone).dayOfWeek;
 }
 
+/**
+ * Shift an instant by N calendar days PRESERVING its wall-clock time at the
+ * store — a 9am shift copied across a DST boundary must still start at 9am
+ * local, not 8am/10am. Adds N×24h, then corrects by however far the
+ * wall-clock drifted (±1h across a US transition). A start inside the
+ * nonexistent spring-forward hour lands on the closest real instant.
+ */
+export function addDaysInZone(date: Date, days: number, timeZone: string): Date {
+  const naive = new Date(date.getTime() + days * 86_400_000);
+  let drift =
+    zonedMinutes(naive, timeZone) - zonedMinutes(date, timeZone);
+  // A drift can only be a small DST delta; wrap the midnight rollover
+  // (e.g. 23:30 → 00:30 reads as -1380, really +60).
+  if (drift > 720) drift -= 1440;
+  if (drift < -720) drift += 1440;
+  return new Date(naive.getTime() - drift * 60_000);
+}
+
 /** Minutes since local midnight of a UTC instant at the store. */
 export function zonedMinutes(date: Date, timeZone: string): number {
   return zonedWallClock(date, timeZone).minutes;
