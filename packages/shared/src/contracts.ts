@@ -1712,6 +1712,69 @@ export const CopyWeekResponseSchema = z.object({
 });
 export type CopyWeekResponse = z.infer<typeof CopyWeekResponseSchema>;
 
+/* Shift teams ==============================================================
+ * A standing crew at a work site ("Front Beach Morning"). Scheduling
+ * filters its roster to a team's members so a manager building the week
+ * sees only the people who work that shift. Optional default start/end
+ * minutes prefill the create-shift dialog.
+ */
+
+export const ShiftTeamSchema = z.object({
+  id: UuidSchema,
+  clientId: UuidSchema,
+  locationId: UuidSchema,
+  locationName: z.string().nullable(),
+  name: z.string(),
+  /** Wall-clock minutes since site-local midnight; null = no default. */
+  startMinute: z.number().int().min(0).max(1439).nullable(),
+  endMinute: z.number().int().min(0).max(1439).nullable(),
+  memberCount: z.number().int().nonnegative(),
+  createdAt: z.string().datetime(),
+});
+export type ShiftTeam = z.infer<typeof ShiftTeamSchema>;
+
+export const ShiftTeamListResponseSchema = z.object({
+  teams: z.array(ShiftTeamSchema),
+});
+export type ShiftTeamListResponse = z.infer<typeof ShiftTeamListResponseSchema>;
+
+export const ShiftTeamCreateInputSchema = z.object({
+  clientId: UuidSchema,
+  locationId: UuidSchema,
+  name: z.string().min(1).max(80),
+  startMinute: z.number().int().min(0).max(1439).nullable().optional(),
+  endMinute: z.number().int().min(0).max(1439).nullable().optional(),
+});
+export type ShiftTeamCreateInput = z.infer<typeof ShiftTeamCreateInputSchema>;
+
+export const ShiftTeamUpdateInputSchema = z.object({
+  name: z.string().min(1).max(80).optional(),
+  startMinute: z.number().int().min(0).max(1439).nullable().optional(),
+  endMinute: z.number().int().min(0).max(1439).nullable().optional(),
+});
+export type ShiftTeamUpdateInput = z.infer<typeof ShiftTeamUpdateInputSchema>;
+
+export const ShiftTeamDetailResponseSchema = z.object({
+  team: ShiftTeamSchema,
+  members: z.array(
+    z.object({
+      associateId: UuidSchema,
+      firstName: z.string(),
+      lastName: z.string(),
+      email: z.string(),
+      /** False when the associate has no open assignment/approved
+       *  application at the team's location — membership likely stale. */
+      atLocation: z.boolean(),
+    }),
+  ),
+});
+export type ShiftTeamDetailResponse = z.infer<typeof ShiftTeamDetailResponseSchema>;
+
+export const ShiftTeamMemberInputSchema = z.object({
+  associateId: UuidSchema,
+});
+export type ShiftTeamMemberInput = z.infer<typeof ShiftTeamMemberInputSchema>;
+
 /* Phase 53 — pivot week view + publish-week ===============================
  * Slim associate list for the row-axis of the people-x-days grid; and a
  * batch-publish endpoint so HR can flip a whole week of DRAFT shifts to

@@ -588,6 +588,7 @@ model Client {
   // Phase 131 — physical sites under this client (one Client can have
   // many Locations, e.g. Walmart → Destin / Front Beach / PCB).
   locations              Location[]
+  shiftTeams             ShiftTeam[]
 
   @@index([status])
   @@index([deletedAt])
@@ -628,9 +629,48 @@ model Location {
   shifts       Shift[]
   kioskDevices KioskDevice[]
   timeEntries  TimeEntry[]
+  shiftTeams   ShiftTeam[]
 
   @@index([clientId, isActive])
   @@index([deletedAt])
+}
+
+// A standing crew at a work site — "Front Beach Morning", "Overnight team".
+// Scheduling filters its roster to a team's members so a manager building
+// the week sees only the people who actually work that shift, not the whole
+// client roster. Optional default start/end minutes prefill the create-shift
+// dialog when the team is selected.
+model ShiftTeam {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId    String    @db.Uuid
+  locationId  String    @db.Uuid
+  name        String    @db.VarChar(80)
+  /** Wall-clock minutes since local midnight at the site; null = no default. */
+  startMinute Int?
+  endMinute   Int?
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+
+  client   Client            @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  location Location          @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  members  ShiftTeamMember[]
+
+  @@index([clientId, deletedAt])
+  @@index([locationId, deletedAt])
+}
+
+model ShiftTeamMember {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId      String   @db.Uuid
+  associateId String   @db.Uuid
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+
+  team      ShiftTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, associateId])
+  @@index([associateId])
 }
 
 // Phase 131 — effective-dated record of which Location an associate is
@@ -856,6 +896,8 @@ model Associate {
   // Phase 131 — location-assignment history. The open row (endedAt IS
   // NULL) is the associate's current work site.
   assignments              AssociateAssignment[]
+  // Standing shift-crew memberships (scheduling roster filter).
+  teamMemberships          ShiftTeamMember[]
   // Tier-2 — manual earning lines attached to draft runs.
   payrollRunAddOns         PayrollRunAddOn[]
 

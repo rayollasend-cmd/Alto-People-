@@ -889,3 +889,109 @@ describe('POST /scheduling/copy-week', () => {
     expect(res.body.error?.code).toBe('same_week');
   });
 });
+
+describe('Shift teams', () => {
+  async function seedSite() {
+    const client = await createClient();
+    const location = await prisma.location.create({
+      data: { clientId: client.id, name: 'Front Beach' },
+    });
+    return { client, location };
+  }
+
+  it('creates a team, manages members, and filters the roster by teamId', async () => {
+    const { client, location } = await seedSite();
+    const maria = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    await createUser({ role: 'ASSOCIATE', associateId: maria.id });
+    const omar = await createAssociate({ firstName: 'Omar', lastName: 'Nye' });
+    await createUser({ role: 'ASSOCIATE', associateId: omar.id });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const created = await a.post('/scheduling/teams').send({
+      clientId: client.id,
+      locationId: location.id,
+      name: 'Morning',
+      startMinute: 360,
+      endMinute: 840,
+    });
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({
+      name: 'Morning',
+      startMinute: 360,
+      endMinute: 840,
+      locationName: 'Front Beach',
+      memberCount: 0,
+    });
+    const teamId = created.body.id as string;
+
+    // Add Maria (twice — the second must be an idempotent no-op).
+    expect(
+      (await a.post(`/scheduling/teams/${teamId}/members`).send({ associateId: maria.id })).status,
+    ).toBe(204);
+    expect(
+      (await a.post(`/scheduling/teams/${teamId}/members`).send({ associateId: maria.id })).status,
+    ).toBe(204);
+
+    const list = await a.get(`/scheduling/teams?locationId=${location.id}`);
+    expect(list.status).toBe(200);
+    expect(list.body.teams).toHaveLength(1);
+    expect(list.body.teams[0].memberCount).toBe(1);
+
+    // The roster narrowed to the team shows ONLY Maria — Omar (same org,
+    // not on the crew) is out. This is the "only my shift's people" filter.
+    const roster = await a.get(`/scheduling/associates?teamId=${teamId}`);
+    expect(roster.status).toBe(200);
+    expect(roster.body.associates.map((x: { id: string }) => x.id)).toEqual([maria.id]);
+
+    // Detail flags Maria as not-at-this-site (no assignment/application there).
+    const detail = await a.get(`/scheduling/teams/${teamId}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.members).toHaveLength(1);
+    expect(detail.body.members[0]).toMatchObject({
+      associateId: maria.id,
+      atLocation: false,
+    });
+
+    // Remove her; the team roster drains.
+    expect(
+      (await a.delete(`/scheduling/teams/${teamId}/members/${maria.id}`)).status,
+    ).toBe(204);
+    const after = await a.get(`/scheduling/associates?teamId=${teamId}`);
+    expect(after.body.associates).toHaveLength(0);
+  });
+
+  it('soft-deleting a team removes it from lists and empties the team roster filter', async () => {
+    const { client, location } = await seedSite();
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const created = await a.post('/scheduling/teams').send({
+      clientId: client.id,
+      locationId: location.id,
+      name: 'Overnight',
+    });
+    const teamId = created.body.id as string;
+    expect((await a.delete(`/scheduling/teams/${teamId}`)).status).toBe(204);
+
+    const list = await a.get(`/scheduling/teams?locationId=${location.id}`);
+    expect(list.body.teams).toHaveLength(0);
+    const roster = await a.get(`/scheduling/associates?teamId=${teamId}`);
+    expect(roster.body.associates).toHaveLength(0);
+  });
+
+  it("rejects creating a team under another client's location", async () => {
+    const { location } = await seedSite();
+    const otherClient = await createClient();
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const res = await a.post('/scheduling/teams').send({
+      clientId: otherClient.id,
+      locationId: location.id,
+      name: 'Sneaky',
+    });
+    expect(res.status).toBe(404);
+    expect(res.body.error?.code).toBe('location_not_found');
+  });
+});
