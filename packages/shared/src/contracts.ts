@@ -1683,7 +1683,12 @@ export const ShiftTemplateApplyInputSchema = z.object({
 export type ShiftTemplateApplyInput = z.infer<typeof ShiftTemplateApplyInputSchema>;
 
 export const CopyWeekInputSchema = z.object({
-  /** ISO timestamp; server snaps to the local Sunday at 00:00. */
+  /**
+   * ISO instant of the first day of the visible week (local midnight on the
+   * client). Used VERBATIM — the copy window is [sourceWeekStart, +7 days),
+   * so it always matches exactly what the manager is looking at, whatever
+   * weekday their week is anchored on.
+   */
   sourceWeekStart: z.string().datetime(),
   targetWeekStart: z.string().datetime(),
   /** When set, only shifts for this client are copied. */

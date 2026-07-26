@@ -678,7 +678,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           ? 'Nothing to copy — this week is empty.'
           : `Copied ${result.created} shift${result.created === 1 ? '' : 's'} to next week${
               result.assigned ? `, ${result.assigned} pre-assigned` : ''
-            } (DRAFT).`
+            } (DRAFT).${
+              result.skipped
+                ? ` ${result.skipped} shift${result.skipped === 1 ? '' : 's'} exceeded the batch cap and did NOT copy.`
+                : ''
+            }`
       );
       // Hop to the target week so HR can review the new drafts immediately.
       setWeekStart(target);
@@ -1400,6 +1404,9 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         position: s.position,
         startsAt: s.startsAt,
         endsAt: s.endsAt,
+        // Keep the structured Location FK — dropping it would detach the
+        // copy from the kiosk geofence and client→location filters.
+        ...(s.locationId ? { locationId: s.locationId } : {}),
         ...(s.location ? { location: s.location } : {}),
         ...(s.hourlyRate != null ? { hourlyRate: s.hourlyRate } : {}),
         ...(s.payRate != null ? { payRate: s.payRate } : {}),
