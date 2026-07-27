@@ -26,7 +26,12 @@ import type {
   KpiTrend,
 } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
-import { ROLE_LABELS, type Role } from '@/lib/roles';
+import {
+  hasCapability,
+  ROLE_LABELS,
+  type Capability,
+  type Role,
+} from '@/lib/roles';
 import { getDashboardKPIs } from '@/lib/analyticsApi';
 import { getW4RecollectionSummary } from '@/lib/w4RecollectionApi';
 import { searchAuditLogs } from '@/lib/auditApi';
@@ -64,6 +69,9 @@ const SUBTITLE_BY_ROLE: Partial<Record<Role, string>> = {
     'Recruiting pipeline and open onboarding applications.',
   CLIENT_PORTAL: 'Your workforce snapshot.',
   MANAGER: 'Your team — pending approvals and time-off requests.',
+  // Harmless fallback — SHIFT_SUPERVISOR normally routes to the dedicated
+  // SupervisorDashboard before this component ever renders.
+  SHIFT_SUPERVISOR: "Your site today — who's on, who's late, what's open.",
 };
 
 // Thousands-separated integer ("1,234"). Kept local because @/lib/format
@@ -210,7 +218,7 @@ export function AdminDashboard() {
         ssnRecollectionOutstanding={ssnRecollectionOutstanding}
       />
 
-      <KpiSection kpis={kpis} />
+      <KpiSection kpis={kpis} role={role} />
 
       {canSeeOnboarding && <OnboardingFunnel kpis={kpis} />}
 
@@ -540,13 +548,21 @@ interface Kpi {
   trend?: KpiTrend & { deltaLabel: string };
 }
 
-function KpiSection({ kpis }: { kpis: DashboardKPIs | null }) {
+function KpiSection({
+  kpis,
+  role,
+}: {
+  kpis: DashboardKPIs | null;
+  role: Role | null;
+}) {
   return (
     <section aria-label="Workforce metrics" className="space-y-3">
       <SectionTitle icon={Activity}>Workforce snapshot</SectionTitle>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {kpis ? (
-          buildKpis(kpis).map((kpi) => <KpiTile key={kpi.label} kpi={kpi} />)
+          buildKpis(kpis, role).map((kpi) => (
+            <KpiTile key={kpi.label} kpi={kpi} />
+          ))
         ) : (
           Array.from({ length: 4 }).map((_, i) => (
             <Card key={i}>
@@ -571,8 +587,16 @@ function withLabel(
   return trend ? { ...trend, deltaLabel } : undefined;
 }
 
-function buildKpis(k: DashboardKPIs): Kpi[] {
-  return [
+function buildKpis(k: DashboardKPIs, role: Role | null): Kpi[] {
+  const has = (cap: Capability) => (role ? hasCapability(role, cap) : false);
+  // A tile links out only when the viewer can actually open the destination
+  // module (/people → view:org, /onboarding → view:onboarding, /payroll →
+  // view:payroll, /scheduling → view:scheduling); otherwise it renders as a
+  // plain, unlinked tile — no dead ends into 403s.
+  const linkTo = (to: string, cap: Capability) =>
+    has(cap) ? to : undefined;
+
+  const xs: Kpi[] = [
     {
       label: 'Active associates',
       value: fmtInt(k.activeAssociates),
@@ -581,7 +605,7 @@ function buildKpis(k: DashboardKPIs): Kpi[] {
           ? `${fmtInt(k.associatesClockedIn)} clocked in now`
           : 'No one on the clock',
       icon: Users,
-      to: '/people?status=ACTIVE',
+      to: linkTo('/people?status=ACTIVE', 'view:org'),
       // Series is weekly *hires* — the leading edge of headcount.
       trend: withLabel(k.trends?.hires, 'hires vs last wk'),
     },
@@ -590,11 +614,16 @@ function buildKpis(k: DashboardKPIs): Kpi[] {
       value: fmtInt(k.openShiftsNext30d),
       hint: k.openShiftsNext30d === 0 ? 'Schedule fully covered' : undefined,
       icon: Clock,
-      to: '/scheduling',
+      to: linkTo('/scheduling', 'view:scheduling'),
       // Series is shifts scheduled per week (all non-cancelled statuses).
       trend: withLabel(k.trends?.shiftsScheduled, 'scheduled vs last wk'),
     },
-    {
+  ];
+  // Onboarding pipeline (and its I-9 Section 2 hint — compliance-adjacent)
+  // only for roles that can see onboarding; the API zeroes these counts for
+  // bounded roles anyway, but a permanent "0" tile is just noise.
+  if (has('view:onboarding')) {
+    xs.push({
       label: 'Onboarding in flight',
       value: fmtInt(k.pendingOnboardingApplications),
       hint:
@@ -602,11 +631,17 @@ function buildKpis(k: DashboardKPIs): Kpi[] {
           ? `${k.pendingI9Section2} I-9 Section 2 pending`
           : 'I-9s up to date',
       icon: ClipboardList,
-      to: '/onboarding',
+      to: linkTo('/onboarding', 'view:onboarding'),
       // Series is new applications per week.
       trend: withLabel(k.trends?.applications, 'new vs last wk'),
-    },
-    {
+    });
+  }
+  // Money tiles (net paid + pending disbursement) only for payroll-capable
+  // roles — the API clamps these to $0 for bounded roles, and rendering a
+  // zeroed money tile reads as "nobody got paid", which is worse than
+  // rendering nothing.
+  if (has('view:payroll')) {
+    xs.push({
       label: `Net paid · last ${k.windowDays}d`,
       value: fmtMoney(k.netPaidLast30d),
       hint:
@@ -614,9 +649,10 @@ function buildKpis(k: DashboardKPIs): Kpi[] {
           ? `${fmtMoney(k.netPendingDisbursement)} queued`
           : 'No pending runs',
       icon: DollarSign,
-      to: '/payroll',
-    },
-  ];
+      to: linkTo('/payroll', 'view:payroll'),
+    });
+  }
+  return xs;
 }
 
 function KpiTile({ kpi }: { kpi: Kpi }) {

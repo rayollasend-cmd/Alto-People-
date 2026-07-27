@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AtSign, Bell, Camera, CheckCircle2, ChevronDown, ChevronUp, Clock, Copy, Download, History, KeyRound, Lock, LogOut, RefreshCw, ShieldAlert, ShieldCheck, Upload, User as UserIcon } from 'lucide-react';
+import { AtSign, Bell, Camera, CheckCircle2, ChevronDown, ChevronUp, Clock, Copy, Download, History, KeyRound, Lock, LogOut, RefreshCw, ShieldAlert, ShieldCheck, Smartphone, Upload, User as UserIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { MFA_RECOVERY_CODE_COUNT, type MfaEnrollStartResponse } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
@@ -24,6 +24,7 @@ import {
   type LoginEvent,
 } from '@/lib/settingsApi';
 import { deleteProfilePhoto, uploadProfilePhoto } from '@/lib/selfApi';
+import { getPushStatus, subscribeToPush, unsubscribeFromPush } from '@/lib/push';
 import { fmtDateTime } from '@/lib/format';
 import {
   ROLE_LABELS,
@@ -712,9 +713,60 @@ function EmailCard() {
   );
 }
 
+type PushRowStatus =
+  | 'loading'
+  | 'unsupported'
+  | 'denied'
+  | 'subscribed'
+  | 'available';
+
 function NotificationsCard() {
   const queryClient = useQueryClient();
   const [pending, setPending] = useState<NotificationCategory | null>(null);
+
+  // Push subscription state for this device. Settings is the recovery
+  // path for users who dismissed the dashboard's one-time enable card
+  // (that dismissal writes a permanent localStorage flag).
+  const [pushStatus, setPushStatus] = useState<PushRowStatus>('loading');
+  const [pushBusy, setPushBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getPushStatus().then((s) => {
+      if (!cancelled) setPushStatus(s);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const onEnablePush = async () => {
+    setPushBusy(true);
+    try {
+      await subscribeToPush();
+      setPushStatus('subscribed');
+      toast.success("Push notifications are on for this device.");
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : 'Could not enable push notifications.',
+      );
+      // Permission may have just been denied — re-read the real state.
+      getPushStatus().then(setPushStatus);
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  const onDisablePush = async () => {
+    setPushBusy(true);
+    try {
+      await unsubscribeFromPush();
+      setPushStatus('available');
+      toast.success('Push notifications are off for this device.');
+    } finally {
+      setPushBusy(false);
+    }
+  };
 
   const { data: entries, error: entriesError } = useQuery({
     queryKey: ['notification-preferences'],
@@ -772,7 +824,7 @@ function NotificationsCard() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Bell className="h-4 w-4 text-gold" />
-          Email notifications
+          Notifications
         </CardTitle>
         <CardDescription>
           Choose which emails Alto sends you. The bell on the topbar always
@@ -825,6 +877,44 @@ function NotificationsCard() {
             ))}
           </ul>
         )}
+
+        {/* Push — device-level, separate from the per-category email
+            toggles above. */}
+        <div className="mt-4 pt-4 border-t border-navy-secondary flex items-start justify-between gap-4 flex-wrap">
+          <div className="flex-1 min-w-48">
+            <div className="text-sm text-white flex items-center gap-2">
+              <Smartphone className="h-3.5 w-3.5 text-gold" />
+              Push notifications
+              {pushStatus === 'subscribed' && (
+                <span className="inline-flex items-center gap-1 text-xs text-success">
+                  <CheckCircle2 className="h-3 w-3" />
+                  on
+                </span>
+              )}
+            </div>
+            <div className="text-xs text-silver mt-0.5">
+              {pushStatus === 'subscribed'
+                ? 'Shift alerts reach this device even when the app is closed.'
+                : pushStatus === 'available'
+                  ? 'Get shift alerts on this device even when the app is closed.'
+                  : pushStatus === 'denied'
+                    ? 'Blocked in your browser settings — allow notifications for this site, then come back here.'
+                    : pushStatus === 'unsupported'
+                      ? 'Not supported in this browser. On iPhone, install the app to your home screen first.'
+                      : 'Checking this device…'}
+            </div>
+          </div>
+          {pushStatus === 'subscribed' && (
+            <Button variant="ghost" onClick={onDisablePush} loading={pushBusy}>
+              Disable
+            </Button>
+          )}
+          {pushStatus === 'available' && (
+            <Button onClick={onEnablePush} loading={pushBusy}>
+              Enable push notifications
+            </Button>
+          )}
+        </div>
       </CardContent>
     </Card>
   );

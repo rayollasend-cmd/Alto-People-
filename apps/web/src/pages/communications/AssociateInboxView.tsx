@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { listMyInbox, markRead } from '@/lib/communicationsApi';
 import { markBroadcastRead, myBroadcasts } from '@/lib/dirCommsApi';
 import { ApiError } from '@/lib/api';
@@ -11,7 +12,7 @@ import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { CheckCheck, ChevronRight, Inbox, Megaphone, Search } from 'lucide-react';
+import { ArrowUpRight, CheckCheck, ChevronRight, Inbox, Megaphone, Search } from 'lucide-react';
 
 /**
  * One row in the merged inbox: either a direct IN_APP notification or a
@@ -29,9 +30,12 @@ interface InboxEntry {
   createdAt: string;
   readAt: string | null;
   senderEmail: string | null;
+  /** In-app deeplink (notifications only) — rendered as an "Open" action. */
+  linkUrl: string | null;
 }
 
 export function AssociateInboxView() {
+  const navigate = useNavigate();
   const [items, setItems] = useState<InboxEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [unreadOnly, setUnreadOnly] = useState(false);
@@ -53,6 +57,7 @@ export function AssociateInboxView() {
             createdAt: n.createdAt,
             readAt: n.readAt,
             senderEmail: n.senderEmail,
+            linkUrl: n.linkUrl,
           }),
         ),
         ...bcasts.broadcasts.map(
@@ -67,6 +72,7 @@ export function AssociateInboxView() {
             createdAt: b.sentAt ?? new Date().toISOString(),
             readAt: b.readAt,
             senderEmail: null,
+            linkUrl: null,
           }),
         ),
       ].sort(
@@ -95,6 +101,15 @@ export function AssociateInboxView() {
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Mark-read failed.');
     }
+  };
+
+  // "Open" action for notifications carrying a deeplink — mark read
+  // best-effort (fire and forget), then navigate. Same behavior as the
+  // topbar bell's row click.
+  const openLink = (entry: InboxEntry) => {
+    if (!entry.linkUrl) return;
+    void onClick(entry);
+    navigate(entry.linkUrl);
   };
 
   const markAllRead = async () => {
@@ -237,45 +252,65 @@ export function AssociateInboxView() {
                 <ul className="space-y-2 p-3 pt-0">
                   {group.entries.map((n) => (
                     <li key={n.key}>
-                      <button
-                        type="button"
-                        onClick={() => onClick(n)}
+                      {/* Wrapper div (not one big <button>) so the "Open"
+                          deeplink action can be a real button without
+                          invalid button-in-button nesting. */}
+                      <div
                         className={cn(
-                          'block w-full text-left p-4 rounded border transition-colors',
+                          'rounded border transition-colors',
                           n.readAt
                             ? 'border-navy-secondary bg-navy/60'
                             : 'border-gold/40 bg-gold/5 hover:bg-gold/10',
                         )}
                       >
-                        <div className="flex items-start justify-between gap-3 mb-1">
-                          <div className="text-white flex items-center gap-2 min-w-0">
-                            {n.kind === 'broadcast' && (
-                              <Badge variant="accent" className="shrink-0 gap-1">
-                                <Megaphone className="h-3 w-3" /> Broadcast
-                              </Badge>
-                            )}
-                            <span className="truncate">
-                              {n.subject ?? (
-                                <span className="text-silver italic">(no subject)</span>
+                        <button
+                          type="button"
+                          onClick={() => onClick(n)}
+                          className="block w-full text-left p-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
+                        >
+                          <div className="flex items-start justify-between gap-3 mb-1">
+                            <div className="text-white flex items-center gap-2 min-w-0">
+                              {n.kind === 'broadcast' && (
+                                <Badge variant="accent" className="shrink-0 gap-1">
+                                  <Megaphone className="h-3 w-3" /> Broadcast
+                                </Badge>
                               )}
+                              <span className="truncate">
+                                {n.subject ?? (
+                                  <span className="text-silver italic">(no subject)</span>
+                                )}
+                              </span>
+                            </div>
+                            <span
+                              className="text-xs text-silver/70 tabular-nums shrink-0"
+                              title={fmtDateTime(n.createdAt)}
+                            >
+                              {fmtTimeOnly(n.createdAt)}
                             </span>
                           </div>
-                          <span
-                            className="text-xs text-silver/70 tabular-nums shrink-0"
-                            title={fmtDateTime(n.createdAt)}
-                          >
-                            {fmtTimeOnly(n.createdAt)}
-                          </span>
-                        </div>
-                        <div className="text-sm text-silver whitespace-pre-line">
-                          {n.body}
-                        </div>
-                        {n.senderEmail && (
-                          <div className="text-[10px] uppercase tracking-widest text-silver/70 mt-2">
-                            From {n.senderEmail}
+                          <div className="text-sm text-silver whitespace-pre-line">
+                            {n.body}
+                          </div>
+                          {n.senderEmail && (
+                            <div className="text-[10px] uppercase tracking-widest text-silver/70 mt-2">
+                              From {n.senderEmail}
+                            </div>
+                          )}
+                        </button>
+                        {n.linkUrl && (
+                          <div className="px-4 pb-3 flex justify-end">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="coarse:min-h-11"
+                              onClick={() => openLink(n)}
+                            >
+                              Open
+                              <ArrowUpRight className="h-3.5 w-3.5" />
+                            </Button>
                           </div>
                         )}
-                      </button>
+                      </div>
                     </li>
                   ))}
                 </ul>

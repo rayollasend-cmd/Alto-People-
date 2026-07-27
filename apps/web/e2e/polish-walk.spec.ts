@@ -13,7 +13,7 @@ const shot = (name: string) => `e2e-results/polish/${name}.png`;
 async function login(page: Page, email: string, pass: string) {
   await page.goto('/login');
   await page.getByLabel(/email/i).fill(email);
-  await page.getByLabel(/password/i).fill(pass);
+  await page.getByLabel(/^password/i).fill(pass);
   await page.getByRole('button', { name: /sign in/i }).click();
   await page.waitForTimeout(3500);
 }

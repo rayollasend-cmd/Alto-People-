@@ -11,7 +11,7 @@ test.skip(!process.env.E2E_FULLSTACK, 'needs the API dev server (set E2E_FULLSTA
 test('associate shell is app-shaped: tab bar, dashboard, schedule', async ({ page }) => {
   await page.goto('/login');
   await page.getByLabel(/email/i).fill('maria.lopez@example.com');
-  await page.getByLabel(/password/i).fill('maria-dev-2026!');
+  await page.getByLabel(/^password/i).fill('maria-dev-2026!');
   await page.getByRole('button', { name: /sign in/i }).click();
 
   // Dashboard greets by name once auth + data land. The greeting renders

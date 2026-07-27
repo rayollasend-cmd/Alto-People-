@@ -59,11 +59,14 @@ import {
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
-import { scopeShifts, effectiveClientIdFilter } from '../lib/scope.js';
+import { associatesOfClient, scopeShifts, effectiveClientIdFilter } from '../lib/scope.js';
+
+// Impossible id used to fail a mis-provisioned client-bounded caller CLOSED.
+const NO_MATCH_ID = '00000000-0000-0000-0000-000000000000';
 import { firstLocationForClient } from '../lib/firstLocationForClient.js';
 import { enqueueAudit, recordShiftEvent } from '../lib/audit.js';
 import { formatShiftLine, notifyShift } from '../lib/notifyShift.js';
-import { notifyAllAdmins, notifyManager } from '../lib/notify.js';
+import { notifyAllAdmins, notifyClientSupervisors, notifyManager } from '../lib/notify.js';
 import { shiftSwapManagerTemplate } from '../lib/emailTemplates.js';
 import { netWorkedMinutes, startOfWeekUTC, endOfWeekUTC } from '../lib/timeAnomalies.js';
 import {
@@ -2000,7 +2003,7 @@ schedulingRouter.post('/me/open-shifts/:id/claim', async (req, res, next) => {
       where: { id: user.associateId },
       select: { firstName: true, lastName: true },
     });
-    void notifyAllAdmins({
+    const pickupNotice = {
       subject: 'Open-shift pickup request',
       body: `${me?.firstName ?? 'An associate'} ${me?.lastName ?? ''} wants to pick up: ${formatShiftLine({
         position: shift.position,
@@ -2010,8 +2013,13 @@ schedulingRouter.post('/me/open-shifts/:id/claim', async (req, res, next) => {
         timezone: tz,
       })}\nApprove or reject it from the Scheduling page.`,
       category: 'scheduling',
+      linkUrl: '/approvals',
       excludeUserId: user.id,
-    });
+    };
+    void notifyAllAdmins(pickupNotice);
+    // The supervisor whose floor this shift is on hears about it too —
+    // they hold the approve capability but no admin role.
+    void notifyClientSupervisors(shift.clientId, pickupNotice);
 
     res.status(201).json(
       OpenShiftClaimSchema.parse({
@@ -2785,6 +2793,15 @@ schedulingRouter.post('/swap-requests', async (req, res, next) => {
       html: mgrSwapTpl.html,
       category: 'scheduling',
     });
+    // The site's shift supervisor approves swaps but is rarely anyone's
+    // managerId — route them a copy keyed on the shift's client.
+    void notifyClientSupervisors(created.shift.clientId, {
+      subject: mgrSwapTpl.subject,
+      body: mgrSwapTpl.text,
+      html: mgrSwapTpl.html,
+      category: 'scheduling',
+      linkUrl: '/approvals',
+    });
 
     res.status(201).json(toSwap(created));
   } catch (err) {
@@ -3363,9 +3380,19 @@ schedulingRouter.get('/availability-overview', MANAGE, async (req, res, next) =>
       throw new HttpError(400, 'range_too_wide', 'Range must be 1–62 days');
     }
 
+    // Bounded roles (SHIFT_SUPERVISOR) only see their own client's people
+    // in the availability heatmap.
+    const availBounded = effectiveClientIdFilter(req.user!, undefined);
     const [associates, ptoRows, exceptionRows] = await Promise.all([
       prisma.associate.findMany({
-        where: ACTIVE_ASSOCIATE_FILTER,
+        where: {
+          AND: [
+            ACTIVE_ASSOCIATE_FILTER,
+            ...(availBounded !== undefined
+              ? [availBounded ? associatesOfClient(availBounded) : { id: NO_MATCH_ID }]
+              : []),
+          ],
+        },
         select: {
           id: true,
           availability: {
@@ -3719,7 +3746,13 @@ const TEMPLATE_INCLUDE = {
  */
 schedulingRouter.get('/templates', MANAGE, async (req, res, next) => {
   try {
-    const clientId = req.query.clientId?.toString();
+    // Bounded roles are clamped to their own client (+ globals) no matter
+    // what they request; admins keep the org-wide overview when omitted.
+    const tplBounded = effectiveClientIdFilter(
+      req.user!,
+      req.query.clientId?.toString(),
+    );
+    const clientId = tplBounded === null ? NO_MATCH_ID : tplBounded;
     const where: Prisma.ShiftTemplateWhereInput = {
       deletedAt: null,
       ...(clientId ? { OR: [{ clientId }, { clientId: null }] } : {}),
@@ -3745,6 +3778,12 @@ schedulingRouter.post('/templates', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
     const i = parsed.data;
+    // Bounded roles can only create templates pinned to their own client
+    // (a global template would leak into every other client's schedule).
+    const createBounded = effectiveClientIdFilter(req.user!, undefined);
+    if (createBounded !== undefined && i.clientId !== createBounded) {
+      throw new HttpError(403, 'forbidden', 'You can only manage templates for your assigned client.');
+    }
     if (i.clientId) {
       const c = await prisma.client.findFirst({ where: { id: i.clientId, deletedAt: null } });
       if (!c) throw new HttpError(404, 'client_not_found', 'Client not found');
@@ -3776,6 +3815,12 @@ schedulingRouter.delete('/templates/:id', MANAGE, async (req, res, next) => {
       where: { id: req.params.id, deletedAt: null },
     });
     if (!existing) throw new HttpError(404, 'template_not_found', 'Template not found');
+    // Bounded roles can only delete their own client's templates (404, not
+    // 403, so existence isn't leaked across tenants).
+    const delBounded = effectiveClientIdFilter(req.user!, undefined);
+    if (delBounded !== undefined && existing.clientId !== delBounded) {
+      throw new HttpError(404, 'template_not_found', 'Template not found');
+    }
     await prisma.shiftTemplate.update({
       where: { id: existing.id },
       data: { deletedAt: new Date() },
@@ -3810,6 +3855,13 @@ schedulingRouter.post('/templates/:id/apply', MANAGE, async (req, res, next) => 
         'client_required',
         'Global templates require a clientId at apply time'
       );
+    }
+    // Same guard as POST /shifts — apply creates a Shift, so a bounded
+    // role must not be able to smuggle one into another client via a
+    // template. Without this, template-apply bypassed the create guard.
+    const applyBounded = effectiveClientIdFilter(req.user!, undefined);
+    if (applyBounded !== undefined && clientId !== applyBounded) {
+      throw new HttpError(403, 'forbidden', 'You can only manage shifts for your assigned client.');
     }
     // Phase 131 — derive locationId from the resolved client.
     const location = await firstLocationForClient(prisma, clientId);

@@ -119,6 +119,37 @@ export function scopeShifts(user: SessionUser): Prisma.ShiftWhereInput {
   return {};
 }
 
+/**
+ * Associates that belong to a client: an APPROVED application there, or an
+ * open assignment at one of its locations. Mirrors the roster query used by
+ * /scheduling/associates so "your client's people" means the same thing on
+ * every surface.
+ */
+export function associatesOfClient(clientId: string): Prisma.AssociateWhereInput {
+  return {
+    OR: [
+      { applications: { some: { status: 'APPROVED', clientId } } },
+      { assignments: { some: { endedAt: null, location: { clientId } } } },
+    ],
+  };
+}
+
+export function scopeTimeOffRequests(
+  user: SessionUser,
+): Prisma.TimeOffRequestWhereInput {
+  if (user.role === 'ASSOCIATE' && user.associateId) {
+    return { associateId: user.associateId };
+  }
+  // SHIFT_SUPERVISOR sees only requests from their own client's people
+  // (fail closed when unassigned). Without this, a supervisor could read
+  // and decide PTO org-wide.
+  if (user.role === 'SHIFT_SUPERVISOR') {
+    if (!user.clientId) return { associateId: NO_CLIENT };
+    return { associate: { is: associatesOfClient(user.clientId) } };
+  }
+  return {};
+}
+
 export function scopeTimeEntries(user: SessionUser): Prisma.TimeEntryWhereInput {
   // ASSOCIATE only ever sees their own entries (defense-in-depth on top of
   // the route-level /me vs /admin split). HR/Ops see all.

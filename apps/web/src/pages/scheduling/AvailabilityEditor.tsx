@@ -43,6 +43,9 @@ function fromAPI(windows: AvailabilityWindow[]): DraftWindow[] {
   }));
 }
 
+const isInvalidRange = (w: DraftWindow) =>
+  hhmmToMinutes(w.end) <= hhmmToMinutes(w.start);
+
 export function AvailabilityEditor() {
   const [drafts, setDrafts] = useState<DraftWindow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,6 +69,14 @@ export function AvailabilityEditor() {
     refresh();
   }, [refresh]);
 
+  // "Saved." goes stale fast — clear it after a few seconds so a
+  // later edit doesn't sit next to an old success message.
+  useEffect(() => {
+    if (!info) return;
+    const timer = window.setTimeout(() => setInfo(null), 3000);
+    return () => window.clearTimeout(timer);
+  }, [info]);
+
   const addWindow = () => {
     setDrafts([...drafts, { dayOfWeek: 1, start: '09:00', end: '17:00' }]);
   };
@@ -82,6 +93,13 @@ export function AvailabilityEditor() {
     if (submitting) return;
     setError(null);
     setInfo(null);
+    // Client-side guard: the API would reject end <= start anyway, but
+    // fail inline with the offending rows highlighted instead of a
+    // round-trip error.
+    if (drafts.some(isInvalidRange)) {
+      setError('End time must be after start time.');
+      return;
+    }
     setSubmitting(true);
     try {
       const payload = drafts.map((w) => ({
@@ -175,8 +193,16 @@ export function AvailabilityEditor() {
                     type="time"
                     value={w.end}
                     onChange={(e) => updateWindow(idx, { end: e.target.value })}
-                    className="col-span-5 sm:col-span-3 px-2 py-1.5 coarse:min-h-11 rounded bg-navy-secondary/60 border border-navy-secondary text-white text-sm coarse:text-base"
+                    aria-invalid={isInvalidRange(w)}
+                    className={`col-span-5 sm:col-span-3 px-2 py-1.5 coarse:min-h-11 rounded bg-navy-secondary/60 border text-white text-sm coarse:text-base ${
+                      isInvalidRange(w) ? 'border-alert' : 'border-navy-secondary'
+                    }`}
                   />
+                  {isInvalidRange(w) && (
+                    <p className="col-span-12 text-xs text-alert" role="alert">
+                      End time must be after start time.
+                    </p>
+                  )}
                 </li>
               ))}
             </ul>

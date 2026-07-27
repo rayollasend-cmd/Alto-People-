@@ -161,12 +161,20 @@ export function HolidaysHome() {
   const { user } = useAuth();
   const confirm = useConfirm();
   const canManage = user ? hasCapability(user.role, 'manage:scheduling') : false;
+  // Client-bound roles (SHIFT_SUPERVISOR) can't list clients — /clients
+  // 403s for them. Seed the chips/drawers with their one client so the
+  // filter and CLIENT_SPECIFIC holidays still work.
+  const boundedClient = user?.clientId
+    ? { id: user.clientId, name: user.clientName ?? 'Your client' }
+    : null;
   const [year, setYear] = useState(CURRENT_YEAR);
   const [typeFilter, setTypeFilter] = useState<HolidayType | 'ALL'>('ALL');
   const [clientFilter, setClientFilter] = useState<string>('ALL');
   const [rows, setRows] = useState<HolidayRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [clients, setClients] = useState<ClientListItem[]>([]);
+  const [clients, setClients] = useState<Array<Pick<ClientListItem, 'id' | 'name'>>>(
+    boundedClient ? [boundedClient] : [],
+  );
   const [showNew, setShowNew] = useState(false);
   const [editing, setEditing] = useState<HolidayRow | null>(null);
   const [importing, setImporting] = useState(false);
@@ -192,8 +200,10 @@ export function HolidaysHome() {
   }, [refresh]);
 
   // Best-effort client list for the filter chips — a failure (or a role
-  // without client access) just leaves the chips hidden.
+  // without client access) just leaves the chips hidden. Client-bound
+  // viewers are seeded above and never fetch (the endpoint would 403).
   useEffect(() => {
+    if (boundedClient) return;
     let cancelled = false;
     listClients()
       .then((r) => {
@@ -203,6 +213,8 @@ export function HolidaysHome() {
     return () => {
       cancelled = true;
     };
+    // boundedClient is stable for the session (derived from the signed-in user).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // One POST — the server computes floating holidays (MLK Day,
@@ -452,6 +464,7 @@ export function HolidaysHome() {
         <NewHolidayDrawer
           shownYear={year}
           clients={clients}
+          boundedClient={boundedClient}
           onClose={() => setShowNew(false)}
           onSaved={() => {
             setShowNew(false);
@@ -477,11 +490,14 @@ export function HolidaysHome() {
 function NewHolidayDrawer({
   shownYear,
   clients,
+  boundedClient,
   onClose,
   onSaved,
 }: {
   shownYear: number;
-  clients: ClientListItem[];
+  clients: Array<Pick<ClientListItem, 'id' | 'name'>>;
+  /** Client-bound roles: CLIENT_SPECIFIC holidays are pinned to this client. */
+  boundedClient?: { id: string; name: string } | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -496,7 +512,7 @@ function NewHolidayDrawer({
   });
   const [type, setType] = useState<HolidayType>('COMPANY');
   const [state, setState] = useState('');
-  const [clientId, setClientId] = useState('');
+  const [clientId, setClientId] = useState(boundedClient?.id ?? '');
   const [paid, setPaid] = useState(true);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
@@ -580,21 +596,31 @@ function NewHolidayDrawer({
         {type === 'CLIENT_SPECIFIC' && (
           <div>
             <Label htmlFor="holiday-client">Client</Label>
-            <Select
-              id="holiday-client"
-              className="mt-1"
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-            >
-              {/* clientId is optional server-side — blank stores NULL, i.e.
-                  the holiday applies org-wide despite the CLIENT_SPECIFIC type. */}
-              <option value="">Org-wide (no client)</option>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </Select>
+            {boundedClient ? (
+              // Client-bound role — pinned to their client (no org-wide option).
+              <div
+                id="holiday-client"
+                className="mt-1 flex h-10 items-center rounded-md border border-navy-secondary bg-navy-secondary/20 px-3 text-sm text-white"
+              >
+                {boundedClient.name}
+              </div>
+            ) : (
+              <Select
+                id="holiday-client"
+                className="mt-1"
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+              >
+                {/* clientId is optional server-side — blank stores NULL, i.e.
+                    the holiday applies org-wide despite the CLIENT_SPECIFIC type. */}
+                <option value="">Org-wide (no client)</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            )}
           </div>
         )}
         <div className="flex items-center gap-2">

@@ -201,6 +201,19 @@ function toAuthUser(u: {
 }
 
 /**
+ * Display name of the bound client for client-scoped roles. The web pins
+ * pickers/scope bars to it — those roles can't read the client list.
+ */
+async function clientNameFor(clientId: string | null): Promise<string | null> {
+  if (!clientId) return null;
+  const c = await prisma.client.findUnique({
+    where: { id: clientId },
+    select: { name: true },
+  });
+  return c?.name ?? null;
+}
+
+/**
  * Look up profile fields (name + photo) for the linked Associate so we can
  * surface them in `AuthUser`. Skips the query when the user has no associate
  * row (HR-only / portal accounts) — they always carry null.
@@ -321,7 +334,7 @@ authRouter.post(
       });
 
       const profile = await loadProfileFor(user.associateId);
-      res.json({ user: toAuthUser({ ...user, ...profile }) });
+      res.json({ user: { ...toAuthUser({ ...user, ...profile }), clientName: await clientNameFor(user.clientId) } });
     } catch (err) {
       next(err);
     }
@@ -469,7 +482,7 @@ authRouter.post(
       }
 
       const profile = await loadProfileFor(user.associateId);
-      res.json({ user: toAuthUser({ ...user, ...profile }) });
+      res.json({ user: { ...toAuthUser({ ...user, ...profile }), clientName: await clientNameFor(user.clientId) } });
     } catch (err) {
       next(err);
     }
@@ -505,7 +518,7 @@ authRouter.post('/logout', async (req, res, next) => {
  * 200 with `{ user: null }` when no cookie (anonymous, normal).
  * 401 when cookie is present but invalid/stale (signal client to clear).
  */
-authRouter.get('/me', (req, res) => {
+authRouter.get('/me', async (req, res) => {
   if (req.sessionStale && !req.user) {
     res.clearCookie(SESSION_COOKIE, cookieOptions());
     res.status(401).json({
@@ -513,7 +526,7 @@ authRouter.get('/me', (req, res) => {
     });
     return;
   }
-  res.json({ user: req.user ? toAuthUser(req.user) : null });
+  res.json({ user: req.user ? { ...toAuthUser(req.user), clientName: await clientNameFor(req.user.clientId) } : null });
 });
 
 /* ===== Invitation flow (Phase 16) ====================================== */
@@ -664,7 +677,7 @@ authRouter.post('/accept-invite', acceptInviteIpLimiter, async (req, res, next) 
     const nextPath = await pickPostAcceptPath(updatedUser.id);
 
     const profile = await loadProfileFor(updatedUser.associateId);
-    res.json({ user: toAuthUser({ ...updatedUser, ...profile }), nextPath });
+    res.json({ user: { ...toAuthUser({ ...updatedUser, ...profile }), clientName: await clientNameFor(updatedUser.clientId) }, nextPath });
   } catch (err) {
     next(err);
   }

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { FileSignature, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, parseYmd } from '@/lib/format';
 import {
   deleteAgreement,
   expireAgreement,
@@ -61,6 +61,12 @@ function daysSince(iso: string): number {
     0,
     Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000),
   );
+}
+
+/** Local-midnight comparison for the YYYY-MM-DD expiry date. */
+function isPastYmd(s: string): boolean {
+  const d = parseYmd(s);
+  return d !== null && d.getTime() < Date.now();
 }
 
 export function AgreementsHome() {
@@ -175,24 +181,34 @@ export function AgreementsHome() {
                         {a.signedAt
                           ? `Signed ${fmtDate(a.signedAt)}`
                           : 'Awaiting your signature'}
-                        {a.expiresOn && ` · expires ${a.expiresOn}`}
+                        {a.expiresOn && ` · expires ${fmtDate(parseYmd(a.expiresOn))}`}
                       </div>
                     </div>
                     <Badge variant={STATUS_VARIANT[a.status]}>
                       {STATUS_LABELS[a.status]}
                     </Badge>
                     {a.documentUrl && (
-                      <a
-                        href={a.documentUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs text-steel hover:underline"
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        asChild
+                        className="coarse:min-h-11"
                       >
-                        Read ↗
-                      </a>
+                        <a
+                          href={a.documentUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Read ↗
+                        </a>
+                      </Button>
                     )}
                     {a.status === 'PENDING_SIGNATURE' && (
-                      <Button size="sm" onClick={() => setSignRow(a)}>
+                      <Button
+                        size="sm"
+                        onClick={() => setSignRow(a)}
+                        className="coarse:min-h-11"
+                      >
                         Sign
                       </Button>
                     )}
@@ -241,7 +257,7 @@ export function AgreementsHome() {
                           {a.signedAt
                             ? `Signed ${fmtDate(a.signedAt)}`
                             : 'Not signed'}
-                          {a.expiresOn && ` · expires ${a.expiresOn}`}
+                          {a.expiresOn && ` · expires ${fmtDate(parseYmd(a.expiresOn))}`}
                         </div>
                       </TableCell>
                       <TableCell className="text-sm">
@@ -275,12 +291,12 @@ export function AgreementsHome() {
                         {a.expiresOn ? (
                           <span
                             className={
-                              new Date(a.expiresOn) < new Date()
+                              isPastYmd(a.expiresOn)
                                 ? 'text-alert'
                                 : 'text-silver'
                             }
                           >
-                            {a.expiresOn}
+                            {fmtDate(parseYmd(a.expiresOn))}
                           </span>
                         ) : (
                           <span className="text-silver">—</span>
@@ -558,8 +574,12 @@ function SignDrawer({
 }) {
   const [signature, setSignature] = useState('');
   const [saving, setSaving] = useState(false);
+  // No attached document → nothing to read → nothing to legally agree to.
+  // Signing is blocked until HR attaches the file.
+  const missingDoc = !row.documentUrl;
 
   const submit = async () => {
+    if (missingDoc) return;
     if (!signature.trim()) {
       toast.error('Type your full name to sign.');
       return;
@@ -594,8 +614,8 @@ function SignDrawer({
             Read the document →
           </a>
         ) : (
-          <div className="text-sm text-silver">
-            No document URL provided. Ask HR for the file before signing.
+          <div role="alert" className="text-sm text-alert">
+            The document file is missing — ask HR to attach it before signing.
           </div>
         )}
         {row.notes && (
@@ -608,17 +628,20 @@ function SignDrawer({
             value={signature}
             onChange={(e) => setSignature(e.target.value)}
             placeholder="Jane Q. Smith"
+            disabled={missingDoc}
           />
         </div>
-        <div className="text-xs text-silver">
-          By signing, you agree this is a legally binding electronic signature.
-        </div>
+        {!missingDoc && (
+          <div className="text-xs text-silver">
+            By signing, you agree this is a legally binding electronic signature.
+          </div>
+        )}
       </DrawerBody>
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>
           Cancel
         </Button>
-        <Button onClick={submit} disabled={saving}>
+        <Button onClick={submit} disabled={saving || missingDoc}>
           {saving ? 'Signing…' : 'Sign'}
         </Button>
       </DrawerFooter>

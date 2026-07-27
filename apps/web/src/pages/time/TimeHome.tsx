@@ -52,14 +52,19 @@ function AssociateKioskOnlyView() {
         title={t('time.title')}
         subtitle={t('time.subtitle')}
       />
-      <div className="rounded-lg border border-navy-secondary bg-navy/40 p-8 text-center">
-        <ScanLine className="mx-auto h-10 w-10 text-gold mb-4" />
-        <h2 className="text-white text-lg font-medium mb-2">
-          {t('time.kioskHeading')}
-        </h2>
-        <p className="text-silver text-sm leading-relaxed max-w-md mx-auto">
-          {t('time.kioskBody')}
-        </p>
+      {/* Compact kiosk note — the "how punches happen" explainer stays,
+          but the timesheet below is the primary content of this page,
+          not a dead end. */}
+      <div className="rounded-lg border border-navy-secondary bg-navy/40 p-4 mb-6 flex items-start gap-3">
+        <ScanLine className="h-5 w-5 text-gold shrink-0 mt-0.5" aria-hidden="true" />
+        <div className="min-w-0">
+          <h2 className="text-white text-sm font-medium">
+            {t('time.kioskHeading')}
+          </h2>
+          <p className="text-silver text-xs leading-relaxed mt-0.5">
+            {t('time.kioskBody')}
+          </p>
+        </div>
       </div>
       {/* The receipt side: every kiosk punch with in/out times, net
           hours, and review status — the page the dashboard's

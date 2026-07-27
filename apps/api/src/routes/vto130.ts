@@ -257,7 +257,7 @@ vto130Router.post(
           approved ? 'approved' : 'rejected'
         }.` + (input.notes ? ` Reviewer note: ${input.notes}` : ''),
       category: 'vto',
-      linkUrl: '/vto',
+      linkUrl: '/volunteer',
       emailFallback: true,
     });
     res.json({ ok: true });
@@ -321,7 +321,7 @@ vto130Router.post(
         2,
       )} was recorded for your ${e.hours} volunteer hour(s) at ${e.organization}.`,
       category: 'vto',
-      linkUrl: '/vto',
+      linkUrl: '/volunteer',
       emailFallback: true,
     });
     res.json({ ok: true });

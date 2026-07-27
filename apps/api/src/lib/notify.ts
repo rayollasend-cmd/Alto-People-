@@ -328,6 +328,58 @@ export function notifyAllAdmins(
 }
 
 /**
+ * Notify every ACTIVE SHIFT_SUPERVISOR bound to `clientId`. Supervisors
+ * hold no admin capability, so notifyAllAdmins never reaches them — yet
+ * they're the person physically on the floor for client-attributable
+ * events (shift claims, swaps, possible no-shows). Call this ALONGSIDE
+ * the existing notifyManager/notifyAllAdmins fan-outs, not instead.
+ */
+export function notifyClientSupervisors(
+  clientId: string | null | undefined,
+  opts: NotifyOpts & { excludeUserId?: string | null },
+): Promise<void> {
+  return track(
+    (async () => {
+      if (!clientId) return;
+      const recipients = await prisma.user.findMany({
+        where: {
+          role: 'SHIFT_SUPERVISOR',
+          status: 'ACTIVE',
+          clientId,
+          ...(opts.excludeUserId ? { NOT: { id: opts.excludeUserId } } : {}),
+        },
+        select: { id: true, email: true },
+      });
+      if (recipients.length === 0) return;
+      const now = new Date();
+      await prisma.notification.createMany({
+        data: recipients.map((u) => ({
+          channel: 'IN_APP' as const,
+          status: 'SENT' as const,
+          recipientUserId: u.id,
+          subject: opts.subject,
+          body: opts.body,
+          category: opts.category ?? null,
+          linkUrl: opts.linkUrl ?? null,
+          sentAt: now,
+        })),
+      });
+      for (const u of recipients) emitLiveEvent(u.id, 'notification');
+      for (const u of recipients) {
+        if (!u.email) continue;
+        const muted = await isEmailMutedForCategory(u.id, opts.category);
+        if (!muted) void sendEmailNotification(u.id, u.email, opts);
+      }
+    })().catch((err: unknown) => {
+      console.warn(
+        '[notify] notifyClientSupervisors failed:',
+        err instanceof Error ? err.message : err,
+      );
+    }),
+  );
+}
+
+/**
  * Notify the associate (via their User row, if one exists). No-op if the
  * associate has no active User account yet — invited-but-unaccepted
  * accounts have no confirmed inbox to mail.

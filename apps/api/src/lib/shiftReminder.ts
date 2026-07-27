@@ -14,7 +14,7 @@ import type { PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { formatShiftLine, notifyShift } from './notifyShift.js';
-import { notifyAllAdmins } from './notify.js';
+import { notifyAllAdmins, notifyClientSupervisors } from './notify.js';
 
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 // Bound one sweep so a backlog (e.g. cron re-enabled after a week off)
@@ -146,7 +146,7 @@ export async function runShiftReminderSweep(
       const who = shift.assignedAssociate
         ? `${shift.assignedAssociate.firstName} ${shift.assignedAssociate.lastName}`
         : 'The assigned associate';
-      await notifyAllAdmins({
+      const noShowNotice = {
         subject: `Possible no-show — ${who}`,
         body: `${who} hasn't clocked in for ${formatShiftLine({
           position: shift.position,
@@ -157,7 +157,11 @@ export async function runShiftReminderSweep(
         })}. Worth a call — the shift started over 15 minutes ago.`,
         category: 'shift_no_show',
         linkUrl: '/scheduling',
-      });
+      };
+      await notifyAllAdmins(noShowNotice);
+      // The on-site supervisor is the one person who can physically walk
+      // the floor and find (or replace) the associate.
+      await notifyClientSupervisors(shift.clientId, noShowNotice);
       noShows++;
     } catch (err) {
       errors.push({

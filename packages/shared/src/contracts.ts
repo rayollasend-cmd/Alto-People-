@@ -436,6 +436,10 @@ export const AuthUserSchema = z.object({
   role: RoleSchema,
   status: UserStatusSchema,
   clientId: UuidSchema.nullable(),
+  /** Display name of the bound client for client-scoped roles
+   *  (SHIFT_SUPERVISOR, CLIENT_PORTAL) — the web pins pickers/scope bars
+   *  to it instead of fetching a client list those roles can't read. */
+  clientName: z.string().nullable().optional(),
   associateId: UuidSchema.nullable(),
   firstName: z.string().nullable(),
   lastName: z.string().nullable(),

@@ -239,7 +239,7 @@ directoryAndCommsRouter.post(
               subject: b.title || 'Company announcement',
               body: bodyText,
               category: 'broadcast',
-              linkUrl: '/inbox',
+              linkUrl: '/communications',
             }),
           ),
         );

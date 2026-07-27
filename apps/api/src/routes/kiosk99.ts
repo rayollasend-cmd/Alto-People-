@@ -22,6 +22,26 @@ import { encryptString, decryptString } from '../lib/crypto.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
 import { send } from '../lib/notifications.js';
+import { associatesOfClient, effectiveClientIdFilter } from '../lib/scope.js';
+
+/**
+ * Tenant clamp for kiosk admin surfaces. Client-bounded roles
+ * (SHIFT_SUPERVISOR) get their own clientId regardless of what was
+ * requested; an unassigned bounded caller fails CLOSED via an impossible
+ * id. Admin callers pass their requested filter through (may be
+ * undefined = org-wide).
+ */
+function kioskClientClamp(
+  user: { role: string; clientId: string | null },
+  requested?: string,
+): string | undefined {
+  const bounded = effectiveClientIdFilter(
+    user as Parameters<typeof effectiveClientIdFilter>[0],
+    requested,
+  );
+  if (bounded === null) return '00000000-0000-0000-0000-000000000000';
+  return bounded;
+}
 
 /**
  * Phase 99 — Kiosk-mode clock in/out: 4-digit PIN + selfie.
@@ -81,7 +101,8 @@ function nextTokenExpiry(now: Date = new Date()): Date {
 }
 
 kiosk99Router.get('/kiosk-devices', MANAGE, async (req, res) => {
-  const clientId = z.string().uuid().optional().parse(req.query.clientId);
+  const requested = z.string().uuid().optional().parse(req.query.clientId);
+  const clientId = kioskClientClamp(req.user!, requested);
   const rows = await prisma.kioskDevice.findMany({
     take: 500,
     where: { ...(clientId ? { clientId } : {}) },
@@ -153,6 +174,12 @@ kiosk99Router.post('/kiosk-devices', MANAGE, async (req, res) => {
     throw new HttpError(400, 'invalid_body', 'clientId or locationId is required.');
   }
 
+  // Client-bounded roles can only register devices for their own client.
+  const bounded = effectiveClientIdFilter(req.user!, undefined);
+  if (bounded !== undefined && resolvedClientId !== bounded) {
+    throw new HttpError(403, 'forbidden', 'You can only manage kiosks for your assigned client.');
+  }
+
   const { plaintext, prefix } = generateDeviceToken();
   const tokenHash = hashDeviceToken(plaintext);
   const created = await prisma.kioskDevice.create({
@@ -182,8 +209,9 @@ kiosk99Router.post('/kiosk-devices', MANAGE, async (req, res) => {
 //     red and HR wants to keep the kiosk working.
 // The old token stops working the moment this returns.
 kiosk99Router.post('/kiosk-devices/:id/rotate', MANAGE, async (req, res) => {
-  const existing = await prisma.kioskDevice.findUnique({
-    where: { id: req.params.id },
+  const deviceClamp = kioskClientClamp(req.user!);
+  const existing = await prisma.kioskDevice.findFirst({
+    where: { id: req.params.id, ...(deviceClamp ? { clientId: deviceClamp } : {}) },
     select: { id: true, isActive: true },
   });
   if (!existing) {
@@ -210,15 +238,27 @@ kiosk99Router.post('/kiosk-devices/:id/rotate', MANAGE, async (req, res) => {
 });
 
 kiosk99Router.post('/kiosk-devices/:id/revoke', MANAGE, async (req, res) => {
+  const revokeClamp = kioskClientClamp(req.user!);
+  const target = await prisma.kioskDevice.findFirst({
+    where: { id: req.params.id, ...(revokeClamp ? { clientId: revokeClamp } : {}) },
+    select: { id: true },
+  });
+  if (!target) throw new HttpError(404, 'device_not_found', 'Device not found.');
   await prisma.kioskDevice.update({
-    where: { id: req.params.id },
+    where: { id: target.id },
     data: { isActive: false },
   });
   res.json({ ok: true });
 });
 
 kiosk99Router.delete('/kiosk-devices/:id', MANAGE, async (req, res) => {
-  await prisma.kioskDevice.delete({ where: { id: req.params.id } });
+  const deleteClamp = kioskClientClamp(req.user!);
+  const target = await prisma.kioskDevice.findFirst({
+    where: { id: req.params.id, ...(deleteClamp ? { clientId: deleteClamp } : {}) },
+    select: { id: true },
+  });
+  if (!target) throw new HttpError(404, 'device_not_found', 'Device not found.');
+  await prisma.kioskDevice.delete({ where: { id: target.id } });
   res.status(204).end();
 });
 
@@ -254,7 +294,10 @@ kiosk99Router.get('/kiosk-pins', MANAGE, async (req, res) => {
   // Scoped per-client it sorts newest-first (matches issuing order); the
   // all-clients view groups by client then name so the flat list stays
   // scannable.
-  const clientId = z.string().uuid().optional().parse(req.query.clientId);
+  const requested = z.string().uuid().optional().parse(req.query.clientId);
+  // Decrypted PINs + employee numbers are tenant-sensitive: bounded roles
+  // are clamped to their own client no matter what they request.
+  const clientId = kioskClientClamp(req.user!, requested);
   const rows = await prisma.kioskPin.findMany({
     take: 1000,
     where: { ...(clientId ? { clientId } : {}) },
@@ -337,8 +380,12 @@ const FaceConsentAdminSchema = z.object({
 
 kiosk99Router.post('/kiosk-pins/:id/face-consent', MANAGE, async (req, res) => {
   const { action } = FaceConsentAdminSchema.parse(req.body);
-  const pin = await prisma.kioskPin.findUnique({
-    where: { id: req.params.id },
+  const consentClamp = kioskClientClamp(req.user!);
+  const pin = await prisma.kioskPin.findFirst({
+    where: {
+      id: req.params.id,
+      ...(consentClamp ? { clientId: consentClamp } : {}),
+    },
     select: { id: true, clientId: true, associateId: true },
   });
   if (!pin) {
@@ -386,7 +433,8 @@ kiosk99Router.post('/kiosk-pins/:id/face-consent', MANAGE, async (req, res) => {
 // means that code will fail clock-in (the secret changed). Codes we can't
 // decrypt at all flag the encryption key drifting. Either way → rotate.
 kiosk99Router.get('/kiosk-pins/health', MANAGE, async (req, res) => {
-  const clientId = z.string().uuid().optional().parse(req.query.clientId);
+  const requestedHealth = z.string().uuid().optional().parse(req.query.clientId);
+  const clientId = kioskClientClamp(req.user!, requestedHealth);
   const pins = await prisma.kioskPin.findMany({
     where: { ...(clientId ? { clientId } : {}) },
     select: { pinEncrypted: true, pinHmac: true },
@@ -425,6 +473,12 @@ kiosk99Router.get('/kiosk-pins/health', MANAGE, async (req, res) => {
 
 kiosk99Router.post('/kiosk-pins', MANAGE, async (req, res) => {
   const input = PinInputSchema.parse(req.body);
+
+  // Client-bounded roles can only issue employee numbers for their client.
+  const boundedPin = effectiveClientIdFilter(req.user!, undefined);
+  if (boundedPin !== undefined && input.clientId !== boundedPin) {
+    throw new HttpError(403, 'forbidden', 'You can only manage employee numbers for your assigned client.');
+  }
 
   // The employee number is issued AFTER onboarding completes — i.e.
   // the associate has at least one APPROVED application. HR shouldn't
@@ -491,7 +545,13 @@ kiosk99Router.post('/kiosk-pins', MANAGE, async (req, res) => {
 });
 
 kiosk99Router.delete('/kiosk-pins/:id', MANAGE, async (req, res) => {
-  await prisma.kioskPin.delete({ where: { id: req.params.id } });
+  const pinDeleteClamp = kioskClientClamp(req.user!);
+  const target = await prisma.kioskPin.findFirst({
+    where: { id: req.params.id, ...(pinDeleteClamp ? { clientId: pinDeleteClamp } : {}) },
+    select: { id: true },
+  });
+  if (!target) throw new HttpError(404, 'not_found', 'Employee number not found.');
+  await prisma.kioskPin.delete({ where: { id: target.id } });
   res.status(204).end();
 });
 
@@ -526,8 +586,9 @@ function pinEmailContent(
 // My Profile page — this is just a convenience push to their inbox.
 kiosk99Router.post('/kiosk-pins/:id/email', MANAGE, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
-  const pin = await prisma.kioskPin.findUnique({
-    where: { id },
+  const emailClamp = kioskClientClamp(req.user!);
+  const pin = await prisma.kioskPin.findFirst({
+    where: { id, ...(emailClamp ? { clientId: emailClamp } : {}) },
     include: {
       associate: { select: { firstName: true, email: true } },
       client: { select: { name: true } },
@@ -605,8 +666,12 @@ const BulkEmailSchema = z.object({
 
 kiosk99Router.post('/kiosk-pins/email', MANAGE, async (req, res) => {
   const { ids } = BulkEmailSchema.parse(req.body);
+  const bulkEmailClamp = kioskClientClamp(req.user!);
   const pins = await prisma.kioskPin.findMany({
-    where: { id: { in: ids } },
+    where: {
+      id: { in: ids },
+      ...(bulkEmailClamp ? { clientId: bulkEmailClamp } : {}),
+    },
     include: {
       associate: { select: { firstName: true, email: true } },
       client: { select: { name: true } },
@@ -720,12 +785,20 @@ kiosk99Router.get('/kiosk-pins/diagnose', MANAGE, async (req, res) => {
       select: { id: true, clientId: true, associateId: true, pinEncrypted: true },
     });
   } else if (associateQuery) {
+    // Bounded roles only search their own client's people — this endpoint
+    // returns names/emails and, below, decrypted numbers.
+    const diagnoseSearchClamp = kioskClientClamp(req.user!);
     const associates = await prisma.associate.findMany({
       where: {
-        OR: [
-          { firstName: { contains: associateQuery, mode: 'insensitive' } },
-          { lastName: { contains: associateQuery, mode: 'insensitive' } },
-          { email: { contains: associateQuery, mode: 'insensitive' } },
+        AND: [
+          {
+            OR: [
+              { firstName: { contains: associateQuery, mode: 'insensitive' } },
+              { lastName: { contains: associateQuery, mode: 'insensitive' } },
+              { email: { contains: associateQuery, mode: 'insensitive' } },
+            ],
+          },
+          ...(diagnoseSearchClamp ? [associatesOfClient(diagnoseSearchClamp)] : []),
         ],
       },
       select: { id: true, firstName: true, lastName: true, email: true },
@@ -773,6 +846,13 @@ kiosk99Router.get('/kiosk-pins/diagnose', MANAGE, async (req, res) => {
       });
       return;
     }
+  }
+
+  // Tenant boundary: a bounded caller diagnosing a number that belongs to
+  // another client gets "not found", never the other tenant's identity.
+  const diagnoseClamp = kioskClientClamp(req.user!);
+  if (pin && diagnoseClamp && pin.clientId !== diagnoseClamp) {
+    pin = null;
   }
 
   if (!pin) {
@@ -930,7 +1010,10 @@ kiosk99Router.get('/kiosk-punches', MANAGE, async (req, res) => {
   );
 
   const dir: Prisma.SortOrder = sort === 'oldest' ? 'asc' : 'desc';
+  // Bounded roles only see punches from their own client's devices.
+  const punchClamp = kioskClientClamp(req.user!);
   const where: Prisma.KioskPunchWhereInput = {
+    ...(punchClamp ? { device: { is: { clientId: punchClamp } } } : {}),
     ...(associateId ? { associateId } : {}),
     ...(deviceId ? { kioskDeviceId: deviceId } : {}),
     ...(reviewStatus ? { reviewStatus } : {}),
@@ -1014,8 +1097,14 @@ const BulkReviewSchema = z.object({
 
 kiosk99Router.post('/kiosk-punches/review', MANAGE, async (req, res) => {
   const { ids, decision, notes } = BulkReviewSchema.parse(req.body);
+  // Bounded roles can only review punches from their own client's devices;
+  // out-of-tenant ids fall out here and report as not_found.
+  const bulkReviewClamp = kioskClientClamp(req.user!);
   const punches = await prisma.kioskPunch.findMany({
-    where: { id: { in: ids } },
+    where: {
+      id: { in: ids },
+      ...(bulkReviewClamp ? { device: { is: { clientId: bulkReviewClamp } } } : {}),
+    },
     select: { id: true, timeEntryId: true, reviewStatus: true },
   });
   const byId = new Map(punches.map((p) => [p.id, p]));
@@ -1077,8 +1166,12 @@ kiosk99Router.post('/kiosk-punches/review', MANAGE, async (req, res) => {
 
 kiosk99Router.post('/kiosk-punches/:id/review', MANAGE, async (req, res) => {
   const { decision, notes } = ReviewDecisionSchema.parse(req.body);
-  const punch = await prisma.kioskPunch.findUnique({
-    where: { id: req.params.id },
+  const reviewClamp = kioskClientClamp(req.user!);
+  const punch = await prisma.kioskPunch.findFirst({
+    where: {
+      id: req.params.id,
+      ...(reviewClamp ? { device: { is: { clientId: reviewClamp } } } : {}),
+    },
     select: { id: true, timeEntryId: true, reviewStatus: true },
   });
   if (!punch) {
@@ -1129,9 +1222,12 @@ kiosk99Router.post('/kiosk-punches/:id/review', MANAGE, async (req, res) => {
 
 // ----- Face references (Phase 101) ---------------------------------------
 
-kiosk99Router.get('/kiosk-face-references', MANAGE, async (_req, res) => {
+kiosk99Router.get('/kiosk-face-references', MANAGE, async (req, res) => {
+  // Bounded roles only see face enrollments for their own client's people.
+  const faceClamp = kioskClientClamp(req.user!);
   const rows = await prisma.kioskFaceReference.findMany({
     take: 500,
+    where: faceClamp ? { associate: { is: associatesOfClient(faceClamp) } } : {},
     include: {
       associate: { select: { firstName: true, lastName: true, email: true } },
     },
@@ -1158,6 +1254,15 @@ kiosk99Router.delete(
   MANAGE,
   async (req, res) => {
     const associateId = z.string().uuid().parse(req.params.associateId);
+    // Bounded roles can only clear enrollments for their own client's people.
+    const faceDeleteClamp = kioskClientClamp(req.user!);
+    if (faceDeleteClamp) {
+      const inScope = await prisma.associate.findFirst({
+        where: { id: associateId, ...associatesOfClient(faceDeleteClamp) },
+        select: { id: true },
+      });
+      if (!inScope) throw new HttpError(404, 'not_found', 'Associate not found.');
+    }
     await prisma.kioskFaceReference.deleteMany({
       where: { associateId },
     });
@@ -1170,8 +1275,14 @@ kiosk99Router.delete(
 // with manage:time can pull them and we want a paper trail of who
 // looked at what, when, and from where.
 kiosk99Router.get('/kiosk-punches/:id/selfie', MANAGE, async (req, res) => {
-  const p = await prisma.kioskPunch.findUnique({
-    where: { id: req.params.id },
+  // Tenant boundary FIRST: a bounded caller can only stream selfies from
+  // their own client's devices — biometric images never cross tenants.
+  const selfieClamp = kioskClientClamp(req.user!);
+  const p = await prisma.kioskPunch.findFirst({
+    where: {
+      id: req.params.id,
+      ...(selfieClamp ? { device: { is: { clientId: selfieClamp } } } : {}),
+    },
     select: { selfie: true, associateId: true, kioskDeviceId: true },
   });
   if (!p || !p.selfie) {

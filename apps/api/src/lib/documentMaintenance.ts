@@ -141,7 +141,7 @@ export async function expireLapsedDocs(
         `expired on ${doc.expiresAt!.toISOString().slice(0, 10)}. ` +
         `Please upload a current copy from Documents so your records stay compliant.`,
       category: 'documents.expired',
-      linkUrl: '/me/documents',
+      linkUrl: '/documents',
       emailFallback: true,
     });
   }

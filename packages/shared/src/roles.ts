@@ -213,6 +213,10 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'manage:time',
     'view:scheduling',
     'manage:scheduling',
+    // The in-app inbox/bell. Without it, notifications routed to
+    // supervisors (shift claims, swaps, no-shows at their site) land in a
+    // mailbox they can't open — associates hold this for the same reason.
+    'view:communications',
   ]),
 };
 

@@ -51,7 +51,14 @@ type Tab = 'open' | 'claims' | 'catalog';
 export function MarketplaceHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:scheduling') : false;
-  const [tab, setTab] = useState<Tab>(canManage ? 'claims' : 'open');
+  // "Available" is the associate-side marketplace — it needs an associate
+  // record to pick up shifts. Users without one (e.g. SHIFT_SUPERVISOR
+  // accounts) got a red 403 banner there; hide the tab and land them on
+  // the manager views instead.
+  const canPickUp = !!user?.associateId;
+  const [tab, setTab] = useState<Tab>(
+    canManage || !canPickUp ? 'claims' : 'open',
+  );
 
   return (
     <div className="space-y-5">
@@ -63,12 +70,14 @@ export function MarketplaceHome() {
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
-          <TabsTrigger value="open">Available</TabsTrigger>
+          {canPickUp && <TabsTrigger value="open">Available</TabsTrigger>}
           {canManage && <TabsTrigger value="claims">Pending claims</TabsTrigger>}
           {canManage && <TabsTrigger value="catalog">Qualifications</TabsTrigger>}
         </TabsList>
 
-        <TabsContent value="open"><AvailableTab /></TabsContent>
+        {canPickUp && (
+          <TabsContent value="open"><AvailableTab /></TabsContent>
+        )}
         {canManage && (
           <TabsContent value="claims"><ClaimsTab /></TabsContent>
         )}

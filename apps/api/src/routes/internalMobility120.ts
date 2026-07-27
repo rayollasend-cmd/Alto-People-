@@ -225,6 +225,9 @@ internalMobility120Router.get(
         // Last status-change stamp (set by the manager decision route) so
         // the associate's "My applications" list can show when it moved.
         reviewedAt: a.reviewedAt?.toISOString() ?? null,
+        // The decision note — a REJECTED badge with no reason is a dead
+        // end; the reviewer wrote one, the applicant gets to read it.
+        reviewerNotes: a.reviewerNotes,
         posting: a.posting,
       })),
     });
