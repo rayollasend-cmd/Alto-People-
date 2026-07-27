@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
-import { effectiveClientIdFilter } from '../lib/scope.js';
+import { effectiveClientIdFilter, scopeShifts } from '../lib/scope.js';
+import { hasCapability } from '@alto-people/shared';
 import { notifyAssociate, notifyManager } from '../lib/notify.js';
 import { formatShiftLine } from '../lib/notifyShift.js';
 
@@ -431,6 +432,7 @@ qualificationsRouter.put(
             position: true,
             startsAt: true,
             endsAt: true,
+            clientId: true,
             client: { select: { name: true } },
             locationRel: { select: { timezone: true } },
           },
@@ -447,14 +449,19 @@ qualificationsRouter.put(
         throw new HttpError(403, 'forbidden', 'Only the claimer can withdraw.');
       }
     } else {
-      // APPROVE / REJECT requires manage:scheduling.
+      // APPROVE / REJECT requires the manage:scheduling capability — the
+      // old hardcoded role allowlist both locked out SHIFT_SUPERVISOR
+      // (whose UI shows the Approve button) and let read-only chairs
+      // approve. Client-bounded roles must also own the shift's client.
       const can = req.user?.role
-        ? ['HR_ADMINISTRATOR', 'OPERATIONS_MANAGER', 'EXECUTIVE_CHAIRMAN'].includes(
-            req.user.role,
-          )
+        ? hasCapability(req.user.role, 'manage:scheduling')
         : false;
       if (!can) {
         throw new HttpError(403, 'forbidden', 'Manager approval required.');
+      }
+      const decideBounded = effectiveClientIdFilter(req.user!, undefined);
+      if (decideBounded !== undefined && claim.shift.clientId !== decideBounded) {
+        throw new HttpError(404, 'not_found', 'Claim not found.');
       }
     }
 
@@ -528,9 +535,11 @@ qualificationsRouter.put(
 qualificationsRouter.get(
   '/shifts/claims/pending',
   MANAGE_SCHED,
-  async (_req, res) => {
+  async (req, res) => {
+    // Client-bounded roles only see claims on their own client's shifts —
+    // this mirrors the already-hardened /scheduling/open-shift-claims.
     const rows = await prisma.openShiftClaim.findMany({
-      where: { status: 'PENDING' },
+      where: { status: 'PENDING', shift: { is: scopeShifts(req.user!) } },
       include: {
         associate: { select: { firstName: true, lastName: true } },
         shift: {

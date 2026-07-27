@@ -362,42 +362,59 @@ export function InternalJobsHome() {
         <div className="space-y-2">
           {mine.map((a) => (
             <Card key={a.id}>
-              <CardContent className="p-4 flex items-center gap-3">
-                <div className="flex-1">
-                  <div className="text-sm font-medium text-white">
-                    {a.posting.title}
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-white">
+                      {a.posting.title}
+                    </div>
+                    <div className="text-xs text-silver">
+                      Applied {fmtDate(a.createdAt)}
+                      {a.posting.location && ` · ${a.posting.location}`}
+                      {a.reviewedAt && ` · Status updated ${fmtDate(a.reviewedAt)}`}
+                    </div>
                   </div>
-                  <div className="text-xs text-silver">
-                    Applied {fmtDate(a.createdAt)}
-                    {a.posting.location && ` · ${a.posting.location}`}
-                    {a.reviewedAt && ` · Status updated ${fmtDate(a.reviewedAt)}`}
-                  </div>
+                  <Badge variant={STATUS_VARIANT[a.status]}>
+                    {STATUS_LABELS[a.status]}
+                  </Badge>
+                  {a.status !== 'WITHDRAWN' &&
+                    a.status !== 'HIRED' &&
+                    a.status !== 'REJECTED' && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={async () => {
+                          if (!(await confirm({ title: 'Withdraw your application?', destructive: true }))) return;
+                          try {
+                            await withdrawApplication(a.id);
+                            toast.success('Withdrawn.');
+                            refresh();
+                          } catch (err) {
+                            toast.error(
+                              err instanceof ApiError ? err.message : 'Failed.',
+                            );
+                          }
+                        }}
+                      >
+                        Withdraw
+                      </Button>
+                    )}
                 </div>
-                <Badge variant={STATUS_VARIANT[a.status]}>
-                  {STATUS_LABELS[a.status]}
-                </Badge>
-                {a.status !== 'WITHDRAWN' &&
-                  a.status !== 'HIRED' &&
-                  a.status !== 'REJECTED' && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={async () => {
-                        if (!(await confirm({ title: 'Withdraw your application?', destructive: true }))) return;
-                        try {
-                          await withdrawApplication(a.id);
-                          toast.success('Withdrawn.');
-                          refresh();
-                        } catch (err) {
-                          toast.error(
-                            err instanceof ApiError ? err.message : 'Failed.',
-                          );
-                        }
-                      }}
-                    >
-                      Withdraw
-                    </Button>
-                  )}
+                {a.reviewerNotes && (
+                  <div
+                    className={cn(
+                      'mt-3 rounded-md border px-3 py-2 text-xs text-silver',
+                      a.status === 'REJECTED'
+                        ? 'border-alert/30 bg-alert/10'
+                        : 'border-navy-secondary bg-navy-secondary/30',
+                    )}
+                  >
+                    <span className="font-medium text-white">
+                      Note from the hiring manager:
+                    </span>{' '}
+                    {a.reviewerNotes}
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))}
@@ -425,6 +442,10 @@ export function InternalJobsHome() {
   );
 }
 
+/** localStorage key for the per-posting cover-letter draft. */
+const coverDraftKey = (postingId: string) =>
+  `alto:internal-job-cover-draft:${postingId}`;
+
 function ApplyDrawer({
   job,
   onClose,
@@ -434,9 +455,26 @@ function ApplyDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [coverLetter, setCoverLetter] = useState('');
+  // Draft survives an accidental drawer close / navigation: restored on
+  // reopen, kept per posting id, cleared on successful submit.
+  const [coverLetter, setCoverLetter] = useState(() => {
+    try {
+      return localStorage.getItem(coverDraftKey(job.id)) ?? '';
+    } catch {
+      return '';
+    }
+  });
   const [resumeUrl, setResumeUrl] = useState('');
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    try {
+      if (coverLetter) localStorage.setItem(coverDraftKey(job.id), coverLetter);
+      else localStorage.removeItem(coverDraftKey(job.id));
+    } catch {
+      // Storage unavailable (private mode / quota) — drafts just don't persist.
+    }
+  }, [coverLetter, job.id]);
 
   const submit = async () => {
     setSaving(true);
@@ -445,6 +483,11 @@ function ApplyDrawer({
         coverLetter: coverLetter.trim() || null,
         resumeUrl: resumeUrl.trim() || null,
       });
+      try {
+        localStorage.removeItem(coverDraftKey(job.id));
+      } catch {
+        // Best-effort cleanup.
+      }
       toast.success('Applied.');
       onSaved();
     } catch (err) {

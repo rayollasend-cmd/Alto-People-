@@ -7,6 +7,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import type { PayrollItem, PayrollItemEarning } from '@alto-people/shared';
 import {
@@ -19,19 +20,35 @@ import {
   type MyPayoutMethod,
   type MyW4,
 } from '@/lib/payrollApi';
+import { fileCase } from '@/lib/hrCases123Api';
 import { ApiError } from '@/lib/api';
+import { fmtDate, fmtMoney } from '@/lib/format';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import { dayHeading, groupByDayBy } from '@/lib/dayGroup';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
+import { Textarea } from '@/components/ui/Input';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/Dialog';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { ChevronDown, ChevronRight, Download, Settings, Wallet } from 'lucide-react';
-
-const fmtMoney = (n: number) =>
-  n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+import {
+  ChevronDown,
+  ChevronRight,
+  Download,
+  FileText,
+  HelpCircle,
+  Settings,
+  Wallet,
+} from 'lucide-react';
 
 const KIND_KEY: Record<PayrollItemEarning['kind'], MessageKey> = {
   REGULAR: 'pay.kind.REGULAR',
@@ -82,6 +99,8 @@ async function emptyOnExpectedDenial<T>(p: Promise<T>): Promise<T | null> {
 export function AssociatePayrollView() {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // FAILED/HELD paystub the associate is asking HR about (files an HR case).
+  const [askItem, setAskItem] = useState<PayrollItem | null>(null);
 
   const payQuery = useQuery({
     queryKey: ['me', 'payrollItems'],
@@ -145,6 +164,7 @@ export function AssociatePayrollView() {
                 allItems={items}
                 expanded={expanded}
                 onToggle={toggle}
+                onAsk={setAskItem}
                 defaultOpen
               />
             )}
@@ -156,12 +176,15 @@ export function AssociatePayrollView() {
                 allItems={items}
                 expanded={expanded}
                 onToggle={toggle}
+                onAsk={setAskItem}
                 defaultOpen={pending.length === 0 && idx === 0}
               />
             ))}
           </div>
         );
       })()}
+
+      <AskPaycheckDialog item={askItem} onClose={() => setAskItem(null)} />
     </div>
   );
 }
@@ -198,14 +221,37 @@ function TaxAndPaySettings() {
         )}
       </button>
       {open && (
-        <div className="grid gap-4 border-t border-navy-secondary p-4 md:grid-cols-2">
-          <W4Card />
-          <PayoutMethodCard />
+        <div className="space-y-4 border-t border-navy-secondary p-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <W4Card />
+            <PayoutMethodCard />
+          </div>
+          <Link
+            to="/me?tab=tax-docs"
+            className="flex items-center gap-2 rounded-md border border-navy-secondary bg-navy px-3 py-2.5 text-xs text-silver hover:text-gold coarse:min-h-11"
+          >
+            <FileText className="h-4 w-4 shrink-0 text-gold" />
+            <span className="font-medium text-white">Tax documents</span>
+            <span className="ml-auto text-silver/70">W-2s &amp; year-end forms →</span>
+          </Link>
         </div>
       )}
     </div>
   );
 }
+
+/** Blank election set used to seed the form when no W-4 exists yet —
+ *  POST /me/w4 handles the create. */
+const EMPTY_W4: MyW4 = {
+  filingStatus: 'SINGLE',
+  multipleJobs: false,
+  dependentsAmount: 0,
+  otherIncome: 0,
+  deductions: 0,
+  extraWithholding: 0,
+  signedAt: null,
+  updatedAt: '',
+};
 
 function W4Card() {
   const [w4, setW4] = useState<MyW4 | null>(null);
@@ -267,10 +313,19 @@ function W4Card() {
           </Button>
         )}
       </div>
-      {missing && (
-        <p className="text-xs text-silver">
-          No W-4 on file yet — it&rsquo;s captured during onboarding.
-        </p>
+      {missing && !editing && (
+        <div className="space-y-2">
+          <p className="text-xs text-silver">No W-4 on file yet.</p>
+          <Button
+            size="sm"
+            onClick={() => {
+              setForm(EMPTY_W4);
+              setEditing(true);
+            }}
+          >
+            Set up your W-4
+          </Button>
+        </div>
       )}
       {w4 && !editing && (
         <dl className="space-y-1 text-xs">
@@ -337,11 +392,15 @@ function W4Card() {
   );
 }
 
+// NOTE: the payout-method API (GET/POST /me/payout-method) has no removal
+// path — an account can be replaced but not cleared — so there is no
+// "switch to paper check" affordance here until the server grows one.
 function PayoutMethodCard() {
   const [method, setMethod] = useState<MyPayoutMethod | null | undefined>(undefined);
   const [editing, setEditing] = useState(false);
   const [routing, setRouting] = useState('');
   const [account, setAccount] = useState('');
+  const [confirmAccount, setConfirmAccount] = useState('');
   const [type, setType] = useState<'CHECKING' | 'SAVINGS'>('CHECKING');
   const [busy, setBusy] = useState(false);
 
@@ -354,18 +413,27 @@ function PayoutMethodCard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const mismatch = confirmAccount.length > 0 && confirmAccount !== account;
+  const accountsMatch = account.length > 0 && confirmAccount === account;
+
+  const closeForm = () => {
+    setEditing(false);
+    setRouting('');
+    setAccount('');
+    setConfirmAccount('');
+  };
+
   const save = async () => {
     if (!/^\d{9}$/.test(routing) || !/^\d{4,17}$/.test(account)) {
       toast.error('Enter a 9-digit routing number and a valid account number.');
       return;
     }
+    if (!accountsMatch) return;
     setBusy(true);
     try {
       const r = await updateMyPayoutMethod({ routingNumber: routing, accountNumber: account, accountType: type });
       toast.success(`Direct deposit updated (account ending ${r.accountLast4}).`);
-      setEditing(false);
-      setRouting('');
-      setAccount('');
+      closeForm();
       await load();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed to update direct deposit.');
@@ -391,8 +459,8 @@ function PayoutMethodCard() {
           {method && method.branchCard && 'Paid to your Branch card.'}
           {method && !method.branchCard && (
             <span>
-              {method.accountType ?? 'Bank'} account ending{' '}
-              <span className="text-white">{method.accountLast4 ?? '••••'}</span>
+              {method.accountType ?? 'Bank'} account{' '}
+              <span className="text-white">••••{method.accountLast4 ?? ''}</span>
               {method.verifiedAt ? ' · verified' : ' · pending verification'}
             </span>
           )}
@@ -403,17 +471,39 @@ function PayoutMethodCard() {
           <input
             className="w-full rounded-md border border-navy-secondary bg-navy px-2 py-2 text-sm text-white"
             placeholder="Routing number (9 digits)"
+            type="tel"
             inputMode="numeric"
+            autoComplete="off"
             value={routing}
             onChange={(e) => setRouting(e.target.value.replace(/\D/g, '').slice(0, 9))}
           />
           <input
             className="w-full rounded-md border border-navy-secondary bg-navy px-2 py-2 text-sm text-white"
             placeholder="Account number"
+            type="tel"
             inputMode="numeric"
+            autoComplete="off"
             value={account}
             onChange={(e) => setAccount(e.target.value.replace(/\D/g, '').slice(0, 17))}
           />
+          <input
+            className={cn(
+              'w-full rounded-md border bg-navy px-2 py-2 text-sm text-white',
+              mismatch ? 'border-alert' : 'border-navy-secondary'
+            )}
+            placeholder="Confirm account number"
+            type="tel"
+            inputMode="numeric"
+            autoComplete="off"
+            aria-invalid={mismatch || undefined}
+            value={confirmAccount}
+            onChange={(e) => setConfirmAccount(e.target.value.replace(/\D/g, '').slice(0, 17))}
+          />
+          {mismatch && (
+            <p role="alert" className="text-xs text-alert">
+              Account numbers don&rsquo;t match — re-check both fields.
+            </p>
+          )}
           <Select value={type} onChange={(e) => setType(e.target.value as 'CHECKING' | 'SAVINGS')}>
             <option value="CHECKING">Checking</option>
             <option value="SAVINGS">Savings</option>
@@ -423,10 +513,10 @@ function PayoutMethodCard() {
             wasn&rsquo;t you.
           </p>
           <div className="flex justify-end gap-2">
-            <Button size="sm" variant="ghost" onClick={() => setEditing(false)} disabled={busy}>
+            <Button size="sm" variant="ghost" onClick={closeForm} disabled={busy}>
               Cancel
             </Button>
-            <Button size="sm" onClick={save} loading={busy} disabled={busy}>
+            <Button size="sm" onClick={save} loading={busy} disabled={busy || !accountsMatch}>
               Save
             </Button>
           </div>
@@ -476,6 +566,7 @@ function PaystubGroup({
   allItems,
   expanded,
   onToggle,
+  onAsk,
   defaultOpen,
 }: {
   heading: string;
@@ -483,6 +574,7 @@ function PaystubGroup({
   allItems: PayrollItem[];
   expanded: Set<string>;
   onToggle: (id: string) => void;
+  onAsk: (item: PayrollItem) => void;
   defaultOpen?: boolean;
 }) {
   const { t } = useI18n();
@@ -508,6 +600,7 @@ function PaystubGroup({
             allItems={allItems}
             expanded={expanded.has(it.id)}
             onToggle={() => onToggle(it.id)}
+            onAsk={() => onAsk(it)}
           />
         ))}
       </ul>
@@ -520,11 +613,13 @@ function PaystubCard({
   allItems,
   expanded,
   onToggle,
+  onAsk,
 }: {
   item: PayrollItem;
   allItems: PayrollItem[];
   expanded: boolean;
   onToggle: () => void;
+  onAsk: () => void;
 }) {
   const { t } = useI18n();
   const badge = statusBadge(item.status);
@@ -721,7 +816,18 @@ function PaystubCard({
             <div className="text-xs text-alert">{item.failureReason}</div>
           )}
 
-          <div className="flex justify-end pt-1">
+          <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+            {(item.status === 'FAILED' || item.status === 'HELD') && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onAsk}
+                className="mr-auto"
+              >
+                <HelpCircle className="h-3.5 w-3.5" />
+                Ask about this paycheck
+              </Button>
+            )}
             <Button
               size="sm"
               variant="outline"
@@ -735,6 +841,96 @@ function PaystubCard({
         </div>
       )}
     </li>
+  );
+}
+
+/**
+ * Files an HR case (category PAYROLL) about a FAILED/HELD paycheck with the
+ * item's facts auto-attached — same paper-trail pattern as MyTimesheet's
+ * time-entry dispute dialog.
+ */
+function AskPaycheckDialog({
+  item,
+  onClose,
+}: {
+  item: PayrollItem | null;
+  onClose: () => void;
+}) {
+  const [message, setMessage] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const open = item !== null;
+
+  const submit = async () => {
+    if (!item || submitting) return;
+    if (message.trim().length === 0) {
+      toast.error('Tell us what you need help with first.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const when = item.disbursedAt ? fmtDate(item.disbursedAt) : 'not yet disbursed';
+      await fileCase({
+        category: 'PAYROLL',
+        subject: `Paycheck ${item.status.toLowerCase()} — net ${fmtMoney(item.netPay)}`,
+        description:
+          `${message.trim()}\n\n— Paycheck details (auto-attached) —\n` +
+          `Status: ${item.status}\n` +
+          `Net pay: ${fmtMoney(item.netPay)}\n` +
+          `Disbursed: ${when}\n` +
+          (item.failureReason ? `Failure reason: ${item.failureReason}\n` : '') +
+          `Payroll item id: ${item.id}`,
+      });
+      toast.success('Sent — HR will follow up on your paycheck.');
+      setMessage('');
+      onClose();
+    } catch (err) {
+      toast.error('Could not send your question.', {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Ask about this paycheck</DialogTitle>
+          <DialogDescription>
+            This files an HR case with the paycheck&rsquo;s details attached, so
+            payroll can look into it and get back to you.
+          </DialogDescription>
+        </DialogHeader>
+        {item && (
+          <p className="text-xs text-silver tabular-nums">
+            {item.status} · net {fmtMoney(item.netPay)}
+            {item.disbursedAt ? ` · ${fmtDate(item.disbursedAt)}` : ''}
+          </p>
+        )}
+        <label className="block">
+          <span className="text-[11px] uppercase tracking-wider text-silver">
+            What&rsquo;s your question?
+          </span>
+          <Textarea
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            rows={3}
+            maxLength={2000}
+            placeholder="e.g., My paycheck shows as failed — when will it be re-sent?"
+            className="mt-1"
+          />
+        </label>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button onClick={submit} loading={submitting}>
+            Send
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

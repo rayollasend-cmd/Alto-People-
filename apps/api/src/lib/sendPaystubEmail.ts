@@ -118,14 +118,14 @@ export async function sendPaystubEmail(
       `Your paystub for the period ${period} is attached as a PDF.\n\n` +
       `Net pay: ${fmtMoney(netPay)}\n\n` +
       `You can also download the latest copy any time from ` +
-      `${env.APP_BASE_URL}/me/paystubs.\n\n` +
+      `${env.APP_BASE_URL}/payroll.\n\n` +
       `— Alto People`;
     const html =
       `<p>Hi ${escapeHtml(item.associate.firstName)},</p>` +
       `<p>Your paystub for the period <strong>${escapeHtml(period)}</strong> is attached as a PDF.</p>` +
       `<p><strong>Net pay:</strong> ${escapeHtml(fmtMoney(netPay))}</p>` +
       `<p>You can also download the latest copy any time from ` +
-      `<a href="${escapeHtml(env.APP_BASE_URL)}/me/paystubs">your paystubs page</a>.</p>` +
+      `<a href="${escapeHtml(env.APP_BASE_URL)}/payroll">your paystubs page</a>.</p>` +
       `<p>— Alto People</p>`;
 
     const filename = `paystub-${data.period.start}-${item.id.slice(0, 8)}.pdf`;
@@ -202,9 +202,9 @@ export async function sendPaystubEmail(
           status: 'SENT',
           recipientUserId: portalUser.id,
           subject,
-          body: `Net pay: ${fmtMoney(netPay)} for ${period}. Check your inbox or open /me/paystubs.`,
+          body: `Net pay: ${fmtMoney(netPay)} for ${period}. Check your inbox or open /payroll.`,
           category: 'payroll.paystub_emailed',
-          linkUrl: '/me/paystubs',
+          linkUrl: '/payroll',
           sentAt: new Date(),
         },
       });

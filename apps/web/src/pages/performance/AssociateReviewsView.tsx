@@ -3,6 +3,7 @@ import { ClipboardCheck } from 'lucide-react';
 import type { PerformanceReview } from '@alto-people/shared';
 import { acknowledgeReview, listMyReviews } from '@/lib/performanceApi';
 import { ApiError } from '@/lib/api';
+import { useConfirm } from '@/lib/confirm';
 import { fmtDate, parseYmd } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
@@ -14,7 +15,16 @@ function ratingStars(n: number): string {
   return '★'.repeat(n) + '☆'.repeat(Math.max(0, 5 - n));
 }
 
+/** Associate-facing wording for review states — "SUBMITTED" is manager
+ *  jargon; from this side it just means the review reached you. */
+const STATUS_LABEL: Record<PerformanceReview['status'], string> = {
+  DRAFT: 'Draft',
+  SUBMITTED: 'Shared with you',
+  ACKNOWLEDGED: 'Acknowledged',
+};
+
 export function AssociateReviewsView() {
+  const confirm = useConfirm();
   const [reviews, setReviews] = useState<PerformanceReview[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -34,6 +44,15 @@ export function AssociateReviewsView() {
   }, [refresh]);
 
   const onAck = async (id: string) => {
+    if (
+      !(await confirm({
+        title: 'Acknowledge this review?',
+        description:
+          "Acknowledging confirms you've read this review — it doesn't mean you agree with it.",
+        confirmLabel: 'Acknowledge',
+      }))
+    )
+      return;
     setPendingId(id);
     try {
       await acknowledgeReview(id);
@@ -89,7 +108,7 @@ export function AssociateReviewsView() {
                       : 'border-gold/40 bg-gold/10 text-gold'
                   )}
                 >
-                  {r.status}
+                  {STATUS_LABEL[r.status]}
                 </span>
               </div>
               <div className="text-white whitespace-pre-line mb-3">{r.summary}</div>

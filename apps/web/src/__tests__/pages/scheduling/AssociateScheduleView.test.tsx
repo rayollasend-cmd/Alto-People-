@@ -40,6 +40,7 @@ import {
   listSwapsIncoming,
 } from '@/lib/schedulingApi';
 import { AssociateScheduleView } from '@/pages/scheduling/AssociateScheduleView';
+import { ConfirmProvider } from '@/lib/confirm';
 
 const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -100,10 +101,14 @@ beforeEach(() => {
 });
 
 function renderView() {
+  // SwapMarketplace's Decline action now routes through the shared
+  // confirm dialog, so the provider must be mounted like in the app.
   return render(
-    <MemoryRouter>
-      <AssociateScheduleView />
-    </MemoryRouter>,
+    <ConfirmProvider>
+      <MemoryRouter>
+        <AssociateScheduleView />
+      </MemoryRouter>
+    </ConfirmProvider>,
   );
 }
 

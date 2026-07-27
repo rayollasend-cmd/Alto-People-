@@ -10,6 +10,7 @@ import {
 } from '@/lib/schedulingApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { useConfirm } from '@/lib/confirm';
 import { Button } from '@/components/ui/Button';
 import { fmtDateTz, fmtShiftRangeTz, fmtWeekdayTz } from '@/lib/format';
 import { SkeletonRows } from '@/components/ui/Skeleton';
@@ -26,6 +27,49 @@ const STATUS_CLS: Record<ShiftSwapStatus, string> = {
   CANCELLED: 'text-silver/70',
 };
 
+/**
+ * Raw enum → plain language, from the viewer's perspective. `label` is the
+ * status itself; `hint` is the "what happens next" line for states where
+ * the next step isn't obvious.
+ */
+function statusMeta(
+  s: ShiftSwapRequest,
+  tab: Tab,
+): { label: string; hint?: string } {
+  switch (s.status) {
+    case 'PENDING_PEER':
+      return tab === 'incoming'
+        ? {
+            label: 'Waiting for you to accept',
+            hint: 'Accept or decline below — a manager gives final approval after that.',
+          }
+        : {
+            label: `Waiting for ${s.counterpartyName} to accept`,
+            hint: 'Once they accept, a manager gives final approval.',
+          };
+    case 'PEER_ACCEPTED':
+      return {
+        label: 'Accepted — waiting for manager approval',
+        hint: "You'll be notified when a manager decides.",
+      };
+    case 'PEER_DECLINED':
+      return tab === 'incoming'
+        ? { label: 'You declined' }
+        : { label: `${s.counterpartyName} declined` };
+    case 'MANAGER_APPROVED':
+      return { label: 'Approved — schedules updated' };
+    case 'MANAGER_REJECTED':
+      return {
+        label: 'Not approved',
+        hint: 'A manager rejected this swap — the shift stays as originally scheduled.',
+      };
+    case 'CANCELLED':
+      return tab === 'incoming'
+        ? { label: `${s.requesterName} cancelled this request` }
+        : { label: 'Cancelled' };
+  }
+}
+
 export function SwapMarketplace({
   // Parent bumps this when a swap is created elsewhere on the page (the
   // shift-card offer flow) so the list refetches without a manual reload.
@@ -33,6 +77,7 @@ export function SwapMarketplace({
 }: {
   refreshToken?: number;
 }) {
+  const confirm = useConfirm();
   const [tab, setTab] = useState<Tab>('incoming');
   const [items, setItems] = useState<ShiftSwapRequest[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -62,6 +107,20 @@ export function SwapMarketplace({
     } finally {
       setPendingId(null);
     }
+  };
+
+  const declineSwap = async (s: ShiftSwapRequest) => {
+    if (
+      !(await confirm({
+        title: 'Decline this swap request?',
+        description: `${s.requesterName} will be notified that you declined.`,
+        confirmLabel: 'Decline',
+        destructive: true,
+      }))
+    ) {
+      return;
+    }
+    await wrap(s.id, () => peerDeclineSwap(s.id));
   };
 
   return (
@@ -109,7 +168,9 @@ export function SwapMarketplace({
 
       {items && items.length > 0 && (
         <ul className="space-y-2">
-          {items.map((s) => (
+          {items.map((s) => {
+            const meta = statusMeta(s, tab);
+            return (
             <li
               key={s.id}
               className="p-3 bg-navy-secondary/30 border border-navy-secondary rounded"
@@ -151,27 +212,30 @@ export function SwapMarketplace({
                   )}
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className={cn('text-[10px] uppercase tracking-widest', STATUS_CLS[s.status])}>
-                    {s.status.replace(/_/g, ' ')}
+                  <span className={cn('text-xs', STATUS_CLS[s.status])}>
+                    {meta.label}
                   </span>
                   {tab === 'incoming' && s.status === 'PENDING_PEER' && (
                     <>
-                      <button
+                      <Button
                         type="button"
+                        size="sm"
+                        className="coarse:min-h-11"
                         onClick={() => wrap(s.id, () => peerAcceptSwap(s.id))}
                         disabled={pendingId === s.id}
-                        className="text-xs px-2 py-1 rounded border border-success/40 text-success hover:bg-success/10 disabled:opacity-50"
                       >
                         Accept
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         type="button"
-                        onClick={() => wrap(s.id, () => peerDeclineSwap(s.id))}
+                        variant="outline"
+                        size="sm"
+                        className="coarse:min-h-11"
+                        onClick={() => void declineSwap(s)}
                         disabled={pendingId === s.id}
-                        className="text-xs px-2 py-1 rounded border border-alert/40 text-alert hover:bg-alert/10 disabled:opacity-50"
                       >
                         Decline
-                      </button>
+                      </Button>
                     </>
                   )}
                   {tab === 'outgoing' &&
@@ -188,8 +252,12 @@ export function SwapMarketplace({
                     )}
                 </div>
               </div>
+              {meta.hint && (
+                <div className="text-xs text-silver/70 mt-2">{meta.hint}</div>
+              )}
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
     </section>

@@ -11,6 +11,7 @@ import {
   ymdLocal,
 } from '@/lib/format';
 import { listClients } from '@/lib/clientsApi';
+import { useAuth } from '@/lib/auth';
 import type { ClientListItem } from '@alto-people/shared';
 import {
   addAllocation,
@@ -66,17 +67,28 @@ import { toast } from 'sonner';
 type Tab = 'projects' | 'premium' | 'tips';
 
 export function PayRulesHome() {
-  const [clients, setClients] = useState<ClientListItem[]>([]);
-  const [clientId, setClientId] = useState('');
+  const { user } = useAuth();
+  // Client-bound roles (SHIFT_SUPERVISOR) can't list clients — /clients
+  // 403s for them. Seed and pin the picker to their one client instead.
+  const boundedClient = user?.clientId
+    ? { id: user.clientId, name: user.clientName ?? 'Your client' }
+    : null;
+  const [clients, setClients] = useState<Array<Pick<ClientListItem, 'id' | 'name'>>>(
+    boundedClient ? [boundedClient] : [],
+  );
+  const [clientId, setClientId] = useState(boundedClient?.id ?? '');
   const [tab, setTab] = useState<Tab>('projects');
 
   useEffect(() => {
+    if (boundedClient) return; // seeded above; the fetch would 403
     listClients()
       .then((r) => {
         setClients(r.clients);
         if (!clientId && r.clients.length > 0) setClientId(r.clients[0].id);
       })
       .catch(() => {});
+    // boundedClient is stable for the session (derived from the signed-in user).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId]);
 
   return (
@@ -94,19 +106,30 @@ export function PayRulesHome() {
           >
             Client
           </label>
-          <Select
-            id="payrules-client"
-            size="sm"
-            value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
-          >
-            {clients.length === 0 && <option value="">—</option>}
-            {clients.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </Select>
+          {boundedClient ? (
+            // Client-bound role — the client is fixed, not a choice.
+            <div
+              id="payrules-client"
+              className="inline-flex h-8 items-center rounded-md border border-navy-secondary bg-navy-secondary/20 px-2.5 text-sm text-white"
+              title="Your account is scoped to this client"
+            >
+              {boundedClient.name}
+            </div>
+          ) : (
+            <Select
+              id="payrules-client"
+              size="sm"
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+            >
+              {clients.length === 0 && <option value="">—</option>}
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+          )}
         </CardContent>
       </Card>
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>

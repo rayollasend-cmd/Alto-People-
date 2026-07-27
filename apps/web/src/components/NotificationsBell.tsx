@@ -288,9 +288,17 @@ export function NotificationsBell() {
         {items && items.length > 50 && (
           <>
             <DropdownMenuSeparator className="m-0" />
-            <div className="px-3 py-2 text-[10px] text-silver/80 text-center">
-              Showing 50 of {items.length} notifications.
-            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                navigate('/communications');
+              }}
+              className="w-full px-3 py-2 coarse:min-h-11 text-[10px] text-center text-silver/80 hover:text-gold-bright hover:bg-navy-secondary/40 transition-colors focus:outline-none focus-visible:bg-navy-secondary"
+            >
+              Showing 50 of {items.length} —{' '}
+              <span className="text-gold">View all in Inbox</span>
+            </button>
           </>
         )}
       </DropdownMenuContent>

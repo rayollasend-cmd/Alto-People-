@@ -31,6 +31,7 @@ import {
   parseDateUTC,
 } from '../lib/timeOffRequests.js';
 import { ensureEntitlementApplied } from '../lib/timeOffEntitlement.js';
+import { scopeTimeOffRequests } from '../lib/scope.js';
 
 export const timeOffRouter = Router();
 
@@ -196,6 +197,39 @@ timeOffRouter.post('/me/requests', async (req, res, next) => {
     } else {
       void notifyAllAdmins({ ...opts, excludeUserId: user.id });
     }
+    // The site's shift supervisor can approve this but holds no admin role
+    // and is rarely the managerId — resolve the associate's client and copy
+    // them in. Fire-and-forget; a lookup failure must not fail the request.
+    void (async () => {
+      try {
+        const assignment = await prisma.associateAssignment.findFirst({
+          where: { associateId: user.associateId!, endedAt: null },
+          orderBy: { startedAt: 'desc' },
+          select: { location: { select: { clientId: true } } },
+        });
+        const clientId =
+          assignment?.location.clientId ??
+          (
+            await prisma.application.findFirst({
+              where: {
+                associateId: user.associateId!,
+                status: 'APPROVED',
+                deletedAt: null,
+              },
+              orderBy: { createdAt: 'desc' },
+              select: { clientId: true },
+            })
+          )?.clientId;
+        const { notifyClientSupervisors } = await import('../lib/notify.js');
+        await notifyClientSupervisors(clientId, {
+          ...opts,
+          linkUrl: '/approvals',
+          excludeUserId: user.id,
+        });
+      } catch (err) {
+        console.warn('[time-off] supervisor fan-out failed:', err);
+      }
+    })();
 
     res.status(201).json(
       TimeOffRequestResponseSchema.parse({ request: toRequestDTO(created) })
@@ -272,7 +306,10 @@ timeOffRouter.get('/admin/requests', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_query', 'Invalid query', queryParsed.error.flatten());
     }
     const query = queryParsed.data;
-    const where = query.status ? { status: query.status } : undefined;
+    const where = {
+      ...scopeTimeOffRequests(req.user!),
+      ...(query.status ? { status: query.status } : {}),
+    };
     const [rows, total] = await Promise.all([
       prisma.timeOffRequest.findMany({
         where,
@@ -343,6 +380,13 @@ timeOffRouter.post('/admin/requests/bulk-decide', MANAGE, async (req, res, next)
     const results: Array<{ id: string; ok: boolean; error?: string }> = [];
     for (const id of input.ids) {
       try {
+        // Tenant boundary per id — a supervisor can only decide their own
+        // client's requests, even in a bulk batch.
+        const inScope = await prisma.timeOffRequest.findFirst({
+          where: { ...scopeTimeOffRequests(user), id },
+          select: { id: true },
+        });
+        if (!inScope) throw new IllegalStateError('Request not found');
         if (input.decision === 'APPROVE') {
           await approveRequest(prisma, id, user.id, input.note ?? null);
         } else {
@@ -406,6 +450,14 @@ timeOffRouter.post('/admin/requests/:id/approve', MANAGE, async (req, res, next)
     }
     const input = parsed.data;
 
+    // Tenant boundary: 404 (not 403) when the request isn't within the
+    // caller's scope, so existence isn't leaked across clients.
+    const inScope = await prisma.timeOffRequest.findFirst({
+      where: { ...scopeTimeOffRequests(user), id },
+      select: { id: true },
+    });
+    if (!inScope) throw new HttpError(404, 'not_found', 'Request not found');
+
     try {
       await approveRequest(prisma, id, user.id, input.note ?? null);
     } catch (err) {
@@ -458,7 +510,9 @@ timeOffRouter.post('/admin/requests/:id/deny', MANAGE, async (req, res, next) =>
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
     const input = parsed.data;
-    const row = await prisma.timeOffRequest.findUnique({ where: { id } });
+    const row = await prisma.timeOffRequest.findFirst({
+      where: { ...scopeTimeOffRequests(user), id },
+    });
     if (!row) throw new HttpError(404, 'not_found', 'Request not found');
     if (row.status !== 'PENDING') {
       throw new HttpError(409, 'illegal_state', `Cannot deny a ${row.status} request`);

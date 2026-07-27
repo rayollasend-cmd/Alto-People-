@@ -15,7 +15,11 @@ import { requireCapability } from '../middleware/auth.js';
 
 export const reports96Router = Router();
 
-const VIEW = requireCapability('view:dashboard');
+// view:analytics, NOT view:dashboard — the column whitelist includes
+// payroll gross/net figures, so any associate or supervisor could build
+// an org-wide payroll report through the API while the web nav hid the
+// button. Report building is an analytics-tier surface.
+const VIEW = requireCapability('view:analytics');
 
 // Whitelist: per-entity, the columns that can be selected/filtered/sorted.
 // Maps the spec's column key to a Prisma scalar field. Anything not in

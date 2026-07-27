@@ -623,16 +623,14 @@ selfServiceRouter.post('/me/w4', async (req, res) => {
   const id = requireAssociate(req);
   const input = W4UpdateSchema.parse(req.body ?? {});
   const existing = await prisma.w4Submission.findUnique({ where: { associateId: id } });
-  if (!existing) {
-    throw new HttpError(
-      409,
-      'no_w4',
-      'No W-4 on file — the onboarding W-4 (with SSN) must be completed first.',
-    );
-  }
-  await prisma.w4Submission.update({
+  // First-time election set is allowed: an associate hired before the
+  // onboarding W-4 flow existed (or whose flow was skipped) was previously
+  // stuck being withheld at defaults with a 409 dead end. `ssnEncrypted`
+  // stays null on this path — HR captures it via onboarding/HR tooling;
+  // the election fields alone are what payroll math needs.
+  await prisma.w4Submission.upsert({
     where: { associateId: id },
-    data: {
+    update: {
       filingStatus: input.filingStatus,
       ...(input.multipleJobs !== undefined ? { multipleJobs: input.multipleJobs } : {}),
       ...(input.dependentsAmount !== undefined ? { dependentsAmount: input.dependentsAmount } : {}),
@@ -641,16 +639,26 @@ selfServiceRouter.post('/me/w4', async (req, res) => {
       ...(input.extraWithholding !== undefined ? { extraWithholding: input.extraWithholding } : {}),
       signedAt: new Date(),
     },
+    create: {
+      associateId: id,
+      filingStatus: input.filingStatus,
+      multipleJobs: input.multipleJobs ?? false,
+      dependentsAmount: input.dependentsAmount ?? 0,
+      otherIncome: input.otherIncome ?? 0,
+      deductions: input.deductions ?? 0,
+      extraWithholding: input.extraWithholding ?? 0,
+      signedAt: new Date(),
+    },
   });
   enqueueAudit(
     {
       actorUserId: req.user!.id,
-      action: 'self.w4_updated',
+      action: existing ? 'self.w4_updated' : 'self.w4_created',
       entityType: 'Associate',
       entityId: id,
       metadata: { fields: Object.keys(input) },
     },
-    'self.w4_updated',
+    existing ? 'self.w4_updated' : 'self.w4_created',
   );
   res.json({ ok: true, effectiveNote: 'Applies from the next payroll run.' });
 });

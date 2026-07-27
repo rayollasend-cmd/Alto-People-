@@ -62,6 +62,7 @@ import {
   type SchedulingKpis,
 } from '@/lib/schedulingApi';
 import { apiFetch, ApiError } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { useConfirm, type ConfirmOptions } from '@/lib/confirm';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -457,6 +458,24 @@ function parseView(raw: string | null): ViewMode {
 
 export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const confirm = useConfirm();
+  const { user } = useAuth();
+  // Client-scoped roles (SHIFT_SUPERVISOR) can't list clients — /clients
+  // 403s for them. Pin every client control to their one bound client
+  // instead of fetching, so the Location → Team cascade still unlocks.
+  const boundedClient = useMemo<ClientSummary | null>(
+    () =>
+      user?.clientId
+        ? {
+            id: user.clientId,
+            name: user.clientName ?? 'Your client',
+            industry: null,
+            status: 'ACTIVE',
+            contactEmail: null,
+            state: null,
+          }
+        : null,
+    [user?.clientId, user?.clientName],
+  );
   const [searchParams, setSearchParams] = useSearchParams();
   // View mode persists in the URL so deep links stay stable.
   const view: ViewMode = parseView(searchParams.get('view'));
@@ -526,8 +545,15 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     () => readStoredFilters()?.position ?? '',
   );
   const [clientFilter, setClientFilter] = useState<string>(
-    () => readStoredFilters()?.client ?? '',
+    () => boundedClient?.id ?? readStoredFilters()?.client ?? '',
   ); // '' = all
+  // Belt-and-braces: a bounded user's scope can never widen (Clear button,
+  // stale localStorage, late-arriving auth state) — re-pin whenever it drifts.
+  useEffect(() => {
+    if (boundedClient && clientFilter !== boundedClient.id) {
+      setClientFilter(boundedClient.id);
+    }
+  }, [boundedClient, clientFilter]);
   const [locationFilter, setLocationFilter] = useState<string>(
     () => readStoredFilters()?.location ?? '',
   ); // '' = all
@@ -880,17 +906,28 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     refresh();
   }, [refresh]);
 
-  useEffect(() => {
+  // True when the admin client fetch failed — the New-shift dialog shows an
+  // error + retry instead of the old silent free-text UUID fallback.
+  const [clientsError, setClientsError] = useState(false);
+  const loadClients = useCallback(async () => {
     if (!canManage) return;
-    (async () => {
-      try {
-        const res = await apiFetch<{ clients: ClientSummary[] }>('/clients');
-        setClients(res.clients);
-      } catch {
-        // Silent — Create form falls back to free-text Client UUID entry.
-      }
-    })();
-  }, [canManage]);
+    if (boundedClient) {
+      // Client-bound role: /clients would 403 — seed with the one client.
+      setClients([boundedClient]);
+      setClientsError(false);
+      return;
+    }
+    try {
+      const res = await apiFetch<{ clients: ClientSummary[] }>('/clients');
+      setClients(res.clients);
+      setClientsError(false);
+    } catch {
+      setClientsError(true);
+    }
+  }, [canManage, boundedClient]);
+  useEffect(() => {
+    loadClients();
+  }, [loadClients]);
 
   // Associate list for the pivot grid Y axis — scoped to the selected
   // client/location so the rows match the filtered schedule (picking a
@@ -1233,8 +1270,9 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           return;
         }
         // Resolve client: template's clientId wins; else fall back to the
-        // current filter; else error (global template needs a target client).
-        const targetClientId = tpl.clientId ?? clientFilter ?? '';
+        // current filter, then to a bounded user's own client; else error
+        // (global template needs a target client).
+        const targetClientId = tpl.clientId ?? (clientFilter || user?.clientId || '');
         if (!targetClientId) {
           toast.error('Pick a client filter first — global templates need a target.');
           return;
@@ -1305,7 +1343,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         toast.error(err instanceof ApiError ? err.message : 'Apply failed.');
       }
     },
-    [clientFilter, locationFilter, clientLocations, refresh],
+    [clientFilter, locationFilter, clientLocations, refresh, user?.clientId],
   );
 
   // Optimistic local-state helpers — patch the one changed shift immediately so
@@ -1655,9 +1693,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         <div className="text-xl font-semibold">Schedule</div>
         <div className="text-sm text-gray-700">
           {fmtPrintRange(exportRange.from, exportRange.to)}
-          {clientFilter && clients.find((c) => c.id === clientFilter)
-            ? ` · ${clients.find((c) => c.id === clientFilter)?.name}`
-            : ''}
+          {boundedClient
+            ? ` · ${boundedClient.name}`
+            : clientFilter && clients.find((c) => c.id === clientFilter)
+              ? ` · ${clients.find((c) => c.id === clientFilter)?.name}`
+              : ''}
           {locationFilter && clientLocations.find((l) => l.id === locationFilter)
             ? ` › ${clientLocations.find((l) => l.id === locationFilter)?.name}`
             : ''}
@@ -1731,6 +1771,9 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         <CreateShiftDialog
           open={showCreate}
           clients={clients}
+          boundedClient={boundedClient}
+          clientsError={clientsError}
+          onRetryClients={loadClients}
           associates={associates}
           initialDate={createInitialDate}
           initialEnd={createInitialEnd}
@@ -2046,6 +2089,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             posFilter={posFilter}
             setPosFilter={setPosFilter}
             positions={knownPositions}
+            boundedClient={boundedClient}
             clientFilter={clientFilter}
             setClientFilter={setClientFilter}
             locationFilter={locationFilter}
@@ -2664,7 +2708,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           open={showTemplates}
           onOpenChange={setShowTemplates}
           clients={clients}
-          activeClientId={clientFilter || null}
+          activeClientId={clientFilter || boundedClient?.id || null}
           weekStart={weekStart}
           onApplied={() => {
             toast.success('Template applied as a draft shift.');
@@ -2687,7 +2731,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           cell to apply. */}
       {canManage && (view === 'week' || view === 'day') && (
         <TemplatesRail
-          clientId={clientFilter || null}
+          clientId={clientFilter || boundedClient?.id || null}
           onManage={() => setShowTemplates(true)}
         />
       )}
@@ -3819,6 +3863,9 @@ function EditShiftDialog({
 function CreateShiftDialog({
   open,
   clients,
+  boundedClient,
+  clientsError,
+  onRetryClients,
   associates,
   initialDate,
   initialEnd,
@@ -3833,6 +3880,12 @@ function CreateShiftDialog({
 }: {
   open: boolean;
   clients: ClientSummary[];
+  /** Client-bound roles (SHIFT_SUPERVISOR): the client is fixed — render it
+   *  as read-only text instead of a picker. */
+  boundedClient?: ClientSummary | null;
+  /** True when the admin client fetch failed — show an error + retry. */
+  clientsError?: boolean;
+  onRetryClients?: () => void;
   /** Schedulable employees, for the multi-assign picker. */
   associates: AssociateLite[];
   initialDate?: Date | null;
@@ -4102,7 +4155,16 @@ function CreateShiftDialog({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <Field label="Client" required>
               {(p) =>
-                clients.length > 0 ? (
+                boundedClient ? (
+                  // Client-bound role — the client is fixed, not a choice.
+                  <div
+                    id={p.id}
+                    aria-describedby={p['aria-describedby']}
+                    className="flex h-10 coarse:h-11 w-full items-center rounded-md border border-navy-secondary bg-navy-secondary/20 px-3 text-sm coarse:text-base text-white"
+                  >
+                    {boundedClient.name}
+                  </div>
+                ) : clients.length > 0 ? (
                   <Select
                     value={clientId}
                     onChange={(e) => setClientId(e.target.value)}
@@ -4115,12 +4177,23 @@ function CreateShiftDialog({
                     ))}
                   </Select>
                 ) : (
-                  <Input
-                    placeholder="Client UUID"
-                    value={clientId}
-                    onChange={(e) => setClientId(e.target.value)}
-                    {...p}
-                  />
+                  <div
+                    id={p.id}
+                    className="rounded-md border border-alert/40 bg-alert/[0.06] px-3 py-2 text-xs text-alert"
+                  >
+                    {clientsError
+                      ? "Couldn't load the client list."
+                      : 'No clients available yet.'}{' '}
+                    {onRetryClients && (
+                      <button
+                        type="button"
+                        onClick={onRetryClients}
+                        className="underline underline-offset-2 hover:text-white"
+                      >
+                        Retry
+                      </button>
+                    )}
+                  </div>
                 )
               }
             </Field>
@@ -4802,6 +4875,7 @@ function FilterBar({
   posFilter,
   setPosFilter,
   positions,
+  boundedClient,
   clientFilter,
   setClientFilter,
   locationFilter,
@@ -4819,6 +4893,9 @@ function FilterBar({
   posFilter: string;
   setPosFilter: (v: string) => void;
   positions: string[];
+  /** Client-bound roles: the one client the viewer is scoped to. The client
+   *  control renders as a read-only label and can never be cleared. */
+  boundedClient?: ClientSummary | null;
   clientFilter: string;
   setClientFilter: (v: string) => void;
   locationFilter: string;
@@ -4835,10 +4912,11 @@ function FilterBar({
 }) {
   const anyActive =
     posFilter.trim() !== '' ||
-    clientFilter !== '' ||
+    (!boundedClient && clientFilter !== '') ||
     locationFilter !== '' ||
     teamFilter !== '';
-  const clientName = clients.find((c) => c.id === clientFilter)?.name;
+  const clientName =
+    clients.find((c) => c.id === clientFilter)?.name ?? boundedClient?.name;
   const locationName = clientLocations.find((l) => l.id === locationFilter)?.name;
   const teamName = teams.find((t) => t.id === teamFilter)?.name;
   // Location only makes sense once a client is chosen (a Location belongs to
@@ -4848,7 +4926,25 @@ function FilterBar({
     <div className="mb-3 rounded-md border border-navy-secondary bg-navy-secondary/20 px-3 py-2">
       {/* Scope line — tells the admin exactly what they're looking at. */}
       <div className="mb-2 text-[11px] text-silver/80">
-        {!clientFilter ? (
+        {boundedClient ? (
+          <span className="inline-flex flex-wrap items-center gap-1">
+            <span className="font-medium text-white">Schedule</span>
+            <span className="text-silver/50">·</span>
+            <span className="font-medium text-white">{boundedClient.name}</span>
+            {locationName && (
+              <>
+                <span className="text-silver/50">›</span>
+                <span className="font-medium text-white">{locationName}</span>
+                {teamName && (
+                  <>
+                    <span className="text-silver/50">›</span>
+                    <span className="font-medium text-gold">{teamName}</span>
+                  </>
+                )}
+              </>
+            )}
+          </span>
+        ) : !clientFilter ? (
           <span>
             <span className="font-medium text-white">Full schedule</span>
             <span className="text-silver/60"> · every client &amp; location in the organization</span>
@@ -4878,21 +4974,31 @@ function FilterBar({
           <Filter className="h-3 w-3" />
           Filter
         </div>
-        <div className="min-w-[10rem]">
-          <Select
-            value={clientFilter}
-            onChange={(e) => setClientFilter(e.target.value)}
-            size="sm"
-            aria-label="Filter by client"
+        {boundedClient ? (
+          // Client-bound role — the client is pinned; no "All clients".
+          <div
+            className="inline-flex h-8 items-center rounded-md border border-navy-secondary bg-navy-secondary/30 px-2.5 text-xs text-white"
+            title="Your account is scoped to this client"
           >
-            <option value="">All clients (full schedule)</option>
-            {clients.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </Select>
-        </div>
+            {boundedClient.name}
+          </div>
+        ) : (
+          <div className="min-w-[10rem]">
+            <Select
+              value={clientFilter}
+              onChange={(e) => setClientFilter(e.target.value)}
+              size="sm"
+              aria-label="Filter by client"
+            >
+              <option value="">All clients (full schedule)</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
         <div className="min-w-[11rem]">
           <Select
             value={locationFilter}
@@ -4969,7 +5075,9 @@ function FilterBar({
             type="button"
             onClick={() => {
               setPosFilter('');
-              setClientFilter('');
+              // A bounded viewer's client can't be cleared — only widened
+              // filters below it reset.
+              if (!boundedClient) setClientFilter('');
               setLocationFilter('');
               setTeamFilter('');
             }}

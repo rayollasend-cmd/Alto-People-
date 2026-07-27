@@ -34,6 +34,9 @@ vi.mock('@/lib/clientsApi', () => ({
 
 vi.mock('@/lib/schedulingApi', () => ({
   listShifts: vi.fn(async () => ({ shifts: [] })),
+  // The add-entry associate picker now uses the client-clamped scheduling
+  // roster instead of the view:org-gated directory.
+  listSchedulingAssociates: vi.fn(async () => ({ associates: [] })),
 }));
 
 import {
@@ -43,8 +46,9 @@ import {
   listPayPeriods,
 } from '@/lib/timeApi';
 import { listDirectory } from '@/lib/directoryApi';
-import { listShifts } from '@/lib/schedulingApi';
+import { listSchedulingAssociates, listShifts } from '@/lib/schedulingApi';
 import { AdminTimeView } from '@/pages/time/AdminTimeView';
+import { AuthContext } from '@/lib/auth';
 
 // Fixed windows from the MOCKED endpoint — the component only displays
 // them, so nothing here rots as the calendar moves.
@@ -53,11 +57,34 @@ const PERIODS = [
   { start: '2026-06-22', end: '2026-06-28', current: false, hasRun: true },
 ];
 
+// The view now reads the caller's client boundary from useAuth (to pin
+// SHIFT_SUPERVISOR pickers), so tests must supply an auth context.
+const AUTH_VALUE = {
+  isInitializing: false,
+  isOffline: false,
+  user: {
+    id: 'u-hr',
+    email: 'hr@example.com',
+    role: 'HR_ADMINISTRATOR',
+    status: 'ACTIVE',
+    clientId: null,
+    clientName: null,
+    associateId: null,
+  },
+  role: 'HR_ADMINISTRATOR',
+  capabilities: new Set(),
+  signIn: vi.fn(),
+  signOut: vi.fn(),
+  can: () => true,
+} as never;
+
 function renderQueueTab() {
   render(
-    <MemoryRouter>
-      <AdminTimeView canManage />
-    </MemoryRouter>,
+    <AuthContext.Provider value={AUTH_VALUE}>
+      <MemoryRouter>
+        <AdminTimeView canManage />
+      </MemoryRouter>
+    </AuthContext.Provider>,
   );
   return userEvent.setup();
 }
@@ -138,7 +165,7 @@ const isoAt = (dateStr: string, time: string, dayOffset = 0) => {
 async function openCreateDrawerWithAssociate(
   user: ReturnType<typeof userEvent.setup>,
 ) {
-  vi.mocked(listDirectory).mockResolvedValue({
+  vi.mocked(listSchedulingAssociates).mockResolvedValue({
     associates: [
       { id: 'a1', firstName: 'Maria', lastName: 'Lopez', email: 'maria@x.com' },
     ],

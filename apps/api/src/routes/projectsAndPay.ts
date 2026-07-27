@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { effectiveClientIdFilter } from '../lib/scope.js';
 
 /**
  * Phase 86 — Projects, premium pay rules, tip pools.
@@ -48,7 +49,13 @@ const ProjectInputSchema = z.object({
 });
 
 projectsAndPayRouter.get('/projects', VIEW_TIME, async (req, res) => {
-  const clientId = z.string().uuid().optional().parse(req.query.clientId);
+  const requestedClient = z.string().uuid().optional().parse(req.query.clientId);
+  // Client-bounded roles only see their own client's project codes.
+  const boundedProjects = effectiveClientIdFilter(req.user!, requestedClient);
+  const clientId =
+    boundedProjects === null
+      ? '00000000-0000-0000-0000-000000000000'
+      : boundedProjects;
   const includeInactive = req.query.includeInactive === '1';
   const rows = await prisma.project.findMany({
     take: 1000,

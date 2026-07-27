@@ -92,9 +92,14 @@ const ISSUE_LABEL: Record<TimesheetIssueKind, string> = {
 };
 
 export function TimesheetsView() {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const navigate = useNavigate();
   const canAttest = can('manage:compliance');
+  // Client-bound roles (SHIFT_SUPERVISOR) can't list clients — /clients
+  // 403s for them. Pin the client filter to their one client instead.
+  const boundedClient = user?.clientId
+    ? { id: user.clientId, name: user.clientName ?? 'Your client' }
+    : null;
 
   const [weekStart, setWeekStart] = useState<Date>(() => lastCompletedWeekStart(new Date()));
   const [data, setData] = useState<TimesheetWeekResponse | null>(null);
@@ -110,10 +115,14 @@ export function TimesheetsView() {
   const [showSchedule, setShowSchedule] = useState(false);
 
   // Per-client filter — file one Fieldglass SOW at a time. '' = all clients.
-  const [clientId, setClientId] = useState('');
-  const [clients, setClients] = useState<ClientListItem[]>([]);
+  // Bounded viewers start (and stay) pinned to their client.
+  const [clientId, setClientId] = useState(boundedClient?.id ?? '');
+  const [clients, setClients] = useState<Array<Pick<ClientListItem, 'id' | 'name'>>>(
+    boundedClient ? [boundedClient] : [],
+  );
 
   useEffect(() => {
+    if (boundedClient) return; // seeded above; the fetch would 403
     let live = true;
     listClients({ status: 'ACTIVE' })
       .then((r) => live && setClients(r.clients))
@@ -123,6 +132,8 @@ export function TimesheetsView() {
     return () => {
       live = false;
     };
+    // boundedClient is stable for the session (derived from the signed-in user).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const clientArg = clientId || undefined;
@@ -291,20 +302,29 @@ export function TimesheetsView() {
         >
           Last completed week
         </Button>
-        <Select
-          value={clientId}
-          onChange={(e) => setClientId(e.target.value)}
-          className="h-8 w-auto text-sm"
-          title="File one Fieldglass client/SOW at a time"
-          aria-label="Client filter"
-        >
-          <option value="">All clients</option>
-          {clients.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </Select>
+        {boundedClient ? (
+          <div
+            className="inline-flex h-8 items-center rounded-md border border-navy-secondary bg-navy-secondary/30 px-2.5 text-sm text-white"
+            title="Your account is scoped to this client"
+          >
+            {boundedClient.name}
+          </div>
+        ) : (
+          <Select
+            value={clientId}
+            onChange={(e) => setClientId(e.target.value)}
+            className="h-8 w-auto text-sm"
+            title="File one Fieldglass client/SOW at a time"
+            aria-label="Client filter"
+          >
+            <option value="">All clients</option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </Select>
+        )}
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Button

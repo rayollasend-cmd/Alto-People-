@@ -548,16 +548,23 @@ function NewDeviceDrawer({
   onClose: () => void;
   onSaved: (token: string) => void;
 }) {
+  const { user } = useAuth();
+  // Client-bound roles (SHIFT_SUPERVISOR) can't list clients — /clients
+  // 403s for them. Pin the required client choice to theirs instead.
+  const boundedClient = user?.clientId
+    ? { id: user.clientId, name: user.clientName ?? 'Your client' }
+    : null;
   const [clients, setClients] = useState<
     Array<{ id: string; name: string }> | null
-  >(null);
-  const [clientId, setClientId] = useState('');
+  >(boundedClient ? [boundedClient] : null);
+  const [clientId, setClientId] = useState(boundedClient?.id ?? '');
   const [locations, setLocations] = useState<LocationSummary[] | null>(null);
   const [locationId, setLocationId] = useState('');
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    if (boundedClient) return; // seeded above; the fetch would 403
     let cancelled = false;
     listClients()
       .then((r) => {
@@ -572,6 +579,8 @@ function NewDeviceDrawer({
     return () => {
       cancelled = true;
     };
+    // boundedClient is stable for the session (derived from the signed-in user).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Phase 131 — load Locations when the client changes. Auto-pick the
@@ -626,7 +635,12 @@ function NewDeviceDrawer({
       <DrawerBody className="space-y-4">
         <div>
           <Label>Client</Label>
-          {clients === null ? (
+          {boundedClient ? (
+            // Client-bound role — the client is fixed, not a choice.
+            <div className="mt-1 flex h-10 items-center rounded-md border border-navy-secondary bg-navy-secondary/20 px-3 text-sm text-white">
+              {boundedClient.name}
+            </div>
+          ) : clients === null ? (
             <Skeleton className="mt-1 h-10 w-full" />
           ) : clients.length === 0 ? (
             <div className="mt-1 text-xs text-silver">
@@ -867,10 +881,17 @@ function FaceConsentCell({
 
 function PinsTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
+  const { user } = useAuth();
+  // Client-bound roles (SHIFT_SUPERVISOR) can't list clients — /clients
+  // 403s for them. Seed the picker with their one client (no "All clients")
+  // and start on it so the tab isn't an empty dead end.
+  const boundedClient = user?.clientId
+    ? { id: user.clientId, name: user.clientName ?? 'Your client' }
+    : null;
   const [clients, setClients] = useState<
     Array<{ id: string; name: string }> | null
-  >(null);
-  const [clientId, setClientId] = useState('');
+  >(boundedClient ? [boundedClient] : null);
+  const [clientId, setClientId] = useState(boundedClient?.id ?? '');
   const [rows, setRows] = useState<KioskPin[] | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [showNew, setShowNew] = useState(false);
@@ -903,8 +924,10 @@ function PinsTab({ canManage }: { canManage: boolean }) {
   const [issueFor, setIssueFor] = useState<string | null>(null);
 
   // Load the client picker once. Default to the first client so HR
-  // doesn't land on an empty state.
+  // doesn't land on an empty state. Bounded viewers are seeded above and
+  // never fetch (the endpoint would 403).
   useEffect(() => {
+    if (boundedClient) return;
     let cancelled = false;
     listClients()
       .then((r) => {
@@ -1038,7 +1061,15 @@ function PinsTab({ canManage }: { canManage: boolean }) {
       <div className="flex items-end gap-3">
         <div className="flex-1 max-w-md">
           <Label>Client</Label>
-          {clients === null ? (
+          {boundedClient ? (
+            // Client-bound role — pinned to their client; no "All clients".
+            <div
+              className="mt-1 flex h-10 items-center rounded-md border border-navy-secondary bg-navy-secondary/20 px-3 text-sm text-white"
+              title="Your account is scoped to this client"
+            >
+              {boundedClient.name}
+            </div>
+          ) : clients === null ? (
             <Skeleton className="mt-1 h-10 w-full" />
           ) : clients.length === 0 ? (
             <div className="mt-1 text-xs text-silver">

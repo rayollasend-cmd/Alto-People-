@@ -70,6 +70,8 @@ export type ModuleKey =
   | 'workflows'
   | 'me'
   | 'compensation'
+  | 'reimbursements'
+  | 'learning'
   | 'marketplace'
   | 'payrules'
   | 'dircomms'
@@ -130,7 +132,7 @@ export {
   UserPlus,
 };
 
-import { Inbox as ApprovalsIcon, Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon, LogOut as SeparationIcon, Briefcase as InternalJobsIcon, Syringe as VaccinationsIcon, FileSignature as AgreementsIcon, MessageCircle as HrCasesIcon, BookOpen as KbIcon, Target as RampIcon, TrendingUp as CareerIcon, GraduationCap as TuitionIcon, Siren as HotlineIcon, Coins as EquityIcon, Heart as VolunteerIcon, Plug as IntegrationsIcon, Palette as BrandingIcon, CreditCard as BillingIcon, FileBarChart as ReportsIcon } from 'lucide-react';
+import { Inbox as ApprovalsIcon, Receipt as ReimbursementsIcon, GraduationCap as LearningIcon, Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon, LogOut as SeparationIcon, Briefcase as InternalJobsIcon, Syringe as VaccinationsIcon, FileSignature as AgreementsIcon, MessageCircle as HrCasesIcon, BookOpen as KbIcon, Target as RampIcon, TrendingUp as CareerIcon, GraduationCap as TuitionIcon, Siren as HotlineIcon, Coins as EquityIcon, Heart as VolunteerIcon, Plug as IntegrationsIcon, Palette as BrandingIcon, CreditCard as BillingIcon, FileBarChart as ReportsIcon } from 'lucide-react';
 
 export const MODULES: ModuleNav[] = [
   {
@@ -348,8 +350,11 @@ export const MODULES: ModuleNav[] = [
     path: '/agreements',
     label: 'Agreements',
     description:
-      'NDAs, non-competes, IP assignments, equity grants — per-associate one-off legal agreements with electronic signature.',
-    requires: 'view:hr-admin',
+      'NDAs, non-competes, IP assignments, equity grants — legal agreements with electronic signature. Associates see and sign their own; HR manages everyone’s.',
+    // Lowered from view:hr-admin so associates can reach their own
+    // agreements to e-sign; the page hides the org-wide "All" tab from
+    // anyone without the admin capability.
+    requires: 'view:dashboard',
     icon: AgreementsIcon,
     group: 'compliance',
   },
@@ -391,6 +396,16 @@ export const MODULES: ModuleNav[] = [
       'Progression paths through your job family. Each rung links a job profile and lists required skills with a minimum proficiency.',
     requires: 'view:dashboard',
     icon: CareerIcon,
+    group: 'workforce',
+  },
+  {
+    key: 'learning',
+    path: '/learning',
+    label: 'My learning',
+    description:
+      'Courses assigned to you — work through required training and see what’s complete, due, or overdue.',
+    requires: 'view:dashboard',
+    icon: LearningIcon,
     group: 'workforce',
   },
   {
@@ -569,8 +584,23 @@ export const MODULES: ModuleNav[] = [
     label: 'Pay rules',
     description:
       'Project codes, premium-pay differentials (overtime, night, holiday), and tip pools.',
-    requires: 'manage:scheduling',
+    // Pay rules are payroll configuration, not day-of-shift scheduling —
+    // gated on view:payroll so client-scoped schedulers (SHIFT_SUPERVISOR
+    // holds manage:scheduling) don't get a nav item that dead-ends.
+    requires: 'view:payroll',
     icon: PayRulesIcon,
+    group: 'time-and-pay',
+  },
+  {
+    key: 'reimbursements',
+    path: '/reimbursements',
+    label: 'Reimbursements',
+    description:
+      'Submit expense reimbursements with receipts; managers approve and HR/Finance settles them into the next payroll run.',
+    // Every associate can submit their own — the page scopes what each
+    // role sees; approval/settlement actions stay capability-gated inside.
+    requires: 'view:dashboard',
+    icon: ReimbursementsIcon,
     group: 'time-and-pay',
   },
   {

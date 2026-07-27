@@ -43,11 +43,11 @@ import {
   listPayPeriods,
   rejectTimeEntry,
 } from '@/lib/timeApi';
-import { listDirectory } from '@/lib/directoryApi';
 import { listClients, listClientLocations } from '@/lib/clientsApi';
-import { listShifts } from '@/lib/schedulingApi';
+import { listShifts, listSchedulingAssociates } from '@/lib/schedulingApi';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { timeAnomalyLabel } from '@/lib/timeLabels';
@@ -1721,7 +1721,11 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-// Debounced directory typeahead → resolves to an associate id.
+// Associate typeahead → resolves to an associate id. Sourced from the
+// scheduling roster (listSchedulingAssociates), which the server clamps to
+// the viewer's scope — a client-bound SHIFT_SUPERVISOR gets their client's
+// people. The old listDirectory() source 403'd for that role and silently
+// returned no matches.
 function AssociateSearchField({
   value,
   onChange,
@@ -1731,35 +1735,36 @@ function AssociateSearchField({
 }) {
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
-  const [results, setResults] = useState<
-    Array<{ id: string; name: string; email: string }>
-  >([]);
+  const [all, setAll] = useState<
+    Array<{ id: string; name: string; email: string }> | null
+  >(null);
   useEffect(() => {
-    const term = q.trim();
-    if (term.length < 2) {
-      setResults([]);
-      return;
-    }
     let cancelled = false;
-    const t = setTimeout(() => {
-      listDirectory({ q: term })
-        .then((r) => {
-          if (cancelled) return;
-          setResults(
-            r.associates.slice(0, 8).map((a) => ({
-              id: a.id,
-              name: `${a.firstName} ${a.lastName}`,
-              email: a.email,
-            })),
-          );
-        })
-        .catch(() => !cancelled && setResults([]));
-    }, 250);
+    listSchedulingAssociates()
+      .then((r) => {
+        if (cancelled) return;
+        setAll(
+          r.associates.map((a) => ({
+            id: a.id,
+            name: `${a.firstName} ${a.lastName}`,
+            email: a.email,
+          })),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setAll([]);
+      });
     return () => {
       cancelled = true;
-      clearTimeout(t);
     };
-  }, [q]);
+  }, []);
+  const results = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    if (term.length < 2 || !all) return [];
+    return all
+      .filter((a) => `${a.name} ${a.email}`.toLowerCase().includes(term))
+      .slice(0, 8);
+  }, [q, all]);
 
   if (value) {
     return (
@@ -2371,6 +2376,12 @@ function SummaryExportDialog({
   fromIso: string;
   toIso: string;
 }) {
+  const { user } = useAuth();
+  // Client-bound roles can't list clients (403) — pin the dropdown to
+  // their one client instead of fetching.
+  const boundedClient = user?.clientId
+    ? { id: user.clientId, name: user.clientName ?? 'Your client' }
+    : null;
   const [clients, setClients] = useState<Array<{ id: string; name: string }>>([]);
   const [clientId, setClientId] = useState('');
   const [locations, setLocations] = useState<Array<{ id: string; name: string }>>([]);
@@ -2380,9 +2391,16 @@ function SummaryExportDialog({
 
   useEffect(() => {
     if (!open) return;
+    if (boundedClient) {
+      setClients([boundedClient]);
+      setClientId(boundedClient.id);
+      return;
+    }
     listClients()
       .then((r) => setClients(r.clients.map((c) => ({ id: c.id, name: c.name }))))
       .catch(() => setClients([]));
+    // boundedClient is stable for the session (derived from the signed-in user).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
   useEffect(() => {
     setLocationId('');
@@ -2431,18 +2449,24 @@ function SummaryExportDialog({
           )}
           <div>
             <FieldLabel>Client</FieldLabel>
-            <Select
-              className="mt-1"
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-            >
-              <option value="">All clients</option>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </Select>
+            {boundedClient ? (
+              <div className="mt-1 flex h-10 items-center rounded-md border border-navy-secondary bg-navy-secondary/20 px-3 text-sm text-white">
+                {boundedClient.name}
+              </div>
+            ) : (
+              <Select
+                className="mt-1"
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+              >
+                <option value="">All clients</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            )}
           </div>
           <div>
             <FieldLabel>Facility (location)</FieldLabel>
@@ -2494,6 +2518,12 @@ function PayrollSheetDialog({
   defaultFromYmd: string;
   defaultToYmd: string;
 }) {
+  const { user } = useAuth();
+  // Client-bound roles can't list clients (403) — pin the required client
+  // to theirs so the export isn't hard-blocked by an empty dropdown.
+  const boundedClient = user?.clientId
+    ? { id: user.clientId, name: user.clientName ?? 'Your client' }
+    : null;
   const [clients, setClients] = useState<Array<{ id: string; name: string }>>([]);
   const [clientId, setClientId] = useState('');
   const [fromYmd, setFromYmd] = useState(defaultFromYmd);
@@ -2506,9 +2536,16 @@ function PayrollSheetDialog({
     setFromYmd(defaultFromYmd);
     setToYmd(defaultToYmd);
     setErr(null);
+    if (boundedClient) {
+      setClients([boundedClient]);
+      setClientId(boundedClient.id);
+      return;
+    }
     listClients()
       .then((r) => setClients(r.clients.map((c) => ({ id: c.id, name: c.name }))))
       .catch(() => setClients([]));
+    // boundedClient is stable for the session (derived from the signed-in user).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, defaultFromYmd, defaultToYmd]);
 
   const download = async (format: 'pdf' | 'xlsx') => {
@@ -2561,18 +2598,24 @@ function PayrollSheetDialog({
           )}
           <div>
             <FieldLabel>Client</FieldLabel>
-            <Select
-              className="mt-1"
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-            >
-              <option value="">Select a client…</option>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </Select>
+            {boundedClient ? (
+              <div className="mt-1 flex h-10 items-center rounded-md border border-navy-secondary bg-navy-secondary/20 px-3 text-sm text-white">
+                {boundedClient.name}
+              </div>
+            ) : (
+              <Select
+                className="mt-1"
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+              >
+                <option value="">Select a client…</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
