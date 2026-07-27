@@ -222,7 +222,7 @@ describe('shift template tenant boundary', () => {
     });
     const apply = await sup
       .post(`/scheduling/templates/${theirs.id}/apply`)
-      .send({ weekStart: '2026-06-08' });
+      .send({ weekStart: '2026-06-08T00:00:00.000Z' });
     expect(apply.status).toBe(403);
     expect(await prisma.shift.count({ where: { clientId: other.id } })).toBe(0);
     expect((await sup.delete(`/scheduling/templates/${theirs.id}`)).status).toBe(404);

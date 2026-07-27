@@ -14,7 +14,7 @@ const shot = (name: string) => `e2e-results/walk-${name}.png`;
 test('associate visual walk', async ({ page }) => {
   await page.goto('/login');
   await page.getByLabel(/email/i).fill('maria.lopez@example.com');
-  await page.getByLabel(/password/i).fill('maria-dev-2026!');
+  await page.getByLabel(/^password/i).fill('maria-dev-2026!');
   await page.getByRole('button', { name: /sign in/i }).click();
   await expect(page.getByText(/hey maria/i)).toBeVisible({ timeout: 20_000 });
   await page.waitForTimeout(1_500); // let cards land
