@@ -23,6 +23,8 @@ interface Props {
   associateName: string;
   /** Default subject line based on what's missing. Optional. */
   suggestedSubject?: string;
+  /** Personalized default body (progress %, blocked task). Optional. */
+  suggestedBody?: string;
 }
 
 const DEFAULT_SUBJECT = 'Quick check-in on your onboarding';
@@ -48,18 +50,19 @@ export function NudgeDialog({
   applicationId,
   associateName,
   suggestedSubject,
+  suggestedBody,
 }: Props) {
   const [subject, setSubject] = useState(suggestedSubject ?? DEFAULT_SUBJECT);
-  const [body, setBody] = useState(DEFAULT_BODY);
+  const [body, setBody] = useState(suggestedBody ?? DEFAULT_BODY);
   const [submitting, setSubmitting] = useState(false);
 
   // Reset to defaults whenever the dialog opens for a new applicant.
   useEffect(() => {
     if (open) {
       setSubject(suggestedSubject ?? DEFAULT_SUBJECT);
-      setBody(DEFAULT_BODY);
+      setBody(suggestedBody ?? DEFAULT_BODY);
     }
-  }, [open, suggestedSubject]);
+  }, [open, suggestedSubject, suggestedBody]);
 
   const submit = async () => {
     if (!applicationId) return;

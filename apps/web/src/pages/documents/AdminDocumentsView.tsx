@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ChevronRight,
   FileText,
@@ -94,6 +94,14 @@ const STATUS_VARIANT: Record<
   EXPIRED: 'destructive',
 };
 
+// Canned reasons for the bulk-reject panel — the common cases HR types
+// over and over. Clicking one fills the free-text field (still editable).
+const BULK_REJECT_PRESETS = [
+  'Blurry / unreadable',
+  'Expired document',
+  'Wrong document type',
+] as const;
+
 const fmtSize = (b: number): string => {
   if (b < 1024) return `${b} B`;
   if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
@@ -150,6 +158,9 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   // VERIFIED — UPLOADED or REJECTED — are ever selectable.
   const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  // Bulk-reject panel state — one reason applied to every selected doc.
+  const [bulkRejectOpen, setBulkRejectOpen] = useState(false);
+  const [bulkRejectReason, setBulkRejectReason] = useState('');
 
   const refresh = useCallback(async () => {
     try {
@@ -389,6 +400,63 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     }
   };
 
+  // Of the current selection, the docs the reject endpoint will accept
+  // (UPLOADED / VERIFIED). Selected REJECTED docs are skipped — the ball
+  // is already in the associate's court.
+  const bulkRejectTargets = useMemo(
+    () =>
+      (docs ?? []).filter(
+        (d) =>
+          selectedDocs.has(d.id) &&
+          (d.status === 'UPLOADED' || d.status === 'VERIFIED'),
+      ),
+    [docs, selectedDocs],
+  );
+
+  const onBulkReject = async () => {
+    const reason = bulkRejectReason.trim();
+    if (bulkBusy || !reason || bulkRejectTargets.length === 0) return;
+    setBulkBusy(true);
+    let ok = 0;
+    const failures: string[] = [];
+    // Sequential on purpose: the per-id endpoint carries all the side
+    // effects (task rewind + email to the associate) — no parallel
+    // hammering, and a mid-loop failure leaves an honest partial state.
+    for (const d of bulkRejectTargets) {
+      try {
+        await rejectDocument(d.id, { reason });
+        ok += 1;
+      } catch (err) {
+        failures.push(
+          `${d.filename}: ${err instanceof ApiError ? err.message : 'failed'}`,
+        );
+      }
+    }
+    const skipped = selectedDocs.size - bulkRejectTargets.length;
+    const detailBits = [
+      skipped > 0 ? `${skipped} skipped (already rejected)` : null,
+      ...failures.slice(0, 3),
+      failures.length > 3 ? `+ ${failures.length - 3} more failed` : null,
+    ].filter((x): x is string => x !== null);
+    const description = detailBits.length > 0 ? detailBits.join(' · ') : undefined;
+    if (failures.length === 0) {
+      toast.success(`Rejected ${ok} document${ok === 1 ? '' : 's'}`, {
+        description,
+      });
+    } else if (ok === 0) {
+      toast.error(`All ${failures.length} rejections failed`, { description });
+    } else {
+      toast.message(`Rejected ${ok} of ${bulkRejectTargets.length}`, {
+        description,
+      });
+    }
+    setBulkRejectOpen(false);
+    setBulkRejectReason('');
+    setSelectedDocs(new Set());
+    await Promise.all([refresh(), refreshAll()]);
+    setBulkBusy(false);
+  };
+
   const onConfirmReject = async () => {
     if (!rejectTarget || !rejectReason.trim()) return;
     setRejectSubmitting(true);
@@ -621,6 +689,29 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         const allVerifiableSelected =
           verifiable.length > 0 &&
           verifiable.every((d) => selectedDocs.has(d.id));
+        // Group the queue by associate — one header row per person — in
+        // order of first appearance under the current sort, so column
+        // sorting still decides both group order and order within a group.
+        const groups: Array<{
+          associateId: string;
+          associateName: string;
+          docs: DocumentRecord[];
+        }> = [];
+        const groupIndex = new Map<string, number>();
+        for (const d of sortedDocs) {
+          const at = groupIndex.get(d.associateId);
+          if (at === undefined) {
+            groupIndex.set(d.associateId, groups.length);
+            groups.push({
+              associateId: d.associateId,
+              associateName: d.associateName ?? '—',
+              docs: [d],
+            });
+          } else {
+            groups[at].docs.push(d);
+          }
+        }
+        const colCount = canManage ? 8 : 6;
         return (
         <Card className="overflow-hidden">
           {canManage && selectedDocs.size > 0 && (
@@ -647,7 +738,22 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                   className="text-success"
                 >
                   <ShieldCheck className="h-3.5 w-3.5" />
-                  Verify {selectedDocs.size}
+                  Verify selected ({selectedDocs.size})
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setBulkRejectOpen(true)}
+                  disabled={bulkBusy || bulkRejectTargets.length === 0}
+                  title={
+                    bulkRejectTargets.length === 0
+                      ? 'Nothing in the selection can be rejected'
+                      : 'Reject the selected documents with one reason'
+                  }
+                  className="text-alert hover:text-alert"
+                >
+                  <ShieldAlert className="h-3.5 w-3.5" />
+                  Reject selected ({selectedDocs.size})
                 </Button>
               </div>
             </div>
@@ -695,10 +801,26 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {sortedDocs.map((d) => {
-                const selectable =
-                  d.status === 'UPLOADED' || d.status === 'REJECTED';
-                return (
+              {groups.map((g) => (
+                <Fragment key={g.associateId}>
+                  {/* Associate header row: name + doc count. */}
+                  <TableRow className="hover:bg-transparent bg-navy-secondary/40">
+                    <TableCell colSpan={colCount} className="py-1.5">
+                      <div className="flex items-center gap-2">
+                        <Avatar name={g.associateName} size="xs" />
+                        <span className="text-xs font-medium text-white truncate">
+                          {g.associateName}
+                        </span>
+                        <span className="text-[10px] tabular-nums text-silver/70">
+                          {g.docs.length} document{g.docs.length === 1 ? '' : 's'}
+                        </span>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  {g.docs.map((d) => {
+                    const selectable =
+                      d.status === 'UPLOADED' || d.status === 'REJECTED';
+                    return (
                 <TableRow key={d.id} className="group">
                   {canManage && (
                     <TableCell className="w-8">
@@ -810,8 +932,10 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                     </TableCell>
                   )}
                 </TableRow>
-                );
-              })}
+                    );
+                  })}
+                </Fragment>
+              ))}
             </TableBody>
           </Table>
         </Card>
@@ -1173,6 +1297,87 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
             >
               <XCircle className="h-4 w-4" />
               Reject
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk rejection panel — one reason applied to every selected doc.
+          Loops the per-id endpoint sequentially so each rejection keeps its
+          side effects (task rewind + email to the associate). */}
+      <Dialog
+        open={bulkRejectOpen}
+        onOpenChange={(v) => {
+          if (bulkBusy) return;
+          setBulkRejectOpen(v);
+          if (!v) setBulkRejectReason('');
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              Reject {bulkRejectTargets.length} document
+              {bulkRejectTargets.length === 1 ? '' : 's'}
+            </DialogTitle>
+            <DialogDescription>
+              The same reason is attached to every selected document. Each
+              associate is emailed and their upload task reopens so they can
+              re-submit.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            {selectedDocs.size > bulkRejectTargets.length && (
+              <div className="text-xs text-silver">
+                {selectedDocs.size - bulkRejectTargets.length} of the selected
+                documents are already rejected and will be skipped.
+              </div>
+            )}
+            <div className="flex flex-wrap gap-1.5">
+              {BULK_REJECT_PRESETS.map((r) => (
+                <Button
+                  key={r}
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  onClick={() => setBulkRejectReason(r)}
+                  className={cn(
+                    'rounded-md',
+                    bulkRejectReason === r &&
+                      'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold',
+                  )}
+                >
+                  {r}
+                </Button>
+              ))}
+            </div>
+            <Field label="Reason" required>
+              {(p) => (
+                <Textarea
+                  value={bulkRejectReason}
+                  onChange={(e) => setBulkRejectReason(e.target.value)}
+                  rows={3}
+                  maxLength={500}
+                  placeholder="Pick a preset above or write your own."
+                  {...p}
+                />
+              )}
+            </Field>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setBulkRejectOpen(false)}
+              disabled={bulkBusy}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={onBulkReject}
+              loading={bulkBusy}
+              disabled={!bulkRejectReason.trim() || bulkRejectTargets.length === 0}
+            >
+              <XCircle className="h-4 w-4" />
+              Reject {bulkRejectTargets.length}
             </Button>
           </DialogFooter>
         </DialogContent>

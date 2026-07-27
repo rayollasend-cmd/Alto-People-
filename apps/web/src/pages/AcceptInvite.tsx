@@ -28,6 +28,11 @@ export function AcceptInvite() {
   const [confirm, setConfirm] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  // Self-service renewal shown in the invalid/expired state.
+  const [renewEmail, setRenewEmail] = useState('');
+  const [renewSubmitting, setRenewSubmitting] = useState(false);
+  const [renewSent, setRenewSent] = useState(false);
+
   useEffect(() => {
     if (!token) {
       setError('Missing invitation token.');
@@ -57,6 +62,24 @@ export function AcceptInvite() {
   }, [token]);
 
   const passwordOk = password.length >= 12 && password === confirm;
+
+  const handleRenew = async (e: FormEvent) => {
+    e.preventDefault();
+    if (renewSubmitting || !renewEmail.trim()) return;
+    setRenewSubmitting(true);
+    try {
+      await apiFetch<{ ok: boolean }>('/auth/invite/renew', {
+        method: 'POST',
+        body: { email: renewEmail.trim() },
+      });
+    } catch {
+      // Deliberately swallowed — the confirmation below is neutral by design
+      // (the server never reveals whether the email has a pending invite).
+    } finally {
+      setRenewSubmitting(false);
+      setRenewSent(true);
+    }
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -116,6 +139,41 @@ export function AcceptInvite() {
                 Invitation problem
               </h2>
               <ErrorBanner className="mb-4">{error}</ErrorBanner>
+
+              {renewSent ? (
+                <p className="text-silver text-sm mb-4">
+                  If that email has a pending invitation, a fresh link is on
+                  its way.
+                </p>
+              ) : (
+                <form onSubmit={handleRenew} noValidate className="mb-4">
+                  <p className="text-silver text-sm mb-3">
+                    Enter your email and we'll send you a fresh invitation
+                    link.
+                  </p>
+                  <Field label="Email" required className="mb-3">
+                    {(p) => (
+                      <Input
+                        type="email"
+                        autoComplete="email"
+                        inputMode="email"
+                        value={renewEmail}
+                        onChange={(e) => setRenewEmail(e.target.value)}
+                        {...p}
+                      />
+                    )}
+                  </Field>
+                  <Button
+                    type="submit"
+                    loading={renewSubmitting}
+                    disabled={renewSubmitting || !renewEmail.trim()}
+                    className="w-full"
+                  >
+                    {renewSubmitting ? 'Sending…' : 'Send me a new link'}
+                  </Button>
+                </form>
+              )}
+
               <Button variant="ghost" onClick={() => navigate('/login')}>
                 Go to sign in
               </Button>

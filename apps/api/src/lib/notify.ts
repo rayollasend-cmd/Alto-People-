@@ -331,16 +331,39 @@ export function notifyAllAdmins(
  * Notify the associate (via their User row, if one exists). No-op if the
  * associate has no active User account yet — invited-but-unaccepted
  * accounts have no confirmed inbox to mail.
+ *
+ * Pass `emailFallback: true` for messages that MUST reach the person even
+ * without an active account (e.g. "your application was declined" — the
+ * population most likely to be rejected is exactly the one that never
+ * logged in). Falls back to a direct email to Associate.email.
  */
-export function notifyAssociate(associateId: string, opts: NotifyOpts): Promise<void> {
+export function notifyAssociate(
+  associateId: string,
+  opts: NotifyOpts & { emailFallback?: boolean },
+): Promise<void> {
   return track(
     (async () => {
       const user = await prisma.user.findFirst({
         where: { associateId, status: 'ACTIVE' },
         select: { id: true },
       });
-      if (!user) return;
-      await notifyUser(user.id, opts);
+      if (user) {
+        await notifyUser(user.id, opts);
+        return;
+      }
+      if (!opts.emailFallback) return;
+      const associate = await prisma.associate.findUnique({
+        where: { id: associateId },
+        select: { email: true },
+      });
+      if (!associate?.email) return;
+      await send({
+        channel: 'EMAIL',
+        recipient: { userId: null, phone: null, email: associate.email },
+        subject: opts.subject ?? 'Notification from Alto HR',
+        body: opts.body,
+        ...(opts.html ? { html: opts.html } : {}),
+      });
     })().catch((err: unknown) => {
       console.warn('[notify] notifyAssociate failed:', err instanceof Error ? err.message : err);
     }),
@@ -407,9 +430,15 @@ export function notifyHrOnApplicationComplete(applicationId: string): Promise<vo
       if (!allDone) return;
 
       // Stamp first; if the stamp succeeds we own the notification fan-out.
+      // Also advance the status machine: a fully-complete DRAFT is
+      // SUBMITTED — this is what the list's Submitted chip, the stale
+      // banner's Review button, and the associate's status banner read.
       await prisma.application.update({
         where: { id: applicationId },
-        data: { submittedAt: new Date() },
+        data: {
+          submittedAt: new Date(),
+          ...(app.status === 'DRAFT' ? { status: 'SUBMITTED' } : {}),
+        },
       });
 
       const who = `${app.associate.firstName} ${app.associate.lastName}`;
@@ -417,7 +446,7 @@ export function notifyHrOnApplicationComplete(applicationId: string): Promise<vo
         associateName: who,
         clientName: app.client.name,
         submittedAt: new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC',
-        applicationUrl: `${env.APP_BASE_URL}/admin/applications/${app.id}`,
+        applicationUrl: `${env.APP_BASE_URL}/onboarding/applications/${app.id}`,
       });
       await notifyAllAdmins({
         subject: tpl.subject,

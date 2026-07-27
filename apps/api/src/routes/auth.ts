@@ -53,6 +53,7 @@ import {
   mfaEnrollConfirmLimiter,
 } from '../middleware/rateLimit.js';
 import { hashToken } from '../lib/inviteToken.js';
+import { sendReminderForUser } from '../lib/inviteReminder.js';
 import {
   generatePasswordResetToken,
   hashResetToken,
@@ -547,6 +548,40 @@ authRouter.get('/invite/:token', async (req, res, next) => {
       expiresAt: invite.expiresAt.toISOString(),
     };
     res.json(payload);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /auth/invite/renew { email }
+ * Public — self-service replacement for an expired invite link. If the
+ * email matches an INVITED user, a fresh token is minted and emailed;
+ * the response is ALWAYS { ok: true } (no account enumeration). Turns the
+ * "This invitation has expired. Ask HR." dead end into a button — the
+ * most common way a hire silently disappeared.
+ */
+authRouter.post('/invite/renew', acceptInviteIpLimiter, async (req, res, next) => {
+  try {
+    const email = (req.body?.email ?? '').toString().trim().toLowerCase();
+    if (email && email.length <= 320) {
+      const user = await prisma.user.findFirst({
+        where: { email, status: 'INVITED', passwordHash: null },
+        select: { id: true },
+      });
+      if (user) {
+        // Fire-and-forget: response timing must not reveal whether the
+        // email matched.
+        void sendReminderForUser(prisma, user.id, { reason: 'manual' }).catch(
+          (err: unknown) =>
+            console.warn(
+              '[auth] self-service invite renew failed:',
+              err instanceof Error ? err.message : err,
+            ),
+        );
+      }
+    }
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }

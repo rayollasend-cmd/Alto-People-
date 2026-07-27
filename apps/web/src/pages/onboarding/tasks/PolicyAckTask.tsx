@@ -34,13 +34,17 @@ export function PolicyAckTask() {
     ? `/onboarding/me/${applicationId}`
     : `/onboarding/applications/${applicationId}`;
 
-  const refresh = useCallback(async () => {
-    if (!applicationId) return;
+  const rowRefs = useRef<Record<string, HTMLLIElement | null>>({});
+
+  const refresh = useCallback(async (): Promise<PolicyForApplication[] | null> => {
+    if (!applicationId) return null;
     try {
       const res = await getApplicationPolicies(applicationId);
       setPolicies(res.policies);
+      return res.policies;
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load.');
+      return null;
     }
   }, [applicationId]);
 
@@ -56,8 +60,20 @@ export function PolicyAckTask() {
     setError(null);
     try {
       await acknowledgePolicy(applicationId, { policyId });
-      await refresh();
-      setOpenId(null);
+      const fresh = await refresh();
+      // Auto-advance: expand the next unacknowledged policy and bring it
+      // into view. When none remain, collapse — the done state takes over.
+      const next = fresh?.find((p) => !p.acknowledged) ?? null;
+      setOpenId(next?.id ?? null);
+      if (next) {
+        const nextId = next.id;
+        window.setTimeout(() => {
+          rowRefs.current[nextId]?.scrollIntoView({
+            block: 'start',
+            behavior: 'smooth',
+          });
+        }, 0);
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Acknowledgement failed.');
     } finally {
@@ -73,6 +89,15 @@ export function PolicyAckTask() {
         the document. Your acknowledgment is stored as part of your permanent
         employment record.
       </p>
+
+      {policies && policies.length > 0 && (
+        <p className="text-xs text-silver mb-4" aria-live="polite">
+          <span className={cn(allAcked && 'text-gold')}>
+            {policies.filter((p) => p.acknowledged).length} of {policies.length}{' '}
+            acknowledged
+          </span>
+        </p>
+      )}
 
       {error && (
         <p role="alert" className="text-sm text-alert mb-4">
@@ -95,6 +120,9 @@ export function PolicyAckTask() {
           {policies.map((p) => (
             <PolicyRow
               key={p.id}
+              rowRef={(node) => {
+                rowRefs.current[p.id] = node;
+              }}
               policy={p}
               expanded={openId === p.id}
               onToggle={() => setOpenId((cur) => (cur === p.id ? null : p.id))}
@@ -129,15 +157,18 @@ function PolicyRow({
   onToggle,
   onAck,
   busy,
+  rowRef,
 }: {
   policy: PolicyForApplication;
   expanded: boolean;
   onToggle: () => void;
   onAck: () => void;
   busy: boolean;
+  rowRef: (node: HTMLLIElement | null) => void;
 }) {
   return (
     <li
+      ref={rowRef}
       className={cn(
         'rounded border transition-colors',
         policy.acknowledged

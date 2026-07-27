@@ -297,6 +297,11 @@ function DocumentsCard({
   onChanged: () => void;
 }) {
   const [docs, setDocs] = useState<I9DocumentListItem[] | null>(null);
+  // Doc count from the FIRST fetch this session — i.e. before any upload
+  // made here. Non-zero means identity documents already exist in the shared
+  // vault (same records as the Documents task), so tell the associate they
+  // can just submit those.
+  const [preexistingCount, setPreexistingCount] = useState<number | null>(null);
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -316,6 +321,7 @@ function DocumentsCard({
     try {
       const r = await listI9Documents(applicationId);
       setDocs(r.documents);
+      setPreexistingCount((cur) => cur ?? r.documents.length);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load documents.');
     }
@@ -392,6 +398,13 @@ function DocumentsCard({
 
       {!section2Done && !submitted && (
         <>
+          {preexistingCount !== null && preexistingCount > 0 && (
+            <div className="mb-4 px-3 py-2.5 rounded border border-gold/40 bg-gold/[0.06] text-sm text-silver">
+              {preexistingCount} identity document
+              {preexistingCount === 1 ? '' : 's'} already on file from your
+              Documents step — you can submit these for review or add more.
+            </div>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
             <Field label="Document type">
               <Select

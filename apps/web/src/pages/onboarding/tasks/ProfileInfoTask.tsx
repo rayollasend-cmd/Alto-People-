@@ -1,7 +1,7 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
-import { submitProfile } from '@/lib/onboardingApi';
+import { getProfile, submitProfile } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
@@ -14,20 +14,54 @@ const STATES = [
   'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY',
 ];
 
+interface ProfileDraft {
+  firstName?: string;
+  lastName?: string;
+  dob?: string;
+  phone?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+}
+
+const draftKeyFor = (applicationId: string) =>
+  `alto:onboarding-profile-draft:${applicationId}`;
+
+function readDraft(key: string): ProfileDraft | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') return parsed as ProfileDraft;
+    return null;
+  } catch {
+    return null; // corrupt / unavailable storage — drafts are best-effort
+  }
+}
+
 export function ProfileInfoTask() {
   const { applicationId } = useParams<{ applicationId: string }>();
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
-  const [dob, setDob] = useState('');
-  const [phone, setPhone] = useState('');
-  const [addressLine1, setAddressLine1] = useState('');
-  const [addressLine2, setAddressLine2] = useState('');
-  const [city, setCity] = useState('');
-  const [state, setState] = useState('FL');
-  const [zip, setZip] = useState('');
+  const draftKey = draftKeyFor(applicationId ?? '');
+  // Read once, synchronously, so the local draft wins over anything the
+  // server sends back later.
+  const [draft] = useState<ProfileDraft | null>(() => readDraft(draftKey));
+
+  const [firstName, setFirstName] = useState(draft?.firstName ?? '');
+  const [lastName, setLastName] = useState(draft?.lastName ?? '');
+  const [dob, setDob] = useState(draft?.dob ?? '');
+  const [phone, setPhone] = useState(draft?.phone ?? '');
+  const [addressLine1, setAddressLine1] = useState(draft?.addressLine1 ?? '');
+  const [addressLine2, setAddressLine2] = useState(draft?.addressLine2 ?? '');
+  const [city, setCity] = useState(draft?.city ?? '');
+  // 'FL' is only the LAST-resort fallback — applied after both the draft and
+  // the server profile have had a chance to fill this in (see the fetch below).
+  const [state, setState] = useState(draft?.state ?? '');
+  const [zip, setZip] = useState(draft?.zip ?? '');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -35,6 +69,78 @@ export function ProfileInfoTask() {
   const backTo = isAssociate
     ? `/onboarding/me/${applicationId}`
     : `/onboarding/applications/${applicationId}`;
+
+  // Hydrate from the server, seeding only fields the user (or their draft)
+  // hasn't already filled — server values must never clobber typed input.
+  useEffect(() => {
+    if (!applicationId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const p = await getProfile(applicationId);
+        if (cancelled) return;
+        const seed = (
+          setter: React.Dispatch<React.SetStateAction<string>>,
+          value: string | null
+        ) => setter((cur) => (cur !== '' ? cur : value ?? ''));
+        seed(setFirstName, p.firstName);
+        seed(setLastName, p.lastName);
+        seed(setDob, p.dob);
+        seed(setPhone, p.phone);
+        seed(setAddressLine1, p.addressLine1);
+        seed(setAddressLine2, p.addressLine2);
+        seed(setCity, p.city);
+        seed(setZip, p.zip);
+        setState((cur) => cur || p.state || 'FL');
+      } catch {
+        // Hydration is best-effort — the blank form still works. Apply the
+        // final state fallback so the select isn't left empty.
+        if (!cancelled) setState((cur) => cur || 'FL');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [applicationId]);
+
+  // Debounced draft save — cleared on successful submit. The cleanup also
+  // cancels any pending write when the component unmounts after submit.
+  useEffect(() => {
+    if (!applicationId) return;
+    const t = window.setTimeout(() => {
+      try {
+        localStorage.setItem(
+          draftKey,
+          JSON.stringify({
+            firstName,
+            lastName,
+            dob,
+            phone,
+            addressLine1,
+            addressLine2,
+            city,
+            state,
+            zip,
+          } satisfies ProfileDraft)
+        );
+      } catch {
+        // storage full / unavailable — drafts are best-effort
+      }
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [
+    applicationId,
+    draftKey,
+    firstName,
+    lastName,
+    dob,
+    phone,
+    addressLine1,
+    addressLine2,
+    city,
+    state,
+    zip,
+  ]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -53,6 +159,11 @@ export function ProfileInfoTask() {
         state: state || null,
         zip: zip || null,
       });
+      try {
+        localStorage.removeItem(draftKey);
+      } catch {
+        // best-effort
+      }
       navigate(backTo, { replace: true });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Submission failed.');
@@ -143,6 +254,7 @@ export function ProfileInfoTask() {
               value={state}
               onChange={(e) => setState(e.target.value)}
             >
+              {state === '' && <option value="">—</option>}
               {STATES.map((s) => (
                 <option key={s} value={s}>
                   {s}

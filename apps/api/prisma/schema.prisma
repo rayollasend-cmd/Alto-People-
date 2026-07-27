@@ -946,6 +946,11 @@ model Application {
   approvedAt      DateTime?            @db.Timestamptz(6)
   rejectedAt      DateTime?            @db.Timestamptz(6)
   rejectionReason String?
+  // Progress-reminder sweep bookkeeping: when the associate was last
+  // nagged about incomplete tasks and how many times (2nd+ escalates
+  // to HR).
+  progressRemindedAt DateTime?         @db.Timestamptz(6)
+  progressRemindCount Int              @default(0)
   associate       Associate            @relation(fields: [associateId], references: [id], onDelete: Restrict)
   client          Client               @relation(fields: [clientId], references: [id], onDelete: Restrict)
   location        Location?            @relation(fields: [locationId], references: [id], onDelete: SetNull)
@@ -980,6 +985,9 @@ model OnboardingTask {
   title           String
   description     String?
   order           Int
+  /// Days before the application's start date this task is due (null =
+  /// no deadline). Snapshot from the template at instantiation.
+  dueOffsetDays   Int?
   documentId      String?             @db.Uuid
   completedAt     DateTime?           @db.Timestamptz(6)
   checklist       OnboardingChecklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
@@ -1013,6 +1021,10 @@ model OnboardingTemplateTask {
   title       String
   description String?
   order       Int
+  /// Days BEFORE the application's start date this task should be done
+  /// (0 = by the start date; null = no deadline). Copied onto each
+  /// instantiated OnboardingTask; drives the at-risk math.
+  dueOffsetDays Int?
   template    OnboardingTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
 
   @@index([templateId])

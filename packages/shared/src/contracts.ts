@@ -164,6 +164,8 @@ export const ChecklistTaskSchema = z.object({
   order: z.number().int(),
   documentId: UuidSchema.nullable(),
   completedAt: z.string().datetime().nullable(),
+  /** Days before the application's start date this task is due. */
+  dueOffsetDays: z.number().int().nullable().optional(),
 });
 export type ChecklistTask = z.infer<typeof ChecklistTaskSchema>;
 
@@ -211,6 +213,10 @@ export const ApplicationSummarySchema = z.object({
   // tagged onboarding.invite or onboarding.nudge. null when there's no
   // such row yet (test fixtures, legacy data).
   lastInviteDelivery: InviteDeliveryInfoSchema.nullable().optional(),
+  /** Title of the first incomplete task — what the hire is stuck on. */
+  blockedOnTitle: z.string().nullable().optional(),
+  /** Most recent movement: latest task completion, else the invite. */
+  lastActivityAt: z.string().datetime().nullable().optional(),
 });
 export type ApplicationSummary = z.infer<typeof ApplicationSummarySchema>;
 
@@ -237,6 +243,11 @@ export type ApplicationDetail = z.infer<typeof ApplicationDetailSchema>;
 // approve dialog.
 export const ApproveApplicationInputSchema = z.object({
   hireDate: z.string().date(),
+  /** Verification gaps (skipped tasks, unreviewed documents, incomplete
+   *  I-9) make approval return 409 `approval_warnings` with the list —
+   *  pass true to approve anyway. Forces a human to SEE what was never
+   *  verified instead of activating a hire on a skipped checklist. */
+  acknowledgeWarnings: z.boolean().optional(),
 });
 export type ApproveApplicationInput = z.infer<
   typeof ApproveApplicationInputSchema
@@ -282,6 +293,9 @@ export const TemplateTaskSchema = z.object({
   title: z.string(),
   description: z.string().nullable(),
   order: z.number().int(),
+  /** Days before the application's start date this task should be done
+   *  (0 = by the start date; null = no deadline). */
+  dueOffsetDays: z.number().int().min(0).max(365).nullable().optional(),
 });
 export type TemplateTask = z.infer<typeof TemplateTaskSchema>;
 
@@ -309,6 +323,7 @@ export const TemplateTaskInputSchema = z.object({
   title: z.string().min(1).max(120),
   description: z.string().max(500).nullable().optional(),
   order: z.number().int().nonnegative().optional(),
+  dueOffsetDays: z.number().int().min(0).max(365).nullable().optional(),
 });
 export type TemplateTaskInput = z.infer<typeof TemplateTaskInputSchema>;
 
