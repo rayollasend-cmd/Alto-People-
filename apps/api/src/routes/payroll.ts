@@ -125,6 +125,8 @@ function toItem(i: RawItem): PayrollItem {
     employerFuta: Number(i.employerFuta),
     employerSuta: Number(i.employerSuta),
     netPay: Number(i.netPay),
+    preTaxDeductions: Number(i.preTaxDeductions),
+    preTaxRetirement: Number(i.preTaxRetirement),
     postTaxDeductions: Number(i.postTaxDeductions),
     status: i.status,
     disbursementRef: i.disbursementRef,
@@ -387,6 +389,7 @@ payrollRouter.post('/runs/preview', PROCESS, async (req, res, next) => {
         associateName: p.associateName,
         hoursWorked: p.hoursWorked,
         hourlyRate: p.hourlyRate,
+        rateSource: p.rateSource,
         regularHours: p.regularHours,
         overtimeHours: p.overtimeHours,
         grossPay: p.grossPay,
@@ -642,6 +645,10 @@ payrollRouter.post('/runs', PROCESS, async (req, res, next) => {
           status: 'DRAFT',
           notes: input.notes ?? null,
           createdById: req.user!.id,
+          // OFF_CYCLE = bonus / terminal-pay run: the aggregation still
+          // runs (it picks up add-on lines) but starts from an empty
+          // period on purpose — paychecks are built from add-ons.
+          ...(input.kind ? { kind: input.kind } : {}),
         },
       });
       await aggregateAndPersistRun(tx, run, defaultRate);
@@ -653,7 +660,11 @@ payrollRouter.post('/runs', PROCESS, async (req, res, next) => {
       action: 'payroll.run_created',
       payrollRunId: result.id,
       clientId: result.clientId,
-      metadata: { periodStart: input.periodStart, periodEnd: input.periodEnd },
+      metadata: {
+        periodStart: input.periodStart,
+        periodEnd: input.periodEnd,
+        kind: input.kind ?? 'REGULAR',
+      },
       req,
     });
 
@@ -1182,6 +1193,11 @@ payrollRouter.delete('/runs/:id', VOID, async (req, res, next) => {
         periodStart: ymd(run.periodStart),
         periodEnd: ymd(run.periodEnd),
         itemCount: run.items.length,
+        // Optional operator-supplied reason from the delete confirm.
+        reason:
+          typeof req.body?.reason === 'string' && req.body.reason.trim()
+            ? req.body.reason.trim().slice(0, 500)
+            : null,
       },
       req,
     });
@@ -1326,9 +1342,23 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
     }
 
     const adapter = pickAdapter();
+    // Snapshot ALL pending item ids up front, then work in batches of 100.
+    // The old single `take: 100` silently paid only the first 100 people on
+    // a large run while still marking it DISBURSED — everyone past the cap
+    // stayed PENDING and invisible.
+    const pendingIds = (
+      await prisma.payrollItem.findMany({
+        where: { payrollRunId: run.id, status: 'PENDING' },
+        select: { id: true },
+        orderBy: { createdAt: 'asc' },
+        take: 10_000,
+      })
+    ).map((x) => x.id);
+
+    const now = new Date();
+    for (let batchStart = 0; batchStart < pendingIds.length; batchStart += 100) {
     const items = await prisma.payrollItem.findMany({
-      take: 100,
-      where: { payrollRunId: run.id, status: 'PENDING' },
+      where: { id: { in: pendingIds.slice(batchStart, batchStart + 100) } },
       include: {
         associate: {
           include: {
@@ -1340,8 +1370,6 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
       },
     });
 
-    let allSucceeded = true;
-    const now = new Date();
     for (const item of items) {
       // Gap 3 — AMENDMENT runs with non-positive net: no rail call. A
       // negative net is an overpayment clawback (queued as a
@@ -1432,7 +1460,6 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
       } else if (result.status === 'PENDING') {
         // Provider accepted the request but hasn't settled. Leave PayrollItem
         // PENDING; webhook handler (future) will flip to DISBURSED.
-        allSucceeded = false;
       } else {
         // FAILED — mark the item HELD so HR sees it in the failure queue
         // without polluting the future SUCCESS retry attempt log.
@@ -1440,9 +1467,16 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
           where: { id: item.id },
           data: { status: 'HELD', failureReason: result.failureReason ?? 'unknown' },
         });
-        allSucceeded = false;
       }
     }
+    }
+
+    // The run is complete only when NOTHING remains pending or held —
+    // derived from the database, not from whichever batch we just walked.
+    const unresolved = await prisma.payrollItem.count({
+      where: { payrollRunId: run.id, status: { in: ['PENDING', 'HELD'] } },
+    });
+    const allSucceeded = unresolved === 0;
 
     const updated = await prisma.payrollRun.update({
       where: { id: run.id },
@@ -1471,7 +1505,8 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
       clientId: updated.clientId,
       metadata: {
         provider: adapter.provider,
-        items: items.length,
+        items: pendingIds.length,
+        unresolved,
         allSucceeded,
       },
       req,
@@ -1489,8 +1524,10 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
         where: { clientId: updated.clientId },
       });
       if (conn) {
+        // No cap — a journal entry over a subset of the run books the
+        // wrong totals into the ledger.
         const allItems = await prisma.payrollItem.findMany({
-          take: 100,
+          take: 10_000,
           where: { payrollRunId: updated.id },
         });
         const totals = aggregateForQbo(allItems);
@@ -2074,9 +2111,37 @@ payrollRouter.post('/runs/:id/retry-failures', PROCESS, async (req, res, next) =
       );
     }
     const adapter = pickAdapter();
+    // Optional subset: retry only the given item ids (per-item / selected
+    // retry from the failure queue). Absent → every HELD item, paginated —
+    // the old take:100 quietly skipped the rest while reporting done.
+    const requestedIds: string[] | undefined = Array.isArray(req.body?.itemIds)
+      ? (req.body.itemIds as unknown[]).filter(
+          (x): x is string => typeof x === 'string',
+        )
+      : undefined;
+    const heldIds = (
+      await prisma.payrollItem.findMany({
+        where: {
+          payrollRunId: run.id,
+          status: 'HELD',
+          ...(requestedIds && requestedIds.length > 0
+            ? { id: { in: requestedIds } }
+            : {}),
+        },
+        select: { id: true },
+        orderBy: { createdAt: 'asc' },
+        take: 10_000,
+      })
+    ).map((x) => x.id);
+    if (heldIds.length === 0) {
+      res.json({ retried: 0, succeeded: 0 });
+      return;
+    }
+    let succeeded = 0;
+    const now = new Date();
+    for (let batchStart = 0; batchStart < heldIds.length; batchStart += 100) {
     const held = await prisma.payrollItem.findMany({
-      take: 100,
-      where: { payrollRunId: run.id, status: 'HELD' },
+      where: { id: { in: heldIds.slice(batchStart, batchStart + 100) } },
       include: {
         associate: {
           include: {
@@ -2085,12 +2150,6 @@ payrollRouter.post('/runs/:id/retry-failures', PROCESS, async (req, res, next) =
         },
       },
     });
-    if (held.length === 0) {
-      res.json({ retried: 0, succeeded: 0 });
-      return;
-    }
-    let succeeded = 0;
-    const now = new Date();
     for (const item of held) {
       const primary = item.associate.payoutMethods[0] ?? null;
       const result = await adapter.disburse({
@@ -2142,6 +2201,7 @@ payrollRouter.post('/runs/:id/retry-failures', PROCESS, async (req, res, next) =
         });
       }
     }
+    }
 
     // If every item is now DISBURSED, flip the run.
     const stillOpen = await prisma.payrollItem.count({
@@ -2159,11 +2219,11 @@ payrollRouter.post('/runs/:id/retry-failures', PROCESS, async (req, res, next) =
       action: 'payroll.failures_retried',
       payrollRunId: run.id,
       clientId: run.clientId,
-      metadata: { provider: adapter.provider, retried: held.length, succeeded },
+      metadata: { provider: adapter.provider, retried: heldIds.length, succeeded },
       req,
     });
 
-    res.json({ retried: held.length, succeeded });
+    res.json({ retried: heldIds.length, succeeded });
   } catch (err) {
     next(err);
   }
@@ -3066,6 +3126,9 @@ payrollRouter.get('/config', PROCESS, async (req, res, next) => {
       fedBracketsSingle: row.fedBracketsSingle as unknown as PayrollConfigDto['fedBracketsSingle'],
       fedBracketsMfj: row.fedBracketsMfj as unknown as PayrollConfigDto['fedBracketsMfj'],
       fedBracketsHoh: row.fedBracketsHoh as unknown as PayrollConfigDto['fedBracketsHoh'],
+      // Governance flag the UI needs to render Disburse honestly — without
+      // it the button walks the admin into a guaranteed 409.
+      requireSecondApproval: env.PAYROLL_REQUIRE_SECOND_APPROVAL,
       updatedAt: row.updatedAt.toISOString(),
     };
     res.json(dto);

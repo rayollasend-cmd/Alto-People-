@@ -382,3 +382,17 @@ export const saveSubmitterProfile = (input: SubmitterProfileInput) =>
     method: 'POST',
     body: input,
   });
+
+/** Bulk-file many DRAFT/AMENDED forms; per-form failures skip with a reason. */
+export const bulkFileTaxForms = (ids: string[]) =>
+  apiFetch<{ filed: number; skipped: { id: string; reason: string }[] }>(
+    '/tax-forms/bulk-file',
+    { method: 'POST', body: { ids } },
+  );
+
+/** Bulk-send recipient copies; per-form failures skip with a reason. */
+export const bulkSendTaxFormCopies = (ids: string[], force = false) =>
+  apiFetch<{ sent: number; skipped: { id: string; reason: string }[] }>(
+    '/tax-forms/bulk-send-copies',
+    { method: 'POST', body: { ids, force } },
+  );

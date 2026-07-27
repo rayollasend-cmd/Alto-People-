@@ -175,6 +175,8 @@ export interface ProjectedItem {
   associateName: string;
   hoursWorked: number;
   hourlyRate: number;
+  /** DEFAULT = the editable fallback rate because no comp record exists. */
+  rateSource: 'OVERRIDE' | 'COMP' | 'DEFAULT' | 'SALARY';
   /** Federal weekly OT split: regular vs overtime hours. */
   regularHours: number;
   overtimeHours: number;
@@ -470,11 +472,18 @@ export async function aggregatePayrollProjection(
     let otSplit = { regularHours: 0, overtimeHours: 0 };
     let regularPay = 0;
     let overtimePay = 0;
+    // Where the rate came from — surfaced on preview items so a silent
+    // $15/hr default fallback (no comp record) is visible BEFORE money
+    // moves, instead of requiring a row-by-row compare against People.
+    let rateSource: 'OVERRIDE' | 'COMP' | 'DEFAULT' | 'SALARY' =
+      annualSalary !== undefined ? 'SALARY' : 'DEFAULT';
     if (annualSalary === undefined && hoursWorked > 0) {
       // Rate resolution: an explicit caller override wins (the payroll
       // sheet passes one), then the associate's individual HOURLY comp
       // record, then the editable default (15). The shift rate is no
       // longer consulted — pay follows the person's contracted wage.
+      if (input.hourlyRateOverride?.has(associateId)) rateSource = 'OVERRIDE';
+      else if (hourlyRateByAssociate.has(associateId)) rateSource = 'COMP';
       hourlyRate =
         input.hourlyRateOverride?.get(associateId) ??
         hourlyRateByAssociate.get(associateId) ??
@@ -813,6 +822,7 @@ export async function aggregatePayrollProjection(
       associateName,
       hoursWorked,
       hourlyRate,
+      rateSource,
       regularHours: otSplit.regularHours,
       overtimeHours: otSplit.overtimeHours,
       earnings,
