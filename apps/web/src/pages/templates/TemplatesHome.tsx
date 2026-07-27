@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { FileText, Plus } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Check, Copy, Download, FileText, Plus } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
 import {
@@ -50,6 +50,20 @@ const KIND_LABEL: Record<DocumentTemplateKind, string> = {
   WARNING_LETTER: 'Warning letter',
   GENERIC: 'Generic',
 };
+
+// Token paths the server's render context actually resolves (see
+// apps/api/src/routes/docTemplates.ts — associate select + flattened
+// department/jobTitle). Anything else must come in via custom render data.
+const ASSOCIATE_TOKEN_PATHS = [
+  'associate.firstName',
+  'associate.lastName',
+  'associate.email',
+  'associate.phone',
+  'associate.state',
+  'associate.department',
+  'associate.jobTitle',
+  'associate.id',
+] as const;
 
 export function TemplatesHome() {
   const confirm = useConfirm();
@@ -248,9 +262,31 @@ function TemplateDrawer({
   const [versions, setVersions] = useState<DocumentTemplateVersion[] | null>(null);
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
-  const [renderPreview, setRenderPreview] = useState<string | null>(null);
+  const [renderResult, setRenderResult] = useState<{
+    body: string;
+    unresolvedTokens: string[];
+  } | null>(null);
   const [renderTarget, setRenderTarget] = useState<PickedAssociate | null>(null);
   const [saving, setSaving] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+
+  const insertToken = (path: string) => {
+    const token = `{{ ${path} }}`;
+    const el = bodyRef.current;
+    if (!el) {
+      setBody((b) => b + token);
+      return;
+    }
+    const start = el.selectionStart ?? body.length;
+    const end = el.selectionEnd ?? start;
+    setBody(body.slice(0, start) + token + body.slice(end));
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + token.length;
+      el.setSelectionRange(pos, pos);
+    });
+  };
 
   const refresh = () => {
     listVersions(template.id)
@@ -305,11 +341,44 @@ function TemplateDrawer({
       const r = await renderTemplate(template.id, {
         associateId: renderTarget?.id ?? null,
       });
-      setRenderPreview(r.renderedBody);
+      setRenderResult({
+        body: r.renderedBody,
+        unresolvedTokens: r.unresolvedTokens ?? [],
+      });
+      setCopied(false);
       onChanged();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
     }
+  };
+
+  const onCopy = async () => {
+    if (!renderResult) return;
+    try {
+      await navigator.clipboard.writeText(renderResult.body);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast.error('Copy failed.');
+    }
+  };
+
+  const onDownload = () => {
+    if (!renderResult) return;
+    const safeName =
+      template.name.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') ||
+      'render';
+    const blob = new Blob([renderResult.body], {
+      type: 'text/plain;charset=utf-8',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${safeName}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -333,11 +402,35 @@ function TemplateDrawer({
             <div>
               <Label>Body</Label>
               <Textarea
+                ref={bodyRef}
                 className="mt-1 min-h-48 font-mono text-xs"
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
                 placeholder="Dear {{ associate.firstName }}, ..."
               />
+              <details className="mt-2 rounded-md border border-navy-secondary bg-navy-secondary/20">
+                <summary className="cursor-pointer select-none px-3 py-2 text-xs text-silver hover:text-white">
+                  Available tokens
+                </summary>
+                <div className="flex flex-wrap gap-1.5 px-3 pb-3">
+                  {ASSOCIATE_TOKEN_PATHS.map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      title="Insert at cursor"
+                      onClick={() => insertToken(p)}
+                      className="rounded border border-navy-secondary bg-navy-secondary/40 px-1.5 py-0.5 font-mono text-[11px] text-steel transition hover:border-steel hover:text-white"
+                    >
+                      {`{{ ${p} }}`}
+                    </button>
+                  ))}
+                  <div className="w-full pt-1 text-[11px] text-silver/70">
+                    Associate tokens resolve when an associate is picked at
+                    render time. Any custom key passed in the render data (e.g.{' '}
+                    {'{{ startDate }}'}) also resolves.
+                  </div>
+                </div>
+              </details>
             </div>
             <div className="flex gap-2 justify-end">
               <Button onClick={onSave} disabled={saving}>
@@ -410,10 +503,44 @@ function TemplateDrawer({
               </div>
             </div>
             <Button onClick={onRender}>Render preview</Button>
-            {renderPreview !== null && (
-              <pre className="mt-2 whitespace-pre-wrap text-xs text-white bg-navy-secondary/40 border border-navy-secondary rounded-md p-3">
-                {renderPreview}
-              </pre>
+            {renderResult !== null && (
+              <div className="mt-2 space-y-2">
+                {renderResult.unresolvedTokens.length > 0 && (
+                  <div
+                    role="alert"
+                    className="rounded-md border border-alert/40 bg-alert/10 p-3 text-xs text-alert"
+                  >
+                    {renderResult.unresolvedTokens.length} token
+                    {renderResult.unresolvedTokens.length === 1 ? '' : 's'}{' '}
+                    resolved to nothing:{' '}
+                    <span className="font-mono">
+                      {renderResult.unresolvedTokens
+                        .map((t) => `{{ ${t} }}`)
+                        .join(', ')}
+                    </span>{' '}
+                    — check for typos.
+                  </div>
+                )}
+                <div className="flex justify-end gap-2">
+                  <Button size="sm" variant="ghost" onClick={onCopy}>
+                    {copied ? (
+                      <>
+                        <Check className="mr-1.5 h-3.5 w-3.5" /> Copied
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="mr-1.5 h-3.5 w-3.5" /> Copy
+                      </>
+                    )}
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={onDownload}>
+                    <Download className="mr-1.5 h-3.5 w-3.5" /> Download .txt
+                  </Button>
+                </div>
+                <pre className="whitespace-pre-wrap text-xs text-white bg-navy-secondary/40 border border-navy-secondary rounded-md p-3">
+                  {renderResult.body}
+                </pre>
+              </div>
             )}
           </CardContent>
         </Card>

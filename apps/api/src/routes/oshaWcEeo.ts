@@ -100,7 +100,10 @@ oshaWcEeoRouter.post('/osha/incidents', MANAGE_COMP, async (req, res) => {
       severity: input.severity,
       daysAway: input.daysAway ?? 0,
       daysRestricted: input.daysRestricted ?? 0,
-      isRecordable: input.isRecordable ?? true,
+      // 29 CFR 1904.7 — first-aid-only cases are NOT recordable. The old
+      // blanket `?? true` default inflated the posted 300A totals for
+      // every first-aid incident (the caller can still override).
+      isRecordable: input.isRecordable ?? input.severity !== 'FIRST_AID',
       reportedById: req.user!.id,
     },
   });
@@ -149,6 +152,9 @@ oshaWcEeoRouter.get('/osha/300a', VIEW_COMP, async (req, res) => {
   const restrictedCases = rows.filter(
     (r) => r.severity === 'RESTRICTED_DUTY',
   ).length;
+  // First-aid-only cases are excluded from the query via isRecordable
+  // (default false for FIRST_AID); any explicitly-marked-recordable
+  // leftovers bucket under "other recordable" per the form's categories.
   const otherRecordable = rows.filter(
     (r) => r.severity === 'MEDICAL_TREATMENT' || r.severity === 'FIRST_AID',
   ).length;

@@ -117,7 +117,12 @@ const EnvSchema = z.object({
   // weekly/monthly compliance attestation comes due. Per-signal de-dup
   // inside the sweep ensures a 1h cadence doesn't spam HR — each
   // (key, periodStart) reminder fires at most once per 24h.
-  ATTESTATION_REMINDER_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(0),
+  // On by default like the other compliance-hygiene sweeps (the 24h
+  // per-signal de-dup makes hourly ticks safe). Set 0 to disable.
+  ATTESTATION_REMINDER_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(3600),
+  // Daily push of the scorecard's 0–30-day expirations (work auth, drug
+  // tests, J-1 program ends, training certs). Set 0 to disable.
+  EXPIRATION_DIGEST_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(86400),
   // Day-before shift reminder cron. 0 (default) disables; production should
   // set 1800-3600. Each assigned+published shift starting within the next
   // 24h is reminded exactly once — Shift.reminderSentAt is claimed with a

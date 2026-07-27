@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ChevronRight,
+  Download,
   FileText,
   Folder,
   LayoutList,
@@ -19,10 +20,12 @@ import type {
 } from '@alto-people/shared';
 import {
   bulkVerifyDocuments,
+  downloadAllDocumentsUrl,
   listAdminDocuments,
   rejectDocument,
   verifyDocument,
 } from '@/lib/documentsApi';
+import { fmtDate } from '@/lib/format';
 import { ApiError } from '@/lib/api';
 import { DocumentPreview } from '@/components/DocumentPreview';
 import { Avatar } from '@/components/ui/Avatar';
@@ -146,6 +149,11 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   // the user filters. Same pattern as the onboarding inbox. Doubles as the
   // source for the "By associate" view.
   const [allDocs, setAllDocs] = useState<DocumentRecord[] | null>(null);
+  // Server-side total for the unfiltered list. The list itself is capped
+  // (200), so when total > allDocs.length the KPIs/folders are partial and
+  // we say so instead of presenting the slice as audit truth.
+  const [allTotal, setAllTotal] = useState<number | null>(null);
+  const [allError, setAllError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -153,7 +161,14 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   const [rejectReason, setRejectReason] = useState('');
   const [rejectSubmitting, setRejectSubmitting] = useState(false);
   const [selectedAssociateId, setSelectedAssociateId] = useState<string | null>(null);
+  // The open folder's docs, fetched directly with ?associateId= so the
+  // drawer is complete even when the global list is truncated at the cap.
+  const [folderDocs, setFolderDocs] = useState<DocumentRecord[] | null>(null);
+  const [folderError, setFolderError] = useState<string | null>(null);
   const [previewDoc, setPreviewDoc] = useState<DocumentRecord | null>(null);
+  // Optional expiry captured alongside a single verify in the preview
+  // viewer ('YYYY-MM-DD'). Bulk verify stays expiry-less on purpose.
+  const [verifyExpiresAt, setVerifyExpiresAt] = useState('');
   // Bulk-verify selection (queue view only). Only docs that can transition to
   // VERIFIED — UPLOADED or REJECTED — are ever selectable.
   const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set());
@@ -190,10 +205,28 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
 
   const refreshAll = useCallback(async () => {
     try {
+      setAllError(null);
       const res = await listAdminDocuments({});
       setAllDocs(res.documents);
-    } catch {
-      setAllDocs([]);
+      setAllTotal(res.total ?? res.documents.length);
+    } catch (err) {
+      // Don't fake an empty vault — leave allDocs as-is (null on first load)
+      // and surface the failure in a banner instead of zeroed KPIs.
+      setAllError(err instanceof ApiError ? err.message : 'Failed to load.');
+    }
+  }, []);
+
+  // Per-associate folder fetch — direct, uncapped-by-the-global-list view of
+  // one person's documents.
+  const fetchFolder = useCallback(async (associateId: string) => {
+    try {
+      setFolderError(null);
+      const res = await listAdminDocuments({ associateId });
+      setFolderDocs(res.documents);
+    } catch (err) {
+      setFolderError(
+        err instanceof ApiError ? err.message : 'Failed to load this folder.',
+      );
     }
   }, []);
 
@@ -204,6 +237,18 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   useEffect(() => {
     refreshAll();
   }, [refreshAll]);
+
+  useEffect(() => {
+    setFolderDocs(null);
+    setFolderError(null);
+    if (selectedAssociateId) fetchFolder(selectedAssociateId);
+  }, [selectedAssociateId, fetchFolder]);
+
+  // The optional expiry date belongs to one document — clear it whenever the
+  // preview switches docs or closes.
+  useEffect(() => {
+    setVerifyExpiresAt('');
+  }, [previewDoc?.id]);
 
   // Drop any selection when the visible slice changes (filter / kind / view),
   // so a bulk-verify can never act on rows the user can no longer see.
@@ -357,13 +402,42 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     [associateGroups, selectedAssociateId],
   );
 
-  const onVerify = async (d: DocumentRecord) => {
+  // What the folder drawer renders: the directly-fetched docs when they've
+  // arrived, falling back to the (possibly capped) global slice while
+  // loading. Counts are recomputed from whichever list is shown so the
+  // header chips always match the table.
+  const folder = useMemo(() => {
+    if (!selectedAssociateId) return null;
+    const source = folderDocs ?? selectedGroup?.docs ?? null;
+    const list = source ?? [];
+    const count = (s: DocumentStatus) =>
+      list.filter((d) => d.status === s).length;
+    return {
+      associateId: selectedAssociateId,
+      associateName:
+        selectedGroup?.associateName ?? list[0]?.associateName ?? '—',
+      docs: list,
+      loading: source === null,
+      total: list.length,
+      uploaded: count('UPLOADED'),
+      verified: count('VERIFIED'),
+      rejected: count('REJECTED'),
+      expired: count('EXPIRED'),
+      hasDownloadable: list.some((d) => d.fileAvailable),
+    };
+  }, [selectedAssociateId, folderDocs, selectedGroup]);
+
+  const onVerify = async (d: DocumentRecord, expiresAt?: string) => {
     if (pendingId) return;
     setPendingId(d.id);
     try {
-      await verifyDocument(d.id);
+      await verifyDocument(d.id, expiresAt ? { expiresAt } : {});
       toast.success(`Verified ${d.filename}`);
-      await Promise.all([refresh(), refreshAll()]);
+      await Promise.all([
+        refresh(),
+        refreshAll(),
+        ...(selectedAssociateId ? [fetchFolder(selectedAssociateId)] : []),
+      ]);
     } catch (err) {
       toast.error('Verify failed', {
         description: err instanceof ApiError ? err.message : undefined,
@@ -465,7 +539,11 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
       toast.success(`Rejected ${rejectTarget.filename}`);
       setRejectTarget(null);
       setRejectReason('');
-      await Promise.all([refresh(), refreshAll()]);
+      await Promise.all([
+        refresh(),
+        refreshAll(),
+        ...(selectedAssociateId ? [fetchFolder(selectedAssociateId)] : []),
+      ]);
     } catch (err) {
       toast.error('Reject failed', {
         description: err instanceof ApiError ? err.message : undefined,
@@ -647,6 +725,24 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
 
       {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
 
+      {/* The overview fetch failed — say so instead of rendering zeroed
+          KPIs and an empty "No documents yet" folder view. */}
+      {allError && (
+        <ErrorBanner className="mb-4">
+          Couldn't load the document overview — KPIs, counts, and the
+          by-associate view are unavailable. {allError}
+        </ErrorBanner>
+      )}
+
+      {/* Truncation honesty: the unfiltered list is capped server-side. */}
+      {allDocs && allTotal !== null && allTotal > allDocs.length && (
+        <ErrorBanner severity="warning" className="mb-4">
+          Showing {allDocs.length} of {allTotal} documents — KPIs and folders
+          reflect only what's loaded; filter by status/kind or open a folder
+          to see everything for one person.
+        </ErrorBanner>
+      )}
+
       {view === 'queue' && !docs && !error && (
         <Card>
           <div className="p-2">
@@ -753,7 +849,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                   className="text-alert hover:text-alert"
                 >
                   <ShieldAlert className="h-3.5 w-3.5" />
-                  Reject selected ({selectedDocs.size})
+                  Reject selected ({bulkRejectTargets.length})
                 </Button>
               </div>
             </div>
@@ -895,6 +991,19 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                         {d.rejectionReason}
                       </div>
                     )}
+                    {d.expiresAt && (
+                      <div
+                        className={cn(
+                          'text-[10px] mt-1 tabular-nums',
+                          d.status === 'EXPIRED'
+                            ? 'text-alert'
+                            : 'text-silver/70',
+                        )}
+                      >
+                        {d.status === 'EXPIRED' ? 'Expired' : 'Expires'}{' '}
+                        {fmtDate(d.expiresAt)}
+                      </div>
+                    )}
                   </TableCell>
                   {canManage && (
                     <TableCell className="hidden md:table-cell text-right whitespace-nowrap">
@@ -942,7 +1051,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         );
       })()}
 
-      {view === 'associates' && !allDocs && !error && (
+      {view === 'associates' && !allDocs && !error && !allError && (
         <Card>
           <div className="p-2">
             <SkeletonRows count={6} rowHeight="h-12" />
@@ -1050,49 +1159,62 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
       {/* Per-associate folder. Opens from either view: clicking a row in the
           associates list or clicking the avatar/name in the queue's table. */}
       <Drawer
-        open={selectedGroup !== null}
+        open={folder !== null}
         onOpenChange={(o) => !o && setSelectedAssociateId(null)}
         width="max-w-3xl"
       >
-        {selectedGroup && (
+        {folder && (
           <>
             <DrawerHeader>
               <div className="flex items-center gap-3">
-                <Avatar name={selectedGroup.associateName} size="md" />
+                <Avatar name={folder.associateName} size="md" />
                 <div className="min-w-0">
                   <DrawerTitle className="truncate">
-                    {selectedGroup.associateName}
+                    {folder.associateName}
                   </DrawerTitle>
                   <DrawerDescription>
-                    {selectedGroup.total} document
-                    {selectedGroup.total === 1 ? '' : 's'} on file
+                    {folder.loading
+                      ? 'Loading documents…'
+                      : `${folder.total} document${folder.total === 1 ? '' : 's'} on file`}
                   </DrawerDescription>
                 </div>
               </div>
               <div className="flex flex-wrap gap-1.5 mt-3">
-                {selectedGroup.uploaded > 0 && (
+                {folder.uploaded > 0 && (
                   <Badge variant="pending">
-                    {selectedGroup.uploaded} awaiting
+                    {folder.uploaded} awaiting
                   </Badge>
                 )}
-                {selectedGroup.verified > 0 && (
+                {folder.verified > 0 && (
                   <Badge variant="success">
-                    {selectedGroup.verified} verified
+                    {folder.verified} verified
                   </Badge>
                 )}
-                {selectedGroup.rejected > 0 && (
+                {folder.rejected > 0 && (
                   <Badge variant="destructive">
-                    {selectedGroup.rejected} rejected
+                    {folder.rejected} rejected
                   </Badge>
                 )}
-                {selectedGroup.expired > 0 && (
+                {folder.expired > 0 && (
                   <Badge variant="destructive">
-                    {selectedGroup.expired} expired
+                    {folder.expired} expired
                   </Badge>
                 )}
               </div>
             </DrawerHeader>
             <DrawerBody>
+              {folderError && (
+                <ErrorBanner className="mb-3">{folderError}</ErrorBanner>
+              )}
+              {folder.loading && folder.docs.length === 0 && !folderError && (
+                <SkeletonRows count={4} rowHeight="h-12" />
+              )}
+              {!folder.loading && !folderError && folder.docs.length === 0 && (
+                <div className="py-8 text-center text-sm text-silver">
+                  No documents on file for this associate.
+                </div>
+              )}
+              {folder.docs.length > 0 && (
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
@@ -1106,7 +1228,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {selectedGroup.docs.map((d) => (
+                  {folder.docs.map((d) => (
                     <TableRow key={d.id} className="group">
                       <TableCell>
                         <button
@@ -1138,6 +1260,19 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                             title={d.rejectionReason}
                           >
                             {d.rejectionReason}
+                          </div>
+                        )}
+                        {d.expiresAt && (
+                          <div
+                            className={cn(
+                              'text-[10px] mt-1 tabular-nums',
+                              d.status === 'EXPIRED'
+                                ? 'text-alert'
+                                : 'text-silver/70',
+                            )}
+                          >
+                            {d.status === 'EXPIRED' ? 'Expired' : 'Expires'}{' '}
+                            {fmtDate(d.expiresAt)}
                           </div>
                         )}
                       </TableCell>
@@ -1180,8 +1315,21 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                   ))}
                 </TableBody>
               </Table>
+              )}
             </DrawerBody>
             <DrawerFooter>
+              {folder.hasDownloadable && (
+                <Button asChild variant="secondary">
+                  <a
+                    href={downloadAllDocumentsUrl(folder.associateId)}
+                    download
+                    title="Download every available document for this associate as a zip"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Download all (.zip)
+                  </a>
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 onClick={() => setSelectedAssociateId(null)}
@@ -1203,20 +1351,37 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
             <div className="flex items-center gap-1">
               {(previewDoc.status === 'UPLOADED' ||
                 previewDoc.status === 'REJECTED') && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={async () => {
-                    const target = previewDoc;
-                    await onVerify(target);
-                    setPreviewDoc(null);
-                  }}
-                  loading={pendingId === previewDoc.id}
-                  className="text-success hover:text-success"
-                >
-                  <ShieldCheck className="h-3.5 w-3.5" />
-                  <span className="ml-1 hidden sm:inline">Verify</span>
-                </Button>
+                <>
+                  {/* Optional expiry, captured with the verify. Most useful
+                      for IDs / visas / certs; harmless to leave blank. */}
+                  <label
+                    className="hidden sm:flex items-center gap-1.5 text-[11px] text-silver"
+                    title="Optional — when this document lapses it flips to EXPIRED and the associate is asked for a fresh copy"
+                  >
+                    <span className="whitespace-nowrap">Expires on</span>
+                    <Input
+                      type="date"
+                      value={verifyExpiresAt}
+                      onChange={(e) => setVerifyExpiresAt(e.target.value)}
+                      aria-label="Expires on (optional)"
+                      className="h-8 w-[8.75rem] text-xs"
+                    />
+                  </label>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={async () => {
+                      const target = previewDoc;
+                      await onVerify(target, verifyExpiresAt || undefined);
+                      setPreviewDoc(null);
+                    }}
+                    loading={pendingId === previewDoc.id}
+                    className="text-success hover:text-success"
+                  >
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                    <span className="ml-1 hidden sm:inline">Verify</span>
+                  </Button>
+                </>
               )}
               {(previewDoc.status === 'UPLOADED' ||
                 previewDoc.status === 'VERIFIED') && (

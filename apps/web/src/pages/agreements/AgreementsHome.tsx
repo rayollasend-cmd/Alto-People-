@@ -56,6 +56,13 @@ const STATUS_VARIANT: Record<
   SUPERSEDED: 'outline',
 };
 
+function daysSince(iso: string): number {
+  return Math.max(
+    0,
+    Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000),
+  );
+}
+
 export function AgreementsHome() {
   const { user } = useAuth();
   const confirm = useConfirm();
@@ -248,7 +255,21 @@ export function AgreementsHome() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-sm text-silver hidden md:table-cell">
-                        {fmtDate(a.signedAt)}
+                        {a.signedAt ? (
+                          fmtDate(a.signedAt)
+                        ) : a.status === 'PENDING_SIGNATURE' ? (
+                          <span
+                            className={
+                              daysSince(a.createdAt) >= 7
+                                ? 'text-alert'
+                                : 'text-silver'
+                            }
+                          >
+                            Unsigned · {daysSince(a.createdAt)}d
+                          </span>
+                        ) : (
+                          fmtDate(a.signedAt)
+                        )}
                       </TableCell>
                       <TableCell className="text-sm hidden md:table-cell">
                         {a.expiresOn ? (
@@ -274,7 +295,14 @@ export function AgreementsHome() {
                               size="xs"
                               loading={pendingKey === `expire:${a.id}`}
                               onClick={async () => {
-                                if (!(await confirm({ title: 'Mark this agreement expired?', destructive: true })))
+                                if (
+                                  !(await confirm({
+                                    title: 'Expire this agreement now?',
+                                    description:
+                                      'Agreements past their expiry date are expired automatically by a daily sweep — use this to expire one immediately.',
+                                    destructive: true,
+                                  }))
+                                )
                                   return;
                                 setPendingKey(`expire:${a.id}`);
                                 try {
@@ -302,7 +330,14 @@ export function AgreementsHome() {
                             loading={pendingKey === `delete:${a.id}`}
                             aria-label="Delete agreement"
                             onClick={async () => {
-                              if (!(await confirm({ title: 'Delete this agreement record?', destructive: true })))
+                              if (
+                                !(await confirm({
+                                  title: 'Delete this agreement record?',
+                                  description:
+                                    'The record is soft-deleted and the deletion is recorded in the audit trail.',
+                                  destructive: true,
+                                }))
+                              )
                                 return;
                               setPendingKey(`delete:${a.id}`);
                               try {
@@ -392,7 +427,7 @@ function NewAgreementDrawer({
         expiresOn: expiresOn || null,
         notes: notes.trim() || null,
       });
-      toast.success('Issued.');
+      toast.success('Issued — the associate has been notified.');
       onSaved();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -479,7 +514,11 @@ function NewAgreementDrawer({
               className="mt-1"
               value={expiresOn}
               onChange={(e) => setExpiresOn(e.target.value)}
+              aria-describedby="issue-agreement-expires-hint"
             />
+            <FormHint id="issue-agreement-expires-hint">
+              Expires automatically on this date — no manual step needed.
+            </FormHint>
           </div>
         </div>
         <div>
@@ -492,13 +531,17 @@ function NewAgreementDrawer({
           />
         </div>
       </DrawerBody>
-      <DrawerFooter>
+      <DrawerFooter className="flex-wrap">
         <Button variant="ghost" onClick={onClose}>
           Cancel
         </Button>
         <Button onClick={submit} disabled={saving}>
           {saving ? 'Saving…' : 'Issue'}
         </Button>
+        <p className="w-full text-right text-xs text-silver">
+          The associate is notified immediately and reminded weekly until
+          signed.
+        </p>
       </DrawerFooter>
     </Drawer>
   );

@@ -5175,8 +5175,12 @@ model Agreement {
   supersedesId  String?         @db.Uuid
   notes         String?
   issuedById    String?         @db.Uuid
+  /// Last unsigned-agreement reminder sent by the daily sweep.
+  reminderSentAt DateTime?      @db.Timestamptz(6)
   createdAt     DateTime        @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime        @updatedAt @db.Timestamptz(6)
+  /// Soft delete — a legal record is never hard-deleted.
+  deletedAt     DateTime?       @db.Timestamptz(6)
 
   associate    Associate   @relation(fields: [associateId], references: [id], onDelete: Cascade)
   supersedes   Agreement?  @relation("AgreementSupersedes", fields: [supersedesId], references: [id], onDelete: SetNull)

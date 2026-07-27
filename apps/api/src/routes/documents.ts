@@ -402,13 +402,78 @@ documentsRouter.get('/admin', MANAGE, async (req, res, next) => {
       ...(kind ? { kind: kind as Prisma.DocumentRecordWhereInput['kind'] } : {}),
       ...(associateId ? { associateId } : {}),
     };
-    const rows = await prisma.documentRecord.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      take: 200,
-      include: DOC_INCLUDE,
-    });
-    res.json(DocumentListResponseSchema.parse({ documents: rows.map(toRecord) }));
+    // Total alongside the capped page — past 200 docs the vault used to
+    // present a silently-partial list as authoritative audit truth.
+    const [rows, total] = await Promise.all([
+      prisma.documentRecord.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        take: 200,
+        include: DOC_INCLUDE,
+      }),
+      prisma.documentRecord.count({ where }),
+    ]);
+    res.json(
+      DocumentListResponseSchema.parse({
+        documents: rows.map(toRecord),
+        total,
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /documents/admin/all.zip?associateId=UUID — one archive of every
+ * available document for an associate. An auditor asking for someone's
+ * file used to mean opening and downloading each row individually.
+ */
+documentsRouter.get('/admin/all.zip', MANAGE, async (req, res, next) => {
+  try {
+    const associateId = req.query.associateId?.toString();
+    if (!associateId) {
+      throw new HttpError(400, 'associate_required', 'associateId is required');
+    }
+    const [associate, docs] = await Promise.all([
+      prisma.associate.findFirst({
+        where: { id: associateId, deletedAt: null },
+        select: { firstName: true, lastName: true },
+      }),
+      prisma.documentRecord.findMany({
+        where: {
+          ...scopeDocuments(req.user!),
+          associateId,
+          deletedAt: null,
+          s3Key: { not: null },
+        },
+        orderBy: { createdAt: 'asc' },
+        take: 500,
+      }),
+    ]);
+    if (!associate) {
+      throw new HttpError(404, 'associate_not_found', 'Associate not found');
+    }
+    const { default: archiver } = await import('archiver');
+    const { createReadStream, existsSync } = await import('node:fs');
+    const zipName = `documents-${associate.lastName}-${associate.firstName}`
+      .toLowerCase()
+      .replace(/[^a-z0-9.-]+/g, '-');
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${zipName}.zip"`);
+    const archive = archiver('zip', { zlib: { level: 6 } });
+    archive.pipe(res);
+    const seen = new Set<string>();
+    for (const d of docs) {
+      const path = resolveStoragePath(d.s3Key!);
+      if (!existsSync(path)) continue; // purged / lost blob — skip quietly
+      // Prefix with kind + a uniquifier so same-named uploads don't clash.
+      let entry = `${d.kind.toLowerCase()}-${d.filename}`;
+      if (seen.has(entry)) entry = `${d.id.slice(0, 8)}-${entry}`;
+      seen.add(entry);
+      archive.append(createReadStream(path), { name: entry });
+    }
+    await archive.finalize();
   } catch (err) {
     next(err);
   }
@@ -430,6 +495,15 @@ documentsRouter.post('/admin/:id/verify', MANAGE, async (req, res, next) => {
       res.json(toRecord(r));
       return;
     }
+    // Optional document expiry captured AT VERIFICATION — the reviewer is
+    // looking at the ID/visa's printed expiry right now. Feeds the daily
+    // expiry sweep + the (previously always-zero) Expired chips and the
+    // associate's Renew flow.
+    const expiresAtRaw = req.body?.expiresAt;
+    let expiresAt: Date | undefined;
+    if (typeof expiresAtRaw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(expiresAtRaw)) {
+      expiresAt = new Date(`${expiresAtRaw}T00:00:00.000Z`);
+    }
     const updated = await prisma.documentRecord.update({
       where: { id: doc.id },
       data: {
@@ -437,6 +511,7 @@ documentsRouter.post('/admin/:id/verify', MANAGE, async (req, res, next) => {
         verifiedById: user.id,
         verifiedAt: new Date(),
         rejectionReason: null,
+        ...(expiresAt ? { expiresAt } : {}),
       },
       include: DOC_INCLUDE,
     });

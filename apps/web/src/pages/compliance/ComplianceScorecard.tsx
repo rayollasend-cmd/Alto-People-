@@ -7,6 +7,7 @@ import {
   ClipboardList,
   Clock,
   DollarSign,
+  Download,
   ExternalLink,
   GraduationCap,
   Info,
@@ -55,6 +56,7 @@ import type {
   ManualAttestationSignal,
 } from '@alto-people/shared';
 import { Input, Textarea, Label } from '@/components/ui';
+import { downloadDocumentUrl } from '@/lib/documentsApi';
 import { fmtDate } from '@/lib/format';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
@@ -759,7 +761,12 @@ function AttestationDrawer({
             ? null
             : new Date(`${actionTakenAt}T12:00:00Z`).toISOString(),
         notes: notes.trim() || null,
-        evidenceDocumentId: null,
+        // Preserve any evidence already attached (e.g. via API/backfill)
+        // instead of nulling it out on every re-attestation. New-file
+        // upload is not offered here: POST /documents/admin/upload
+        // strictly requires an associateId, and these attestations are
+        // organization/client-scoped — they carry no associate subject.
+        evidenceDocumentId: signal.current?.evidenceDocumentId ?? null,
       });
       onSaved(r.signal);
     } catch (e) {
@@ -853,6 +860,26 @@ function AttestationDrawer({
               placeholder="e.g. submitted with adjusted hours for J. Smith"
               className="mt-1"
             />
+          </div>
+          <div>
+            <Label>Evidence</Label>
+            {signal.current?.evidenceDocumentId ? (
+              <a
+                href={downloadDocumentUrl(signal.current.evidenceDocumentId)}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-1 inline-flex items-center gap-1.5 text-xs text-gold hover:underline"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                View evidence document
+              </a>
+            ) : (
+              <p className="mt-1 text-[11px] text-silver/70">
+                No evidence document attached.
+                {canManage &&
+                  ' File upload is not available for these organization-scoped attestations yet — admin document uploads must be attached to an associate.'}
+              </p>
+            )}
           </div>
         </div>
 
@@ -990,6 +1017,36 @@ function ActionsTile({ refreshEpoch }: { refreshEpoch: number }) {
     return data.actions.filter((a) => a.severity === filter);
   }, [data, filter]);
 
+  // Client-side CSV of the currently filtered list — no extra endpoint.
+  const downloadCsv = () => {
+    if (filtered.length === 0) return;
+    const esc = (v: string): string =>
+      /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+    const header = ['severity', 'title', 'contract_clause', 'associate', 'client', 'link'];
+    const lines = [
+      header.join(','),
+      ...filtered.map((a) =>
+        [
+          a.severity,
+          a.title,
+          a.contractClause,
+          a.subject.associateName ?? '',
+          a.subject.clientName ?? '',
+          a.link ?? '',
+        ]
+          .map(esc)
+          .join(','),
+      ),
+    ];
+    const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `compliance-open-actions-${new Date().toISOString().slice(0, 10)}.csv`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <Card>
       <CardContent className="space-y-3">
@@ -1033,6 +1090,16 @@ function ActionsTile({ refreshEpoch }: { refreshEpoch: number }) {
                 count={data.warnCount}
                 tone="warning"
               />
+              <Button
+                size="sm"
+                variant="outline"
+                className="ml-1"
+                onClick={downloadCsv}
+                disabled={filtered.length === 0}
+              >
+                <Download className="h-3.5 w-3.5" />
+                Download CSV
+              </Button>
             </div>
           )}
         </div>

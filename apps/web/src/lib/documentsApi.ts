@@ -72,6 +72,12 @@ export function downloadDocumentUrl(id: string): string {
   return `/api/documents/${id}/download`;
 }
 
+// Streams a zip of every available document for one associate. Plain URL —
+// consumed via an <a href> just like the per-document download route.
+export function downloadAllDocumentsUrl(associateId: string): string {
+  return `/api/documents/admin/all.zip?associateId=${encodeURIComponent(associateId)}`;
+}
+
 // Same endpoint, but the API responds with `Content-Disposition: inline` so
 // browsers render PDFs / images in an iframe or <img> instead of downloading.
 // Only safe MIME types are allowed inline by the API.
@@ -88,8 +94,16 @@ export function deleteMyDocument(id: string): Promise<void> {
   return apiFetch<void>(`/documents/me/${id}`, { method: 'DELETE' });
 }
 
-export function verifyDocument(id: string): Promise<DocumentRecord> {
-  return apiFetch<DocumentRecord>(`/documents/admin/${id}/verify`, { method: 'POST' });
+// `expiresAt` ('YYYY-MM-DD', optional) is captured at verification time and
+// drives the daily expiry sweep that flips lapsed docs to EXPIRED.
+export function verifyDocument(
+  id: string,
+  opts: { expiresAt?: string } = {}
+): Promise<DocumentRecord> {
+  return apiFetch<DocumentRecord>(`/documents/admin/${id}/verify`, {
+    method: 'POST',
+    ...(opts.expiresAt ? { body: { expiresAt: opts.expiresAt } } : {}),
+  });
 }
 
 export interface BulkVerifyResult {
