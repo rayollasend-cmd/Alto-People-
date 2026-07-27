@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
+import { notifyAssociate } from '../lib/notify.js';
 
 /**
  * Phase 130 — Volunteer time off (VTO).
@@ -244,6 +245,21 @@ vto130Router.post(
         reviewerNotes: input.notes ?? null,
       },
     });
+    // Fire-and-forget after the write — a notification hiccup must never
+    // roll back or fail the decision itself.
+    const approved = input.decision === 'APPROVED';
+    void notifyAssociate(e.associateId, {
+      subject: `Volunteer hours ${approved ? 'approved' : 'rejected'}`,
+      body:
+        `Your ${e.hours} volunteer hour(s) on ${e.activityDate
+          .toISOString()
+          .slice(0, 10)} for ${e.organization} were ${
+          approved ? 'approved' : 'rejected'
+        }.` + (input.notes ? ` Reviewer note: ${input.notes}` : ''),
+      category: 'vto',
+      linkUrl: '/vto',
+      emailFallback: true,
+    });
     res.json({ ok: true });
   },
 );
@@ -297,6 +313,16 @@ vto130Router.post(
         status: 'MATCHED',
         matchAmount,
       },
+    });
+    // Fire-and-forget after the write (see decide handler).
+    void notifyAssociate(e.associateId, {
+      subject: 'Employer match recorded',
+      body: `An employer match of ${e.matchCurrency} ${matchAmount.toFixed(
+        2,
+      )} was recorded for your ${e.hours} volunteer hour(s) at ${e.organization}.`,
+      category: 'vto',
+      linkUrl: '/vto',
+      emailFallback: true,
     });
     res.json({ ok: true });
   },

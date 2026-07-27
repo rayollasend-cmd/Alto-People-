@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Briefcase, Plus, Trash2, Users } from 'lucide-react';
 import type {
-  AssociateOrgSummary,
   CostCenter,
   Department,
   JobProfile,
@@ -23,10 +22,11 @@ import {
   listCostCenters,
   listDepartments,
   listJobProfiles,
-  listOrgAssociates,
 } from '@/lib/orgApi';
 import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
+import { fmtMoney, fmtPercent, ymdLocal } from '@/lib/format';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import {
   Avatar,
   Badge,
@@ -71,7 +71,6 @@ export function PositionsTab({
 }) {
   const [rows, setRows] = useState<Position[] | null>(null);
   const [headcount, setHeadcount] = useState<PositionHeadcount | null>(null);
-  const [associates, setAssociates] = useState<AssociateOrgSummary[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [jobProfiles, setJobProfiles] = useState<JobProfile[]>([]);
@@ -81,17 +80,15 @@ export function PositionsTab({
   const refresh = async () => {
     try {
       setError(null);
-      const [p, h, a, d, c, j] = await Promise.all([
+      const [p, h, d, c, j] = await Promise.all([
         listPositions({ clientId: clientId || undefined }),
         getHeadcount(clientId || undefined),
-        listOrgAssociates(clientId || undefined),
         listDepartments(clientId || undefined),
         listCostCenters(clientId || undefined),
         listJobProfiles(clientId || undefined),
       ]);
       setRows(p.positions);
       setHeadcount(h);
-      setAssociates(a.associates);
       setDepartments(d.departments);
       setCostCenters(c.costCenters);
       setJobProfiles(j.jobProfiles);
@@ -207,7 +204,6 @@ export function PositionsTab({
             target={drawerTarget}
             clientId={clientId}
             canManage={canManage}
-            associates={associates}
             departments={departments}
             costCenters={costCenters}
             jobProfiles={jobProfiles}
@@ -242,7 +238,6 @@ function PositionDrawer({
   target,
   clientId,
   canManage,
-  associates,
   departments,
   costCenters,
   jobProfiles,
@@ -252,7 +247,6 @@ function PositionDrawer({
   target: Position | 'new';
   clientId: string;
   canManage: boolean;
-  associates: AssociateOrgSummary[];
   departments: Department[];
   costCenters: CostCenter[];
   jobProfiles: JobProfile[];
@@ -267,20 +261,49 @@ function PositionDrawer({
   const [jobProfileId, setJobProfileId] = useState(initial?.jobProfileId ?? '');
   const [departmentId, setDepartmentId] = useState(initial?.departmentId ?? '');
   const [costCenterId, setCostCenterId] = useState(initial?.costCenterId ?? '');
-  const [managerId, setManagerId] = useState(initial?.managerAssociateId ?? '');
+  const [manager, setManager] = useState<PickedAssociate | null>(
+    initial?.managerAssociateId
+      ? { id: initial.managerAssociateId, name: initial.managerName ?? 'Current manager' }
+      : null,
+  );
   const [fte, setFte] = useState(initial?.fteAuthorized ?? '1.00');
+  // New requisitions default to today — most are opened "hire ASAP".
   const [targetStartDate, setTargetStartDate] = useState(
-    initial?.targetStartDate ?? '',
+    initial?.targetStartDate ?? (isNew ? ymdLocal() : ''),
   );
   const [minRate, setMinRate] = useState(initial?.minHourlyRate ?? '');
   const [maxRate, setMaxRate] = useState(initial?.maxHourlyRate ?? '');
   const [notes, setNotes] = useState(initial?.notes ?? '');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [assignToId, setAssignToId] = useState('');
+  const [assignTo, setAssignTo] = useState<PickedAssociate | null>(null);
+
+  // Live band math: min ≤ max is validated inline; when the range is
+  // sane we show the midpoint + spread so the admin can sanity-check
+  // the band without a calculator.
+  const minNum = minRate === '' ? null : Number(minRate);
+  const maxNum = maxRate === '' ? null : Number(maxRate);
+  const rangeInvalid =
+    minNum !== null &&
+    maxNum !== null &&
+    Number.isFinite(minNum) &&
+    Number.isFinite(maxNum) &&
+    minNum > maxNum;
+  const rangeStats =
+    minNum !== null &&
+    maxNum !== null &&
+    Number.isFinite(minNum) &&
+    Number.isFinite(maxNum) &&
+    minNum > 0 &&
+    minNum <= maxNum
+      ? {
+          midpoint: (minNum + maxNum) / 2,
+          spreadPct: ((maxNum - minNum) / minNum) * 100,
+        }
+      : null;
 
   const submit = async () => {
-    if (!code.trim() || !title.trim()) return;
+    if (!code.trim() || !title.trim() || rangeInvalid) return;
     setError(null);
     setSubmitting(true);
     try {
@@ -291,7 +314,7 @@ function PositionDrawer({
         jobProfileId: jobProfileId || null,
         departmentId: departmentId || null,
         costCenterId: costCenterId || null,
-        managerAssociateId: managerId || null,
+        managerAssociateId: manager?.id ?? null,
         fteAuthorized: Number(fte),
         targetStartDate: targetStartDate || null,
         minHourlyRate: minRate ? Number(minRate) : null,
@@ -313,12 +336,12 @@ function PositionDrawer({
     }
   };
 
-  const transition = async (status: PositionStatus) => {
+  const transition = async (status: PositionStatus, successMessage: string) => {
     if (isNew) return;
     setSubmitting(true);
     try {
       await setPositionStatus(initial!.id, status);
-      toast.success(`Status → ${status}`);
+      toast.success(successMessage);
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to update status.');
@@ -326,12 +349,24 @@ function PositionDrawer({
     }
   };
 
+  const freeze = async () => {
+    if (isNew) return;
+    const ok = await confirm({
+      title: `Freeze ${initial!.code}?`,
+      description:
+        'Hiring pauses on a frozen position — it cannot be filled until it is reopened.',
+      confirmLabel: 'Freeze position',
+    });
+    if (!ok) return;
+    await transition('FROZEN', `${initial!.code} frozen — hiring is paused`);
+  };
+
   const assign = async () => {
-    if (isNew || !assignToId) return;
+    if (isNew || !assignTo) return;
     setSubmitting(true);
     try {
-      await assignPosition(initial!.id, { associateId: assignToId });
-      toast.success('Position filled');
+      await assignPosition(initial!.id, { associateId: assignTo.id });
+      toast.success(`Position filled by ${assignTo.name}`);
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Assign failed.');
@@ -477,21 +512,19 @@ function PositionDrawer({
               )}
             </Field>
             <Field label="Reporting manager">
-              {(p) => (
-                <Select
-                  value={managerId}
-                  onChange={(e) => setManagerId(e.target.value)}
-                  disabled={!canManage}
-                  {...p}
-                >
-                  <option value="">—</option>
-                  {associates.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.firstName} {a.lastName}
-                    </option>
-                  ))}
-                </Select>
-              )}
+              {() =>
+                canManage ? (
+                  <AssociatePicker
+                    value={manager}
+                    onChange={setManager}
+                    placeholder="Search for a manager…"
+                  />
+                ) : (
+                  <div className="rounded-md border border-navy-secondary bg-navy px-3 py-2 text-sm text-white">
+                    {manager?.name ?? '—'}
+                  </div>
+                )
+              }
             </Field>
           </div>
 
@@ -533,6 +566,18 @@ function PositionDrawer({
             </Field>
           </div>
 
+          {rangeInvalid && (
+            <p role="alert" className="text-sm text-alert">
+              Min hourly rate must be less than or equal to the max rate.
+            </p>
+          )}
+          {rangeStats && (
+            <p className="text-[11px] text-silver tabular-nums">
+              midpoint {fmtMoney(rangeStats.midpoint)} · spread{' '}
+              {fmtPercent(rangeStats.spreadPct)}
+            </p>
+          )}
+
           <Field label="Notes">
             {(p) => (
               <Input
@@ -552,23 +597,16 @@ function PositionDrawer({
               </div>
               <div className="flex gap-2">
                 <div className="flex-1">
-                  <Select
-                    value={assignToId}
-                    onChange={(e) => setAssignToId(e.target.value)}
-                    aria-label="Choose an associate to assign to this position"
-                  >
-                    <option value="">— choose an associate —</option>
-                    {associates.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.firstName} {a.lastName}
-                      </option>
-                    ))}
-                  </Select>
+                  <AssociatePicker
+                    value={assignTo}
+                    onChange={setAssignTo}
+                    placeholder="Search for an associate to fill this seat…"
+                  />
                 </div>
                 <Button
                   size="sm"
                   onClick={assign}
-                  disabled={!assignToId || submitting}
+                  disabled={!assignTo || submitting}
                 >
                   <Users className="h-4 w-4" />
                   Fill
@@ -589,12 +627,18 @@ function PositionDrawer({
               </Button>
             )}
             {initial!.status !== 'OPEN' && initial!.status !== 'FILLED' && (
-              <Button variant="outline" onClick={() => transition('OPEN')} disabled={submitting}>
+              <Button
+                variant="outline"
+                onClick={() =>
+                  void transition('OPEN', `${initial!.code} is open for hiring`)
+                }
+                disabled={submitting}
+              >
                 Open
               </Button>
             )}
             {initial!.status !== 'FROZEN' && initial!.status !== 'FILLED' && (
-              <Button variant="outline" onClick={() => transition('FROZEN')} disabled={submitting}>
+              <Button variant="outline" onClick={() => void freeze()} disabled={submitting}>
                 Freeze
               </Button>
             )}
@@ -619,7 +663,7 @@ function PositionDrawer({
             <Button
               onClick={submit}
               loading={submitting}
-              disabled={!code.trim() || !title.trim()}
+              disabled={!code.trim() || !title.trim() || rangeInvalid}
             >
               {isNew ? 'Create' : 'Save'}
             </Button>

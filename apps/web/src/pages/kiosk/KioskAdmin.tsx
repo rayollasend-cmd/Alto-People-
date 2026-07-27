@@ -15,7 +15,6 @@ import {
   Search,
   Stethoscope,
   Tablet,
-  X,
 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
@@ -51,6 +50,7 @@ import { useAuth } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
+  AssociatePicker,
   Badge,
   Button,
   Card,
@@ -61,6 +61,7 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
   Select,
@@ -278,14 +279,16 @@ function DevicesTab({
 }) {
   const confirm = useConfirm();
   const [rows, setRows] = useState<KioskDevice[] | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [showToken, setShowToken] = useState<string | null>(null);
 
   const refresh = () => {
     setRows(null);
+    setLoadError(false);
     listKioskDevices()
       .then((r) => setRows(r.devices))
-      .catch(() => setRows([]));
+      .catch(() => setLoadError(true));
     // Revoking/deleting/registering changes the offline tab badge too.
     onChanged?.();
   };
@@ -381,7 +384,18 @@ function DevicesTab({
       )}
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {loadError ? (
+            <div className="p-6">
+              <ErrorBanner>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>Couldn't load kiosk devices.</span>
+                  <Button size="sm" variant="ghost" onClick={refresh}>
+                    Retry
+                  </Button>
+                </div>
+              </ErrorBanner>
+            </div>
+          ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
@@ -858,6 +872,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
   >(null);
   const [clientId, setClientId] = useState('');
   const [rows, setRows] = useState<KioskPin[] | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [showDiagnose, setShowDiagnose] = useState(false);
   const [showPin, setShowPin] = useState<{
@@ -913,9 +928,10 @@ function PinsTab({ canManage }: { canManage: boolean }) {
       return;
     }
     setRows(null);
+    setLoadError(false);
     listKioskPins(clientId === ALL_CLIENTS ? undefined : clientId)
       .then((r) => setRows(r.pins))
-      .catch(() => setRows([]));
+      .catch(() => setLoadError(true));
   };
   useEffect(() => {
     refresh();
@@ -1277,6 +1293,17 @@ function PinsTab({ canManage }: { canManage: boolean }) {
           {!clientId ? (
             <div className="p-6 text-sm text-silver">
               Pick a client to manage employee numbers.
+            </div>
+          ) : loadError ? (
+            <div className="p-6">
+              <ErrorBanner>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>Couldn't load employee numbers.</span>
+                  <Button size="sm" variant="ghost" onClick={refresh}>
+                    Retry
+                  </Button>
+                </div>
+              </ErrorBanner>
             </div>
           ) : effectiveView === 'missing' ? (
             eligible === null ? (
@@ -1911,101 +1938,6 @@ function rangeFrom(range: 'all' | 'today' | '7d' | '30d'): string | undefined {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 }
 
-// Typeahead that resolves a name/email to an associate id so the punch log
-// can filter by associate SERVER-SIDE — i.e. across all history, not just
-// the loaded page. Debounced lookup against the directory; selecting shows
-// a removable chip.
-function AssociatePicker({
-  value,
-  onChange,
-}: {
-  value: { id: string; name: string } | null;
-  onChange: (v: { id: string; name: string } | null) => void;
-}) {
-  const [q, setQ] = useState('');
-  const [open, setOpen] = useState(false);
-  const [results, setResults] = useState<
-    Array<{ id: string; name: string; email: string }>
-  >([]);
-  useEffect(() => {
-    const term = q.trim();
-    if (term.length < 2) {
-      setResults([]);
-      return;
-    }
-    let cancelled = false;
-    const t = window.setTimeout(() => {
-      listDirectory({ q: term })
-        .then((r) => {
-          if (cancelled) return;
-          setResults(
-            r.associates.slice(0, 8).map((a) => ({
-              id: a.id,
-              name: `${a.firstName} ${a.lastName}`,
-              email: a.email,
-            })),
-          );
-        })
-        .catch(() => !cancelled && setResults([]));
-    }, 250);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(t);
-    };
-  }, [q]);
-
-  if (value) {
-    return (
-      <span className="inline-flex h-9 items-center gap-2 rounded-md border border-gold/40 bg-gold/10 px-3 text-sm text-white">
-        {value.name}
-        <button
-          type="button"
-          onClick={() => onChange(null)}
-          aria-label="Clear associate filter"
-          className="text-silver hover:text-white"
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
-      </span>
-    );
-  }
-  return (
-    <div className="relative min-w-[200px]">
-      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-silver" />
-      <Input
-        value={q}
-        onChange={(e) => {
-          setQ(e.target.value);
-          setOpen(true);
-        }}
-        onFocus={() => setOpen(true)}
-        onBlur={() => window.setTimeout(() => setOpen(false), 150)}
-        placeholder="Filter by associate"
-        className="h-9 pl-9"
-      />
-      {open && results.length > 0 && (
-        <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-md border border-navy-secondary bg-midnight shadow-xl">
-          {results.map((a) => (
-            <button
-              key={a.id}
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                onChange({ id: a.id, name: a.name });
-                setQ('');
-                setOpen(false);
-              }}
-              className="block w-full px-3 py-2 text-left text-sm text-white hover:bg-navy-secondary/60"
-            >
-              {a.name} <span className="text-silver">— {a.email}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 type ActionFilter =
   | 'ALL'
   | 'CLOCK_IN'
@@ -2016,6 +1948,9 @@ type ActionFilter =
 
 function LogTab() {
   const [rows, setRows] = useState<KioskPunchSummary[] | null>(null);
+  const [loadError, setLoadError] = useState(false);
+  // Bumped by the error-state Retry button to re-run the first-page load.
+  const [reloadKey, setReloadKey] = useState(0);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [devices, setDevices] = useState<Array<{ id: string; name: string }>>([]);
@@ -2047,11 +1982,12 @@ function LogTab() {
   // page onto the new result set.
   const loadIdRef = useRef(0);
 
-  // (Re)load the first page whenever a filter changes.
+  // (Re)load the first page whenever a filter changes (or Retry is hit).
   useEffect(() => {
     const myId = ++loadIdRef.current;
     setRows(null);
     setNextCursor(null);
+    setLoadError(false);
     listKioskPunches(queryParams())
       .then((r) => {
         if (loadIdRef.current !== myId) return;
@@ -2060,11 +1996,11 @@ function LogTab() {
       })
       .catch(() => {
         if (loadIdRef.current !== myId) return;
-        setRows([]);
+        setLoadError(true);
         setNextCursor(null);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [associate?.id, deviceId, action, range, anomaliesOnly]);
+  }, [associate?.id, deviceId, action, range, anomaliesOnly, reloadKey]);
 
   // Device dropdown options.
   useEffect(() => {
@@ -2086,7 +2022,10 @@ function LogTab() {
         setRows((prev) => [...(prev ?? []), ...r.punches]);
         setNextCursor(r.nextCursor);
       })
-      .catch(() => {})
+      .catch(() => {
+        if (loadIdRef.current !== myId) return;
+        toast.error('Could not load more punches — try again.');
+      })
       .finally(() => setLoadingMore(false));
   };
 
@@ -2165,7 +2104,7 @@ function LogTab() {
       toast.success(
         `Exported ${all.length} punch${all.length === 1 ? '' : 'es'}${
           cursor
-            ? ` (capped at ${EXPORT_CAP.toLocaleString()} — narrow the date range for the rest)`
+            ? ` (capped at ${EXPORT_CAP} — narrow the date range for the rest)`
             : ''
         }.`,
       );
@@ -2186,7 +2125,13 @@ function LogTab() {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <AssociatePicker value={associate} onChange={setAssociate} />
+        <div className="min-w-[220px]">
+          <AssociatePicker
+            value={associate}
+            onChange={setAssociate}
+            placeholder="Filter by associate"
+          />
+        </div>
         <Select
           size="sm"
           className="h-9 w-auto"
@@ -2266,7 +2211,22 @@ function LogTab() {
       </div>
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {loadError ? (
+            <div className="p-6">
+              <ErrorBanner>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>Couldn't load the punch log.</span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setReloadKey((k) => k + 1)}
+                  >
+                    Retry
+                  </Button>
+                </div>
+              </ErrorBanner>
+            </div>
+          ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             hasFilters ? (
@@ -2376,12 +2336,14 @@ function LogTab() {
 function FacesTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
   const [rows, setRows] = useState<KioskFaceReferenceSummary[] | null>(null);
+  const [loadError, setLoadError] = useState(false);
 
   const refresh = () => {
     setRows(null);
+    setLoadError(false);
     listKioskFaceReferences()
       .then((r) => setRows(r.references))
-      .catch(() => setRows([]));
+      .catch(() => setLoadError(true));
   };
   useEffect(() => {
     refresh();
@@ -2390,7 +2352,18 @@ function FacesTab({ canManage }: { canManage: boolean }) {
   return (
     <Card>
       <CardContent className="p-0">
-        {rows === null ? (
+        {loadError ? (
+          <div className="p-6">
+            <ErrorBanner>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>Couldn't load face references.</span>
+                <Button size="sm" variant="ghost" onClick={refresh}>
+                  Retry
+                </Button>
+              </div>
+            </ErrorBanner>
+          </div>
+        ) : rows === null ? (
           <div className="p-6"><SkeletonRows count={3} /></div>
         ) : rows.length === 0 ? (
           <EmptyState
@@ -2494,6 +2467,7 @@ function ReviewTab({
 }) {
   const prompt = usePrompt();
   const [rows, setRows] = useState<KioskPunchSummary[] | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [truncated, setTruncated] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -2501,6 +2475,7 @@ function ReviewTab({
 
   const refresh = () => {
     setRows(null);
+    setLoadError(false);
     setSelected(new Set());
     // Oldest first — HR works the back of the queue down, not the
     // freshest punch first.
@@ -2511,7 +2486,7 @@ function ReviewTab({
         // silently masquerades as "all of it".
         setTruncated(Boolean(r.nextCursor));
       })
-      .catch(() => setRows([]));
+      .catch(() => setLoadError(true));
     onChanged?.();
   };
   useEffect(() => {
@@ -2600,7 +2575,18 @@ function ReviewTab({
   return (
     <Card>
       <CardContent className="p-0">
-        {rows === null ? (
+        {loadError ? (
+          <div className="p-6">
+            <ErrorBanner>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>Couldn't load the review queue.</span>
+                <Button size="sm" variant="ghost" onClick={refresh}>
+                  Retry
+                </Button>
+              </div>
+            </ErrorBanner>
+          </div>
+        ) : rows === null ? (
           <div className="p-6"><SkeletonRows count={3} /></div>
         ) : rows.length === 0 ? (
           <EmptyState

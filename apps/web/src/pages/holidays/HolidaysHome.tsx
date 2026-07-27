@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CalendarDays, Download, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {
   createHoliday,
   deleteHoliday,
+  importUsFederal,
   listHolidays,
+  updateHoliday,
   type HolidayRow,
   type HolidayType,
 } from '@/lib/holiday117Api';
@@ -14,6 +16,7 @@ import type { ClientListItem } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
+import { parseYmd, ymdLocal } from '@/lib/format';
 import {
   Badge,
   Button,
@@ -43,6 +46,14 @@ const TYPE_VARIANT: Record<
   CLIENT_SPECIFIC: 'outline',
 };
 
+const TYPE_FILTERS: { key: HolidayType | 'ALL'; label: string }[] = [
+  { key: 'ALL', label: 'All types' },
+  { key: 'FEDERAL', label: 'Federal' },
+  { key: 'STATE', label: 'State' },
+  { key: 'COMPANY', label: 'Company' },
+  { key: 'CLIENT_SPECIFIC', label: 'Client-specific' },
+];
+
 const MONTH_NAMES = [
   'January',
   'February',
@@ -58,101 +69,157 @@ const MONTH_NAMES = [
   'December',
 ];
 
-/**
- * Day-of-month of the nth WEEKDAY in a month. `nth` >= 1 counts from the
- * start ("3rd Monday"); `nth` === -1 means the LAST such weekday.
- * `month` is 0-based, `weekday` is 0=Sun … 6=Sat.
- */
-function nthWeekdayOfMonth(
-  year: number,
-  month: number,
-  weekday: number,
-  nth: number,
-): number {
-  if (nth > 0) {
-    const firstDow = new Date(year, month, 1).getDay();
-    return 1 + ((weekday - firstDow + 7) % 7) + (nth - 1) * 7;
-  }
-  const last = new Date(year, month + 1, 0); // last day of month
-  return last.getDate() - ((last.getDay() - weekday + 7) % 7);
+const US_STATES: { code: string; name: string }[] = [
+  { code: 'AL', name: 'Alabama' },
+  { code: 'AK', name: 'Alaska' },
+  { code: 'AZ', name: 'Arizona' },
+  { code: 'AR', name: 'Arkansas' },
+  { code: 'CA', name: 'California' },
+  { code: 'CO', name: 'Colorado' },
+  { code: 'CT', name: 'Connecticut' },
+  { code: 'DE', name: 'Delaware' },
+  { code: 'FL', name: 'Florida' },
+  { code: 'GA', name: 'Georgia' },
+  { code: 'HI', name: 'Hawaii' },
+  { code: 'ID', name: 'Idaho' },
+  { code: 'IL', name: 'Illinois' },
+  { code: 'IN', name: 'Indiana' },
+  { code: 'IA', name: 'Iowa' },
+  { code: 'KS', name: 'Kansas' },
+  { code: 'KY', name: 'Kentucky' },
+  { code: 'LA', name: 'Louisiana' },
+  { code: 'ME', name: 'Maine' },
+  { code: 'MD', name: 'Maryland' },
+  { code: 'MA', name: 'Massachusetts' },
+  { code: 'MI', name: 'Michigan' },
+  { code: 'MN', name: 'Minnesota' },
+  { code: 'MS', name: 'Mississippi' },
+  { code: 'MO', name: 'Missouri' },
+  { code: 'MT', name: 'Montana' },
+  { code: 'NE', name: 'Nebraska' },
+  { code: 'NV', name: 'Nevada' },
+  { code: 'NH', name: 'New Hampshire' },
+  { code: 'NJ', name: 'New Jersey' },
+  { code: 'NM', name: 'New Mexico' },
+  { code: 'NY', name: 'New York' },
+  { code: 'NC', name: 'North Carolina' },
+  { code: 'ND', name: 'North Dakota' },
+  { code: 'OH', name: 'Ohio' },
+  { code: 'OK', name: 'Oklahoma' },
+  { code: 'OR', name: 'Oregon' },
+  { code: 'PA', name: 'Pennsylvania' },
+  { code: 'RI', name: 'Rhode Island' },
+  { code: 'SC', name: 'South Carolina' },
+  { code: 'SD', name: 'South Dakota' },
+  { code: 'TN', name: 'Tennessee' },
+  { code: 'TX', name: 'Texas' },
+  { code: 'UT', name: 'Utah' },
+  { code: 'VT', name: 'Vermont' },
+  { code: 'VA', name: 'Virginia' },
+  { code: 'WA', name: 'Washington' },
+  { code: 'WV', name: 'West Virginia' },
+  { code: 'WI', name: 'Wisconsin' },
+  { code: 'WY', name: 'Wyoming' },
+];
+
+function StateSelect({
+  id,
+  value,
+  onChange,
+}: {
+  id?: string;
+  value: string;
+  onChange: (code: string) => void;
+}) {
+  return (
+    <Select
+      id={id}
+      className="mt-1"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      <option value="">Select a state…</option>
+      {US_STATES.map((s) => (
+        <option key={s.code} value={s.code}>
+          {s.name}
+        </option>
+      ))}
+    </Select>
+  );
 }
 
-/** The 11 US federal holidays for a year, as {name, date: 'YYYY-MM-DD'}. */
-export function usFederalHolidays(
-  year: number,
-): { name: string; date: string }[] {
-  const ymd = (month0: number, day: number) =>
-    `${year}-${String(month0 + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-  const MON = 1;
-  const THU = 4;
-  return [
-    { name: "New Year's Day", date: ymd(0, 1) },
-    { name: 'Martin Luther King Jr. Day', date: ymd(0, nthWeekdayOfMonth(year, 0, MON, 3)) },
-    { name: "Presidents' Day", date: ymd(1, nthWeekdayOfMonth(year, 1, MON, 3)) },
-    { name: 'Memorial Day', date: ymd(4, nthWeekdayOfMonth(year, 4, MON, -1)) },
-    { name: 'Juneteenth', date: ymd(5, 19) },
-    { name: 'Independence Day', date: ymd(6, 4) },
-    { name: 'Labor Day', date: ymd(8, nthWeekdayOfMonth(year, 8, MON, 1)) },
-    { name: 'Columbus Day', date: ymd(9, nthWeekdayOfMonth(year, 9, MON, 2)) },
-    { name: 'Veterans Day', date: ymd(10, 11) },
-    { name: 'Thanksgiving', date: ymd(10, nthWeekdayOfMonth(year, 10, THU, 4)) },
-    { name: 'Christmas Day', date: ymd(11, 25) },
-  ];
-}
+const CURRENT_YEAR = new Date().getFullYear();
+const YEAR_OPTIONS = [
+  CURRENT_YEAR - 1,
+  CURRENT_YEAR,
+  CURRENT_YEAR + 1,
+  CURRENT_YEAR + 2,
+  CURRENT_YEAR + 3,
+];
 
 export function HolidaysHome() {
   const { user } = useAuth();
   const confirm = useConfirm();
   const canManage = user ? hasCapability(user.role, 'manage:scheduling') : false;
-  const [year, setYear] = useState(new Date().getFullYear());
+  const [year, setYear] = useState(CURRENT_YEAR);
+  const [typeFilter, setTypeFilter] = useState<HolidayType | 'ALL'>('ALL');
+  const [clientFilter, setClientFilter] = useState<string>('ALL');
   const [rows, setRows] = useState<HolidayRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [clients, setClients] = useState<ClientListItem[]>([]);
   const [showNew, setShowNew] = useState(false);
-  const [seeding, setSeeding] = useState(false);
+  const [editing, setEditing] = useState<HolidayRow | null>(null);
+  const [importing, setImporting] = useState(false);
 
-  const refresh = () => {
+  const refresh = useCallback(() => {
     setRows(null);
-    listHolidays({ year })
+    setError(null);
+    listHolidays({
+      year,
+      type: typeFilter === 'ALL' ? undefined : typeFilter,
+      clientId: clientFilter === 'ALL' ? undefined : clientFilter,
+    })
       .then((r) => setRows(r.holidays))
-      .catch(() => setRows([]));
-  };
+      .catch((err) =>
+        setError(
+          err instanceof ApiError ? err.message : 'Could not load holidays.',
+        ),
+      );
+  }, [year, typeFilter, clientFilter]);
+
   useEffect(() => {
     refresh();
-  }, [year]);
+  }, [refresh]);
 
-  // Bulk-create the standard US federal calendar for the selected year,
-  // skipping any already on the list by (date, name). Sequential creates —
-  // 11 small POSTs — with one summary toast at the end.
-  const seedFederal = async () => {
-    if (!rows || seeding) return;
-    setSeeding(true);
-    const key = (date: string, name: string) =>
-      `${date}|${name.trim().toLowerCase()}`;
-    const existing = new Set(rows.map((h) => key(h.date, h.name)));
-    let added = 0;
-    let skipped = 0;
+  // Best-effort client list for the filter chips — a failure (or a role
+  // without client access) just leaves the chips hidden.
+  useEffect(() => {
+    let cancelled = false;
+    listClients()
+      .then((r) => {
+        if (!cancelled) setClients(r.clients);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // One POST — the server computes floating holidays (MLK Day,
+  // Thanksgiving, …) and skips rows already present.
+  const importFederal = async () => {
+    if (importing) return;
+    setImporting(true);
     try {
-      for (const h of usFederalHolidays(year)) {
-        if (existing.has(key(h.date, h.name))) {
-          skipped += 1;
-          continue;
-        }
-        await createHoliday({
-          clientId: null,
-          name: h.name,
-          date: h.date,
-          type: 'FEDERAL',
-          state: null,
-          paid: true,
-          notes: null,
-        });
-        added += 1;
-      }
-      toast.success(`Added ${added}, skipped ${skipped} already present.`);
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
-    } finally {
-      setSeeding(false);
+      const res = await importUsFederal({ year });
+      toast.success(
+        `Imported ${res.inserted}, skipped ${res.skipped} already present.`,
+      );
       refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Import failed.');
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -167,6 +234,16 @@ export function HolidaysHome() {
     return byMonth;
   }, [rows]);
 
+  const stats = useMemo(() => {
+    if (!rows || rows.length === 0) return null;
+    const paid = rows.filter((h) => h.paid).length;
+    const weekend = rows.filter((h) => {
+      const d = parseYmd(h.date);
+      return d !== null && (d.getDay() === 0 || d.getDay() === 6);
+    }).length;
+    return { total: rows.length, paid, weekend };
+  }, [rows]);
+
   return (
     <div className="space-y-5">
       <PageHeader
@@ -175,26 +252,37 @@ export function HolidaysHome() {
         breadcrumbs={[{ label: 'Time & Pay' }, { label: 'Holidays' }]}
       />
 
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Button size="sm" variant="ghost" onClick={() => setYear((y) => y - 1)}>
-            ← {year - 1}
-          </Button>
-          <div className="text-lg font-semibold text-white px-2">{year}</div>
-          <Button size="sm" variant="ghost" onClick={() => setYear((y) => y + 1)}>
-            {year + 1} →
-          </Button>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <Select
+            value={String(year)}
+            onChange={(e) => setYear(Number(e.target.value))}
+            aria-label="Calendar year"
+            className="w-auto"
+          >
+            {YEAR_OPTIONS.map((y) => (
+              <option key={y} value={y}>
+                {y}
+              </option>
+            ))}
+          </Select>
+          {stats && (
+            <span className="text-xs text-silver tabular-nums">
+              {stats.total} holiday{stats.total === 1 ? '' : 's'} · {stats.paid}{' '}
+              paid · {stats.weekend} fall on a weekend
+            </span>
+          )}
         </div>
         {canManage && (
           <div className="flex gap-2">
             <Button
               size="sm"
               variant="ghost"
-              disabled={rows === null || seeding}
-              onClick={seedFederal}
+              disabled={importing}
+              onClick={importFederal}
             >
               <Download className="mr-1 h-3 w-3" />
-              {seeding ? 'Seeding…' : `Seed US federal holidays ${year}`}
+              {importing ? 'Importing…' : `Import US federal holidays ${year}`}
             </Button>
             <Button onClick={() => setShowNew(true)}>
               <Plus className="mr-2 h-4 w-4" /> New holiday
@@ -203,7 +291,54 @@ export function HolidaysHome() {
         )}
       </div>
 
-      {grouped === null ? (
+      <div className="space-y-1.5">
+        <div className="flex flex-wrap gap-1.5">
+          {TYPE_FILTERS.map((f) => (
+            <Button
+              key={f.key}
+              size="xs"
+              variant={typeFilter === f.key ? 'secondary' : 'ghost'}
+              onClick={() => setTypeFilter(f.key)}
+            >
+              {f.label}
+            </Button>
+          ))}
+        </div>
+        {clients.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            <Button
+              size="xs"
+              variant={clientFilter === 'ALL' ? 'secondary' : 'ghost'}
+              onClick={() => setClientFilter('ALL')}
+            >
+              All clients
+            </Button>
+            {clients.map((c) => (
+              <Button
+                key={c.id}
+                size="xs"
+                variant={clientFilter === c.id ? 'secondary' : 'ghost'}
+                onClick={() => setClientFilter(c.id)}
+              >
+                {c.name}
+              </Button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {error ? (
+        <Card>
+          <CardContent className="p-6 space-y-3">
+            <p role="alert" className="text-sm text-alert">
+              {error}
+            </p>
+            <Button size="sm" variant="secondary" onClick={refresh}>
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
+      ) : grouped === null ? (
         <Card>
           <CardContent className="p-6">
             <SkeletonRows count={4} />
@@ -216,9 +351,18 @@ export function HolidaysHome() {
               icon={CalendarDays}
               title={`No holidays for ${year}`}
               description={
-                canManage
-                  ? 'Add company holidays manually or import the US federal calendar.'
-                  : 'Ask HR to set up the calendar for this year.'
+                typeFilter !== 'ALL' || clientFilter !== 'ALL'
+                  ? 'Nothing matches the current filters.'
+                  : canManage
+                    ? 'Add company holidays manually or import the US federal calendar.'
+                    : 'Ask HR to set up the calendar for this year.'
+              }
+              action={
+                canManage && typeFilter === 'ALL' && clientFilter === 'ALL' ? (
+                  <Button onClick={() => setShowNew(true)}>
+                    <Plus className="mr-2 h-4 w-4" /> New holiday
+                  </Button>
+                ) : undefined
               }
             />
           </CardContent>
@@ -238,7 +382,12 @@ export function HolidaysHome() {
                     {items.map((h) => (
                       <div
                         key={h.id}
-                        className="px-4 py-3 flex items-center gap-3 group"
+                        className={`px-4 py-3 flex items-center gap-3 group ${
+                          canManage
+                            ? 'cursor-pointer hover:bg-navy-secondary/30 transition-colors'
+                            : ''
+                        }`}
+                        onClick={canManage ? () => setEditing(h) : undefined}
                       >
                         <div className="text-2xl font-bold text-white tabular-nums w-10 text-center">
                           {parseInt(h.date.slice(8, 10), 10)}
@@ -268,10 +417,13 @@ export function HolidaysHome() {
                         </div>
                         {canManage && (
                           <button
-                            onClick={async () => {
+                            aria-label={`Delete ${h.name}`}
+                            onClick={async (e) => {
+                              e.stopPropagation();
                               if (!(await confirm({ title: `Delete ${h.name}?`, destructive: true }))) return;
                               try {
                                 await deleteHoliday(h.id);
+                                toast.success(`Deleted ${h.name}.`);
                                 refresh();
                               } catch (err) {
                                 toast.error(
@@ -298,10 +450,22 @@ export function HolidaysHome() {
 
       {showNew && (
         <NewHolidayDrawer
-          defaultYear={year}
+          shownYear={year}
+          clients={clients}
           onClose={() => setShowNew(false)}
           onSaved={() => {
             setShowNew(false);
+            refresh();
+          }}
+        />
+      )}
+
+      {editing && (
+        <EditHolidayDrawer
+          holiday={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
             refresh();
           }}
         />
@@ -311,39 +475,39 @@ export function HolidaysHome() {
 }
 
 function NewHolidayDrawer({
-  defaultYear,
+  shownYear,
+  clients,
   onClose,
   onSaved,
 }: {
-  defaultYear: number;
+  shownYear: number;
+  clients: ClientListItem[];
   onClose: () => void;
   onSaved: () => void;
 }) {
   const [name, setName] = useState('');
-  const [date, setDate] = useState(`${defaultYear}-01-01`);
+  // Sensible default: today when the shown year is the current one,
+  // otherwise Jan 1 of the shown year.
+  const [date, setDate] = useState(() => {
+    const today = ymdLocal();
+    return today.slice(0, 4) === String(shownYear)
+      ? today
+      : `${shownYear}-01-01`;
+  });
   const [type, setType] = useState<HolidayType>('COMPANY');
   const [state, setState] = useState('');
   const [clientId, setClientId] = useState('');
-  const [clients, setClients] = useState<ClientListItem[]>([]);
   const [paid, setPaid] = useState(true);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    listClients()
-      .then((r) => {
-        if (!cancelled) setClients(r.clients);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   const submit = async () => {
     if (!name.trim()) {
       toast.error('Name required.');
+      return;
+    }
+    if (type === 'STATE' && !state) {
+      toast.error('Pick a state.');
       return;
     }
     setSaving(true);
@@ -354,7 +518,7 @@ function NewHolidayDrawer({
         name: name.trim(),
         date,
         type,
-        state: type === 'STATE' ? state.trim().toUpperCase() : null,
+        state: type === 'STATE' ? state : null,
         paid,
         notes: notes.trim() || null,
       });
@@ -409,14 +573,8 @@ function NewHolidayDrawer({
         </div>
         {type === 'STATE' && (
           <div>
-            <Label>State (2-letter)</Label>
-            <Input
-              className="mt-1 uppercase"
-              maxLength={2}
-              value={state}
-              onChange={(e) => setState(e.target.value)}
-              placeholder="CA"
-            />
+            <Label htmlFor="holiday-state">State</Label>
+            <StateSelect id="holiday-state" value={state} onChange={setState} />
           </div>
         )}
         {type === 'CLIENT_SPECIFIC' && (
@@ -460,8 +618,111 @@ function NewHolidayDrawer({
         <Button variant="ghost" onClick={onClose}>
           Cancel
         </Button>
-        <Button onClick={submit} disabled={saving}>
-          {saving ? 'Saving…' : 'Save'}
+        <Button onClick={submit} loading={saving}>
+          Save
+        </Button>
+      </DrawerFooter>
+    </Drawer>
+  );
+}
+
+function EditHolidayDrawer({
+  holiday,
+  onClose,
+  onSaved,
+}: {
+  holiday: HolidayRow;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(holiday.name);
+  const [state, setState] = useState(holiday.state ?? '');
+  const [paid, setPaid] = useState(holiday.paid);
+  const [notes, setNotes] = useState(holiday.notes ?? '');
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    if (!name.trim()) {
+      toast.error('Name required.');
+      return;
+    }
+    if (holiday.type === 'STATE' && !state) {
+      toast.error('Pick a state.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateHoliday(holiday.id, {
+        name: name.trim(),
+        paid,
+        notes: notes.trim() || null,
+        ...(holiday.type === 'STATE' ? { state } : {}),
+      });
+      toast.success('Holiday updated.');
+      onSaved();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+      <DrawerHeader>
+        <DrawerTitle>Edit holiday</DrawerTitle>
+      </DrawerHeader>
+      <DrawerBody className="space-y-4">
+        <div>
+          <Label>Name</Label>
+          <Input
+            className="mt-1"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </div>
+        {/* Date and type are immutable — delete and recreate to change them. */}
+        <div className="text-xs text-silver">
+          {holiday.date.slice(0, 10)} ·{' '}
+          <Badge variant={TYPE_VARIANT[holiday.type]}>{holiday.type}</Badge>
+          {holiday.scope === 'client' && holiday.clientName && (
+            <span> · {holiday.clientName}</span>
+          )}
+        </div>
+        {holiday.type === 'STATE' && (
+          <div>
+            <Label htmlFor="edit-holiday-state">State</Label>
+            <StateSelect
+              id="edit-holiday-state"
+              value={state}
+              onChange={setState}
+            />
+          </div>
+        )}
+        <div className="flex items-center gap-2">
+          <input
+            id="edit-holiday-paid"
+            type="checkbox"
+            checked={paid}
+            onChange={(e) => setPaid(e.target.checked)}
+          />
+          <Label htmlFor="edit-holiday-paid">Paid holiday</Label>
+        </div>
+        <div>
+          <Label>Notes</Label>
+          <Textarea
+            className="mt-1 h-20"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+          />
+        </div>
+      </DrawerBody>
+      <DrawerFooter>
+        <Button variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button onClick={submit} loading={saving}>
+          Save
         </Button>
       </DrawerFooter>
     </Drawer>

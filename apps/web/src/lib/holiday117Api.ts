@@ -74,3 +74,12 @@ export const importUsFederalHolidays2026 = () =>
     '/holidays/import-us-federal-2026',
     { method: 'POST', body: {} },
   );
+
+/** Server-side import of the 11 US federal holidays for any year.
+ *  Floating holidays (MLK Day, Thanksgiving, …) are computed server-side;
+ *  idempotent — already-present rows are skipped. */
+export const importUsFederal = (input: { year: number }) =>
+  apiFetch<{ inserted: number; skipped: number }>(
+    '/holidays/import-us-federal',
+    { method: 'POST', body: input },
+  );

@@ -31,7 +31,7 @@ import { getDashboardKPIs } from '@/lib/analyticsApi';
 import { getW4RecollectionSummary } from '@/lib/w4RecollectionApi';
 import { searchAuditLogs } from '@/lib/auditApi';
 import { ApiError } from '@/lib/api';
-import { fmtDateTz } from '@/lib/format';
+import { fmtDate, fmtMoney, fmtRelativeDate } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -66,26 +66,10 @@ const SUBTITLE_BY_ROLE: Partial<Record<Role, string>> = {
   MANAGER: 'Your team — pending approvals and time-off requests.',
 };
 
-const fmtMoney = (n: number) =>
-  n.toLocaleString('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: 0,
-  });
-
-const fmtRelative = (iso: string): string => {
-  const ms = Date.now() - new Date(iso).getTime();
-  const min = Math.floor(ms / 60_000);
-  if (min < 1) return 'just now';
-  if (min < 60) return `${min}m ago`;
-  const hrs = Math.floor(min / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  if (days < 7) return `${days}d ago`;
-  // fmtDateTz without a zone renders "May 13" in the browser zone —
-  // byte-for-byte the previous inline toLocaleDateString options.
-  return fmtDateTz(iso);
-};
+// Thousands-separated integer ("1,234"). Kept local because @/lib/format
+// has no integer formatter; Intl directly, since toLocale* is lint-banned.
+const INT_FMT = new Intl.NumberFormat('en-US');
+const fmtInt = (n: number): string => INT_FMT.format(n);
 
 const greetingFor = (hour: number): string => {
   if (hour < 5) return 'Up late';
@@ -175,22 +159,19 @@ export function AdminDashboard() {
   const activity: AuditSearchEntry[] | null = canSeeAudit
     ? (activityQuery.data?.entries ?? null)
     : [];
-  // KPIs are required; audit failure is silent (the section just shows empty).
+  // KPIs are required; the activity feed surfaces its own inline error +
+  // retry (see ActivityFeed) instead of masquerading as "no activity".
   const error = kpisQuery.error
     ? kpisQuery.error instanceof ApiError
       ? kpisQuery.error.message
       : 'Failed to load dashboard data.'
     : null;
 
-  const greetingName = user?.email
-    ? firstNameFromEmail(user.email)
-    : 'there';
+  const greetingName =
+    user?.firstName?.trim() ||
+    (user?.email ? firstNameFromEmail(user.email) : 'there');
   const greeting = greetingFor(now.getHours());
-  const dateLabel = now.toLocaleDateString('en-US', {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-  });
+  const dateLabel = fmtDate(now);
 
   return (
     <div className="mx-auto space-y-8">
@@ -233,7 +214,13 @@ export function AdminDashboard() {
 
       {canSeeOnboarding && <OnboardingFunnel kpis={kpis} />}
 
-      {canSeeAudit && <ActivityFeed entries={activity} />}
+      {canSeeAudit && (
+        <ActivityFeed
+          entries={activity}
+          error={Boolean(activityQuery.error)}
+          onRetry={() => void activityQuery.refetch()}
+        />
+      )}
     </div>
   );
 }
@@ -588,10 +575,10 @@ function buildKpis(k: DashboardKPIs): Kpi[] {
   return [
     {
       label: 'Active associates',
-      value: k.activeAssociates.toLocaleString(),
+      value: fmtInt(k.activeAssociates),
       hint:
         k.associatesClockedIn > 0
-          ? `${k.associatesClockedIn.toLocaleString()} clocked in now`
+          ? `${fmtInt(k.associatesClockedIn)} clocked in now`
           : 'No one on the clock',
       icon: Users,
       to: '/people?status=ACTIVE',
@@ -600,7 +587,7 @@ function buildKpis(k: DashboardKPIs): Kpi[] {
     },
     {
       label: `Open shifts · next ${k.windowDays}d`,
-      value: k.openShiftsNext30d.toLocaleString(),
+      value: fmtInt(k.openShiftsNext30d),
       hint: k.openShiftsNext30d === 0 ? 'Schedule fully covered' : undefined,
       icon: Clock,
       to: '/scheduling',
@@ -609,7 +596,7 @@ function buildKpis(k: DashboardKPIs): Kpi[] {
     },
     {
       label: 'Onboarding in flight',
-      value: k.pendingOnboardingApplications.toLocaleString(),
+      value: fmtInt(k.pendingOnboardingApplications),
       hint:
         k.pendingI9Section2 > 0
           ? `${k.pendingI9Section2} I-9 Section 2 pending`
@@ -833,7 +820,15 @@ function entityHref(entityType: string, entityId: string): string | null {
   }
 }
 
-function ActivityFeed({ entries }: { entries: AuditSearchEntry[] | null }) {
+function ActivityFeed({
+  entries,
+  error,
+  onRetry,
+}: {
+  entries: AuditSearchEntry[] | null;
+  error: boolean;
+  onRetry: () => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   const collapsible =
     entries !== null && entries.length > ACTIVITY_FEED_PREVIEW;
@@ -858,7 +853,21 @@ function ActivityFeed({ entries }: { entries: AuditSearchEntry[] | null }) {
       </div>
       <Card>
         <CardContent className="p-0">
-          {entries === null ? (
+          {error ? (
+            <div className="p-6 text-center">
+              <div role="alert" className="text-sm text-alert">
+                Couldn't load recent activity.
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="mt-3"
+                onClick={onRetry}
+              >
+                Retry
+              </Button>
+            </div>
+          ) : entries === null ? (
             <div className="p-5 space-y-3">
               {Array.from({ length: 4 }).map((_, i) => (
                 <div key={i} className="flex items-center gap-3">
@@ -913,7 +922,7 @@ function ActivityFeed({ entries }: { entries: AuditSearchEntry[] | null }) {
                           )}{' '}
                           ·{' '}
                           <span className="tabular-nums">
-                            {fmtRelative(e.createdAt)}
+                            {fmtRelativeDate(e.createdAt)}
                           </span>
                         </div>
                       </div>
@@ -940,7 +949,7 @@ function ActivityFeed({ entries }: { entries: AuditSearchEntry[] | null }) {
                           className="h-3.5 w-3.5"
                           aria-hidden="true"
                         />
-                        Show all {entries.length}
+                        Show {entries.length} most recent
                       </>
                     )}
                   </button>

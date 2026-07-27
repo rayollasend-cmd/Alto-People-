@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react';
 import { GraduationCap, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
+import { downloadCsv } from '@/lib/csv';
+import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
+import { useConfirm } from '@/lib/confirm';
 import {
   decideTuition,
   getTuitionSummary,
@@ -52,18 +55,55 @@ const STATUS_VARIANT: Record<
   PAID: 'success',
 };
 
+const GRADE_OPTIONS = [
+  'A',
+  'A-',
+  'B+',
+  'B',
+  'B-',
+  'C+',
+  'C',
+  'C-',
+  'D',
+  'F',
+  'P',
+  'NP',
+  'Incomplete',
+] as const;
+
+/** Shared load-failure block: message + Retry. Never fake an empty state. */
+function LoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="p-6 space-y-3">
+      <p role="alert" className="text-sm text-alert">
+        {message}
+      </p>
+      <Button size="sm" variant="secondary" onClick={onRetry}>
+        Retry
+      </Button>
+    </div>
+  );
+}
+
 export function TuitionHome() {
   const { user } = useAuth();
   const canProcessPayroll = user
     ? hasCapability(user.role, 'process:payroll')
     : false;
+  const confirm = useConfirm();
   const [tab, setTab] = useState<'mine' | 'queue'>('mine');
   const [mine, setMine] = useState<MyTuitionRequest[] | null>(null);
+  const [mineError, setMineError] = useState<string | null>(null);
   const [queue, setQueue] = useState<QueueTuitionRequest[] | null>(null);
+  const [queueError, setQueueError] = useState<string | null>(null);
   const [summary, setSummary] = useState<TuitionSummary | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<TuitionStatus | 'ALL'>(
     'SUBMITTED',
   );
+  const [queueSearch, setQueueSearch] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [openMine, setOpenMine] = useState<MyTuitionRequest | null>(null);
@@ -71,22 +111,138 @@ export function TuitionHome() {
   const refresh = () => {
     if (tab === 'mine') {
       setMine(null);
+      setMineError(null);
       listMyTuition()
         .then((r) => setMine(r.requests))
-        .catch(() => setMine([]));
+        .catch((err) =>
+          setMineError(
+            err instanceof ApiError ? err.message : 'Failed to load your requests.',
+          ),
+        );
     } else {
       setQueue(null);
+      setQueueError(null);
+      setSelected(new Set());
       listTuitionQueue(statusFilter === 'ALL' ? undefined : statusFilter)
         .then((r) => setQueue(r.requests))
-        .catch(() => setQueue([]));
+        .catch((err) =>
+          setQueueError(
+            err instanceof ApiError ? err.message : 'Failed to load the queue.',
+          ),
+        );
+      setSummaryError(null);
       getTuitionSummary()
         .then(setSummary)
-        .catch(() => setSummary(null));
+        .catch((err) => {
+          setSummary(null);
+          setSummaryError(
+            err instanceof ApiError ? err.message : 'Failed to load the summary.',
+          );
+        });
     }
   };
   useEffect(() => {
     refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, statusFilter]);
+
+  // If the open queue row vanished after a refetch (decided elsewhere,
+  // filter changed), close the drawer instead of crashing on a missing row.
+  useEffect(() => {
+    if (openId && queue && !queue.some((q) => q.id === openId)) {
+      setOpenId(null);
+    }
+  }, [openId, queue]);
+
+  const qSearch = queueSearch.trim().toLowerCase();
+  const filteredQueue = (queue ?? []).filter(
+    (r) =>
+      !qSearch ||
+      r.associateName.toLowerCase().includes(qSearch) ||
+      r.schoolName.toLowerCase().includes(qSearch),
+  );
+  const openRow = openId ? (queue?.find((q) => q.id === openId) ?? null) : null;
+
+  // Bulk approve targets only SUBMITTED rows — the only decidable state.
+  const selectableIds = filteredQueue
+    .filter((r) => r.status === 'SUBMITTED')
+    .map((r) => r.id);
+  const allSelected =
+    selectableIds.length > 0 && selectableIds.every((id) => selected.has(id));
+
+  const toggleSelected = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const exportQueueCsv = () => {
+    downloadCsv(`tuition-queue-${ymdLocal()}.csv`, [
+      [
+        'Associate',
+        'Email',
+        'School',
+        'Program',
+        'Course',
+        'Term start',
+        'Term end',
+        'Amount',
+        'Currency',
+        'Status',
+        'Grade',
+        'Reviewer notes',
+      ],
+      ...filteredQueue.map((r) => [
+        r.associateName,
+        r.associateEmail,
+        r.schoolName,
+        r.programName ?? '',
+        r.courseName,
+        r.termStartDate,
+        r.termEndDate,
+        r.amount,
+        r.currency,
+        r.status,
+        r.gradeReceived ?? '',
+        r.reviewerNotes ?? '',
+      ]),
+    ]);
+  };
+
+  const bulkApprove = async () => {
+    const ids = selectableIds.filter((id) => selected.has(id));
+    if (ids.length === 0) return;
+    if (
+      !(await confirm({
+        title: `Approve ${ids.length} request${ids.length === 1 ? '' : 's'}?`,
+        description:
+          'Each selected request will be approved and the associate notified.',
+        confirmLabel: 'Approve all',
+      }))
+    )
+      return;
+    setBulkBusy(true);
+    try {
+      const results = await Promise.allSettled(
+        ids.map((id) => decideTuition(id, 'APPROVED')),
+      );
+      const failed = results.filter((r) => r.status === 'rejected').length;
+      const ok = results.length - failed;
+      if (failed === 0) {
+        toast.success(`Approved ${ok} request${ok === 1 ? '' : 's'}.`);
+      } else if (ok === 0) {
+        toast.error(`Failed to approve ${failed} request${failed === 1 ? '' : 's'}.`);
+      } else {
+        toast.error(`Approved ${ok}; ${failed} failed.`);
+      }
+      refresh();
+    } finally {
+      setBulkBusy(false);
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -144,6 +300,18 @@ export function TuitionHome() {
         </div>
       </div>
 
+      {tab === 'queue' && summaryError && (
+        <Card>
+          <CardContent className="p-4 flex flex-wrap items-center gap-3">
+            <p role="alert" className="text-sm text-alert">
+              {summaryError}
+            </p>
+            <Button size="sm" variant="secondary" onClick={refresh}>
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
+      )}
       {tab === 'queue' && summary && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <Card>
@@ -172,7 +340,7 @@ export function TuitionHome() {
                 Paid YTD
               </div>
               <div className="text-xl font-semibold text-white mt-1">
-                ${summary.paidYtdAmount}
+                {fmtMoney(summary.paidYtdAmount)}
               </div>
             </CardContent>
           </Card>
@@ -182,7 +350,9 @@ export function TuitionHome() {
       {tab === 'mine' ? (
         <Card>
           <CardContent className="p-0">
-            {mine === null ? (
+            {mineError ? (
+              <LoadError message={mineError} onRetry={refresh} />
+            ) : mine === null ? (
               <div className="p-6">
                 <SkeletonRows count={3} />
               </div>
@@ -226,10 +396,10 @@ export function TuitionHome() {
                         )}
                       </TableCell>
                       <TableCell className="text-xs text-silver hidden lg:table-cell">
-                        {r.termStartDate} → {r.termEndDate}
+                        {fmtDate(parseYmd(r.termStartDate))} → {fmtDate(parseYmd(r.termEndDate))}
                       </TableCell>
                       <TableCell className="text-sm">
-                        {r.currency} {r.amount}
+                        {fmtMoney(r.amount, { currency: r.currency })}
                       </TableCell>
                       <TableCell>
                         <Badge variant={STATUS_VARIANT[r.status]}>
@@ -249,70 +419,129 @@ export function TuitionHome() {
           </CardContent>
         </Card>
       ) : (
-        <Card>
-          <CardContent className="p-0">
-            {queue === null ? (
-              <div className="p-6">
-                <SkeletonRows count={4} />
-              </div>
-            ) : queue.length === 0 ? (
-              <EmptyState
-                icon={GraduationCap}
-                title="Queue is empty"
-                description="Nothing pending."
-              />
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Associate</TableHead>
-                    <TableHead className="hidden md:table-cell">Course</TableHead>
-                    <TableHead className="hidden lg:table-cell">School</TableHead>
-                    <TableHead>Amount</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="hidden lg:table-cell">Grade</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {queue.map((r) => (
-                    <TableRow
-                      key={r.id}
-                      className="cursor-pointer"
-                      onClick={() => setOpenId(r.id)}
-                    >
-                      <TableCell>
-                        <div className="font-medium text-white">
-                          {r.associateName}
-                        </div>
-                        <div className="text-xs text-silver">
-                          {r.associateEmail}
-                        </div>
-                        <div className="md:hidden text-[11px] text-silver/70 truncate">
-                          {r.courseName} · {r.schoolName}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm hidden md:table-cell">{r.courseName}</TableCell>
-                      <TableCell className="text-sm hidden lg:table-cell">{r.schoolName}</TableCell>
-                      <TableCell className="text-sm">
-                        {r.currency} {r.amount}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={STATUS_VARIANT[r.status]}>
-                          {r.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-sm hidden lg:table-cell">
-                        {r.gradeReceived ?? (
-                          <span className="text-silver">—</span>
-                        )}
-                      </TableCell>
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              className="h-8 w-56"
+              placeholder="Search associate or school…"
+              value={queueSearch}
+              onChange={(e) => setQueueSearch(e.target.value)}
+              aria-label="Search queue by associate or school"
+            />
+            <Button
+              size="sm"
+              variant="secondary"
+              className="ml-auto"
+              onClick={exportQueueCsv}
+              disabled={filteredQueue.length === 0}
+            >
+              Export CSV
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => void bulkApprove()}
+              disabled={bulkBusy || selected.size === 0}
+              loading={bulkBusy}
+            >
+              Approve selected ({selected.size})
+            </Button>
+          </div>
+          <Card>
+            <CardContent className="p-0">
+              {queueError ? (
+                <LoadError message={queueError} onRetry={refresh} />
+              ) : queue === null ? (
+                <div className="p-6">
+                  <SkeletonRows count={4} />
+                </div>
+              ) : queue.length === 0 ? (
+                <EmptyState
+                  icon={GraduationCap}
+                  title="Queue is empty"
+                  description="Nothing pending."
+                />
+              ) : filteredQueue.length === 0 ? (
+                <EmptyState
+                  icon={GraduationCap}
+                  title="No matching requests"
+                  description="Adjust the search or status filter."
+                />
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-8">
+                        <input
+                          type="checkbox"
+                          aria-label="Select all pending requests"
+                          checked={allSelected}
+                          disabled={selectableIds.length === 0}
+                          onChange={() =>
+                            setSelected(
+                              allSelected ? new Set() : new Set(selectableIds),
+                            )
+                          }
+                        />
+                      </TableHead>
+                      <TableHead>Associate</TableHead>
+                      <TableHead className="hidden md:table-cell">Course</TableHead>
+                      <TableHead className="hidden lg:table-cell">School</TableHead>
+                      <TableHead>Amount</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="hidden lg:table-cell">Grade</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredQueue.map((r) => (
+                      <TableRow
+                        key={r.id}
+                        className="cursor-pointer"
+                        onClick={() => setOpenId(r.id)}
+                      >
+                        <TableCell onClick={(e) => e.stopPropagation()}>
+                          {r.status === 'SUBMITTED' && (
+                            <input
+                              type="checkbox"
+                              aria-label={`Select request from ${r.associateName}`}
+                              checked={selected.has(r.id)}
+                              onChange={() => toggleSelected(r.id)}
+                            />
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <div className="font-medium text-white">
+                            {r.associateName}
+                          </div>
+                          <div className="text-xs text-silver">
+                            {r.associateEmail}
+                          </div>
+                          <div className="md:hidden text-[11px] text-silver/70 truncate">
+                            {r.courseName} · {r.schoolName}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-sm hidden md:table-cell">{r.courseName}</TableCell>
+                        <TableCell className="text-sm hidden lg:table-cell">{r.schoolName}</TableCell>
+                        <TableCell className="text-sm">
+                          {fmtMoney(r.amount, { currency: r.currency })}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={STATUS_VARIANT[r.status]}>
+                            {r.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-sm hidden lg:table-cell">
+                          {r.gradeReceived ?? (
+                            <span className="text-silver">—</span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       )}
 
       {showNew && (
@@ -334,9 +563,9 @@ export function TuitionHome() {
           }}
         />
       )}
-      {openId && queue && (
+      {openRow && (
         <QueueDetailDrawer
-          row={queue.find((q) => q.id === openId)!}
+          row={openRow}
           onClose={() => setOpenId(null)}
           onSaved={() => {
             setOpenId(null);
@@ -516,7 +745,7 @@ function MyDetailDrawer({
         <div className="flex items-center gap-2">
           <Badge variant={STATUS_VARIANT[row.status]}>{row.status}</Badge>
           <span className="text-sm text-silver">
-            {row.currency} {row.amount}
+            {fmtMoney(row.amount, { currency: row.currency })}
           </span>
         </div>
         <div className="text-sm text-white">
@@ -524,7 +753,7 @@ function MyDetailDrawer({
           {row.programName && ` · ${row.programName}`}
         </div>
         <div className="text-xs text-silver">
-          Term {row.termStartDate} → {row.termEndDate}
+          Term {fmtDate(parseYmd(row.termStartDate))} → {fmtDate(parseYmd(row.termEndDate))}
         </div>
         {row.receiptUrl && (
           <a
@@ -543,20 +772,34 @@ function MyDetailDrawer({
         )}
         {row.status !== 'REJECTED' && (
           <div className="space-y-2 pt-2 border-t border-navy-secondary">
-            <Label>Grade received</Label>
-            <Input
-              className="max-w-[120px]"
+            <Label htmlFor="tuition-grade">Grade received</Label>
+            <Select
+              id="tuition-grade"
+              size="sm"
+              className="max-w-[160px]"
               value={grade}
               onChange={(e) => setGrade(e.target.value)}
-              placeholder="A, B+, P/F…"
-            />
+            >
+              <option value="">Select grade…</option>
+              {/* Keep a legacy free-text value selectable so an existing
+                  grade doesn't silently disappear from the picker. */}
+              {row.gradeReceived &&
+                !(GRADE_OPTIONS as readonly string[]).includes(row.gradeReceived) && (
+                  <option value={row.gradeReceived}>{row.gradeReceived}</option>
+                )}
+              {GRADE_OPTIONS.map((g) => (
+                <option key={g} value={g}>
+                  {g}
+                </option>
+              ))}
+            </Select>
             <Button
               size="sm"
               onClick={async () => {
-                if (!grade.trim()) return;
+                if (!grade) return;
                 setBusy(true);
                 try {
-                  await setTuitionGrade(row.id, grade.trim());
+                  await setTuitionGrade(row.id, grade);
                   toast.success('Grade saved.');
                   onSaved();
                 } catch (err) {
@@ -567,7 +810,7 @@ function MyDetailDrawer({
                   setBusy(false);
                 }
               }}
-              disabled={busy || !grade.trim()}
+              disabled={busy || !grade}
             >
               Save grade
             </Button>
@@ -604,7 +847,7 @@ function QueueDetailDrawer({
         <div className="flex items-center gap-2">
           <Badge variant={STATUS_VARIANT[row.status]}>{row.status}</Badge>
           <span className="text-sm text-silver">
-            {row.currency} {row.amount}
+            {fmtMoney(row.amount, { currency: row.currency })}
           </span>
         </div>
         <div className="text-sm text-white">
@@ -612,7 +855,7 @@ function QueueDetailDrawer({
           {row.programName && ` · ${row.programName}`}
         </div>
         <div className="text-xs text-silver">
-          Term {row.termStartDate} → {row.termEndDate}
+          Term {fmtDate(parseYmd(row.termStartDate))} → {fmtDate(parseYmd(row.termEndDate))}
         </div>
         {row.receiptUrl && (
           <a

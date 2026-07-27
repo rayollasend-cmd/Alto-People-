@@ -364,8 +364,11 @@ projectsAndPayRouter.post(
     if (pool.status !== 'OPEN') {
       throw new HttpError(400, 'pool_locked', 'Pool is no longer open.');
     }
+    // No take cap — a capped read here once split tips across an arbitrary
+    // 100-entry subset of the crew on busy days. A single client-day window
+    // is bounded in practice; 10k is a runaway backstop, not a page size.
     const entries = await prisma.timeEntry.findMany({
-      take: 100,
+      take: 10_000,
       where: {
         clientId: pool.clientId,
         clockInAt: { gte: new Date(input.from), lt: new Date(input.to) },

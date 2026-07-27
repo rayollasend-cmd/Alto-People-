@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { GraduationCap, Plus, Sparkles } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Download, GraduationCap, Plus, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {
@@ -9,6 +9,7 @@ import {
   transitionMentorship,
   type Mentorship,
   type MentorshipCandidate,
+  type MentorshipStatus,
 } from '@/lib/mentorship112Api';
 import { listSkills, type SkillCatalogEntry } from '@/lib/skills111Api';
 import { useAuth } from '@/lib/auth';
@@ -25,6 +26,7 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  Input,
   PageHeader,
   Select,
   SkeletonRows,
@@ -38,26 +40,78 @@ import {
 } from '@/components/ui';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Label } from '@/components/ui/Label';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, ymdLocal } from '@/lib/format';
+import { downloadCsv } from '@/lib/csv';
+
+const STATUSES: MentorshipStatus[] = [
+  'PROPOSED',
+  'ACTIVE',
+  'COMPLETED',
+  'DECLINED',
+  'CANCELLED',
+];
+
+interface PairingPrefill {
+  mentor: PickedAssociate;
+  mentee: PickedAssociate;
+  skillId: string;
+}
 
 export function MentorshipHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:org') : false;
   const [rows, setRows] = useState<Mentorship[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [showSuggest, setShowSuggest] = useState(false);
+  const [prefill, setPrefill] = useState<PairingPrefill | null>(null);
   const [completeTarget, setCompleteTarget] = useState<Mentorship | null>(null);
   const [completing, setCompleting] = useState(false);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<MentorshipStatus | ''>('');
 
   const refresh = () => {
     setRows(null);
+    setLoadError(null);
     listMentorships()
       .then((r) => setRows(r.mentorships))
-      .catch(() => setRows([]));
+      .catch((err) =>
+        setLoadError(
+          err instanceof ApiError ? err.message : 'Failed to load mentorships.',
+        ),
+      );
   };
   useEffect(() => {
     refresh();
   }, []);
+
+  const filtered = useMemo(() => {
+    if (!rows) return null;
+    const q = search.trim().toLowerCase();
+    return rows.filter(
+      (m) =>
+        (!q ||
+          m.mentorName.toLowerCase().includes(q) ||
+          m.menteeName.toLowerCase().includes(q)) &&
+        (!statusFilter || m.status === statusFilter),
+    );
+  }, [rows, search, statusFilter]);
+
+  const onExportCsv = () => {
+    if (!filtered) return;
+    downloadCsv(`mentorships-${ymdLocal()}.csv`, [
+      ['Mentor', 'Mentee', 'Focus skill', 'Status', 'Started', 'Ended', 'Created'],
+      ...filtered.map((m) => [
+        m.mentorName,
+        m.menteeName,
+        m.focusSkillName ?? '',
+        m.status,
+        m.startedAt ? fmtDate(m.startedAt) : '',
+        m.endedAt ? fmtDate(m.endedAt) : '',
+        fmtDate(m.createdAt),
+      ]),
+    ]);
+  };
 
   return (
     <div className="space-y-5">
@@ -76,15 +130,53 @@ export function MentorshipHome() {
           </Button>
         </div>
       )}
+      <div className="flex flex-wrap items-center gap-2 justify-end">
+        <Input
+          placeholder="Search mentor or mentee…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="max-w-xs"
+          aria-label="Search mentor or mentee"
+        />
+        <Select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as MentorshipStatus | '')}
+          aria-label="Filter by status"
+          className="w-auto"
+        >
+          <option value="">All statuses</option>
+          {STATUSES.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </Select>
+        <Button
+          variant="ghost"
+          onClick={onExportCsv}
+          disabled={!filtered || filtered.length === 0}
+        >
+          <Download className="mr-2 h-4 w-4" /> Export CSV
+        </Button>
+      </div>
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {loadError ? (
+            <div className="p-6 space-y-3">
+              <p role="alert" className="text-sm text-alert">{loadError}</p>
+              <Button size="sm" variant="secondary" onClick={refresh}>
+                Retry
+              </Button>
+            </div>
+          ) : filtered === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
-          ) : rows.length === 0 ? (
+          ) : filtered.length === 0 ? (
             <EmptyState
               icon={GraduationCap}
-              title="No mentorships yet"
-              description="Pair an experienced associate with a junior to start one."
+              title={rows && rows.length > 0 ? 'No matches' : 'No mentorships yet'}
+              description={
+                rows && rows.length > 0
+                  ? 'No pairing matches the current search or status filter.'
+                  : 'Pair an experienced associate with a junior to start one.'
+              }
             />
           ) : (
             <Table>
@@ -99,7 +191,7 @@ export function MentorshipHome() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((m) => (
+                {filtered.map((m) => (
                   <TableRow key={m.id} className="group">
                     <TableCell className="font-medium text-white">
                       <div className="truncate">{m.mentorName}</div>
@@ -136,6 +228,7 @@ export function MentorshipHome() {
                             onClick={async () => {
                               try {
                                 await transitionMentorship(m.id, { status: 'ACTIVE' });
+                                toast.success('Pairing activated.');
                                 refresh();
                               } catch (err) {
                                 toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -150,6 +243,7 @@ export function MentorshipHome() {
                             onClick={async () => {
                               try {
                                 await transitionMentorship(m.id, { status: 'DECLINED' });
+                                toast.success('Pairing declined.');
                                 refresh();
                               } catch (err) {
                                 toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -177,17 +271,30 @@ export function MentorshipHome() {
           )}
         </CardContent>
       </Card>
-      {showNew && (
+      {(showNew || prefill !== null) && (
         <NewPairingDrawer
-          onClose={() => setShowNew(false)}
+          initialMentor={prefill?.mentor ?? null}
+          initialMentee={prefill?.mentee ?? null}
+          initialSkillId={prefill?.skillId ?? ''}
+          onClose={() => {
+            setShowNew(false);
+            setPrefill(null);
+          }}
           onSaved={() => {
             setShowNew(false);
+            setPrefill(null);
             refresh();
           }}
         />
       )}
       {showSuggest && (
-        <SuggestDrawer onClose={() => setShowSuggest(false)} />
+        <SuggestDrawer
+          onClose={() => setShowSuggest(false)}
+          onPropose={(p) => {
+            setShowSuggest(false);
+            setPrefill(p);
+          }}
+        />
       )}
       <ConfirmDialog
         open={completeTarget !== null}
@@ -222,23 +329,34 @@ export function MentorshipHome() {
 }
 
 function NewPairingDrawer({
+  initialMentor = null,
+  initialMentee = null,
+  initialSkillId = '',
   onClose,
   onSaved,
 }: {
+  initialMentor?: PickedAssociate | null;
+  initialMentee?: PickedAssociate | null;
+  initialSkillId?: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [mentor, setMentor] = useState<PickedAssociate | null>(null);
-  const [mentee, setMentee] = useState<PickedAssociate | null>(null);
-  const [skillId, setSkillId] = useState('');
+  const [mentor, setMentor] = useState<PickedAssociate | null>(initialMentor);
+  const [mentee, setMentee] = useState<PickedAssociate | null>(initialMentee);
+  const [skillId, setSkillId] = useState(initialSkillId);
   const [skills, setSkills] = useState<SkillCatalogEntry[]>([]);
+  const [skillsError, setSkillsError] = useState<string | null>(null);
   const [goals, setGoals] = useState('');
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
+  const loadSkills = () => {
+    setSkillsError(null);
     listSkills()
       .then((r) => setSkills(r.skills))
-      .catch(() => setSkills([]));
+      .catch(() => setSkillsError('Failed to load the skill catalog.'));
+  };
+  useEffect(() => {
+    loadSkills();
   }, []);
 
   const submit = async () => {
@@ -283,12 +401,21 @@ function NewPairingDrawer({
         </div>
         <div>
           <Label>Focus skill (optional)</Label>
-          <Select className="mt-1" value={skillId} onChange={(e) => setSkillId(e.target.value)}>
-            <option value="">None</option>
-            {skills.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </Select>
+          {skillsError ? (
+            <div className="mt-1 space-y-2">
+              <p role="alert" className="text-sm text-alert">{skillsError}</p>
+              <Button size="sm" variant="secondary" onClick={loadSkills}>
+                Retry
+              </Button>
+            </div>
+          ) : (
+            <Select className="mt-1" value={skillId} onChange={(e) => setSkillId(e.target.value)}>
+              <option value="">None</option>
+              {skills.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </Select>
+          )}
         </div>
         <div>
           <Label>Goals (optional)</Label>
@@ -309,17 +436,28 @@ function NewPairingDrawer({
   );
 }
 
-function SuggestDrawer({ onClose }: { onClose: () => void }) {
+function SuggestDrawer({
+  onClose,
+  onPropose,
+}: {
+  onClose: () => void;
+  onPropose: (prefill: PairingPrefill) => void;
+}) {
   const [mentee, setMentee] = useState<PickedAssociate | null>(null);
   const [skillId, setSkillId] = useState('');
   const [skills, setSkills] = useState<SkillCatalogEntry[]>([]);
+  const [skillsError, setSkillsError] = useState<string | null>(null);
   const [results, setResults] = useState<MentorshipCandidate[] | null>(null);
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
+  const loadSkills = () => {
+    setSkillsError(null);
     listSkills()
       .then((r) => setSkills(r.skills))
-      .catch(() => setSkills([]));
+      .catch(() => setSkillsError('Failed to load the skill catalog.'));
+  };
+  useEffect(() => {
+    loadSkills();
   }, []);
 
   const submit = async () => {
@@ -359,12 +497,21 @@ function SuggestDrawer({ onClose }: { onClose: () => void }) {
         </div>
         <div>
           <Label>Skill</Label>
-          <Select className="mt-1" value={skillId} onChange={(e) => setSkillId(e.target.value)}>
-            <option value="">Select a skill…</option>
-            {skills.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </Select>
+          {skillsError ? (
+            <div className="mt-1 space-y-2">
+              <p role="alert" className="text-sm text-alert">{skillsError}</p>
+              <Button size="sm" variant="secondary" onClick={loadSkills}>
+                Retry
+              </Button>
+            </div>
+          ) : (
+            <Select className="mt-1" value={skillId} onChange={(e) => setSkillId(e.target.value)}>
+              <option value="">Select a skill…</option>
+              {skills.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </Select>
+          )}
         </div>
         <Button onClick={submit} disabled={loading}>
           {loading ? 'Searching…' : 'Find candidates'}
@@ -379,17 +526,32 @@ function SuggestDrawer({ onClose }: { onClose: () => void }) {
               results.map((c) => (
                 <div
                   key={c.associateId}
-                  className="flex items-center justify-between p-2 rounded border border-navy-secondary"
+                  className="flex items-center justify-between gap-2 p-2 rounded border border-navy-secondary"
                 >
-                  <div>
-                    <div className="text-white text-sm">{c.name}</div>
-                    <div className="text-xs text-silver">
+                  <div className="min-w-0">
+                    <div className="text-white text-sm truncate">{c.name}</div>
+                    <div className="text-xs text-silver truncate">
                       {c.email} • {c.yearsExperience ? `${c.yearsExperience}y exp` : 'exp unknown'}
                     </div>
                   </div>
-                  <Badge variant={c.level === 'EXPERT' ? 'success' : 'accent'}>
-                    {c.level}
-                  </Badge>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Badge variant={c.level === 'EXPERT' ? 'success' : 'accent'}>
+                      {c.level}
+                    </Badge>
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        if (!mentee) return;
+                        onPropose({
+                          mentor: { id: c.associateId, name: c.name },
+                          mentee,
+                          skillId,
+                        });
+                      }}
+                    >
+                      Propose
+                    </Button>
+                  </div>
                 </div>
               ))
             )}

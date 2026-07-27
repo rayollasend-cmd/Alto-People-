@@ -45,13 +45,19 @@ performance84Router.get('/goals', VIEW, async (req, res) => {
   const rows = await prisma.goal.findMany({
     take: 500,
     where: { deletedAt: null, ...(associateId ? { associateId } : {}) },
-    include: { keyResults: true },
+    include: {
+      keyResults: true,
+      associate: { select: { firstName: true, lastName: true } },
+    },
     orderBy: { createdAt: 'desc' },
   });
   res.json({
     goals: rows.map((g) => ({
       id: g.id,
       associateId: g.associateId,
+      associateName: g.associate
+        ? `${g.associate.firstName} ${g.associate.lastName}`
+        : null,
       kind: g.kind,
       title: g.title,
       description: g.description,
@@ -184,6 +190,10 @@ performance84Router.get('/one-on-ones', VIEW, async (req, res) => {
   const associateId = z.string().uuid().optional().parse(req.query.associateId);
   const rows = await prisma.oneOnOne.findMany({
     where: associateId ? { associateId } : {},
+    include: {
+      associate: { select: { firstName: true, lastName: true } },
+      manager: { select: { email: true } },
+    },
     orderBy: { scheduledFor: 'desc' },
     take: 100,
   });
@@ -191,7 +201,11 @@ performance84Router.get('/one-on-ones', VIEW, async (req, res) => {
     meetings: rows.map((m) => ({
       id: m.id,
       associateId: m.associateId,
+      associateName: m.associate
+        ? `${m.associate.firstName} ${m.associate.lastName}`
+        : null,
       managerUserId: m.managerUserId,
+      managerEmail: m.manager?.email ?? null,
       scheduledFor: m.scheduledFor.toISOString(),
       completedAt: m.completedAt?.toISOString() ?? null,
       agenda: m.agenda,
@@ -311,6 +325,7 @@ performance84Router.get('/pips', VIEW, async (req, res) => {
   const associateId = z.string().uuid().optional().parse(req.query.associateId);
   const rows = await prisma.pip.findMany({
     where: associateId ? { associateId } : {},
+    include: { associate: { select: { firstName: true, lastName: true } } },
     orderBy: { createdAt: 'desc' },
     take: 50,
   });
@@ -318,6 +333,9 @@ performance84Router.get('/pips', VIEW, async (req, res) => {
     pips: rows.map((p) => ({
       id: p.id,
       associateId: p.associateId,
+      associateName: p.associate
+        ? `${p.associate.firstName} ${p.associate.lastName}`
+        : null,
       managerUserId: p.managerUserId,
       sourceGoalId: p.sourceGoalId,
       startDate: p.startDate.toISOString().slice(0, 10),
@@ -432,7 +450,10 @@ performance84Router.get('/reviews360', VIEW, async (req, res) => {
   const subjectAssociateId = z.string().uuid().optional().parse(req.query.subjectAssociateId);
   const rows = await prisma.review360.findMany({
     where: subjectAssociateId ? { subjectAssociateId } : {},
-    include: { _count: { select: { feedback: true } } },
+    include: {
+      _count: { select: { feedback: true } },
+      subject: { select: { firstName: true, lastName: true } },
+    },
     orderBy: { createdAt: 'desc' },
     take: 50,
   });
@@ -440,6 +461,9 @@ performance84Router.get('/reviews360', VIEW, async (req, res) => {
     reviews: rows.map((r) => ({
       id: r.id,
       subjectAssociateId: r.subjectAssociateId,
+      subjectAssociateName: r.subject
+        ? `${r.subject.firstName} ${r.subject.lastName}`
+        : null,
       requestedById: r.requestedById,
       periodStart: r.periodStart.toISOString().slice(0, 10),
       periodEnd: r.periodEnd.toISOString().slice(0, 10),

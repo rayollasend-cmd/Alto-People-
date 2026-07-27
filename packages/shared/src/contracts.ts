@@ -3450,11 +3450,16 @@ export const TimeOffRequestSchema = z.object({
   decidedAt: z.string().datetime().nullable(),
   cancelledAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
+  /** Admin list only: the associate's current balance for this category,
+   *  so approvers see over-draw BEFORE clicking approve. */
+  balanceMinutes: z.number().int().nullable().optional(),
 });
 export type TimeOffRequest = z.infer<typeof TimeOffRequestSchema>;
 
 export const TimeOffRequestListResponseSchema = z.object({
   requests: z.array(TimeOffRequestSchema),
+  /** True row count before the server cap — lets the UI say "200 of N". */
+  total: z.number().int().nonnegative().optional(),
 });
 export type TimeOffRequestListResponse = z.infer<typeof TimeOffRequestListResponseSchema>;
 

@@ -8,6 +8,7 @@ import {
   type OrgBranding,
 } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
+import { fmtDateTime } from '@/lib/format';
 import {
   deleteOrgLogo,
   getOrgBranding,
@@ -326,8 +327,7 @@ export function BrandingHome() {
               </div>
               {branding?.logoUpdatedAt && (
                 <p className="text-silver/70 text-xs">
-                  Last updated{' '}
-                  {new Date(branding.logoUpdatedAt).toLocaleString()}
+                  Last updated {fmtDateTime(branding.logoUpdatedAt)}
                 </p>
               )}
             </CardContent>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bell, BellRing, CheckCheck, Inbox } from 'lucide-react';
+import { toast } from 'sonner';
 import type { Notification } from '@alto-people/shared';
 import { listMyInbox, markRead } from '@/lib/communicationsApi';
 import { onLiveEvent } from '@/lib/liveEvents';
@@ -107,7 +108,11 @@ export function NotificationsBell() {
         prev?.map((x) => (x.id === n.id ? { ...x, readAt: new Date().toISOString() } : x)) ?? null
       );
       markRead(n.id).catch(() => {
-        // Soft fail — refresh on next poll.
+        // Roll the optimistic read-state back so the badge count stays honest.
+        setItems((prev) =>
+          prev?.map((x) => (x.id === n.id ? { ...x, readAt: null } : x)) ?? null
+        );
+        toast.error('Could not mark as read');
       });
     }
     // Deeplink if the notification has one (e.g., payroll failure → run drawer).
@@ -124,7 +129,17 @@ export function NotificationsBell() {
     setItems((prev) =>
       prev?.map((x) => (x.readAt ? x : { ...x, readAt: new Date().toISOString() })) ?? null
     );
-    await Promise.allSettled(toMark.map((n) => markRead(n.id)));
+    const results = await Promise.allSettled(toMark.map((n) => markRead(n.id)));
+    const failedIds = new Set(
+      toMark.filter((_, i) => results[i]?.status === 'rejected').map((n) => n.id)
+    );
+    if (failedIds.size > 0) {
+      // Roll back only the ones that actually failed.
+      setItems((prev) =>
+        prev?.map((x) => (failedIds.has(x.id) ? { ...x, readAt: null } : x)) ?? null
+      );
+      toast.error('Could not mark as read');
+    }
   };
 
   return (
@@ -270,6 +285,14 @@ export function NotificationsBell() {
             </ul>
           )}
         </div>
+        {items && items.length > 50 && (
+          <>
+            <DropdownMenuSeparator className="m-0" />
+            <div className="px-3 py-2 text-[10px] text-silver/80 text-center">
+              Showing 50 of {items.length} notifications.
+            </div>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

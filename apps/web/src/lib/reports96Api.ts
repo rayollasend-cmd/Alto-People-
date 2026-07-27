@@ -106,3 +106,7 @@ export const createSchedule = (
     method: 'POST',
     body: input,
   });
+
+// Server route is DELETE /report-schedules/:id (not nested under the report).
+export const deleteSchedule = (scheduleId: string) =>
+  apiFetch<void>(`/report-schedules/${scheduleId}`, { method: 'DELETE' });

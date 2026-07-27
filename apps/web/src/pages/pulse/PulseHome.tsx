@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Plus, BarChart3, MessageSquare, Lock } from 'lucide-react';
+import { Plus, BarChart3, Download, MessageSquare, Lock } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {
+  closePulseSurvey,
   createPulseSurvey,
   deletePulseSurvey,
   getPulseResults,
@@ -19,7 +20,10 @@ import { listDepartments } from '@/lib/orgApi';
 import { listClients } from '@/lib/clientsApi';
 import type { Department } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
+import { downloadCsv } from '@/lib/csv';
+import { fmtDateTime, ymdLocal } from '@/lib/format';
 import {
   Badge,
   Button,
@@ -32,6 +36,7 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
   Select,
@@ -49,6 +54,26 @@ import {
   Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+
+/**
+ * "Closes in 3d" / "Closes in 7h" chip copy for respondents. Days once
+ * we're past 48h so the label matches how people reason about deadlines.
+ */
+function closesInLabel(openUntil: string): string {
+  const msLeft = new Date(openUntil).getTime() - Date.now();
+  if (msLeft <= 0) return 'Closing now';
+  const hours = Math.max(1, Math.round(msLeft / 3_600_000));
+  if (hours >= 48) return `Closes in ${Math.round(hours / 24)}d`;
+  return `Closes in ${hours}h`;
+}
+
+/** YES_NO responses store 0/1 — label the buckets like the answer buttons. */
+function bucketLabel(scale: PulseScale, key: string): string {
+  if (scale !== 'YES_NO') return key;
+  if (key === '1') return 'Yes';
+  if (key === '0') return 'No';
+  return key;
+}
 
 type Tab = 'me' | 'admin';
 
@@ -78,16 +103,35 @@ export function PulseHome() {
 
 function MyPulseTab() {
   const [rows, setRows] = useState<PulseSurveyOpen[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = () => {
     setRows(null);
+    setError(null);
     listMyOpenSurveys()
       .then((r) => setRows(r.surveys))
-      .catch(() => setRows([]));
+      .catch((err) =>
+        setError(
+          err instanceof ApiError ? err.message : 'Could not load surveys.',
+        ),
+      );
   };
   useEffect(() => {
     refresh();
   }, []);
+
+  if (error) {
+    return (
+      <ErrorBanner>
+        <div className="flex items-center justify-between gap-3">
+          <span>{error}</span>
+          <Button size="sm" variant="outline" onClick={refresh}>
+            Retry
+          </Button>
+        </div>
+      </ErrorBanner>
+    );
+  }
 
   return (
     <div className="space-y-3">
@@ -155,7 +199,12 @@ function RespondCard({
   return (
     <Card>
       <CardContent className="space-y-4">
-        <div className="text-lg text-white">{survey.question}</div>
+        <div className="flex items-start justify-between gap-3">
+          <div className="text-lg text-white">{survey.question}</div>
+          <Badge variant="pending" className="shrink-0">
+            {closesInLabel(survey.openUntil)}
+          </Badge>
+        </div>
         {survey.scale === 'SCORE_1_5' ? (
           <div className="flex gap-2">
             {[1, 2, 3, 4, 5].map((n) => (
@@ -217,22 +266,50 @@ function RespondCard({
 }
 
 function AdminPulseTab() {
+  const confirm = useConfirm();
   const [rows, setRows] = useState<PulseSurveyAdmin[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [resultsFor, setResultsFor] = useState<PulseSurveyAdmin | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<PulseSurveyAdmin | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [closingId, setClosingId] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'open' | 'closed'>('all');
 
   const refresh = () => {
     setRows(null);
+    setError(null);
     listPulseSurveys()
       .then((r) => setRows(r.surveys))
-      .catch(() => setRows([]));
+      .catch((err) =>
+        setError(
+          err instanceof ApiError ? err.message : 'Could not load surveys.',
+        ),
+      );
   };
   useEffect(() => {
     refresh();
   }, []);
+
+  const closeNow = async (s: PulseSurveyAdmin) => {
+    const ok = await confirm({
+      title: 'Close this survey now?',
+      description:
+        'It stops accepting responses immediately. All responses collected so far are kept and stay visible in Results.',
+      confirmLabel: 'Close survey',
+    });
+    if (!ok) return;
+    setClosingId(s.id);
+    try {
+      await closePulseSurvey(s.id);
+      toast.success('Survey closed.');
+      refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setClosingId(null);
+    }
+  };
 
   const filtered = (rows ?? []).filter((s) => {
     if (filter === 'open') return s.isOpen;
@@ -259,9 +336,19 @@ function AdminPulseTab() {
           <Plus className="mr-2 h-4 w-4" /> New survey
         </Button>
       </div>
+      {error && (
+        <ErrorBanner>
+          <div className="flex items-center justify-between gap-3">
+            <span>{error}</span>
+            <Button size="sm" variant="outline" onClick={refresh}>
+              Retry
+            </Button>
+          </div>
+        </ErrorBanner>
+      )}
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {error ? null : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : filtered.length === 0 ? (
             <EmptyState
@@ -287,6 +374,7 @@ function AdminPulseTab() {
                   <TableHead className="hidden lg:table-cell">Scale</TableHead>
                   <TableHead className="hidden md:table-cell">Audience</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead className="hidden md:table-cell">Closes</TableHead>
                   <TableHead className="hidden sm:table-cell">Responses</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -311,6 +399,9 @@ function AdminPulseTab() {
                         {s.isOpen ? 'Open' : 'Closed'}
                       </Badge>
                     </TableCell>
+                    <TableCell className="hidden md:table-cell text-xs text-silver">
+                      {fmtDateTime(s.openUntil)}
+                    </TableCell>
                     <TableCell className="hidden sm:table-cell">{s.responseCount}</TableCell>
                     <TableCell className="text-right space-x-2">
                       <Button
@@ -320,12 +411,24 @@ function AdminPulseTab() {
                       >
                         <BarChart3 className="mr-1 h-3 w-3" /> Results
                       </Button>
-                      <button
+                      {s.isOpen && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={closingId === s.id}
+                          onClick={() => void closeNow(s)}
+                        >
+                          Close now
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="ghost"
                         onClick={() => setDeleteTarget(s)}
-                        className="opacity-60 group-hover:opacity-100 text-silver hover:text-alert transition text-xs"
+                        className="opacity-60 group-hover:opacity-100 hover:text-alert"
                       >
                         Delete
-                      </button>
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -355,7 +458,7 @@ function AdminPulseTab() {
         title="Delete survey"
         description={
           deleteTarget
-            ? `Delete "${deleteTarget.question.slice(0, 80)}${deleteTarget.question.length > 80 ? '…' : ''}"? All ${deleteTarget.responseCount} responses will be permanently removed.`
+            ? `Delete "${deleteTarget.question.slice(0, 80)}${deleteTarget.question.length > 80 ? '…' : ''}"? Delete is for mistakes only — it permanently destroys the survey AND all ${deleteTarget.responseCount} responses. To stop collecting but keep the results, use Close now instead.`
             : undefined
         }
         confirmLabel="Delete"
@@ -394,22 +497,43 @@ function NewSurveyDrawer({
   const [openHours, setOpenHours] = useState(72);
   const [saving, setSaving] = useState(false);
   const [departments, setDepartments] = useState<Department[] | null>(null);
+  const [departmentsError, setDepartmentsError] = useState<string | null>(null);
   const [clients, setClients] = useState<{ id: string; name: string }[] | null>(null);
+  const [clientsError, setClientsError] = useState<string | null>(null);
+
+  const loadDepartments = () => {
+    setDepartments(null);
+    setDepartmentsError(null);
+    listDepartments()
+      .then((r) => setDepartments(r.departments))
+      .catch((err) =>
+        setDepartmentsError(
+          err instanceof ApiError ? err.message : 'Could not load departments.',
+        ),
+      );
+  };
+  const loadClients = () => {
+    setClients(null);
+    setClientsError(null);
+    listClients()
+      .then((r) =>
+        setClients(r.clients.map((c) => ({ id: c.id, name: c.name }))),
+      )
+      .catch((err) =>
+        setClientsError(
+          err instanceof ApiError ? err.message : 'Could not load clients.',
+        ),
+      );
+  };
 
   // Lazy-load the picker source the first time the user picks a non-ALL
   // audience. Most surveys go to everyone, so don't fetch upfront.
   useEffect(() => {
-    if (audience === 'BY_DEPARTMENT' && departments === null) {
-      listDepartments()
-        .then((r) => setDepartments(r.departments))
-        .catch(() => setDepartments([]));
+    if (audience === 'BY_DEPARTMENT' && departments === null && !departmentsError) {
+      loadDepartments();
     }
-    if (audience === 'BY_CLIENT' && clients === null) {
-      listClients()
-        .then((r) =>
-          setClients(r.clients.map((c) => ({ id: c.id, name: c.name }))),
-        )
-        .catch(() => setClients([]));
+    if (audience === 'BY_CLIENT' && clients === null && !clientsError) {
+      loadClients();
     }
     // Reset selection when the audience type changes.
     setAudienceId('');
@@ -439,7 +563,7 @@ function NewSurveyDrawer({
         audienceClientId: audience === 'BY_CLIENT' ? audienceId : null,
         openHours,
       });
-      toast.success('Survey sent.');
+      toast.success('Survey sent — the audience has been notified.');
       onSaved();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -489,56 +613,103 @@ function NewSurveyDrawer({
         {audience === 'BY_DEPARTMENT' && (
           <div>
             <Label>Department</Label>
-            <Select
-              className="mt-1"
-              value={audienceId}
-              onChange={(e) => setAudienceId(e.target.value)}
-              disabled={departments === null}
-            >
-              <option value="">
-                {departments === null ? 'Loading…' : 'Select a department…'}
-              </option>
-              {(departments ?? []).map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </Select>
-            {departments !== null && departments.length === 0 && (
-              <div className="text-xs text-silver mt-1">
-                No departments defined yet.
-              </div>
+            {departmentsError ? (
+              <ErrorBanner className="mt-1">
+                <div className="flex items-center justify-between gap-3">
+                  <span>{departmentsError}</span>
+                  <Button size="sm" variant="outline" onClick={loadDepartments}>
+                    Retry
+                  </Button>
+                </div>
+              </ErrorBanner>
+            ) : (
+              <>
+                <Select
+                  className="mt-1"
+                  value={audienceId}
+                  onChange={(e) => setAudienceId(e.target.value)}
+                  disabled={departments === null}
+                >
+                  <option value="">
+                    {departments === null ? 'Loading…' : 'Select a department…'}
+                  </option>
+                  {(departments ?? []).map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                    </option>
+                  ))}
+                </Select>
+                {departments !== null && departments.length === 0 && (
+                  <div className="text-xs text-silver mt-1">
+                    No departments defined yet.
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}
         {audience === 'BY_CLIENT' && (
           <div>
             <Label>Client</Label>
-            <Select
-              className="mt-1"
-              value={audienceId}
-              onChange={(e) => setAudienceId(e.target.value)}
-              disabled={clients === null}
-            >
-              <option value="">
-                {clients === null ? 'Loading…' : 'Select a client…'}
-              </option>
-              {(clients ?? []).map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
+            {clientsError ? (
+              <ErrorBanner className="mt-1">
+                <div className="flex items-center justify-between gap-3">
+                  <span>{clientsError}</span>
+                  <Button size="sm" variant="outline" onClick={loadClients}>
+                    Retry
+                  </Button>
+                </div>
+              </ErrorBanner>
+            ) : (
+              <Select
+                className="mt-1"
+                value={audienceId}
+                onChange={(e) => setAudienceId(e.target.value)}
+                disabled={clients === null}
+              >
+                <option value="">
+                  {clients === null ? 'Loading…' : 'Select a client…'}
                 </option>
-              ))}
-            </Select>
+                {(clients ?? []).map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            )}
           </div>
         )}
         <div>
           <Label>Open for (hours)</Label>
+          <div className="flex gap-1.5 mt-1 mb-2">
+            {(
+              [
+                { label: '24h', hours: 24 },
+                { label: '72h', hours: 72 },
+                { label: '1 week', hours: 168 },
+              ] as const
+            ).map((p) => (
+              <Button
+                key={p.hours}
+                size="xs"
+                type="button"
+                variant={openHours === p.hours ? 'secondary' : 'outline'}
+                aria-pressed={openHours === p.hours}
+                onClick={() => setOpenHours(p.hours)}
+              >
+                {p.label}
+              </Button>
+            ))}
+          </div>
           <Input
             type="number"
-            className="mt-1"
+            min={1}
             value={openHours}
             onChange={(e) => setOpenHours(Number(e.target.value) || 72)}
           />
+          <div className="text-xs text-silver mt-1">
+            Closes {fmtDateTime(new Date(Date.now() + openHours * 3_600_000))}
+          </div>
         </div>
       </DrawerBody>
       <DrawerFooter>
@@ -559,11 +730,39 @@ function ResultsDrawer({
   onClose: () => void;
 }) {
   const [data, setData] = useState<PulseResults | null>(null);
-  useEffect(() => {
+  const [error, setError] = useState<string | null>(null);
+
+  const load = () => {
+    setData(null);
+    setError(null);
     getPulseResults(surveyId)
       .then(setData)
-      .catch(() => setData(null));
+      .catch((err) =>
+        setError(
+          err instanceof ApiError ? err.message : 'Could not load results.',
+        ),
+      );
+  };
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [surveyId]);
+
+  const exportCsv = () => {
+    if (!data) return;
+    downloadCsv(`pulse-results-${ymdLocal()}.csv`, [
+      ['Question', data.survey.question],
+      [],
+      ['Bucket', 'Count'],
+      ...Object.entries(data.distribution).map(([k, v]) => [
+        bucketLabel(data.survey.scale, k),
+        v,
+      ]),
+      [],
+      ['Comment', 'Submitted at'],
+      ...data.comments.map((c) => [c.comment, fmtDateTime(c.submittedAt)]),
+    ]);
+  };
 
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
@@ -571,7 +770,16 @@ function ResultsDrawer({
         <DrawerTitle>Results</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
-        {!data ? (
+        {error ? (
+          <ErrorBanner>
+            <div className="flex items-center justify-between gap-3">
+              <span>{error}</span>
+              <Button size="sm" variant="outline" onClick={load}>
+                Retry
+              </Button>
+            </div>
+          </ErrorBanner>
+        ) : !data ? (
           <SkeletonRows count={3} />
         ) : (
           <>
@@ -581,13 +789,24 @@ function ResultsDrawer({
               {data.average !== null && (
                 <div>Average: <span className="text-white">{data.average}</span></div>
               )}
+              <Button
+                size="xs"
+                variant="outline"
+                className="ml-auto"
+                onClick={exportCsv}
+                disabled={data.responseCount === 0}
+              >
+                <Download className="mr-1 h-3 w-3" /> Export CSV
+              </Button>
             </div>
             <div className="space-y-2">
               {Object.entries(data.distribution).map(([k, v]) => {
                 const max = Math.max(1, ...Object.values(data.distribution));
                 return (
                   <div key={k} className="flex items-center gap-3">
-                    <div className="w-8 text-xs text-silver">{k}</div>
+                    <div className="w-8 text-xs text-silver">
+                      {bucketLabel(data.survey.scale, k)}
+                    </div>
                     <div className="flex-1 h-3 rounded bg-navy-secondary/40 overflow-hidden">
                       <div
                         className="h-full bg-gold"

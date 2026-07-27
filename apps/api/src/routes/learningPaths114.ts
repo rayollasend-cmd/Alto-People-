@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
+import { notifyAssociate } from '../lib/notify.js';
 
 /**
  * Phase 114 — Learning paths.
@@ -224,6 +225,13 @@ learningPaths114Router.post(
   MANAGE,
   async (req, res) => {
     const input = EnrollSchema.parse(req.body);
+    const path = await prisma.learningPath.findUnique({
+      where: { id: input.pathId },
+      select: { title: true, deletedAt: true },
+    });
+    if (!path || path.deletedAt) {
+      throw new HttpError(404, 'not_found', 'Learning path not found.');
+    }
     // Upsert so re-assigning the same path is a no-op (or revives WITHDRAWN).
     const enrollment = await prisma.learningPathEnrollment.upsert({
       where: {
@@ -258,6 +266,17 @@ learningPaths114Router.post(
         skipDuplicates: true,
       });
     }
+    // Fire-and-forget, after the writes have landed.
+    void notifyAssociate(input.associateId, {
+      subject: `You've been assigned a learning path: ${path.title}`,
+      body:
+        `You have been assigned the "${path.title}" learning path` +
+        ` (${steps.length} course${steps.length === 1 ? '' : 's'}).` +
+        ' Work through the steps in order from the Learning page.',
+      category: 'learning',
+      linkUrl: '/learning',
+      emailFallback: true,
+    });
     res.status(201).json({ id: enrollment.id });
   },
 );

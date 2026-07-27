@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { BadgeDollarSign, CreditCard, FileText, Users as UsersIcon } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { getOrgBranding } from '@/lib/brandingApi';
-import { listAdminUsers } from '@/lib/usersAdminApi';
+import { getUserCounts } from '@/lib/usersAdminApi';
 import { Button } from '@/components/ui/Button';
 import {
   Card,
@@ -31,11 +31,13 @@ export function BillingHome() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([getOrgBranding(), listAdminUsers({ status: 'ACTIVE' })])
-      .then(([branding, users]) => {
+    // getUserCounts is uncapped — the /admin/users list truncates at the
+    // server page size, so its length undercounts seats on large orgs.
+    Promise.all([getOrgBranding(), getUserCounts()])
+      .then(([branding, counts]) => {
         if (cancelled) return;
         setSupportEmail(branding.supportEmail);
-        setActiveSeats(users.users.length);
+        setActiveSeats(counts.counts.ACTIVE);
       })
       .catch((err) => {
         if (cancelled) return;

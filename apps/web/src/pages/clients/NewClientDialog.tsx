@@ -19,6 +19,21 @@ import { Select } from '@/components/ui/Select';
 
 const STATUSES: ClientStatus[] = ['PROSPECT', 'ACTIVE', 'INACTIVE'];
 
+// Free-text stays allowed — these just seed the browser datalist so common
+// values are spelled consistently across clients.
+const INDUSTRY_SUGGESTIONS = [
+  'Hospitality',
+  'Logistics',
+  'Warehousing',
+  'Manufacturing',
+  'Retail',
+  'Healthcare',
+  'Construction',
+  'Food service',
+  'Events',
+  'Cleaning services',
+] as const;
+
 interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -92,13 +107,21 @@ export function NewClientDialog({ open, onOpenChange, onCreated }: Props) {
           </Field>
           <Field label="Industry">
             {(p) => (
-              <Input
-                value={industry}
-                onChange={(e) => setIndustry(e.target.value)}
-                maxLength={80}
-                placeholder="e.g. Hospitality, Logistics"
-                {...p}
-              />
+              <>
+                <Input
+                  value={industry}
+                  onChange={(e) => setIndustry(e.target.value)}
+                  maxLength={80}
+                  placeholder="e.g. Hospitality, Logistics"
+                  list="new-client-industry-options"
+                  {...p}
+                />
+                <datalist id="new-client-industry-options">
+                  {INDUSTRY_SUGGESTIONS.map((s) => (
+                    <option key={s} value={s} />
+                  ))}
+                </datalist>
+              </>
             )}
           </Field>
           <Field

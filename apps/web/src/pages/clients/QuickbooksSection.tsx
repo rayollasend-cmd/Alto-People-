@@ -13,6 +13,8 @@ import {
 } from '@/lib/quickbooksApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
+import { fmtDateTime } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import {
@@ -56,6 +58,7 @@ const ACCOUNT_FIELDS: ReadonlyArray<{
 export function QuickbooksSection({ clientId }: Props) {
   const { can } = useAuth();
   const canManage = can('process:payroll');
+  const confirm = useConfirm();
 
   const [status, setStatus] = useState<QboStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -111,7 +114,17 @@ export function QuickbooksSection({ clientId }: Props) {
   };
 
   const onDisconnect = async () => {
-    if (!confirm('Disconnect QuickBooks? Future payroll runs will not auto-sync until reconnected.')) return;
+    if (
+      !(await confirm({
+        title: 'Disconnect QuickBooks?',
+        description:
+          'Future payroll runs will not auto-sync until reconnected.',
+        confirmLabel: 'Disconnect',
+        destructive: true,
+      }))
+    ) {
+      return;
+    }
     setDisconnecting(true);
     try {
       await disconnect(clientId);
@@ -386,15 +399,11 @@ function ConnectionDetails({ status }: { status: QboStatus }) {
       </div>
       <div>
         <dt className="text-silver text-xs uppercase tracking-wide">Token expires</dt>
-        <dd className="text-white">
-          {status.expiresAt ? new Date(status.expiresAt).toLocaleString() : '—'}
-        </dd>
+        <dd className="text-white">{fmtDateTime(status.expiresAt)}</dd>
       </div>
       <div>
         <dt className="text-silver text-xs uppercase tracking-wide">Last refreshed</dt>
-        <dd className="text-white">
-          {status.lastRefreshedAt ? new Date(status.lastRefreshedAt).toLocaleString() : '—'}
-        </dd>
+        <dd className="text-white">{fmtDateTime(status.lastRefreshedAt)}</dd>
       </div>
     </dl>
   );

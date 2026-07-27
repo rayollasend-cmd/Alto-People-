@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Coins, Plus } from 'lucide-react';
+import { Coins, Download, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
+import { downloadCsv } from '@/lib/csv';
+import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { hasCapability } from '@/lib/roles';
 import {
   cancelEquityGrant,
@@ -31,6 +34,7 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
   Select,
@@ -49,24 +53,37 @@ import {
   type PickedAssociate,
 } from '@/components/ui/AssociatePicker';
 
-/** Today as YYYY-MM-DD in the user's local timezone. */
-const todayLocal = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
-    d.getDate(),
-  ).padStart(2, '0')}`;
-};
-
 /** Add n months to a YYYY-MM-DD string, returning YYYY-MM-DD (local). */
 const addMonths = (iso: string, months: number): string | null => {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-  if (!m) return null;
-  const d = new Date(Number(m[1]), Number(m[2]) - 1 + months, Number(m[3]));
+  const d = parseYmd(iso);
+  if (!d) return null;
+  d.setMonth(d.getMonth() + months);
   if (Number.isNaN(d.getTime())) return null;
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
-    d.getDate(),
-  ).padStart(2, '0')}`;
+  return ymdLocal(d);
 };
+
+/** Date-only "YYYY-MM-DD" → "May 13, 2026" without the UTC-midnight shift. */
+const fmtYmd = (s: string | null | undefined) => fmtDate(parseYmd(s));
+
+/** Strike price render: currency-aware, 4-decimal precision (sub-cent strikes). */
+const fmtStrike = (price: string | null, currency: string) =>
+  price ? fmtMoney(price, { currency, precise: true }) : '—';
+
+/** Shared "section failed to load" body with a Retry affordance. */
+function LoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="p-6">
+      <ErrorBanner>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <span>{message}</span>
+          <Button size="sm" variant="secondary" onClick={onRetry}>
+            Retry
+          </Button>
+        </div>
+      </ErrorBanner>
+    </div>
+  );
+}
 
 const GRANT_TYPE_LABELS: Record<EquityGrantType, string> = {
   RSU: 'RSU',
@@ -92,11 +109,15 @@ export function EquityHome() {
   const canManageComp = user ? hasCapability(user.role, 'manage:comp') : false;
   const [tab, setTab] = useState<'mine' | 'admin'>('mine');
   const [mine, setMine] = useState<MyEquityGrant[] | null>(null);
+  const [mineError, setMineError] = useState<string | null>(null);
   const [admin, setAdmin] = useState<EquityGrant[] | null>(null);
+  const [adminError, setAdminError] = useState<string | null>(null);
   const [summary, setSummary] = useState<EquitySummary | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<EquityGrantStatus | 'ALL'>(
     'GRANTED',
   );
+  const [search, setSearch] = useState('');
   const [showNew, setShowNew] = useState(false);
   const [openMine, setOpenMine] = useState<MyEquityGrant | null>(null);
   const [openAdminId, setOpenAdminId] = useState<string | null>(null);
@@ -104,22 +125,63 @@ export function EquityHome() {
   const refresh = () => {
     if (tab === 'mine') {
       setMine(null);
+      setMineError(null);
       listMyEquity()
         .then((r) => setMine(r.grants))
-        .catch(() => setMine([]));
+        .catch((err) =>
+          setMineError(
+            err instanceof ApiError ? err.message : 'Could not load your grants.',
+          ),
+        );
     } else {
       setAdmin(null);
+      setAdminError(null);
+      setSummaryError(null);
       listEquityGrants(statusFilter === 'ALL' ? undefined : statusFilter)
         .then((r) => setAdmin(r.grants))
-        .catch(() => setAdmin([]));
+        .catch((err) =>
+          setAdminError(
+            err instanceof ApiError ? err.message : 'Could not load grants.',
+          ),
+        );
       getEquitySummary()
         .then(setSummary)
-        .catch(() => setSummary(null));
+        .catch((err) => {
+          setSummary(null);
+          setSummaryError(
+            err instanceof ApiError
+              ? err.message
+              : 'Could not load the equity summary.',
+          );
+        });
     }
   };
   useEffect(() => {
     refresh();
   }, [tab, statusFilter]);
+
+  const q = search.trim().toLowerCase();
+  const filteredAdmin = (admin ?? []).filter(
+    (g) =>
+      q === '' ||
+      (g.associateName ?? '').toLowerCase().includes(q) ||
+      (g.associateEmail ?? '').toLowerCase().includes(q),
+  );
+
+  const exportCsv = () => {
+    // Cap-table extract of what's currently on screen (filter + search).
+    downloadCsv(`equity-grants-${ymdLocal()}.csv`, [
+      ['Associate', 'Kind', 'Shares', 'Strike', 'Vest start', 'Status'],
+      ...filteredAdmin.map((g) => [
+        g.associateName ?? '',
+        GRANT_TYPE_LABELS[g.grantType],
+        g.totalShares,
+        g.strikePrice ? `${g.currency} ${g.strikePrice}` : '',
+        g.vestingStartDate,
+        g.status,
+      ]),
+    ]);
+  };
 
   return (
     <div className="space-y-5">
@@ -153,22 +215,39 @@ export function EquityHome() {
             </Button>
           )}
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap justify-end">
           {canManageComp && tab === 'admin' && (
-            <Select
-              size="sm"
-              value={statusFilter}
-              onChange={(e) =>
-                setStatusFilter(e.target.value as EquityGrantStatus | 'ALL')
-              }
-            >
-              <option value="ALL">All statuses</option>
-              <option value="PROPOSED">Proposed</option>
-              <option value="GRANTED">Granted</option>
-              <option value="CANCELLED">Cancelled</option>
-              <option value="EXERCISED">Exercised</option>
-              <option value="EXPIRED">Expired</option>
-            </Select>
+            <>
+              <Input
+                className="h-8 w-44 text-sm"
+                placeholder="Search associate…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                aria-label="Search grants by associate"
+              />
+              <Select
+                size="sm"
+                value={statusFilter}
+                onChange={(e) =>
+                  setStatusFilter(e.target.value as EquityGrantStatus | 'ALL')
+                }
+              >
+                <option value="ALL">All statuses</option>
+                <option value="PROPOSED">Proposed</option>
+                <option value="GRANTED">Granted</option>
+                <option value="CANCELLED">Cancelled</option>
+                <option value="EXERCISED">Exercised</option>
+                <option value="EXPIRED">Expired</option>
+              </Select>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={exportCsv}
+                disabled={filteredAdmin.length === 0}
+              >
+                <Download className="mr-2 h-4 w-4" /> Export CSV
+              </Button>
+            </>
           )}
           {canManageComp && (
             <Button onClick={() => setShowNew(true)}>
@@ -177,6 +256,17 @@ export function EquityHome() {
           )}
         </div>
       </div>
+
+      {tab === 'admin' && summaryError && (
+        <ErrorBanner>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span>{summaryError}</span>
+            <Button size="sm" variant="secondary" onClick={refresh}>
+              Retry
+            </Button>
+          </div>
+        </ErrorBanner>
+      )}
 
       {tab === 'admin' && summary && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -199,7 +289,9 @@ export function EquityHome() {
       {tab === 'mine' ? (
         <Card>
           <CardContent className="p-0">
-            {mine === null ? (
+            {mineError !== null ? (
+              <LoadError message={mineError} onRetry={refresh} />
+            ) : mine === null ? (
               <div className="p-6">
                 <SkeletonRows count={3} />
               </div>
@@ -231,8 +323,10 @@ export function EquityHome() {
                       <TableCell className="font-medium text-white">
                         <div className="truncate">{GRANT_TYPE_LABELS[g.grantType]}</div>
                         <div className="md:hidden text-[11px] text-silver/70 truncate">
-                          {g.grantDate}
-                          {g.strikePrice ? ` · ${g.currency} ${g.strikePrice}` : ''}
+                          {fmtYmd(g.grantDate)}
+                          {g.strikePrice
+                            ? ` · ${fmtStrike(g.strikePrice, g.currency)}`
+                            : ''}
                         </div>
                       </TableCell>
                       <TableCell className="text-sm">
@@ -245,12 +339,10 @@ export function EquityHome() {
                         {g.unvestedShares.toLocaleString()}
                       </TableCell>
                       <TableCell className="text-sm hidden lg:table-cell">
-                        {g.strikePrice
-                          ? `${g.currency} ${g.strikePrice}`
-                          : '—'}
+                        {fmtStrike(g.strikePrice, g.currency)}
                       </TableCell>
                       <TableCell className="text-xs text-silver hidden md:table-cell">
-                        {g.grantDate}
+                        {fmtYmd(g.grantDate)}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -262,15 +354,38 @@ export function EquityHome() {
       ) : (
         <Card>
           <CardContent className="p-0">
-            {admin === null ? (
+            {adminError !== null ? (
+              <LoadError message={adminError} onRetry={refresh} />
+            ) : admin === null ? (
               <div className="p-6">
                 <SkeletonRows count={4} />
               </div>
-            ) : admin.length === 0 ? (
+            ) : filteredAdmin.length === 0 ? (
               <EmptyState
                 icon={Coins}
                 title="No grants"
-                description="Nothing matches this filter."
+                description={
+                  admin.length > 0
+                    ? 'No grants match your search.'
+                    : statusFilter !== 'ALL'
+                      ? 'Nothing matches this status filter.'
+                      : 'No equity grants have been created yet.'
+                }
+                action={
+                  admin.length > 0 ? (
+                    <Button size="sm" variant="secondary" onClick={() => setSearch('')}>
+                      Clear search
+                    </Button>
+                  ) : statusFilter !== 'ALL' ? (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => setStatusFilter('ALL')}
+                    >
+                      Clear filter
+                    </Button>
+                  ) : undefined
+                }
               />
             ) : (
               <Table>
@@ -284,7 +399,7 @@ export function EquityHome() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {admin.map((g) => (
+                  {filteredAdmin.map((g) => (
                     <TableRow
                       key={g.id}
                       className="cursor-pointer"
@@ -298,7 +413,7 @@ export function EquityHome() {
                           {g.associateEmail ?? ''}
                         </div>
                         <div className="md:hidden text-[11px] text-silver/70 truncate">
-                          {GRANT_TYPE_LABELS[g.grantType]} · {g.grantDate}
+                          {GRANT_TYPE_LABELS[g.grantType]} · {fmtYmd(g.grantDate)}
                         </div>
                       </TableCell>
                       <TableCell className="text-sm hidden md:table-cell">
@@ -313,7 +428,7 @@ export function EquityHome() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-xs text-silver hidden md:table-cell">
-                        {g.grantDate}
+                        {fmtYmd(g.grantDate)}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -380,7 +495,7 @@ function NewGrantDrawer({
   const [grantType, setGrantType] = useState<EquityGrantType>('RSU');
   const [totalShares, setTotalShares] = useState('');
   const [strikePrice, setStrikePrice] = useState('');
-  const today = todayLocal();
+  const today = ymdLocal();
   const [grantDate, setGrantDate] = useState(today);
   const [vestingStartDate, setVestingStartDate] = useState(today);
   const [cliffMonths, setCliffMonths] = useState('12');
@@ -414,6 +529,12 @@ function NewGrantDrawer({
   const monthlyShares = previewValid
     ? Math.round(previewShares / previewMonths)
     : 0;
+  // Notional value at strike — only meaningful for options with a strike set.
+  const strikeNum = parseFloat(strikePrice);
+  const valueAtStrike =
+    isOption && previewValid && Number.isFinite(strikeNum) && strikeNum > 0
+      ? previewShares * strikeNum
+      : null;
 
   const submit = async () => {
     if (!assoc) {
@@ -545,10 +666,19 @@ function NewGrantDrawer({
           </div>
         </div>
         {previewValid && cliffDate && vestEndDate && (
-          <div className="text-xs text-silver border border-navy-secondary rounded-md p-3">
-            {previewCliff > 0
-              ? `${cliffShares.toLocaleString()} shares vest at cliff on ${cliffDate}; then ~${monthlyShares.toLocaleString()}/month through ${vestEndDate}.`
-              : `No cliff — ~${monthlyShares.toLocaleString()} shares/month through ${vestEndDate}.`}
+          <div className="text-xs text-silver border border-navy-secondary rounded-md p-3 space-y-1">
+            <div>
+              {previewCliff > 0
+                ? `${cliffShares.toLocaleString()} shares vest at cliff on ${fmtYmd(cliffDate)}; then ~${monthlyShares.toLocaleString()}/month through ${fmtYmd(vestEndDate)}.`
+                : `No cliff — ~${monthlyShares.toLocaleString()} shares/month through ${fmtYmd(vestEndDate)}.`}
+            </div>
+            {valueAtStrike !== null && (
+              <div>
+                Value at strike: {fmtMoney(valueAtStrike)} (
+                {previewShares.toLocaleString()} × {fmtMoney(strikeNum, { precise: true })}
+                )
+              </div>
+            )}
           </div>
         )}
         <div>
@@ -596,7 +726,7 @@ function MyDetailDrawer({
         <div className="flex items-center gap-2">
           <Badge variant={STATUS_VARIANT[row.status]}>{row.status}</Badge>
           <span className="text-sm text-silver">
-            Granted {row.grantDate} · Vesting from {row.vestingStartDate}
+            Granted {fmtYmd(row.grantDate)} · Vesting from {fmtYmd(row.vestingStartDate)}
           </span>
         </div>
 
@@ -627,11 +757,11 @@ function MyDetailDrawer({
           <div className="text-sm">
             <span className="text-silver">Strike price: </span>
             <span className="text-white font-semibold">
-              {row.currency} {row.strikePrice}
+              {fmtStrike(row.strikePrice, row.currency)}
             </span>
             {row.expirationDate && (
               <span className="text-silver ml-3">
-                Expires {row.expirationDate}
+                Expires {fmtYmd(row.expirationDate)}
               </span>
             )}
           </div>
@@ -650,7 +780,7 @@ function MyDetailDrawer({
                   key={t.vestDate}
                   className="flex justify-between text-sm border-b border-navy-secondary pb-1"
                 >
-                  <span className="text-silver">{t.vestDate}</span>
+                  <span className="text-silver">{fmtYmd(t.vestDate)}</span>
                   <span className="text-white">
                     +{t.shares.toLocaleString()}
                   </span>
@@ -681,13 +811,24 @@ function AdminDetailDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const confirm = useConfirm();
   const [grant, setGrant] = useState<EquityGrantDetail | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
+  const load = () => {
+    setGrant(null);
+    setLoadError(null);
     getEquityGrant(id)
       .then((r) => setGrant(r.grant))
-      .catch(() => setGrant(null));
+      .catch((err) =>
+        setLoadError(
+          err instanceof ApiError ? err.message : 'Could not load this grant.',
+        ),
+      );
+  };
+  useEffect(() => {
+    load();
   }, [id]);
 
   const act = async (
@@ -706,17 +847,35 @@ function AdminDetailDrawer({
     }
   };
 
+  // The cancel endpoint takes no reason payload, so this is a hard confirm
+  // (destructive) rather than a reason prompt — no more one-click voiding.
+  const onCancelGrant = async (g: EquityGrantDetail) => {
+    const ok = await confirm({
+      title: `Cancel this ${GRANT_TYPE_LABELS[g.grantType]} grant?`,
+      description: `${g.associateName ?? 'The associate'}'s grant of ${g.totalShares.toLocaleString()} shares will be voided and they'll be notified. This can't be undone.`,
+      confirmLabel: 'Cancel grant',
+      cancelLabel: 'Keep grant',
+      destructive: true,
+    });
+    if (!ok) return;
+    await act(() => cancelEquityGrant(g.id), 'Grant cancelled.');
+  };
+
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
         <DrawerTitle>
           {grant
             ? `${grant.associateName} · ${GRANT_TYPE_LABELS[grant.grantType]}`
-            : 'Loading…'}
+            : loadError
+              ? 'Grant'
+              : 'Loading…'}
         </DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
-        {!grant ? (
+        {loadError !== null ? (
+          <LoadError message={loadError} onRetry={load} />
+        ) : !grant ? (
           <SkeletonRows count={3} />
         ) : (
           <>
@@ -730,15 +889,16 @@ function AdminDetailDrawer({
               </span>
             </div>
             <div className="text-xs text-silver">
-              Granted {grant.grantDate} · Vesting starts{' '}
-              {grant.vestingStartDate} · {grant.cliffMonths}-mo cliff ·{' '}
+              Granted {fmtYmd(grant.grantDate)} · Vesting starts{' '}
+              {fmtYmd(grant.vestingStartDate)} · {grant.cliffMonths}-mo cliff ·{' '}
               {grant.vestingMonths} mo total
               {grant.grantedByEmail && ` · by ${grant.grantedByEmail}`}
             </div>
             {grant.strikePrice && (
               <div className="text-sm">
-                Strike: {grant.currency} {grant.strikePrice}
-                {grant.expirationDate && ` · expires ${grant.expirationDate}`}
+                Strike: {fmtStrike(grant.strikePrice, grant.currency)}
+                {grant.expirationDate &&
+                  ` · expires ${fmtYmd(grant.expirationDate)}`}
               </div>
             )}
             {grant.notes && (
@@ -764,12 +924,10 @@ function AdminDetailDrawer({
                 <Button
                   size="sm"
                   variant="destructive"
-                  onClick={() =>
-                    act(() => cancelEquityGrant(grant.id), 'Cancelled.')
-                  }
+                  onClick={() => onCancelGrant(grant)}
                   disabled={busy}
                 >
-                  Cancel
+                  Cancel grant
                 </Button>
               )}
               {grant.status === 'GRANTED' &&
@@ -806,7 +964,7 @@ function AdminDetailDrawer({
                     {grant.events.map((e) => (
                       <TableRow key={e.id}>
                         <TableCell className="text-xs">
-                          <div className="truncate">{e.vestDate}</div>
+                          <div className="truncate">{fmtYmd(e.vestDate)}</div>
                           <div className="md:hidden text-[11px] text-silver/70 truncate">
                             {e.isCliff ? 'Cliff' : 'Monthly'}
                           </div>

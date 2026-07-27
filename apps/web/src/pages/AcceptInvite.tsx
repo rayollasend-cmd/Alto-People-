@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Lock } from 'lucide-react';
+import { Eye, EyeOff, Lock } from 'lucide-react';
 import type {
   AcceptInviteResponse,
   InviteSummary,
@@ -13,6 +13,43 @@ import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Logo } from '@/components/Logo';
+import { fmtDateTime } from '@/lib/format';
+
+/**
+ * "ok" once the 12-char floor is met; "strong" when it also mixes upper +
+ * lower case and a digit. Deliberately simple — the server only enforces
+ * length, this is a nudge, not a gate.
+ */
+function passwordStrength(pw: string): 'ok' | 'strong' | null {
+  if (pw.length < 12) return null;
+  return /[a-z]/.test(pw) && /[A-Z]/.test(pw) && /\d/.test(pw)
+    ? 'strong'
+    : 'ok';
+}
+
+/** Eye toggle rendered inside a password field's right edge. */
+function ShowPasswordToggle({
+  shown,
+  onToggle,
+}: {
+  shown: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-label={shown ? 'Hide password' : 'Show password'}
+      className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded text-silver/70 hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+    >
+      {shown ? (
+        <EyeOff className="h-4 w-4" aria-hidden="true" />
+      ) : (
+        <Eye className="h-4 w-4" aria-hidden="true" />
+      )}
+    </button>
+  );
+}
 
 export function AcceptInvite() {
   const { token } = useParams<{ token: string }>();
@@ -26,6 +63,8 @@ export function AcceptInvite() {
 
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   // Self-service renewal shown in the invalid/expired state.
@@ -62,6 +101,7 @@ export function AcceptInvite() {
   }, [token]);
 
   const passwordOk = password.length >= 12 && password === confirm;
+  const strength = passwordStrength(password);
 
   const handleRenew = async (e: FormEvent) => {
     e.preventDefault();
@@ -193,7 +233,13 @@ export function AcceptInvite() {
               <Field
                 label="Password"
                 required
-                hint="Minimum 12 characters."
+                hint={
+                  strength === 'strong'
+                    ? 'Strength: strong.'
+                    : strength === 'ok'
+                      ? 'Strength: ok — mix upper and lower case with a number to make it strong.'
+                      : 'Minimum 12 characters.'
+                }
                 className="mb-4"
               >
                 {(p) => (
@@ -203,13 +249,17 @@ export function AcceptInvite() {
                       aria-hidden="true"
                     />
                     <Input
-                      type="password"
+                      type={showPassword ? 'text' : 'password'}
                       autoComplete="new-password"
                       minLength={12}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className="pl-9"
+                      className="pl-9 pr-10"
                       {...p}
+                    />
+                    <ShowPasswordToggle
+                      shown={showPassword}
+                      onToggle={() => setShowPassword((v) => !v)}
                     />
                   </div>
                 )}
@@ -232,13 +282,17 @@ export function AcceptInvite() {
                       aria-hidden="true"
                     />
                     <Input
-                      type="password"
+                      type={showConfirm ? 'text' : 'password'}
                       autoComplete="new-password"
                       minLength={12}
                       value={confirm}
                       onChange={(e) => setConfirm(e.target.value)}
-                      className="pl-9"
+                      className="pl-9 pr-10"
                       {...p}
+                    />
+                    <ShowPasswordToggle
+                      shown={showConfirm}
+                      onToggle={() => setShowConfirm((v) => !v)}
                     />
                   </div>
                 )}
@@ -256,7 +310,7 @@ export function AcceptInvite() {
                 {submitting ? 'Setting up…' : 'Set password & sign in'}
               </Button>
               <p className="text-[10px] text-silver/70 text-center mt-4">
-                This link expires {new Date(invite.expiresAt).toLocaleString()}.
+                This link expires {fmtDateTime(invite.expiresAt)}.
               </p>
             </form>
           )}

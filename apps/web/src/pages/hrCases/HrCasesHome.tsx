@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Lock, MessageCircle, Plus, Tag } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Download, Lock, MessageCircle, Plus, Tag } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {
@@ -46,7 +46,8 @@ import {
   Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
-import { fmtDate } from '@/lib/format';
+import { downloadCsv } from '@/lib/csv';
+import { fmtDate, fmtDateTime, ymdLocal } from '@/lib/format';
 
 const STATUS_VARIANT: Record<
   CaseStatus,
@@ -79,20 +80,39 @@ export function HrCasesHome() {
   const [showNew, setShowNew] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<CaseStatus | 'ALL'>('OPEN');
+  const [categoryFilter, setCategoryFilter] = useState<CaseCategory | 'ALL'>(
+    'ALL',
+  );
+  const [assignedToMe, setAssignedToMe] = useState(false);
+  const [search, setSearch] = useState('');
+  const [mineError, setMineError] = useState<string | null>(null);
+  const [queueError, setQueueError] = useState<string | null>(null);
 
   const refresh = () => {
     if (tab === 'mine') {
       setMine(null);
+      setMineError(null);
       listMyCases()
         .then((r) => setMine(r.cases))
-        .catch(() => setMine([]));
+        .catch((err) =>
+          setMineError(
+            err instanceof ApiError ? err.message : 'Failed to load your cases.',
+          ),
+        );
     } else {
       setQueue(null);
+      setQueueError(null);
       listCaseQueue({
         status: statusFilter === 'ALL' ? undefined : statusFilter,
+        category: categoryFilter === 'ALL' ? undefined : categoryFilter,
+        assignedToMe: assignedToMe || undefined,
       })
         .then((r) => setQueue(r.cases))
-        .catch(() => setQueue([]));
+        .catch((err) =>
+          setQueueError(
+            err instanceof ApiError ? err.message : 'Failed to load the queue.',
+          ),
+        );
       getCaseSummary()
         .then(setSummary)
         .catch(() => setSummary(null));
@@ -100,7 +120,48 @@ export function HrCasesHome() {
   };
   useEffect(() => {
     refresh();
-  }, [tab, statusFilter]);
+  }, [tab, statusFilter, categoryFilter, assignedToMe]);
+
+  const visibleQueue = useMemo(() => {
+    const rows = queue ?? [];
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(
+      (c) =>
+        c.subject.toLowerCase().includes(q) ||
+        c.associateName.toLowerCase().includes(q) ||
+        c.associateEmail.toLowerCase().includes(q),
+    );
+  }, [queue, search]);
+
+  const exportQueueCsv = () => {
+    downloadCsv(`hr-cases-queue-${ymdLocal()}.csv`, [
+      [
+        'Subject',
+        'Associate',
+        'Email',
+        'Category',
+        'Priority',
+        'Status',
+        'Assigned to',
+        'Replies',
+        'Created',
+        'Updated',
+      ],
+      ...visibleQueue.map((c) => [
+        c.subject,
+        c.associateName,
+        c.associateEmail,
+        CATEGORY_LABELS[c.category],
+        c.priority,
+        STATUS_LABELS[c.status],
+        c.assignedToEmail ?? '',
+        c.commentCount,
+        fmtDate(c.createdAt),
+        fmtDate(c.updatedAt),
+      ]),
+    ]);
+  };
 
   return (
     <div className="space-y-5">
@@ -134,23 +195,63 @@ export function HrCasesHome() {
             </Button>
           )}
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           {canManage && tab === 'queue' && (
-            <Select
-              size="sm"
-              aria-label="Filter by status"
-              value={statusFilter}
-              onChange={(e) =>
-                setStatusFilter(e.target.value as CaseStatus | 'ALL')
-              }
-            >
-              <option value="ALL">All statuses</option>
-              {(Object.keys(STATUS_LABELS) as CaseStatus[]).map((s) => (
-                <option key={s} value={s}>
-                  {STATUS_LABELS[s]}
-                </option>
-              ))}
-            </Select>
+            <>
+              <Input
+                aria-label="Search subject or associate"
+                className="h-8 w-44 text-xs"
+                placeholder="Search subject/associate"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              <Select
+                size="sm"
+                aria-label="Filter by status"
+                value={statusFilter}
+                onChange={(e) =>
+                  setStatusFilter(e.target.value as CaseStatus | 'ALL')
+                }
+              >
+                <option value="ALL">All statuses</option>
+                {(Object.keys(STATUS_LABELS) as CaseStatus[]).map((s) => (
+                  <option key={s} value={s}>
+                    {STATUS_LABELS[s]}
+                  </option>
+                ))}
+              </Select>
+              <Select
+                size="sm"
+                aria-label="Filter by category"
+                value={categoryFilter}
+                onChange={(e) =>
+                  setCategoryFilter(e.target.value as CaseCategory | 'ALL')
+                }
+              >
+                <option value="ALL">All categories</option>
+                {(Object.keys(CATEGORY_LABELS) as CaseCategory[]).map((k) => (
+                  <option key={k} value={k}>
+                    {CATEGORY_LABELS[k]}
+                  </option>
+                ))}
+              </Select>
+              <Button
+                size="sm"
+                variant={assignedToMe ? 'primary' : 'secondary'}
+                aria-pressed={assignedToMe}
+                onClick={() => setAssignedToMe((v) => !v)}
+              >
+                Assigned to me
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={exportQueueCsv}
+                disabled={visibleQueue.length === 0}
+              >
+                <Download className="mr-2 h-4 w-4" /> Export CSV
+              </Button>
+            </>
           )}
           <Button onClick={() => setShowNew(true)}>
             <Plus className="mr-2 h-4 w-4" /> New case
@@ -161,7 +262,16 @@ export function HrCasesHome() {
       {tab === 'mine' ? (
         <Card>
           <CardContent className="p-0">
-            {mine === null ? (
+            {mineError ? (
+              <div className="p-6 space-y-3">
+                <p role="alert" className="text-sm text-alert">
+                  {mineError}
+                </p>
+                <Button size="sm" variant="secondary" onClick={refresh}>
+                  Retry
+                </Button>
+              </div>
+            ) : mine === null ? (
               <div className="p-6">
                 <SkeletonRows count={3} />
               </div>
@@ -170,6 +280,11 @@ export function HrCasesHome() {
                 icon={MessageCircle}
                 title="No cases yet"
                 description="Have a question or concern? File a new case — HR will reply here."
+                action={
+                  <Button onClick={() => setShowNew(true)}>
+                    <Plus className="mr-2 h-4 w-4" /> File a case
+                  </Button>
+                }
               />
             ) : (
               <div className="divide-y divide-navy-secondary">
@@ -202,15 +317,30 @@ export function HrCasesHome() {
       ) : (
         <Card>
           <CardContent className="p-0">
-            {queue === null ? (
+            {queueError ? (
+              <div className="p-6 space-y-3">
+                <p role="alert" className="text-sm text-alert">
+                  {queueError}
+                </p>
+                <Button size="sm" variant="secondary" onClick={refresh}>
+                  Retry
+                </Button>
+              </div>
+            ) : queue === null ? (
               <div className="p-6">
                 <SkeletonRows count={4} />
               </div>
-            ) : queue.length === 0 ? (
+            ) : visibleQueue.length === 0 ? (
               <EmptyState
                 icon={MessageCircle}
-                title="Queue is empty"
-                description="Nothing pending. Nice."
+                title={
+                  search.trim() ? 'No matching cases' : 'Queue is empty'
+                }
+                description={
+                  search.trim()
+                    ? 'No cases match your search.'
+                    : 'Nothing pending. Nice.'
+                }
               />
             ) : (
               <Table>
@@ -225,7 +355,7 @@ export function HrCasesHome() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {queue.map((c) => (
+                  {visibleQueue.map((c) => (
                     <TableRow
                       key={c.id}
                       className="cursor-pointer"
@@ -406,15 +536,21 @@ function CaseDetailDrawer({
   onClose: () => void;
 }) {
   const [data, setData] = useState<CaseDetail | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [reply, setReply] = useState('');
   const [internal, setInternal] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const refresh = () => {
     setData(null);
+    setLoadError(null);
     getCase(caseId)
       .then(setData)
-      .catch(() => setData(null));
+      .catch((err) =>
+        setLoadError(
+          err instanceof ApiError ? err.message : 'Failed to load case.',
+        ),
+      );
   };
   useEffect(() => {
     refresh();
@@ -425,6 +561,7 @@ function CaseDetailDrawer({
     setBusy(true);
     try {
       await addComment(caseId, reply.trim(), internal);
+      toast.success(internal ? 'Internal note added.' : 'Reply sent.');
       setReply('');
       setInternal(false);
       refresh();
@@ -441,7 +578,16 @@ function CaseDetailDrawer({
         <DrawerTitle>{data?.subject ?? 'Loading…'}</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
-        {!data ? (
+        {loadError ? (
+          <div className="space-y-3">
+            <p role="alert" className="text-sm text-alert">
+              {loadError}
+            </p>
+            <Button size="sm" variant="secondary" onClick={refresh}>
+              Retry
+            </Button>
+          </div>
+        ) : !data ? (
           <SkeletonRows count={3} />
         ) : (
           <>
@@ -460,8 +606,7 @@ function CaseDetailDrawer({
               )}
             </div>
             <div className="text-xs text-silver">
-              Filed by {data.associateName} ·{' '}
-              {new Date(data.createdAt).toLocaleString()}
+              Filed by {data.associateName} · {fmtDateTime(data.createdAt)}
             </div>
             <div className="text-sm text-white whitespace-pre-wrap p-3 rounded border border-navy-secondary bg-midnight">
               {data.description}
@@ -493,7 +638,7 @@ function CaseDetailDrawer({
                           <Lock className="h-3 w-3 text-warning" />
                         )}
                         <span>{c.authorEmail ?? c.authorName ?? 'Unknown'}</span>
-                        <span>· {new Date(c.createdAt).toLocaleString()}</span>
+                        <span>· {fmtDateTime(c.createdAt)}</span>
                         {c.internalNote && (
                           <span className="text-warning">internal</span>
                         )}
@@ -551,11 +696,41 @@ function TriageBlock({
   detail: CaseDetail;
   onChange: () => void;
 }) {
+  const { user } = useAuth();
   const [resolution, setResolution] = useState(detail.resolution ?? '');
+  const [claiming, setClaiming] = useState(false);
+  const assignedToMe =
+    user !== null && detail.assignedToEmail === user.email;
+
+  const claim = async () => {
+    if (!user) return;
+    setClaiming(true);
+    try {
+      await triageCase(detail.id, { assignedToId: user.id });
+      toast.success('Case assigned to you.');
+      onChange();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setClaiming(false);
+    }
+  };
 
   return (
     <div className="space-y-2 p-3 rounded border border-navy-secondary">
       <div className="text-xs uppercase tracking-wider text-silver">Triage</div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-silver">
+          {detail.assignedToEmail
+            ? `Assigned to ${assignedToMe ? 'you' : detail.assignedToEmail}`
+            : 'Unassigned'}
+        </span>
+        {!assignedToMe && (
+          <Button size="xs" variant="secondary" loading={claiming} onClick={claim}>
+            Assign to me
+          </Button>
+        )}
+      </div>
       <div className="flex gap-2 flex-wrap">
         <Select
           size="sm"

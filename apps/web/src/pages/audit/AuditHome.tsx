@@ -7,6 +7,7 @@ import {
   type AuditFilters,
 } from '@/lib/auditApi';
 import { ApiError } from '@/lib/api';
+import { listDirectory } from '@/lib/directoryApi';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import {
@@ -14,11 +15,22 @@ import {
   CardContent,
   CardHeader,
 } from '@/components/ui/Card';
+import {
+  AssociatePicker,
+  type PickedAssociate,
+} from '@/components/ui/AssociatePicker';
+import {
+  Drawer,
+  DrawerBody,
+  DrawerHeader,
+  DrawerTitle,
+} from '@/components/ui/Drawer';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import {
   Table,
@@ -28,13 +40,39 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/Table';
+import { fmtDateTime } from '@/lib/format';
 
 import { dayHeading, fmtTimeOnly, groupByDay } from '@/lib/dayGroup';
 
 const PAGE_SIZE = 100;
 
-function fmtTs(iso: string): string {
-  return new Date(iso).toLocaleString();
+/**
+ * Entity types the app actually writes audit rows for. Kept as a Select so
+ * HR doesn't have to guess exact casing; "Other…" opens a free-text escape
+ * for anything not listed here yet.
+ */
+const KNOWN_ENTITY_TYPES = [
+  'Application',
+  'User',
+  'Associate',
+  'PayrollRun',
+  'Agreement',
+  'DocumentRecord',
+  'TimeEntry',
+  'Shift',
+  'Client',
+] as const;
+
+const ENTITY_OTHER = '__other__';
+
+function sinceDaysAgo(days: number): string {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+/** Default window: last 7 days. An unbounded first query on years of audit
+ *  rows is slow AND useless — nobody reviews "all history" first. */
+function defaultFilters(): AuditFilters {
+  return { limit: PAGE_SIZE, since: sinceDaysAgo(7) };
 }
 
 function metaPreview(m: Record<string, unknown> | null): string {
@@ -60,13 +98,19 @@ function metaPreview(m: Record<string, unknown> | null): string {
  * external compliance work.
  */
 export function AuditHome() {
-  const [filters, setFilters] = useState<AuditFilters>({ limit: PAGE_SIZE });
-  const [appliedFilters, setAppliedFilters] = useState<AuditFilters>({ limit: PAGE_SIZE });
+  const [filters, setFilters] = useState<AuditFilters>(defaultFilters);
+  const [appliedFilters, setAppliedFilters] = useState<AuditFilters>(defaultFilters);
   const [entries, setEntries] = useState<AuditSearchEntry[] | null>(null);
   const [nextBefore, setNextBefore] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // "Other…" free-text mode for the entity-type filter.
+  const [entityOther, setEntityOther] = useState(false);
+  // Associate helper next to the raw actor-ID input (see the Field hint).
+  const [helperAssociate, setHelperAssociate] = useState<PickedAssociate | null>(null);
+  // Row detail drawer.
+  const [detail, setDetail] = useState<AuditSearchEntry | null>(null);
 
   const load = useCallback(async (f: AuditFilters) => {
     setLoading(true);
@@ -106,9 +150,39 @@ export function AuditHome() {
   };
 
   const reset = () => {
-    const empty: AuditFilters = { limit: PAGE_SIZE };
+    const empty = defaultFilters();
     setFilters(empty);
     setAppliedFilters(empty);
+    setEntityOther(false);
+    setHelperAssociate(null);
+  };
+
+  // Quick time-window chips — set `since` and search immediately.
+  const applyPreset = (hours: number) => {
+    const since = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+    const next = { ...filters, since, before: undefined, limit: PAGE_SIZE };
+    setFilters(next);
+    setAppliedFilters(next);
+  };
+
+  // The audit table keys actors by *user* ID, which isn't searchable by
+  // name from the web app (the directory only exposes associate IDs). The
+  // picker instead fills the associate's email into the Entity ID filter —
+  // auth/onboarding rows are keyed by email there, so it still finds their
+  // trail without pasting UUIDs.
+  const onPickHelperAssociate = (v: PickedAssociate | null) => {
+    setHelperAssociate(v);
+    if (!v) return;
+    listDirectory({ q: v.name })
+      .then((r) => {
+        const email = r.associates.find((a) => a.id === v.id)?.email;
+        setFilters((f) => ({ ...f, entityId: email ?? v.id }));
+      })
+      .catch(() => {
+        // Directory lookup failed — the associate id is still a valid
+        // entity-ID for Associate-typed rows.
+        setFilters((f) => ({ ...f, entityId: v.id }));
+      });
   };
 
   const csvHref = useMemo(() => auditCsvUrl(appliedFilters), [appliedFilters]);
@@ -155,17 +229,48 @@ export function AuditHome() {
               </Field>
               <Field label="Entity type">
                 {(p) => (
-                  <Input
-                    value={filters.entityType ?? ''}
-                    onChange={(e) =>
-                      setFilters((f) => ({
-                        ...f,
-                        entityType: e.target.value || undefined,
-                      }))
-                    }
-                    placeholder="Application, User, PayrollRun…"
-                    {...p}
-                  />
+                  <div className="space-y-2">
+                    <Select
+                      value={
+                        entityOther ? ENTITY_OTHER : (filters.entityType ?? '')
+                      }
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === ENTITY_OTHER) {
+                          setEntityOther(true);
+                          setFilters((f) => ({ ...f, entityType: undefined }));
+                        } else {
+                          setEntityOther(false);
+                          setFilters((f) => ({
+                            ...f,
+                            entityType: v || undefined,
+                          }));
+                        }
+                      }}
+                      {...p}
+                    >
+                      <option value="">Any entity type</option>
+                      {KNOWN_ENTITY_TYPES.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                      <option value={ENTITY_OTHER}>Other…</option>
+                    </Select>
+                    {entityOther && (
+                      <Input
+                        value={filters.entityType ?? ''}
+                        onChange={(e) =>
+                          setFilters((f) => ({
+                            ...f,
+                            entityType: e.target.value || undefined,
+                          }))
+                        }
+                        placeholder="Exact entity type, e.g. KioskDevice"
+                        aria-label="Entity type (free text)"
+                      />
+                    )}
+                  </div>
                 )}
               </Field>
               <Field label="Entity ID">
@@ -198,19 +303,50 @@ export function AuditHome() {
                   />
                 )}
               </Field>
+              <Field
+                label="Find associate"
+                hint="Audit rows key actors by user ID (not searchable by name), so picking someone here fills their email into Entity ID — the key auth and onboarding events are logged under."
+              >
+                {() => (
+                  <AssociatePicker
+                    value={helperAssociate}
+                    onChange={onPickHelperAssociate}
+                    placeholder="Search by name…"
+                  />
+                )}
+              </Field>
               <Field label="Since">
                 {(p) => (
-                  <Input
-                    type="datetime-local"
-                    value={isoToLocal(filters.since)}
-                    onChange={(e) =>
-                      setFilters((f) => ({
-                        ...f,
-                        since: localToIso(e.target.value),
-                      }))
-                    }
-                    {...p}
-                  />
+                  <div className="space-y-2">
+                    <Input
+                      type="datetime-local"
+                      value={isoToLocal(filters.since)}
+                      onChange={(e) =>
+                        setFilters((f) => ({
+                          ...f,
+                          since: localToIso(e.target.value),
+                        }))
+                      }
+                      {...p}
+                    />
+                    <div className="flex gap-1.5">
+                      {[
+                        { label: 'Last 24h', hours: 24 },
+                        { label: '7 days', hours: 7 * 24 },
+                        { label: '30 days', hours: 30 * 24 },
+                      ].map((preset) => (
+                        <Button
+                          key={preset.hours}
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => applyPreset(preset.hours)}
+                        >
+                          {preset.label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </Field>
               <Field label="Before">
@@ -301,10 +437,14 @@ export function AuditHome() {
                     </TableHeader>
                     <TableBody>
                       {group.entries.map((e) => (
-                        <TableRow key={e.id}>
+                        <TableRow
+                          key={e.id}
+                          className="cursor-pointer"
+                          onClick={() => setDetail(e)}
+                        >
                           <TableCell
                             className="text-silver text-xs whitespace-nowrap tabular-nums"
-                            title={fmtTs(e.createdAt)}
+                            title={fmtDateTime(e.createdAt)}
                           >
                             {fmtTimeOnly(e.createdAt)}
                           </TableCell>
@@ -357,6 +497,68 @@ export function AuditHome() {
           End of results — {entries.length} row{entries.length === 1 ? '' : 's'}.
         </p>
       )}
+
+      <Drawer
+        open={detail !== null}
+        onOpenChange={(o) => !o && setDetail(null)}
+        width="max-w-lg"
+      >
+        {detail && (
+          <>
+            <DrawerHeader>
+              <DrawerTitle className="font-mono text-base">
+                {detail.action}
+              </DrawerTitle>
+            </DrawerHeader>
+            <DrawerBody className="space-y-4 text-sm">
+              <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
+                <dt className="text-silver">When</dt>
+                <dd className="text-white">{fmtDateTime(detail.createdAt)}</dd>
+                <dt className="text-silver">Actor</dt>
+                <dd className="text-white break-all">
+                  {detail.actorEmail ?? (
+                    <span className="text-silver/70">system</span>
+                  )}
+                  {detail.actorUserId && (
+                    <div className="font-mono text-[10px] text-silver/70">
+                      {detail.actorUserId}
+                    </div>
+                  )}
+                </dd>
+                <dt className="text-silver">Entity</dt>
+                <dd className="text-white break-all">
+                  {detail.entityType}
+                  <div className="font-mono text-[10px] text-silver/70">
+                    {detail.entityId}
+                  </div>
+                </dd>
+                {detail.clientId && (
+                  <>
+                    <dt className="text-silver">Client ID</dt>
+                    <dd className="font-mono text-xs text-white break-all">
+                      {detail.clientId}
+                    </dd>
+                  </>
+                )}
+              </dl>
+              <div>
+                <div className="text-xs uppercase tracking-widest text-silver mb-1.5">
+                  Metadata
+                </div>
+                {detail.metadata ? (
+                  <pre className="rounded-md border border-navy-secondary bg-navy-secondary/40 p-3 font-mono text-xs text-white overflow-x-auto whitespace-pre-wrap break-all">
+                    {JSON.stringify(detail.metadata, null, 2)}
+                  </pre>
+                ) : (
+                  <div className="text-silver/70 italic">
+                    No metadata recorded for this event.
+                  </div>
+                )}
+              </div>
+            </DrawerBody>
+          </>
+        )}
+      </Drawer>
     </div>
   );
 }

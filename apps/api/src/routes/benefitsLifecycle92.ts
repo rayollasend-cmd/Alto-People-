@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { notifyAssociate } from '../lib/notify.js';
 
 /**
  * Phase 92 — Benefits lifecycle: open enrollment, QLE, COBRA, ACA.
@@ -172,6 +173,14 @@ benefitsLifecycle92Router.post('/qles', VIEW, async (req, res) => {
 
 benefitsLifecycle92Router.post('/qles/:id/decide', MANAGE, async (req, res) => {
   const decision = z.enum(['APPROVED', 'DENIED']).parse(req.body?.decision);
+  // Optional denial reason — not persisted (no column), but surfaced in the
+  // associate's notification so a denial never arrives unexplained.
+  const reason = z
+    .string()
+    .max(2000)
+    .optional()
+    .parse(req.body?.reason)
+    ?.trim();
   const q = await prisma.qualifyingLifeEvent.findUnique({
     where: { id: req.params.id },
   });
@@ -186,6 +195,18 @@ benefitsLifecycle92Router.post('/qles/:id/decide', MANAGE, async (req, res) => {
       decidedAt: new Date(),
       decidedById: req.user!.id,
     },
+  });
+  const approved = decision === 'APPROVED';
+  void notifyAssociate(q.associateId, {
+    subject: approved
+      ? 'Your qualifying life event was approved'
+      : 'Your qualifying life event was denied',
+    body: approved
+      ? `Your qualifying life event was approved. You can update your benefit elections until ${q.allowedUntil.toISOString().slice(0, 10)}.`
+      : `Your qualifying life event was denied.${reason ? ` Reason: ${reason}` : ''} Contact HR if you have questions.`,
+    category: 'benefits',
+    linkUrl: '/benefits',
+    emailFallback: true,
   });
   res.json({ ok: true });
 });
@@ -245,6 +266,19 @@ benefitsLifecycle92Router.post('/cobra', MANAGE, async (req, res) => {
       coverageEndsOn,
       premiumPerMonth: input.premiumPerMonth ?? null,
     },
+  });
+  // emailFallback matters here: the COBRA population (terminated / reduced
+  // hours) is exactly the group least likely to still have an active login.
+  void notifyAssociate(created.associateId, {
+    subject: 'COBRA continuation coverage offer',
+    body:
+      `You are eligible to continue your health coverage under COBRA. ` +
+      `Elect or waive by ${electionDeadline.toISOString().slice(0, 10)}` +
+      `${input.premiumPerMonth != null ? ` (premium $${input.premiumPerMonth}/month)` : ''}. ` +
+      `If you do nothing, the offer expires on that date.`,
+    category: 'benefits',
+    linkUrl: '/benefits',
+    emailFallback: true,
   });
   res.status(201).json({ id: created.id });
 });

@@ -9,6 +9,7 @@ import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { decryptString, encryptString } from '../lib/crypto.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { send } from '../lib/notifications.js';
+import { notifyAllAdmins } from '../lib/notify.js';
 import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
 
 /**
@@ -459,6 +460,8 @@ selfServiceRouter.get('/me/life-events', async (req, res) => {
 selfServiceRouter.post('/me/life-events', async (req, res) => {
   const associateId = requireAssociate(req);
   const input = LifeEventInputSchema.parse(req.body);
+  // include the associate's name — one joined read is cheaper than a
+  // follow-up query, and admins shouldn't get a bare UUID in their inbox.
   const created = await prisma.lifeEvent.create({
     data: {
       associateId,
@@ -466,6 +469,21 @@ selfServiceRouter.post('/me/life-events', async (req, res) => {
       eventDate: new Date(input.eventDate),
       notes: input.notes ?? null,
     },
+    include: {
+      associate: { select: { firstName: true, lastName: true } },
+    },
+  });
+  // Fire-and-forget after the write — life events gate benefits windows
+  // (30-day qualifying-event clock), so HR needs a nudge, but a
+  // notification hiccup must never fail the associate's submission.
+  const who = created.associate
+    ? `${created.associate.firstName} ${created.associate.lastName}`
+    : associateId;
+  void notifyAllAdmins({
+    subject: `Life event reported: ${input.kind.replace(/_/g, ' ')}`,
+    body: `${who} reported ${input.kind} effective ${input.eventDate} — review benefits eligibility.`,
+    category: 'benefits',
+    linkUrl: '/people',
   });
   // Fire workflow: associate hired isn't relevant; this is informational
   // for HR. We use ASSOCIATE_HIRED-style channel? No — there's no

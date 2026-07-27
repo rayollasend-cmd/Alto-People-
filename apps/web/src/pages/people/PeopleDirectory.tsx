@@ -40,7 +40,9 @@ import { listDirectory, type DirectoryFilters } from '@/lib/directoryApi';
 import { listClients } from '@/lib/clientsApi';
 import type { ClientListItem } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtMoney } from '@/lib/format';
+import { fmtDate, fmtMoney, fmtPayRate, parseYmd, ymdLocal } from '@/lib/format';
+import { downloadCsv } from '@/lib/csv';
+import { EMPLOYMENT_LABEL } from '@/lib/employmentLabels';
 import {
   type CompChangeReason,
   type CompRecord,
@@ -135,12 +137,6 @@ const STATUS_LABEL: Record<DirectoryStatus, string> = {
   INACTIVE: 'Inactive',
 };
 
-const EMPLOYMENT_LABEL: Record<string, string> = {
-  W2_EMPLOYEE: 'W-2',
-  CONTRACTOR_1099_INDIVIDUAL: '1099 Individual',
-  CONTRACTOR_1099_BUSINESS: '1099 Business',
-};
-
 const PAY_TYPE_SUFFIX: Record<string, string> = {
   HOURLY: '/ hr',
   SALARY: '/ yr',
@@ -224,10 +220,19 @@ export function PeopleDirectory() {
   const urlSeedApplied = useRef(false);
   if (!urlSeedApplied.current) {
     urlSeedApplied.current = true;
-    const raw = new URLSearchParams(window.location.search).get(
-      'status',
-    ) as DirectoryStatus | null;
+    const params = new URLSearchParams(window.location.search);
+    const raw = params.get('status') as DirectoryStatus | null;
     if (raw && SEEDABLE_STATUSES.has(raw) && raw !== status) setStatus(raw);
+    // ?employmentType= deep-link — the headcount dashboard's
+    // by-employment-type rows land here pre-filtered.
+    const rawType = params.get('employmentType');
+    if (
+      rawType &&
+      (EMPLOYMENT_TYPE_VALUES as readonly string[]).includes(rawType) &&
+      rawType !== employmentType
+    ) {
+      setEmploymentType(rawType as EmploymentTypeFilter);
+    }
   }
   const filters = useMemo<DirectoryFilters>(
     () => ({
@@ -314,7 +319,11 @@ export function PeopleDirectory() {
   // keepPreviousData makes filter/search changes show the old rows
   // (faded by isFetching) until the new ones arrive instead of flashing
   // a skeleton — much smoother on slow connections.
-  const { data: rows, error: rowsError } = useQuery({
+  const {
+    data: rows,
+    error: rowsError,
+    isFetching: rowsFetching,
+  } = useQuery({
     queryKey: ['directory', filters],
     queryFn: async () => (await listDirectory(filters)).associates,
     placeholderData: keepPreviousData,
@@ -324,16 +333,48 @@ export function PeopleDirectory() {
   // canonical drawer-open path so we get all the existing render logic
   // for free. Strip the query param so the URL stays clean and a back-
   // forward dance doesn't re-open the drawer after the user closed it.
+  //
+  // When no loaded row matches (persisted status/workplace filters can
+  // hide the person), there's no single-associate getter in the
+  // directory API to fall back on — so we clear those filters once and
+  // let the refetch surface them. If they're still absent after the
+  // widened fetch, the id is stale: drop the param instead of looping.
+  const deepLinkRetried = useRef(false);
   useEffect(() => {
-    if (!deepLinkAssociateId || !rows) return;
-    const match = rows.find((r) => r.id === deepLinkAssociateId);
-    if (match) {
-      setTarget(match);
+    if (!deepLinkAssociateId || !rows || rowsFetching) return;
+    const dropParam = () => {
       const next = new URLSearchParams(searchParams);
       next.delete('associateId');
       setSearchParams(next, { replace: true });
+    };
+    const match = rows.find((r) => r.id === deepLinkAssociateId);
+    if (match) {
+      setTarget(match);
+      dropParam();
+      return;
     }
-  }, [deepLinkAssociateId, rows, searchParams, setSearchParams]);
+    if (!deepLinkRetried.current && (status || clientId || locationId)) {
+      deepLinkRetried.current = true;
+      setStatus('');
+      setClientId('');
+      setLocationId('');
+      toast('Cleared filters to show this person');
+      return;
+    }
+    toast.error("Couldn't find that person in the directory.");
+    dropParam();
+  }, [
+    deepLinkAssociateId,
+    rows,
+    rowsFetching,
+    searchParams,
+    setSearchParams,
+    status,
+    clientId,
+    locationId,
+    setStatus,
+    setClientId,
+  ]);
   const error = rowsError
     ? rowsError instanceof ApiError
       ? rowsError.message
@@ -350,6 +391,37 @@ export function PeopleDirectory() {
     for (const r of rows) byStatus[r.status] += 1;
     return { total: rows.length, ...byStatus };
   }, [rows]);
+
+  const hasActiveFilters = Boolean(
+    q || status || clientId || locationId || departmentId || employmentType,
+  );
+
+  const clearAllFilters = () => {
+    setSearch('');
+    setQ('');
+    setStatus('');
+    setClientId('');
+    setLocationId('');
+    setDepartmentId('');
+    setEmploymentType('');
+  };
+
+  // Serializes exactly what the user is looking at — the current
+  // (server-filtered) rows, not the whole directory.
+  const exportCsv = () => {
+    if (!rows || rows.length === 0) return;
+    downloadCsv(`people-${ymdLocal()}.csv`, [
+      ['Name', 'Status', 'Email', 'Workplace', 'Type', 'Start date'],
+      ...rows.map((r) => [
+        `${r.firstName} ${r.lastName}`,
+        STATUS_LABEL[r.status],
+        r.email,
+        r.workplaceClientName ?? '',
+        EMPLOYMENT_LABEL[r.employmentType] ?? r.employmentType,
+        r.startDate ?? '',
+      ]),
+    ]);
+  };
 
   return (
     <div className="space-y-5">
@@ -464,6 +536,16 @@ export function PeopleDirectory() {
               { value: 'CONTRACTOR_1099_BUSINESS', label: '1099 Business' },
             ]}
           />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={exportCsv}
+            disabled={!rows || rows.length === 0}
+            title="Download the current filtered list as CSV"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Export CSV
+          </Button>
         </CardContent>
       </Card>
 
@@ -475,14 +557,29 @@ export function PeopleDirectory() {
         <EmptyState
           icon={Users}
           title={
-            filters.q || filters.status || filters.clientId || filters.departmentId || filters.locationId || filters.employmentType
+            hasActiveFilters
               ? 'No associates match these filters'
               : 'No associates yet'
           }
           description={
-            filters.q || filters.status || filters.clientId || filters.departmentId || filters.locationId || filters.employmentType
+            hasActiveFilters
               ? 'Loosen a filter or clear the search.'
               : 'Once you invite associates through onboarding they show up here.'
+          }
+          action={
+            hasActiveFilters ? (
+              <Button variant="outline" size="sm" onClick={clearAllFilters}>
+                <X className="h-3.5 w-3.5" />
+                Clear all filters
+              </Button>
+            ) : (
+              <Button asChild size="sm">
+                <Link to="/onboarding">
+                  <Plus className="h-3.5 w-3.5" />
+                  Invite associates
+                </Link>
+              </Button>
+            )
           }
         />
       )}
@@ -861,7 +958,11 @@ const DirectoryRow = memo(function DirectoryRow({
         )}
       </TableCell>
       <TableCell className="hidden xl:table-cell text-silver text-xs tabular-nums">
-        {r.startDate ?? <span className="text-silver/70" aria-hidden="true">—</span>}
+        {r.startDate ? (
+          fmtDate(parseYmd(r.startDate) ?? r.startDate)
+        ) : (
+          <span className="text-silver/70" aria-hidden="true">—</span>
+        )}
       </TableCell>
     </TableRow>
   );
@@ -984,7 +1085,7 @@ function DirectoryDrawer({
           Close
         </Button>
         <Link
-          to={`/org`}
+          to={`/org?tab=people&associateId=${a.id}`}
           className="text-xs px-3 py-2 rounded bg-navy-secondary/60 text-silver hover:text-white border border-navy-secondary"
         >
           Edit org assignment
@@ -1051,7 +1152,10 @@ function ProfileTab({
           label="Position"
           value={a.position ?? '—'}
         />
-        <InfoRow label="Start date" value={a.startDate ?? '—'} />
+        <InfoRow
+          label="Start date"
+          value={a.startDate ? fmtDate(parseYmd(a.startDate) ?? a.startDate) : '—'}
+        />
         {a.status === 'PENDING' && a.onboardingPercent !== null && (
           <InfoRow
             label="Onboarding"
@@ -1206,6 +1310,8 @@ function PhoneField({
         </div>
         <div className="flex-1 min-w-0 flex items-center gap-1">
           <Input
+            type="tel"
+            inputMode="tel"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             placeholder="555 555 0123"
@@ -1404,8 +1510,35 @@ function CompensationTab({ associate: a }: { associate: DirectoryEntry }) {
       </Card>
 
       <div>
-        <div className="text-[10px] uppercase tracking-widest text-silver/80 mb-2 border-b border-navy-secondary pb-1">
-          History
+        <div className="flex items-center justify-between mb-2 border-b border-navy-secondary pb-1">
+          <div className="text-[10px] uppercase tracking-widest text-silver/80">
+            History
+          </div>
+          {records && records.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                downloadCsv(
+                  `pay-history-${a.firstName}-${a.lastName}-${ymdLocal()}.csv`.toLowerCase(),
+                  [
+                    ['Effective from', 'Effective to', 'Amount', 'Pay type', 'Reason', 'Notes'],
+                    ...records.map((r) => [
+                      fmtDate(r.effectiveFrom),
+                      r.effectiveTo ? fmtDate(r.effectiveTo) : '',
+                      r.amount,
+                      r.payType,
+                      REASON_LABEL[r.reason],
+                      r.notes ?? '',
+                    ]),
+                  ],
+                )
+              }
+            >
+              <Download className="h-3.5 w-3.5" />
+              CSV
+            </Button>
+          )}
         </div>
         {error && (
           <div className="text-sm text-alert" role="alert">
@@ -1484,7 +1617,7 @@ function TransferDialog({
   associate: DirectoryEntry;
   onSaved: (locationId: string, locationName: string) => void;
 }) {
-  const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const today = useMemo(() => ymdLocal(), []);
   const [locationId, setLocationId] = useState<string>(a.currentLocationId ?? '');
   const [startedAt, setStartedAt] = useState(today);
   const [reason, setReason] = useState('');
@@ -2006,9 +2139,6 @@ function W4Section({ associateId }: { associateId: string }) {
   if (!canSee) return null;
   if (data && data.employmentType !== 'W2_EMPLOYEE') return null; // 1099 → no W-4
 
-  const money = (n: number | null) =>
-    n == null ? '—' : n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
-
   const startEdit = () => {
     if (!data) return;
     setForm({
@@ -2104,10 +2234,10 @@ function W4Section({ associateId }: { associateId: string }) {
             label="Filing status"
             value={data.filingStatus ? W4_FILING_LABEL[data.filingStatus] : '—'}
           />
-          <InfoRow label="Dependents credit" value={money(data.dependentsAmount)} />
-          <InfoRow label="Other income" value={money(data.otherIncome)} />
-          <InfoRow label="Deductions" value={money(data.deductions)} />
-          <InfoRow label="Extra withholding / check" value={money(data.extraWithholding)} />
+          <InfoRow label="Dependents credit" value={fmtMoney(data.dependentsAmount)} />
+          <InfoRow label="Other income" value={fmtMoney(data.otherIncome)} />
+          <InfoRow label="Deductions" value={fmtMoney(data.deductions)} />
+          <InfoRow label="Extra withholding / check" value={fmtMoney(data.extraWithholding)} />
           {data.signedAt && (
             <InfoRow
               label="Last signed"
@@ -2274,7 +2404,7 @@ function NewRateDialog({
   currentRecord: CompRecord | null;
   onSaved: () => void;
 }) {
-  const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const today = useMemo(() => ymdLocal(), []);
   const initialPayType: PayType =
     (currentRecord?.payType as PayType | undefined) ??
     (a.payType === 'SALARY' ? 'SALARY' : 'HOURLY');
@@ -2303,6 +2433,27 @@ function NewRateDialog({
   const amountNum = Number(amount);
   const valid =
     Number.isFinite(amountNum) && amountNum > 0 && effectiveFrom.length === 10;
+
+  // Live "was → will be" math against the current open record so the
+  // admin sees the delta before committing.
+  const currentAmountNum = currentRecord ? Number(currentRecord.amount) : NaN;
+  const deltaPct =
+    Number.isFinite(currentAmountNum) &&
+    currentAmountNum > 0 &&
+    Number.isFinite(amountNum) &&
+    amountNum > 0
+      ? ((amountNum - currentAmountNum) / currentAmountNum) * 100
+      : null;
+  // Effective-from can't sensibly predate the current record's start —
+  // back-dating past it rewrites already-closed history.
+  const minEffectiveFrom = currentRecord
+    ? currentRecord.effectiveFrom.slice(0, 10)
+    : undefined;
+  const backdated = Boolean(
+    minEffectiveFrom &&
+      effectiveFrom.length === 10 &&
+      effectiveFrom < minEffectiveFrom,
+  );
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -2355,16 +2506,27 @@ function NewRateDialog({
               label={`Amount${payType === 'HOURLY' ? ' / hour' : ' / year'}`}
             >
               {(p) => (
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  step="0.01"
-                  min="0"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  placeholder={payType === 'HOURLY' ? '24.50' : '65000'}
-                  {...p}
-                />
+                <div>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.01"
+                    min="0"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    placeholder={payType === 'HOURLY' ? '24.50' : '65000'}
+                    {...p}
+                  />
+                  {currentRecord && deltaPct !== null && (
+                    <p className="mt-1 text-[11px] text-silver tabular-nums">
+                      was{' '}
+                      {fmtPayRate(currentRecord.amount, currentRecord.payType)}{' '}
+                      → {fmtPayRate(amountNum, payType)} (
+                      {deltaPct >= 0 ? '+' : ''}
+                      {deltaPct.toFixed(1)}%)
+                    </p>
+                  )}
+                </div>
               )}
             </Field>
           </div>
@@ -2372,12 +2534,22 @@ function NewRateDialog({
           <div className="grid grid-cols-2 gap-3">
             <Field label="Effective from">
               {(p) => (
-                <Input
-                  type="date"
-                  value={effectiveFrom}
-                  onChange={(e) => setEffectiveFrom(e.target.value)}
-                  {...p}
-                />
+                <div>
+                  <Input
+                    type="date"
+                    value={effectiveFrom}
+                    min={minEffectiveFrom}
+                    onChange={(e) => setEffectiveFrom(e.target.value)}
+                    {...p}
+                  />
+                  {backdated && (
+                    <p className="mt-1 text-[11px] text-warning" role="alert">
+                      Before the current rate&apos;s start (
+                      {fmtDate(parseYmd(minEffectiveFrom!) ?? minEffectiveFrom)}
+                      ) — this back-dates pay history.
+                    </p>
+                  )}
+                </div>
               )}
             </Field>
             <Field label="Reason">

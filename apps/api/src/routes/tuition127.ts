@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
+import { notifyAssociate } from '../lib/notify.js';
 
 /**
  * Phase 127 — Tuition reimbursement.
@@ -200,6 +201,25 @@ tuition127Router.post(
         reviewerNotes: input.notes ?? null,
       },
     });
+    // Fire-and-forget, after the write. Rejections carry the reviewer's
+    // reason so the associate isn't left guessing.
+    const notes = input.notes?.trim() || null;
+    const approved = input.decision === 'APPROVED';
+    void notifyAssociate(r.associateId, {
+      subject: approved
+        ? `Tuition request approved: ${r.courseName}`
+        : `Tuition request rejected: ${r.courseName}`,
+      body: approved
+        ? `Your tuition reimbursement request for "${r.courseName}" ` +
+          `(${r.currency} ${r.amount.toString()}) was approved and is awaiting payment.` +
+          (notes ? ` Reviewer notes: ${notes}` : '')
+        : `Your tuition reimbursement request for "${r.courseName}" ` +
+          `(${r.currency} ${r.amount.toString()}) was rejected.` +
+          (notes ? ` Reason: ${notes}` : ''),
+      category: 'tuition',
+      linkUrl: '/tuition',
+      emailFallback: true,
+    });
     res.json({ ok: true });
   },
 );
@@ -229,6 +249,17 @@ tuition127Router.post(
         paidById: req.user!.id,
         paidAt: new Date(),
       },
+    });
+    // Fire-and-forget, after the write.
+    void notifyAssociate(r.associateId, {
+      subject: `Tuition reimbursement paid: ${r.courseName}`,
+      body:
+        `Your tuition reimbursement for "${r.courseName}" ` +
+        `(${r.currency} ${r.amount.toString()}) has been paid.` +
+        (r.reviewerNotes ? ` Reviewer notes: ${r.reviewerNotes}` : ''),
+      category: 'tuition',
+      linkUrl: '/tuition',
+      emailFallback: true,
     });
     res.json({ ok: true });
   },

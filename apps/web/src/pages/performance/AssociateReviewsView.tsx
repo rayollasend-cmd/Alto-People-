@@ -3,6 +3,7 @@ import { ClipboardCheck } from 'lucide-react';
 import type { PerformanceReview } from '@alto-people/shared';
 import { acknowledgeReview, listMyReviews } from '@/lib/performanceApi';
 import { ApiError } from '@/lib/api';
+import { fmtDate, parseYmd } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -74,7 +75,7 @@ export function AssociateReviewsView() {
               <div className="flex items-start justify-between gap-4 mb-3">
                 <div>
                   <div className="text-xs uppercase tracking-widest text-silver">
-                    {r.periodStart} → {r.periodEnd}
+                    {fmtDate(parseYmd(r.periodStart))} → {fmtDate(parseYmd(r.periodEnd))}
                   </div>
                   <div className="font-display text-2xl text-gold tabular-nums">
                     {ratingStars(r.overallRating)}

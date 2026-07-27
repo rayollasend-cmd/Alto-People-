@@ -5,6 +5,7 @@ import { CareersApplyInputSchema } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { send } from '../lib/notifications.js';
 import {
   careersApplyEmailLimiter,
   careersApplyIpLimiter,
@@ -259,7 +260,12 @@ recruiting90Router.post('/offers', MANAGE, async (req, res) => {
 });
 
 recruiting90Router.post('/offers/:id/send', MANAGE, async (req, res) => {
-  const o = await prisma.offer.findUnique({ where: { id: req.params.id } });
+  const o = await prisma.offer.findUnique({
+    where: { id: req.params.id },
+    include: {
+      candidate: { select: { firstName: true, lastName: true, email: true } },
+    },
+  });
   if (!o) throw new HttpError(404, 'not_found', 'Offer not found.');
   if (o.status !== 'DRAFT') {
     throw new HttpError(409, 'invalid_state', `Cannot send offer in ${o.status} state.`);
@@ -268,7 +274,39 @@ recruiting90Router.post('/offers/:id/send', MANAGE, async (req, res) => {
     where: { id: o.id },
     data: { status: 'SENT', sentAt: new Date() },
   });
-  res.json({ ok: true });
+
+  // Actually email the candidate the offer. Candidates are usually not
+  // Users yet, so this is a raw email — fire-and-forget after the write.
+  // If there is no reachable email, the flip still happened; the `emailed`
+  // flag lets the UI toast "Marked sent — no candidate email on file."
+  const candidateEmail = o.candidate.email?.trim() || null;
+  if (candidateEmail) {
+    const pay =
+      o.salary != null
+        ? `${o.currency} ${o.salary.toString()} per year`
+        : o.hourlyRate != null
+          ? `${o.currency} ${o.hourlyRate.toString()} per hour`
+          : 'to be discussed';
+    void send({
+      channel: 'EMAIL',
+      recipient: { userId: null, phone: null, email: candidateEmail },
+      subject: 'Your offer from Alto People',
+      body: [
+        `Hi ${o.candidate.firstName},`,
+        '',
+        `We are pleased to extend you an offer for the position of ${o.jobTitle}.`,
+        '',
+        `Start date: ${o.startDate.toISOString().slice(0, 10)}`,
+        `Compensation: ${pay}`,
+        ...(o.letterBody ? ['', o.letterBody] : []),
+        '',
+        'Please reply to this email with any questions.',
+      ].join('\n'),
+    }).catch(() => {
+      /* fire-and-forget — the offer is already SENT */
+    });
+  }
+  res.json({ ok: true, emailed: candidateEmail !== null });
 });
 
 recruiting90Router.post('/offers/:id/decision', MANAGE, async (req, res) => {
@@ -369,6 +407,46 @@ recruiting90Router.post('/referrals/:id/bonus-paid', MANAGE, async (req, res) =>
     data: { bonusPaidAt: new Date() },
   });
   res.json({ ok: true });
+});
+
+/**
+ * Promote a referral into the recruiting funnel: create a Candidate from
+ * the referral's stored contact info (source 'referral') and link it back
+ * via referral.candidateId. Idempotent — an already-converted referral
+ * returns its existing candidateId, and an existing candidate with the
+ * same email is linked rather than duplicated (email is unique).
+ */
+recruiting90Router.post('/referrals/:id/convert', MANAGE, async (req, res) => {
+  const referral = await prisma.referral.findUnique({
+    where: { id: req.params.id },
+  });
+  if (!referral) throw new HttpError(404, 'not_found', 'Referral not found.');
+  if (referral.candidateId) {
+    res.json({ candidateId: referral.candidateId });
+    return;
+  }
+  const email = referral.candidateEmail.trim().toLowerCase();
+  let candidate = await prisma.candidate.findUnique({ where: { email } });
+  if (!candidate) {
+    const parts = referral.candidateName.trim().split(/\s+/);
+    candidate = await prisma.candidate.create({
+      data: {
+        firstName: parts[0] ?? referral.candidateName,
+        lastName: parts.slice(1).join(' '),
+        email,
+        phone: referral.candidatePhone,
+        position: referral.position,
+        source: 'referral',
+        notes: referral.notes,
+        stage: 'APPLIED',
+      },
+    });
+  }
+  await prisma.referral.update({
+    where: { id: referral.id },
+    data: { candidateId: candidate.id },
+  });
+  res.status(201).json({ candidateId: candidate.id });
 });
 
 // ----- Job Postings (admin) ----------------------------------------------

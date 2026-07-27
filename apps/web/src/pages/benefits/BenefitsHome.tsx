@@ -36,7 +36,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { listClients } from '@/lib/onboardingApi';
@@ -53,13 +53,6 @@ const KIND_LABEL: Record<BenefitsPlanKind, string> = {
   LIFE_INSURANCE: 'Life insurance',
   DISABILITY: 'Disability',
 };
-
-const fmtMoney = (cents: number) =>
-  (cents / 100).toLocaleString('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: 2,
-  });
 
 function isActiveEnrollment(e: BenefitsEnrollment): boolean {
   if (!e.terminationDate) return true;
@@ -81,7 +74,9 @@ export function BenefitsHome() {
         // The associate's first client drives the available-plans pool.
         // For multi-client associates this is a v1 simplification — pick
         // the most recent application's client (matches backend logic).
-        listClients().catch(() => ({ clients: [] })),
+        // A failure here surfaces as the page-level error (with Retry)
+        // rather than silently pretending there are no plans to offer.
+        listClients(),
       ]);
       setEnrollments(mine.enrollments);
 
@@ -130,9 +125,18 @@ export function BenefitsHome() {
         subtitle="Pre-tax elections come out of every paycheck before federal, FICA, Medicare, and state tax. Your take-home goes down by less than the elected amount."
       />
 
-      {error && <ErrorBanner>{error}</ErrorBanner>}
+      {error && (
+        <ErrorBanner>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span>{error}</span>
+            <Button size="sm" variant="secondary" onClick={refresh}>
+              Retry
+            </Button>
+          </div>
+        </ErrorBanner>
+      )}
 
-      {!enrollments && (
+      {!enrollments && !error && (
         <div className="space-y-2">
           <Skeleton className="h-20" />
           <Skeleton className="h-20" />
@@ -156,7 +160,29 @@ export function BenefitsHome() {
               <EmptyState
                 icon={HeartPulse}
                 title="No active benefits"
-                description="When HR opens enrollment, plans you're eligible for will appear below to elect."
+                description={
+                  offerable.length > 0
+                    ? `${offerable.length} plan${offerable.length === 1 ? ' is' : 's are'} available to elect right now.`
+                    : "When HR opens enrollment, plans you're eligible for will appear below to elect."
+                }
+                action={
+                  offerable.length > 0 ? (
+                    <Button
+                      size="sm"
+                      onClick={() =>
+                        document
+                          .getElementById('benefits-available-plans')
+                          ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                      }
+                    >
+                      Browse available plans
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="secondary" onClick={refresh}>
+                      Refresh
+                    </Button>
+                  )
+                }
               />
             ) : (
               <ul className="divide-y divide-navy-secondary">
@@ -173,48 +199,62 @@ export function BenefitsHome() {
         </Card>
       )}
 
-      {availablePlans && offerable.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Available plans</CardTitle>
-            <CardDescription>
-              Pick a plan to enroll. You can change or cancel any time —
-              enrollment changes apply on the next payroll period.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="p-0">
-            <ul className="divide-y divide-navy-secondary">
-              {offerable.map((p) => (
-                <li key={p.id} className="p-4 flex items-center gap-4">
-                  <div className="flex-1 min-w-0">
-                    <Badge variant="outline" className="text-[10px] mb-1">
-                      {KIND_LABEL[p.kind]}
-                    </Badge>
-                    <div className="text-white font-medium">{p.name}</div>
-                    {p.description && (
-                      <p className="text-xs text-silver/80 mt-1">{p.description}</p>
-                    )}
-                    <div className="text-xs text-silver mt-1">
-                      Default: {fmtMoney(p.employeeContributionDefaultCentsPerPeriod)}/period
-                      {p.employerContributionCentsPerPeriod > 0 && (
-                        <>
-                          {' · '}
-                          Employer match:{' '}
-                          {fmtMoney(p.employerContributionCentsPerPeriod)}
-                        </>
+      {availablePlans &&
+        (offerable.length > 0 ? (
+          <Card id="benefits-available-plans">
+            <CardHeader>
+              <CardTitle>Available plans</CardTitle>
+              <CardDescription>
+                Pick a plan to enroll. You can change or cancel any time —
+                enrollment changes apply on the next payroll period.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              <ul className="divide-y divide-navy-secondary">
+                {offerable.map((p) => (
+                  <li key={p.id} className="p-4 flex items-center gap-4">
+                    <div className="flex-1 min-w-0">
+                      <Badge variant="outline" className="text-[10px] mb-1">
+                        {KIND_LABEL[p.kind]}
+                      </Badge>
+                      <div className="text-white font-medium">{p.name}</div>
+                      {p.description && (
+                        <p className="text-xs text-silver/80 mt-1">{p.description}</p>
                       )}
+                      <div className="text-xs text-silver mt-1">
+                        Default: {fmtMoney(p.employeeContributionDefaultCentsPerPeriod / 100)}/period
+                        {p.employerContributionCentsPerPeriod > 0 && (
+                          <>
+                            {' · '}
+                            Employer match:{' '}
+                            {fmtMoney(p.employerContributionCentsPerPeriod / 100)}
+                          </>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  <Button size="sm" onClick={() => setEnrolling(p)}>
-                    <Plus className="h-4 w-4" />
-                    Enroll
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
-      )}
+                    <Button size="sm" onClick={() => setEnrolling(p)}>
+                      <Plus className="h-4 w-4" />
+                      Enroll
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardHeader>
+              <CardTitle>Available plans</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-silver">
+                {availablePlans.length === 0
+                  ? 'Your employer hasn’t published any benefit plans yet. When HR sets up plans or opens enrollment, they’ll appear here to elect.'
+                  : 'You’re already enrolled in every plan your employer currently offers — there’s nothing new to elect right now.'}
+              </p>
+            </CardContent>
+          </Card>
+        ))}
 
       <EnrollDialog
         plan={enrolling}
@@ -265,7 +305,7 @@ function EnrollmentRow({
         </Badge>
         <div className="text-white font-medium">{enrollment.planName}</div>
         <div className="text-xs text-silver mt-0.5">
-          {fmtMoney(enrollment.electedAmountCentsPerPeriod)}/period · effective{' '}
+          {fmtMoney(enrollment.electedAmountCentsPerPeriod / 100)}/period · effective{' '}
           {fmtDate(enrollment.effectiveDate)}
           {enrollment.terminationDate && (
             <>
@@ -316,21 +356,41 @@ function EnrollDialog({
   onEnrolled: () => void;
 }) {
   const [amount, setAmount] = useState('');
+  const [amountError, setAmountError] = useState<string | null>(null);
+  const [coverageStarts, setCoverageStarts] = useState(ymdLocal());
+  const [dateError, setDateError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (plan) {
       setAmount((plan.employeeContributionDefaultCentsPerPeriod / 100).toFixed(2));
+      setCoverageStarts(ymdLocal());
     } else {
       setAmount('');
     }
+    setAmountError(null);
+    setDateError(null);
   }, [plan]);
+
+  // Live math for the annualized line under the amount field. 26 biweekly
+  // pay periods per year — matches the payroll cadence used app-wide.
+  const cents = Math.round(Number(amount) * 100);
+  const centsValid = amount !== '' && Number.isFinite(cents) && cents > 0;
+  const employerMatchCents = plan?.employerContributionCentsPerPeriod ?? 0;
 
   const submit = async () => {
     if (!plan) return;
-    const cents = Math.round(Number(amount) * 100);
     if (!Number.isFinite(cents) || cents < 0) {
-      toast.error('Election amount must be a non-negative number.');
+      setAmountError('Enter a valid dollar amount.');
+      return;
+    }
+    if (cents === 0) {
+      setAmountError('Election must be more than $0.00 — to stop contributing, don’t enroll (or end an existing enrollment).');
+      return;
+    }
+    const startDate = parseYmd(coverageStarts);
+    if (!startDate) {
+      setDateError('Pick a valid coverage start date.');
       return;
     }
     setSubmitting(true);
@@ -338,7 +398,7 @@ function EnrollDialog({
       await enrollMe({
         planId: plan.id,
         electedAmountCentsPerPeriod: cents,
-        effectiveDate: new Date().toISOString(),
+        effectiveDate: startDate.toISOString(),
       });
       toast.success(`Enrolled in ${plan.name}.`);
       onEnrolled();
@@ -357,14 +417,15 @@ function EnrollDialog({
         <DialogHeader>
           <DialogTitle>Enroll in {plan?.name}</DialogTitle>
           <DialogDescription>
-            Set your per-pay-period election. Effective immediately — first
-            deduction comes out of the next payroll run.
+            Set your per-pay-period election. The first deduction comes out of
+            the first payroll run on or after your coverage start date.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <Field
             label="Election amount (USD/period)"
             required
+            error={amountError}
             hint="Pre-tax — reduces your taxable wages on the paystub."
           >
             {(p) => (
@@ -373,8 +434,37 @@ function EnrollDialog({
                 step="0.01"
                 min="0"
                 value={amount}
-                onChange={(e) => setAmount(e.target.value)}
+                onChange={(e) => {
+                  setAmount(e.target.value);
+                  setAmountError(null);
+                }}
                 autoFocus
+                {...p}
+              />
+            )}
+          </Field>
+          {centsValid && (
+            <p className="text-xs text-silver">
+              ≈ {fmtMoney((cents * 26) / 100)} per year across 26 pay periods
+              {employerMatchCents > 0 && (
+                <>
+                  {' '}
+                  — plus {fmtMoney((employerMatchCents * 26) / 100)}/yr employer
+                  match
+                </>
+              )}
+              .
+            </p>
+          )}
+          <Field label="Coverage starts" required error={dateError}>
+            {(p) => (
+              <Input
+                type="date"
+                value={coverageStarts}
+                onChange={(e) => {
+                  setCoverageStarts(e.target.value);
+                  setDateError(null);
+                }}
                 {...p}
               />
             )}

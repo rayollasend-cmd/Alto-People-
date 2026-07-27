@@ -32,6 +32,12 @@ import {
 interface CommandPaletteProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * Opens the KeyboardShortcutsDialog mounted alongside the palette (in
+   * Layout). Lifted in as a prop so the "Keyboard shortcuts" item can
+   * actually show the overlay rather than just closing the palette.
+   */
+  onShowKeyboardShortcuts?: () => void;
 }
 
 interface PaletteItem {
@@ -66,7 +72,11 @@ const GROUP_CLASS =
  * because People results come from the server and must not be re-filtered
  * by cmdk's fuzzy matcher (a hit on email would otherwise be hidden).
  */
-export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
+export function CommandPalette({
+  open,
+  onOpenChange,
+  onShowKeyboardShortcuts,
+}: CommandPaletteProps) {
   const navigate = useNavigate();
   const { signOut, can, user } = useAuth();
   const [search, setSearch] = useState('');
@@ -241,10 +251,13 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     {
       id: 'help-shortcuts',
       label: 'Keyboard shortcuts',
-      hint: 'Open this palette with ⌘K / Ctrl+K',
+      hint: 'See every shortcut (also: press ?)',
       icon: HelpCircle,
       group: 'Help',
-      perform: ({ close }) => close(),
+      perform: ({ close }) => {
+        close();
+        onShowKeyboardShortcuts?.();
+      },
     },
   ];
 

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { notifyAssociate, notifyManager } from '../lib/notify.js';
 
 /**
  * Phase 83 — Compensation: history + bands + merit cycles.
@@ -166,6 +167,21 @@ compensationRouter.post(
           actorUserId: req.user!.id,
         },
       });
+    });
+    // Fire-and-forget, after the transaction commits. emailFallback so a
+    // pay change reaches the person even without an active account.
+    const effectiveDate = effectiveFrom.toISOString().slice(0, 10);
+    void notifyAssociate(associateId, {
+      subject: 'Your pay rate was updated',
+      body: `New rate effective ${effectiveDate}. Open your profile for details.`,
+      category: 'compensation',
+      linkUrl: '/me',
+      emailFallback: true,
+    });
+    void notifyManager(associateId, {
+      subject: 'Pay rate updated on your team',
+      body: `${associate.firstName} ${associate.lastName} has a new rate effective ${effectiveDate}.`,
+      category: 'compensation',
     });
     res.status(201).json({ ok: true });
   },

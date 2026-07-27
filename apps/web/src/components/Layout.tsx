@@ -169,7 +169,11 @@ export function Layout() {
           </main>
           <BottomTabBar onOpenMenu={() => setMobileOpen(true)} />
         </div>
-        <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+        <CommandPalette
+          open={paletteOpen}
+          onOpenChange={setPaletteOpen}
+          onShowKeyboardShortcuts={() => setShortcutsOpen(true)}
+        />
         <KeyboardShortcutsDialog
           open={shortcutsOpen}
           onOpenChange={setShortcutsOpen}

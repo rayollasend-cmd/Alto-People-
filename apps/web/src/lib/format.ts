@@ -372,6 +372,30 @@ export function fmtRelativeDayTz(
   return `${fmtWeekdayTz(value, timeZone)}, ${fmtDateTz(value, timeZone)}`;
 }
 
+/**
+ * Today's calendar date in the BROWSER's timezone as "YYYY-MM-DD".
+ * `new Date().toISOString().slice(0, 10)` is UTC, so an evening user west
+ * of UTC gets tomorrow's date pre-filled in forms — several pages carried
+ * private copies of this helper to avoid exactly that.
+ */
+export function ymdLocal(d: Date = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/**
+ * Parse a date-only "YYYY-MM-DD" string as LOCAL midnight. `new Date(s)`
+ * parses date-only strings as UTC midnight, which renders/compares as the
+ * previous day west of UTC (birthdays a day early, expiries a day late).
+ * Returns null for malformed input.
+ */
+export function parseYmd(s: string | null | undefined): Date | null {
+  if (!s) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
+
 /** "2h ago", "yesterday", "Mar 4". For activity feeds. */
 export function fmtRelativeDate(
   value: string | Date | null | undefined,

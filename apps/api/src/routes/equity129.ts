@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
+import { notifyAssociate } from '../lib/notify.js';
 
 /**
  * Phase 129 — Equity grants & vesting.
@@ -191,6 +192,13 @@ equity129Router.post(
       where: { id },
       data: { status: 'GRANTED' },
     });
+    void notifyAssociate(g.associateId, {
+      subject: 'Equity grant issued',
+      body: `Your ${g.grantType} grant of ${g.totalShares} shares has been issued. Your vesting schedule is available in the equity portal.`,
+      category: 'equity',
+      linkUrl: '/equity',
+      emailFallback: true,
+    });
     res.json({ ok: true });
   },
 );
@@ -214,6 +222,13 @@ equity129Router.post(
     await prisma.equityGrant.update({
       where: { id },
       data: { status: 'CANCELLED' },
+    });
+    void notifyAssociate(g.associateId, {
+      subject: 'Equity grant cancelled',
+      body: `Your ${g.grantType} grant of ${g.totalShares} shares has been cancelled. Contact HR if you have questions.`,
+      category: 'equity',
+      linkUrl: '/equity',
+      emailFallback: true,
     });
     res.json({ ok: true });
   },
