@@ -118,8 +118,10 @@ export function CountUpValue({ value }: { value: React.ReactNode }) {
 
 /* ---------------------------------------------------------- sparkline */
 
-const SPARK_W = 64;
-const SPARK_H = 20;
+// 88×24 — the old 64×20 at opacity-40 was invisible at arm's length,
+// which made the executive dashboard's only data-viz read as decoration.
+const SPARK_W = 88;
+const SPARK_H = 24;
 
 /**
  * Dependency-free micro-sparkline: a bare polyline in currentColor at low
@@ -144,19 +146,23 @@ export function Sparkline({
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     })
     .join(' ');
+  const areaPoints = `1,${SPARK_H - 1} ${points} ${SPARK_W - 1},${SPARK_H - 1}`;
   return (
     <svg
       width={SPARK_W}
       height={SPARK_H}
       viewBox={`0 0 ${SPARK_W} ${SPARK_H}`}
       aria-hidden="true"
-      className={cn('shrink-0 opacity-40', className)}
+      className={cn('shrink-0 opacity-90 text-gold/70', className)}
     >
+      {/* Soft area fill under the line — the thing that makes a KPI tile
+          read "premium" instead of "a number in a box". */}
+      <polygon points={areaPoints} fill="currentColor" opacity="0.12" />
       <polyline
         points={points}
         fill="none"
         stroke="currentColor"
-        strokeWidth="1.5"
+        strokeWidth="1.75"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
@@ -184,7 +190,7 @@ export function DeltaChip({
   const tone = flat ? 'text-silver' : good ? 'text-success' : 'text-alert';
   const arrow = flat ? '—' : delta > 0 ? '↑' : '↓';
   return (
-    <span className={cn('text-[11px] tabular-nums whitespace-nowrap', tone)}>
+    <span className={cn('text-xs2 tabular-nums whitespace-nowrap', tone)}>
       <span aria-hidden="true">{arrow}</span>
       <span className="sr-only">
         {flat ? 'unchanged' : delta > 0 ? 'up' : 'down'}
@@ -219,7 +225,8 @@ export function MetricCard({
   const card = (
     <Card interactive={isInteractive} className={cn('group', className)}>
       <CardContent className="pt-5">
-        <div className="text-[10px] uppercase tracking-widest text-silver">
+        {/* The one canonical KPI label spec (audits found three). */}
+        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
           {label}
         </div>
         <div
@@ -242,7 +249,7 @@ export function MetricCard({
         )}
         {hint && <div className="text-xs text-silver mt-2">{hint}</div>}
         {isInteractive && (
-          <div className="text-[10px] uppercase tracking-widest mt-3 text-gold/80 group-hover:text-gold-bright transition-colors inline-flex items-center gap-1">
+          <div className="text-2xs uppercase tracking-widest mt-3 text-gold/80 group-hover:text-gold-bright transition-colors inline-flex items-center gap-1">
             View details
             <span aria-hidden="true" className="transition-transform group-hover:translate-x-0.5">
               →

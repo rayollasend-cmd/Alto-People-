@@ -44,6 +44,7 @@ import {
   DialogHeader,
   DialogTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
   Select,
@@ -56,6 +57,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui';
+import { FilterChip, SearchInput } from '@/components/ui/FilterBar';
+import { ViewToggle } from '@/components/ui/ViewToggle';
 
 const STAGES: CandidateStage[] = [
   'APPLIED',
@@ -66,6 +69,16 @@ const STAGES: CandidateStage[] = [
   'WITHDRAWN',
   'REJECTED',
 ];
+
+const STAGE_LABEL: Record<CandidateStage, string> = {
+  APPLIED: 'Applied',
+  SCREENING: 'Screening',
+  INTERVIEW: 'Interview',
+  OFFER: 'Offer',
+  HIRED: 'Hired',
+  WITHDRAWN: 'Withdrawn',
+  REJECTED: 'Rejected',
+};
 
 const STAGE_VARIANT: Record<
   CandidateStage,
@@ -96,6 +109,18 @@ const CANDIDATE_SOURCES = [
   'agency',
   'other',
 ] as const;
+
+/** Human labels for the stored source slugs. */
+const SOURCE_LABEL: Record<string, string> = {
+  referral: 'Referral',
+  'careers-page': 'Careers page',
+  indeed: 'Indeed',
+  linkedin: 'LinkedIn',
+  'walk-in': 'Walk-in',
+  agency: 'Agency',
+  other: 'Other',
+  manual: 'Manual',
+};
 
 /** Whole days since an ISO timestamp; the pipeline-age badge. The DTO only
  *  carries createdAt (no per-stage stamp), so this is days since applied. */
@@ -192,7 +217,9 @@ export function RecruitingHome() {
     setPendingId(c.id);
     try {
       await advanceCandidate(c.id, { stage: target });
-      toast.success(`Moved ${c.firstName} ${c.lastName} to ${target}.`);
+      toast.success(
+        `Moved ${c.firstName} ${c.lastName} to ${STAGE_LABEL[target]}.`,
+      );
       await Promise.all([refresh(), refreshKpis()]);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Advance failed.');
@@ -328,14 +355,16 @@ export function RecruitingHome() {
       />
 
       {kpiError && !allCandidates ? (
-        <Card className="p-4 mb-6 flex flex-wrap items-center justify-between gap-3">
-          <p role="alert" className="text-sm text-alert">
-            {kpiError}
-          </p>
-          <Button size="sm" variant="secondary" onClick={() => refreshKpis()}>
-            Retry
-          </Button>
-        </Card>
+        <ErrorBanner
+          className="mb-6"
+          action={
+            <Button size="sm" variant="secondary" onClick={() => refreshKpis()}>
+              Retry
+            </Button>
+          }
+        >
+          {kpiError}
+        </ErrorBanner>
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
           <KpiCard
@@ -370,17 +399,24 @@ export function RecruitingHome() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <CardTitle className="text-base">Candidates</CardTitle>
-              <ViewToggle value={view} onChange={setViewPersisted} />
+              <ViewToggle<ViewMode>
+                value={view}
+                onChange={setViewPersisted}
+                ariaLabel="Switch between board and list view"
+                options={[
+                  { value: 'board', label: 'Board', icon: Kanban },
+                  { value: 'list', label: 'List', icon: Rows3 },
+                ]}
+              />
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <div className="w-full sm:w-60">
-                <Input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search name, email, position…"
-                  aria-label="Search candidates"
-                />
-              </div>
+              <SearchInput
+                wrapperClassName="w-full sm:w-60"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search name, email, position…"
+                aria-label="Search candidates"
+              />
               <Button
                 type="button"
                 variant="outline"
@@ -399,20 +435,13 @@ export function RecruitingHome() {
             {view === 'list' && (
               <div className="flex flex-wrap gap-2">
                 {(['ALL', ...STAGES] as Array<CandidateStage | 'ALL'>).map((s) => (
-                  <Button
+                  <FilterChip
                     key={s}
-                    type="button"
-                    size="xs"
-                    variant="outline"
+                    active={filter === s}
                     onClick={() => setFilter(s)}
-                    className={cn(
-                      'uppercase tracking-wider',
-                      filter === s &&
-                        'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold',
-                    )}
                   >
-                    {s}
-                  </Button>
+                    {s === 'ALL' ? 'All' : STAGE_LABEL[s]}
+                  </FilterChip>
                 ))}
               </div>
             )}
@@ -420,21 +449,34 @@ export function RecruitingHome() {
         </CardHeader>
         <CardContent className="pt-0">
           {error && (
-            <p role="alert" className="text-sm text-alert mb-3">
+            <ErrorBanner
+              className="mb-3"
+              action={
+                <Button size="sm" variant="secondary" onClick={() => refresh()}>
+                  Retry
+                </Button>
+              }
+            >
               {error}
-            </p>
+            </ErrorBanner>
           )}
           {view === 'board' && (
             <>
               {!visibleAll && kpiError && (
-                <div className="py-8 text-center">
-                  <p role="alert" className="text-sm text-alert mb-3">
-                    {kpiError}
-                  </p>
-                  <Button size="sm" variant="secondary" onClick={() => refreshKpis()}>
-                    Retry
-                  </Button>
-                </div>
+                <ErrorBanner
+                  className="my-4"
+                  action={
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => refreshKpis()}
+                    >
+                      Retry
+                    </Button>
+                  }
+                >
+                  {kpiError}
+                </ErrorBanner>
               )}
               {!visibleAll && !kpiError && <SkeletonRows count={5} rowHeight="h-24" />}
               {visibleAll && (
@@ -512,7 +554,7 @@ export function RecruitingHome() {
                           {c.position ?? '—'}
                         </TableCell>
                         <TableCell className="text-silver">
-                          {c.source ?? '—'}
+                          {c.source ? (SOURCE_LABEL[c.source] ?? c.source) : '—'}
                         </TableCell>
                         <TableCell className="text-silver whitespace-nowrap">
                           {fmtDate(c.createdAt)}
@@ -523,14 +565,16 @@ export function RecruitingHome() {
                           </span>
                         </TableCell>
                         <TableCell>
-                          <Badge variant={STAGE_VARIANT[c.stage]}>{c.stage}</Badge>
+                          <Badge variant={STAGE_VARIANT[c.stage]}>
+                            {STAGE_LABEL[c.stage]}
+                          </Badge>
                           {c.rejectedReason && (
-                            <div className="text-[10px] mt-1 text-alert">
+                            <div className="text-2xs mt-1 text-alert">
                               {c.rejectedReason}
                             </div>
                           )}
                           {c.withdrawnReason && (
-                            <div className="text-[10px] mt-1 text-silver">
+                            <div className="text-2xs mt-1 text-silver">
                               {c.withdrawnReason}
                             </div>
                           )}
@@ -567,29 +611,29 @@ export function RecruitingHome() {
                         variant={STAGE_VARIANT[c.stage]}
                         className="shrink-0"
                       >
-                        {c.stage}
+                        {STAGE_LABEL[c.stage]}
                       </Badge>
                     </div>
-                    <div className="mt-1.5 ml-[2.4rem] text-[12px] text-silver/80 truncate">
+                    <div className="mt-1.5 ml-[2.4rem] text-xs text-silver/80 truncate">
                       {c.email}
                     </div>
                     {(c.position || c.source) && (
-                      <div className="mt-0.5 ml-[2.4rem] text-[11px] text-silver/70 truncate">
+                      <div className="mt-0.5 ml-[2.4rem] text-xs2 text-silver/70 truncate">
                         {c.position ?? '—'}
                         <span className="mx-1.5 text-silver/70">·</span>
-                        {c.source ?? 'manual'}
+                        {SOURCE_LABEL[c.source ?? 'manual'] ?? c.source}
                       </div>
                     )}
-                    <div className="mt-0.5 ml-[2.4rem] text-[11px] text-silver/70">
+                    <div className="mt-0.5 ml-[2.4rem] text-xs2 text-silver/70">
                       Applied {fmtDate(c.createdAt)} · {daysSince(c.createdAt)}d in stage
                     </div>
                     {c.rejectedReason && (
-                      <div className="mt-2 ml-[2.4rem] text-[11px] text-alert/90">
+                      <div className="mt-2 ml-[2.4rem] text-xs2 text-alert/90">
                         {c.rejectedReason}
                       </div>
                     )}
                     {c.withdrawnReason && (
-                      <div className="mt-2 ml-[2.4rem] text-[11px] text-silver/70">
+                      <div className="mt-2 ml-[2.4rem] text-xs2 text-silver/70">
                         {c.withdrawnReason}
                       </div>
                     )}
@@ -737,7 +781,7 @@ function CandidateActions({
           loading={isPending}
           disabled={isPending}
         >
-          {next}
+          {STAGE_LABEL[next]}
           <ArrowRight className="h-3.5 w-3.5" />
         </Button>
       )}
@@ -794,7 +838,9 @@ function KpiCard({ icon: Icon, label, value, tone }: KpiCardProps) {
   return (
     <Card className="p-4">
       <div className="flex items-start justify-between mb-1">
-        <div className="text-[10px] uppercase tracking-wider text-silver">{label}</div>
+        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
+          {label}
+        </div>
         <Icon className="h-3.5 w-3.5 text-silver/70" />
       </div>
       {value === null ? (
@@ -892,8 +938,8 @@ function CreateCandidateDialog({
         <DialogHeader>
           <DialogTitle>New candidate</DialogTitle>
           <DialogDescription>
-            They&apos;ll start in APPLIED. You can advance them through the funnel from
-            the table.
+            They&apos;ll start in the Applied stage. You can advance them
+            through the funnel from the table.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="grid gap-4">
@@ -954,7 +1000,7 @@ function CreateCandidateDialog({
                 <option value="">Select a source…</option>
                 {CANDIDATE_SOURCES.map((s) => (
                   <option key={s} value={s}>
-                    {s}
+                    {SOURCE_LABEL[s] ?? s}
                   </option>
                 ))}
               </Select>
@@ -975,7 +1021,7 @@ function CreateCandidateDialog({
               Cancel
             </Button>
             <Button type="submit" loading={submitting} disabled={submitting}>
-              Save as APPLIED
+              Save as Applied
             </Button>
           </DialogFooter>
         </form>
@@ -995,7 +1041,7 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="block text-[11px] uppercase tracking-wider text-silver mb-1">
+      <span className="block text-xs2 uppercase tracking-wider text-silver mb-1">
         {label}
         {required && <span className="text-alert"> *</span>}
       </span>
@@ -1004,64 +1050,3 @@ function Field({
   );
 }
 
-function ViewToggle({
-  value,
-  onChange,
-}: {
-  value: ViewMode;
-  onChange: (v: ViewMode) => void;
-}) {
-  return (
-    <div
-      role="radiogroup"
-      aria-label="Switch between board and list view"
-      className="inline-flex items-center rounded-md border border-navy-secondary p-0.5"
-    >
-      <ToggleButton
-        active={value === 'board'}
-        onClick={() => onChange('board')}
-        label="Board"
-        icon={Kanban}
-      />
-      <ToggleButton
-        active={value === 'list'}
-        onClick={() => onChange('list')}
-        label="List"
-        icon={Rows3}
-      />
-    </div>
-  );
-}
-
-function ToggleButton({
-  active,
-  onClick,
-  label,
-  icon: Icon,
-}: {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
-}) {
-  return (
-    <Button
-      type="button"
-      size="xs"
-      variant="ghost"
-      role="radio"
-      aria-checked={active}
-      aria-label={label}
-      onClick={onClick}
-      className={cn(
-        'gap-1.5 rounded text-[11px] uppercase tracking-wider',
-        active
-          ? 'bg-gold/15 text-gold hover:bg-gold/15 hover:text-gold'
-          : 'text-silver/70',
-      )}
-    >
-      <Icon className="h-3.5 w-3.5" />
-      {label}
-    </Button>
-  );
-}

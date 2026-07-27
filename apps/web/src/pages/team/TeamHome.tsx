@@ -28,8 +28,9 @@ import {
   Card,
   CardContent,
   EmptyState,
-  Input,
+  ErrorBanner,
   PageHeader,
+  SearchInput,
   SegmentedControl,
   SkeletonRows,
   Table,
@@ -122,9 +123,22 @@ export function TeamHome() {
       )}
 
       {error && (
-        <p role="alert" className="text-sm text-alert">
+        <ErrorBanner
+          action={
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                dashboardQ.refetch();
+                reportsQ.refetch();
+              }}
+            >
+              Retry
+            </Button>
+          }
+        >
           {error instanceof ApiError ? error.message : 'Failed to load team.'}
-        </p>
+        </ErrorBanner>
       )}
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
@@ -201,7 +215,7 @@ function KpiTile({
     <Card>
       <CardContent className="p-4">
         <div className="flex items-center justify-between">
-          <div className="text-[10px] uppercase tracking-widest text-silver/80">
+          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
             {label}
           </div>
           <Icon className={`h-4 w-4 ${highlight ? 'text-gold' : 'text-silver/70'}`} />
@@ -242,40 +256,40 @@ function InboxTab() {
   const approveTsM = useMutation({
     mutationFn: approveTeamTimesheet,
     onSuccess: () => {
-      toast.success('Timesheet approved');
+      toast.success('Timesheet approved.');
       invalidateTeam();
     },
     onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Approve failed'),
+      toast.error(err instanceof ApiError ? err.message : 'Approve failed.'),
   });
   const rejectTsM = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) =>
       rejectTeamTimesheet(id, reason),
     onSuccess: () => {
-      toast.success('Timesheet rejected');
+      toast.success('Timesheet rejected.');
       invalidateTeam();
     },
     onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Reject failed'),
+      toast.error(err instanceof ApiError ? err.message : 'Reject failed.'),
   });
   const approvePtoM = useMutation({
     mutationFn: (id: string) => approveTeamTimeOff(id),
     onSuccess: () => {
-      toast.success('Time off approved');
+      toast.success('Time off approved.');
       invalidateTeam();
     },
     onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Approve failed'),
+      toast.error(err instanceof ApiError ? err.message : 'Approve failed.'),
   });
   const denyPtoM = useMutation({
     mutationFn: ({ id, note }: { id: string; note: string }) =>
       denyTeamTimeOff(id, note),
     onSuccess: () => {
-      toast.success('Time off denied');
+      toast.success('Time off denied.');
       invalidateTeam();
     },
     onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Deny failed'),
+      toast.error(err instanceof ApiError ? err.message : 'Deny failed.'),
   });
 
   const rejectTs = async (id: string) => {
@@ -316,9 +330,15 @@ function InboxTab() {
 
   if (q.error) {
     return (
-      <p role="alert" className="text-sm text-alert">
+      <ErrorBanner
+        action={
+          <Button size="sm" variant="secondary" onClick={() => q.refetch()}>
+            Retry
+          </Button>
+        }
+      >
         {q.error instanceof ApiError ? q.error.message : 'Failed to load.'}
-      </p>
+      </ErrorBanner>
     );
   }
   if (!q.data) return <SkeletonRows count={4} rowHeight="h-14" />;
@@ -361,7 +381,7 @@ function InboxTab() {
                   <Avatar name={item.associateName} size="sm" />
                   <div className="min-w-0">
                     <div className="truncate">{item.associateName}</div>
-                    <div className="md:hidden text-[11px] text-silver/70 truncate">
+                    <div className="md:hidden text-xs2 text-silver/70 truncate">
                       {meta.label}{item.summary ? ` · ${item.summary}` : ''}
                     </div>
                   </div>
@@ -456,13 +476,12 @@ function ReportsList({ reports }: { reports: DirectReport[] | null }) {
   }
   return (
     <div className="space-y-3">
-      <Input
-        type="search"
+      <SearchInput
         value={search}
         onChange={(ev) => setSearch(ev.target.value)}
         placeholder="Search by name, email, title, or department…"
         aria-label="Search direct reports"
-        className="max-w-sm"
+        wrapperClassName="max-w-sm"
       />
       {filtered.length === 0 ? (
         <p className="text-sm text-silver">
@@ -495,7 +514,7 @@ function ReportsList({ reports }: { reports: DirectReport[] | null }) {
                       <div className="truncate group-hover:text-gold-bright transition-colors">
                         {r.firstName} {r.lastName}
                       </div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         {r.email}{r.departmentName ? ` · ${r.departmentName}` : ''}
                       </div>
                     </div>
@@ -538,6 +557,14 @@ const TS_STATUS_BADGE: Record<
   REJECTED: 'destructive',
 };
 
+// Human-readable labels — raw enum values never reach the user's eyes.
+const TS_STATUS_LABELS: Record<TeamTimeEntry['status'], string> = {
+  ACTIVE: 'Active',
+  COMPLETED: 'Completed',
+  APPROVED: 'Approved',
+  REJECTED: 'Rejected',
+};
+
 function TimesheetsTab() {
   const qc = useQueryClient();
   const prompt = usePrompt();
@@ -557,22 +584,22 @@ function TimesheetsTab() {
   const approveM = useMutation({
     mutationFn: approveTeamTimesheet,
     onSuccess: () => {
-      toast.success('Approved');
+      toast.success('Approved.');
       invalidateTeam();
     },
     onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Approve failed'),
+      toast.error(err instanceof ApiError ? err.message : 'Approve failed.'),
   });
 
   const rejectM = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) =>
       rejectTeamTimesheet(id, reason),
     onSuccess: () => {
-      toast.success('Rejected');
+      toast.success('Rejected.');
       invalidateTeam();
     },
     onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Reject failed'),
+      toast.error(err instanceof ApiError ? err.message : 'Reject failed.'),
   });
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -580,13 +607,13 @@ function TimesheetsTab() {
     mutationFn: (ids: string[]) => bulkApproveTeamTimesheets(ids),
     onSuccess: (r) => {
       toast.success(
-        `Approved ${r.approved}${r.skipped.length ? ` · ${r.skipped.length} skipped` : ''}`,
+        `Approved ${r.approved}${r.skipped.length ? ` · ${r.skipped.length} skipped` : ''}.`,
       );
       setSelected(new Set());
       invalidateTeam();
     },
     onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Bulk approve failed'),
+      toast.error(err instanceof ApiError ? err.message : 'Bulk approve failed.'),
   });
   // No bulk-reject endpoint exists, so mirror the bulk approve by looping
   // the single reject with one shared reason. allSettled: one bad row
@@ -603,15 +630,15 @@ function TimesheetsTab() {
     },
     onSuccess: (r) => {
       if (r.failed > 0) {
-        toast.error(`Rejected ${r.rejected} · ${r.failed} failed`);
+        toast.error(`Rejected ${r.rejected} · ${r.failed} failed.`);
       } else {
-        toast.success(`Rejected ${r.rejected}`);
+        toast.success(`Rejected ${r.rejected}.`);
       }
       setSelected(new Set());
       invalidateTeam();
     },
     onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Bulk reject failed'),
+      toast.error(err instanceof ApiError ? err.message : 'Bulk reject failed.'),
   });
   const toggle = (id: string) =>
     setSelected((prev) => {
@@ -730,14 +757,15 @@ function TimesheetsTab() {
     return (
       <div className="space-y-3">
         {toolbar}
-        <div role="alert" className="flex items-center gap-3 text-sm text-alert">
-          <span>
-            {q.error instanceof ApiError ? q.error.message : 'Failed to load.'}
-          </span>
-          <Button size="sm" variant="outline" onClick={() => q.refetch()}>
-            Retry
-          </Button>
-        </div>
+        <ErrorBanner
+          action={
+            <Button size="sm" variant="secondary" onClick={() => q.refetch()}>
+              Retry
+            </Button>
+          }
+        >
+          {q.error instanceof ApiError ? q.error.message : 'Failed to load.'}
+        </ErrorBanner>
       </div>
     );
   }
@@ -825,8 +853,8 @@ function TimesheetsTab() {
             <TableHead className="hidden lg:table-cell">Client</TableHead>
             <TableHead className="hidden md:table-cell">Clock in</TableHead>
             <TableHead>Clock out</TableHead>
-            <TableHead className="tabular-nums">Hours</TableHead>
-            <TableHead className="hidden lg:table-cell tabular-nums">
+            <TableHead className="text-right tabular-nums">Hours</TableHead>
+            <TableHead className="hidden lg:table-cell text-right tabular-nums">
               Est. cost
             </TableHead>
             <TableHead className="hidden xl:table-cell">Notes</TableHead>
@@ -859,7 +887,7 @@ function TimesheetsTab() {
                     <Avatar name={e.associateName} size="sm" />
                     <div className="min-w-0">
                       <div className="truncate">{e.associateName}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         <span className="tabular-nums">
                           In {fmtDateTime(e.clockInAt)}
                         </span>
@@ -875,10 +903,10 @@ function TimesheetsTab() {
                 <TableCell className="text-silver tabular-nums">
                   {e.clockOutAt ? fmtDateTime(e.clockOutAt) : '—'}
                 </TableCell>
-                <TableCell className="tabular-nums">
+                <TableCell className="text-right tabular-nums">
                   {e.clockOutAt ? hours.toFixed(2) : '—'}
                 </TableCell>
-                <TableCell className="hidden lg:table-cell text-silver tabular-nums">
+                <TableCell className="hidden lg:table-cell text-right text-silver tabular-nums">
                   {e.payRate && e.clockOutAt
                     ? fmtMoney(hours * Number(e.payRate))
                     : '—'}
@@ -923,7 +951,7 @@ function TimesheetsTab() {
                     </div>
                   ) : (
                     <Badge variant={TS_STATUS_BADGE[e.status]}>
-                      {e.status.toLowerCase()}
+                      {TS_STATUS_LABELS[e.status] ?? e.status}
                     </Badge>
                   )}
                 </TableCell>
@@ -949,22 +977,22 @@ function TimeOffTab() {
   const approveM = useMutation({
     mutationFn: (id: string) => approveTeamTimeOff(id),
     onSuccess: () => {
-      toast.success('Approved');
+      toast.success('Approved.');
       invalidateTeam();
     },
     onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Approve failed'),
+      toast.error(err instanceof ApiError ? err.message : 'Approve failed.'),
   });
 
   const denyM = useMutation({
     mutationFn: ({ id, note }: { id: string; note: string }) =>
       denyTeamTimeOff(id, note),
     onSuccess: () => {
-      toast.success('Denied');
+      toast.success('Denied.');
       invalidateTeam();
     },
     onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Deny failed'),
+      toast.error(err instanceof ApiError ? err.message : 'Deny failed.'),
   });
 
   const deny = async (id: string) => {
@@ -985,13 +1013,13 @@ function TimeOffTab() {
     mutationFn: (ids: string[]) => bulkApproveTeamTimeOff(ids),
     onSuccess: (r) => {
       toast.success(
-        `Approved ${r.approved}${r.skipped.length ? ` · ${r.skipped.length} skipped` : ''}`,
+        `Approved ${r.approved}${r.skipped.length ? ` · ${r.skipped.length} skipped` : ''}.`,
       );
       setSelected(new Set());
       invalidateTeam();
     },
     onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Bulk approve failed'),
+      toast.error(err instanceof ApiError ? err.message : 'Bulk approve failed.'),
   });
   // No bulk-deny endpoint — loop the single deny with one shared note,
   // allSettled so one already-decided row doesn't sink the batch.
@@ -1007,15 +1035,15 @@ function TimeOffTab() {
     },
     onSuccess: (r) => {
       if (r.failed > 0) {
-        toast.error(`Denied ${r.denied} · ${r.failed} failed`);
+        toast.error(`Denied ${r.denied} · ${r.failed} failed.`);
       } else {
-        toast.success(`Denied ${r.denied}`);
+        toast.success(`Denied ${r.denied}.`);
       }
       setSelected(new Set());
       invalidateTeam();
     },
     onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Bulk deny failed'),
+      toast.error(err instanceof ApiError ? err.message : 'Bulk deny failed.'),
   });
   const bulkDeny = async () => {
     const ids = Array.from(selected);
@@ -1048,9 +1076,15 @@ function TimeOffTab() {
 
   if (q.error) {
     return (
-      <p role="alert" className="text-sm text-alert">
+      <ErrorBanner
+        action={
+          <Button size="sm" variant="secondary" onClick={() => q.refetch()}>
+            Retry
+          </Button>
+        }
+      >
         {q.error instanceof ApiError ? q.error.message : 'Failed to load.'}
-      </p>
+      </ErrorBanner>
     );
   }
   if (!q.data) return <SkeletonRows count={4} rowHeight="h-14" />;
@@ -1145,7 +1179,7 @@ function TimeOffTab() {
                   <Avatar name={r.associateName} size="sm" />
                   <div className="min-w-0">
                     <div className="truncate">{r.associateName}</div>
-                    <div className="md:hidden text-[11px] text-silver/70 truncate">
+                    <div className="md:hidden text-xs2 text-silver/70 truncate">
                       {r.category}
                       <span className="sm:hidden tabular-nums">
                         {' · '}

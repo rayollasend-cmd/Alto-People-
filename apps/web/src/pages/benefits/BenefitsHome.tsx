@@ -145,9 +145,8 @@ export function BenefitsHome() {
       />
 
       {(error || clientsError) && (
-        <ErrorBanner>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <span>{error ?? 'Could not load.'}</span>
+        <ErrorBanner
+          action={
             <Button
               size="sm"
               variant="secondary"
@@ -158,7 +157,9 @@ export function BenefitsHome() {
             >
               Retry
             </Button>
-          </div>
+          }
+        >
+          {error ?? 'Could not load your benefits.'}
         </ErrorBanner>
       )}
 
@@ -240,7 +241,7 @@ export function BenefitsHome() {
                 {offerable.map((p) => (
                   <li key={p.id} className="p-4 flex items-center gap-4">
                     <div className="flex-1 min-w-0">
-                      <Badge variant="outline" className="text-[10px] mb-1">
+                      <Badge variant="outline" className="text-2xs mb-1">
                         {KIND_LABEL[p.kind]}
                       </Badge>
                       <div className="text-white font-medium">{p.name}</div>
@@ -326,7 +327,7 @@ function EnrollmentRow({
   return (
     <li className="p-4 flex items-center gap-4">
       <div className="flex-1 min-w-0">
-        <Badge variant="outline" className="text-[10px] mb-1">
+        <Badge variant="outline" className="text-2xs mb-1">
           {KIND_LABEL[enrollment.planKind]}
         </Badge>
         <div className="text-white font-medium">{enrollment.planName}</div>

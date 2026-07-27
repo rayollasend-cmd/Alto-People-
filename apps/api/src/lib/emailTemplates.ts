@@ -66,6 +66,12 @@ interface WrapHtmlOpts {
   cta?: { label: string; url: string };
   signatory: Signatory;
   refId: string;
+  /**
+   * Inbox preview line — the text mail clients show after the subject.
+   * Without one, clients scrape the first visible HTML, which for us was
+   * the recipient's own name + heading repeated. Defaults to the intro.
+   */
+  preheader?: string;
 }
 
 /* ============================================================== */
@@ -212,12 +218,20 @@ function dataBlockHtml(rows: DataRow[]): string {
 
 function ctaHtml(cta: { label: string; url: string }): string {
   const b = brand();
+  // Table-cell button, not a padded <a> — Outlook desktop (Word renderer)
+  // drops padding on anchors, which collapsed the button to bare link text.
   return `
     <div style="margin:32px 0;text-align:center">
-      <a href="${escapeHtml(cta.url)}"
-         style="display:inline-block;padding:14px 28px;background:${b.color};color:#FFFFFF;text-decoration:none;font-weight:600;font-size:14px;border-radius:6px;border-bottom:3px solid ${b.accent}">
-        ${escapeHtml(cta.label)}
-      </a>
+      <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:0 auto">
+        <tr>
+          <td bgcolor="${b.color}" style="background:${b.color};border-radius:6px;border-bottom:3px solid ${b.accent};mso-padding-alt:14px 28px">
+            <a href="${escapeHtml(cta.url)}"
+               style="display:inline-block;padding:14px 28px;color:#FFFFFF;text-decoration:none;font-weight:600;font-size:14px">
+              ${escapeHtml(cta.label)}
+            </a>
+          </td>
+        </tr>
+      </table>
       <div style="margin-top:12px;color:${MUTED_COLOR};font-size:12px;word-break:break-all">
         Or paste this link into your browser:<br>
         <a href="${escapeHtml(cta.url)}" style="color:${MUTED_COLOR}">${escapeHtml(cta.url)}</a>
@@ -237,14 +251,26 @@ function wrapHtml(opts: WrapHtmlOpts): string {
     ? `<img src="${b.logoDataUri}" alt="${escapeHtml(b.name)}" style="max-height:40px;max-width:240px;display:block">`
     : `<div style="color:#FFFFFF;font-weight:700;font-size:18px;letter-spacing:0.04em">${escapeHtml(b.name.toUpperCase())}</div>
        <div style="color:${b.accent};font-size:11px;text-transform:uppercase;letter-spacing:0.18em;margin-top:2px">Workforce Management</div>`;
+  // A caller-supplied preheader is raw text (escape it); the intro fallback
+  // is already-escaped HTML, so only strip its tags — re-escaping would
+  // double-encode entities.
+  const preheader = (
+    opts.preheader ? escapeHtml(opts.preheader) : opts.intro.replace(/<[^>]+>/g, '')
+  ).slice(0, 140);
   return `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <!-- Declare light-only: without these, Apple Mail / Gmail dark mode
+       auto-invert the navy header into an unreadable mush. -->
+  <meta name="color-scheme" content="light">
+  <meta name="supported-color-schemes" content="light">
+  <style>:root { color-scheme: light; supported-color-schemes: light; }</style>
   <title>${escapeHtml(opts.heading)}</title>
 </head>
 <body style="margin:0;padding:0;background:#F4F4F0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:${TEXT_COLOR}">
+  <div style="display:none;max-height:0;overflow:hidden;mso-hide:all">${escapeHtml(preheader)}&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;</div>
   <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;background:#F4F4F0">
     <tr>
       <td align="center" style="padding:32px 16px">
@@ -367,34 +393,37 @@ export interface ApplicationApprovedOpts {
 }
 export function applicationApprovedTemplate(opts: ApplicationApprovedOpts): EmailTemplate {
   const refId = formatRef();
-  const subject = `[Confirmation] Your offer with ${opts.clientName} has been finalized`;
-  const heading = `You are cleared to start at ${opts.clientName}`;
-  const intro = `Your onboarding has been reviewed and approved. You are formally cleared to begin work at ${opts.clientName}.`;
+  // The one genuinely happy email in the system — it should sound like a
+  // welcome, not a clearance memo. Keep the logistics in the data block.
+  const subject = `Welcome aboard — you're all set to start at ${opts.clientName}`;
+  const heading = `Congratulations, ${opts.firstName} — you're in!`;
+  const intro = `Great news: your onboarding is complete and approved. We're excited to have you on the team at ${opts.clientName}. Here's everything you need for day one.`;
   const dataBlock: DataRow[] = [];
   if (opts.position) dataBlock.push({ label: 'Position', value: opts.position });
   dataBlock.push({ label: 'Start date', value: opts.hireDate });
   if (opts.managerName) dataBlock.push({ label: 'Reporting to', value: opts.managerName });
   if (opts.location) dataBlock.push({ label: 'Work location', value: opts.location });
-  const followUp = 'Direct any questions to your assigned manager or the HR contact for your site.';
+  const followUp = `Your dashboard has your schedule, time clock, and pay details — take a look before your first shift. Questions? Your manager and the HR team are happy to help.`;
   return {
     subject,
     text: composeText({
       greeting: `${opts.firstName},`,
       intro,
       dataBlock,
-      cta: { label: 'Open your associate dashboard', url: opts.appUrl },
-      body: [followUp],
+      cta: { label: 'Explore your dashboard', url: opts.appUrl },
+      body: [followUp, `See you on ${opts.hireDate}!`],
       signatory: { kind: 'system' },
       refId,
     }),
     html: wrapHtml({
       heading,
-      intro: `${escapeHtml(opts.firstName)}, ${escapeHtml(intro)}`,
+      intro: escapeHtml(intro),
       dataBlock,
-      cta: { label: 'Open dashboard', url: opts.appUrl },
-      body: [escapeHtml(followUp)],
+      cta: { label: 'Explore your dashboard', url: opts.appUrl },
+      body: [escapeHtml(followUp), `<strong>See you on ${escapeHtml(opts.hireDate)}!</strong>`],
       signatory: { kind: 'system' },
       refId,
+      preheader: `Your onboarding is approved — you start ${opts.hireDate}.`,
     }),
   };
 }

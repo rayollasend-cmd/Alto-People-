@@ -51,6 +51,7 @@ import {
 } from '@/components/ui/Drawer';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { FilterChip } from '@/components/ui/FilterBar';
 import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
@@ -460,17 +461,17 @@ export function ApplicationsList() {
       const res = await resendInvite(a.id);
       if (res.inviteUrl) {
         await navigator.clipboard.writeText(res.inviteUrl).catch(() => {});
-        toast.success('Fresh invite link copied');
+        toast.success('Fresh invite link copied.');
       } else {
-        toast.success('Invite re-sent');
+        toast.success('Invite re-sent.');
       }
     } catch (err) {
       if (err instanceof ApiError && err.code === 'user_already_active') {
-        toast.message('Already accepted', {
+        toast.message('Invite already accepted.', {
           description: `${a.associateName} has already set their password.`,
         });
       } else {
-        toast.error('Resend failed');
+        toast.error('Resend failed.');
       }
     } finally {
       setResendingIds((prev) => {
@@ -531,13 +532,13 @@ export function ApplicationsList() {
     try {
       const res = await bulkResendInvite({ applicationIds: ids });
       if (res.failed === 0) {
-        toast.success(`Re-sent ${res.succeeded} invite${res.succeeded === 1 ? '' : 's'}`);
+        toast.success(`Re-sent ${res.succeeded} invite${res.succeeded === 1 ? '' : 's'}.`);
       } else if (res.succeeded === 0) {
-        toast.error(`All ${res.failed} resends failed`);
+        toast.error(`All ${res.failed} resends failed.`);
       } else {
         // Pull the first failure as the description so HR sees actionable info.
         const firstFail = res.results.find((r) => !r.ok);
-        toast.message(`Re-sent ${res.succeeded}, ${res.failed} failed`, {
+        toast.message(`Re-sent ${res.succeeded}, ${res.failed} failed.`, {
           description: firstFail
             ? `e.g. ${firstFail.errorCode}: ${firstFail.errorMessage}`
             : undefined,
@@ -548,8 +549,8 @@ export function ApplicationsList() {
       refreshStats();
     } catch (err) {
       const msg =
-        err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Bulk resend failed';
-      toast.error('Could not bulk resend', { description: msg });
+        err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Bulk resend failed.';
+      toast.error('Could not bulk resend.', { description: msg });
     } finally {
       setBulkResending(false);
     }
@@ -576,13 +577,13 @@ export function ApplicationsList() {
         reason,
       });
       toast.success(
-        `Rejected ${res.rejected}${res.skipped.length ? ` · ${res.skipped.length} skipped` : ''}`,
+        `Rejected ${res.rejected}${res.skipped.length ? ` · ${res.skipped.length} skipped` : ''}.`,
       );
       setSelected(new Set());
       refresh();
       refreshStats();
     } catch (err) {
-      toast.error('Could not bulk reject', {
+      toast.error('Could not bulk reject.', {
         description: err instanceof ApiError ? err.message : undefined,
       });
     } finally {
@@ -627,13 +628,13 @@ export function ApplicationsList() {
       setBulkNudging(false);
     }
     if (failures.length === 0) {
-      toast.success(`Nudged ${sent} applicant${sent === 1 ? '' : 's'}`);
+      toast.success(`Nudged ${sent} applicant${sent === 1 ? '' : 's'}.`);
     } else if (sent === 0) {
-      toast.error(`All ${failures.length} nudges failed`, {
+      toast.error(`All ${failures.length} nudges failed.`, {
         description: failures[0],
       });
     } else {
-      toast.message(`Nudged ${sent}, ${failures.length} failed`, {
+      toast.message(`Nudged ${sent}, ${failures.length} failed.`, {
         description: failures[0],
       });
     }
@@ -852,25 +853,18 @@ export function ApplicationsList() {
                       : (stats.byStatus[f.value] ?? 0);
               const active = status === f.value;
               return (
-                <button
+                <FilterChip
                   key={f.value}
-                  type="button"
+                  active={active}
                   onClick={() => setStatus(f.value)}
-                  className={cn(
-                    'px-2.5 py-1 rounded-md text-xs border transition-colors inline-flex items-center gap-1.5',
-                    'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
-                    active
-                      ? 'border-gold text-gold bg-gold/10'
-                      : 'border-navy-secondary text-silver hover:text-white hover:border-silver/40'
-                  )}
                 >
                   {f.label}
                   {statsData && (
-                    <span className="text-[10px] tabular-nums text-silver/70">
+                    <span className="text-2xs tabular-nums text-silver/70">
                       {count}
                     </span>
                   )}
-                </button>
+                </FilterChip>
               );
             })}
           </div>
@@ -879,27 +873,18 @@ export function ApplicationsList() {
             role="group"
             aria-label="Filter by invite date"
           >
-            <span className="text-[10px] uppercase tracking-widest text-silver/70">
+            <span className="text-2xs uppercase tracking-widest text-silver/70">
               Invited
             </span>
-            {INVITED_WINDOWS.map((w) => {
-              const active = invitedWindow === w.value;
-              return (
-                <Button
-                  key={w.value}
-                  size="xs"
-                  variant="outline"
-                  onClick={() => setInvitedWindow(w.value)}
-                  aria-pressed={active}
-                  className={cn(
-                    active &&
-                      'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold',
-                  )}
-                >
-                  {w.label}
-                </Button>
-              );
-            })}
+            {INVITED_WINDOWS.map((w) => (
+              <FilterChip
+                key={w.value}
+                active={invitedWindow === w.value}
+                onClick={() => setInvitedWindow(w.value)}
+              >
+                {w.label}
+              </FilterChip>
+            ))}
           </div>
           {staleNudgeTargets.length > 0 && (
             <Button
@@ -913,7 +898,7 @@ export function ApplicationsList() {
               Nudge all stale ({staleNudgeTargets.length})
             </Button>
           )}
-          <span className="ml-auto text-[10px] text-silver/80 tabular-nums">
+          <span className="ml-auto text-2xs text-silver/80 tabular-nums">
             {items ? `${items.length} shown` : ''}
           </span>
           <ViewToggle<ApplicationsView>
@@ -1464,7 +1449,7 @@ function ApplicationCard({
       </div>
 
       <div>
-        <div className="flex items-center justify-between text-[10px] uppercase tracking-widest text-silver/80 mb-1">
+        <div className="flex items-center justify-between text-2xs uppercase tracking-widest text-silver/80 mb-1">
           <span>Progress</span>
           <span
             className={cn(
@@ -1482,7 +1467,7 @@ function ApplicationCard({
         <ProgressBar percent={a.percentComplete} hideLabel />
       </div>
 
-      <div className="flex items-center justify-between text-[10px] text-silver/80">
+      <div className="flex items-center justify-between text-2xs text-silver/80">
         <span>{TRACK_LABEL[a.onboardingTrack] ?? a.onboardingTrack} track</span>
         <span className="tabular-nums">
           Invited {daysSince(a.invitedAt, Date.now())}d ago
@@ -1557,7 +1542,9 @@ function Kpi({
 }) {
   const body = (
     <>
-      <div className="text-[10px] uppercase tracking-wider text-silver">{label}</div>
+      <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
+        {label}
+      </div>
       <div className={cn('text-xl font-semibold tabular-nums', tone)}>{value}</div>
     </>
   );

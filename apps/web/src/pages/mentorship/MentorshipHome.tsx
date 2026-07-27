@@ -26,6 +26,8 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
+  FilterBar,
   Input,
   PageHeader,
   Select,
@@ -50,6 +52,31 @@ const STATUSES: MentorshipStatus[] = [
   'DECLINED',
   'CANCELLED',
 ];
+
+const STATUS_LABELS: Record<MentorshipStatus, string> = {
+  PROPOSED: 'Proposed',
+  ACTIVE: 'Active',
+  COMPLETED: 'Completed',
+  DECLINED: 'Declined',
+  CANCELLED: 'Cancelled',
+};
+
+// Status contract: success = active/completed, pending = awaiting a
+// decision, destructive = declined/cancelled.
+const STATUS_VARIANT: Record<MentorshipStatus, 'success' | 'pending' | 'destructive'> = {
+  PROPOSED: 'pending',
+  ACTIVE: 'success',
+  COMPLETED: 'success',
+  DECLINED: 'destructive',
+  CANCELLED: 'destructive',
+};
+
+const LEVEL_LABELS: Record<MentorshipCandidate['level'], string> = {
+  BEGINNER: 'Beginner',
+  INTERMEDIATE: 'Intermediate',
+  ADVANCED: 'Advanced',
+  EXPERT: 'Expert',
+};
 
 interface PairingPrefill {
   mentor: PickedAssociate;
@@ -105,7 +132,7 @@ export function MentorshipHome() {
         m.mentorName,
         m.menteeName,
         m.focusSkillName ?? '',
-        m.status,
+        STATUS_LABELS[m.status],
         m.startedAt ? fmtDate(m.startedAt) : '',
         m.endedAt ? fmtDate(m.endedAt) : '',
         fmtDate(m.createdAt),
@@ -119,18 +146,31 @@ export function MentorshipHome() {
         title="Mentorship"
         subtitle="Pair experienced associates with juniors. Status tracks the lifecycle from proposal to completion."
         breadcrumbs={[{ label: 'Mentorship' }]}
+        primaryAction={
+          canManage ? (
+            <Button onClick={() => setShowNew(true)}>
+              <Plus className="mr-2 h-4 w-4" /> New pairing
+            </Button>
+          ) : undefined
+        }
+        secondaryActions={
+          <>
+            {canManage && (
+              <Button variant="outline" onClick={() => setShowSuggest(true)}>
+                <Sparkles className="mr-2 h-4 w-4" /> Suggest mentors
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              onClick={onExportCsv}
+              disabled={!filtered || filtered.length === 0}
+            >
+              <Download className="mr-2 h-4 w-4" /> Export CSV
+            </Button>
+          </>
+        }
       />
-      {canManage && (
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={() => setShowSuggest(true)}>
-            <Sparkles className="mr-2 h-4 w-4" /> Suggest mentors
-          </Button>
-          <Button onClick={() => setShowNew(true)}>
-            <Plus className="mr-2 h-4 w-4" /> New pairing
-          </Button>
-        </div>
-      )}
-      <div className="flex flex-wrap items-center gap-2 justify-end">
+      <FilterBar>
         <Input
           placeholder="Search mentor or mentee…"
           value={search}
@@ -146,25 +186,22 @@ export function MentorshipHome() {
         >
           <option value="">All statuses</option>
           {STATUSES.map((s) => (
-            <option key={s} value={s}>{s}</option>
+            <option key={s} value={s}>{STATUS_LABELS[s]}</option>
           ))}
         </Select>
-        <Button
-          variant="ghost"
-          onClick={onExportCsv}
-          disabled={!filtered || filtered.length === 0}
-        >
-          <Download className="mr-2 h-4 w-4" /> Export CSV
-        </Button>
-      </div>
+      </FilterBar>
       <Card>
         <CardContent className="p-0">
           {loadError ? (
-            <div className="p-6 space-y-3">
-              <p role="alert" className="text-sm text-alert">{loadError}</p>
-              <Button size="sm" variant="secondary" onClick={refresh}>
-                Retry
-              </Button>
+            <div className="p-6">
+              <ErrorBanner>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>{loadError}</span>
+                  <Button size="sm" variant="outline" onClick={refresh}>
+                    Retry
+                  </Button>
+                </div>
+              </ErrorBanner>
             </div>
           ) : filtered === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
@@ -195,25 +232,15 @@ export function MentorshipHome() {
                   <TableRow key={m.id} className="group">
                     <TableCell className="font-medium text-white">
                       <div className="truncate">{m.mentorName}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         {m.focusSkillName ?? '—'} · {fmtDate(m.startedAt)}
                       </div>
                     </TableCell>
                     <TableCell>{m.menteeName}</TableCell>
                     <TableCell className="text-silver hidden md:table-cell">{m.focusSkillName ?? '—'}</TableCell>
                     <TableCell>
-                      <Badge
-                        variant={
-                          m.status === 'ACTIVE'
-                            ? 'success'
-                            : m.status === 'PROPOSED'
-                              ? 'pending'
-                              : m.status === 'COMPLETED'
-                                ? 'accent'
-                                : 'destructive'
-                        }
-                      >
-                        {m.status}
+                      <Badge variant={STATUS_VARIANT[m.status]}>
+                        {STATUS_LABELS[m.status]}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-xs hidden md:table-cell">
@@ -402,12 +429,14 @@ function NewPairingDrawer({
         <div>
           <Label>Focus skill (optional)</Label>
           {skillsError ? (
-            <div className="mt-1 space-y-2">
-              <p role="alert" className="text-sm text-alert">{skillsError}</p>
-              <Button size="sm" variant="secondary" onClick={loadSkills}>
-                Retry
-              </Button>
-            </div>
+            <ErrorBanner className="mt-1">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>{skillsError}</span>
+                <Button size="sm" variant="outline" onClick={loadSkills}>
+                  Retry
+                </Button>
+              </div>
+            </ErrorBanner>
           ) : (
             <Select className="mt-1" value={skillId} onChange={(e) => setSkillId(e.target.value)}>
               <option value="">None</option>
@@ -498,12 +527,14 @@ function SuggestDrawer({
         <div>
           <Label>Skill</Label>
           {skillsError ? (
-            <div className="mt-1 space-y-2">
-              <p role="alert" className="text-sm text-alert">{skillsError}</p>
-              <Button size="sm" variant="secondary" onClick={loadSkills}>
-                Retry
-              </Button>
-            </div>
+            <ErrorBanner className="mt-1">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>{skillsError}</span>
+                <Button size="sm" variant="outline" onClick={loadSkills}>
+                  Retry
+                </Button>
+              </div>
+            </ErrorBanner>
           ) : (
             <Select className="mt-1" value={skillId} onChange={(e) => setSkillId(e.target.value)}>
               <option value="">Select a skill…</option>
@@ -536,7 +567,7 @@ function SuggestDrawer({
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <Badge variant={c.level === 'EXPERT' ? 'success' : 'accent'}>
-                      {c.level}
+                      {LEVEL_LABELS[c.level]}
                     </Badge>
                     <Button
                       size="sm"

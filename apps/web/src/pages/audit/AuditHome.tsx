@@ -451,11 +451,11 @@ export function AuditHome() {
                           <TableCell>
                             <Badge
                               variant="outline"
-                              className="font-mono text-[11px]"
+                              className="font-mono text-xs2"
                             >
                               {e.action}
                             </Badge>
-                            <div className="text-[11px] text-silver/70 md:hidden truncate max-w-[20ch]">
+                            <div className="text-xs2 text-silver/70 md:hidden truncate max-w-[20ch]">
                               {e.actorEmail ?? 'system'}
                             </div>
                           </TableCell>
@@ -466,7 +466,7 @@ export function AuditHome() {
                           </TableCell>
                           <TableCell className="text-silver text-xs">
                             <div className="text-white">{e.entityType}</div>
-                            <div className="font-mono text-[10px] text-silver/70 truncate max-w-[20ch]">
+                            <div className="font-mono text-2xs text-silver/70 truncate max-w-[20ch]">
                               {e.entityId}
                             </div>
                           </TableCell>
@@ -520,7 +520,7 @@ export function AuditHome() {
                     <span className="text-silver/70">system</span>
                   )}
                   {detail.actorUserId && (
-                    <div className="font-mono text-[10px] text-silver/70">
+                    <div className="font-mono text-2xs text-silver/70">
                       {detail.actorUserId}
                     </div>
                   )}
@@ -528,7 +528,7 @@ export function AuditHome() {
                 <dt className="text-silver">Entity</dt>
                 <dd className="text-white break-all">
                   {detail.entityType}
-                  <div className="font-mono text-[10px] text-silver/70">
+                  <div className="font-mono text-2xs text-silver/70">
                     {detail.entityId}
                   </div>
                 </dd>

@@ -8,7 +8,7 @@ import {
 } from '@/lib/complianceApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, fmtDateTime } from '@/lib/format';
 import {
   Avatar,
   Badge,
@@ -26,6 +26,7 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   SkeletonRows,
   Table,
@@ -49,13 +50,23 @@ function statusVariant(s: BgCheckStatus): 'default' | 'pending' | 'success' | 'd
       return 'success';
     case 'FAILED':
       return 'destructive';
+    // In-flight work reads gold per the status contract.
     case 'IN_PROGRESS':
+      return 'accent';
     case 'NEEDS_REVIEW':
       return 'pending';
     case 'INITIATED':
       return 'default';
   }
 }
+
+const STATUS_LABELS: Record<BgCheckStatus, string> = {
+  INITIATED: 'Initiated',
+  IN_PROGRESS: 'In progress',
+  NEEDS_REVIEW: 'Needs review',
+  PASSED: 'Passed',
+  FAILED: 'Failed',
+};
 
 function transitionVariant(
   s: BgCheckStatus,
@@ -134,9 +145,16 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
       </div>
 
       {error && (
-        <p role="alert" className="text-sm text-alert mb-3">
+        <ErrorBanner
+          className="mb-3"
+          action={
+            <Button size="sm" variant="secondary" onClick={() => void refresh()}>
+              Retry
+            </Button>
+          }
+        >
           {error}
-        </p>
+        </ErrorBanner>
       )}
       {!checks && <SkeletonRows count={4} rowHeight="h-12" />}
       {checks && checks.length === 0 && (
@@ -187,7 +205,7 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
                     <div className="min-w-0">
                       <div className="truncate">{c.associateName}</div>
                       {/* Phone-only secondary line replacing the hidden cells. */}
-                      <div className="sm:hidden text-[11px] text-silver/70 truncate">
+                      <div className="sm:hidden text-xs2 text-silver/70 truncate">
                         {c.provider}
                         {c.externalId ? ` · ${c.externalId}` : ''} · initiated{' '}
                         {fmtDate(c.initiatedAt)}
@@ -203,13 +221,15 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
                 <TableCell className="hidden sm:table-cell text-silver">
                   <div>{c.provider}</div>
                   {c.externalId && (
-                    <div className="text-[10px] font-mono text-silver/70 truncate max-w-[160px]">
+                    <div className="text-2xs font-mono text-silver/70 truncate max-w-[160px]">
                       {c.externalId}
                     </div>
                   )}
                 </TableCell>
                 <TableCell>
-                  <Badge variant={statusVariant(c.status)}>{c.status}</Badge>
+                  <Badge variant={statusVariant(c.status)}>
+                    {STATUS_LABELS[c.status]}
+                  </Badge>
                 </TableCell>
                 <TableCell className="hidden md:table-cell text-silver tabular-nums">
                   {fmtDate(c.initiatedAt)}
@@ -282,7 +302,9 @@ function BackgroundCheckDetailPanel({
       </DrawerHeader>
       <DrawerBody>
         <div className="flex items-center gap-3 mb-5">
-          <Badge variant={statusVariant(check.status)}>{check.status}</Badge>
+          <Badge variant={statusVariant(check.status)}>
+            {STATUS_LABELS[check.status]}
+          </Badge>
           {!finalized && (
             <span className={cn('text-xs tabular-nums', ageTone(ageDays))}>
               {ageDays}d open
@@ -292,10 +314,10 @@ function BackgroundCheckDetailPanel({
 
         <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
           <DetailRow label="Initiated">
-            {new Date(check.initiatedAt).toLocaleString()}
+            {fmtDateTime(check.initiatedAt)}
           </DetailRow>
           <DetailRow label="Completed">
-            {check.completedAt ? new Date(check.completedAt).toLocaleString() : '—'}
+            {fmtDateTime(check.completedAt)}
           </DetailRow>
           <DetailRow label="Provider">{check.provider}</DetailRow>
           <DetailRow label="External ref">{check.externalId ?? '—'}</DetailRow>
@@ -346,7 +368,7 @@ function labelFor(s: BgCheckStatus): string {
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <dt className="text-[10px] uppercase tracking-widest text-silver/80">{label}</dt>
+      <dt className="text-2xs uppercase tracking-widest text-silver/80">{label}</dt>
       <dd className="text-white text-sm mt-0.5 tabular-nums break-all">{children}</dd>
     </div>
   );
@@ -408,7 +430,7 @@ function InitiateCheckDialog({
         </DialogHeader>
         <form onSubmit={submit} className="grid gap-3">
           <label className="grid gap-1">
-            <span className="text-[11px] uppercase tracking-wider text-silver">
+            <span className="text-xs2 uppercase tracking-wider text-silver">
               Associate ID
             </span>
             <Input
@@ -420,7 +442,7 @@ function InitiateCheckDialog({
             />
           </label>
           <label className="grid gap-1">
-            <span className="text-[11px] uppercase tracking-wider text-silver">
+            <span className="text-xs2 uppercase tracking-wider text-silver">
               Provider reference / external ID (optional)
             </span>
             <Input

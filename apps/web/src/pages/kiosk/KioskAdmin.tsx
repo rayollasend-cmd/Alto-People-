@@ -425,7 +425,7 @@ function DevicesTab({
                     <TableCell className="font-medium text-white">
                       <div className="min-w-0">
                         <div className="truncate">{d.name}</div>
-                        <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                        <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
                           {d.clientName}
                           <span className="sm:hidden">
                             {' · '}
@@ -1399,7 +1399,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                     <TableCell className="font-medium text-white">
                       <div className="min-w-0">
                         <div className="truncate">{p.associateName}</div>
-                        <div className="lg:hidden text-[11px] text-silver/70 truncate font-normal">
+                        <div className="lg:hidden text-xs2 text-silver/70 truncate font-normal">
                           {p.clientName}
                           {p.locationName ? ` · ${p.locationName}` : ''}
                         </div>
@@ -1971,7 +1971,7 @@ const PunchLogRow = memo(function PunchLogRow({ p }: { p: KioskPunchSummary }) {
       <TableCell>
         <div className="min-w-0">
           <div>{fmtDateTime(p.createdAt)}</div>
-          <div className="md:hidden text-[11px] text-silver/70 truncate">
+          <div className="md:hidden text-xs2 text-silver/70 truncate">
             {p.deviceName}
           </div>
         </div>
@@ -2448,7 +2448,7 @@ function FacesTab({ canManage }: { canManage: boolean }) {
                   <TableCell className="font-medium text-white">
                     <div className="min-w-0">
                       <div className="truncate">{r.associateName}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
                         {r.associateEmail}
                       </div>
                     </div>
@@ -2728,7 +2728,7 @@ function ReviewTab({
                     <TableCell className="font-medium text-white">
                       <div className="min-w-0">
                         <div className="truncate">{p.associateName ?? '—'}</div>
-                        <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                        <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
                           {fmtDateTime(p.createdAt)}
                           <span className="sm:hidden">{` · ${p.action}`}</span>
                         </div>

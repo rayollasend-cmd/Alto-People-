@@ -57,6 +57,7 @@ import {
 } from '@/components/ui/Drawer';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { FilterChip } from '@/components/ui/FilterBar';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Field } from '@/components/ui/Field';
@@ -102,6 +103,13 @@ const STATUS_VARIANT: Record<
   VERIFIED: 'success',
   REJECTED: 'destructive',
   EXPIRED: 'destructive',
+};
+
+const STATUS_LABELS: Record<DocumentStatus, string> = {
+  UPLOADED: 'Awaiting review',
+  VERIFIED: 'Verified',
+  REJECTED: 'Rejected',
+  EXPIRED: 'Expired',
 };
 
 // Canned reasons for the bulk-reject panel — the common cases HR types
@@ -483,14 +491,14 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     setPendingId(d.id);
     try {
       await verifyDocument(d.id, expiresAt ? { expiresAt } : {});
-      toast.success(`Verified ${d.filename}`);
+      toast.success(`Verified ${d.filename}.`);
       await Promise.all([
         refresh(),
         refreshAll(),
         ...(selectedAssociateId ? [fetchFolder(selectedAssociateId)] : []),
       ]);
     } catch (err) {
-      toast.error('Verify failed', {
+      toast.error('Verify failed.', {
         description: err instanceof ApiError ? err.message : undefined,
       });
     } finally {
@@ -512,12 +520,12 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     try {
       const res = await bulkVerifyDocuments(Array.from(selectedDocs));
       toast.success(
-        `Verified ${res.verified}${res.skipped.length ? ` · ${res.skipped.length} skipped` : ''}`,
+        `Verified ${res.verified}${res.skipped.length ? ` · ${res.skipped.length} skipped` : ''}.`,
       );
       setSelectedDocs(new Set());
       await Promise.all([refresh(), refreshAll()]);
     } catch (err) {
-      toast.error('Bulk verify failed', {
+      toast.error('Bulk verify failed.', {
         description: err instanceof ApiError ? err.message : undefined,
       });
     } finally {
@@ -565,13 +573,13 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     ].filter((x): x is string => x !== null);
     const description = detailBits.length > 0 ? detailBits.join(' · ') : undefined;
     if (failures.length === 0) {
-      toast.success(`Rejected ${ok} document${ok === 1 ? '' : 's'}`, {
+      toast.success(`Rejected ${ok} document${ok === 1 ? '' : 's'}.`, {
         description,
       });
     } else if (ok === 0) {
-      toast.error(`All ${failures.length} rejections failed`, { description });
+      toast.error(`All ${failures.length} rejections failed.`, { description });
     } else {
-      toast.message(`Rejected ${ok} of ${bulkRejectTargets.length}`, {
+      toast.message(`Rejected ${ok} of ${bulkRejectTargets.length}.`, {
         description,
       });
     }
@@ -587,7 +595,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     setRejectSubmitting(true);
     try {
       await rejectDocument(rejectTarget.id, { reason: rejectReason.trim() });
-      toast.success(`Rejected ${rejectTarget.filename}`);
+      toast.success(`Rejected ${rejectTarget.filename}.`);
       setRejectTarget(null);
       setRejectReason('');
       await Promise.all([
@@ -596,7 +604,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         ...(selectedAssociateId ? [fetchFolder(selectedAssociateId)] : []),
       ]);
     } catch (err) {
-      toast.error('Reject failed', {
+      toast.error('Reject failed.', {
         description: err instanceof ApiError ? err.message : undefined,
       });
     } finally {
@@ -740,30 +748,24 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                     : (stats.byStatus[f.value] ?? 0);
               const active = filter === f.value;
               return (
-                <Button
+                <FilterChip
                   key={f.value}
-                  type="button"
-                  size="xs"
-                  variant="outline"
+                  active={active}
                   onClick={() => setFilter(f.value)}
-                  className={cn(
-                    'gap-1.5 rounded-md',
-                    active &&
-                      'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold'
-                  )}
+                  className="gap-1.5 rounded-md"
                 >
                   {f.label}
                   {allDocs && (
-                    <span className="text-[10px] tabular-nums text-silver/70">
+                    <span className="text-2xs tabular-nums text-silver/70">
                       {count}
                     </span>
                   )}
-                </Button>
+                </FilterChip>
               );
             })}
           </div>
         )}
-        <span className="ml-auto text-[10px] text-silver/70 tabular-nums">
+        <span className="ml-auto text-2xs text-silver/70 tabular-nums">
           {view === 'queue'
             ? visibleDocs
               ? `${visibleDocs.length} shown`
@@ -958,7 +960,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                         <span className="text-xs font-medium text-white truncate">
                           {g.associateName}
                         </span>
-                        <span className="text-[10px] tabular-nums text-silver/70">
+                        <span className="text-2xs tabular-nums text-silver/70">
                           {g.docs.length} document{g.docs.length === 1 ? '' : 's'}
                         </span>
                       </div>
@@ -997,14 +999,14 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                       <span className="truncate">{d.filename}</span>
                     </button>
                     {!d.fileAvailable && (
-                      <div className="text-[11px] text-alert truncate mt-0.5">
+                      <div className="text-xs2 text-alert truncate mt-0.5">
                         File missing on server — please re-upload
                       </div>
                     )}
                     {/* Phone-only secondary line — associate name takes the
                         place of its hidden column. Tap-target area still
                         opens the preview via the file button above. */}
-                    <div className="sm:hidden text-[11px] text-silver/70 truncate mt-0.5">
+                    <div className="sm:hidden text-xs2 text-silver/70 truncate mt-0.5">
                       {d.associateName ?? '—'}
                     </div>
                   </TableCell>
@@ -1032,11 +1034,11 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                   </TableCell>
                   <TableCell>
                     <Badge variant={STATUS_VARIANT[d.status]} data-status={d.status}>
-                      {d.status}
+                      {STATUS_LABELS[d.status]}
                     </Badge>
                     {d.rejectionReason && (
                       <div
-                        className="text-alert text-[10px] mt-1 max-w-[140px] truncate"
+                        className="text-alert text-2xs mt-1 max-w-[140px] truncate"
                         title={d.rejectionReason}
                       >
                         {d.rejectionReason}
@@ -1045,7 +1047,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                     {d.expiresAt && (
                       <div
                         className={cn(
-                          'text-[10px] mt-1 tabular-nums',
+                          'text-2xs mt-1 tabular-nums',
                           d.status === 'EXPIRED'
                             ? 'text-alert'
                             : 'text-silver/70',
@@ -1303,11 +1305,11 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                           variant={STATUS_VARIANT[d.status]}
                           data-status={d.status}
                         >
-                          {d.status}
+                          {STATUS_LABELS[d.status]}
                         </Badge>
                         {d.rejectionReason && (
                           <div
-                            className="text-alert text-[10px] mt-1 max-w-[160px] truncate"
+                            className="text-alert text-2xs mt-1 max-w-[160px] truncate"
                             title={d.rejectionReason}
                           >
                             {d.rejectionReason}
@@ -1316,7 +1318,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                         {d.expiresAt && (
                           <div
                             className={cn(
-                              'text-[10px] mt-1 tabular-nums',
+                              'text-2xs mt-1 tabular-nums',
                               d.status === 'EXPIRED'
                                 ? 'text-alert'
                                 : 'text-silver/70',
@@ -1406,7 +1408,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                   {/* Optional expiry, captured with the verify. Most useful
                       for IDs / visas / certs; harmless to leave blank. */}
                   <label
-                    className="hidden sm:flex items-center gap-1.5 text-[11px] text-silver"
+                    className="hidden sm:flex items-center gap-1.5 text-xs2 text-silver"
                     title="Optional — when this document lapses it flips to EXPIRED and the associate is asked for a fresh copy"
                   >
                     <span className="whitespace-nowrap">Expires on</span>
@@ -1613,7 +1615,9 @@ function Kpi({
 }) {
   return (
     <div className="min-w-[6rem]">
-      <div className="text-[10px] uppercase tracking-wider text-silver">{label}</div>
+      <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
+        {label}
+      </div>
       <div className={cn('text-xl font-semibold tabular-nums', tone)}>{value}</div>
     </div>
   );

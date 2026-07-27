@@ -24,6 +24,7 @@ import {
   updateProposal,
   type CompBand,
   type MeritCycle,
+  type MeritCycleStatus,
   type MeritProposal,
   type MeritProposalStatus,
   type PayType,
@@ -43,6 +44,7 @@ import {
   DrawerTitle,
   EmptyState,
   ErrorBanner,
+  FilterChip,
   Input,
   PageHeader,
   Select,
@@ -66,17 +68,38 @@ type Tab = 'bands' | 'cycles';
 /** Date-only "YYYY-MM-DD" → "May 13, 2026" without the UTC-midnight shift. */
 const fmtYmd = (s: string | null | undefined) => fmtDate(parseYmd(s));
 
+const PAY_TYPE_LABELS: Record<PayType, string> = {
+  HOURLY: 'Hourly',
+  SALARY: 'Salary',
+};
+
+const CYCLE_STATUS_LABELS: Record<MeritCycleStatus, string> = {
+  DRAFT: 'Draft',
+  OPEN: 'Open',
+  APPLIED: 'Applied',
+  CLOSED: 'Closed',
+};
+
+const PROPOSAL_STATUS_LABELS: Record<MeritProposalStatus, string> = {
+  DRAFT: 'Draft',
+  SUBMITTED: 'Submitted',
+  APPROVED: 'Approved',
+  REJECTED: 'Rejected',
+  APPLIED: 'Applied',
+};
+
 /** Shared "section failed to load" body with a Retry affordance. */
 function LoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <div className="p-6">
-      <ErrorBanner>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <span>{message}</span>
+      <ErrorBanner
+        action={
           <Button size="sm" variant="secondary" onClick={onRetry}>
             Retry
           </Button>
-        </div>
+        }
+      >
+        {message}
       </ErrorBanner>
     </div>
   );
@@ -113,7 +136,7 @@ export function CompensationHome() {
         <CardContent className="p-4 flex items-center gap-3 flex-wrap">
           <label
             htmlFor="comp-client"
-            className="text-[11px] uppercase tracking-wider text-silver"
+            className="text-xs2 uppercase tracking-wider text-silver"
           >
             Client
           </label>
@@ -131,9 +154,9 @@ export function CompensationHome() {
             ))}
           </Select>
           {clientsError && (
-            <ErrorBanner className="flex-1 min-w-[16rem]">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <span>Could not load the client list.</span>
+            <ErrorBanner
+              className="flex-1 min-w-[16rem]"
+              action={
                 <Button
                   size="sm"
                   variant="secondary"
@@ -141,7 +164,9 @@ export function CompensationHome() {
                 >
                   Retry
                 </Button>
-              </div>
+              }
+            >
+              Could not load the client list.
             </ErrorBanner>
           )}
         </CardContent>
@@ -230,7 +255,7 @@ function BandsTab({ clientId, canManage }: { clientId: string; canManage: boolea
         b.name,
         b.jobProfileTitle ?? '',
         b.level ?? '',
-        b.payType,
+        PAY_TYPE_LABELS[b.payType],
         b.minAmount,
         b.midAmount,
         b.maxAmount,
@@ -245,7 +270,7 @@ function BandsTab({ clientId, canManage }: { clientId: string; canManage: boolea
       toast.success('Band deleted.');
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not delete the band.');
     }
   };
 
@@ -340,13 +365,13 @@ function BandsTab({ clientId, canManage }: { clientId: string; canManage: boolea
                   >
                     <TableCell className="font-medium text-white">
                       <div className="truncate">{b.name}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         {b.jobProfileTitle ?? '—'}{b.level ? ` · ${b.level}` : ''}
                       </div>
                     </TableCell>
                     <TableCell className="hidden md:table-cell">{b.jobProfileTitle ?? '—'}</TableCell>
                     <TableCell className="hidden md:table-cell">{b.level ?? '—'}</TableCell>
-                    <TableCell className="hidden lg:table-cell">{b.payType}</TableCell>
+                    <TableCell className="hidden lg:table-cell">{PAY_TYPE_LABELS[b.payType]}</TableCell>
                     <TableCell className="tabular-nums">
                       {fmtMoney(b.minAmount)} · {fmtMoney(b.midAmount)} · {fmtMoney(b.maxAmount)}
                     </TableCell>
@@ -461,7 +486,7 @@ function BandDrawer({
       toast.success(draft.id ? 'Band updated.' : 'Band created.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not save the band.');
     } finally {
       setSaving(false);
     }
@@ -617,7 +642,7 @@ function CyclesTab({ clientId, canManage }: { clientId: string; canManage: boole
                   >
                     <TableCell className="font-medium text-white">
                       <div className="truncate">{c.name}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         {fmtYmd(c.reviewPeriodStart)} – {fmtYmd(c.reviewPeriodEnd)}
                       </div>
                     </TableCell>
@@ -631,7 +656,7 @@ function CyclesTab({ clientId, canManage }: { clientId: string; canManage: boole
                               : 'default'
                         }
                       >
-                        {c.status}
+                        {CYCLE_STATUS_LABELS[c.status]}
                       </Badge>
                     </TableCell>
                     <TableCell className="whitespace-nowrap hidden md:table-cell">
@@ -708,7 +733,7 @@ function NewCycleDrawer({
       toast.success('Cycle created.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not create the cycle.');
     } finally {
       setSaving(false);
     }
@@ -850,11 +875,11 @@ function CycleDetailDrawer({
       ['Associate', 'Pay type', 'Current', 'Proposed', 'Delta', 'Status'],
       ...filtered.map((p) => [
         p.associateName,
-        p.currentPayType,
+        PAY_TYPE_LABELS[p.currentPayType],
         p.currentAmount,
         p.proposedAmount,
         (Number(p.proposedAmount) - Number(p.currentAmount)).toFixed(2),
-        p.status,
+        PROPOSAL_STATUS_LABELS[p.status],
       ]),
     ]);
   };
@@ -867,7 +892,7 @@ function CycleDetailDrawer({
       onChanged();
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not seed proposals.');
     } finally {
       setBusy(false);
     }
@@ -884,7 +909,7 @@ function CycleDetailDrawer({
       onChanged();
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not apply the cycle.');
     } finally {
       setBusy(false);
     }
@@ -901,7 +926,7 @@ function CycleDetailDrawer({
       );
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not save the decision.');
     }
   };
 
@@ -956,7 +981,7 @@ function CycleDetailDrawer({
       toast.success(`${p.associateName}'s proposed amount updated.`);
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not update the amount.');
     }
   };
 
@@ -967,7 +992,7 @@ function CycleDetailDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div className="text-sm text-silver flex flex-wrap gap-4">
-          <span>Status: <span className="text-white">{cycle.status}</span></span>
+          <span>Status: <span className="text-white">{CYCLE_STATUS_LABELS[cycle.status]}</span></span>
           <span>Effective: <span className="text-white">{fmtYmd(cycle.effectiveDate)}</span></span>
           {budget !== null && (
             <span>
@@ -1038,14 +1063,13 @@ function CycleDetailDrawer({
             />
             {(['ALL', 'DRAFT', 'SUBMITTED', 'APPROVED', 'REJECTED', 'APPLIED'] as const).map(
               (s) => (
-                <Button
+                <FilterChip
                   key={s}
-                  size="sm"
-                  variant={statusChip === s ? 'primary' : 'ghost'}
+                  active={statusChip === s}
                   onClick={() => setStatusChip(s)}
                 >
-                  {s === 'ALL' ? 'All' : s.charAt(0) + s.slice(1).toLowerCase()}
-                </Button>
+                  {s === 'ALL' ? 'All' : PROPOSAL_STATUS_LABELS[s]}
+                </FilterChip>
               ),
             )}
             <Button
@@ -1127,7 +1151,7 @@ function CycleDetailDrawer({
                     )}
                     <TableCell className="font-medium text-white">
                       <div className="truncate">{p.associateName}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate tabular-nums">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate tabular-nums">
                         {fmtPayRate(p.currentAmount, p.currentPayType)}
                       </div>
                     </TableCell>
@@ -1155,12 +1179,12 @@ function CycleDetailDrawer({
                             invalid={Boolean(editError)}
                           />
                           {editError ? (
-                            <p className="text-[11px] text-alert">{editError}</p>
+                            <p className="text-xs2 text-alert">{editError}</p>
                           ) : (
                             delta !== null &&
                             delta !== 0 && (
                               <p
-                                className={`text-[11px] tabular-nums ${delta > 0 ? 'text-success' : 'text-alert'}`}
+                                className={`text-xs2 tabular-nums ${delta > 0 ? 'text-success' : 'text-alert'}`}
                               >
                                 {delta > 0 ? '+' : '−'}
                                 {deltaPct !== null
@@ -1186,7 +1210,7 @@ function CycleDetailDrawer({
                               : 'pending'
                         }
                       >
-                        {p.status}
+                        {PROPOSAL_STATUS_LABELS[p.status]}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">

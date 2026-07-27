@@ -69,9 +69,11 @@ import { Select } from '@/components/ui/Select';
 import { Stepper } from '@/components/ui/Stepper';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
+import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 
-const fmtMoney = (n: number) =>
-  n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+/** "May 13, 2026 → May 26, 2026" — a YMD period, parsed as local days. */
+const fmtPeriod = (startYmd: string, endYmd: string) =>
+  `${fmtDate(parseYmd(startYmd))} → ${fmtDate(parseYmd(endYmd))}`;
 
 interface Props {
   open: boolean;
@@ -147,7 +149,7 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated }: Props) {
     if (k === runKind) return;
     setRunKind(k);
     if (k === 'OFF_CYCLE') {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = ymdLocal();
       setPeriodStart(today);
       setPeriodEnd(today);
     } else if (activeSchedule) {
@@ -577,7 +579,7 @@ function ExceptionStrip({
   const [open, setOpen] = useState(false);
   if (loading) {
     return (
-      <div className="flex items-center gap-2 text-[11px] text-silver/70 py-2">
+      <div className="flex items-center gap-2 text-xs2 text-silver/70 py-2">
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
         Checking pre-flight exceptions…
       </div>
@@ -585,7 +587,7 @@ function ExceptionStrip({
   }
   if (!exceptions || exceptions.exceptions.length === 0) {
     return (
-      <div className="flex items-center gap-2 rounded border border-success/20 bg-success/5 px-3 py-2 text-[11px] text-success">
+      <div className="flex items-center gap-2 rounded border border-success/20 bg-success/5 px-3 py-2 text-xs2 text-success">
         <CheckCircle2 className="h-3.5 w-3.5" />
         No exceptions — every associate has a W-4, a payout method, and a supported state.
       </div>
@@ -639,13 +641,13 @@ function ExceptionStrip({
                       ? 'pending'
                       : 'default'
                   }
-                  className="text-[10px]"
+                  className="text-2xs"
                 >
                   {EXCEPTION_COPY[ex.kind].label}
                 </Badge>
                 <Link
                   to={`/people?associateId=${ex.associateId}`}
-                  className="ml-auto inline-flex items-center gap-1 text-[10px] text-gold hover:underline"
+                  className="ml-auto inline-flex items-center gap-1 text-2xs text-gold hover:underline"
                   title="Open associate profile to fix"
                 >
                   Fix <ExternalLink className="h-2.5 w-2.5" />
@@ -729,7 +731,7 @@ function PaycheckCard({
           )}
           <div className="min-w-0">
             <div className="text-sm text-white truncate">{item.associateName}</div>
-            <div className="text-[11px] text-silver/70 truncate">
+            <div className="text-xs2 text-silver/70 truncate">
               {item.taxState ?? '—'} · {item.payFrequency.toLowerCase()}
               {item.overtimeHours > 0 && (
                 <> · <span className="text-gold">{item.overtimeHours.toFixed(1)}h OT</span></>
@@ -739,7 +741,7 @@ function PaycheckCard({
           {item.rateSource === 'DEFAULT' && (
             <Badge
               variant="pending"
-              className="text-[10px] shrink-0"
+              className="text-2xs shrink-0"
               title="No compensation record; paying the wizard's default rate. Set their rate in People → Compensation."
             >
               default rate — no comp record
@@ -748,7 +750,7 @@ function PaycheckCard({
           {(blockingCount > 0 || otherCount > 0) && (
             <Badge
               variant={blockingCount > 0 ? 'destructive' : 'pending'}
-              className="text-[10px] shrink-0"
+              className="text-2xs shrink-0"
             >
               {blockingCount > 0
                 ? `${blockingCount} blocking`
@@ -776,7 +778,7 @@ function PaycheckCard({
         </div>
       </button>
       {expanded && (
-        <div className="border-t border-silver/10 px-3 py-3 text-[11px] space-y-3">
+        <div className="border-t border-silver/10 px-3 py-3 text-xs2 space-y-3">
           {variant === 'hours' ? (
             <HoursDrillDown item={item} />
           ) : (
@@ -784,7 +786,7 @@ function PaycheckCard({
           )}
           {exceptions.length > 0 && (
             <div className="border-t border-silver/10 pt-2">
-              <div className="text-[10px] uppercase tracking-widest text-silver/70 mb-1">
+              <div className="text-2xs uppercase tracking-widest text-silver/70 mb-1">
                 Exceptions
               </div>
               <ul className="space-y-1">
@@ -820,7 +822,7 @@ function CardStat({
 }) {
   return (
     <div>
-      <div className="text-[10px] uppercase tracking-widest text-silver/70">
+      <div className="text-2xs uppercase tracking-widest text-silver/70">
         {label}
       </div>
       <div className={cn('tabular-nums text-sm', highlight ? 'text-gold' : 'text-white')}>
@@ -848,7 +850,7 @@ function InfoTip({ text }: { text: string }) {
           <HelpCircle className="h-3 w-3" />
         </button>
       </TooltipTrigger>
-      <TooltipContent className="max-w-xs text-[11px] leading-relaxed">
+      <TooltipContent className="max-w-xs text-xs2 leading-relaxed">
         {text}
       </TooltipContent>
     </Tooltip>
@@ -1021,7 +1023,7 @@ function Step2({
     return (
       <div className="space-y-3 text-sm">
         <Pill icon={<Calendar className="h-3.5 w-3.5" />}>
-          {periodStart} → {periodEnd} · off-cycle
+          {fmtPeriod(periodStart, periodEnd)} · off-cycle
         </Pill>
         <div className="rounded border border-gold/30 bg-gold/5 p-3 text-xs text-silver/80">
           Nothing to review yet — off-cycle runs don't pull hours from time
@@ -1035,7 +1037,7 @@ function Step2({
   return (
     <div className="space-y-3 text-sm">
       <Pill icon={<Calendar className="h-3.5 w-3.5" />}>
-        {periodStart} → {periodEnd}{schedule ? ` · ${schedule.name}` : ''}
+        {fmtPeriod(periodStart, periodEnd)}{schedule ? ` · ${schedule.name}` : ''}
       </Pill>
 
       <ExceptionStrip exceptions={exceptions} loading={exceptionsLoading} />
@@ -1146,7 +1148,7 @@ function Step3({
             ))}
           </div>
 
-          <p className="text-[10px] text-silver/70">
+          <p className="text-2xs text-silver/70">
             Withholding tables: IRS Pub 15-T 2024. State tables include CA, NY,
             NJ, GA, OH, VA, MN (bracketed) and 11 flat-rate states. Long-tail
             states use a 4% conservative fallback.
@@ -1157,7 +1159,7 @@ function Step3({
       {schedule && (
         <p className="text-xs text-silver/70">
           Pay date will land on{' '}
-          <strong className="text-silver/80">{schedule.nextPayDate}</strong>{' '}
+          <strong className="text-silver/80">{fmtDate(parseYmd(schedule.nextPayDate))}</strong>{' '}
           ({schedule.payDateOffsetDays} day offset from period end).
         </p>
       )}
@@ -1168,7 +1170,7 @@ function Step3({
 function Stat({ label, value, highlight }: { label: React.ReactNode; value: string; highlight?: boolean }) {
   return (
     <div className={cn('rounded border border-silver/15 bg-black/30 px-3 py-2', highlight && 'border-gold/40 bg-gold/5')}>
-      <div className={cn('text-[10px] uppercase tracking-widest inline-flex items-center', highlight ? 'text-gold' : 'text-silver/70')}>
+      <div className={cn('text-2xs uppercase tracking-widest inline-flex items-center', highlight ? 'text-gold' : 'text-silver/70')}>
         {label}
       </div>
       <div className={cn('mt-0.5 tabular-nums', highlight ? 'text-gold' : 'text-white')}>{value}</div>
@@ -1224,7 +1226,7 @@ function Step4({
           <span className="font-medium uppercase tracking-wide">Ready to create</span>
         </div>
         <ul className="space-y-1 text-silver/80">
-          <li>• Period {periodStart} → {periodEnd}</li>
+          <li>• Period {fmtPeriod(periodStart, periodEnd)}</li>
           {offCycle && (
             <li>
               • <strong>Off-cycle</strong> — created empty; paychecks come from add-on earning
@@ -1240,7 +1242,7 @@ function Step4({
               employer cost {fmtMoney(preview.totals.totalEmployerTax)}
             </li>
           )}
-          <li>• Status will be <strong>DRAFT</strong> until you finalize it from the run drawer.</li>
+          <li>• Status will be <strong>Draft</strong> until you finalize it from the run drawer.</li>
           <li>• A QuickBooks journal entry will be queued on disbursement.</li>
         </ul>
       </div>

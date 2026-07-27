@@ -31,8 +31,6 @@ import {
   Avatar,
   Badge,
   Button,
-  Card,
-  CardContent,
   Drawer,
   DrawerBody,
   DrawerDescription,
@@ -43,6 +41,7 @@ import {
   ErrorBanner,
   Field,
   Input,
+  MetricCard,
   Select,
   SkeletonRows,
   Table,
@@ -60,6 +59,14 @@ const STATUS_VARIANT: Record<PositionStatus, 'default' | 'pending' | 'success' |
   FILLED: 'success',
   FROZEN: 'default',
   CLOSED: 'default',
+};
+
+const STATUS_LABELS: Record<PositionStatus, string> = {
+  PLANNED: 'Planned',
+  OPEN: 'Open',
+  FILLED: 'Filled',
+  FROZEN: 'Frozen',
+  CLOSED: 'Closed',
 };
 
 export function PositionsTab({
@@ -116,15 +123,24 @@ export function PositionsTab({
 
       {headcount && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
-          <HeadcountTile label="Total" value={headcount.total.toString()} />
-          <HeadcountTile label="FTE auth" value={headcount.fteAuthorized} />
-          <HeadcountTile label="FTE filled" value={headcount.fteFilled} />
-          <HeadcountTile label="Open" value={(headcount.byStatus.OPEN ?? 0).toString()} />
-          <HeadcountTile label="Filled" value={(headcount.byStatus.FILLED ?? 0).toString()} />
+          <MetricCard label="Total" value={headcount.total.toString()} />
+          <MetricCard label="FTE auth" value={headcount.fteAuthorized} />
+          <MetricCard label="FTE filled" value={headcount.fteFilled} />
+          <MetricCard label="Open" value={(headcount.byStatus.OPEN ?? 0).toString()} />
+          <MetricCard label="Filled" value={(headcount.byStatus.FILLED ?? 0).toString()} />
         </div>
       )}
 
-      {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
+      {error && (
+        <ErrorBanner className="mb-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <span>{error}</span>
+            <Button size="sm" variant="outline" onClick={() => void refresh()}>
+              Retry
+            </Button>
+          </div>
+        </ErrorBanner>
+      )}
       {!rows && <SkeletonRows count={4} rowHeight="h-12" />}
       {rows && rows.length === 0 && (
         <EmptyState
@@ -153,7 +169,7 @@ export function PositionsTab({
               <TableHead>Title</TableHead>
               <TableHead className="hidden md:table-cell">Department</TableHead>
               <TableHead>Filled by</TableHead>
-              <TableHead className="hidden lg:table-cell">FTE</TableHead>
+              <TableHead className="hidden lg:table-cell text-right">FTE</TableHead>
               <TableHead>Status</TableHead>
             </TableRow>
           </TableHeader>
@@ -171,7 +187,7 @@ export function PositionsTab({
                 <TableCell className="font-medium tabular-nums">{p.code}</TableCell>
                 <TableCell>
                   {p.title}
-                  <div className="text-[11px] text-silver/70 md:hidden">{p.departmentName ?? '—'}</div>
+                  <div className="text-xs2 text-silver/70 md:hidden">{p.departmentName ?? '—'}</div>
                 </TableCell>
                 <TableCell className="text-silver hidden md:table-cell">{p.departmentName ?? '—'}</TableCell>
                 <TableCell className="text-silver">
@@ -184,9 +200,9 @@ export function PositionsTab({
                     '—'
                   )}
                 </TableCell>
-                <TableCell className="tabular-nums hidden lg:table-cell">{p.fteAuthorized}</TableCell>
+                <TableCell className="text-right tabular-nums hidden lg:table-cell">{p.fteAuthorized}</TableCell>
                 <TableCell>
-                  <Badge variant={STATUS_VARIANT[p.status]}>{p.status}</Badge>
+                  <Badge variant={STATUS_VARIANT[p.status]}>{STATUS_LABELS[p.status]}</Badge>
                 </TableCell>
               </TableRow>
             ))}
@@ -216,21 +232,6 @@ export function PositionsTab({
         )}
       </Drawer>
     </section>
-  );
-}
-
-function HeadcountTile({ label, value }: { label: string; value: string }) {
-  return (
-    <Card>
-      <CardContent className="p-3">
-        <div className="text-[10px] uppercase tracking-widest text-silver/80">
-          {label}
-        </div>
-        <div className="font-display text-2xl text-white tabular-nums mt-1">
-          {value}
-        </div>
-      </CardContent>
-    </Card>
   );
 }
 
@@ -323,10 +324,10 @@ function PositionDrawer({
       };
       if (isNew) {
         await createPosition(payload);
-        toast.success('Position created');
+        toast.success('Position created.');
       } else {
         await updatePosition(initial!.id, payload);
-        toast.success('Position updated');
+        toast.success('Position updated.');
       }
       onSaved();
     } catch (err) {
@@ -358,7 +359,7 @@ function PositionDrawer({
       confirmLabel: 'Freeze position',
     });
     if (!ok) return;
-    await transition('FROZEN', `${initial!.code} frozen — hiring is paused`);
+    await transition('FROZEN', `${initial!.code} frozen — hiring is paused.`);
   };
 
   const assign = async () => {
@@ -366,7 +367,7 @@ function PositionDrawer({
     setSubmitting(true);
     try {
       await assignPosition(initial!.id, { associateId: assignTo.id });
-      toast.success(`Position filled by ${assignTo.name}`);
+      toast.success(`Position filled by ${assignTo.name}.`);
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Assign failed.');
@@ -376,11 +377,11 @@ function PositionDrawer({
 
   const vacate = async () => {
     if (isNew) return;
-    if (!(await confirm({ title: 'Vacate this position?', description: 'Status moves to OPEN.', destructive: true }))) return;
+    if (!(await confirm({ title: 'Vacate this position?', description: 'Status moves to Open.', destructive: true }))) return;
     setSubmitting(true);
     try {
       await vacatePosition(initial!.id);
-      toast.success('Position vacated');
+      toast.success('Position vacated.');
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Vacate failed.');
@@ -394,7 +395,7 @@ function PositionDrawer({
     setSubmitting(true);
     try {
       await deletePosition(initial!.id);
-      toast.success('Position closed');
+      toast.success('Position closed.');
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Close failed.');
@@ -413,7 +414,7 @@ function PositionDrawer({
             ? 'Authorized seat in the org — distinct from the person filling it.'
             : (
               <span className="inline-flex items-center gap-2">
-                <Badge variant={STATUS_VARIANT[initial!.status]}>{initial!.status}</Badge>
+                <Badge variant={STATUS_VARIANT[initial!.status]}>{STATUS_LABELS[initial!.status]}</Badge>
                 {initial!.filledByName ? (
                   <>filled by {initial!.filledByName}</>
                 ) : (
@@ -572,7 +573,7 @@ function PositionDrawer({
             </p>
           )}
           {rangeStats && (
-            <p className="text-[11px] text-silver tabular-nums">
+            <p className="text-xs2 text-silver tabular-nums">
               midpoint {fmtMoney(rangeStats.midpoint)} · spread{' '}
               {fmtPercent(rangeStats.spreadPct)}
             </p>
@@ -592,7 +593,7 @@ function PositionDrawer({
 
           {!isNew && canManage && initial!.status !== 'FILLED' && (
             <div className="pt-3 border-t border-navy-secondary space-y-2">
-              <div className="text-[10px] uppercase tracking-widest text-silver/80">
+              <div className="text-2xs uppercase tracking-widest text-silver/80">
                 Assign to
               </div>
               <div className="flex gap-2">
@@ -630,7 +631,7 @@ function PositionDrawer({
               <Button
                 variant="outline"
                 onClick={() =>
-                  void transition('OPEN', `${initial!.code} is open for hiring`)
+                  void transition('OPEN', `${initial!.code} is open for hiring.`)
                 }
                 disabled={submitting}
               >

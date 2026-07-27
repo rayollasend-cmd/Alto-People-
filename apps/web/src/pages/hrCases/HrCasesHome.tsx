@@ -33,8 +33,12 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
+  SearchInput,
+  SegmentedControl,
+  type SegmentedControlOption,
   Select,
   SkeletonRows,
   Table,
@@ -68,6 +72,13 @@ const PRIORITY_VARIANT: Record<
   MEDIUM: 'pending',
   HIGH: 'accent',
   URGENT: 'destructive',
+};
+
+const PRIORITY_LABELS: Record<CasePriority, string> = {
+  LOW: 'Low',
+  MEDIUM: 'Medium',
+  HIGH: 'High',
+  URGENT: 'Urgent',
 };
 
 export function HrCasesHome() {
@@ -141,6 +152,28 @@ export function HrCasesHome() {
     );
   }, [queue, search]);
 
+  // The queue segment only exists for HR; building the option list up front
+  // keeps the conditional out of the JSX and the generic parameter explicit
+  // (inference would otherwise narrow to 'mine').
+  const tabOptions: SegmentedControlOption<'mine' | 'queue'>[] = [
+    { value: 'mine', label: 'My cases' },
+  ];
+  if (canManage) {
+    tabOptions.push({
+      value: 'queue',
+      label: (
+        <>
+          Queue
+          {summary && summary.openTotal > 0 && (
+            <Badge variant="destructive" className="ml-2">
+              {summary.openTotal}
+            </Badge>
+          )}
+        </>
+      ),
+    });
+  }
+
   const exportQueueCsv = () => {
     downloadCsv(`hr-cases-queue-${ymdLocal()}.csv`, [
       [
@@ -160,7 +193,7 @@ export function HrCasesHome() {
         c.associateName,
         c.associateEmail,
         CATEGORY_LABELS[c.category],
-        c.priority,
+        PRIORITY_LABELS[c.priority],
         STATUS_LABELS[c.status],
         c.assignedToEmail ?? '',
         c.commentCount,
@@ -179,35 +212,18 @@ export function HrCasesHome() {
       />
 
       <div className="flex items-center justify-between">
-        <div className="flex gap-1">
-          <Button
-            size="sm"
-            variant={tab === 'mine' ? 'primary' : 'ghost'}
-            onClick={() => setTab('mine')}
-          >
-            My cases
-          </Button>
-          {canManage && (
-            <Button
-              size="sm"
-              variant={tab === 'queue' ? 'primary' : 'ghost'}
-              onClick={() => setTab('queue')}
-            >
-              Queue
-              {summary && summary.openTotal > 0 && (
-                <Badge variant="destructive" className="ml-2">
-                  {summary.openTotal}
-                </Badge>
-              )}
-            </Button>
-          )}
-        </div>
+        <SegmentedControl<'mine' | 'queue'>
+          ariaLabel="Case view"
+          value={tab}
+          onChange={setTab}
+          options={tabOptions}
+        />
         <div className="flex flex-wrap items-center justify-end gap-2">
           {canManage && tab === 'queue' && (
             <>
-              <Input
+              <SearchInput
                 aria-label="Search subject or associate"
-                className="h-8 w-44 text-xs"
+                className="h-8 w-52 text-xs"
                 placeholder="Search subject/associate"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -270,13 +286,16 @@ export function HrCasesHome() {
         <Card>
           <CardContent className="p-0">
             {mineError ? (
-              <div className="p-6 space-y-3">
-                <p role="alert" className="text-sm text-alert">
+              <div className="p-6">
+                <ErrorBanner
+                  action={
+                    <Button size="sm" variant="secondary" onClick={refresh}>
+                      Retry
+                    </Button>
+                  }
+                >
                   {mineError}
-                </p>
-                <Button size="sm" variant="secondary" onClick={refresh}>
-                  Retry
-                </Button>
+                </ErrorBanner>
               </div>
             ) : mine === null ? (
               <div className="p-6">
@@ -325,13 +344,16 @@ export function HrCasesHome() {
         <Card>
           <CardContent className="p-0">
             {queueError ? (
-              <div className="p-6 space-y-3">
-                <p role="alert" className="text-sm text-alert">
+              <div className="p-6">
+                <ErrorBanner
+                  action={
+                    <Button size="sm" variant="secondary" onClick={refresh}>
+                      Retry
+                    </Button>
+                  }
+                >
                   {queueError}
-                </p>
-                <Button size="sm" variant="secondary" onClick={refresh}>
-                  Retry
-                </Button>
+                </ErrorBanner>
               </div>
             ) : queue === null ? (
               <div className="p-6">
@@ -375,7 +397,7 @@ export function HrCasesHome() {
                             {c.commentCount} replies
                           </div>
                         )}
-                        <div className="text-[11px] text-silver/70 md:hidden">
+                        <div className="text-xs2 text-silver/70 md:hidden">
                           {c.associateName} · {CATEGORY_LABELS[c.category]}
                         </div>
                       </TableCell>
@@ -390,7 +412,7 @@ export function HrCasesHome() {
                       </TableCell>
                       <TableCell>
                         <Badge variant={PRIORITY_VARIANT[c.priority]}>
-                          {c.priority}
+                          {PRIORITY_LABELS[c.priority]}
                         </Badge>
                       </TableCell>
                       <TableCell>
@@ -465,7 +487,7 @@ function NewCaseDrawer({
       toast.success('Case filed.');
       onSaved(r.id);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not file the case.');
     } finally {
       setSaving(false);
     }
@@ -575,7 +597,7 @@ function CaseDetailDrawer({
       setInternal(false);
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not send the reply.');
     } finally {
       setBusy(false);
     }
@@ -584,18 +606,19 @@ function CaseDetailDrawer({
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>{data?.subject ?? 'Loading…'}</DrawerTitle>
+        <DrawerTitle>{data?.subject ?? 'Case details'}</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         {loadError ? (
-          <div className="space-y-3">
-            <p role="alert" className="text-sm text-alert">
-              {loadError}
-            </p>
-            <Button size="sm" variant="secondary" onClick={refresh}>
-              Retry
-            </Button>
-          </div>
+          <ErrorBanner
+            action={
+              <Button size="sm" variant="secondary" onClick={refresh}>
+                Retry
+              </Button>
+            }
+          >
+            {loadError}
+          </ErrorBanner>
         ) : !data ? (
           <SkeletonRows count={3} />
         ) : (
@@ -605,7 +628,7 @@ function CaseDetailDrawer({
                 {STATUS_LABELS[data.status]}
               </Badge>
               <Badge variant={PRIORITY_VARIANT[data.priority]}>
-                {data.priority}
+                {PRIORITY_LABELS[data.priority]}
               </Badge>
               <Badge variant="outline">{CATEGORY_LABELS[data.category]}</Badge>
               {data.assignedToEmail && (
@@ -649,7 +672,7 @@ function CaseDetailDrawer({
                         <span>{c.authorEmail ?? c.authorName ?? 'Unknown'}</span>
                         <span>· {fmtDateTime(c.createdAt)}</span>
                         {c.internalNote && (
-                          <span className="text-warning">internal</span>
+                          <span className="text-warning">Internal</span>
                         )}
                       </div>
                       <div className="text-sm text-white whitespace-pre-wrap">
@@ -719,7 +742,7 @@ function TriageBlock({
       toast.success('Case assigned to you.');
       onChange();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not assign the case.');
     } finally {
       setClaiming(false);
     }
@@ -754,7 +777,9 @@ function TriageBlock({
               });
               onChange();
             } catch (err) {
-              toast.error(err instanceof ApiError ? err.message : 'Failed.');
+              toast.error(
+                err instanceof ApiError ? err.message : 'Could not update the status.',
+              );
             }
           }}
         >
@@ -774,7 +799,9 @@ function TriageBlock({
               });
               onChange();
             } catch (err) {
-              toast.error(err instanceof ApiError ? err.message : 'Failed.');
+              toast.error(
+                err instanceof ApiError ? err.message : 'Could not update the priority.',
+              );
             }
           }}
         >
@@ -796,7 +823,9 @@ function TriageBlock({
                 await triageCase(detail.id, { resolution: resolution.trim() || null });
                 onChange();
               } catch (err) {
-                toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                toast.error(
+                  err instanceof ApiError ? err.message : 'Could not save the resolution.',
+                );
               }
             }
           }}

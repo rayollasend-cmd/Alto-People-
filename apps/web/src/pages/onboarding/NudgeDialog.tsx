@@ -67,11 +67,11 @@ export function NudgeDialog({
   const submit = async () => {
     if (!applicationId) return;
     if (!subject.trim()) {
-      toast.error('Subject required');
+      toast.error('Subject is required.');
       return;
     }
     if (!body.trim()) {
-      toast.error('Body required');
+      toast.error('Body is required.');
       return;
     }
     setSubmitting(true);
@@ -81,9 +81,9 @@ export function NudgeDialog({
         body: body.trim(),
       });
       if (res.emailSent) {
-        toast.success(`Nudge sent to ${res.recipientEmail}`);
+        toast.success(`Nudge sent to ${res.recipientEmail}.`);
       } else {
-        toast.message('Nudge logged — email delivery failed', {
+        toast.message('Nudge logged — email delivery failed.', {
           description: 'The Notification row was created. Check email config.',
         });
       }
@@ -94,8 +94,8 @@ export function NudgeDialog({
           ? err.message
           : err instanceof Error
             ? err.message
-            : 'Could not send nudge';
-      toast.error('Could not send', { description: msg });
+            : 'Could not send the nudge.';
+      toast.error('Could not send the nudge.', { description: msg });
     } finally {
       setSubmitting(false);
     }

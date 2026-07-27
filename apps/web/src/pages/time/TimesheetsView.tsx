@@ -28,6 +28,8 @@ import { upsertAttestation } from '@/lib/complianceScorecardApi';
 import { useAuth } from '@/lib/auth';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
+import { fmtDate, fmtDateTime } from '@/lib/format';
+import { useConfirm } from '@/lib/confirm';
 import {
   Badge,
   Button,
@@ -80,9 +82,6 @@ function mondayOfIsoWeek(fridayIso: string): string {
   return d.toISOString().slice(0, 10);
 }
 
-const fmtDay = (d: Date) =>
-  d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-
 const hoursCell = (n: number) => (n === 0 ? '0.00' : n.toFixed(2));
 
 const ISSUE_LABEL: Record<TimesheetIssueKind, string> = {
@@ -94,6 +93,7 @@ const ISSUE_LABEL: Record<TimesheetIssueKind, string> = {
 export function TimesheetsView() {
   const { can, user } = useAuth();
   const navigate = useNavigate();
+  const confirm = useConfirm();
   const canAttest = can('manage:compliance');
   // Client-bound roles (SHIFT_SUPERVISOR) can't list clients — /clients
   // 403s for them. Pin the client filter to their one client instead.
@@ -210,21 +210,27 @@ export function TimesheetsView() {
       await navigator.clipboard.writeText(lines.join('\n'));
       toast.success(`Copied ${data.rows.length} rows to the clipboard.`);
     } catch {
-      toast.error('Clipboard blocked — use Download instead.');
+      toast.error('Clipboard blocked — use Export .xlsx instead.');
     }
   };
 
   const onMarkFiled = async () => {
     if (!data || filingBusy) return;
     const already = !!data.filing;
-    if (
-      !window.confirm(
-        already
-          ? `Re-file the week ending ${data.weekEnding}? This updates the recorded snapshot to the current hours.`
-          : `Mark the Fieldglass timesheet for the week ending ${data.weekEnding} as filed? This records a snapshot of the current hours${canAttest ? ' and ticks the weekly compliance attestation' : ''}.`,
-      )
-    )
-      return;
+    const ok = await confirm(
+      already
+        ? {
+            title: `Re-file the week ending ${data.weekEnding}?`,
+            description: 'This updates the recorded snapshot to the current hours.',
+            confirmLabel: 'Re-file',
+          }
+        : {
+            title: `Mark the week ending ${data.weekEnding} as filed?`,
+            description: `This records a snapshot of the current hours${canAttest ? ' and ticks the weekly compliance attestation' : ''}.`,
+            confirmLabel: 'Mark filed',
+          },
+    );
+    if (!ok) return;
     setFilingBusy(true);
     try {
       const updated = await fileTimesheetWeek({ weekStart: weekStart.toISOString(), clientId: clientArg });
@@ -275,7 +281,7 @@ export function TimesheetsView() {
             <ChevronLeft className="h-4 w-4" />
           </Button>
           <span className="px-3 text-sm text-white tabular-nums whitespace-nowrap">
-            {fmtDay(weekStart)} – {fmtDay(weekEnd)}
+            {fmtDate(weekStart)} – {fmtDate(weekEnd)}
           </span>
           <Button
             variant="ghost"
@@ -330,7 +336,7 @@ export function TimesheetsView() {
             <CalendarClock className="h-3.5 w-3.5" />
             Scheduled vs actual
             {scheduleFlags.length > 0 && (
-              <span className="ml-1 rounded-full bg-gold/20 px-1.5 text-[11px] text-gold">
+              <span className="ml-1 rounded-full bg-gold/20 px-1.5 text-xs2 text-gold">
                 {scheduleFlags.length}
               </span>
             )}
@@ -357,7 +363,7 @@ export function TimesheetsView() {
             disabled={rows.length === 0}
           >
             <FileSpreadsheet className="h-3.5 w-3.5" />
-            Download .xlsx
+            Export .xlsx
           </Button>
           <Button
             variant="primary"
@@ -379,8 +385,8 @@ export function TimesheetsView() {
             <div className="mb-2 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-sm font-medium text-gold">
                 <AlertTriangle className="h-4 w-4 shrink-0" />
-                Filed {new Date(data.filing.filedAt).toLocaleDateString()} — {data.filing.drift.length}{' '}
-                worker{data.filing.drift.length === 1 ? '' : 's'} changed since. Re-file to match
+                Filed {fmtDate(data.filing.filedAt)} — {data.filing.drift.length}{' '}
+                associate{data.filing.drift.length === 1 ? '' : 's'} changed since. Re-file to match
                 Fieldglass.
               </div>
               <Button variant="secondary" size="sm" onClick={onMarkFiled} loading={filingBusy}>
@@ -405,7 +411,7 @@ export function TimesheetsView() {
           <div className="flex items-center gap-2 rounded-md border border-navy-secondary bg-navy/40 p-2.5 text-sm text-silver">
             <Lock className="h-4 w-4 text-gold" />
             Filed{data.filing.filedBy ? ` by ${data.filing.filedBy}` : ''} ·{' '}
-            {new Date(data.filing.filedAt).toLocaleString()} ·{' '}
+            {fmtDateTime(data.filing.filedAt)} ·{' '}
             {data.filing.filedTotalHours.toFixed(2)}h — in sync.
           </div>
         ))}
@@ -449,7 +455,7 @@ export function TimesheetsView() {
                 <TableHead>Status</TableHead>
                 <TableHead>ID</TableHead>
                 <TableHead className="text-right">Revision</TableHead>
-                <TableHead>Worker</TableHead>
+                <TableHead>Associate</TableHead>
                 <TableHead>Site</TableHead>
                 <TableHead>End</TableHead>
                 <TableHead className="text-right">ST</TableHead>
@@ -493,7 +499,7 @@ export function TimesheetsView() {
                         type="button"
                         onClick={() => void openDetail(r.associateId)}
                         className="text-left text-gold hover:underline focus:underline focus:outline-none"
-                        title="Open this worker's daily timesheet"
+                        title="Open this associate's daily timesheet"
                       >
                         {r.worker}
                       </button>
@@ -528,7 +534,7 @@ export function TimesheetsView() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Worker</TableHead>
+                    <TableHead>Associate</TableHead>
                     <TableHead className="text-right">Scheduled</TableHead>
                     <TableHead className="text-right">Actual</TableHead>
                     <TableHead className="text-right">Δ</TableHead>
@@ -577,7 +583,7 @@ export function TimesheetsView() {
 
       {data && rows.length > 0 && (
         <p className="text-xs text-silver/70">
-          {rows.length} worker{rows.length === 1 ? '' : 's'} · {data.totalHours.toFixed(2)} total
+          {rows.length} associate{rows.length === 1 ? '' : 's'} · {data.totalHours.toFixed(2)} total
           hours · week ending {data.weekEnding}. Hours are net of unpaid breaks, billed flat under
           &ldquo;Others&rdquo; per the SOW.
         </p>
@@ -639,7 +645,7 @@ export function TimesheetsView() {
                       {detail.days.map((d) => (
                         <th key={d.date} className="p-2 text-center whitespace-nowrap">
                           <div className="font-semibold text-white">{d.weekday}</div>
-                          <div className="text-[11px] tabular-nums text-silver/60">{d.monthDay}</div>
+                          <div className="text-xs2 tabular-nums text-silver/60">{d.monthDay}</div>
                         </th>
                       ))}
                       <th className="p-2 text-center font-semibold text-white">Total</th>
@@ -658,7 +664,7 @@ export function TimesheetsView() {
                     <tr className="border-t border-navy-secondary">
                       <td className="p-2 text-silver/70">Meal Break</td>
                       {detail.days.map((d) => (
-                        <td key={d.date} className="p-2 text-center text-[11px] text-silver/80 whitespace-nowrap">
+                        <td key={d.date} className="p-2 text-center text-xs2 text-silver/80 whitespace-nowrap">
                           {d.breaks.length > 0
                             ? d.breaks.map((b, i) => <div key={i}>{b}</div>)
                             : '—'}

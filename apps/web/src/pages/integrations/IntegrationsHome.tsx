@@ -47,8 +47,9 @@ import {
   TabsList,
   TabsTrigger,
 } from '@/components/ui';
+import { SearchInput } from '@/components/ui/FilterBar';
 import { Label } from '@/components/ui/Label';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, ymdLocal } from '@/lib/format';
 import { toast } from 'sonner';
 
 type Tab = 'keys' | 'webhooks';
@@ -112,6 +113,19 @@ function keyStatus(k: ApiKeyRecord): KeyStatus {
   return 'active';
 }
 
+const KEY_STATUS_LABELS: Record<KeyStatus, string> = {
+  active: 'Active',
+  revoked: 'Revoked',
+  expired: 'Expired',
+};
+
+/** ACTIVE is success, EXPIRED/REVOKED are both dead keys — destructive. */
+const KEY_STATUS_VARIANT: Record<KeyStatus, 'success' | 'destructive'> = {
+  active: 'success',
+  revoked: 'destructive',
+  expired: 'destructive',
+};
+
 function KeysTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
   const [keys, setKeys] = useState<ApiKeyRecord[] | null>(null);
@@ -147,7 +161,7 @@ function KeysTab({ canManage }: { canManage: boolean }) {
   }, [keys, search, statusFilter]);
 
   const exportCsv = () => {
-    downloadCsv('api-key-inventory.csv', [
+    downloadCsv(`api-key-inventory-${ymdLocal()}.csv`, [
       ['Name', 'Key', 'Client', 'Capabilities', 'Created by', 'Last used', 'Expires', 'Status', 'Created'],
       ...filtered.map((k) => [
         k.name,
@@ -157,7 +171,7 @@ function KeysTab({ canManage }: { canManage: boolean }) {
         k.createdByEmail,
         fmtDate(k.lastUsedAt),
         fmtDate(k.expiresAt),
-        keyStatus(k),
+        KEY_STATUS_LABELS[keyStatus(k)],
         fmtDate(k.createdAt),
       ]),
     ]);
@@ -190,8 +204,9 @@ function KeysTab({ canManage }: { canManage: boolean }) {
     <div className="space-y-4">
       {keys !== null && keys.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
-          <Input
-            className="max-w-xs h-8 text-xs"
+          <SearchInput
+            wrapperClassName="max-w-xs"
+            className="h-8 text-xs"
             placeholder="Search keys by name…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -225,11 +240,16 @@ function KeysTab({ canManage }: { canManage: boolean }) {
       <Card>
         <CardContent className="p-0">
           {loadError ? (
-            <div className="p-6 space-y-3">
-              <ErrorBanner>{loadError}</ErrorBanner>
-              <Button size="sm" variant="outline" onClick={refresh}>
-                Retry
-              </Button>
+            <div className="p-6">
+              <ErrorBanner
+                action={
+                  <Button size="sm" variant="secondary" onClick={refresh}>
+                    Retry
+                  </Button>
+                }
+              >
+                {loadError}
+              </ErrorBanner>
             </div>
           ) : keys === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
@@ -267,7 +287,7 @@ function KeysTab({ canManage }: { canManage: boolean }) {
                   <TableRow key={k.id} className="group">
                     <TableCell className="font-medium text-white">
                       <div className="truncate">{k.name}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         <span className="sm:hidden font-mono">
                           altop_…{k.last4}
                           {' · '}
@@ -285,13 +305,9 @@ function KeysTab({ canManage }: { canManage: boolean }) {
                       {fmtDate(k.lastUsedAt)}
                     </TableCell>
                     <TableCell>
-                      {keyStatus(k) === 'revoked' ? (
-                        <Badge variant="destructive">Revoked</Badge>
-                      ) : keyStatus(k) === 'expired' ? (
-                        <Badge variant="default">Expired</Badge>
-                      ) : (
-                        <Badge variant="success">Active</Badge>
-                      )}
+                      <Badge variant={KEY_STATUS_VARIANT[keyStatus(k)]}>
+                        {KEY_STATUS_LABELS[keyStatus(k)]}
+                      </Badge>
                     </TableCell>
                     <TableCell className="text-right space-x-2">
                       {canManage && !k.revokedAt && (
@@ -548,15 +564,20 @@ function NewKeyDrawer({
               <div>
                 <Label required>Store</Label>
                 {storesError ? (
-                  <div className="mt-1 space-y-2">
-                    <ErrorBanner>Failed to load stores.</ErrorBanner>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => void refetchStores()}
+                  <div className="mt-1">
+                    <ErrorBanner
+                      action={
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => void refetchStores()}
+                        >
+                          Retry
+                        </Button>
+                      }
                     >
-                      Retry
-                    </Button>
+                      Failed to load stores.
+                    </ErrorBanner>
                   </div>
                 ) : (
                   <>
@@ -737,7 +758,7 @@ function WebhooksTab({ canManage }: { canManage: boolean }) {
       if (r.ok) {
         toast.success(`Test delivered (HTTP ${r.responseStatus}).`);
       } else {
-        toast.error(`Failed: ${r.responseBody ?? 'unknown error'}`);
+        toast.error(`Test delivery failed: ${r.responseBody ?? 'unknown error'}.`);
       }
       refresh();
     } catch (err) {
@@ -770,8 +791,9 @@ function WebhooksTab({ canManage }: { canManage: boolean }) {
     <div className="space-y-4">
       {rows !== null && rows.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
-          <Input
-            className="max-w-xs h-8 text-xs"
+          <SearchInput
+            wrapperClassName="max-w-xs"
+            className="h-8 text-xs"
             placeholder="Search webhooks by name…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -803,11 +825,16 @@ function WebhooksTab({ canManage }: { canManage: boolean }) {
       <Card>
         <CardContent className="p-0">
           {loadError ? (
-            <div className="p-6 space-y-3">
-              <ErrorBanner>{loadError}</ErrorBanner>
-              <Button size="sm" variant="outline" onClick={refresh}>
-                Retry
-              </Button>
+            <div className="p-6">
+              <ErrorBanner
+                action={
+                  <Button size="sm" variant="secondary" onClick={refresh}>
+                    Retry
+                  </Button>
+                }
+              >
+                {loadError}
+              </ErrorBanner>
             </div>
           ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
@@ -835,7 +862,7 @@ function WebhooksTab({ canManage }: { canManage: boolean }) {
                   <TableHead>Name</TableHead>
                   <TableHead className="hidden sm:table-cell">URL</TableHead>
                   <TableHead className="hidden lg:table-cell">Events</TableHead>
-                  <TableHead className="hidden md:table-cell">Deliveries</TableHead>
+                  <TableHead className="hidden md:table-cell text-right">Deliveries</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -845,7 +872,7 @@ function WebhooksTab({ canManage }: { canManage: boolean }) {
                   <TableRow key={w.id} className="group">
                     <TableCell className="font-medium text-white">
                       <div className="truncate">{w.name}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         <span className="sm:hidden font-mono">
                           {w.url}
                           {' · '}
@@ -859,7 +886,9 @@ function WebhooksTab({ canManage }: { canManage: boolean }) {
                     <TableCell className="text-xs text-silver hidden lg:table-cell">
                       {w.eventTypes.length > 0 ? w.eventTypes.join(', ') : '(all)'}
                     </TableCell>
-                    <TableCell className="hidden md:table-cell">{w.deliveryCount}</TableCell>
+                    <TableCell className="hidden md:table-cell text-right tabular-nums">
+                      {w.deliveryCount}
+                    </TableCell>
                     <TableCell>
                       {w.isActive ? (
                         <Badge variant="success">Active</Badge>

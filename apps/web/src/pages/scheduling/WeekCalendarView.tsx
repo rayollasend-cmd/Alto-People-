@@ -420,7 +420,7 @@ export function WeekCalendarView({
       <div className="rounded-md border border-navy-secondary bg-navy/40 overflow-x-auto">
         <div className="grid" style={gridStyle}>
           {/* ===== Header row ===== */}
-          <div className="sticky left-0 z-20 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-3 py-2 text-[10px] uppercase tracking-wider text-silver">
+          <div className="sticky left-0 z-20 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-3 py-2 text-2xs uppercase tracking-wider text-silver">
             Schedule
           </div>
           {days.map((d) => {
@@ -435,7 +435,7 @@ export function WeekCalendarView({
               >
                 <div
                   className={cn(
-                    'text-[10px] uppercase tracking-wider',
+                    'text-2xs uppercase tracking-wider',
                     isToday ? 'text-gold' : 'text-silver'
                   )}
                 >
@@ -545,7 +545,7 @@ export function WeekCalendarView({
           })}
 
           {/* ===== Day totals footer ===== */}
-          <div className="sticky left-0 z-10 bg-navy/95 backdrop-blur border-t border-r border-navy-secondary px-3 py-2 text-[10px] uppercase tracking-wider text-silver/70">
+          <div className="sticky left-0 z-10 bg-navy/95 backdrop-blur border-t border-r border-navy-secondary px-3 py-2 text-2xs uppercase tracking-wider text-silver/70">
             Daily total
           </div>
           {days.map((d, i) => {
@@ -563,9 +563,9 @@ export function WeekCalendarView({
                 )}
               >
                 {count === 0 ? (
-                  <div className="text-[11px] text-silver/70">—</div>
+                  <div className="text-xs2 text-silver/70">—</div>
                 ) : (
-                  <div className="flex items-baseline gap-2 text-[11px] tabular-nums">
+                  <div className="flex items-baseline gap-2 text-xs2 tabular-nums">
                     <span className="text-white font-medium">{count}</span>
                     <span className="text-silver/70">·</span>
                     <span className="text-silver">{hrs.toFixed(1)}h</span>
@@ -653,7 +653,7 @@ const Row = memo(function Row({
           <div className="text-sm text-white truncate">
             {associate.firstName} {associate.lastName}
           </div>
-          <div className="text-[10px] tabular-nums">
+          <div className="text-2xs tabular-nums">
             <span
               className={
                 overTime || nearOT ? 'text-warning' : 'text-silver/70'
@@ -696,7 +696,7 @@ function RailCell({
         {label}
       </div>
       {sublabel && (
-        <div className="text-[10px] uppercase tracking-wider text-silver/70">
+        <div className="text-2xs uppercase tracking-wider text-silver/70">
           {sublabel}
         </div>
       )}
@@ -833,7 +833,7 @@ const Cell = memo(function Cell({
             <button
               type="button"
               onClick={onCreate}
-              className="text-[10px] text-silver/70 hover:text-gold inline-flex items-center justify-center gap-1 mt-auto opacity-60 group-hover:opacity-100 transition-opacity"
+              className="text-2xs text-silver/70 hover:text-gold inline-flex items-center justify-center gap-1 mt-auto opacity-60 group-hover:opacity-100 transition-opacity"
               aria-label="Add another shift"
             >
               <Plus className="h-3 w-3" />
@@ -962,7 +962,7 @@ function ShiftChip({
       {isSelected && (
         <div
           aria-hidden
-          className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-gold text-navy flex items-center justify-center text-[10px] font-bold"
+          className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-gold text-navy flex items-center justify-center text-2xs font-bold"
         >
           ✓
         </div>
@@ -992,19 +992,19 @@ function ShiftChip({
         title={`${fmtTime(shift.startsAt, shift.timezone)}–${fmtTime(previewEndsAt.toISOString(), shift.timezone)} · ${shift.position}${shift.clientName ? ` · ${shift.clientName}` : ''}`}
       >
         <div className="flex items-center gap-1.5 min-w-0">
-          <span className="text-[10px] text-silver/90 tabular-nums shrink-0">
+          <span className="text-2xs text-silver/90 tabular-nums shrink-0">
             {compactRange(
               shift.startsAt,
               previewEndsAt.toISOString(),
               shift.timezone,
             )}
           </span>
-          <span className="flex-1 min-w-0 text-[11px] text-white font-medium truncate">
+          <span className="flex-1 min-w-0 text-xs2 text-white font-medium truncate">
             {shift.position}
           </span>
           <Badge
             variant={STATUS_VARIANT[shift.status] ?? 'default'}
-            className="text-[9px] px-1 py-0 shrink-0"
+            className="text-3xs px-1 py-0 shrink-0"
             data-status={shift.status}
           >
             {shift.status === 'ASSIGNED'

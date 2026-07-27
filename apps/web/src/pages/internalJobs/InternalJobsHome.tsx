@@ -31,8 +31,13 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
+  FilterBar,
+  FilterChip,
   Input,
   PageHeader,
+  SearchInput,
+  SegmentedControl,
   Select,
   SkeletonRows,
   Textarea,
@@ -66,13 +71,15 @@ function LoadErrorState({
   onRetry: () => void;
 }) {
   return (
-    <div className="p-6 text-center">
-      <p role="alert" className="text-sm text-alert mb-3">
-        {message}
-      </p>
-      <Button size="sm" variant="secondary" onClick={onRetry}>
-        Retry
-      </Button>
+    <div className="p-6">
+      <ErrorBanner>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span>{message}</span>
+          <Button size="sm" variant="outline" onClick={onRetry}>
+            Retry
+          </Button>
+        </div>
+      </ErrorBanner>
     </div>
   );
 }
@@ -145,28 +152,21 @@ export function InternalJobsHome() {
         breadcrumbs={[{ label: 'Workforce' }, { label: 'Internal jobs' }]}
       />
 
-      <div className="flex gap-1">
-        <Button
-          size="sm"
-          variant={tab === 'browse' ? 'primary' : 'ghost'}
-          onClick={() => setTab('browse')}
-        >
-          Browse
-        </Button>
-        <Button
-          size="sm"
-          variant={tab === 'mine' ? 'primary' : 'ghost'}
-          onClick={() => setTab('mine')}
-        >
-          My applications
-        </Button>
-      </div>
+      <SegmentedControl<'browse' | 'mine'>
+        ariaLabel="Internal jobs view"
+        options={[
+          { value: 'browse', label: 'Browse' },
+          { value: 'mine', label: 'My applications' },
+        ]}
+        value={tab}
+        onChange={setTab}
+      />
 
       {tab === 'browse' ? (
         <div className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
+          <FilterBar>
             <div className="w-full sm:w-72">
-              <Input
+              <SearchInput
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search title, client, or location…"
@@ -174,39 +174,27 @@ export function InternalJobsHome() {
               />
             </div>
             {locations.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  size="xs"
-                  variant="outline"
+              <>
+                <FilterChip
+                  active={locationFilter === null}
                   onClick={() => setLocationFilter(null)}
-                  className={cn(
-                    locationFilter === null &&
-                      'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold',
-                  )}
                 >
                   All locations
-                </Button>
+                </FilterChip>
                 {locations.map((l) => (
-                  <Button
+                  <FilterChip
                     key={l}
-                    type="button"
-                    size="xs"
-                    variant="outline"
+                    active={locationFilter === l}
                     onClick={() =>
                       setLocationFilter(locationFilter === l ? null : l)
                     }
-                    className={cn(
-                      locationFilter === l &&
-                        'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold',
-                    )}
                   >
                     {l}
-                  </Button>
+                  </FilterChip>
                 ))}
-              </div>
+              </>
             )}
-          </div>
+          </FilterBar>
           {jobsError ? (
             <Card>
               <CardContent className="p-0">

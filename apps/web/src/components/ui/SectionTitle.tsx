@@ -55,7 +55,7 @@ export function SectionTitle({
   return (
     <div className={cn('mb-3', className)}>
       {eyebrow && (
-        <div className="text-[10px] uppercase tracking-[0.18em] text-silver/80 mb-1.5">
+        <div className="text-2xs uppercase tracking-[0.18em] text-silver/80 mb-1.5">
           {eyebrow}
         </div>
       )}

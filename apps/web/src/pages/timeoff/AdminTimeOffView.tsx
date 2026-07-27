@@ -37,9 +37,12 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from '@/components/ui/Drawer';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { SearchInput } from '@/components/ui/FilterBar';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Badge } from '@/components/ui/Badge';
 import { Avatar } from '@/components/ui/Avatar';
@@ -59,6 +62,16 @@ const TABS: { key: TimeOffRequestStatus | 'ALL'; label: string }[] = [
   { key: 'CANCELLED', label: 'Withdrawn' },
   { key: 'ALL', label: 'All' },
 ];
+
+// Human-readable labels — raw enum values never reach the user's eyes.
+const CATEGORY_LABELS: Record<TimeOffRequest['category'], string> = {
+  SICK: 'Sick',
+  VACATION: 'Vacation',
+  PTO: 'PTO',
+  BEREAVEMENT: 'Bereavement',
+  JURY_DUTY: 'Jury duty',
+  OTHER: 'Other',
+};
 
 function fmtHours(minutes: number): string {
   const h = minutes / 60;
@@ -149,12 +162,12 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
   const reportBulk = (res: BulkDecideResponse, verb: string) => {
     if (res.decided > 0) {
       toast.success(
-        `${verb} ${res.decided} request${res.decided === 1 ? '' : 's'}`,
+        `${verb} ${res.decided} request${res.decided === 1 ? '' : 's'}.`,
       );
     }
     if (res.failed.length > 0) {
       toast.error(
-        `${res.failed.length} request${res.failed.length === 1 ? '' : 's'} failed`,
+        `${res.failed.length} request${res.failed.length === 1 ? '' : 's'} failed.`,
         { description: res.failed[0]?.error },
       );
     }
@@ -169,7 +182,7 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
       reportBulk(res, 'Approved');
       refresh();
     } catch (err) {
-      toast.error('Could not approve selected', {
+      toast.error('Could not approve the selected requests.', {
         description: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -187,7 +200,7 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
       setBulkDenyOpen(false);
       refresh();
     } catch (err) {
-      toast.error('Could not deny selected', {
+      toast.error('Could not deny the selected requests.', {
         description: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -200,18 +213,18 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
     setDeciding(true);
     try {
       await approveAdminRequest(approveTarget.id, note.trim() || undefined);
-      toast.success(`Approved ${approveTarget.associateName ?? 'request'}`);
+      toast.success(`Approved ${approveTarget.associateName ?? 'request'}.`);
       setApproveTarget(null);
       refresh();
     } catch (err) {
       if (err instanceof ApiError && err.code === 'insufficient_balance') {
         const d = err.details as { currentMinutes: number; requestedMinutes: number };
-        toast.error('Insufficient balance', {
+        toast.error('Insufficient balance.', {
           description: `Available ${fmtHours(d.currentMinutes)}, requested ${fmtHours(d.requestedMinutes)}`,
         });
         return;
       }
-      toast.error('Could not approve', {
+      toast.error('Could not approve.', {
         description: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -224,11 +237,11 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
     setDeciding(true);
     try {
       await denyAdminRequest(denyTarget.id, { note: note.trim() });
-      toast.success('Denied');
+      toast.success('Denied.');
       setDenyTarget(null);
       refresh();
     } catch (err) {
-      toast.error('Could not deny', {
+      toast.error('Could not deny.', {
         description: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -238,22 +251,18 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap gap-1 border-b border-navy-secondary">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            onClick={() => setTab(t.key)}
-            className={`px-3 py-2 text-sm border-b-2 -mb-px transition-colors ${
-              tab === t.key
-                ? 'border-gold text-gold'
-                : 'border-transparent text-silver hover:text-white'
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <Tabs
+        value={tab}
+        onValueChange={(v) => setTab(v as TimeOffRequestStatus | 'ALL')}
+      >
+        <TabsList>
+          {TABS.map((t) => (
+            <TabsTrigger key={t.key} value={t.key}>
+              {t.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
 
       <Card>
         <CardHeader>
@@ -261,27 +270,32 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
             <div>
               <CardTitle>Queue</CardTitle>
               <CardDescription>
-                {tab === 'PENDING' ? 'Awaiting decision' : `${tab.toLowerCase()} requests`}
+                {tab === 'PENDING'
+                  ? 'Awaiting decision'
+                  : `${(TABS.find((t) => t.key === tab)?.label ?? tab).toLowerCase()} requests`}
               </CardDescription>
             </div>
-            <Input
+            <SearchInput
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search associate…"
               aria-label="Search by associate name"
-              className="w-full sm:w-56"
+              wrapperClassName="w-full sm:w-56"
             />
           </div>
         </CardHeader>
         <CardContent className="p-0">
           {error && (
-            <div className="p-6 space-y-3">
-              <p role="alert" className="text-sm text-alert">
+            <div className="p-6">
+              <ErrorBanner
+                action={
+                  <Button size="sm" variant="secondary" onClick={refresh}>
+                    Retry
+                  </Button>
+                }
+              >
                 {error}
-              </p>
-              <Button size="sm" variant="secondary" onClick={refresh}>
-                Retry
-              </Button>
+              </ErrorBanner>
             </div>
           )}
           {!error && !visible && (
@@ -380,8 +394,8 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
                               <div className="truncate">{r.associateName ?? '—'}</div>
                               {/* Phone-only inline category + hours since their
                                   dedicated columns are hidden. */}
-                              <div className="md:hidden text-[11px] text-silver/70 truncate">
-                                {r.category}
+                              <div className="md:hidden text-xs2 text-silver/70 truncate">
+                                {CATEGORY_LABELS[r.category] ?? r.category}
                                 <span className="sm:hidden tabular-nums">
                                   {' · '}
                                   {fmtHours(r.requestedMinutes)}
@@ -390,7 +404,9 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
                             </div>
                           </div>
                         </TableCell>
-                        <TableCell className="hidden md:table-cell">{r.category}</TableCell>
+                        <TableCell className="hidden md:table-cell">
+                          {CATEGORY_LABELS[r.category] ?? r.category}
+                        </TableCell>
                         <TableCell className="tabular-nums">
                           {fmtYmd(r.startDate)}
                           {r.startDate !== r.endDate && ` – ${fmtYmd(r.endDate)}`}
@@ -507,7 +523,8 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
             <DrawerHeader>
               <DrawerTitle>{detail.associateName ?? 'Request'}</DrawerTitle>
               <DrawerDescription>
-                {detail.category} · {fmtYmd(detail.startDate)}
+                {CATEGORY_LABELS[detail.category] ?? detail.category} ·{' '}
+                {fmtYmd(detail.startDate)}
                 {detail.startDate !== detail.endDate &&
                   ` – ${fmtYmd(detail.endDate)}`}
               </DrawerDescription>
@@ -527,7 +544,7 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
                 </span>
               </div>
               <div>
-                <div className="text-[10px] uppercase tracking-widest text-silver mb-1">
+                <div className="text-2xs uppercase tracking-widest text-silver mb-1">
                   Reason
                 </div>
                 <p className="text-sm text-white whitespace-pre-wrap">
@@ -536,7 +553,7 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
               </div>
               {detail.reviewerNote && (
                 <div>
-                  <div className="text-[10px] uppercase tracking-widest text-silver mb-1">
+                  <div className="text-2xs uppercase tracking-widest text-silver mb-1">
                     Reviewer note
                   </div>
                   <p className="text-sm text-white whitespace-pre-wrap">
@@ -601,7 +618,7 @@ function DecisionDialog({
 
   const submit = () => {
     if (noteRequired && note.trim().length === 0) {
-      toast.error('A note is required when denying');
+      toast.error('A note is required when denying.');
       return;
     }
     onSubmit(note);

@@ -6,6 +6,7 @@ import { getW4, submitW4, type W4Status } from '@/lib/onboardingApi';
 import { uploadI9Document } from '@/lib/i9Api';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { fmtDateTime } from '@/lib/format';
 import { Select } from '@/components/ui/Select';
 import { Field, SubmitRow, TaskShell, inputCls } from './ProfileInfoTask';
 
@@ -150,8 +151,8 @@ export function W4Task() {
       {status?.submittedAt && (
         <div className="mb-4 flex items-center gap-2 px-3 py-2 rounded-md border border-success/30 bg-success/[0.05] text-success text-xs">
           <CheckCircle2 className="h-3.5 w-3.5" />
-          You submitted this on{' '}
-          {new Date(status.submittedAt).toLocaleString()}. Re-submit to update.
+          You submitted this on {fmtDateTime(status.submittedAt)}. Re-submit to
+          update.
         </div>
       )}
 

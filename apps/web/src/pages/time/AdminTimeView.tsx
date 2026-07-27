@@ -52,7 +52,7 @@ import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { timeAnomalyLabel } from '@/lib/timeLabels';
-import { fmtDateTime, fmtDateTz, fmtTime } from '@/lib/format';
+import { fmtDateTime, fmtDateTz, fmtPayRate, fmtTime, ymdLocal } from '@/lib/format';
 import {
   Avatar,
   Badge,
@@ -74,6 +74,8 @@ import {
   DialogHeader,
   DialogTitle,
   EmptyState,
+  ErrorBanner,
+  FilterChip,
   Input,
   PageHeader,
   Select,
@@ -86,6 +88,9 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  Tabs,
+  TabsList,
+  TabsTrigger,
   Textarea,
   useTableSort,
 } from '@/components/ui';
@@ -133,6 +138,14 @@ function statusVariant(s: TimeEntryStatus): 'success' | 'pending' | 'destructive
   }
 }
 
+// Human labels for the raw status enum — chips never show "COMPLETED".
+const STATUS_LABELS: Record<TimeEntryStatus, string> = {
+  ACTIVE: 'Active',
+  COMPLETED: 'Pending review',
+  APPROVED: 'Approved',
+  REJECTED: 'Rejected',
+};
+
 // Net-first duration. The headline figure is worked-time NET of breaks —
 // what payroll actually pays — with the gross span and break time as a
 // subline whenever they differ. Showing only gross made approvals
@@ -144,7 +157,7 @@ function DurationCell({ entry }: { entry: TimeEntry }) {
     <div className="tabular-nums">
       {formatHM(net)}
       {breakMin > 0 && (
-        <div className="text-[10px] text-silver/70">
+        <div className="text-2xs text-silver/70">
           {formatHM(entry.minutesElapsed)} gross − {formatHM(breakMin)} break
         </div>
       )}
@@ -165,7 +178,7 @@ function LateChip({ entry }: { entry: TimeEntry }) {
   if (lateMin <= LATE_GRACE_MINUTES) return null;
   return (
     <span
-      className="text-[10px] uppercase tracking-widest px-1.5 py-0.5 rounded border border-alert/40 bg-alert/10 text-alert whitespace-nowrap"
+      className="text-2xs uppercase tracking-widest px-1.5 py-0.5 rounded border border-alert/40 bg-alert/10 text-alert whitespace-nowrap"
       title={`Scheduled ${fmtTime(entry.shiftStartsAt)}${entry.shiftPosition ? ` · ${entry.shiftPosition}` : ''}`}
     >
       Late {lateMin >= 60 ? `${Math.floor(lateMin / 60)}h ${lateMin % 60}m` : `${lateMin}m`}
@@ -214,7 +227,7 @@ function FocusBanner({
       <Avatar name={name} size="sm" />
       <div className="min-w-0">
         <div className="text-sm text-white font-medium truncate">{name}</div>
-        <div className="text-[11px] text-silver/70">
+        <div className="text-xs2 text-silver/70">
           Individual timesheet — date range and status filters still apply
         </div>
       </div>
@@ -258,22 +271,13 @@ function AnomalyChips({ anomalies }: { anomalies?: string[] | null }) {
       {anomalies.map((a) => (
         <span
           key={a}
-          className="text-[10px] uppercase tracking-widest px-1.5 py-0.5 rounded border border-warning/40 bg-warning/10 text-warning whitespace-nowrap"
+          className="text-2xs uppercase tracking-widest px-1.5 py-0.5 rounded border border-warning/40 bg-warning/10 text-warning whitespace-nowrap"
         >
           {timeAnomalyLabel(a)}
         </span>
       ))}
     </div>
   );
-}
-
-// YYYY-MM-DD in local time. Inputs and the API both treat dates as days,
-// so we convert to ISO at the boundary, not in state.
-function ymdLocal(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
 }
 
 function defaultFromYmd(): string {
@@ -794,42 +798,27 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
         />
       </div>
 
-      <div role="tablist" className="flex gap-2 mb-5 border-b border-navy-secondary">
-        {(['live', 'queue'] as const).map((t) => (
-          <button
-            key={t}
-            type="button"
-            role="tab"
-            aria-selected={tab === t}
-            onClick={() => setTab(t)}
-            className={cn(
-              'px-3 py-2 text-sm border-b-2 -mb-px transition capitalize',
-              tab === t
-                ? 'border-gold text-gold'
-                : 'border-transparent text-silver hover:text-white'
-            )}
-          >
-            {t === 'live' ? 'Live (clocked in)' : 'Approval queue'}
-          </button>
-        ))}
-      </div>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="mb-5">
+        <TabsList>
+          <TabsTrigger value="live">Live (clocked in)</TabsTrigger>
+          <TabsTrigger value="queue">Approval queue</TabsTrigger>
+        </TabsList>
+      </Tabs>
 
       {error && (
-        <div
-          role="alert"
-          className="flex items-start gap-2 mb-4 px-3 py-2 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-        >
-          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-          <span className="flex-1">{error}</span>
-          <button
-            type="button"
-            onClick={() => setError(null)}
-            className="text-alert/60 hover:text-alert"
-            aria-label="Dismiss"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+        <ErrorBanner className="mb-4">
+          <div className="flex items-start gap-2">
+            <span className="flex-1">{error}</span>
+            <button
+              type="button"
+              onClick={() => setError(null)}
+              className="text-alert/60 hover:text-alert"
+              aria-label="Dismiss"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </ErrorBanner>
       )}
 
       {tab === 'live' && (
@@ -944,7 +933,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                             <div className="font-medium text-white truncate">
                               {e.associateName}
                             </div>
-                            <div className="text-[11px] text-silver/70 truncate">
+                            <div className="text-xs2 text-silver/70 truncate">
                               {e.clientName ?? '—'}
                               {e.jobName ? ` · ${e.jobName}` : ''}
                             </div>
@@ -957,13 +946,13 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                             <Badge variant="success">Working</Badge>
                           )}
                           {e.geofenceOk === false && (
-                            <Badge variant="destructive" className="text-[10px]">
+                            <Badge variant="destructive" className="text-2xs">
                               Off-site
                             </Badge>
                           )}
                         </div>
                       </div>
-                      <div className="mt-2 flex items-end justify-between gap-3 text-[11px] text-silver">
+                      <div className="mt-2 flex items-end justify-between gap-3 text-xs2 text-silver">
                         <span className="tabular-nums">
                           Since {fmtTime(e.clockInAt)}
                         </span>
@@ -991,7 +980,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                     No matches for &ldquo;{liveSearch}&rdquo;.
                   </p>
                 )}
-                <div className="mt-3 text-[10px] uppercase tracking-widest text-silver/70">
+                <div className="mt-3 text-2xs uppercase tracking-widest text-silver/70">
                   Auto-refreshes every 30s
                 </div>
               </>
@@ -1016,21 +1005,13 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
               </CardTitle>
               <div className="flex flex-wrap gap-2">
                 {STATUS_FILTERS.map((f) => (
-                  <Button
+                  <FilterChip
                     key={f.value}
-                    type="button"
-                    variant="outline"
-                    size="sm"
+                    active={filter === f.value}
                     onClick={() => setFilter(f.value)}
-                    className={cn(
-                      'uppercase tracking-wider font-normal',
-                      filter === f.value
-                        ? 'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold'
-                        : 'border-navy-secondary'
-                    )}
                   >
                     {f.label}
-                  </Button>
+                  </FilterChip>
                 ))}
               </div>
             </div>
@@ -1041,7 +1022,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                 <div>
                   <label
                     htmlFor="pay-period-picker"
-                    className="block text-[10px] uppercase tracking-wider text-silver mb-1"
+                    className="block text-2xs uppercase tracking-wider text-silver mb-1"
                   >
                     Pay period
                   </label>
@@ -1063,7 +1044,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
               )}
               <div className="flex items-end gap-2">
                 <div>
-                  <label className="block text-[10px] uppercase tracking-wider text-silver mb-1">
+                  <label className="block text-2xs uppercase tracking-wider text-silver mb-1">
                     From
                   </label>
                   <Input
@@ -1078,7 +1059,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] uppercase tracking-wider text-silver mb-1">
+                  <label className="block text-2xs uppercase tracking-wider text-silver mb-1">
                     To
                   </label>
                   <Input
@@ -1095,7 +1076,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
               </div>
 
               <div className="relative flex-1 w-full sm:min-w-[200px]">
-                <label className="block text-[10px] uppercase tracking-wider text-silver mb-1">
+                <label className="block text-2xs uppercase tracking-wider text-silver mb-1">
                   Search
                 </label>
                 <Search className="absolute left-2.5 top-[2.1rem] h-4 w-4 text-silver/70 pointer-events-none" />
@@ -1351,13 +1332,13 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                                     {e.associateName ?? '—'}
                                   </div>
                                   <Badge variant={statusVariant(e.status)} className="shrink-0">
-                                    {e.status}
+                                    {STATUS_LABELS[e.status]}
                                   </Badge>
                                 </div>
-                                <div className="text-[11px] text-silver/70 truncate">
+                                <div className="text-xs2 text-silver/70 truncate">
                                   {e.clientName ?? '—'}
                                 </div>
-                                <div className="mt-1.5 flex items-end justify-between gap-3 text-[11px] text-silver">
+                                <div className="mt-1.5 flex items-end justify-between gap-3 text-xs2 text-silver">
                                   <span className="tabular-nums">
                                     {fmtDateTime(e.clockInAt)}
                                     {e.clockOutAt
@@ -1373,7 +1354,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                                 </div>
                                 <AnomalyChips anomalies={e.anomalies} />
                                 {e.rejectionReason && (
-                                  <div className="text-alert text-[10px] mt-1">
+                                  <div className="text-alert text-2xs mt-1">
                                     {e.rejectionReason}
                                   </div>
                                 )}
@@ -1592,12 +1573,12 @@ const QueueEntryRow = memo(function QueueEntryRow({
       </TableCell>
       <TableCell>
         <div className="flex items-center gap-1.5 flex-wrap">
-          <Badge variant={statusVariant(e.status)}>{e.status}</Badge>
+          <Badge variant={statusVariant(e.status)}>{STATUS_LABELS[e.status]}</Badge>
           <LateChip entry={e} />
         </div>
         <AnomalyChips anomalies={e.anomalies} />
         {e.rejectionReason && (
-          <div className="text-alert text-[10px] mt-1">
+          <div className="text-alert text-2xs mt-1">
             {e.rejectionReason}
           </div>
         )}
@@ -1676,7 +1657,7 @@ function TimeEntryDetailPanel({
       </DrawerHeader>
       <DrawerBody>
         <div className="flex flex-wrap items-center gap-2 mb-4">
-          <Badge variant={statusVariant(entry.status)}>{entry.status}</Badge>
+          <Badge variant={statusVariant(entry.status)}>{STATUS_LABELS[entry.status]}</Badge>
           {entry.anomalies && entry.anomalies.length > 0 && (
             <Badge variant="destructive">
               {entry.anomalies.length} anomal{entry.anomalies.length === 1 ? 'y' : 'ies'}
@@ -1686,11 +1667,11 @@ function TimeEntryDetailPanel({
 
         <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm mb-5">
           <DetailRow label="Clock in">
-            {new Date(entry.clockInAt).toLocaleString()}
+            {fmtDateTime(entry.clockInAt)}
           </DetailRow>
           <DetailRow label="Clock out">
             {entry.clockOutAt
-              ? new Date(entry.clockOutAt).toLocaleString()
+              ? fmtDateTime(entry.clockOutAt)
               : 'Still on the clock'}
           </DetailRow>
           <DetailRow label="Worked (net of breaks)">
@@ -1699,13 +1680,13 @@ function TimeEntryDetailPanel({
           <DetailRow label="Gross span">{formatHM(entry.minutesElapsed)}</DetailRow>
           <DetailRow label="Pay rate">
             {entry.payRate != null
-              ? `$${entry.payRate.toFixed(2)}/hr`
+              ? fmtPayRate(entry.payRate, 'HOURLY')
               : <span className="text-silver/80">—</span>}
           </DetailRow>
           {entry.shiftStartsAt && (
             <DetailRow label="Scheduled shift">
               <span className="tabular-nums">
-                {new Date(entry.shiftStartsAt).toLocaleString()}
+                {fmtDateTime(entry.shiftStartsAt)}
               </span>
               {entry.shiftPosition && (
                 <span className="text-silver/80"> · {entry.shiftPosition}</span>
@@ -1738,7 +1719,7 @@ function TimeEntryDetailPanel({
 
         {entry.breaks && entry.breaks.length > 0 && (
           <div className="mb-5 rounded-md border border-navy-secondary bg-navy-secondary/30 p-3 text-sm">
-            <div className="text-[10px] uppercase tracking-widest text-silver mb-1.5">
+            <div className="text-2xs uppercase tracking-widest text-silver mb-1.5">
               Breaks
             </div>
             <ul className="space-y-1 text-silver">
@@ -1760,7 +1741,7 @@ function TimeEntryDetailPanel({
 
         {entry.anomalies && entry.anomalies.length > 0 && (
           <div className="mb-5 rounded-md border border-warning/40 bg-warning/[0.07] p-3 text-sm">
-            <div className="text-[10px] uppercase tracking-widest text-warning mb-1.5">
+            <div className="text-2xs uppercase tracking-widest text-warning mb-1.5">
               Anomalies
             </div>
             <ul className="list-disc list-inside text-warning/90 space-y-0.5">
@@ -1855,7 +1836,7 @@ function fmtDurMin(min: number): string {
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mb-1 text-[11px] uppercase tracking-widest text-silver">
+    <div className="mb-1 text-xs2 uppercase tracking-widest text-silver">
       {children}
     </div>
   );
@@ -1941,7 +1922,7 @@ function AssociateSearchField({
           className="pl-9"
         />
         {open && results.length > 0 && (
-          <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-md border border-navy-secondary bg-midnight shadow-xl">
+          <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-md border border-navy-secondary bg-midnight elev-2">
             {results.map((a) => (
               <button
                 key={a.id}
@@ -2285,11 +2266,7 @@ function TimeEntryFormDrawer({
         </DrawerDescription>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
-        {err && (
-          <div className="rounded-md border border-alert/40 bg-alert/10 p-2 text-sm text-alert">
-            {err}
-          </div>
-        )}
+        {err && <ErrorBanner>{err}</ErrorBanner>}
         {mode === 'create' ? (
           <AssociateSearchField value={assoc} onChange={setAssoc} />
         ) : (
@@ -2571,11 +2548,7 @@ function SummaryExportDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          {err && (
-            <div className="rounded-md border border-alert/40 bg-alert/10 p-2 text-sm text-alert">
-              {err}
-            </div>
-          )}
+          {err && <ErrorBanner>{err}</ErrorBanner>}
           <div>
             <FieldLabel>Client</FieldLabel>
             {boundedClient ? (
@@ -2625,7 +2598,7 @@ function SummaryExportDialog({
           </Button>
           <Button onClick={download} loading={busy} disabled={busy}>
             <Download className="mr-2 h-4 w-4" />
-            Download CSV
+            Export CSV
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -2712,11 +2685,7 @@ function PayrollSheetDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          {err && (
-            <div className="rounded-md border border-alert/40 bg-alert/10 p-2 text-sm text-alert">
-              {err}
-            </div>
-          )}
+          {err && <ErrorBanner>{err}</ErrorBanner>}
           <div>
             <FieldLabel>Client</FieldLabel>
             {boundedClient ? (
@@ -2794,7 +2763,7 @@ function PayrollSheetDialog({
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="min-w-0">
-      <dt className="text-[10px] uppercase tracking-widest text-silver/80">{label}</dt>
+      <dt className="text-2xs uppercase tracking-widest text-silver/80">{label}</dt>
       <dd className="text-white text-sm mt-0.5 break-words tabular-nums">{children}</dd>
     </div>
   );
@@ -2803,7 +2772,7 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
 function DetailSection({ label, body }: { label: string; body: string }) {
   return (
     <div className="mb-4">
-      <div className="text-[10px] uppercase tracking-widest text-silver/80 mb-1">
+      <div className="text-2xs uppercase tracking-widest text-silver/80 mb-1">
         {label}
       </div>
       <div className="rounded-md border border-navy-secondary bg-navy-secondary/30 p-3 text-sm text-white whitespace-pre-wrap">
@@ -2833,7 +2802,7 @@ function KpiCard({ icon: Icon, label, value, tone }: KpiCardProps) {
     return (
       <Card className="p-4">
         <div className="flex items-start justify-between mb-1">
-          <div className="text-[10px] uppercase tracking-wider text-silver">
+          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
             {label}
           </div>
           <Icon className="h-3.5 w-3.5 text-silver/70" />
@@ -2845,7 +2814,7 @@ function KpiCard({ icon: Icon, label, value, tone }: KpiCardProps) {
   return (
     <Card className="p-4">
       <div className="flex items-start justify-between mb-1">
-        <div className="text-[10px] uppercase tracking-wider text-silver">
+        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
           {label}
         </div>
         <Icon className="h-3.5 w-3.5 text-silver/70" />

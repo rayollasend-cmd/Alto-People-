@@ -10,6 +10,7 @@ import { Field } from '@/components/ui/Field';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Input } from '@/components/ui/Input';
 import { Label, FormHint } from '@/components/ui/Label';
+import { Logo } from '@/components/Logo';
 
 interface LocationState {
   from?: string;
@@ -114,14 +115,28 @@ export function Login() {
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-login-aurora">
       <div className="w-full max-w-md">
+        {/* Brand lockup — the most-visited screen in the product was the
+            only auth screen with no logo or wordmark. */}
+        <div className="text-center mb-8 animate-fade-in">
+          <Logo
+            size="lg"
+            className="mx-auto mb-4 rounded-xl ring-1 ring-gold/25 shadow-[0_8px_32px_rgba(217,185,103,0.15)]"
+          />
+          <div className="font-display text-4xl md:text-5xl text-white leading-none">
+            Alto <span className="text-gold">People</span>
+          </div>
+          <p className="text-silver/70 text-xs2 tracking-[0.32em] uppercase mt-2">
+            {t('login.brandTagline')}
+          </p>
+        </div>
         {step === 'password' ? (
           <form
             ref={formRef}
             onSubmit={handlePasswordSubmit}
-            className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 shadow-2xl animate-zoom-in"
+            className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 ring-1 ring-white/[0.06] animate-zoom-in"
             noValidate
           >
-            <h2 className="font-display text-2xl md:text-3xl text-white mb-1">
+            <h2 className="font-display text-xl text-white mb-1">
               {t('login.title')}
             </h2>
             <p className="text-silver text-sm mb-6">
@@ -201,7 +216,7 @@ export function Login() {
               {submitting ? t('login.signingIn') : t('login.signIn')}
             </Button>
 
-            <div className="mt-6 flex items-center justify-center gap-1.5 text-[10px] uppercase tracking-widest text-silver/70">
+            <div className="mt-6 flex items-center justify-center gap-1.5 text-2xs uppercase tracking-widest text-silver/70">
               <ShieldCheck className="h-3 w-3" aria-hidden="true" />
               {t('login.securedBy')}
             </div>
@@ -215,7 +230,7 @@ export function Login() {
         ) : (
           <form
             onSubmit={handleMfaSubmit}
-            className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 shadow-2xl animate-zoom-in"
+            className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 ring-1 ring-white/[0.06] animate-zoom-in"
             noValidate
           >
             <h2 className="font-display text-2xl md:text-3xl text-white mb-1">
@@ -246,7 +261,7 @@ export function Login() {
                   setCode(v);
                 }}
                 placeholder={useRecovery ? 'xxxxx-xxxxx' : '123456'}
-                className="font-mono tracking-widest text-center"
+                className="h-14 text-2xl tracking-[0.5em] text-center font-mono"
               />
             </div>
 
@@ -289,7 +304,7 @@ export function Login() {
               </button>
             </div>
 
-            <div className="mt-6 flex items-center justify-center gap-1.5 text-[10px] uppercase tracking-widest text-silver/70">
+            <div className="mt-6 flex items-center justify-center gap-1.5 text-2xs uppercase tracking-widest text-silver/70">
               <ShieldCheck className="h-3 w-3" aria-hidden="true" />
               {t('login.securedBy')}
             </div>

@@ -186,7 +186,7 @@ export function AdminDashboard() {
       {/* Greeting strip — calm, generous typography, time + role context. */}
       <header>
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="text-[11px] uppercase tracking-[0.18em] text-silver flex items-center gap-2">
+          <div className="text-xs2 uppercase tracking-[0.18em] text-silver flex items-center gap-2">
             <Calendar className="h-3 w-3" aria-hidden="true" />
             {dateLabel}
           </div>
@@ -279,7 +279,7 @@ function WelcomeCard({ greetingName }: { greetingName: string }) {
         >
           <X className="h-4 w-4" aria-hidden="true" />
         </Button>
-        <div className="text-[10px] uppercase tracking-widest text-silver/80 flex items-center gap-1.5">
+        <div className="text-2xs uppercase tracking-widest text-silver/80 flex items-center gap-1.5">
           <Sparkles className="h-3 w-3 text-gold" aria-hidden="true" />
           Welcome
         </div>
@@ -290,7 +290,7 @@ function WelcomeCard({ greetingName }: { greetingName: string }) {
           This is your home base. Items needing your attention are pinned
           at the top, followed by today's workforce metrics. Click any
           tile to drill in. Drag a sidebar item into the topbar's
-          command palette (<kbd className="px-1 py-0.5 rounded border border-navy-secondary text-[10px] font-mono">⌘K</kbd>) to jump anywhere in two
+          command palette (<kbd className="px-1 py-0.5 rounded border border-navy-secondary text-2xs font-mono">⌘K</kbd>) to jump anywhere in two
           keystrokes.
         </p>
       </CardContent>
@@ -494,7 +494,7 @@ function ActionCard({ item }: { item: ActionItem }) {
         // elev-1 (same as other cards in the grid) and lifts to elev-2
         // on hover plus a 1px vertical translate so the cue compounds.
         // Matches the rest of the system instead of inventing a one-off
-        // shadow-lg flourish.
+        // elev-2 flourish.
         'group flex flex-col rounded-lg border bg-navy p-5 elev-1 transition-all',
         'hover:-translate-y-0.5 hover:elev-2',
         'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright focus-visible:ring-offset-2 focus-visible:ring-offset-midnight',
@@ -669,12 +669,13 @@ function KpiTile({ kpi }: { kpi: Kpi }) {
     >
       <CardContent className="pt-5">
         <div className="flex items-center justify-between">
-          <div className="text-[10px] md:text-[11px] uppercase tracking-[0.15em] text-silver">
+          {/* Canonical KPI label spec (matches MetricCard). */}
+          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
             {kpi.label}
           </div>
           <Icon className="h-3.5 w-3.5 text-gold/70" aria-hidden="true" />
         </div>
-        <div className="font-display text-3xl md:text-[2rem] text-gold-bright mt-3 leading-none tabular-nums">
+        <div className="font-display text-3xl md:text-hero text-gold-bright mt-3 leading-none tabular-nums">
           <CountUpValue value={kpi.value} />
         </div>
         {kpi.trend && (
@@ -798,7 +799,7 @@ function OnboardingFunnel({ kpis }: { kpis: DashboardKPIs | null }) {
                   className="min-w-0 block rounded-md -m-1 p-1 hover:bg-navy-secondary/40 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
                   title={`View ${PIPELINE_LABEL[status].toLowerCase()} applications`}
                 >
-                  <div className="text-[10px] uppercase tracking-widest text-silver">
+                  <div className="text-2xs uppercase tracking-widest text-silver">
                     {PIPELINE_LABEL[status]}
                   </div>
                   <div
@@ -823,7 +824,7 @@ function OnboardingFunnel({ kpis }: { kpis: DashboardKPIs | null }) {
                       style={{ width: `${pct}%` }}
                     />
                   </div>
-                  <div className="text-[10px] text-silver/70 mt-1 tabular-nums">
+                  <div className="text-2xs text-silver/70 mt-1 tabular-nums">
                     {pct}% of pipeline
                   </div>
                 </Link>
@@ -945,7 +946,7 @@ function ActivityFeed({
                           </span>{' '}
                           {humanizeAction(e.action)}
                         </div>
-                        <div className="text-[11px] text-silver/70">
+                        <div className="text-xs2 text-silver/70">
                           {href ? (
                             <Link
                               to={href}

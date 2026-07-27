@@ -30,15 +30,17 @@ import {
   type GoalStatus,
   type KeyResult,
   type OneOnOne,
+  type OneOnOneStatus,
   type PerfTimelineEntry,
   type Pip,
+  type PipStatus,
   type Review360,
+  type Review360Status,
 } from '@/lib/perf84Api';
 import { createReview } from '@/lib/performanceApi';
 import { fmtDate, fmtDateTime, parseYmd } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
 import { useAuth } from '@/lib/auth';
-import { cn } from '@/lib/cn';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
@@ -54,8 +56,11 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
+  FilterChip,
   Input,
   PageHeader,
+  SearchInput,
   Select,
   SkeletonRows,
   Table,
@@ -74,6 +79,81 @@ import { Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
 
 type Tab = 'goals' | 'kudos' | 'one-on-ones' | 'pips' | 'reviews360' | 'timeline';
+
+const GOAL_STATUS_LABELS: Record<GoalStatus, string> = {
+  DRAFT: 'Draft',
+  ACTIVE: 'Active',
+  AT_RISK: 'At risk',
+  COMPLETED: 'Completed',
+  CANCELLED: 'Cancelled',
+};
+
+const ONE_ON_ONE_STATUS_LABELS: Record<OneOnOneStatus, string> = {
+  SCHEDULED: 'Scheduled',
+  COMPLETED: 'Completed',
+  CANCELLED: 'Cancelled',
+};
+
+const PIP_STATUS_LABELS: Record<PipStatus, string> = {
+  DRAFT: 'Draft',
+  ACTIVE: 'Active',
+  PASSED: 'Passed',
+  FAILED: 'Failed',
+  CANCELLED: 'Cancelled',
+};
+
+const REVIEW360_STATUS_LABELS: Record<Review360Status, string> = {
+  COLLECTING: 'Collecting',
+  COMPLETED: 'Completed',
+  CANCELLED: 'Cancelled',
+};
+
+/** Timeline rows mix three sources, so their status strings aren't a single
+ *  union — fall back to a de-SCREAMED label for anything unmapped. */
+const TIMELINE_STATUS_LABELS: Record<string, string> = {
+  ...GOAL_STATUS_LABELS,
+  ...PIP_STATUS_LABELS,
+  ...REVIEW360_STATUS_LABELS,
+  SUBMITTED: 'Submitted',
+  ACKNOWLEDGED: 'Acknowledged',
+};
+
+function timelineStatusLabel(s: string): string {
+  return (
+    TIMELINE_STATUS_LABELS[s] ??
+    s.charAt(0) + s.slice(1).toLowerCase().replace(/_/g, ' ')
+  );
+}
+
+/** react-query error → message. Without this the tabs render a skeleton
+ *  forever on a failed fetch (q.data stays undefined). */
+function queryErrorMessage(error: unknown, fallback: string): string | null {
+  if (!error) return null;
+  return error instanceof ApiError ? error.message : fallback;
+}
+
+/** Load failure for a react-query-backed tab: message + Retry. */
+function QueryError({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="p-6">
+      <ErrorBanner
+        action={
+          <Button size="sm" variant="secondary" onClick={onRetry}>
+            Retry
+          </Button>
+        }
+      >
+        {message}
+      </ErrorBanner>
+    </div>
+  );
+}
 
 function ymd(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -179,6 +259,7 @@ function GoalsTab() {
     queryFn: async () => (await listGoals()).goals,
   });
   const rows = q.data ?? null;
+  const loadError = queryErrorMessage(q.error, 'Could not load goals.');
 
   const filtered = useMemo(() => {
     if (!rows) return null;
@@ -205,7 +286,7 @@ function GoalsTab() {
       toast.success('Progress saved.');
       invalidateGoals();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not save the progress.');
     }
   };
 
@@ -225,10 +306,10 @@ function GoalsTab() {
     }
     try {
       await updateGoal(g.id, { status });
-      toast.success(`Goal marked ${status.replace('_', ' ').toLowerCase()}.`);
+      toast.success(`Goal marked ${GOAL_STATUS_LABELS[status].toLowerCase()}.`);
       invalidateGoals();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not update the goal.');
     }
   };
 
@@ -242,7 +323,7 @@ function GoalsTab() {
         g.title,
         g.periodStart,
         g.periodEnd,
-        g.status,
+        GOAL_STATUS_LABELS[g.status],
         goalProgress(g),
       ]),
     ]);
@@ -254,7 +335,7 @@ function GoalsTab() {
       await deleteGoal(id);
       invalidateGoals();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not delete the goal.');
     }
   };
 
@@ -263,31 +344,24 @@ function GoalsTab() {
       <div className="flex flex-wrap items-center gap-2">
         {(['ALL', 'DRAFT', 'ACTIVE', 'AT_RISK', 'COMPLETED', 'CANCELLED'] as const).map(
           (s) => (
-            <Button
+            <FilterChip
               key={s}
-              type="button"
-              size="xs"
-              variant="outline"
+              active={statusFilter === s}
               onClick={() => setStatusFilter(s)}
-              className={cn(
-                'uppercase tracking-wider',
-                statusFilter === s &&
-                  'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold',
-              )}
+              className="uppercase tracking-wider"
             >
-              {s === 'ALL' ? 'All' : s.replace('_', ' ')}
-            </Button>
+              {s === 'ALL' ? 'All' : GOAL_STATUS_LABELS[s]}
+            </FilterChip>
           ),
         )}
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <div className="w-52 max-w-full">
-            <Input
-              value={assocFilter}
-              onChange={(e) => setAssocFilter(e.target.value)}
-              placeholder="Filter by associate…"
-              aria-label="Filter goals by associate"
-            />
-          </div>
+          <SearchInput
+            wrapperClassName="w-52 max-w-full"
+            value={assocFilter}
+            onChange={(e) => setAssocFilter(e.target.value)}
+            placeholder="Filter by associate…"
+            aria-label="Filter goals by associate"
+          />
           <Button
             variant="outline"
             onClick={onExportCsv}
@@ -313,7 +387,9 @@ function GoalsTab() {
       </div>
       <Card>
         <CardContent className="p-0">
-          {filtered === null ? (
+          {loadError ? (
+            <QueryError message={loadError} onRetry={() => void q.refetch()} />
+          ) : filtered === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : filtered.length === 0 ? (
             <EmptyState
@@ -334,7 +410,7 @@ function GoalsTab() {
                   <TableHead className="hidden md:table-cell">Kind</TableHead>
                   <TableHead className="hidden md:table-cell">Period</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Progress</TableHead>
+                  <TableHead className="text-right">Progress</TableHead>
                   <TableHead className="w-44 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -343,14 +419,15 @@ function GoalsTab() {
                   <TableRow key={g.id}>
                     <TableCell className="font-medium text-white">
                       <div className="truncate">{g.title}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
-                        {g.kind === 'OBJECTIVE' ? 'OKR' : 'Goal'} · {g.periodStart} – {g.periodEnd}
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
+                        {g.kind === 'OBJECTIVE' ? 'OKR' : 'Goal'} · {fmtYmd(g.periodStart)} –{' '}
+                        {fmtYmd(g.periodEnd)}
                       </div>
                     </TableCell>
                     <TableCell>{g.associateName ?? '—'}</TableCell>
                     <TableCell className="hidden md:table-cell">{g.kind === 'OBJECTIVE' ? 'OKR' : 'Goal'}</TableCell>
-                    <TableCell className="hidden md:table-cell">
-                      {g.periodStart} – {g.periodEnd}
+                    <TableCell className="hidden md:table-cell whitespace-nowrap">
+                      {fmtYmd(g.periodStart)} – {fmtYmd(g.periodEnd)}
                     </TableCell>
                     <TableCell>
                       <div className="inline-block">
@@ -362,28 +439,28 @@ function GoalsTab() {
                           {(['DRAFT', 'ACTIVE', 'AT_RISK', 'COMPLETED', 'CANCELLED'] as const).map(
                             (s) => (
                               <option key={s} value={s}>
-                                {s}
+                                {GOAL_STATUS_LABELS[s]}
                               </option>
                             ),
                           )}
                         </Select>
                       </div>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="text-right">
                       {g.keyResults.length > 0 ? (
                         <span
                           className="tabular-nums"
                           title={`Derived from ${g.keyResults.length} key result${g.keyResults.length === 1 ? '' : 's'}`}
                         >
                           {goalProgress(g)}%
-                          <span className="ml-1 text-[11px] text-silver/70">
+                          <span className="ml-1 text-xs2 text-silver/70">
                             ({g.keyResults.length} KR{g.keyResults.length === 1 ? '' : 's'})
                           </span>
                         </span>
                       ) : (
                         <>
                           <Input
-                            className="h-8 w-20"
+                            className="h-8 w-20 text-right tabular-nums"
                             type="number"
                             min={0}
                             max={100}
@@ -417,7 +494,9 @@ function GoalsTab() {
                                 });
                               } catch (err) {
                                 toast.error(
-                                  err instanceof ApiError ? err.message : 'Failed.',
+                                  err instanceof ApiError
+                                    ? err.message
+                                    : 'Could not prefill a PIP from this goal.',
                                 );
                               }
                             }}
@@ -518,7 +597,7 @@ function KeyResultsDrawer({
       toast.success('Key result saved.');
       onChanged();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not save the key result.');
     }
   };
 
@@ -532,7 +611,7 @@ function KeyResultsDrawer({
       toast.success('Key result saved.');
       onChanged();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not save the key result.');
     }
   };
 
@@ -559,7 +638,7 @@ function KeyResultsDrawer({
       setNewUnit('');
       onChanged();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not add the key result.');
     } finally {
       setAdding(false);
     }
@@ -589,7 +668,7 @@ function KeyResultsDrawer({
                 <div className="text-sm text-white">{k.title}</div>
                 <div className="mt-2 flex flex-wrap items-end gap-3 text-xs text-silver">
                   <label className="block">
-                    <span className="block text-[10px] uppercase tracking-widest text-silver/70 mb-1">
+                    <span className="block text-2xs uppercase tracking-widest text-silver/70 mb-1">
                       Current
                     </span>
                     <Input
@@ -600,7 +679,7 @@ function KeyResultsDrawer({
                     />
                   </label>
                   <div>
-                    <span className="block text-[10px] uppercase tracking-widest text-silver/70 mb-1">
+                    <span className="block text-2xs uppercase tracking-widest text-silver/70 mb-1">
                       Target
                     </span>
                     <span className="inline-block py-1.5 tabular-nums">
@@ -610,14 +689,14 @@ function KeyResultsDrawer({
                   </div>
                   {k.targetValue !== null ? (
                     <div>
-                      <span className="block text-[10px] uppercase tracking-widest text-silver/70 mb-1">
+                      <span className="block text-2xs uppercase tracking-widest text-silver/70 mb-1">
                         Progress
                       </span>
                       <span className="inline-block py-1.5 tabular-nums">{k.progressPct}%</span>
                     </div>
                   ) : (
                     <label className="block">
-                      <span className="block text-[10px] uppercase tracking-widest text-silver/70 mb-1">
+                      <span className="block text-2xs uppercase tracking-widest text-silver/70 mb-1">
                         Progress %
                       </span>
                       <Input
@@ -636,7 +715,7 @@ function KeyResultsDrawer({
           </div>
         )}
         <div className="rounded-lg border border-dashed border-navy-secondary p-3 space-y-3">
-          <div className="text-[10px] uppercase tracking-widest text-silver/70">
+          <div className="text-2xs uppercase tracking-widest text-silver/70">
             Add key result
           </div>
           <div>
@@ -721,7 +800,7 @@ function GoalDrawer({
       toast.success('Goal created.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not create the goal.');
     } finally {
       setSaving(false);
     }
@@ -843,7 +922,7 @@ function PipFromGoalDrawer({
       });
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not create the PIP.');
     } finally {
       setSaving(false);
     }
@@ -935,6 +1014,7 @@ function KudosTab() {
     queryFn: async () => (await listKudos({ onlyPublic: true })).kudos,
   });
   const rows = q.data ?? null;
+  const loadError = queryErrorMessage(q.error, 'Could not load kudos.');
 
   const sendM = useMutation({
     mutationFn: createKudo,
@@ -947,7 +1027,7 @@ function KudosTab() {
       qc.invalidateQueries({ queryKey: perfKeys.kudos(true) });
     },
     onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Failed.'),
+      toast.error(err instanceof ApiError ? err.message : 'Could not send the kudo.'),
   });
 
   const onSend = () => {
@@ -973,7 +1053,13 @@ function KudosTab() {
           <Heart className="mr-2 h-4 w-4" /> Send kudo
         </Button>
       </div>
-      {rows === null ? (
+      {loadError ? (
+        <Card>
+          <CardContent className="p-0">
+            <QueryError message={loadError} onRetry={() => void q.refetch()} />
+          </CardContent>
+        </Card>
+      ) : rows === null ? (
         <Card><CardContent className="p-6"><SkeletonRows count={3} /></CardContent></Card>
       ) : rows.length === 0 ? (
         <EmptyState
@@ -1062,6 +1148,7 @@ function OneOnOnesTab() {
     queryFn: async () => (await listOneOnOnes()).meetings,
   });
   const rows = q.data ?? null;
+  const loadError = queryErrorMessage(q.error, 'Could not load 1:1s.');
 
   const invalidate = () =>
     qc.invalidateQueries({ queryKey: perfKeys.oneOnOnes() });
@@ -1080,7 +1167,7 @@ function OneOnOnesTab() {
       toast.success(status === 'COMPLETED' ? '1:1 marked completed.' : '1:1 cancelled.');
       invalidate();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not update the 1:1.');
     }
   };
 
@@ -1095,7 +1182,9 @@ function OneOnOnesTab() {
       {scheduleButton && <div className="flex justify-end">{scheduleButton}</div>}
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {loadError ? (
+            <QueryError message={loadError} onRetry={() => void q.refetch()} />
+          ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
@@ -1121,7 +1210,7 @@ function OneOnOnesTab() {
                   <TableRow key={m.id}>
                     <TableCell className="font-medium text-white">
                       <div className="truncate">{m.associateName ?? '—'}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         {m.managerEmail ?? '—'}
                       </div>
                     </TableCell>
@@ -1136,10 +1225,10 @@ function OneOnOnesTab() {
                             ? 'success'
                             : m.status === 'CANCELLED'
                               ? 'destructive'
-                              : 'pending'
+                              : 'info'
                         }
                       >
-                        {m.status}
+                        {ONE_ON_ONE_STATUS_LABELS[m.status]}
                       </Badge>
                     </TableCell>
                     <TableCell className="max-w-md truncate hidden md:table-cell">
@@ -1221,7 +1310,7 @@ function ScheduleOneOnOneDrawer({
       toast.success('1:1 scheduled.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not schedule the 1:1.');
     } finally {
       setSaving(false);
     }
@@ -1285,6 +1374,7 @@ function PipsTab({ canManage }: { canManage: boolean }) {
     queryFn: async () => (await listPips()).pips,
   });
   const rows = q.data ?? null;
+  const loadError = queryErrorMessage(q.error, 'Could not load PIPs.');
 
   const filtered = useMemo(() => {
     if (!rows) return null;
@@ -1309,7 +1399,7 @@ function PipsTab({ canManage }: { canManage: boolean }) {
       await updatePip(p.id, { status, outcomeNote: note });
       invalidatePips();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not record the PIP outcome.');
     }
   };
 
@@ -1332,7 +1422,7 @@ function PipsTab({ canManage }: { canManage: boolean }) {
         action: { label: 'Open reviews', onClick: () => navigate('/performance') },
       });
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not create the review.');
     } finally {
       setReviewBusyId(null);
     }
@@ -1341,14 +1431,13 @@ function PipsTab({ canManage }: { canManage: boolean }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-end gap-2">
-        <div className="w-52 max-w-full">
-          <Input
-            value={assocFilter}
-            onChange={(e) => setAssocFilter(e.target.value)}
-            placeholder="Filter by associate…"
-            aria-label="Filter PIPs by associate"
-          />
-        </div>
+        <SearchInput
+          wrapperClassName="w-52 max-w-full"
+          value={assocFilter}
+          onChange={(e) => setAssocFilter(e.target.value)}
+          placeholder="Filter by associate…"
+          aria-label="Filter PIPs by associate"
+        />
         {canManage && (
           <Button onClick={() => setShowNew(true)}>
             <Plus className="mr-2 h-4 w-4" /> New PIP
@@ -1357,7 +1446,9 @@ function PipsTab({ canManage }: { canManage: boolean }) {
       </div>
       <Card>
         <CardContent className="p-0">
-          {filtered === null ? (
+          {loadError ? (
+            <QueryError message={loadError} onRetry={() => void q.refetch()} />
+          ) : filtered === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : filtered.length === 0 ? (
             <EmptyState
@@ -1389,7 +1480,7 @@ function PipsTab({ canManage }: { canManage: boolean }) {
                       <div className="truncate">
                         {fmtYmd(p.startDate)} – {fmtYmd(p.endDate)}
                       </div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate max-w-[24ch]">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate max-w-[24ch]">
                         {p.reason}
                       </div>
                     </TableCell>
@@ -1401,10 +1492,12 @@ function PipsTab({ canManage }: { canManage: boolean }) {
                             ? 'success'
                             : p.status === 'FAILED'
                               ? 'destructive'
-                              : 'pending'
+                              : p.status === 'ACTIVE'
+                                ? 'accent'
+                                : 'default'
                         }
                       >
-                        {p.status}
+                        {PIP_STATUS_LABELS[p.status]}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">
@@ -1476,7 +1569,7 @@ function PipDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
       toast.success('PIP created.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not create the PIP.');
     } finally {
       setSaving(false);
     }
@@ -1553,6 +1646,7 @@ function Reviews360Tab({ canManage }: { canManage: boolean }) {
     queryFn: async () => (await listReviews360()).reviews,
   });
   const rows = q.data ?? null;
+  const loadError = queryErrorMessage(q.error, 'Could not load 360 reviews.');
 
   const invalidate = () =>
     qc.invalidateQueries({ queryKey: perfKeys.reviews360() });
@@ -1563,7 +1657,7 @@ function Reviews360Tab({ canManage }: { canManage: boolean }) {
       await closeReview360(id);
       invalidate();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not close the review.');
     }
   };
 
@@ -1578,7 +1672,9 @@ function Reviews360Tab({ canManage }: { canManage: boolean }) {
       )}
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {loadError ? (
+            <QueryError message={loadError} onRetry={() => void q.refetch()} />
+          ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
@@ -1592,7 +1688,7 @@ function Reviews360Tab({ canManage }: { canManage: boolean }) {
                   <TableHead>Subject</TableHead>
                   <TableHead className="hidden md:table-cell">Period</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead className="hidden md:table-cell">Feedback</TableHead>
+                  <TableHead className="hidden md:table-cell text-right">Feedback</TableHead>
                   <TableHead className="w-64 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -1603,7 +1699,7 @@ function Reviews360Tab({ canManage }: { canManage: boolean }) {
                       <div className="truncate">
                         {r.subjectAssociateName ?? r.subjectAssociateId}
                       </div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         {fmtYmd(r.periodStart)} – {fmtYmd(r.periodEnd)} · {r.feedbackCount} feedback
                       </div>
                     </TableCell>
@@ -1617,13 +1713,15 @@ function Reviews360Tab({ canManage }: { canManage: boolean }) {
                             ? 'success'
                             : r.status === 'CANCELLED'
                               ? 'destructive'
-                              : 'pending'
+                              : 'accent'
                         }
                       >
-                        {r.status}
+                        {REVIEW360_STATUS_LABELS[r.status]}
                       </Badge>
                     </TableCell>
-                    <TableCell className="hidden md:table-cell">{r.feedbackCount}</TableCell>
+                    <TableCell className="hidden md:table-cell text-right tabular-nums">
+                      {r.feedbackCount}
+                    </TableCell>
                     <TableCell className="text-right">
                       <div className="inline-flex gap-1">
                         {r.status === 'COLLECTING' && (
@@ -1701,7 +1799,7 @@ function FeedbackDrawer({
       toast.success('Feedback submitted.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not submit the feedback.');
     } finally {
       setSaving(false);
     }
@@ -1786,7 +1884,11 @@ function AggregateDrawer({
   });
   const data = q.data ?? null;
   const error =
-    q.error instanceof ApiError ? q.error.message : q.error ? 'Failed to load.' : null;
+    q.error instanceof ApiError
+      ? q.error.message
+      : q.error
+        ? 'Could not load the 360 results.'
+        : null;
 
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()} width="max-w-xl">
@@ -1797,19 +1899,26 @@ function AggregateDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <p className="text-xs text-silver">
-          {fmtYmd(review.periodStart)} – {fmtYmd(review.periodEnd)} · {review.status}
+          {fmtYmd(review.periodStart)} – {fmtYmd(review.periodEnd)} ·{' '}
+          {REVIEW360_STATUS_LABELS[review.status]}
         </p>
         {error && (
-          <p role="alert" className="text-sm text-alert">
+          <ErrorBanner
+            action={
+              <Button size="sm" variant="secondary" onClick={() => void q.refetch()}>
+                Retry
+              </Button>
+            }
+          >
             {error}
-          </p>
+          </ErrorBanner>
         )}
         {!data && !error && <SkeletonRows count={3} />}
         {data && (
           <>
             <div className="flex items-center gap-6 rounded-lg border border-navy-secondary bg-navy-secondary/30 p-4">
               <div>
-                <div className="text-[10px] uppercase tracking-widest text-silver/70">
+                <div className="text-2xs uppercase tracking-widest text-silver/70">
                   Responses
                 </div>
                 <div className="font-display text-2xl text-white tabular-nums">
@@ -1817,7 +1926,7 @@ function AggregateDrawer({
                 </div>
               </div>
               <div>
-                <div className="text-[10px] uppercase tracking-widest text-silver/70">
+                <div className="text-2xs uppercase tracking-widest text-silver/70">
                   Average rating
                 </div>
                 <div className="font-display text-2xl text-gold tabular-nums">
@@ -1844,7 +1953,7 @@ function AggregateDrawer({
                 </div>
                 {f.strengths && (
                   <div>
-                    <div className="text-[10px] uppercase tracking-widest text-silver/70">
+                    <div className="text-2xs uppercase tracking-widest text-silver/70">
                       Strengths
                     </div>
                     <div className="text-sm text-white whitespace-pre-wrap">{f.strengths}</div>
@@ -1852,7 +1961,7 @@ function AggregateDrawer({
                 )}
                 {f.improvements && (
                   <div>
-                    <div className="text-[10px] uppercase tracking-widest text-silver/70">
+                    <div className="text-2xs uppercase tracking-widest text-silver/70">
                       Areas to improve
                     </div>
                     <div className="text-sm text-white whitespace-pre-wrap">
@@ -1897,7 +2006,7 @@ function NewReview360Drawer({ onClose, onSaved }: { onClose: () => void; onSaved
       toast.success('360 review created.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not create the 360 review.');
     } finally {
       setSaving(false);
     }
@@ -1960,7 +2069,11 @@ function TimelineTab() {
   });
   const entries = associate !== null ? q.data ?? null : null;
   const error =
-    q.error instanceof ApiError ? q.error.message : q.error ? 'Failed to load.' : null;
+    q.error instanceof ApiError
+      ? q.error.message
+      : q.error
+        ? 'Could not load the performance timeline.'
+        : null;
   const loading = associate !== null && entries === null && !error;
 
   return (
@@ -1978,7 +2091,17 @@ function TimelineTab() {
           )}
         </CardContent>
       </Card>
-      {error && <p role="alert" className="text-sm text-alert">{error}</p>}
+      {error && (
+        <ErrorBanner
+          action={
+            <Button size="sm" variant="secondary" onClick={() => void q.refetch()}>
+              Retry
+            </Button>
+          }
+        >
+          {error}
+        </ErrorBanner>
+      )}
       {loading && <SkeletonRows count={3} />}
       {entries && entries.length === 0 && (
         <EmptyState
@@ -1996,8 +2119,8 @@ function TimelineTab() {
                 key={`${e.kind}-${e.id}`}
                 className="flex items-center gap-3 rounded-lg border border-navy-secondary bg-navy-secondary/30 px-4 py-3"
               >
-                <div className="w-24 shrink-0 text-xs tabular-nums text-silver">
-                  {e.date}
+                <div className="w-28 shrink-0 text-xs tabular-nums text-silver">
+                  {fmtYmd(e.date)}
                 </div>
                 <Badge className={`shrink-0 ${meta.tone}`} variant="outline">
                   {meta.label}
@@ -2005,7 +2128,7 @@ function TimelineTab() {
                 <div className="flex-1 min-w-0">
                   <div className="truncate text-sm text-white">{e.title}</div>
                   <div className="text-xs text-silver">
-                    {e.status}
+                    {timelineStatusLabel(e.status)}
                     {e.parentId && (
                       <span className="ml-2 text-silver/70">
                         ↳ linked to {e.parentKind?.toLowerCase()}

@@ -31,8 +31,10 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
+  SegmentedControl,
   Select,
   SkeletonRows,
   Table,
@@ -81,23 +83,33 @@ export function AgreementsHome() {
   );
   const [showNew, setShowNew] = useState(false);
   const [signRow, setSignRow] = useState<MyAgreement | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   // Track which row's action is in flight so each Button shows its own
   // spinner. Format: `expire:<id>` or `delete:<id>`.
   const [pendingKey, setPendingKey] = useState<string | null>(null);
 
   const refresh = () => {
+    setLoadError(null);
     if (tab === 'all') {
       setRows(null);
       listAgreements({
         status: statusFilter === 'ALL' ? undefined : statusFilter,
       })
         .then((r) => setRows(r.agreements))
-        .catch(() => setRows([]));
+        .catch((err) =>
+          setLoadError(
+            err instanceof ApiError ? err.message : 'Could not load agreements.',
+          ),
+        );
     } else {
       setMine(null);
       listMyAgreements()
         .then((r) => setMine(r.agreements))
-        .catch(() => setMine([]));
+        .catch((err) =>
+          setLoadError(
+            err instanceof ApiError ? err.message : 'Could not load agreements.',
+          ),
+        );
     }
   };
   useEffect(() => {
@@ -113,24 +125,15 @@ export function AgreementsHome() {
       />
 
       <div className="flex items-center justify-between">
-        <div className="flex gap-1">
-          <Button
-            size="sm"
-            variant={tab === 'mine' ? 'primary' : 'ghost'}
-            onClick={() => setTab('mine')}
-          >
-            Mine
-          </Button>
-          {canManage && (
-            <Button
-              size="sm"
-              variant={tab === 'all' ? 'primary' : 'ghost'}
-              onClick={() => setTab('all')}
-            >
-              All
-            </Button>
-          )}
-        </div>
+        <SegmentedControl
+          ariaLabel="Agreements view"
+          value={tab}
+          onChange={(v) => setTab(v)}
+          options={[
+            { value: 'mine' as const, label: 'Mine' },
+            ...(canManage ? [{ value: 'all' as const, label: 'All' }] : []),
+          ]}
+        />
         {canManage && tab === 'all' && (
           <div className="flex gap-2">
             <Select
@@ -157,7 +160,19 @@ export function AgreementsHome() {
       {tab === 'mine' ? (
         <Card>
           <CardContent className="p-0">
-            {mine === null ? (
+            {loadError ? (
+              <div className="p-6">
+                <ErrorBanner
+                  action={
+                    <Button size="sm" variant="secondary" onClick={refresh}>
+                      Retry
+                    </Button>
+                  }
+                >
+                  {loadError}
+                </ErrorBanner>
+              </div>
+            ) : mine === null ? (
               <div className="p-6">
                 <SkeletonRows count={3} />
               </div>
@@ -221,7 +236,19 @@ export function AgreementsHome() {
       ) : (
         <Card>
           <CardContent className="p-0">
-            {rows === null ? (
+            {loadError ? (
+              <div className="p-6">
+                <ErrorBanner
+                  action={
+                    <Button size="sm" variant="secondary" onClick={refresh}>
+                      Retry
+                    </Button>
+                  }
+                >
+                  {loadError}
+                </ErrorBanner>
+              </div>
+            ) : rows === null ? (
               <div className="p-6">
                 <SkeletonRows count={4} />
               </div>
@@ -253,7 +280,7 @@ export function AgreementsHome() {
                         <div className="text-xs text-silver">
                           {a.associateEmail}
                         </div>
-                        <div className="text-[11px] text-silver/70 md:hidden">
+                        <div className="text-xs2 text-silver/70 md:hidden">
                           {a.signedAt
                             ? `Signed ${fmtDate(a.signedAt)}`
                             : 'Not signed'}

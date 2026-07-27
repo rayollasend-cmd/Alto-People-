@@ -6,6 +6,9 @@ import {
   type WebhookHealth,
 } from '@/lib/payrollApi';
 import { ApiError } from '@/lib/api';
+import { fmtDateTime } from '@/lib/format';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { Skeleton } from '@/components/ui/Skeleton';
 
 const POLL_INTERVAL_MS = 60_000;
 
@@ -101,16 +104,17 @@ export function WebhookHealthTile() {
   }, []);
 
   if (error) {
-    return (
-      <div className="rounded-lg border border-navy-secondary bg-navy elev-1 p-3 text-sm text-silver">
-        {error}
-      </div>
-    );
+    // The tile re-polls itself every minute, so no explicit Retry needed.
+    return <ErrorBanner severity="warning">{error}</ErrorBanner>;
   }
   if (!data) {
     return (
-      <div className="rounded-lg border border-navy-secondary bg-navy elev-1 p-3 text-sm text-silver">
-        Loading disbursement health…
+      <div className="rounded-lg border border-navy-secondary bg-navy elev-1 p-3 flex items-start gap-3">
+        <Skeleton className="h-8 w-8 rounded-full shrink-0" />
+        <div className="flex-1 space-y-2">
+          <Skeleton className="h-4 w-56" />
+          <Skeleton className="h-3 w-72" />
+        </div>
       </div>
     );
   }
@@ -130,7 +134,7 @@ export function WebhookHealthTile() {
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-medium text-white">Disbursement webhook</span>
           <span
-            className={`rounded px-1.5 py-0.5 text-[10px] uppercase tracking-widest font-medium ${style.chip}`}
+            className={`rounded px-1.5 py-0.5 text-2xs uppercase tracking-widest font-medium ${style.chip}`}
           >
             {style.label}
           </span>
@@ -139,7 +143,7 @@ export function WebhookHealthTile() {
         <p className="mt-0.5 text-silver">{data.detail}</p>
         {data.health === 'erroring' && data.latestError?.notes && (
           <p className="mt-1 text-xs text-alert break-words">
-            Latest error ({new Date(data.latestError.at).toLocaleString()}):{' '}
+            Latest error ({fmtDateTime(data.latestError.at)}):{' '}
             {data.latestError.notes}
           </p>
         )}

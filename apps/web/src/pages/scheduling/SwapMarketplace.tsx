@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/Button';
 import { fmtDateTz, fmtShiftRangeTz, fmtWeekdayTz } from '@/lib/format';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 
 type Tab = 'incoming' | 'outgoing';
 
@@ -149,9 +150,16 @@ export function SwapMarketplace({
       </div>
 
       {error && (
-        <p role="alert" className="text-sm text-alert mb-3">
+        <ErrorBanner
+          className="mb-3"
+          action={
+            <Button size="sm" variant="secondary" onClick={() => void refresh()}>
+              Retry
+            </Button>
+          }
+        >
           {error}
-        </p>
+        </ErrorBanner>
       )}
       {!items && <SkeletonRows count={3} rowHeight="h-16" />}
       {items && items.length === 0 && (

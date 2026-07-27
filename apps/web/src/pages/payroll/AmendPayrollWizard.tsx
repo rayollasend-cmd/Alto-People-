@@ -36,9 +36,7 @@ import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
-
-const fmtMoney = (n: number) =>
-  n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+import { fmtDate, fmtMoney, parseYmd } from '@/lib/format';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -327,7 +325,8 @@ export function AmendPayrollWizard({ open, onOpenChange, sourceRun, onAmended }:
             Amend payroll run
           </DialogTitle>
           <DialogDescription>
-            {sourceRun.periodStart} → {sourceRun.periodEnd} · {sourceRun.items.length}{' '}
+            {fmtDate(parseYmd(sourceRun.periodStart))} →{' '}
+            {fmtDate(parseYmd(sourceRun.periodEnd))} · {sourceRun.items.length}{' '}
             paystub{sourceRun.items.length === 1 ? '' : 's'}. Edit any associate
             you need to correct. The server posts the SIGNED DELTAS as a new
             AMENDMENT run; untouched associates are unaffected.
@@ -354,10 +353,10 @@ export function AmendPayrollWizard({ open, onOpenChange, sourceRun, onAmended }:
 
           <div>
             <div className="flex items-center justify-between mb-2">
-              <div className="text-[10px] uppercase tracking-widest text-silver/70">
+              <div className="text-2xs uppercase tracking-widest text-silver/70">
                 Paystubs ({sourceRun.items.length})
               </div>
-              <div className="text-[11px] text-silver/70">
+              <div className="text-xs2 text-silver/70">
                 {correctionEntries.length} editing
               </div>
             </div>
@@ -380,7 +379,7 @@ export function AmendPayrollWizard({ open, onOpenChange, sourceRun, onAmended }:
                         <div className="text-sm text-white truncate">
                           {it.associateName ?? '—'}
                         </div>
-                        <div className="text-[11px] text-silver/70">
+                        <div className="text-xs2 text-silver/70">
                           {it.hoursWorked.toFixed(2)} hrs · gross{' '}
                           {fmtMoney(it.grossPay)} · net {fmtMoney(it.netPay)}
                           {netDelta !== null && (
@@ -497,7 +496,7 @@ export function AmendPayrollWizard({ open, onOpenChange, sourceRun, onAmended }:
 
         <DialogFooter>
           {correctionEntries.length > 0 && (
-            <div className="self-center text-[11px] text-silver/70 sm:mr-auto">
+            <div className="self-center text-xs2 text-silver/70 sm:mr-auto">
               This amendment changes total net pay by{' '}
               <span className={cn('font-medium', deltaClass(totalNetDelta))}>
                 {fmtDelta(totalNetDelta)}

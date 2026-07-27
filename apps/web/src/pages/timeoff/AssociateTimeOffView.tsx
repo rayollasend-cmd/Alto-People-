@@ -38,6 +38,7 @@ import {
 } from '@/components/ui/Dialog';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -224,25 +225,19 @@ export function AssociateTimeOffView() {
           )}
           {requests && requests.length > 0 && (
             <>
-              <div className="flex flex-wrap gap-1.5 mb-3">
-                <Button
-                  size="xs"
-                  variant={statusFilter === 'ALL' ? 'secondary' : 'ghost'}
-                  onClick={() => setStatusFilter('ALL')}
-                >
-                  All
-                </Button>
-                {STATUS_FILTERS.map((s) => (
-                  <Button
-                    key={s}
-                    size="xs"
-                    variant={statusFilter === s ? 'secondary' : 'ghost'}
-                    onClick={() => setStatusFilter(s)}
-                  >
-                    {t(STATUS_KEYS[s])}
-                  </Button>
-                ))}
-              </div>
+              <SegmentedControl<TimeOffRequest['status'] | 'ALL'>
+                options={[
+                  { value: 'ALL', label: 'All' },
+                  ...STATUS_FILTERS.map((s) => ({
+                    value: s,
+                    label: t(STATUS_KEYS[s]),
+                  })),
+                ]}
+                value={statusFilter}
+                onChange={setStatusFilter}
+                ariaLabel="Filter requests by status"
+                className="mb-3 flex-wrap"
+              />
               {filteredRequests && filteredRequests.length === 0 && (
                 <p className="text-sm text-silver py-4 text-center">
                   No requests with this status.
@@ -341,7 +336,7 @@ function BalanceGrid({ balances }: { balances: TimeOffBalance[] | null }) {
       {balances.map((b) => (
         <Card key={b.category}>
           <CardContent className="py-4">
-            <div className="text-[10px] uppercase tracking-widest text-silver">
+            <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
               {t(CATEGORY_KEYS[b.category])}
             </div>
             <div className="text-2xl text-white font-display mt-1 tabular-nums">

@@ -13,6 +13,7 @@ import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { TaskShell, inputCls, Field } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Select } from '@/components/ui/Select';
@@ -39,11 +40,16 @@ const STATUS_LABEL: Record<string, string> = {
   EXPIRED: 'Expired',
 };
 
-const STATUS_TONE: Record<string, string> = {
-  UPLOADED: 'text-warning border-warning/40 bg-warning/[0.06]',
-  VERIFIED: 'text-success border-success/40 bg-success/[0.06]',
-  REJECTED: 'text-alert border-alert/40 bg-alert/[0.07]',
-  EXPIRED: 'text-alert border-alert/40 bg-alert/[0.07]',
+const STATUS_VARIANT: Record<string, 'pending' | 'success' | 'destructive'> = {
+  UPLOADED: 'pending',
+  VERIFIED: 'success',
+  REJECTED: 'destructive',
+  EXPIRED: 'destructive',
+};
+
+const KIND_LABEL: Record<string, string> = {
+  J1_DS2019: 'DS-2019',
+  J1_VISA: 'J-1 visa',
 };
 
 export function J1DocsTask() {
@@ -120,7 +126,7 @@ export function J1DocsTask() {
         sevisId: sevisId.trim() || null,
       });
       setProfileSaved(true);
-      toast.success('Program details saved');
+      toast.success('Program details saved.');
     } catch (err) {
       const code = err instanceof ApiError ? err.code : null;
       if (code === 'bad_program_dates') {
@@ -147,7 +153,7 @@ export function J1DocsTask() {
     setUploading(true);
     try {
       await uploadMyDocument(file, kind);
-      toast.success(`Uploaded ${file.name}`);
+      toast.success(`Uploaded ${file.name}.`);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed.');
@@ -169,7 +175,7 @@ export function J1DocsTask() {
       setDeleteTarget(null);
       await refresh();
     } catch (err) {
-      toast.error('Could not remove', {
+      toast.error('Could not remove the document.', {
         description: err instanceof ApiError ? err.message : undefined,
       });
     } finally {
@@ -378,7 +384,8 @@ export function J1DocsTask() {
                       {d.filename}
                     </div>
                     <div className="text-xs text-silver/70 tabular-nums">
-                      {d.kind.replace(/_/g, ' ')} · {fmtSize(d.size)}
+                      {KIND_LABEL[d.kind] ?? d.kind.replace(/_/g, ' ')} ·{' '}
+                      {fmtSize(d.size)}
                     </div>
                     {d.rejectionReason && (
                       <div className="text-xs text-alert mt-1">
@@ -386,15 +393,13 @@ export function J1DocsTask() {
                       </div>
                     )}
                   </div>
-                  <span
-                    className={cn(
-                      'text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border whitespace-nowrap',
-                      STATUS_TONE[d.status] ?? STATUS_TONE.UPLOADED
-                    )}
+                  <Badge
+                    size="sm"
+                    variant={STATUS_VARIANT[d.status] ?? 'pending'}
                     data-status={d.status}
                   >
                     {STATUS_LABEL[d.status] ?? d.status}
-                  </span>
+                  </Badge>
                   {d.status !== 'VERIFIED' && (
                     <button
                       type="button"

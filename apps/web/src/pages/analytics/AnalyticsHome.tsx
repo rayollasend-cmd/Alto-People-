@@ -14,6 +14,8 @@ import {
 import type { DashboardKPIs } from '@alto-people/shared';
 import { getDashboardKPIs } from '@/lib/analyticsApi';
 import { ApiError } from '@/lib/api';
+import { downloadCsv } from '@/lib/csv';
+import { fmtMoney, ymdLocal } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
 import {
   Card,
@@ -35,9 +37,6 @@ import { MetricCard } from '@/components/ui/MetricCard';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Skeleton } from '@/components/ui/Skeleton';
-
-const fmtMoney = (n: number) =>
-  n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
 
 /**
  * Brand-aligned color per application status. Drives the donut chart and
@@ -96,29 +95,25 @@ export function AnalyticsHome() {
     };
   }, [days, reloadTick]);
 
-  const downloadCsv = () => {
+  const exportCsv = () => {
     if (!kpis) return;
-    const lines: string[] = [];
-    lines.push('Metric,Value');
-    lines.push(`Window (days),${kpis.windowDays}`);
-    lines.push(`Active associates,${kpis.activeAssociates}`);
-    lines.push(`Associates clocked in,${kpis.associatesClockedIn}`);
-    lines.push(`Open shifts (next ${kpis.windowDays}d),${kpis.openShiftsNext30d}`);
-    lines.push(`Pending onboarding applications,${kpis.pendingOnboardingApplications}`);
-    lines.push(`Pending I-9 Section 2,${kpis.pendingI9Section2}`);
-    lines.push(`Pending document reviews,${kpis.pendingDocumentReviews}`);
-    lines.push(`Net paid (last ${kpis.windowDays}d) USD,${kpis.netPaidLast30d.toFixed(2)}`);
-    lines.push(`Net pending disbursement USD,${kpis.netPendingDisbursement.toFixed(2)}`);
-    for (const [status, count] of Object.entries(kpis.applicationStatusCounts)) {
-      lines.push(`Applications: ${status},${count}`);
-    }
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `alto-analytics-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    // Shared RFC-4180 helper + local calendar date in the filename
+    // (toISOString is UTC and rolls to tomorrow for evening users).
+    downloadCsv(`alto-analytics-${ymdLocal()}.csv`, [
+      ['Metric', 'Value'],
+      ['Window (days)', kpis.windowDays],
+      ['Active associates', kpis.activeAssociates],
+      ['Associates clocked in', kpis.associatesClockedIn],
+      [`Open shifts (next ${kpis.windowDays}d)`, kpis.openShiftsNext30d],
+      ['Pending onboarding applications', kpis.pendingOnboardingApplications],
+      ['Pending I-9 Section 2', kpis.pendingI9Section2],
+      ['Pending document reviews', kpis.pendingDocumentReviews],
+      [`Net paid (last ${kpis.windowDays}d) USD`, kpis.netPaidLast30d.toFixed(2)],
+      ['Net pending disbursement USD', kpis.netPendingDisbursement.toFixed(2)],
+      ...Object.entries(kpis.applicationStatusCounts).map(
+        ([status, count]) => [`Applications: ${STATUS_LABELS[status] ?? status}`, count],
+      ),
+    ]);
   };
 
   return (
@@ -127,7 +122,7 @@ export function AnalyticsHome() {
         title="Analytics"
         subtitle="Live operational and financial KPIs across all clients."
         primaryAction={
-          <Button onClick={downloadCsv} variant="secondary" disabled={!kpis}>
+          <Button onClick={exportCsv} variant="secondary" disabled={!kpis}>
             <Download className="h-4 w-4" />
             Export CSV
           </Button>

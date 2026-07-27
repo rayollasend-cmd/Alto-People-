@@ -5,8 +5,9 @@ import { acknowledgeReview, listMyReviews } from '@/lib/performanceApi';
 import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
 import { fmtDate, parseYmd } from '@/lib/format';
-import { cn } from '@/lib/cn';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -35,7 +36,7 @@ export function AssociateReviewsView() {
       const res = await listMyReviews();
       setReviews(res.reviews);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
+      setError(err instanceof ApiError ? err.message : 'Could not load your reviews.');
     }
   }, []);
 
@@ -58,7 +59,9 @@ export function AssociateReviewsView() {
       await acknowledgeReview(id);
       await refresh();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Acknowledge failed.');
+      setError(
+        err instanceof ApiError ? err.message : 'Could not record your acknowledgment.',
+      );
     } finally {
       setPendingId(null);
     }
@@ -72,11 +75,18 @@ export function AssociateReviewsView() {
       />
 
       {error && (
-        <p role="alert" className="text-sm text-alert mb-3">
+        <ErrorBanner
+          className="mb-3"
+          action={
+            <Button size="sm" variant="secondary" onClick={() => void refresh()}>
+              Retry
+            </Button>
+          }
+        >
           {error}
-        </p>
+        </ErrorBanner>
       )}
-      {!reviews && <SkeletonRows count={2} rowHeight="h-40" />}
+      {!reviews && !error && <SkeletonRows count={2} rowHeight="h-40" />}
       {reviews && reviews.length === 0 && (
         <EmptyState
           icon={ClipboardCheck}
@@ -100,16 +110,18 @@ export function AssociateReviewsView() {
                     {ratingStars(r.overallRating)}
                   </div>
                 </div>
-                <span
-                  className={cn(
-                    'text-xs uppercase tracking-widest px-2 py-1 rounded border',
+                <Badge
+                  size="lg"
+                  variant={
                     r.status === 'ACKNOWLEDGED'
-                      ? 'border-success/40 bg-success/15 text-success'
-                      : 'border-gold/40 bg-gold/10 text-gold'
-                  )}
+                      ? 'success'
+                      : r.status === 'SUBMITTED'
+                        ? 'pending'
+                        : 'default'
+                  }
                 >
                   {STATUS_LABEL[r.status]}
-                </span>
+                </Badge>
               </div>
               <div className="text-white whitespace-pre-line mb-3">{r.summary}</div>
               {r.strengths && (
@@ -133,7 +145,7 @@ export function AssociateReviewsView() {
                 </div>
               )}
               {r.reviewerEmail && (
-                <div className="text-[10px] uppercase tracking-widest text-silver/70 mt-3">
+                <div className="text-2xs uppercase tracking-widest text-silver/70 mt-3">
                   Reviewed by {r.reviewerEmail}
                 </div>
               )}
@@ -148,7 +160,7 @@ export function AssociateReviewsView() {
 function Section({ label, body }: { label: string; body: string }) {
   return (
     <div className="mb-2">
-      <div className="text-[10px] uppercase tracking-widest text-silver/70">{label}</div>
+      <div className="text-2xs uppercase tracking-widest text-silver/70">{label}</div>
       <div className="text-sm text-silver whitespace-pre-line">{body}</div>
     </div>
   );

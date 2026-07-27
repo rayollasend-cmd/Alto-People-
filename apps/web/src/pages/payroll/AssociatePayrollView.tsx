@@ -22,7 +22,7 @@ import {
 } from '@/lib/payrollApi';
 import { fileCase } from '@/lib/hrCases123Api';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtMoney } from '@/lib/format';
+import { fmtDate, fmtMoney, parseYmd } from '@/lib/format';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import { dayHeading, groupByDayBy } from '@/lib/dayGroup';
@@ -38,7 +38,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
-import { SkeletonRows } from '@/components/ui/Skeleton';
+import { Badge } from '@/components/ui/Badge';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import {
   ChevronDown,
@@ -63,20 +65,24 @@ const KIND_KEY: Record<PayrollItemEarning['kind'], MessageKey> = {
   REIMBURSEMENT: 'pay.kind.REIMBURSEMENT',
 };
 
-function statusBadge(status: PayrollItem['status']): { labelKey: MessageKey; cls: string } {
-  switch (status) {
-    case 'PENDING':
-      return { labelKey: 'pay.status.PENDING', cls: 'bg-silver/10 text-silver border-silver/30' };
-    case 'DISBURSED':
-      return { labelKey: 'pay.status.DISBURSED', cls: 'bg-success/15 text-success border-success/30' };
-    case 'FAILED':
-      return { labelKey: 'pay.status.FAILED', cls: 'bg-alert/15 text-alert border-alert/30' };
-    case 'HELD':
-      return { labelKey: 'pay.status.HELD', cls: 'bg-gold/20 text-gold border-gold/40' };
-    case 'VOIDED':
-      return { labelKey: 'pay.status.VOIDED', cls: 'bg-alert/10 text-alert/80 border-alert/20' };
-  }
-}
+const STATUS_KEY: Record<PayrollItem['status'], MessageKey> = {
+  PENDING: 'pay.status.PENDING',
+  DISBURSED: 'pay.status.DISBURSED',
+  FAILED: 'pay.status.FAILED',
+  HELD: 'pay.status.HELD',
+  VOIDED: 'pay.status.VOIDED',
+};
+
+const STATUS_VARIANT: Record<
+  PayrollItem['status'],
+  'default' | 'success' | 'destructive' | 'accent'
+> = {
+  PENDING: 'default',
+  DISBURSED: 'success',
+  FAILED: 'destructive',
+  HELD: 'accent',
+  VOIDED: 'destructive',
+};
 
 /**
  * 403/404 are fully expected for accounts without payroll records and
@@ -135,9 +141,16 @@ export function AssociatePayrollView() {
       <TaxAndPaySettings />
 
       {error && (
-        <p role="alert" className="text-sm text-alert mb-4">
+        <ErrorBanner
+          className="mb-4"
+          action={
+            <Button size="sm" variant="secondary" onClick={() => void payQuery.refetch()}>
+              {t('common.retry')}
+            </Button>
+          }
+        >
           {error}
-        </p>
+        </ErrorBanner>
       )}
       {!items && <SkeletonRows count={3} rowHeight="h-32" />}
       {items && items.length === 0 && (
@@ -171,7 +184,11 @@ export function AssociatePayrollView() {
             {groups.map((g, idx) => (
               <PaystubGroup
                 key={g.key}
-                heading={`${dayHeading(g.key)} · ${g.key}`}
+                heading={
+                  /^(Today|Yesterday)$/.test(dayHeading(g.key))
+                    ? `${dayHeading(g.key)} · ${fmtDate(parseYmd(g.key))}`
+                    : dayHeading(g.key)
+                }
                 items={g.entries}
                 allItems={items}
                 expanded={expanded}
@@ -454,7 +471,7 @@ function PayoutMethodCard() {
       </div>
       {!editing && (
         <div className="text-xs text-silver">
-          {method === undefined && 'Loading…'}
+          {method === undefined && <Skeleton className="h-4 w-40" />}
           {method === null && 'No direct-deposit account on file.'}
           {method && method.branchCard && 'Paid to your Branch card.'}
           {method && !method.branchCard && (
@@ -622,7 +639,6 @@ function PaystubCard({
   onAsk: () => void;
 }) {
   const { t } = useI18n();
-  const badge = statusBadge(item.status);
   const ytd = useMemo(() => computeYtd(item, allItems), [item, allItems]);
   const [downloading, setDownloading] = useState(false);
 
@@ -657,14 +673,9 @@ function PaystubCard({
               rate: fmtMoney(item.hourlyRate),
             })}
           </div>
-          <span
-            className={cn(
-              'shrink-0 text-xs uppercase tracking-widest px-2 py-1 rounded border',
-              badge.cls
-            )}
-          >
-            {t(badge.labelKey)}
-          </span>
+          <Badge className="shrink-0" variant={STATUS_VARIANT[item.status]}>
+            {t(STATUS_KEY[item.status])}
+          </Badge>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm pl-7">
           <div>
@@ -801,7 +812,7 @@ function PaystubCard({
               <div className="font-display text-2xl text-gold tabular-nums">
                 {fmtMoney(item.netPay)}
               </div>
-              <div className="text-[10px] uppercase tracking-wide text-silver/70">
+              <div className="text-2xs uppercase tracking-wide text-silver/70">
                 {t('pay.ytdNet', { amount: fmtMoney(ytd.net) })}
               </div>
             </div>
@@ -856,6 +867,7 @@ function AskPaycheckDialog({
   item: PayrollItem | null;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const [message, setMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const open = item !== null;
@@ -904,12 +916,12 @@ function AskPaycheckDialog({
         </DialogHeader>
         {item && (
           <p className="text-xs text-silver tabular-nums">
-            {item.status} · net {fmtMoney(item.netPay)}
+            {t(STATUS_KEY[item.status])} · net {fmtMoney(item.netPay)}
             {item.disbursedAt ? ` · ${fmtDate(item.disbursedAt)}` : ''}
           </p>
         )}
         <label className="block">
-          <span className="text-[11px] uppercase tracking-wider text-silver">
+          <span className="text-xs2 uppercase tracking-wider text-silver">
             What&rsquo;s your question?
           </span>
           <Textarea
@@ -937,7 +949,7 @@ function AskPaycheckDialog({
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="text-[10px] uppercase tracking-widest text-silver/70 mb-1.5">{title}</div>
+      <div className="text-2xs uppercase tracking-widest text-silver/70 mb-1.5">{title}</div>
       {children}
     </div>
   );
@@ -960,13 +972,13 @@ function PaystubTable({
       {/* 13px, not 12 — these cells carry the associate's pay math, the
           most load-bearing numbers in the app, read on phones at arm's
           length. Still fits the 5-col grid at 320px. */}
-      <table className="w-full min-w-[20rem] text-[13px]">
+      <table className="w-full min-w-[20rem] text-xs">
       <thead>
         <tr className="text-silver/70">
           {headers.map((h, i) => (
             <th
               key={i}
-              className={cn('py-1 font-normal text-[11px] uppercase tracking-widest', i === 0 ? 'text-left' : 'text-right')}
+              className={cn('py-1 font-normal text-xs2 uppercase tracking-widest', i === 0 ? 'text-left' : 'text-right')}
             >
               {h}
             </th>

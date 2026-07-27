@@ -37,8 +37,10 @@ import {
   DrawerTitle,
   EmptyState,
   ErrorBanner,
+  FilterChip,
   Input,
   PageHeader,
+  SegmentedControl,
   Select,
   SkeletonRows,
   Table,
@@ -122,13 +124,14 @@ function MyPulseTab() {
 
   if (error) {
     return (
-      <ErrorBanner>
-        <div className="flex items-center justify-between gap-3">
-          <span>{error}</span>
-          <Button size="sm" variant="outline" onClick={refresh}>
+      <ErrorBanner
+        action={
+          <Button size="sm" variant="secondary" onClick={refresh}>
             Retry
           </Button>
-        </div>
+        }
+      >
+        {error}
       </ErrorBanner>
     );
   }
@@ -190,7 +193,7 @@ function RespondCard({
       toast.success('Thanks for sharing.');
       onAnswered();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not submit your response.');
     } finally {
       setSubmitting(false);
     }
@@ -305,7 +308,7 @@ function AdminPulseTab() {
       toast.success('Survey closed.');
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not close the survey.');
     } finally {
       setClosingId(null);
     }
@@ -320,16 +323,15 @@ function AdminPulseTab() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div className="flex gap-1">
+        <div className="flex flex-wrap gap-1.5">
           {(['all', 'open', 'closed'] as const).map((f) => (
-            <Button
+            <FilterChip
               key={f}
-              size="sm"
-              variant={filter === f ? 'primary' : 'ghost'}
+              active={filter === f}
               onClick={() => setFilter(f)}
             >
               {f === 'all' ? 'All' : f === 'open' ? 'Open' : 'Closed (history)'}
-            </Button>
+            </FilterChip>
           ))}
         </div>
         <Button onClick={() => setShowNew(true)}>
@@ -337,13 +339,14 @@ function AdminPulseTab() {
         </Button>
       </div>
       {error && (
-        <ErrorBanner>
-          <div className="flex items-center justify-between gap-3">
-            <span>{error}</span>
-            <Button size="sm" variant="outline" onClick={refresh}>
+        <ErrorBanner
+          action={
+            <Button size="sm" variant="secondary" onClick={refresh}>
               Retry
             </Button>
-          </div>
+          }
+        >
+          {error}
         </ErrorBanner>
       )}
       <Card>
@@ -375,7 +378,7 @@ function AdminPulseTab() {
                   <TableHead className="hidden md:table-cell">Audience</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="hidden md:table-cell">Closes</TableHead>
-                  <TableHead className="hidden sm:table-cell">Responses</TableHead>
+                  <TableHead className="hidden sm:table-cell text-right">Responses</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -384,7 +387,7 @@ function AdminPulseTab() {
                   <TableRow key={s.id} className="group">
                     <TableCell className="font-medium text-white max-w-md">
                       <div className="truncate">{s.question}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         {s.audienceLabel ?? '—'}
                         <span className="sm:hidden tabular-nums">
                           {' · '}
@@ -395,14 +398,16 @@ function AdminPulseTab() {
                     <TableCell className="hidden lg:table-cell">{s.scale === 'SCORE_1_5' ? '1-5' : 'Yes/No'}</TableCell>
                     <TableCell className="text-xs hidden md:table-cell">{s.audienceLabel ?? '—'}</TableCell>
                     <TableCell>
-                      <Badge variant={s.isOpen ? 'success' : 'pending'}>
+                      <Badge variant={s.isOpen ? 'success' : 'default'}>
                         {s.isOpen ? 'Open' : 'Closed'}
                       </Badge>
                     </TableCell>
                     <TableCell className="hidden md:table-cell text-xs text-silver">
                       {fmtDateTime(s.openUntil)}
                     </TableCell>
-                    <TableCell className="hidden sm:table-cell">{s.responseCount}</TableCell>
+                    <TableCell className="hidden sm:table-cell text-right tabular-nums">
+                      {s.responseCount}
+                    </TableCell>
                     <TableCell className="text-right space-x-2">
                       <Button
                         size="sm"
@@ -473,7 +478,7 @@ function AdminPulseTab() {
             setDeleteTarget(null);
             refresh();
           } catch (err) {
-            toast.error(err instanceof ApiError ? err.message : 'Failed.');
+            toast.error(err instanceof ApiError ? err.message : 'Could not delete the survey.');
           } finally {
             setDeleting(false);
           }
@@ -556,7 +561,7 @@ function NewSurveyDrawer({
       toast.success('Survey sent — the audience has been notified.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not send the survey.');
     } finally {
       setSaving(false);
     }
@@ -604,13 +609,15 @@ function NewSurveyDrawer({
           <div>
             <Label>Department</Label>
             {departmentsError ? (
-              <ErrorBanner className="mt-1">
-                <div className="flex items-center justify-between gap-3">
-                  <span>{departmentsError}</span>
-                  <Button size="sm" variant="outline" onClick={loadDepartments}>
+              <ErrorBanner
+                className="mt-1"
+                action={
+                  <Button size="sm" variant="secondary" onClick={loadDepartments}>
                     Retry
                   </Button>
-                </div>
+                }
+              >
+                {departmentsError}
               </ErrorBanner>
             ) : (
               <>
@@ -621,7 +628,7 @@ function NewSurveyDrawer({
                   disabled={departments === null}
                 >
                   <option value="">
-                    {departments === null ? 'Loading…' : 'Select a department…'}
+                    {departments === null ? 'Loading departments…' : 'Select a department…'}
                   </option>
                   {(departments ?? []).map((d) => (
                     <option key={d.id} value={d.id}>
@@ -642,17 +649,19 @@ function NewSurveyDrawer({
           <div>
             <Label>Client</Label>
             {clientsError ? (
-              <ErrorBanner className="mt-1">
-                <div className="flex items-center justify-between gap-3">
-                  <span>Could not load clients.</span>
+              <ErrorBanner
+                className="mt-1"
+                action={
                   <Button
                     size="sm"
-                    variant="outline"
+                    variant="secondary"
                     onClick={() => void refetchClients()}
                   >
                     Retry
                   </Button>
-                </div>
+                }
+              >
+                Could not load the client list.
               </ErrorBanner>
             ) : (
               <Select
@@ -662,7 +671,7 @@ function NewSurveyDrawer({
                 disabled={clientsLoading}
               >
                 <option value="">
-                  {clientsLoading ? 'Loading…' : 'Select a client…'}
+                  {clientsLoading ? 'Loading clients…' : 'Select a client…'}
                 </option>
                 {clients.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -675,29 +684,22 @@ function NewSurveyDrawer({
         )}
         <div>
           <Label>Open for (hours)</Label>
-          <div className="flex gap-1.5 mt-1 mb-2">
-            {(
-              [
-                { label: '24h', hours: 24 },
-                { label: '72h', hours: 72 },
-                { label: '1 week', hours: 168 },
-              ] as const
-            ).map((p) => (
-              <Button
-                key={p.hours}
-                size="xs"
-                type="button"
-                variant={openHours === p.hours ? 'secondary' : 'outline'}
-                aria-pressed={openHours === p.hours}
-                onClick={() => setOpenHours(p.hours)}
-              >
-                {p.label}
-              </Button>
-            ))}
+          <div className="mt-1 mb-2">
+            <SegmentedControl<number>
+              ariaLabel="How long the survey stays open"
+              value={openHours}
+              onChange={setOpenHours}
+              options={[
+                { value: 24, label: '24h' },
+                { value: 72, label: '72h' },
+                { value: 168, label: '1 week' },
+              ]}
+            />
           </div>
           <Input
             type="number"
             min={1}
+            className="text-right tabular-nums"
             value={openHours}
             onChange={(e) => setOpenHours(Number(e.target.value) || 72)}
           />
@@ -765,13 +767,14 @@ function ResultsDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         {error ? (
-          <ErrorBanner>
-            <div className="flex items-center justify-between gap-3">
-              <span>{error}</span>
-              <Button size="sm" variant="outline" onClick={load}>
+          <ErrorBanner
+            action={
+              <Button size="sm" variant="secondary" onClick={load}>
                 Retry
               </Button>
-            </div>
+            }
+          >
+            {error}
           </ErrorBanner>
         ) : !data ? (
           <SkeletonRows count={3} />
@@ -779,9 +782,12 @@ function ResultsDrawer({
           <>
             <div className="text-lg text-white">{data.survey.question}</div>
             <div className="flex items-center gap-4 text-sm text-silver">
-              <div>{data.responseCount} responses</div>
+              <div className="tabular-nums">{data.responseCount} responses</div>
               {data.average !== null && (
-                <div>Average: <span className="text-white">{data.average}</span></div>
+                <div>
+                  Average:{' '}
+                  <span className="text-white tabular-nums">{data.average}</span>
+                </div>
               )}
               <Button
                 size="xs"
@@ -807,7 +813,7 @@ function ResultsDrawer({
                         style={{ width: `${(v / max) * 100}%` }}
                       />
                     </div>
-                    <div className="w-10 text-right text-xs">{v}</div>
+                    <div className="w-10 text-right text-xs tabular-nums">{v}</div>
                   </div>
                 );
               })}

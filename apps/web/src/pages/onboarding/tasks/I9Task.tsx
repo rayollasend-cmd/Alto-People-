@@ -12,8 +12,10 @@ import {
   type I9DocumentListItem,
   type I9Status,
 } from '@/lib/i9Api';
+import { fmtDate, fmtDateTime, parseYmd } from '@/lib/format';
 import { Field, TaskShell, inputCls } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
@@ -211,7 +213,9 @@ function Section1Card({
           {status.section1.workAuthExpiresAt && (
             <div>
               Work auth expires:{' '}
-              <span className="text-white">{status.section1.workAuthExpiresAt}</span>
+              <span className="text-white">
+                {fmtDate(parseYmd(status.section1.workAuthExpiresAt))}
+              </span>
             </div>
           )}
           {status.section1.typedName && (
@@ -221,7 +225,7 @@ function Section1Card({
             </div>
           )}
           <div className="text-xs text-silver/70 mt-2">
-            Signed at {new Date(status.section1.completedAt).toLocaleString()}.
+            Signed at {fmtDateTime(status.section1.completedAt)}.
           </div>
         </div>
       ) : (
@@ -455,7 +459,7 @@ function DocumentsCard({
         <div className="mb-4 px-3 py-2.5 rounded border border-success/40 bg-success/[0.06] text-sm text-silver">
           Submitted on{' '}
           <span className="text-white">
-            {new Date(status.documentsSubmittedAt!).toLocaleString()}
+            {fmtDateTime(status.documentsSubmittedAt)}
           </span>
           . HR will verify your documents and complete Section 2. You can close this page — you'll be notified when verification is complete.
         </div>
@@ -482,22 +486,22 @@ function DocumentsCard({
                   )}
                 </div>
               </div>
-              <span
-                className={cn(
-                  'text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border whitespace-nowrap',
+              <Badge
+                size="sm"
+                variant={
                   d.status === 'VERIFIED'
-                    ? 'text-success border-success/40 bg-success/[0.06]'
+                    ? 'success'
                     : d.status === 'REJECTED'
-                      ? 'text-alert border-alert/40 bg-alert/[0.07]'
-                      : 'text-warning border-warning/40 bg-warning/[0.06]'
-                )}
+                      ? 'destructive'
+                      : 'pending'
+                }
               >
                 {d.status === 'VERIFIED'
                   ? 'Verified'
                   : d.status === 'REJECTED'
                     ? 'Rejected'
                     : 'Awaiting review'}
-              </span>
+              </Badge>
             </li>
           ))}
         </ul>
@@ -551,7 +555,7 @@ function Section2Status({ status }: { status: I9Status }) {
       </header>
       {s2 ? (
         <div className="text-sm text-silver">
-          Verified at {new Date(s2.completedAt).toLocaleString()}
+          Verified at {fmtDateTime(s2.completedAt)}
           {s2.verifierEmail && (
             <>
               {' '}by <span className="text-white">{s2.verifierEmail}</span>

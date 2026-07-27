@@ -46,7 +46,7 @@ export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
 
   return (
     <header
-      className="bg-navy border-b border-navy-secondary flex items-center gap-3 min-h-14 pt-[env(safe-area-inset-top)] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] md:pl-[max(1.5rem,env(safe-area-inset-left))] md:pr-[max(1.5rem,env(safe-area-inset-right))]"
+      className="bg-navy/95 backdrop-blur elev-1 border-b border-navy-secondary flex items-center gap-3 min-h-14 pt-[env(safe-area-inset-top)] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] md:pl-[max(1.5rem,env(safe-area-inset-left))] md:pr-[max(1.5rem,env(safe-area-inset-right))]"
     >
       <Button
         variant="ghost"
@@ -126,12 +126,12 @@ export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
       <button
         type="button"
         onClick={onOpenCommandPalette}
-        className="hidden md:inline-flex items-center gap-2 w-72 px-3 py-1.5 rounded-md border border-navy-secondary bg-navy-secondary/30 text-silver/80 hover:text-white hover:border-silver/40 transition-colors text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+        className="hidden md:inline-flex items-center gap-2 w-72 h-9 px-3 rounded-md border border-navy-secondary bg-navy-secondary/30 text-silver/80 hover:text-white hover:border-silver/40 transition-colors text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
         aria-label="Open command palette"
       >
         <Search className="h-3.5 w-3.5" aria-hidden="true" />
         <span className="flex-1 text-left">Search or jump to…</span>
-        <kbd className="hidden lg:inline-flex items-center gap-0.5 text-[10px] font-mono text-silver/80 border border-navy-secondary rounded px-1 py-0.5">
+        <kbd className="hidden lg:inline-flex items-center gap-0.5 h-5 px-1.5 rounded border border-navy-secondary bg-navy-secondary/40 font-mono text-3xs text-silver">
           ⌘K
         </kbd>
       </button>

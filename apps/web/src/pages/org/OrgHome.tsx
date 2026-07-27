@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Briefcase, Building2, CalendarClock, FolderTree, Hash, Plus, Search, Sparkles, Trash2, Users } from 'lucide-react';
+import { Briefcase, Building2, CalendarClock, FolderTree, Hash, Plus, Sparkles, Trash2, Users } from 'lucide-react';
 import { PositionsTab } from './PositionsTab';
 import { CustomFieldsTab } from './CustomFieldsTab';
 import type {
@@ -56,6 +56,7 @@ import {
   Field,
   Input,
   PageHeader,
+  SearchInput,
   Select,
   SkeletonRows,
   Table,
@@ -136,7 +137,7 @@ export function OrgHome() {
 
       <Card>
         <CardContent className="p-4 flex items-center gap-3 flex-wrap">
-          <span className="text-[11px] uppercase tracking-wider text-silver">
+          <span className="text-xs2 uppercase tracking-wider text-silver">
             Client
           </span>
           <Select
@@ -274,7 +275,16 @@ function DepartmentsTab({
           </Button>
         )}
       </div>
-      {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
+      {error && (
+        <ErrorBanner className="mb-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <span>{error}</span>
+            <Button size="sm" variant="outline" onClick={() => void refresh()}>
+              Retry
+            </Button>
+          </div>
+        </ErrorBanner>
+      )}
       {!rows && <SkeletonRows count={4} rowHeight="h-12" />}
       {rows && rows.length === 0 && (
         <EmptyState
@@ -324,7 +334,7 @@ function DepartmentsTab({
                 >
                   <TableCell className="font-medium">
                     {d.name}
-                    <div className="text-[11px] text-silver/70 md:hidden">
+                    <div className="text-xs2 text-silver/70 md:hidden">
                       {[d.code, parent?.name].filter(Boolean).join(' · ') || '—'}
                     </div>
                   </TableCell>
@@ -401,7 +411,7 @@ function DepartmentDrawer({
           parentId: parentId || null,
           description: description.trim() || null,
         });
-        toast.success('Department created');
+        toast.success('Department created.');
       } else {
         await updateDepartment(initial!.id, {
           name: name.trim(),
@@ -409,7 +419,7 @@ function DepartmentDrawer({
           parentId: parentId || null,
           description: description.trim() || null,
         });
-        toast.success('Department updated');
+        toast.success('Department updated.');
       }
       onSaved();
     } catch (err) {
@@ -425,7 +435,7 @@ function DepartmentDrawer({
     setSubmitting(true);
     try {
       await deleteDepartment(initial!.id);
-      toast.success('Department deleted');
+      toast.success('Department deleted.');
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Delete failed.');
@@ -573,7 +583,16 @@ function CostCentersTab({
           </Button>
         )}
       </div>
-      {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
+      {error && (
+        <ErrorBanner className="mb-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <span>{error}</span>
+            <Button size="sm" variant="outline" onClick={() => void refresh()}>
+              Retry
+            </Button>
+          </div>
+        </ErrorBanner>
+      )}
       {!rows && <SkeletonRows count={4} rowHeight="h-12" />}
       {rows && rows.length === 0 && (
         <EmptyState
@@ -683,14 +702,14 @@ function CostCenterDrawer({
           name: name.trim(),
           description: description.trim() || null,
         });
-        toast.success('Cost center created');
+        toast.success('Cost center created.');
       } else {
         await updateCostCenter(initial!.id, {
           code: code.trim(),
           name: name.trim(),
           description: description.trim() || null,
         });
-        toast.success('Cost center updated');
+        toast.success('Cost center updated.');
       }
       onSaved();
     } catch (err) {
@@ -706,7 +725,7 @@ function CostCenterDrawer({
     setSubmitting(true);
     try {
       await deleteCostCenter(initial!.id);
-      toast.success('Cost center deleted');
+      toast.success('Cost center deleted.');
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Delete failed.');
@@ -844,7 +863,16 @@ function ShiftPositionsTab({
         it curated stops the same role being typed a dozen different ways and
         keeps scheduling reports clean.
       </p>
-      {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
+      {error && (
+        <ErrorBanner className="mb-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <span>{error}</span>
+            <Button size="sm" variant="outline" onClick={() => void refresh()}>
+              Retry
+            </Button>
+          </div>
+        </ErrorBanner>
+      )}
       {!rows && <SkeletonRows count={4} rowHeight="h-12" />}
       {rows && rows.length === 0 && (
         <EmptyState
@@ -873,7 +901,7 @@ function ShiftPositionsTab({
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-16">Order</TableHead>
+              <TableHead className="w-16 text-right">Order</TableHead>
               <TableHead>Name</TableHead>
             </TableRow>
           </TableHeader>
@@ -888,7 +916,7 @@ function ShiftPositionsTab({
                   setDrawerTarget(p);
                 }}
               >
-                <TableCell className="tabular-nums text-silver">{p.sortOrder}</TableCell>
+                <TableCell className="text-right tabular-nums text-silver">{p.sortOrder}</TableCell>
                 <TableCell className="font-medium">{p.name}</TableCell>
               </TableRow>
             ))}
@@ -951,13 +979,13 @@ function ShiftPositionDrawer({
           name: name.trim(),
           ...(order !== undefined && Number.isFinite(order) ? { sortOrder: order } : {}),
         });
-        toast.success('Shift position created');
+        toast.success('Shift position created.');
       } else {
         await updateShiftPosition(initial!.id, {
           name: name.trim(),
           ...(order !== undefined && Number.isFinite(order) ? { sortOrder: order } : {}),
         });
-        toast.success('Shift position updated');
+        toast.success('Shift position updated.');
       }
       onSaved();
     } catch (err) {
@@ -973,7 +1001,7 @@ function ShiftPositionDrawer({
     setSubmitting(true);
     try {
       await deleteShiftPosition(initial!.id);
-      toast.success('Shift position deleted');
+      toast.success('Shift position deleted.');
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Delete failed.');
@@ -1091,7 +1119,16 @@ function JobProfilesTab({
           </Button>
         )}
       </div>
-      {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
+      {error && (
+        <ErrorBanner className="mb-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <span>{error}</span>
+            <Button size="sm" variant="outline" onClick={() => void refresh()}>
+              Retry
+            </Button>
+          </div>
+        </ErrorBanner>
+      )}
       {!rows && <SkeletonRows count={4} rowHeight="h-12" />}
       {rows && rows.length === 0 && (
         <EmptyState
@@ -1142,7 +1179,7 @@ function JobProfilesTab({
                 <TableCell className="font-medium tabular-nums">{j.code}</TableCell>
                 <TableCell>
                   {j.title}
-                  <div className="text-[11px] text-silver/70 md:hidden">
+                  <div className="text-xs2 text-silver/70 md:hidden">
                     {[j.family, j.level].filter(Boolean).join(' · ') || '—'}
                   </div>
                 </TableCell>
@@ -1224,7 +1261,7 @@ function JobProfileDrawer({
           isExempt,
           description: description.trim() || null,
         });
-        toast.success('Job profile created');
+        toast.success('Job profile created.');
       } else {
         await updateJobProfile(initial!.id, {
           code: code.trim(),
@@ -1234,7 +1271,7 @@ function JobProfileDrawer({
           isExempt,
           description: description.trim() || null,
         });
-        toast.success('Job profile updated');
+        toast.success('Job profile updated.');
       }
       onSaved();
     } catch (err) {
@@ -1250,7 +1287,7 @@ function JobProfileDrawer({
     setSubmitting(true);
     try {
       await deleteJobProfile(initial!.id);
-      toast.success('Job profile deleted');
+      toast.success('Job profile deleted.');
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Delete failed.');
@@ -1466,19 +1503,25 @@ function PeopleTab({
               associate{(debouncedSearch ? filtered.length : rows.length) === 1 ? '' : 's'}
             </span>
           )}
-          <div className="relative">
-            <Search className="h-3.5 w-3.5 text-silver/70 absolute left-2.5 top-1/2 -translate-y-1/2" />
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search name or email"
-              className="pl-8 h-8 text-sm w-56"
-              aria-label="Search associates"
-            />
-          </div>
+          <SearchInput
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search name or email"
+            className="h-8 text-sm w-56"
+            aria-label="Search associates"
+          />
         </div>
       </div>
-      {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
+      {error && (
+        <ErrorBanner className="mb-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <span>{error}</span>
+            <Button size="sm" variant="outline" onClick={() => void refresh()}>
+              Retry
+            </Button>
+          </div>
+        </ErrorBanner>
+      )}
       {!rows && <SkeletonRows count={6} rowHeight="h-14" />}
       {rows && rows.length === 0 && (
         <EmptyState
@@ -1526,7 +1569,7 @@ function PeopleTab({
                     <Avatar src={a.photoUrl} name={`${a.firstName} ${a.lastName}`} email={a.email} size="sm" />
                     <div className="min-w-0">
                       <span>{a.firstName} {a.lastName}</span>
-                      <div className="text-[11px] text-silver/70 md:hidden">
+                      <div className="text-xs2 text-silver/70 md:hidden">
                         {[a.managerName, a.departmentName].filter(Boolean).join(' · ') || '—'}
                       </div>
                     </div>
@@ -1629,7 +1672,7 @@ function PersonOrgDrawer({
         costCenterId: costCenterId || null,
         jobProfileId: jobProfileId || null,
       });
-      toast.success('Org assignment updated');
+      toast.success('Org assignment updated.');
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Save failed.');
@@ -1729,22 +1772,22 @@ function PersonOrgDrawer({
           {error && <ErrorBanner>{error}</ErrorBanner>}
 
           <div className="pt-3 border-t border-navy-secondary">
-            <div className="text-[10px] uppercase tracking-widest text-silver/80 mb-2">
+            <div className="text-2xs uppercase tracking-widest text-silver/80 mb-2">
               Effective changes
             </div>
             {historyError && (
-              <div className="space-y-2">
-                <p role="alert" className="text-sm text-alert">
-                  {historyError}
-                </p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setHistoryRetry((n) => n + 1)}
-                >
-                  Retry
-                </Button>
-              </div>
+              <ErrorBanner className="mb-2">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <span>{historyError}</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setHistoryRetry((n) => n + 1)}
+                  >
+                    Retry
+                  </Button>
+                </div>
+              </ErrorBanner>
             )}
             {history === null && !historyError && (
               <div className="space-y-1.5">

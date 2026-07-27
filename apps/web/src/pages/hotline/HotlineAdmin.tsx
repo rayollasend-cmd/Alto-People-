@@ -1,6 +1,6 @@
 import { useMemo, useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Clock, Download, Search, ShieldQuestion } from 'lucide-react';
+import { AlertTriangle, Clock, Download, ShieldQuestion } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {
@@ -24,7 +24,7 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
-  Input,
+  ErrorBanner,
   PageHeader,
   Select,
   SkeletonRows,
@@ -36,6 +36,7 @@ import {
   TableRow,
   Textarea,
 } from '@/components/ui';
+import { SearchInput } from '@/components/ui/FilterBar';
 import { Label } from '@/components/ui/Label';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
@@ -58,9 +59,18 @@ const STATUS_VARIANT: Record<
 > = {
   RECEIVED: 'destructive',
   TRIAGING: 'pending',
+  // In-flight work reads gold per the status contract.
   INVESTIGATING: 'accent',
   RESOLVED: 'success',
   CLOSED: 'outline',
+};
+
+const STATUS_LABELS: Record<ReportStatus, string> = {
+  RECEIVED: 'New',
+  TRIAGING: 'Triaging',
+  INVESTIGATING: 'Investigating',
+  RESOLVED: 'Resolved',
+  CLOSED: 'Closed',
 };
 
 // Same namespace pattern as TeamHome: one wildcard for `['hotline']` so
@@ -136,7 +146,7 @@ export function HotlineAdmin() {
         r.trackingCode,
         CATEGORY_LABELS[r.category],
         r.subject,
-        r.status,
+        STATUS_LABELS[r.status],
         r.assignedToEmail ?? '',
         fmtDateTime(r.createdAt),
         r.updateCount,
@@ -182,16 +192,13 @@ export function HotlineAdmin() {
       )}
 
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-48">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver" />
-          <Input
-            className="pl-9"
-            aria-label="Search by tracking code or subject"
-            placeholder="Search tracking code or subject…"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-          />
-        </div>
+        <SearchInput
+          wrapperClassName="flex-1 min-w-48"
+          aria-label="Search by tracking code or subject"
+          placeholder="Search tracking code or subject…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
         <Select
           size="sm"
           aria-label="Filter by category"
@@ -234,7 +241,25 @@ export function HotlineAdmin() {
 
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {queueQ.isError ? (
+            <div className="p-6">
+              <ErrorBanner
+                action={
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => void queueQ.refetch()}
+                  >
+                    Retry
+                  </Button>
+                }
+              >
+                {queueQ.error instanceof ApiError
+                  ? queueQ.error.message
+                  : 'Could not load the report queue.'}
+              </ErrorBanner>
+            </div>
+          ) : rows === null ? (
             <div className="p-6">
               <SkeletonRows count={4} />
             </div>
@@ -255,7 +280,7 @@ export function HotlineAdmin() {
                   <TableHead>SLA</TableHead>
                   <TableHead className="hidden md:table-cell">Assignee</TableHead>
                   <TableHead className="hidden lg:table-cell">Filed</TableHead>
-                  <TableHead className="hidden lg:table-cell">Replies</TableHead>
+                  <TableHead className="hidden lg:table-cell text-right">Replies</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -273,17 +298,17 @@ export function HotlineAdmin() {
                     </TableCell>
                     <TableCell className="text-sm font-medium text-white">
                       {r.subject}
-                      <div className="text-[11px] text-silver/70 md:hidden">
+                      <div className="text-xs2 text-silver/70 md:hidden">
                         {CATEGORY_LABELS[r.category]}
                       </div>
-                      <div className="text-[11px] text-silver/70 lg:hidden">
+                      <div className="text-xs2 text-silver/70 lg:hidden">
                         {fmtDate(r.createdAt)}
                         {r.updateCount > 0 ? ` · ${r.updateCount} repl.` : ''}
                       </div>
                     </TableCell>
                     <TableCell>
                       <Badge variant={STATUS_VARIANT[r.status]}>
-                        {r.status}
+                        {STATUS_LABELS[r.status]}
                       </Badge>
                     </TableCell>
                     <TableCell>
@@ -299,7 +324,9 @@ export function HotlineAdmin() {
                     <TableCell className="text-xs text-silver hidden lg:table-cell">
                       {fmtDate(r.createdAt)}
                     </TableCell>
-                    <TableCell className="text-sm hidden lg:table-cell">{r.updateCount}</TableCell>
+                    <TableCell className="text-sm hidden lg:table-cell text-right tabular-nums">
+                      {r.updateCount}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -332,19 +359,22 @@ function SummaryCard({
   const color = {
     destructive: 'text-alert',
     pending: 'text-warning',
-    accent: 'text-steel',
+    accent: 'text-gold',
     success: 'text-success',
   }[tone];
   return (
     <Card>
       <CardContent className="p-3">
         <div className="flex items-center justify-between">
-          <div className="text-xs uppercase tracking-wider text-silver">
+          {/* Canonical KPI label spec. */}
+          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
             {label}
           </div>
           {Icon && <Icon className={`h-3.5 w-3.5 ${color}`} />}
         </div>
-        <div className={`text-xl font-semibold mt-1 ${color}`}>{value}</div>
+        <div className={`text-xl font-semibold mt-1 tabular-nums ${color}`}>
+          {value}
+        </div>
       </CardContent>
     </Card>
   );
@@ -426,7 +456,7 @@ function ReportDrawer({
         resolution: status === 'RESOLVED' ? resolutionText ?? null : undefined,
       }),
     onSuccess: (_data, vars) => {
-      toast.success(`Status: ${vars.status}`);
+      toast.success(`Status set to ${STATUS_LABELS[vars.status].toLowerCase()}.`);
       invalidate();
     },
     onError: (err) =>
@@ -487,7 +517,7 @@ function ReportDrawer({
       const ok = await confirm({
         title: 'Close this report?',
         description:
-          'Closing is terminal for the reporter: they can no longer reply using their tracking code. Use RESOLVED if the case is settled but follow-ups should stay possible.',
+          'Closing is terminal for the reporter: they can no longer reply using their tracking code. Use "Resolved" if the case is settled but follow-ups should stay possible.',
         confirmLabel: 'Close report',
         destructive: true,
       });
@@ -513,7 +543,7 @@ function ReportDrawer({
           <>
             <div className="flex items-center gap-2 flex-wrap">
               <Badge variant={STATUS_VARIANT[report.status]}>
-                {report.status}
+                {STATUS_LABELS[report.status]}
               </Badge>
               <SlaChip sla={report.sla} />
               <span className="text-xs text-silver">
@@ -522,22 +552,19 @@ function ReportDrawer({
               </span>
             </div>
             {report.sla.isOverdue && (
-              <div className="rounded border border-alert/40 bg-alert/15 p-3 text-sm text-alert">
-                <div className="flex items-start gap-2">
-                  <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-                  <div>
-                    <div className="font-medium">
-                      {report.sla.reason === 'unacked'
-                        ? 'No HR acknowledgement within 3 days.'
-                        : 'Reporter is waiting for a response.'}
-                    </div>
-                    <div className="text-xs mt-0.5 text-alert/80">
-                      {report.sla.lastReporterAt &&
-                        `Last reporter message: ${fmtDateTime(report.sla.lastReporterAt)}`}
-                    </div>
-                  </div>
+              <ErrorBanner>
+                <div className="font-medium">
+                  {report.sla.reason === 'unacked'
+                    ? 'No HR acknowledgement within 3 days.'
+                    : 'Reporter is waiting for a response.'}
                 </div>
-              </div>
+                {report.sla.lastReporterAt && (
+                  <div className="text-xs mt-0.5 text-alert/80">
+                    Last reporter message:{' '}
+                    {fmtDateTime(report.sla.lastReporterAt)}
+                  </div>
+                )}
+              </ErrorBanner>
             )}
             <div className="text-xs text-silver">
               Tracking code:{' '}
@@ -593,7 +620,7 @@ function ReportDrawer({
                     onClick={() => void setStatus(s)}
                     disabled={busy || report.status === s}
                   >
-                    {s}
+                    {STATUS_LABELS[s]}
                   </Button>
                 ))}
               </div>
@@ -608,7 +635,7 @@ function ReportDrawer({
                   setResolution(e.target.value);
                   if (e.target.value.trim()) setResolutionError(null);
                 }}
-                placeholder="Visible to the reporter. Required before marking RESOLVED."
+                placeholder="Visible to the reporter. Required before marking resolved."
               />
               {resolutionError && (
                 <p role="alert" className="text-xs text-alert mt-1">
@@ -653,8 +680,8 @@ function ReportDrawer({
                             : u.authorEmail ?? 'HR'}
                         </span>
                         {u.internalOnly && (
-                          <Badge variant="outline" className="text-[10px]">
-                            INTERNAL
+                          <Badge variant="outline" size="sm">
+                            Internal
                           </Badge>
                         )}
                         <span>· {fmtDateTime(u.createdAt)}</span>

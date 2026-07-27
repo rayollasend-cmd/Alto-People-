@@ -162,7 +162,12 @@ export function BrandingHome() {
           <Skeleton className="h-48 w-full" />
         </div>
       ) : error ? (
-        <ErrorBanner>{error}</ErrorBanner>
+        <div className="space-y-3">
+          <ErrorBanner>{error}</ErrorBanner>
+          <Button size="sm" variant="secondary" onClick={() => void load()}>
+            Retry
+          </Button>
+        </div>
       ) : (
         <div className="grid gap-6 md:grid-cols-2">
           <Card>

@@ -9,8 +9,10 @@ import {
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { fmtDate } from '@/lib/format';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui/Skeleton';
@@ -29,18 +31,18 @@ const KIND_OPTIONS: Array<{ value: DocumentKind; label: string }> = [
   { value: 'OTHER', label: 'Other' },
 ];
 
-function statusBadge(status: DocumentRecord['status']) {
-  switch (status) {
-    case 'UPLOADED':
-      return { label: 'Awaiting review', cls: 'bg-silver/10 text-silver border-silver/30' };
-    case 'VERIFIED':
-      return { label: 'Verified', cls: 'bg-success/15 text-success border-success/30' };
-    case 'REJECTED':
-      return { label: 'Rejected', cls: 'bg-alert/15 text-alert border-alert/30' };
-    case 'EXPIRED':
-      return { label: 'Expired', cls: 'bg-gold/20 text-gold border-gold/40' };
-  }
-}
+const STATUS_BADGE: Record<
+  DocumentRecord['status'],
+  { label: string; variant: 'pending' | 'success' | 'destructive' }
+> = {
+  UPLOADED: { label: 'Awaiting review', variant: 'pending' },
+  VERIFIED: { label: 'Verified', variant: 'success' },
+  REJECTED: { label: 'Rejected', variant: 'destructive' },
+  EXPIRED: { label: 'Expired', variant: 'destructive' },
+};
+
+const kindLabel = (k: DocumentKind): string =>
+  KIND_OPTIONS.find((o) => o.value === k)?.label ?? k.replace(/_/g, ' ');
 
 const fmtSize = (b: number) => {
   if (b < 1024) return `${b} B`;
@@ -195,11 +197,7 @@ export function AssociateDocumentsView() {
             </span>
           </label>
         </div>
-        {error && (
-          <p role="alert" className="text-sm text-alert">
-            {error}
-          </p>
-        )}
+        {error && <ErrorBanner>{error}</ErrorBanner>}
         <Button type="submit" loading={busy} disabled={busy}>
           {busy ? 'Uploading…' : 'Upload'}
         </Button>
@@ -217,16 +215,11 @@ export function AssociateDocumentsView() {
       {docs && docs.length > 0 && (
         <ul className="space-y-2">
           {docs.map((d) => {
-            const badge = statusBadge(d.status);
+            const badge = STATUS_BADGE[d.status];
             const badgeEl = (
-              <span
-                className={cn(
-                  'shrink-0 text-xs uppercase tracking-widest px-2 py-1 rounded border',
-                  badge.cls
-                )}
-              >
+              <Badge variant={badge.variant} className="shrink-0">
                 {badge.label}
-              </span>
+              </Badge>
             );
             return (
               <li
@@ -369,9 +362,9 @@ function DocInfo({ d }: { d: DocumentRecord }) {
         <span className="text-xs text-silver/70">· {fmtSize(d.size)}</span>
       </div>
       <div className="text-xs text-silver">
-        {d.kind.replace(/_/g, ' ')}
+        {kindLabel(d.kind)}
         {d.status === 'EXPIRED' && (
-          <span className="text-gold ml-2">
+          <span className="text-alert ml-2">
             · expired{d.expiresAt ? ` ${fmtDate(d.expiresAt)}` : ''} —
             please upload a fresh copy
           </span>

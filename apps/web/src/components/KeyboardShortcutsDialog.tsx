@@ -61,7 +61,7 @@ export function KeyboardShortcutsDialog({
         <div className="grid gap-4">
           {SHORTCUTS.map((group) => (
             <section key={group.label}>
-              <h3 className="text-[10px] uppercase tracking-widest text-silver mb-2">
+              <h3 className="text-2xs uppercase tracking-widest text-silver mb-2">
                 {group.label}
               </h3>
               <ul className="grid gap-1.5">

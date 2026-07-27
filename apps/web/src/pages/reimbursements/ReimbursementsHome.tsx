@@ -33,8 +33,11 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
+  FilterChip,
   Input,
   PageHeader,
+  SearchInput,
   Select,
   SkeletonRows,
   Table,
@@ -192,21 +195,18 @@ export function ReimbursementsHome() {
           )[]
         ).map(
           (s) => (
-            <Button
+            <FilterChip
               key={s}
-              type="button"
-              size="xs"
-              variant={statusFilter === s ? 'primary' : 'secondary'}
-              className="rounded-full"
-              aria-pressed={statusFilter === s}
+              active={statusFilter === s}
               onClick={() => setStatusFilter(s)}
             >
               {s === 'ALL' ? 'All' : STATUS_LABEL[s]}
-            </Button>
+            </FilterChip>
           ),
         )}
-        <Input
-          className="ml-auto w-56"
+        <SearchInput
+          wrapperClassName="ml-auto"
+          className="w-56"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search associate or title…"
@@ -216,13 +216,16 @@ export function ReimbursementsHome() {
       <Card>
         <CardContent className="p-0">
           {loadError ? (
-            <div className="p-6 space-y-3">
-              <p role="alert" className="text-sm text-alert">
+            <div className="p-6">
+              <ErrorBanner
+                action={
+                  <Button size="sm" variant="secondary" onClick={refresh}>
+                    Retry
+                  </Button>
+                }
+              >
                 {loadError}
-              </p>
-              <Button size="sm" variant="secondary" onClick={refresh}>
-                Retry
-              </Button>
+              </ErrorBanner>
             </div>
           ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
@@ -243,8 +246,8 @@ export function ReimbursementsHome() {
                   {canApprove && <TableHead className="w-8"></TableHead>}
                   <TableHead>Title</TableHead>
                   <TableHead className="hidden md:table-cell">Submitter</TableHead>
-                  <TableHead className="hidden lg:table-cell">Lines</TableHead>
-                  <TableHead>Total</TableHead>
+                  <TableHead className="hidden lg:table-cell text-right">Lines</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="hidden md:table-cell">Submitted</TableHead>
                 </TableRow>
@@ -270,14 +273,16 @@ export function ReimbursementsHome() {
                     )}
                     <TableCell className="font-medium text-white">
                       {r.title}
-                      <div className="text-[11px] text-silver/70 md:hidden">
+                      <div className="text-xs2 text-silver/70 md:hidden">
                         {r.associateName}
                         {r.submittedAt && ` · ${fmtDate(r.submittedAt)}`}
                       </div>
                     </TableCell>
                     <TableCell className="hidden md:table-cell">{r.associateName}</TableCell>
-                    <TableCell className="hidden lg:table-cell">{r.lineCount}</TableCell>
-                    <TableCell>
+                    <TableCell className="hidden lg:table-cell text-right tabular-nums">
+                      {r.lineCount}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
                       {fmtMoney(r.totalAmount, { currency: r.currency })}
                     </TableCell>
                     <TableCell>
@@ -488,14 +493,15 @@ function ReimbursementDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         {loadError ? (
-          <div className="space-y-3">
-            <p role="alert" className="text-sm text-alert">
-              {loadError}
-            </p>
-            <Button size="sm" variant="secondary" onClick={refresh}>
-              Retry
-            </Button>
-          </div>
+          <ErrorBanner
+            action={
+              <Button size="sm" variant="secondary" onClick={refresh}>
+                Retry
+              </Button>
+            }
+          >
+            {loadError}
+          </ErrorBanner>
         ) : !data ? (
           <SkeletonRows count={3} />
         ) : (
@@ -554,7 +560,7 @@ function ReimbursementDrawer({
                         <TableHead>Date</TableHead>
                         <TableHead className="hidden md:table-cell">Kind</TableHead>
                         <TableHead>Description</TableHead>
-                        <TableHead>Amount</TableHead>
+                        <TableHead className="text-right">Amount</TableHead>
                         {editable && <TableHead className="w-12"></TableHead>}
                       </TableRow>
                     </TableHeader>
@@ -565,9 +571,11 @@ function ReimbursementDrawer({
                           <TableCell className="hidden md:table-cell">{KIND_LABEL[l.kind]}</TableCell>
                           <TableCell>
                             {l.description}
-                            <div className="text-[11px] text-silver/70 md:hidden">{KIND_LABEL[l.kind]}</div>
+                            <div className="text-xs2 text-silver/70 md:hidden">{KIND_LABEL[l.kind]}</div>
                           </TableCell>
-                          <TableCell>{fmtMoney(l.amount, { currency: data.currency })}</TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {fmtMoney(l.amount, { currency: data.currency })}
+                          </TableCell>
                           {editable && (
                             <TableCell>
                               <button

@@ -4,7 +4,6 @@ import {
   BookOpen,
   Eye,
   Plus,
-  Search,
   ThumbsDown,
   ThumbsUp,
   Trash2,
@@ -46,7 +45,9 @@ import {
   ErrorBanner,
   Input,
   PageHeader,
+  SegmentedControl,
   Select,
+  Skeleton,
   SkeletonRows,
   Table,
   TableBody,
@@ -56,12 +57,20 @@ import {
   TableRow,
   Textarea,
 } from '@/components/ui';
+import { FilterChip, SearchInput } from '@/components/ui/FilterBar';
 import { Label } from '@/components/ui/Label';
 
-const STATUS_VARIANT: Record<KbStatus, 'pending' | 'success' | 'outline'> = {
-  DRAFT: 'pending',
+/** DRAFT is neutral-default per the status contract, not pending. */
+const STATUS_VARIANT: Record<KbStatus, 'default' | 'success' | 'outline'> = {
+  DRAFT: 'default',
   PUBLISHED: 'success',
   ARCHIVED: 'outline',
+};
+
+const STATUS_LABELS: Record<KbStatus, string> = {
+  DRAFT: 'Draft',
+  PUBLISHED: 'Published',
+  ARCHIVED: 'Archived',
 };
 
 /** "How to request PTO?" → "how-to-request-pto". */
@@ -81,13 +90,14 @@ function RetryBanner({
   onRetry: () => void;
 }) {
   return (
-    <ErrorBanner>
-      <div className="flex items-center justify-between gap-3">
-        <span>{message}</span>
-        <Button size="sm" variant="outline" onClick={onRetry}>
+    <ErrorBanner
+      action={
+        <Button size="sm" variant="secondary" onClick={onRetry}>
           Retry
         </Button>
-      </div>
+      }
+    >
+      {message}
     </ErrorBanner>
   );
 }
@@ -197,24 +207,15 @@ export function KbHome() {
       />
 
       <div className="flex items-center justify-between">
-        <div className="flex gap-1">
-          <Button
-            size="sm"
-            variant={tab === 'browse' ? 'primary' : 'ghost'}
-            onClick={() => setTab('browse')}
-          >
-            Browse
-          </Button>
-          {canManage && (
-            <Button
-              size="sm"
-              variant={tab === 'admin' ? 'primary' : 'ghost'}
-              onClick={() => setTab('admin')}
-            >
-              Admin
-            </Button>
-          )}
-        </div>
+        <SegmentedControl
+          ariaLabel="Help center view"
+          value={tab}
+          onChange={(v) => setTab(v)}
+          options={[
+            { value: 'browse' as const, label: 'Browse' },
+            ...(canManage ? [{ value: 'admin' as const, label: 'Admin' }] : []),
+          ]}
+        />
         {canManage && tab === 'admin' && (
           <Button onClick={() => setEditing('new')}>
             <Plus className="mr-2 h-4 w-4" /> New article
@@ -224,39 +225,29 @@ export function KbHome() {
 
       {tab === 'browse' ? (
         <>
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver" />
-            <Input
-              className="pl-9"
-              placeholder="Search articles…"
-              value={qInput}
-              onChange={(e) => setQInput(e.target.value)}
-            />
-          </div>
+          <SearchInput
+            placeholder="Search articles…"
+            aria-label="Search articles"
+            value={qInput}
+            onChange={(e) => setQInput(e.target.value)}
+          />
           {categoriesError ? (
             <RetryBanner message={categoriesError} onRetry={loadCategories} />
           ) : (
             categories.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
-                <Button
-                  variant={category === '' ? 'secondary' : 'outline'}
-                  size="xs"
-                  onClick={() => setCategory('')}
-                  aria-pressed={category === ''}
-                >
+                <FilterChip active={category === ''} onClick={() => setCategory('')}>
                   All
-                </Button>
+                </FilterChip>
                 {categories.map((c) => (
-                  <Button
+                  <FilterChip
                     key={c.category}
-                    variant={category === c.category ? 'secondary' : 'outline'}
-                    size="xs"
+                    active={category === c.category}
                     onClick={() => setCategory(c.category)}
-                    aria-pressed={category === c.category}
                   >
                     {c.category}
                     <span className="ml-1 text-silver/70 tabular-nums">{c.count}</span>
-                  </Button>
+                  </FilterChip>
                 ))}
               </div>
             )
@@ -324,16 +315,13 @@ export function KbHome() {
       ) : (
         <>
           <div className="flex flex-wrap items-center gap-2">
-            <div className="relative flex-1 min-w-48">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver" />
-              <Input
-                className="pl-9"
-                aria-label="Search title, slug, or category"
-                placeholder="Search title, slug, or category…"
-                value={adminSearch}
-                onChange={(e) => setAdminSearch(e.target.value)}
-              />
-            </div>
+            <SearchInput
+              wrapperClassName="flex-1 min-w-48"
+              aria-label="Search title, slug, or category"
+              placeholder="Search title, slug, or category…"
+              value={adminSearch}
+              onChange={(e) => setAdminSearch(e.target.value)}
+            />
             <Select
               size="sm"
               aria-label="Filter by status"
@@ -376,8 +364,8 @@ export function KbHome() {
                       <TableHead>Title</TableHead>
                       <TableHead className="hidden sm:table-cell">Category</TableHead>
                       <TableHead>Status</TableHead>
-                      <TableHead className="hidden lg:table-cell">Views</TableHead>
-                      <TableHead className="hidden md:table-cell">Helpful</TableHead>
+                      <TableHead className="hidden lg:table-cell text-right">Views</TableHead>
+                      <TableHead className="hidden md:table-cell text-right">Helpful</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -389,7 +377,7 @@ export function KbHome() {
                           <div className="text-xs font-mono text-silver">
                             /{a.slug}
                           </div>
-                          <div className="md:hidden text-[11px] text-silver/70 truncate">
+                          <div className="md:hidden text-xs2 text-silver/70 truncate">
                             <span className="sm:hidden">
                               {a.category}
                               {' · '}
@@ -402,11 +390,13 @@ export function KbHome() {
                         </TableCell>
                         <TableCell>
                           <Badge variant={STATUS_VARIANT[a.status]}>
-                            {a.status}
+                            {STATUS_LABELS[a.status]}
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-sm hidden lg:table-cell">{a.views}</TableCell>
-                        <TableCell className="text-sm text-success hidden md:table-cell">
+                        <TableCell className="text-sm hidden lg:table-cell text-right tabular-nums">
+                          {a.views}
+                        </TableCell>
+                        <TableCell className="text-sm text-success hidden md:table-cell text-right tabular-nums">
                           {a.helpful}{' '}
                           {a.notHelpful > 0 && (
                             <span className="text-alert">/ {a.notHelpful}</span>
@@ -420,7 +410,7 @@ export function KbHome() {
                               onClick={async () => {
                                 try {
                                   await publishKbArticle(a.id);
-                                  toast.success('Published.');
+                                  toast.success('Article published.');
                                   refresh();
                                 } catch (err) {
                                   toast.error(
@@ -670,7 +660,7 @@ function EditDrawer({
           category: category.trim(),
           tags: tagList,
         });
-        toast.success('Created.');
+        toast.success('Article created.');
       } else if (article) {
         await updateKbArticle(article.id, {
           title: title.trim(),
@@ -678,7 +668,7 @@ function EditDrawer({
           category: category.trim(),
           tags: tagList,
         });
-        toast.success('Updated.');
+        toast.success('Article updated.');
       }
       onSaved();
     } catch (err) {
@@ -751,11 +741,12 @@ function EditDrawer({
             <div className="mt-1">
               <RetryBanner message={bodyError} onRetry={loadBody} />
             </div>
+          ) : bodyLoading ? (
+            <Skeleton className="mt-1 h-72 w-full" />
           ) : (
             <Textarea
               className="mt-1 h-72 font-mono"
-              value={bodyLoading ? 'Loading…' : body}
-              disabled={bodyLoading}
+              value={body}
               onChange={(e) => setBody(e.target.value)}
             />
           )}
@@ -768,7 +759,7 @@ function EditDrawer({
               if (!(await confirm({ title: 'Archive this article?', destructive: true }))) return;
               try {
                 await archiveKbArticle(article.id);
-                toast.success('Archived.');
+                toast.success('Article archived.');
                 onSaved();
               } catch (err) {
                 toast.error(err instanceof ApiError ? err.message : 'Failed.');

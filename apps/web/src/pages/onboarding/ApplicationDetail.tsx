@@ -21,7 +21,7 @@ import {
   UserCheck,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, fmtWeekdayTz, parseYmd } from '@/lib/format';
 import {
   hasCapability,
   type ApplicationDetail as ApplicationDetailType,
@@ -76,6 +76,12 @@ const EMPLOYMENT_LABEL: Record<string, string> = {
   W2_EMPLOYEE: 'W-2',
   CONTRACTOR_1099_INDIVIDUAL: '1099 (Individual)',
   CONTRACTOR_1099_BUSINESS: '1099 (Business)',
+};
+
+const TRACK_LABEL: Record<string, string> = {
+  STANDARD: 'Standard',
+  J1: 'J-1',
+  CLIENT_SPECIFIC: 'Client-specific',
 };
 
 const TASK_LABEL: Record<string, string> = {
@@ -215,21 +221,21 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
       const res = await resendInvite(detail.id);
       if (res.inviteUrl) {
         await navigator.clipboard.writeText(res.inviteUrl).catch(() => {});
-        toast.success('Fresh invite link copied', {
-          description: 'Email is stubbed — paste the link in Slack / a manual email.',
+        toast.success('Fresh invite link copied.', {
+          description: 'Email is stubbed — paste the link in Slack or a manual email.',
           icon: <Copy className="h-4 w-4" />,
         });
       } else {
-        toast.success('Fresh invite emailed');
+        toast.success('Fresh invite emailed.');
       }
     } catch (err) {
       if (err instanceof ApiError && err.code === 'user_already_active') {
-        toast.message('Already accepted', {
+        toast.message('Invite already accepted.', {
           description: 'This associate has already set their password.',
         });
         return;
       }
-      toast.error('Could not resend', {
+      toast.error('Could not resend the invite.', {
         description: err instanceof Error ? err.message : String(err),
       });
     }
@@ -261,7 +267,7 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
       }
       const msg =
         err instanceof ApiError ? err.message : 'Could not approve.';
-      toast.error('Approval failed', { description: msg });
+      toast.error('Approval failed.', { description: msg });
     }
   };
 
@@ -269,14 +275,14 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
     if (!reason) return;
     try {
       await rejectApplication(detail.id, { reason });
-      toast.success('Application rejected', {
+      toast.success('Application rejected.', {
         icon: <ThumbsDown className="h-4 w-4" />,
       });
       setRejectOpen(false);
       await refresh();
     } catch (err) {
       const msg = err instanceof ApiError ? err.message : 'Could not reject.';
-      toast.error('Rejection failed', { description: msg });
+      toast.error('Rejection failed.', { description: msg });
     }
   };
 
@@ -351,7 +357,7 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
         </CardHeader>
         <CardContent className="pt-2">
           <ProgressBar percent={detail.percentComplete} hideLabel />
-          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 text-[11px]">
+          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 text-xs2">
             <CountChip
               icon={CheckCircle2}
               label="Done"
@@ -496,8 +502,8 @@ function DetailMeta({ detail }: { detail: ApplicationDetailType }) {
           </span>
         </>
       )}
-      <Badge variant="outline" className="text-[10px]">
-        {detail.onboardingTrack} TRACK
+      <Badge variant="outline" className="text-2xs">
+        {TRACK_LABEL[detail.onboardingTrack] ?? detail.onboardingTrack} track
       </Badge>
       <Badge
         variant={detail.employmentType === 'W2_EMPLOYEE' ? 'default' : 'accent'}
@@ -756,13 +762,11 @@ function ApprovedCelebration({
   totalTasks: number;
 }) {
   const navigate = useNavigate();
-  const hireDateLabel = hireDate
-    ? new Date(`${hireDate}T00:00:00`).toLocaleDateString('en-US', {
-        weekday: 'long',
-        month: 'long',
-        day: 'numeric',
-        year: 'numeric',
-      })
+  // parseYmd → local midnight, so the label can't shift a day across
+  // timezones; weekday + fmtDate keeps the ceremony copy on-system.
+  const hireDateParsed = hireDate ? parseYmd(hireDate.slice(0, 10)) : null;
+  const hireDateLabel = hireDateParsed
+    ? `${fmtWeekdayTz(hireDateParsed)}, ${fmtDate(hireDateParsed)}`
     : '';
 
   return (
@@ -774,7 +778,7 @@ function ApprovedCelebration({
             className="absolute -top-8 -right-8 h-32 w-32 rounded-full bg-success/15 blur-2xl"
           />
           <div className="relative">
-            <div className="inline-flex items-center gap-2 text-[10px] uppercase tracking-widest text-success">
+            <div className="inline-flex items-center gap-2 text-2xs uppercase tracking-widest text-success">
               <PartyPopper className="h-3 w-3" aria-hidden="true" />
               Hired
             </div>
@@ -794,7 +798,7 @@ function ApprovedCelebration({
 
             <div className="mt-6 rounded-md border border-navy-secondary bg-navy/60 p-4">
               <div className="flex items-center justify-between gap-3">
-                <div className="text-[10px] uppercase tracking-widest text-silver">
+                <div className="text-2xs uppercase tracking-widest text-silver">
                   Onboarding checklist
                 </div>
                 <div className="text-xs text-silver tabular-nums">
@@ -968,7 +972,7 @@ function TaskTile({ task, canSkip, onSkip }: TaskTileProps) {
             </div>
             <span
               className={cn(
-                'text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0',
+                'text-2xs uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0',
                 tone.badgeBg,
                 tone.badgeText
               )}
@@ -1021,12 +1025,31 @@ function addBusinessDays(start: Date, days: number): Date {
   return d;
 }
 
-const I9_DOC_STATUS_CHIP: Record<I9DocumentListItem['status'], string> = {
-  VERIFIED: 'bg-success/15 text-success',
-  UPLOADED: 'bg-warning/15 text-warning',
-  PENDING: 'bg-silver/10 text-silver',
-  REJECTED: 'bg-alert/15 text-alert',
-  EXPIRED: 'bg-alert/15 text-alert',
+const I9_DOC_STATUS_VARIANT: Record<
+  I9DocumentListItem['status'],
+  'success' | 'pending' | 'destructive' | 'default'
+> = {
+  VERIFIED: 'success',
+  UPLOADED: 'pending',
+  PENDING: 'default',
+  REJECTED: 'destructive',
+  EXPIRED: 'destructive',
+};
+
+const I9_DOC_STATUS_LABEL: Record<I9DocumentListItem['status'], string> = {
+  VERIFIED: 'Verified',
+  UPLOADED: 'Awaiting review',
+  PENDING: 'Pending',
+  REJECTED: 'Rejected',
+  EXPIRED: 'Expired',
+};
+
+const I9_DOC_KIND_LABEL: Record<string, string> = {
+  ID: 'Photo ID',
+  SSN_CARD: 'Social Security card',
+  I9_SUPPORTING: 'I-9 supporting document',
+  J1_VISA: 'J-1 visa',
+  J1_DS2019: 'DS-2019',
 };
 
 function I9StepIcon({ done }: { done: boolean }) {
@@ -1089,7 +1112,22 @@ function I9Card({
       </CardHeader>
       <CardContent>
         {failed ? (
-          <p className="text-sm text-silver/70">Couldn't load I-9 status.</p>
+          <ErrorBanner
+            action={
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  void statusQuery.refetch();
+                  void docsQuery.refetch();
+                }}
+              >
+                Retry
+              </Button>
+            }
+          >
+            Couldn't load I-9 status.
+          </ErrorBanner>
         ) : loading ? (
           <div className="space-y-2">
             <Skeleton className="h-5 w-56" />
@@ -1134,18 +1172,15 @@ function I9Card({
                       <span className="text-white truncate max-w-[16rem]">
                         {d.filename}
                       </span>
-                      <span className="text-[10px] uppercase tracking-wider text-silver/70">
-                        {d.kind.replace(/_/g, ' ')}
-                        {d.side ? ` · ${d.side}` : ''}
+                      <span className="text-2xs uppercase tracking-wider text-silver/70">
+                        {I9_DOC_KIND_LABEL[d.kind] ?? d.kind.replace(/_/g, ' ')}
+                        {d.side
+                          ? ` · ${d.side === 'FRONT' ? 'Front' : 'Back'}`
+                          : ''}
                       </span>
-                      <span
-                        className={cn(
-                          'text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0',
-                          I9_DOC_STATUS_CHIP[d.status]
-                        )}
-                      >
-                        {d.status}
-                      </span>
+                      <Badge size="sm" variant={I9_DOC_STATUS_VARIANT[d.status]}>
+                        {I9_DOC_STATUS_LABEL[d.status] ?? d.status}
+                      </Badge>
                     </li>
                   ))}
                 </ul>

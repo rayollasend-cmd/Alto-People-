@@ -12,13 +12,15 @@ import {
 import { listJobs } from '@/lib/jobsApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
-import { fmtDateTime, fmtTime } from '@/lib/format';
+import { fmtDateTime, fmtPayRate, fmtTime, ymdLocal } from '@/lib/format';
 import { hapticSuccess } from '@/lib/haptics';
 import { timeAnomalyLabel } from '@/lib/timeLabels';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SkeletonRows } from '@/components/ui/Skeleton';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Clock, CalendarRange } from 'lucide-react';
 
@@ -29,18 +31,22 @@ function formatHM(mins: number): string {
   return `${h}h ${m.toString().padStart(2, '0')}m`;
 }
 
-function statusBadge(status: TimeEntry['status']): { label: string; cls: string } {
-  switch (status) {
-    case 'ACTIVE':
-      return { label: 'Active', cls: 'bg-gold/20 text-gold border-gold/40' };
-    case 'COMPLETED':
-      return { label: 'Pending', cls: 'bg-silver/10 text-silver border-silver/30' };
-    case 'APPROVED':
-      return { label: 'Approved', cls: 'bg-success/15 text-success border-success/30' };
-    case 'REJECTED':
-      return { label: 'Rejected', cls: 'bg-alert/15 text-alert border-alert/30' };
-  }
-}
+const STATUS_LABELS: Record<TimeEntry['status'], string> = {
+  ACTIVE: 'Active',
+  COMPLETED: 'Pending',
+  APPROVED: 'Approved',
+  REJECTED: 'Rejected',
+};
+
+const STATUS_VARIANTS: Record<
+  TimeEntry['status'],
+  'accent' | 'pending' | 'success' | 'destructive'
+> = {
+  ACTIVE: 'accent',
+  COMPLETED: 'pending',
+  APPROVED: 'success',
+  REJECTED: 'destructive',
+};
 
 function useTicker(active: boolean): number {
   const [, setTick] = useState(0);
@@ -50,14 +56,6 @@ function useTicker(active: boolean): number {
     return () => clearInterval(id);
   }, [active]);
   return Date.now();
-}
-
-// YYYY-MM-DD in local time. Converted to ISO on the way out to the API.
-function ymdLocal(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
 }
 
 function defaultHistoryFromYmd(): string {
@@ -341,7 +339,7 @@ export function AssociateTimeView() {
                   {jobs.map((j) => (
                     <option key={j.id} value={j.id}>
                       {j.name}
-                      {j.payRate ? ` · $${j.payRate.toFixed(2)}/hr` : ''}
+                      {j.payRate ? ` · ${fmtPayRate(j.payRate, 'HOURLY')}` : ''}
                       {j.clientName ? ` · ${j.clientName}` : ''}
                     </option>
                   ))}
@@ -362,11 +360,7 @@ export function AssociateTimeView() {
             </p>
           </>
         )}
-        {error && (
-          <p role="alert" className="text-sm text-alert mt-4">
-            {error}
-          </p>
-        )}
+        {error && <ErrorBanner className="mt-4">{error}</ErrorBanner>}
         {info && (
           <p className="text-sm text-silver mt-4">{info}</p>
         )}
@@ -379,7 +373,7 @@ export function AssociateTimeView() {
               360px screens); back to the compact inline pair at sm+. */}
           <div className="grid grid-cols-2 gap-2 w-full sm:flex sm:w-auto sm:items-end">
             <div>
-              <label className="block text-[11px] uppercase tracking-wider text-silver mb-1">
+              <label className="block text-xs2 uppercase tracking-wider text-silver mb-1">
                 From
               </label>
               <input
@@ -393,7 +387,7 @@ export function AssociateTimeView() {
               />
             </div>
             <div>
-              <label className="block text-[11px] uppercase tracking-wider text-silver mb-1">
+              <label className="block text-xs2 uppercase tracking-wider text-silver mb-1">
                 To
               </label>
               <input
@@ -430,7 +424,6 @@ export function AssociateTimeView() {
         {entries && entries.length > 0 && (
           <ul className="space-y-2">
             {entries.map((e) => {
-              const badge = statusBadge(e.status);
               const anomalies = e.anomalies ?? [];
               return (
                 <li
@@ -451,7 +444,7 @@ export function AssociateTimeView() {
                       )}
                       {e.jobName && <span className="ml-2">· {e.jobName}</span>}
                       {e.payRate && (
-                        <span className="ml-2">· ${e.payRate.toFixed(2)}/hr</span>
+                        <span className="ml-2">· {fmtPayRate(e.payRate, 'HOURLY')}</span>
                       )}
                       {e.rejectionReason && (
                         <span className="ml-2 text-alert">· {e.rejectionReason}</span>
@@ -462,7 +455,7 @@ export function AssociateTimeView() {
                         {anomalies.map((a) => (
                           <span
                             key={a}
-                            className="text-[11px] uppercase tracking-widest px-2 py-0.5 rounded border border-alert/40 bg-alert/10 text-alert"
+                            className="text-xs2 uppercase tracking-widest px-2 py-0.5 rounded border border-alert/40 bg-alert/10 text-alert"
                           >
                             {timeAnomalyLabel(a)}
                           </span>
@@ -470,14 +463,9 @@ export function AssociateTimeView() {
                       </div>
                     )}
                   </div>
-                  <span
-                    className={cn(
-                      'shrink-0 text-xs uppercase tracking-widest px-2 py-1 rounded border',
-                      badge.cls
-                    )}
-                  >
-                    {badge.label}
-                  </span>
+                  <Badge className="shrink-0" variant={STATUS_VARIANTS[e.status]}>
+                    {STATUS_LABELS[e.status]}
+                  </Badge>
                 </li>
               );
             })}

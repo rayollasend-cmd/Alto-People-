@@ -94,7 +94,13 @@ export function W4SsnRecollection() {
       />
 
       {query.error && (
-        <ErrorBanner>
+        <ErrorBanner
+          action={
+            <Button size="sm" variant="secondary" onClick={() => void query.refetch()}>
+              Retry
+            </Button>
+          }
+        >
           {query.error instanceof ApiError
             ? query.error.message
             : 'Failed to load the re-collection roster.'}
@@ -211,7 +217,9 @@ function SummaryCard({
   return (
     <Card>
       <CardContent className="pt-5">
-        <div className="text-[10px] uppercase tracking-widest text-silver">{label}</div>
+        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
+          {label}
+        </div>
         <div className={`font-display text-3xl tabular-nums mt-1 ${color}`}>{value}</div>
       </CardContent>
     </Card>

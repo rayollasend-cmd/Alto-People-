@@ -17,6 +17,7 @@ import {
   type NewHireRow,
   type TaxDeposit,
 } from '@/lib/payrollApi';
+import { fmtDate, fmtMoney, parseYmd } from '@/lib/format';
 import {
   Badge,
   Button,
@@ -24,6 +25,7 @@ import {
   Select,
   CardContent,
   EmptyState,
+  ErrorBanner,
   PageHeader,
   SkeletonRows,
   Table,
@@ -42,8 +44,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
  * new-hire reporting (20-day rule). Everything overdue is loud.
  */
 
-const money = (n: number) =>
-  n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+const money = fmtMoney;
 
 type Tab = 'deposits' | 'remittances' | 'newhire';
 
@@ -228,9 +229,16 @@ function TaxDepositsTab() {
           )}
         </div>
         {error && (
-          <div role="alert" className="mb-3 rounded-md border border-alert/40 bg-alert/10 p-2 text-sm text-alert">
+          <ErrorBanner
+            className="mb-3"
+            action={
+              <Button size="sm" variant="secondary" onClick={refresh}>
+                Retry
+              </Button>
+            }
+          >
             {error}
-          </div>
+          </ErrorBanner>
         )}
         {!deposits && !error && <SkeletonRows count={4} rowHeight="h-12" />}
         {deposits && deposits.length === 0 && (
@@ -264,7 +272,7 @@ function TaxDepositsTab() {
                       {d.status === 'PENDING' && (
                         <input
                           type="checkbox"
-                          aria-label={`Select ${money(d.amount)} deposit due ${d.dueDate}`}
+                          aria-label={`Select ${money(d.amount)} deposit due ${fmtDate(parseYmd(d.dueDate))}`}
                           checked={selectedIds.has(d.id)}
                           onChange={() => toggleSelected(d.id)}
                           disabled={bulkBusy}
@@ -277,10 +285,12 @@ function TaxDepositsTab() {
                       </div>
                       <div className="text-xs text-silver">{d.periodLabel}</div>
                     </TableCell>
-                    <TableCell className="text-silver">{d.liabilityDate}</TableCell>
+                    <TableCell className="text-silver">
+                      {fmtDate(parseYmd(d.liabilityDate))}
+                    </TableCell>
                     <TableCell>
                       <span className={d.overdue ? 'font-medium text-alert' : undefined}>
-                        {d.dueDate}
+                        {fmtDate(parseYmd(d.dueDate))}
                       </span>
                       {d.overdue && (
                         <Badge variant="destructive" className="ml-2">
@@ -469,9 +479,16 @@ function RemittancesTab() {
           </div>
         </div>
         {error && (
-          <div role="alert" className="mb-3 rounded-md border border-alert/40 bg-alert/10 p-2 text-sm text-alert">
+          <ErrorBanner
+            className="mb-3"
+            action={
+              <Button size="sm" variant="secondary" onClick={refresh}>
+                Retry
+              </Button>
+            }
+          >
             {error}
-          </div>
+          </ErrorBanner>
         )}
         {!remittances && !error && <SkeletonRows count={4} rowHeight="h-12" />}
         {remittances && visible.length === 0 && (
@@ -518,7 +535,7 @@ function RemittancesTab() {
                       </div>
                     </TableCell>
                     <TableCell className="hidden md:table-cell text-silver">
-                      {r.period.start} – {r.period.end}
+                      {fmtDate(parseYmd(r.period.start))} – {fmtDate(parseYmd(r.period.end))}
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-white">
                       {money(r.amount)}
@@ -640,9 +657,16 @@ function NewHireTab() {
           </Button>
         </div>
         {error && (
-          <div role="alert" className="mb-3 rounded-md border border-alert/40 bg-alert/10 p-2 text-sm text-alert">
+          <ErrorBanner
+            className="mb-3"
+            action={
+              <Button size="sm" variant="secondary" onClick={refresh}>
+                Retry
+              </Button>
+            }
+          >
             {error}
-          </div>
+          </ErrorBanner>
         )}
         {!rows && !error && <SkeletonRows count={4} rowHeight="h-12" />}
         {rows && rows.length === 0 && (
@@ -667,7 +691,9 @@ function NewHireTab() {
                 {rows.map((r) => (
                   <TableRow key={r.associateId}>
                     <TableCell className="font-medium text-white">{r.name}</TableCell>
-                    <TableCell className="text-silver">{r.hireDate ?? '—'}</TableCell>
+                    <TableCell className="text-silver">
+                      {r.hireDate ? fmtDate(parseYmd(r.hireDate)) : '—'}
+                    </TableCell>
                     <TableCell className="hidden md:table-cell text-silver">
                       {r.state ?? '—'}
                     </TableCell>

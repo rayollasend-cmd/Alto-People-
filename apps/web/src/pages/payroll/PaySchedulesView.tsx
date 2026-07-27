@@ -36,6 +36,7 @@ import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
+import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
 
 const FREQ_LABEL: Record<PayrollFrequency, string> = {
   WEEKLY: 'Weekly',
@@ -187,12 +188,12 @@ export function PaySchedulesView({ canProcess }: Props) {
                     <span className="text-silver/80 italic">All clients</span>
                   )}
                 </MetaRow>
-                <MetaRow label="Anchor date">{s.anchorDate}</MetaRow>
+                <MetaRow label="Anchor date">{fmtDate(parseYmd(s.anchorDate))}</MetaRow>
                 <MetaRow label="Next period">
-                  {s.nextPeriodStart} → {s.nextPeriodEnd}
+                  {fmtDate(parseYmd(s.nextPeriodStart))} → {fmtDate(parseYmd(s.nextPeriodEnd))}
                 </MetaRow>
                 <MetaRow label="Next pay date">
-                  <span className="text-gold">{s.nextPayDate}</span>
+                  <span className="text-gold">{fmtDate(parseYmd(s.nextPayDate))}</span>
                   <span className="text-silver/70 ml-1">
                     (+{s.payDateOffsetDays}d after period end)
                   </span>
@@ -204,7 +205,7 @@ export function PaySchedulesView({ canProcess }: Props) {
                   </span>
                 </MetaRow>
                 {!s.isActive && (
-                  <div className="text-[10px] uppercase tracking-widest text-silver/70 mt-2">
+                  <div className="text-2xs uppercase tracking-widest text-silver/70 mt-2">
                     Inactive
                   </div>
                 )}
@@ -256,7 +257,7 @@ export function PaySchedulesView({ canProcess }: Props) {
 function MetaRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-baseline justify-between gap-3">
-      <span className="text-silver/70 text-[10px] uppercase tracking-widest">{label}</span>
+      <span className="text-silver/70 text-2xs uppercase tracking-widest">{label}</span>
       <span className="text-silver tabular-nums">{children}</span>
     </div>
   );
@@ -293,7 +294,7 @@ function ScheduleFormDialog({
     } else {
       setName('');
       setFrequency('BIWEEKLY');
-      setAnchorDate(new Date().toISOString().slice(0, 10));
+      setAnchorDate(ymdLocal());
       setPayOffset('5');
       setNotes('');
       setIsActive(true);

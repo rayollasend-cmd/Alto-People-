@@ -200,15 +200,15 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
 
   const submit = async () => {
     if (!firstName.trim() || !lastName.trim() || !email.trim()) {
-      toast.error('Name and email are required');
+      toast.error('Name and email are required.');
       return;
     }
     if (!clientId) {
-      toast.error('Pick a client');
+      toast.error('Pick a client.');
       return;
     }
     if (!templateId) {
-      toast.error('Pick an onboarding template');
+      toast.error('Pick an onboarding template.');
       return;
     }
     setSubmitting(true);
@@ -233,9 +233,9 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
         // Dev-stub mode: keep the dialog open and surface the link so HR
         // can copy it. Closing only happens via the Close button below.
         setInviteLink(res.inviteUrl);
-        toast.success('Application created — invite link ready to copy');
+        toast.success('Application created — invite link ready to copy.');
       } else {
-        toast.success('Application created — invite emailed');
+        toast.success('Application created — invite emailed.');
         reset();
         onOpenChange(false);
       }
@@ -245,8 +245,8 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
           ? err.message
           : err instanceof Error
             ? err.message
-            : 'Could not create application';
-      toast.error('Could not create', { description: msg });
+            : 'Could not create the application.';
+      toast.error('Could not create the application.', { description: msg });
     } finally {
       setSubmitting(false);
     }
@@ -256,9 +256,9 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
     if (!inviteLink) return;
     try {
       await navigator.clipboard.writeText(inviteLink);
-      toast.success('Copied to clipboard');
+      toast.success('Copied to clipboard.');
     } catch {
-      toast.error('Could not copy');
+      toast.error('Could not copy the link.');
     }
   };
 

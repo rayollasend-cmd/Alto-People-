@@ -9,6 +9,7 @@ import {
 } from '@/lib/benefitsApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { fmtMoney } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import {
@@ -55,12 +56,7 @@ const KIND_LABEL: Record<BenefitsPlanKind, string> = {
 
 const KIND_OPTIONS: BenefitsPlanKind[] = Object.keys(KIND_LABEL) as BenefitsPlanKind[];
 
-const fmtMoney = (cents: number) =>
-  (cents / 100).toLocaleString('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: 2,
-  });
+const fmtCents = (cents: number) => fmtMoney(cents / 100);
 
 interface Props {
   clientId: string;
@@ -132,7 +128,16 @@ export function BenefitsPlansSection({ clientId }: Props) {
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        {error && <ErrorBanner className="m-4">{error}</ErrorBanner>}
+        {error && (
+          <ErrorBanner className="m-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span>{error}</span>
+              <Button size="sm" variant="outline" onClick={() => refresh()}>
+                Retry
+              </Button>
+            </div>
+          </ErrorBanner>
+        )}
         {!plans && (
           <div className="p-4 space-y-2">
             <Skeleton className="h-10" />
@@ -161,32 +166,32 @@ export function BenefitsPlansSection({ clientId }: Props) {
               {plans.map((p) => (
                 <TableRow key={p.id}>
                   <TableCell className="hidden md:table-cell">
-                    <Badge variant="outline" className="text-[10px]">
+                    <Badge variant="outline" className="text-2xs">
                       {KIND_LABEL[p.kind]}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-white">
                     <div className="min-w-0">
                       <div className="truncate">{p.name}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         {KIND_LABEL[p.kind]}
                         <span className="tabular-nums">
-                          {` · ${fmtMoney(p.employerContributionCentsPerPeriod)} match`}
+                          {` · ${fmtCents(p.employerContributionCentsPerPeriod)} match`}
                         </span>
                       </div>
                     </div>
                   </TableCell>
                   <TableCell className="text-right tabular-nums text-silver">
-                    {fmtMoney(p.employeeContributionDefaultCentsPerPeriod)}
+                    {fmtCents(p.employeeContributionDefaultCentsPerPeriod)}
                   </TableCell>
                   <TableCell className="text-right tabular-nums text-silver hidden md:table-cell">
-                    {fmtMoney(p.employerContributionCentsPerPeriod)}
+                    {fmtCents(p.employerContributionCentsPerPeriod)}
                   </TableCell>
                   <TableCell>
                     {p.isActive ? (
                       <Badge variant="success">Active</Badge>
                     ) : (
-                      <Badge variant="outline">Inactive</Badge>
+                      <Badge variant="destructive">Inactive</Badge>
                     )}
                   </TableCell>
                   <TableCell className="text-right">
@@ -281,11 +286,11 @@ function PlanDialog({ open, onOpenChange, clientId, existing, onSaved }: PlanDia
     const empDefault = employeeDefault.trim() ? Math.round(Number(employeeDefault) * 100) : 0;
     const employerCents = employerMatch.trim() ? Math.round(Number(employerMatch) * 100) : 0;
     if (!Number.isFinite(empDefault) || empDefault < 0) {
-      toast.error('Default employee contribution must be a non-negative number');
+      toast.error('Default employee contribution must be a non-negative number.');
       return;
     }
     if (!Number.isFinite(employerCents) || employerCents < 0) {
-      toast.error('Employer match must be a non-negative number');
+      toast.error('Employer match must be a non-negative number.');
       return;
     }
 
@@ -299,7 +304,7 @@ function PlanDialog({ open, onOpenChange, clientId, existing, onSaved }: PlanDia
           employerContributionCentsPerPeriod: employerCents,
           isActive,
         });
-        toast.success('Plan updated');
+        toast.success('Plan updated.');
       } else {
         await createPlan({
           clientId,
@@ -309,11 +314,11 @@ function PlanDialog({ open, onOpenChange, clientId, existing, onSaved }: PlanDia
           employeeContributionDefaultCentsPerPeriod: empDefault,
           employerContributionCentsPerPeriod: employerCents,
         });
-        toast.success('Plan created');
+        toast.success('Plan created.');
       }
       onSaved();
     } catch (err) {
-      toast.error('Could not save', {
+      toast.error('Could not save.', {
         description: err instanceof Error ? err.message : String(err),
       });
     } finally {

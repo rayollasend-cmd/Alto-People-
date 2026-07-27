@@ -35,11 +35,17 @@ const fmtDays = (n: number | null): string => {
   return `${n.toFixed(1)}d`;
 };
 
+const MONTH_ABBREV = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+
+/** "2026-05" → "May '26". Pure string math — no locale/timezone drift. */
 const fmtMonth = (yyyymm: string): string => {
   const [y, m] = yyyymm.split('-');
-  if (!y || !m) return yyyymm;
-  const d = new Date(Date.UTC(Number(y), Number(m) - 1, 1));
-  return d.toLocaleDateString(undefined, { month: 'short', year: '2-digit', timeZone: 'UTC' });
+  const idx = Number(m) - 1;
+  if (!y || !MONTH_ABBREV[idx]) return yyyymm;
+  return `${MONTH_ABBREV[idx]} '${y.slice(-2)}`;
 };
 
 const TOP_CLIENTS_PREVIEW = 5;
@@ -93,7 +99,7 @@ export function OnboardingAnalytics() {
         subtitle={
           data
             ? `How long associates take to finish onboarding. Last ${data.windowDays} days unless noted.`
-            : 'Loading time-to-completion stats…'
+            : 'How long associates take to finish onboarding.'
         }
       />
 
@@ -173,7 +179,7 @@ export function OnboardingAnalytics() {
                       key={s}
                       className="flex-1 min-w-[120px] rounded-md border border-navy-secondary bg-navy-secondary/30 p-3"
                     >
-                      <div className="text-[10px] uppercase tracking-wider text-silver">
+                      <div className="text-2xs uppercase tracking-wider text-silver">
                         {STATUS_LABEL[s] ?? s}
                       </div>
                       <div
@@ -188,7 +194,7 @@ export function OnboardingAnalytics() {
                       >
                         {count}
                       </div>
-                      <div className="text-[10px] text-silver/70 tabular-nums mt-0.5">
+                      <div className="text-2xs text-silver/70 tabular-nums mt-0.5">
                         {pct.toFixed(0)}%
                       </div>
                     </div>
@@ -321,7 +327,7 @@ function KpiCard({ icon: Icon, label, value, hint, tone }: KpiCardProps) {
   return (
     <Card className="p-4">
       <div className="flex items-start justify-between mb-1">
-        <div className="text-[10px] uppercase tracking-wider text-silver">
+        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
           {label}
         </div>
         <Icon className="h-3.5 w-3.5 text-silver/70" />
@@ -329,7 +335,7 @@ function KpiCard({ icon: Icon, label, value, hint, tone }: KpiCardProps) {
       <div className={cn('text-3xl font-display tabular-nums', TONE_TEXT[tone])}>
         {value}
       </div>
-      {hint && <div className="text-[11px] text-silver/70 mt-1">{hint}</div>}
+      {hint && <div className="text-xs2 text-silver/70 mt-1">{hint}</div>}
     </Card>
   );
 }
@@ -348,7 +354,7 @@ function BreakdownRow({ label, count, medianDays, max }: BreakdownRowProps) {
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline justify-between gap-2 mb-1">
           <span className="text-white truncate">{label}</span>
-          <span className="text-[11px] text-silver tabular-nums shrink-0">
+          <span className="text-xs2 text-silver tabular-nums shrink-0">
             {count} · median {fmtDays(medianDays)}
           </span>
         </div>
@@ -391,12 +397,12 @@ function MonthlyChart({
               tip={`${p.completed} completed`}
             />
           </div>
-          <div className="text-[10px] text-silver tabular-nums">
+          <div className="text-2xs text-silver tabular-nums">
             {fmtMonth(p.month)}
           </div>
         </div>
       ))}
-      <div className="ml-3 text-[10px] text-silver flex flex-col gap-1.5">
+      <div className="ml-3 text-2xs text-silver flex flex-col gap-1.5">
         <span className="inline-flex items-center gap-1.5">
           <span className="inline-block h-2 w-2 rounded-sm bg-silver/50" />
           Invited

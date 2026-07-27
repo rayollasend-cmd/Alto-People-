@@ -7,7 +7,7 @@ import { listMyTimeEntries } from '@/lib/timeApi';
 import { fileCase } from '@/lib/hrCases123Api';
 import { ApiError } from '@/lib/api';
 import { useI18n, type MessageKey } from '@/lib/i18n';
-import { fmtDateTz, fmtTime, fmtWeekdayTz } from '@/lib/format';
+import { fmtDateTz, fmtMoney, fmtTime, fmtWeekdayTz, ymdLocal } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
 import {
   Card,
@@ -27,6 +27,7 @@ import {
 import { Badge } from '@/components/ui/Badge';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { cn } from '@/lib/cn';
 
@@ -63,13 +64,6 @@ const STATUS_VARIANT: Record<
 
 const WEEK_REGULAR_CAP_MIN = 40 * 60;
 
-function ymdLocal(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
 function daysAgoYmd(days: number): string {
   const d = new Date();
   d.setDate(d.getDate() - days);
@@ -92,9 +86,6 @@ function fmtH(minutes: number): string {
 function fmtEntryDay(iso: string): string {
   return `${fmtWeekdayTz(iso)}, ${fmtDateTz(iso)}`;
 }
-
-const fmtMoney = (n: number) =>
-  n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 
 type Preset = 'THIS_WEEK' | 'LAST_WEEK' | 'LAST14';
 
@@ -256,7 +247,7 @@ export function MyTimesheet() {
             })}
           </div>
           <label className="block">
-            <span className="text-[11px] uppercase tracking-wider text-silver">
+            <span className="text-xs2 uppercase tracking-wider text-silver">
               {t('common.from')}
             </span>
             <Input
@@ -271,7 +262,7 @@ export function MyTimesheet() {
             />
           </label>
           <label className="block">
-            <span className="text-[11px] uppercase tracking-wider text-silver">
+            <span className="text-xs2 uppercase tracking-wider text-silver">
               {t('common.to')}
             </span>
             <Input
@@ -288,11 +279,18 @@ export function MyTimesheet() {
         </div>
 
         {query.isError && (
-          <p role="alert" className="text-sm text-alert">
+          <ErrorBanner
+            className="mb-4"
+            action={
+              <Button size="sm" variant="secondary" onClick={() => void query.refetch()}>
+                {t('common.retry')}
+              </Button>
+            }
+          >
             {query.error instanceof ApiError
               ? query.error.message
               : t('time.loadFailed')}
-          </p>
+          </ErrorBanner>
         )}
         {!entries && !query.isError && <SkeletonRows count={4} rowHeight="h-14" />}
         {entries && entries.length === 0 && (
@@ -311,7 +309,7 @@ export function MyTimesheet() {
                   <div className="mb-2 flex items-baseline justify-between gap-3 border-b border-navy-secondary pb-1.5">
                     <h3
                       className={cn(
-                        'text-[11px] uppercase tracking-wider',
+                        'text-xs2 uppercase tracking-wider',
                         weekMs === currentWeekMs
                           ? 'text-gold font-semibold'
                           : 'text-silver/80',
@@ -319,7 +317,7 @@ export function MyTimesheet() {
                     >
                       {weekLabel(weekMs)}
                     </h3>
-                    <span className="flex items-center gap-2 text-[11px] tabular-nums text-silver/70">
+                    <span className="flex items-center gap-2 text-xs2 tabular-nums text-silver/70">
                       {fmtH(bucket.workedMin)}
                       {overtimeMin > 0 && (
                         <span className="rounded-full border border-warning/40 bg-warning/10 px-2 py-0.5 text-warning">
@@ -361,7 +359,7 @@ export function MyTimesheet() {
                                   ` · ${t('time.breakMinutes', { minutes: breakMin })}`}
                               </div>
                               {e.shiftStartsAt && e.shiftEndsAt && (
-                                <div className="text-[11px] text-silver/60 mt-0.5 tabular-nums">
+                                <div className="text-xs2 text-silver/60 mt-0.5 tabular-nums">
                                   {t('time.scheduled', {
                                     range: `${fmtTime(e.shiftStartsAt)}–${fmtTime(e.shiftEndsAt)}`,
                                   })}
@@ -407,7 +405,7 @@ export function MyTimesheet() {
               );
             })}
             {grossEstimate !== null && (
-              <p className="text-[11px] text-silver/60">{t('time.grossDisclaimer')}</p>
+              <p className="text-xs2 text-silver/60">{t('time.grossDisclaimer')}</p>
             )}
           </div>
         )}
@@ -431,12 +429,12 @@ function TimesheetStat({
 }) {
   return (
     <div className="px-3.5 py-2 first:pl-4 last:pr-4" title={title}>
-      <div className="text-[10px] uppercase tracking-widest text-silver/80 whitespace-nowrap">
+      <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 whitespace-nowrap">
         {label}
       </div>
       <div
         className={cn(
-          'text-sm font-medium tabular-nums mt-0.5',
+          'font-display text-2xl tabular-nums mt-0.5',
           tone === 'success' && 'text-success',
           tone === 'gold' && 'text-gold',
           tone === 'muted' && 'text-silver',
@@ -505,7 +503,7 @@ function DisputeDialog({
           </p>
         )}
         <label className="block">
-          <span className="text-[11px] uppercase tracking-wider text-silver">
+          <span className="text-xs2 uppercase tracking-wider text-silver">
             {t('time.whatsWrong')}
           </span>
           <Textarea

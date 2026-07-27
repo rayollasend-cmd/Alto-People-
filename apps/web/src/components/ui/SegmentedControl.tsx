@@ -48,8 +48,11 @@ export function SegmentedControl<T extends string | number>({
               // pill tappable; precise pointers keep the compact pad.
               'px-3 py-1 rounded-full border text-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-gold/40',
               'coarse:min-h-11 inline-flex items-center',
+              // Selected = the ONE app-wide selection color (gold tint).
+              // This was steel blue — a second selection language that
+              // could sit next to gold tabs/chips on the same screen.
               selected
-                ? 'bg-steel border-steel text-white'
+                ? 'bg-gold/15 border-gold/50 text-gold'
                 : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white',
             )}
           >

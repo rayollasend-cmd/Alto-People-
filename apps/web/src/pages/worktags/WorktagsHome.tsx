@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Plus, Search, Tags } from 'lucide-react';
+import { Plus, Tags } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
   createCategory,
@@ -24,7 +24,7 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
-  Input,
+  ErrorBanner,
   PageHeader,
   Select,
   SkeletonRows,
@@ -40,6 +40,8 @@ import {
   TabsTrigger,
   Textarea,
 } from '@/components/ui';
+import { Input } from '@/components/ui/Input';
+import { SearchInput } from '@/components/ui/FilterBar';
 import { Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
 
@@ -113,13 +115,16 @@ function CategoriesTab({ canManage }: { canManage: boolean }) {
       <Card>
         <CardContent className="p-0">
           {error ? (
-            <div className="p-6 space-y-2">
-              <p role="alert" className="text-sm text-alert">
+            <div className="p-6">
+              <ErrorBanner
+                action={
+                  <Button size="sm" variant="secondary" onClick={refresh}>
+                    Retry
+                  </Button>
+                }
+              >
                 {error}
-              </p>
-              <Button variant="outline" size="sm" onClick={refresh}>
-                Retry
-              </Button>
+              </ErrorBanner>
             </div>
           ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
@@ -143,7 +148,7 @@ function CategoriesTab({ canManage }: { canManage: boolean }) {
                   <TableHead className="hidden md:table-cell">Key</TableHead>
                   <TableHead>Label</TableHead>
                   <TableHead>Required</TableHead>
-                  <TableHead>Values</TableHead>
+                  <TableHead className="text-right">Values</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -152,7 +157,7 @@ function CategoriesTab({ canManage }: { canManage: boolean }) {
                     <TableCell className="font-mono text-xs hidden md:table-cell">{c.key}</TableCell>
                     <TableCell className="font-medium text-white">
                       {c.label}
-                      <div className="md:hidden text-[11px] text-silver/70 truncate font-mono font-normal">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate font-mono font-normal">
                         {c.key}
                       </div>
                     </TableCell>
@@ -163,7 +168,9 @@ function CategoriesTab({ canManage }: { canManage: boolean }) {
                         '—'
                       )}
                     </TableCell>
-                    <TableCell>{c.worktagCount}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {c.worktagCount}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -254,7 +261,7 @@ function NewCategoryDrawer({
             }}
             placeholder="gl_account"
           />
-          <p className="text-[11px] text-silver mt-1">
+          <p className="text-xs2 text-silver mt-1">
             Auto-derived from the label — edit to override.
           </p>
         </div>
@@ -355,13 +362,16 @@ function ValuesTab({ canManage }: { canManage: boolean }) {
 
   if (categoriesError) {
     return (
-      <div className="space-y-2 py-6">
-        <p role="alert" className="text-sm text-alert">
+      <div className="py-6">
+        <ErrorBanner
+          action={
+            <Button size="sm" variant="secondary" onClick={loadCategories}>
+              Retry
+            </Button>
+          }
+        >
           {categoriesError}
-        </p>
-        <Button variant="outline" size="sm" onClick={loadCategories}>
-          Retry
-        </Button>
+        </ErrorBanner>
       </div>
     );
   }
@@ -386,13 +396,12 @@ function ValuesTab({ canManage }: { canManage: boolean }) {
           </div>
           <div>
             <Label>Search</Label>
-            <div className="relative mt-1">
-              <Search className="h-3.5 w-3.5 text-silver/70 absolute left-2.5 top-1/2 -translate-y-1/2" />
-              <Input
+            <div className="mt-1">
+              <SearchInput
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Value or code"
-                className="pl-8 w-56"
+                className="w-56"
                 aria-label="Search values"
               />
             </div>
@@ -415,13 +424,16 @@ function ValuesTab({ canManage }: { canManage: boolean }) {
       <Card>
         <CardContent className="p-0">
           {worktagsError ? (
-            <div className="p-6 space-y-2">
-              <p role="alert" className="text-sm text-alert">
+            <div className="p-6">
+              <ErrorBanner
+                action={
+                  <Button size="sm" variant="secondary" onClick={refresh}>
+                    Retry
+                  </Button>
+                }
+              >
                 {worktagsError}
-              </p>
-              <Button variant="outline" size="sm" onClick={refresh}>
-                Retry
-              </Button>
+              </ErrorBanner>
             </div>
           ) : worktags === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>

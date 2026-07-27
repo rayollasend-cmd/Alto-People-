@@ -8,6 +8,7 @@ import {
   type EsignAgreement,
 } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
+import { fmtDateTime } from '@/lib/format';
 import { Field, TaskShell, inputCls } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
@@ -191,7 +192,7 @@ function AgreementCard({
 
       {signed ? (
         <div className="px-5 pt-3 pb-4 text-sm text-silver">
-          Signed {new Date(agreement.signedAt!).toLocaleString()}
+          Signed {fmtDateTime(agreement.signedAt)}
           {' · '}
           <a
             href={`/api/onboarding/esign/signatures/${agreement.signatureId}/pdf`}

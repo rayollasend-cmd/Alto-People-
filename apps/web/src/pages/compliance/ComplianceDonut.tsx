@@ -49,7 +49,7 @@ export function ComplianceDonut({ fully, total }: { fully: number; total: number
           <div className="font-display text-3xl tabular-nums text-white leading-none">
             {pct}%
           </div>
-          <div className="text-[10px] uppercase tracking-widest text-silver/70 mt-1">
+          <div className="text-2xs uppercase tracking-widest text-silver/70 mt-1">
             compliant
           </div>
         </div>
@@ -58,7 +58,7 @@ export function ComplianceDonut({ fully, total }: { fully: number; total: number
         {fully} of {total} fully compliant
       </div>
       {gaps > 0 && (
-        <div className="text-[10px] text-silver mt-0.5">
+        <div className="text-2xs text-silver mt-0.5">
           {gaps} {gaps === 1 ? 'associate has' : 'associates have'} at least one gap
         </div>
       )}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { TrendingUp, TrendingDown, Users, Activity, ArrowDown, ArrowUp, Download, Search } from 'lucide-react';
+import { TrendingUp, TrendingDown, Users, Activity, ArrowDown, ArrowUp, Download } from 'lucide-react';
 import {
   getHeadcountSnapshot,
   getTurnover,
@@ -22,8 +22,9 @@ import {
   DrawerFooter,
   DrawerHeader,
   DrawerTitle,
-  Input,
+  ErrorBanner,
   PageHeader,
+  SearchInput,
   SegmentedControl,
   SkeletonRows,
   Table,
@@ -94,28 +95,28 @@ export function HeadcountHome() {
       />
 
       {snapError && (
-        <div className="space-y-2">
-          <p role="alert" className="text-sm text-alert">
-            {snapError}
-          </p>
-          <Button variant="outline" size="sm" onClick={loadSnap}>
-            Retry
-          </Button>
-        </div>
+        <ErrorBanner>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>{snapError}</span>
+            <Button variant="outline" size="sm" onClick={loadSnap}>
+              Retry
+            </Button>
+          </div>
+        </ErrorBanner>
       )}
       {turnError && (
-        <div className="space-y-2">
-          <p role="alert" className="text-sm text-alert">
-            {turnError}
-          </p>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setTurnRetry((n) => n + 1)}
-          >
-            Retry
-          </Button>
-        </div>
+        <ErrorBanner>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>{turnError}</span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setTurnRetry((n) => n + 1)}
+            >
+              Retry
+            </Button>
+          </div>
+        </ErrorBanner>
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -219,10 +220,10 @@ function KpiCard({
     <Card>
       <CardContent>
         <div className="flex items-center justify-between">
-          <div className="text-xs uppercase tracking-wider text-silver">{label}</div>
+          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">{label}</div>
           <Icon className={`h-4 w-4 ${accent}`} />
         </div>
-        <div className={`text-3xl font-display mt-2 ${accent}`}>
+        <div className={`text-3xl font-display mt-2 tabular-nums ${accent}`}>
           {value === null ? '—' : value}
         </div>
         {sub && <div className="text-xs text-silver mt-1">{sub}</div>}
@@ -270,7 +271,7 @@ function BreakdownCard({
                   ...rows.map((r) => [r.label, r.count]),
                 ])
               }
-              title="Download this breakdown as CSV"
+              title="Export this breakdown as CSV"
             >
               <Download className="h-3.5 w-3.5" />
               CSV
@@ -305,7 +306,7 @@ function BreakdownCard({
                       style={{ width: `${(r.count / max) * 100}%` }}
                     />
                   </div>
-                  <div className="w-10 text-right text-white">{r.count}</div>
+                  <div className="w-10 text-right tabular-nums text-white">{r.count}</div>
                 </div>
               );
               if (r.href) {
@@ -406,13 +407,12 @@ function DrillDrawer({
       </DrawerHeader>
       <DrawerBody>
         <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
-          <div className="relative flex-1 min-w-[200px] max-w-sm">
-            <Search className="h-3.5 w-3.5 text-silver/70 absolute left-2.5 top-1/2 -translate-y-1/2" />
-            <Input
+          <div className="flex-1 min-w-[200px] max-w-sm">
+            <SearchInput
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search name or email"
-              className="pl-8 h-8 text-sm"
+              className="h-8 text-sm"
               aria-label="Search associates in this segment"
             />
           </div>
@@ -427,18 +427,18 @@ function DrillDrawer({
           </Button>
         </div>
         {error && (
-          <div className="space-y-2">
-            <p role="alert" className="text-sm text-alert">
-              {error}
-            </p>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setRetry((n) => n + 1)}
-            >
-              Retry
-            </Button>
-          </div>
+          <ErrorBanner>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span>{error}</span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setRetry((n) => n + 1)}
+              >
+                Retry
+              </Button>
+            </div>
+          </ErrorBanner>
         )}
         {!error && rows === null && <SkeletonRows count={4} />}
         {!error && filtered && filtered.length === 0 && (
@@ -469,7 +469,7 @@ function DrillDrawer({
                       >
                         {a.firstName} {a.lastName}
                       </Link>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         {a.email}{a.managerName ? ` · ${a.managerName}` : ''}
                       </div>
                     </div>

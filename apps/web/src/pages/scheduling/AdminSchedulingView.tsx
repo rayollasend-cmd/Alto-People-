@@ -95,7 +95,8 @@ import { Input, Textarea } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
 import { Select } from '@/components/ui/Select';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Skeleton } from '@/components/ui/Skeleton';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import {
   Table,
   TableBody,
@@ -213,6 +214,15 @@ const STATUS_VARIANT: Record<
   DRAFT: 'default',
   COMPLETED: 'success',
   CANCELLED: 'destructive',
+};
+
+// Human-readable labels — raw enum values never reach the user's eyes.
+const STATUS_LABELS: Record<ShiftStatus, string> = {
+  OPEN: 'Open',
+  ASSIGNED: 'Assigned',
+  DRAFT: 'Draft',
+  COMPLETED: 'Completed',
+  CANCELLED: 'Cancelled',
 };
 
 function fmt(iso: string): string {
@@ -961,16 +971,31 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // Associate list for the pivot grid Y axis — scoped to the selected
   // client/location so the rows match the filtered schedule (picking a
   // client now narrows the people shown, not just the shifts).
-  useEffect(() => {
+  //
+  // A failure here used to fall back to [] silently, which renders as a
+  // grid with no roster rows — indistinguishable from "this client has
+  // nobody". Surface it so the manager knows to retry instead of
+  // concluding the schedule is empty.
+  const [associatesError, setAssociatesError] = useState(false);
+  const loadAssociates = useCallback(() => {
     if (!canManage) return;
     listSchedulingAssociates({
       clientId: clientFilter || undefined,
       locationId: (clientFilter && locationFilter) || undefined,
       teamId: (clientFilter && locationFilter && teamFilter) || undefined,
     })
-      .then((res) => setAssociates(res.associates))
-      .catch(() => setAssociates([]));
+      .then((res) => {
+        setAssociates(res.associates);
+        setAssociatesError(false);
+      })
+      .catch(() => {
+        setAssociates([]);
+        setAssociatesError(true);
+      });
   }, [canManage, clientFilter, locationFilter, teamFilter]);
+  useEffect(() => {
+    loadAssociates();
+  }, [loadAssociates]);
 
   // Cascade: when the client narrows, load THAT client's locations for the
   // location dropdown and clear any stale location selection. Selecting
@@ -1740,7 +1765,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             : ''}
           {posFilter ? ` · position: ${posFilter}` : ''}
         </div>
-        <div className="text-[10px] text-gray-500 mt-1">
+        <div className="text-2xs text-gray-500 mt-1">
           Generated {fmtDateTime(new Date())}
         </div>
       </div>
@@ -1760,7 +1785,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                 <Printer className="h-4 w-4" />
                 Print
               </Button>
-              <Button variant="ghost" size="sm" onClick={onExportCsv} title="Download as CSV">
+              <Button variant="ghost" size="sm" onClick={onExportCsv} title="Export CSV">
                 <Download className="h-4 w-4" />
                 CSV
               </Button>
@@ -1798,7 +1823,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       )}
 
       {tzHint && (
-        <div className="no-print mb-2 text-[11px] text-silver/70 inline-flex items-center gap-1">
+        <div className="no-print mb-2 text-xs2 text-silver/70 inline-flex items-center gap-1">
           <Clock className="h-3 w-3" />
           {tzHint}
         </div>
@@ -1843,7 +1868,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
 
       {/* View-mode toggle + per-view navigator */}
       <div className="flex flex-wrap items-center gap-3 mb-4 no-print">
-        <div className="inline-flex rounded-md border border-navy-secondary p-0.5 bg-navy-secondary/30">
+        <div
+          role="radiogroup"
+          aria-label="Schedule view"
+          className="inline-flex gap-0.5 rounded-md border border-navy-secondary p-0.5 bg-navy-secondary/30"
+        >
           <ViewTab current={view} value="list" onClick={setView} icon={List} label="List" />
           <ViewTab current={view} value="day" onClick={setView} icon={Calendar} label="Day" />
           <ViewTab current={view} value="week" onClick={setView} icon={CalendarDays} label="Week" />
@@ -1898,7 +1927,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               <ChevronRight className="h-4 w-4" />
             </Button>
             {/* Pick the exact start and end of the range to schedule. */}
-            <label className="ml-2 inline-flex items-center gap-1 text-[11px] text-silver/70">
+            <label className="ml-2 inline-flex items-center gap-1 text-xs2 text-silver/70">
               From
               <input
                 type="date"
@@ -1916,7 +1945,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                 className="h-7 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs text-white [color-scheme:dark] focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
               />
             </label>
-            <label className="inline-flex items-center gap-1 text-[11px] text-silver/70">
+            <label className="inline-flex items-center gap-1 text-xs2 text-silver/70">
               To
               <input
                 type="date"
@@ -1932,7 +1961,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                 className="h-7 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs text-white [color-scheme:dark] focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
               />
             </label>
-            <span className="text-[11px] text-silver/60 tabular-nums">
+            <span className="text-xs2 text-silver/60 tabular-nums">
               {weekDayCount}d
             </span>
             {canManage && (
@@ -2095,25 +2124,13 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         )}
 
         {view === 'list' && (
-          <div className="flex flex-wrap gap-2">
-            {STATUS_FILTERS.map((f) => (
-              <Button
-                key={f.value}
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setFilter(f.value)}
-                className={cn(
-                  'text-sm font-normal',
-                  filter === f.value
-                    ? 'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold'
-                    : 'border-navy-secondary hover:border-silver/40'
-                )}
-              >
-                {f.label}
-              </Button>
-            ))}
-          </div>
+          <SegmentedControl
+            options={STATUS_FILTERS}
+            value={filter}
+            onChange={setFilter}
+            ariaLabel="Filter by shift status"
+            className="flex-wrap"
+          />
         )}
       </div>
 
@@ -2148,7 +2165,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           status filter chips). Defaults to the current month. */}
       {view === 'list' && (
         <div className="no-print mb-3 flex flex-wrap items-center gap-2 px-3 py-2 rounded-md border border-navy-secondary bg-navy-secondary/20">
-          <div className="text-[10px] uppercase tracking-wider text-silver/70 inline-flex items-center gap-1">
+          <div className="text-2xs uppercase tracking-wider text-silver/70 inline-flex items-center gap-1">
             <Calendar className="h-3 w-3" />
             Range
           </div>
@@ -2174,7 +2191,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               setListFrom(ymd(new Date(d.getFullYear(), d.getMonth(), 1)));
               setListTo(ymd(new Date(d.getFullYear(), d.getMonth() + 1, 0)));
             }}
-            className="text-[10px] text-silver/70 hover:text-gold underline underline-offset-2 ml-1"
+            className="text-2xs text-silver/70 hover:text-gold underline underline-offset-2 ml-1"
           >
             This month
           </button>
@@ -2188,7 +2205,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               sunday.setDate(sunday.getDate() + 6);
               setListTo(ymd(sunday));
             }}
-            className="text-[10px] text-silver/70 hover:text-gold underline underline-offset-2"
+            className="text-2xs text-silver/70 hover:text-gold underline underline-offset-2"
           >
             This week
           </button>
@@ -2198,11 +2215,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               setListFrom('');
               setListTo('');
             }}
-            className="text-[10px] text-silver/70 hover:text-gold underline underline-offset-2"
+            className="text-2xs text-silver/70 hover:text-gold underline underline-offset-2"
           >
             Clear
           </button>
-          <span className="ml-auto text-[10px] text-silver/70 tabular-nums">
+          <span className="ml-auto text-2xs text-silver/70 tabular-nums">
             {filteredShifts ? `${filteredShifts.length} shifts` : ''}
           </span>
         </div>
@@ -2443,6 +2460,19 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         </ErrorBanner>
       )}
 
+      {associatesError && (
+        <ErrorBanner
+          className="mb-3 no-print"
+          action={
+            <Button size="sm" variant="secondary" onClick={loadAssociates}>
+              Retry
+            </Button>
+          }
+        >
+          Couldn’t load the roster — the calendar rows may be missing people.
+        </ErrorBanner>
+      )}
+
       {filteredShifts && view === 'list' && filteredShifts.length > 0 && (
         <Card className="overflow-hidden">
           <Table>
@@ -2463,7 +2493,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                   <TableCell className="font-medium">
                     <div className="min-w-0">
                       <div className="truncate">{s.position}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         {s.assignedAssociateName ?? 'Unassigned'}
                         {s.clientName ? ` · ${s.clientName}` : ''}
                       </div>
@@ -2480,10 +2510,10 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                       variant={STATUS_VARIANT[s.status] ?? 'default'}
                       data-status={s.status}
                     >
-                      {s.status}
+                      {STATUS_LABELS[s.status] ?? s.status}
                     </Badge>
                     {s.cancellationReason && (
-                      <div className="text-alert text-[10px] mt-1">
+                      <div className="text-alert text-2xs mt-1">
                         {s.cancellationReason}
                       </div>
                     )}
@@ -2573,7 +2603,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                 <DialogTitle>{mobileAction.position}</DialogTitle>
                 <DialogDescription>
                   {mobileAction.clientName ?? '—'} · {fmt(mobileAction.startsAt)} ·{' '}
-                  {mobileAction.status}
+                  {STATUS_LABELS[mobileAction.status] ?? mobileAction.status}
                   {mobileAction.assignedAssociateName
                     ? ` · ${mobileAction.assignedAssociateName}`
                     : ''}
@@ -2816,7 +2846,7 @@ function KpiStrip({ kpis }: { kpis: SchedulingKpis | null }) {
       {kpis.draftShifts > 0 && (
         <Kpi label="Draft" value={String(kpis.draftShifts)} tone="text-silver" />
       )}
-      <div className="text-[10px] uppercase tracking-wider text-silver/70 self-end ml-auto">
+      <div className="text-2xs uppercase tracking-wider text-silver/70 self-end ml-auto">
         this week
       </div>
     </div>
@@ -2844,10 +2874,10 @@ function Kpi({
 }) {
   return (
     <div className="min-w-[6rem]">
-      <div className="text-[10px] uppercase tracking-wider text-silver">{label}</div>
+      <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">{label}</div>
       <div className={cn('text-xl font-semibold tabular-nums', tone)}>{value}</div>
       {suffix ? (
-        <div className="text-[10px] text-warning/80 tabular-nums">{suffix}</div>
+        <div className="text-2xs text-warning/80 tabular-nums">{suffix}</div>
       ) : null}
     </div>
   );
@@ -3077,7 +3107,7 @@ function AssignDialog({
             {picked ? (
               <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-gold/40 bg-gold/[0.06]">
                 <div className="flex items-center gap-2 min-w-0">
-                  <div className="h-7 w-7 rounded-full bg-gold/15 text-gold text-[10px] font-semibold flex items-center justify-center shrink-0">
+                  <div className="h-7 w-7 rounded-full bg-gold/15 text-gold text-2xs font-semibold flex items-center justify-center shrink-0">
                     {picked.firstName[0]}
                     {picked.lastName[0]}
                   </div>
@@ -3085,7 +3115,7 @@ function AssignDialog({
                     <div className="text-sm text-white truncate">
                       {picked.firstName} {picked.lastName}
                     </div>
-                    <div className="text-[11px] text-silver/70 truncate">
+                    <div className="text-xs2 text-silver/70 truncate">
                       {picked.email}
                     </div>
                   </div>
@@ -3096,7 +3126,7 @@ function AssignDialog({
                     setPicked(null);
                     setQuery('');
                   }}
-                  className="text-[11px] text-silver/70 hover:text-gold underline underline-offset-2"
+                  className="text-xs2 text-silver/70 hover:text-gold underline underline-offset-2"
                 >
                   Change
                 </button>
@@ -3141,7 +3171,7 @@ function AssignDialog({
                             : 'text-silver hover:bg-navy-secondary/40',
                         )}
                       >
-                        <div className="h-6 w-6 rounded-full bg-gold/10 text-gold text-[9px] font-semibold flex items-center justify-center shrink-0">
+                        <div className="h-6 w-6 rounded-full bg-gold/10 text-gold text-3xs font-semibold flex items-center justify-center shrink-0">
                           {a.firstName[0]}
                           {a.lastName[0]}
                         </div>
@@ -3149,7 +3179,7 @@ function AssignDialog({
                           <div className="truncate">
                             {a.firstName} {a.lastName}
                           </div>
-                          <div className="text-[10px] text-silver/70 truncate">
+                          <div className="text-2xs text-silver/70 truncate">
                             {a.email}
                           </div>
                         </div>
@@ -3160,23 +3190,23 @@ function AssignDialog({
                             Math.round((c.weeklyMinutesScheduled / 60) * 10) / 10;
                           return (
                             <div className="shrink-0 text-right leading-tight">
-                              <div className="text-[10px] tabular-nums text-silver/80">
+                              <div className="text-2xs tabular-nums text-silver/80">
                                 {hrs}h wk
                               </div>
                               {c.onApprovedTimeOff ? (
-                                <span className="text-[9px] uppercase tracking-wide text-alert">
+                                <span className="text-3xs uppercase tracking-wide text-alert">
                                   PTO
                                 </span>
                               ) : !c.noConflict ? (
-                                <span className="text-[9px] uppercase tracking-wide text-warning">
+                                <span className="text-3xs uppercase tracking-wide text-warning">
                                   conflict
                                 </span>
                               ) : c.matchesAvailability ? (
-                                <span className="text-[9px] uppercase tracking-wide text-success">
+                                <span className="text-3xs uppercase tracking-wide text-success">
                                   fits
                                 </span>
                               ) : (
-                                <span className="text-[9px] uppercase tracking-wide text-silver/60">
+                                <span className="text-3xs uppercase tracking-wide text-silver/60">
                                   outside avail.
                                 </span>
                               )}
@@ -3188,7 +3218,7 @@ function AssignDialog({
                   </ul>
                 )}
                 {!query.trim() && candidates && candidates.length > 0 && (
-                  <p className="mt-1 text-[10px] text-silver/60">
+                  <p className="mt-1 text-2xs text-silver/60">
                     Best fits first — availability, conflicts, PTO, and weekly
                     hours considered. Type to search everyone.
                   </p>
@@ -3201,16 +3231,16 @@ function AssignDialog({
               </div>
             )}
             {checking && (
-              <div className="text-[11px] text-silver/70 mt-1">Checking conflicts…</div>
+              <div className="text-xs2 text-silver/70 mt-1">Checking conflicts…</div>
             )}
             {!checking && checkError && (
-              <div className="text-[11px] text-warning mt-1 inline-flex items-center gap-1">
+              <div className="text-xs2 text-warning mt-1 inline-flex items-center gap-1">
                 <AlertTriangle className="h-3 w-3" />
                 {checkError}
               </div>
             )}
             {isClean && !checkError && (
-              <div className="text-[11px] text-success mt-1 inline-flex items-center gap-1">
+              <div className="text-xs2 text-success mt-1 inline-flex items-center gap-1">
                 <CheckCircle2 className="h-3 w-3" />
                 No conflicts
               </div>
@@ -3600,7 +3630,9 @@ function DuplicateToEmployeeDialog({
           />
           <div className="max-h-64 overflow-y-auto rounded border border-navy-secondary/60 divide-y divide-navy-secondary/40">
             {associates === null ? (
-              <div className="p-3 text-xs text-silver/70">Loading…</div>
+              <div className="p-2">
+                <SkeletonRows count={4} rowHeight="h-7" />
+              </div>
             ) : filtered.length === 0 ? (
               <div className="p-3 text-xs text-silver/70">
                 No employees for this client.
@@ -4332,7 +4364,7 @@ function CreateShiftDialog({
                 )}
               </div>
               {scopedAssociates.length > 0 && (
-                <div className="flex items-center gap-2 text-[11px]">
+                <div className="flex items-center gap-2 text-xs2">
                   <button
                     type="button"
                     onClick={() => setAssignIds(new Set(scopedAssociates.map((a) => a.id)))}
@@ -4353,7 +4385,7 @@ function CreateShiftDialog({
               )}
             </div>
             {scopedAssociates.length === 0 ? (
-              <div className="text-[11px] text-silver/70">
+              <div className="text-xs2 text-silver/70">
                 No schedulable employees for this client. The shift will be created unassigned.
               </div>
             ) : (
@@ -4404,7 +4436,7 @@ function CreateShiftDialog({
               </>
             )}
             <div className="flex items-center gap-2 pt-1">
-              <label className="text-[11px] text-silver/70" htmlFor="open-slots">
+              <label className="text-xs2 text-silver/70" htmlFor="open-slots">
                 Extra open (unassigned) slots
               </label>
               <Input
@@ -4417,7 +4449,7 @@ function CreateShiftDialog({
                 className="h-8 w-20 text-xs"
               />
             </div>
-            <div className="text-[11px] text-silver/60">
+            <div className="text-xs2 text-silver/60">
               {assignIds.size + (Math.max(0, Math.trunc(Number(openSlots)) || 0)) > 0
                 ? `Creates ${assignIds.size} assigned + ${Math.max(0, Math.trunc(Number(openSlots)) || 0)} open = ${assignIds.size + Math.max(0, Math.trunc(Number(openSlots)) || 0)} shift${assignIds.size + Math.max(0, Math.trunc(Number(openSlots)) || 0) === 1 ? '' : 's'}. Anyone already scheduled then is skipped.`
                 : 'No employees selected — creates one unassigned shift.'}
@@ -4431,7 +4463,7 @@ function CreateShiftDialog({
             <button
               type="button"
               onClick={() => setShowAdvanced((v) => !v)}
-              className="text-[11px] uppercase tracking-wider text-silver/70 hover:text-gold inline-flex items-center gap-1"
+              className="text-xs2 uppercase tracking-wider text-silver/70 hover:text-gold inline-flex items-center gap-1"
             >
               {showAdvanced ? '▾' : '▸'} Advanced
               {!showAdvanced && (
@@ -4507,7 +4539,7 @@ function CreateShiftDialog({
               <div className="text-sm text-white font-medium">
                 Publish immediately
               </div>
-              <div className="text-[11px] text-silver/70">
+              <div className="text-xs2 text-silver/70">
                 {publishImmediately
                   ? 'Will be visible to assigned associate the moment you save.'
                   : 'Saved as draft. Stays private until you click "Publish week".'}
@@ -4895,16 +4927,25 @@ function ViewTab({
 }) {
   const active = current === value;
   return (
-    <Button
+    <button
       type="button"
-      variant={active ? 'primary' : 'ghost'}
-      size="xs"
+      role="radio"
+      aria-checked={active}
       onClick={() => onClick(value)}
-      className="uppercase tracking-wider rounded-sm"
+      className={cn(
+        // Matches SegmentedControl's selection language: the app-wide
+        // gold-tint ghost for the active choice, quiet ghost otherwise —
+        // no solid primary fill competing with real CTAs.
+        'inline-flex h-7 items-center gap-1.5 rounded-sm border px-2.5 text-xs font-medium uppercase tracking-wider transition coarse:h-9 coarse:px-3',
+        'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold/40',
+        active
+          ? 'bg-gold/15 border-gold/50 text-gold'
+          : 'border-transparent text-silver hover:text-white',
+      )}
     >
       <Icon className="h-3.5 w-3.5" />
       {label}
-    </Button>
+    </button>
   );
 }
 
@@ -4962,7 +5003,7 @@ function FilterBar({
   return (
     <div className="mb-3 rounded-md border border-navy-secondary bg-navy-secondary/20 px-3 py-2">
       {/* Scope line — tells the admin exactly what they're looking at. */}
-      <div className="mb-2 text-[11px] text-silver/80">
+      <div className="mb-2 text-xs2 text-silver/80">
         {boundedClient ? (
           <span className="inline-flex flex-wrap items-center gap-1">
             <span className="font-medium text-white">Schedule</span>
@@ -5007,7 +5048,7 @@ function FilterBar({
         )}
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <div className="text-[10px] uppercase tracking-wider text-silver/70 inline-flex items-center gap-1">
+        <div className="text-2xs uppercase tracking-wider text-silver/70 inline-flex items-center gap-1">
           <Filter className="h-3 w-3" />
           Filter
         </div>
@@ -5084,7 +5125,7 @@ function FilterBar({
           <button
             type="button"
             onClick={onManageTeams}
-            className="text-[10px] text-silver/70 hover:text-gold underline underline-offset-2"
+            className="text-2xs text-silver/70 hover:text-gold underline underline-offset-2"
           >
             Shift teams…
           </button>
@@ -5118,13 +5159,13 @@ function FilterBar({
               setLocationFilter('');
               setTeamFilter('');
             }}
-            className="text-[10px] text-silver/70 hover:text-gold underline underline-offset-2 ml-1"
+            className="text-2xs text-silver/70 hover:text-gold underline underline-offset-2 ml-1"
           >
             Clear
           </button>
         )}
         {showAssociateToggle && (
-          <label className="ml-auto inline-flex items-center gap-1.5 text-[11px] text-silver cursor-pointer">
+          <label className="ml-auto inline-flex items-center gap-1.5 text-xs2 text-silver cursor-pointer">
             <input
               type="checkbox"
               checked={showAllAssociates}

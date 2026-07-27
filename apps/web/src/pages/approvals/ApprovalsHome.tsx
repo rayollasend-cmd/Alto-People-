@@ -38,6 +38,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Textarea } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -156,6 +157,16 @@ function fmtHours(minutes: number): string {
   return `${h.toFixed(h % 1 === 0 ? 0 : 1)}h`;
 }
 
+/** Human labels for the time-off category enum (never show SICK/JURY_DUTY raw). */
+const CATEGORY_LABELS: Record<string, string> = {
+  SICK: 'Sick',
+  VACATION: 'Vacation',
+  PTO: 'PTO',
+  BEREAVEMENT: 'Bereavement',
+  JURY_DUTY: 'Jury duty',
+  OTHER: 'Other',
+};
+
 /** Date-only "YYYY-MM-DD" — parse at local midnight so it never renders a
  *  day early west of UTC. */
 const fmtYmd = (iso: string) => fmtDate(parseYmd(iso));
@@ -231,17 +242,17 @@ function PendingTimeOffPanel({
       rollback(ctx);
       if (err instanceof ApiError && err.code === 'insufficient_balance') {
         const d = err.details as { currentMinutes: number; requestedMinutes: number };
-        toast.error('Insufficient balance', {
-          description: `Available ${fmtHours(d.currentMinutes)}, requested ${fmtHours(d.requestedMinutes)}`,
+        toast.error('Insufficient balance.', {
+          description: `Available ${fmtHours(d.currentMinutes)}, requested ${fmtHours(d.requestedMinutes)}.`,
         });
         return;
       }
-      toast.error('Could not approve', {
+      toast.error('Could not approve.', {
         description: err instanceof Error ? err.message : String(err),
       });
     },
     onSuccess: (_res, r) => {
-      toast.success(`Approved ${r.associateName ?? 'request'}`);
+      toast.success(`Approved ${r.associateName ?? 'request'}.`);
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: TIME_OFF_KEY }),
   });
@@ -252,12 +263,12 @@ function PendingTimeOffPanel({
     onMutate: ({ target }) => removeOptimistically(target.id),
     onError: (err, _vars, ctx) => {
       rollback(ctx);
-      toast.error('Could not deny', {
+      toast.error('Could not deny.', {
         description: err instanceof Error ? err.message : String(err),
       });
     },
     onSuccess: () => {
-      toast.success('Denied');
+      toast.success('Request denied.');
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: TIME_OFF_KEY }),
   });
@@ -288,7 +299,7 @@ function PendingTimeOffPanel({
       }
       clear();
     } catch (err) {
-      toast.error('Could not approve selected', {
+      toast.error('Could not approve selected.', {
         description: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -312,9 +323,7 @@ function PendingTimeOffPanel({
       <CardContent>
         {error && (
           <div className="space-y-3">
-            <p role="alert" className="text-sm text-alert">
-              {error}
-            </p>
+            <ErrorBanner>{error}</ErrorBanner>
             <Button size="sm" variant="secondary" onClick={onRetry}>
               Retry
             </Button>
@@ -347,7 +356,7 @@ function PendingTimeOffPanel({
                       {r.associateName ?? '—'}
                     </div>
                     <div className="text-xs text-silver mt-0.5 tabular-nums">
-                      {r.category} · {fmtYmd(r.startDate)}
+                      {CATEGORY_LABELS[r.category] ?? r.category} · {fmtYmd(r.startDate)}
                       {r.startDate !== r.endDate && ` – ${fmtYmd(r.endDate)}`} ·{' '}
                       {fmtHours(r.requestedMinutes)}
                     </div>
@@ -413,7 +422,7 @@ function DenyDialog({
     if (!target) return;
     const trimmed = note.trim();
     if (trimmed.length === 0) {
-      toast.error('A note is required when denying');
+      toast.error('A note is required when denying.');
       return;
     }
     // Optimistic: the row disappears the moment the deny is submitted;
@@ -519,9 +528,7 @@ function SwapsPanel() {
       <CardContent>
         {error && (
           <div className="space-y-3">
-            <p role="alert" className="text-sm text-alert">
-              {error}
-            </p>
+            <ErrorBanner>{error}</ErrorBanner>
             <Button size="sm" variant="secondary" onClick={() => swapsQuery.refetch()}>
               Retry
             </Button>
@@ -667,9 +674,7 @@ function PickupsPanel() {
       <CardContent>
         {error && (
           <div className="space-y-3">
-            <p role="alert" className="text-sm text-alert">
-              {error}
-            </p>
+            <ErrorBanner>{error}</ErrorBanner>
             <Button
               size="sm"
               variant="secondary"

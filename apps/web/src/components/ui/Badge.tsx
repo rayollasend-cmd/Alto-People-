@@ -15,16 +15,19 @@ const badgeVariants = cva(
         pending: 'bg-warning/15 text-warning border border-warning/30',
         // Negative — REJECTED, FAILED, CANCELLED.
         destructive: 'bg-alert/15 text-alert border border-alert/30',
-        // Premium / featured — gold accent.
+        // Premium / featured — gold accent. Also: in-flight/being-worked
+        // states (INVESTIGATING, IN_PROGRESS) per the status contract.
         accent: 'bg-gold/15 text-gold border border-gold/40',
+        // Informational — steel blue. "Out today", scheduled, info chips.
+        info: 'bg-steel/15 text-sky border border-steel/40',
         // Outline-only, used for filter chips.
         outline: 'border border-silver/30 text-silver',
       },
       size: {
         // sm — inline-row chips next to table cell text.
-        sm: 'px-1.5 py-0 text-[10px] gap-0.5',
+        sm: 'px-1.5 py-0 text-2xs gap-0.5',
         // default — the historical badge size (11px, px-2 py-0.5).
-        default: 'px-2 py-0.5 text-[11px] gap-1',
+        default: 'px-2 py-0.5 text-xs2 gap-1',
         // lg — page-level status (drawer header, hero KPI). Larger chrome
         // demands a larger dot, which the per-size DOT_SIZE table picks
         // up so the inline indicator doesn't read as a speck against
@@ -61,6 +64,7 @@ const DOT_COLOR: Record<NonNullable<BadgeProps['variant']>, string> = {
   pending: 'bg-warning',
   destructive: 'bg-alert',
   accent: 'bg-gold',
+  info: 'bg-steel',
   outline: 'bg-silver',
 };
 
@@ -76,6 +80,7 @@ const DOT_DEFAULT: Record<NonNullable<BadgeProps['variant']>, boolean> = {
   pending: true,
   destructive: true,
   accent: false,
+  info: false,
   outline: false,
 };
 

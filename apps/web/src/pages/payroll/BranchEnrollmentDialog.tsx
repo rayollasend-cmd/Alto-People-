@@ -7,6 +7,7 @@ import {
   type BranchEnrollment,
 } from '@/lib/payrollApi';
 import { ApiError } from '@/lib/api';
+import { useConfirm } from '@/lib/confirm';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import {
@@ -56,6 +57,7 @@ export function BranchEnrollmentDialog({
   onOpenChange,
   onSaved,
 }: Props) {
+  const confirm = useConfirm();
   const [data, setData] = useState<BranchEnrollment | null>(null);
   const [draft, setDraft] = useState('');
   const [loading, setLoading] = useState(false);
@@ -119,7 +121,14 @@ export function BranchEnrollmentDialog({
 
   const onClear = async () => {
     if (!associateId) return;
-    if (!confirm('Clear the Branch card id? Future runs will fall back to ACH if the associate has a bank account on file.')) return;
+    const ok = await confirm({
+      title: 'Clear the Branch card id?',
+      description:
+        'Future runs will fall back to ACH if the associate has a bank account on file.',
+      confirmLabel: 'Clear',
+      destructive: true,
+    });
+    if (!ok) return;
     setClearing(true);
     try {
       await setBranchEnrollment(associateId, null);

@@ -18,6 +18,7 @@ import {
   type FaceModelsState,
 } from '@/lib/faceMatch';
 import { Logo } from '@/components/Logo';
+import { AlertTriangle, Check, Delete, Timer } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Textarea } from '@/components/ui/Input';
 import {
@@ -978,7 +979,9 @@ export function KioskPage() {
           onClick={reset}
           className="fixed inset-0 flex flex-col items-center justify-center text-center focus:outline-none"
         >
-          <div className="text-6xl mb-6">⚠️</div>
+          <div className="mb-6 text-alert">
+            <AlertTriangle className="h-16 w-16" strokeWidth={2} aria-hidden="true" />
+          </div>
           <div className="text-3xl text-alert max-w-2xl px-8">{error}</div>
           <div className="mt-8 text-base text-silver/80">{t.tapToDismiss}</div>
         </button>
@@ -1020,11 +1023,11 @@ function SetupScreen({ onSaved }: { onSaved: (token: string) => void }) {
   };
   return (
     <div className="fixed inset-0 bg-midnight text-white flex items-center justify-center p-6">
-      <div className="max-w-md w-full bg-navy-secondary border border-navy-secondary rounded-2xl p-8 shadow-2xl">
+      <div className="max-w-md w-full bg-navy-secondary border border-navy-secondary rounded-2xl p-8 elev-3">
         <div className="text-gold text-sm uppercase tracking-widest mb-2">
           Alto Kiosk
         </div>
-        <h1 className="text-3xl font-serif mb-4">Pair this device</h1>
+        <h1 className="text-3xl font-display mb-4">Pair this device</h1>
         <p className="text-silver text-sm mb-6">
           Paste the device token from HR's kiosk admin page. The token
           starts with <code className="font-mono">altokiosk_</code>.
@@ -1095,9 +1098,17 @@ function IdleScreen({
         Alto Kiosk
         <span className="h-px w-6 bg-gold/60" aria-hidden="true" />
       </div>
-      <div className="text-9xl font-serif font-light tracking-tight">{time}</div>
+      {/* font-display (Cormorant), NOT font-serif — the latter used to
+          fall through to Georgia on the largest type Alto renders.
+          tabular-nums so the clock doesn't jitter on digit changes. */}
+      <div className="text-9xl font-display font-light tracking-tight tabular-nums">{time}</div>
       <div className="text-2xl text-silver mt-3">{date}</div>
-      <div className="mt-16 px-12 py-6 bg-gold/15 border border-gold/60 text-gold rounded-full text-2xl font-medium animate-pulse">
+      {/* One slow expanding ring instead of a 24/7 blink — a wall device
+          pulsing forever reads as nagging, not inviting. */}
+      <div
+        className="mt-16 px-12 py-6 bg-gold/15 border border-gold/60 text-gold rounded-full text-2xl font-medium"
+        style={{ animation: 'kiosk-breathe 3.2s ease-in-out infinite' }}
+      >
         {t.tapToClock}
       </div>
       {faceState === 'loading' && (
@@ -1275,7 +1286,7 @@ function PinPad({
           disabled={submitting}
           className="aspect-square bg-navy-secondary/40 hover:bg-navy-secondary/70 rounded-2xl text-2xl text-silver transition-transform active:scale-95"
         >
-          ⌫
+          <Delete className="mx-auto h-8 w-8" aria-hidden="true" />
         </button>
       </div>
     </div>
@@ -1519,7 +1530,9 @@ function ResultScreen({ result, t }: { result: PunchResult; t: KioskStrings }) {
         <div
           style={{ animation: 'kiosk-celebrate-in 0.5s cubic-bezier(.34,1.56,.64,1) both' }}
         >
-          <div className="text-7xl mb-5 text-warning">⏱</div>
+          <div className="mx-auto mb-5 h-28 w-28 rounded-full border-4 border-current grid place-items-center text-warning">
+            <Timer className="h-16 w-16" strokeWidth={2.5} aria-hidden="true" />
+          </div>
           <div className="text-sm uppercase tracking-[0.3em] text-silver/80 mb-3">
             {t.punchSaved}
           </div>
@@ -1572,7 +1585,13 @@ function ResultScreen({ result, t }: { result: PunchResult; t: KioskStrings }) {
         className="relative"
         style={{ animation: 'kiosk-celebrate-in 0.55s cubic-bezier(.34,1.56,.64,1) both' }}
       >
-        <div className={`text-7xl mb-5 ${accent}`}>✓</div>
+        {/* Vector mark, not '✓' — the emoji glyph rendered a different
+            shape on every tablet's platform font. */}
+        <div
+          className={`mx-auto mb-5 h-28 w-28 rounded-full border-4 border-current grid place-items-center ${accent}`}
+        >
+          <Check className="h-16 w-16" strokeWidth={3} aria-hidden="true" />
+        </div>
         <div className="text-sm uppercase tracking-[0.3em] text-silver/80 mb-3">
           {greeting}
         </div>
