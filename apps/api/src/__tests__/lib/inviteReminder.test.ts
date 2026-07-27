@@ -153,16 +153,24 @@ describe('runInviteReminderSweep', () => {
     expect(result.scanned).toBe(0);
   });
 
-  it('skips tokens that are expired', async () => {
+  it('includes expired tokens — a lapsed invite gets a fresh link', async () => {
     const { user } = await seedInvitedUser();
-    await insertToken({
+    const old = await insertToken({
       userId: user.id,
       createdAtAgoHours: 240,
       expiresAtFromNowHours: -1,
     });
 
     const result = await runInviteReminderSweep();
-    expect(result.scanned).toBe(0);
+    expect(result.scanned).toBe(1);
+    expect(result.reminded).toBe(1);
+
+    // The lapsed token was rotated out and replaced with a live one.
+    const fresh = await prisma.inviteToken.findFirstOrThrow({
+      where: { userId: user.id, consumedAt: null },
+    });
+    expect(fresh.id).not.toBe(old.id);
+    expect(fresh.expiresAt.getTime()).toBeGreaterThan(Date.now());
   });
 
   it('skips tokens whose user has already become ACTIVE', async () => {

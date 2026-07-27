@@ -70,7 +70,7 @@ describe('POST /onboarding/applications/:id/approve — verification gaps', () =
     const ok = await a
       .post(`/onboarding/applications/${application.id}/approve`)
       .send({ hireDate: '2026-08-03', acknowledgeWarnings: true });
-    expect(ok.status).toBe(200);
+    expect(ok.status).toBe(204);
     const after = await prisma.application.findUniqueOrThrow({
       where: { id: application.id },
     });
@@ -119,7 +119,7 @@ describe('POST /onboarding/applications/:id/approve — verification gaps', () =
     const ok = await a
       .post(`/onboarding/applications/${application.id}/approve`)
       .send({ hireDate: '2026-08-03' });
-    expect(ok.status).toBe(200);
+    expect(ok.status).toBe(204);
   });
 });
 
