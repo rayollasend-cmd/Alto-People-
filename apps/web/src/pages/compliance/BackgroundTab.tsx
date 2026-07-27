@@ -7,6 +7,7 @@ import {
   updateBackgroundCheck,
 } from '@/lib/complianceApi';
 import { ApiError } from '@/lib/api';
+import { cn } from '@/lib/cn';
 import { fmtDate } from '@/lib/format';
 import {
   Avatar,
@@ -62,6 +63,25 @@ function transitionVariant(
   if (s === 'PASSED') return 'primary';
   if (s === 'FAILED') return 'destructive';
   return 'outline';
+}
+
+function isTerminal(s: BgCheckStatus): boolean {
+  return s === 'PASSED' || s === 'FAILED';
+}
+
+function ageInDays(initiatedAt: string): number {
+  return Math.max(
+    0,
+    Math.floor((Date.now() - new Date(initiatedAt).getTime()) / 86_400_000),
+  );
+}
+
+// Stuck-check tone: a background check open 7+ days is worth a look,
+// 14+ days is a problem.
+function ageTone(days: number): string {
+  if (days >= 14) return 'text-alert';
+  if (days >= 7) return 'text-warning';
+  return 'text-silver';
 }
 
 export function BackgroundTab({ canManage }: { canManage: boolean }) {
@@ -168,17 +188,36 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
                       <div className="truncate">{c.associateName}</div>
                       {/* Phone-only secondary line replacing the hidden cells. */}
                       <div className="sm:hidden text-[11px] text-silver/70 truncate">
-                        {c.provider} · initiated {fmtDate(c.initiatedAt)}
+                        {c.provider}
+                        {c.externalId ? ` · ${c.externalId}` : ''} · initiated{' '}
+                        {fmtDate(c.initiatedAt)}
+                        {!isTerminal(c.status) && (
+                          <span className={ageTone(ageInDays(c.initiatedAt))}>
+                            {' '}· {ageInDays(c.initiatedAt)}d
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
                 </TableCell>
-                <TableCell className="hidden sm:table-cell text-silver">{c.provider}</TableCell>
+                <TableCell className="hidden sm:table-cell text-silver">
+                  <div>{c.provider}</div>
+                  {c.externalId && (
+                    <div className="text-[10px] font-mono text-silver/70 truncate max-w-[160px]">
+                      {c.externalId}
+                    </div>
+                  )}
+                </TableCell>
                 <TableCell>
                   <Badge variant={statusVariant(c.status)}>{c.status}</Badge>
                 </TableCell>
                 <TableCell className="hidden md:table-cell text-silver tabular-nums">
                   {fmtDate(c.initiatedAt)}
+                  {!isTerminal(c.status) && (
+                    <span className={cn('ml-1.5', ageTone(ageInDays(c.initiatedAt)))}>
+                      {ageInDays(c.initiatedAt)}d since initiated
+                    </span>
+                  )}
                 </TableCell>
                 <TableCell className="hidden lg:table-cell text-silver tabular-nums">
                   {fmtDate(c.completedAt)}
@@ -228,12 +267,8 @@ function BackgroundCheckDetailPanel({
   pending: boolean;
   onTransition: (status: BgCheckStatus) => void;
 }) {
-  const initiated = new Date(check.initiatedAt);
-  const ageDays = Math.max(
-    0,
-    Math.floor((Date.now() - initiated.getTime()) / (1000 * 60 * 60 * 24)),
-  );
-  const finalized = check.status === 'PASSED' || check.status === 'FAILED';
+  const ageDays = ageInDays(check.initiatedAt);
+  const finalized = isTerminal(check.status);
   return (
     <>
       <DrawerHeader>
@@ -249,7 +284,7 @@ function BackgroundCheckDetailPanel({
         <div className="flex items-center gap-3 mb-5">
           <Badge variant={statusVariant(check.status)}>{check.status}</Badge>
           {!finalized && (
-            <span className="text-xs text-silver tabular-nums">
+            <span className={cn('text-xs tabular-nums', ageTone(ageDays))}>
               {ageDays}d open
             </span>
           )}
@@ -331,10 +366,14 @@ function InitiateCheckDialog({
   onError,
 }: InitiateCheckDialogProps) {
   const [associateId, setAssociateId] = useState('');
+  const [externalId, setExternalId] = useState('');
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (open) setAssociateId('');
+    if (open) {
+      setAssociateId('');
+      setExternalId('');
+    }
   }, [open]);
 
   const submit = async (e: React.FormEvent) => {
@@ -343,7 +382,12 @@ function InitiateCheckDialog({
     if (!trimmed || busy) return;
     setBusy(true);
     try {
-      await initiateBackgroundCheck({ associateId: trimmed, provider: 'alto-stub' });
+      const ref = externalId.trim();
+      await initiateBackgroundCheck({
+        associateId: trimmed,
+        provider: 'alto-stub',
+        ...(ref ? { externalId: ref } : {}),
+      });
       onCreated();
     } catch (err) {
       onError(err instanceof ApiError ? err.message : 'Initiate failed.');
@@ -373,6 +417,17 @@ function InitiateCheckDialog({
               placeholder="00000000-0000-4000-8000-000000000000"
               value={associateId}
               onChange={(e) => setAssociateId(e.target.value)}
+            />
+          </label>
+          <label className="grid gap-1">
+            <span className="text-[11px] uppercase tracking-wider text-silver">
+              Provider reference / external ID (optional)
+            </span>
+            <Input
+              placeholder="e.g. Checkr report id"
+              maxLength={120}
+              value={externalId}
+              onChange={(e) => setExternalId(e.target.value)}
             />
           </label>
           <DialogFooter>

@@ -311,7 +311,7 @@ complianceScorecardRouter.get('/expirations', VIEW, async (_req, res) => {
   res.json(body);
 });
 
-async function buildExpirationsTile(): Promise<ScorecardExpirationsResponse> {
+export async function buildExpirationsTile(): Promise<ScorecardExpirationsResponse> {
   const now = new Date();
   const ninetyDaysOut = new Date(now.getTime() + 90 * 24 * 3600 * 1000);
 

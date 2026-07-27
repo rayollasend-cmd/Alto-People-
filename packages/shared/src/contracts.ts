@@ -2447,6 +2447,10 @@ export type DocumentRecord = z.infer<typeof DocumentRecordSchema>;
 
 export const DocumentListResponseSchema = z.object({
   documents: z.array(DocumentRecordSchema),
+  /** Total matching rows — the list itself is capped at 200, so the UI
+   *  must say "showing 200 of N" instead of presenting a partial vault
+   *  as audit truth. Optional for back-compat. */
+  total: z.number().int().nonnegative().optional(),
 });
 export type DocumentListResponse = z.infer<typeof DocumentListResponseSchema>;
 
@@ -2478,6 +2482,12 @@ export const I9VerificationSchema = z.object({
   section2VerifierEmail: z.string().email().nullable(),
   documentList: I9DocumentListSchema.nullable(),
   supportingDocIds: z.array(UuidSchema),
+  /** Application start date (YYYY-MM-DD) — anchors the Section 2
+   *  3-business-day deadline in the queue. */
+  startDate: z.string().nullable().optional(),
+  /** Work-authorization expiry (YYYY-MM-DD) — drives the reverification
+   *  filter for time-limited statuses. */
+  workAuthExpiresAt: z.string().nullable().optional(),
 });
 export type I9Verification = z.infer<typeof I9VerificationSchema>;
 
@@ -2532,6 +2542,9 @@ export type BackgroundCheckListResponse = z.infer<typeof BackgroundCheckListResp
 export const BackgroundInitiateInputSchema = z.object({
   associateId: UuidSchema,
   provider: z.string().min(1).max(80).default('alto-stub'),
+  /** The provider's own reference (e.g. Checkr candidate/report id) so a
+   *  check ordered in an external portal is traceable from here. */
+  externalId: z.string().max(120).optional(),
 });
 export type BackgroundInitiateInput = z.infer<typeof BackgroundInitiateInputSchema>;
 

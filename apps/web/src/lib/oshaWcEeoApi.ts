@@ -92,3 +92,46 @@ export const getEeoReport = (clientId: string) =>
     total: number;
     buckets: Array<{ category: string; race: string; gender: string; count: number }>;
   }>(`/eeo/report?clientId=${clientId}`);
+
+// EEO-1 self-identification enums — mirror EeoInputSchema in
+// apps/api/src/routes/oshaWcEeo.ts.
+export const EEO_CATEGORIES = [
+  'EXEC_SR_OFFICIALS',
+  'FIRST_MID_OFFICIALS',
+  'PROFESSIONALS',
+  'TECHNICIANS',
+  'SALES_WORKERS',
+  'ADMIN_SUPPORT',
+  'CRAFT_WORKERS',
+  'OPERATIVES',
+  'LABORERS_HELPERS',
+  'SERVICE_WORKERS',
+] as const;
+export type EeoCategory = (typeof EEO_CATEGORIES)[number];
+
+export const EEO_RACES = [
+  'HISPANIC_LATINO',
+  'WHITE',
+  'BLACK_AFRICAN_AMERICAN',
+  'NATIVE_HAWAIIAN_PACIFIC_ISLANDER',
+  'ASIAN',
+  'AMERICAN_INDIAN_ALASKA_NATIVE',
+  'TWO_OR_MORE',
+  'NOT_DISCLOSED',
+] as const;
+export type EeoRace = (typeof EEO_RACES)[number];
+
+export const EEO_GENDERS = ['MALE', 'FEMALE', 'NON_BINARY', 'NOT_DISCLOSED'] as const;
+export type EeoGender = (typeof EEO_GENDERS)[number];
+
+export const updateAssociateEeo = (
+  associateId: string,
+  input: {
+    category?: EeoCategory | null;
+    race?: EeoRace | null;
+    gender?: EeoGender | null;
+    isVeteran?: boolean | null;
+    isDisabled?: boolean | null;
+    selfDeclared?: boolean;
+  },
+) => apiFetch<{ ok: true }>(`/eeo/associates/${associateId}`, { method: 'PUT', body: input });

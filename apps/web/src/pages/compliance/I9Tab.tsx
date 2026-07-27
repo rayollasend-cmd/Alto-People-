@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, FileCheck, XCircle } from 'lucide-react';
 import type { I9DocumentList, I9Verification } from '@alto-people/shared';
 import { listI9s, upsertI9 } from '@/lib/complianceApi';
@@ -9,6 +9,7 @@ import {
 } from '@/lib/i9Api';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { fmtDate } from '@/lib/format';
 import {
   Avatar,
   Badge,
@@ -22,12 +23,66 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  Input,
   Select,
   SkeletonRows,
 } from '@/components/ui';
 
+/* ---------------- Section 2 deadline helpers ----------------
+ * Date-only strings ("YYYY-MM-DD") are parsed at LOCAL midnight —
+ * `new Date('YYYY-MM-DD')` would parse UTC and shift the day for
+ * anyone west of Greenwich. */
+
+function parseLocalDate(s: string): Date {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+/** Advance `days` business days (Mon–Fri) past `start`. */
+function addBusinessDays(start: Date, days: number): Date {
+  const d = new Date(start);
+  let added = 0;
+  while (added < days) {
+    d.setDate(d.getDate() + 1);
+    const dow = d.getDay();
+    if (dow !== 0 && dow !== 6) added++;
+  }
+  return d;
+}
+
+/** Section 2 must be completed within 3 business days of the start date. */
+function section2DueDate(startDate: string | null | undefined): Date | null {
+  if (!startDate) return null;
+  return addBusinessDays(parseLocalDate(startDate), 3);
+}
+
+/** Whole days from local-today to `d` (negative = in the past). */
+function daysFromToday(d: Date): number {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((d.getTime() - today.getTime()) / 86_400_000);
+}
+
+/** Shared urgency tone: past → alert, within 2 days → warning, else muted. */
+function toneForDays(days: number): string {
+  if (days < 0) return 'text-alert';
+  if (days <= 2) return 'text-warning';
+  return 'text-silver';
+}
+
+const WORK_AUTH_WINDOW_DAYS = 90;
+
+const I9_FILTERS = [
+  { value: 'pending', label: 'pending' },
+  { value: 'complete', label: 'complete' },
+  { value: 'all', label: 'all' },
+  { value: 'work_auth', label: 'work auth expiring' },
+] as const;
+type I9Filter = (typeof I9_FILTERS)[number]['value'];
+
 export function I9Tab({ canManage }: { canManage: boolean }) {
-  const [filter, setFilter] = useState<'pending' | 'complete' | 'all'>('pending');
+  const [filter, setFilter] = useState<I9Filter>('pending');
+  const [search, setSearch] = useState('');
   const [rows, setRows] = useState<I9Verification[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [drawerTarget, setDrawerTarget] = useState<I9Verification | null>(null);
@@ -35,7 +90,9 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
   const refresh = useCallback(async () => {
     try {
       setError(null);
-      const res = await listI9s(filter);
+      // "Work auth expiring" is a client-side view over the full list —
+      // rows needing reverification can be pending *or* complete.
+      const res = await listI9s(filter === 'work_auth' ? 'all' : filter);
       setRows(res.i9s);
       setDrawerTarget((prev) =>
         prev ? res.i9s.find((r) => r.id === prev.id) ?? null : null,
@@ -54,24 +111,66 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
     refresh();
   };
 
+  // Client-side view over the fetched rows: work-auth window filter, name
+  // search, then deadline-first ordering (pending rows with the earliest
+  // Section 2 due date first; pending without a start date next; complete
+  // rows last).
+  const displayRows = useMemo(() => {
+    if (!rows) return null;
+    let list = rows;
+    if (filter === 'work_auth') {
+      list = list.filter(
+        (r) =>
+          r.workAuthExpiresAt &&
+          daysFromToday(parseLocalDate(r.workAuthExpiresAt)) <= WORK_AUTH_WINDOW_DAYS,
+      );
+    }
+    const q = search.trim().toLowerCase();
+    if (q) {
+      list = list.filter(
+        (r) =>
+          r.associateName.toLowerCase().includes(q) ||
+          r.associateEmail.toLowerCase().includes(q),
+      );
+    }
+    const rank = (r: I9Verification): [number, number] => {
+      if (r.section2CompletedAt) return [2, 0];
+      const due = section2DueDate(r.startDate);
+      return due ? [0, due.getTime()] : [1, 0];
+    };
+    return [...list].sort((a, b) => {
+      const [ga, ka] = rank(a);
+      const [gb, kb] = rank(b);
+      return ga - gb || ka - kb;
+    });
+  }, [rows, filter, search]);
+
   return (
     <section>
-      <div className="flex flex-wrap gap-2 mb-4">
-        {(['pending', 'complete', 'all'] as const).map((f) => (
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        {I9_FILTERS.map((f) => (
           <button
-            key={f}
+            key={f.value}
             type="button"
-            onClick={() => setFilter(f)}
+            onClick={() => setFilter(f.value)}
             className={cn(
               'px-3 py-1.5 rounded text-xs uppercase tracking-wider border transition-colors',
-              filter === f
+              filter === f.value
                 ? 'border-gold text-gold bg-gold/10'
                 : 'border-navy-secondary text-silver hover:text-white',
             )}
           >
-            {f}
+            {f.label}
           </button>
         ))}
+        <div className="w-full sm:w-64 sm:ml-auto">
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by name…"
+            aria-label="Search by name"
+          />
+        </div>
       </div>
 
       {error && (
@@ -79,17 +178,17 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
           {error}
         </p>
       )}
-      {!rows && <SkeletonRows count={4} rowHeight="h-20" />}
-      {rows && rows.length === 0 && (
+      {!displayRows && <SkeletonRows count={4} rowHeight="h-20" />}
+      {displayRows && displayRows.length === 0 && (
         <EmptyState
           icon={FileCheck}
           title="No I-9 records match this filter"
-          description="Switch to a different filter or wait for associates to complete Section 1."
+          description="Switch to a different filter, clear the search, or wait for associates to complete Section 1."
         />
       )}
-      {rows && rows.length > 0 && (
+      {displayRows && displayRows.length > 0 && (
         <ul className="space-y-2">
-          {rows.map((r) => {
+          {displayRows.map((r) => {
             const sec1Done = !!r.section1CompletedAt;
             const sec2Done = !!r.section2CompletedAt;
             return (
@@ -116,12 +215,37 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
                           </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <SectionBadge label="Sec 1" done={sec1Done} />
-                        <SectionBadge label="Sec 2" done={sec2Done} />
-                        {r.documentList && (
-                          <Badge variant="outline">{r.documentList}</Badge>
+                      <div className="flex items-center gap-4 flex-wrap">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <SectionBadge label="Sec 1" done={sec1Done} />
+                          <SectionBadge label="Sec 2" done={sec2Done} />
+                          {r.documentList && (
+                            <Badge variant="outline">{r.documentList}</Badge>
+                          )}
+                        </div>
+                        {r.workAuthExpiresAt && (
+                          <div className="text-right">
+                            <div className="text-[10px] uppercase tracking-widest text-silver/80">
+                              Work auth
+                            </div>
+                            <div
+                              className={cn(
+                                'text-xs tabular-nums',
+                                toneForDays(
+                                  daysFromToday(parseLocalDate(r.workAuthExpiresAt)),
+                                ),
+                              )}
+                            >
+                              {fmtDate(parseLocalDate(r.workAuthExpiresAt))}
+                            </div>
+                          </div>
                         )}
+                        <div className="text-right min-w-[84px]">
+                          <div className="text-[10px] uppercase tracking-widest text-silver/80">
+                            Sec 2 due
+                          </div>
+                          <Section2DueCell row={r} />
+                        </div>
                       </div>
                     </div>
                   </CardContent>
@@ -146,6 +270,27 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
         )}
       </Drawer>
     </section>
+  );
+}
+
+/** "Section 2 due" cell: overdue Nd in alert, due within 2 days in warning,
+ *  otherwise a muted date. Em dash when complete or no start date. */
+function Section2DueCell({ row }: { row: I9Verification }) {
+  if (row.section2CompletedAt) {
+    return <div className="text-xs text-silver/60">—</div>;
+  }
+  const due = section2DueDate(row.startDate);
+  if (!due) return <div className="text-xs text-silver/60">—</div>;
+  const days = daysFromToday(due);
+  if (days < 0) {
+    return (
+      <div className="text-xs font-medium text-alert">overdue {-days}d</div>
+    );
+  }
+  return (
+    <div className={cn('text-xs tabular-nums', toneForDays(days))}>
+      {fmtDate(due)}
+    </div>
   );
 }
 
@@ -217,6 +362,24 @@ function I9DetailPanel({
             {current.supportingDocIds.length
               ? `${current.supportingDocIds.length} on file`
               : '—'}
+          </DetailRow>
+          <DetailRow label="Start date">
+            {current.startDate
+              ? fmtDate(parseLocalDate(current.startDate))
+              : '—'}
+          </DetailRow>
+          <DetailRow label="Work auth expires">
+            {current.workAuthExpiresAt ? (
+              <span
+                className={toneForDays(
+                  daysFromToday(parseLocalDate(current.workAuthExpiresAt)),
+                )}
+              >
+                {fmtDate(parseLocalDate(current.workAuthExpiresAt))}
+              </span>
+            ) : (
+              '—'
+            )}
           </DetailRow>
         </dl>
 

@@ -32,6 +32,7 @@ export interface AgreementRow {
   supersedesId: string | null;
   notes: string | null;
   issuedByEmail: string | null;
+  createdAt: string;
 }
 
 export interface MyAgreement {

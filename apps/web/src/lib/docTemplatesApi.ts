@@ -72,10 +72,13 @@ export const renderTemplate = (
     data?: Record<string, unknown>;
   },
 ) =>
-  apiFetch<{ id: string; renderedSubject: string | null; renderedBody: string }>(
-    `/document-templates/${templateId}/render`,
-    { method: 'POST', body: input },
-  );
+  apiFetch<{
+    id: string;
+    renderedSubject: string | null;
+    renderedBody: string;
+    /** Token paths that resolved to nothing (typos would silently blank a field). */
+    unresolvedTokens?: string[];
+  }>(`/document-templates/${templateId}/render`, { method: 'POST', body: input });
 
 export const listRenders = (templateId: string) =>
   apiFetch<{

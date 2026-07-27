@@ -36,7 +36,7 @@ type RawI9 = Prisma.I9VerificationGetPayload<{
         lastName: true;
         email: true;
         applications: {
-          select: { id: true; invitedAt: true };
+          select: { id: true; invitedAt: true; startDate: true };
           orderBy: { invitedAt: 'desc' };
           take: 1;
         };
@@ -61,6 +61,15 @@ function toI9(row: RawI9): I9Verification {
     supportingDocIds: Array.isArray(row.supportingDocIds)
       ? (row.supportingDocIds as string[])
       : [],
+    // Deadline anchors for the queue: without these HR couldn't tell
+    // which of 40 pending I-9s is due tomorrow vs next week, and
+    // expiring work authorizations were invisible here.
+    startDate: row.associate.applications[0]?.startDate
+      ? row.associate.applications[0].startDate.toISOString().slice(0, 10)
+      : null,
+    workAuthExpiresAt: row.workAuthExpiresAt
+      ? row.workAuthExpiresAt.toISOString().slice(0, 10)
+      : null,
   };
 }
 
@@ -71,7 +80,7 @@ const I9_INCLUDE = {
       lastName: true,
       email: true,
       applications: {
-        select: { id: true, invitedAt: true },
+        select: { id: true, invitedAt: true, startDate: true },
         orderBy: { invitedAt: 'desc' as const },
         take: 1,
       },
@@ -221,6 +230,7 @@ complianceRouter.post('/background', MANAGE, async (req, res, next) => {
         associateId: associate.id,
         clientId: associate.applications[0]?.clientId ?? null,
         provider: parsed.data.provider,
+        externalId: parsed.data.externalId ?? null,
         status: 'INITIATED',
       },
       include: BG_INCLUDE,

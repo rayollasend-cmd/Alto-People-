@@ -8,6 +8,7 @@ import {
 } from '@/lib/documentsApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { fmtDate } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -155,6 +156,7 @@ export function AssociateDocumentsView() {
               ref={fileRef}
               type="file"
               accept="application/pdf,image/png,image/jpeg,image/webp"
+              capture="environment"
               className={cn(inputCls, 'file:text-silver file:bg-navy-secondary file:border-0 file:px-2 file:py-1 file:mr-3 file:rounded')}
             />
             <span className="block text-xs text-silver/70 mt-1">
@@ -204,7 +206,13 @@ export function AssociateDocumentsView() {
                     )}
                     {d.status === 'EXPIRED' && (
                       <span className="text-gold ml-2">
-                        · expired — please upload a fresh copy
+                        · expired{d.expiresAt ? ` ${fmtDate(d.expiresAt)}` : ''} —
+                        please upload a fresh copy
+                      </span>
+                    )}
+                    {d.status !== 'EXPIRED' && d.expiresAt && (
+                      <span className="text-silver/70 ml-2">
+                        · expires {fmtDate(d.expiresAt)}
                       </span>
                     )}
                     {!d.fileAvailable && (
