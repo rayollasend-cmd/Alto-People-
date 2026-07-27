@@ -6,7 +6,9 @@ import {
   Camera,
   Check,
   ChevronLeft,
+  Copy,
   FileText,
+  LogIn,
   Upload,
   UserCheck,
 } from 'lucide-react';
@@ -112,6 +114,9 @@ export function InPersonOnboarding() {
   const [showCamera, setShowCamera] = useState(false);
   const [finishingDocs, setFinishingDocs] = useState(false);
   const [approveOpen, setApproveOpen] = useState(false);
+  // Set when resend-invite 409s because the associate already accepted —
+  // switches the hand-off card from "copy invite link" to "have them sign in".
+  const [alreadyAccepted, setAlreadyAccepted] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!applicationId) return;
@@ -167,8 +172,34 @@ export function InPersonOnboarding() {
       } else {
         toast.success('Fresh invite sent to associate');
       }
+    } catch (err) {
+      // 409 user_already_active — the invite can't be reissued once accepted.
+      // Not an error from the workflow's point of view: switch the hand-off
+      // card to the "sign in" panel instead of dead-ending on a toast.
+      if (
+        err instanceof ApiError &&
+        (err.status === 409 || err.code === 'user_already_active')
+      ) {
+        setAlreadyAccepted(true);
+        return;
+      }
+      toast.error('Could not resend invite', {
+        description:
+          err instanceof ApiError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : undefined,
+      });
+    }
+  };
+
+  const copyLoginUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.origin);
+      toast.success('Login URL copied to clipboard');
     } catch {
-      toast.error('Could not resend invite');
+      toast.error('Could not copy — select the URL manually');
     }
   };
 
@@ -423,9 +454,31 @@ export function InPersonOnboarding() {
                   </li>
                 ))}
               </ul>
-              <Button variant="secondary" onClick={handleResendInvite}>
-                Copy fresh invite link
-              </Button>
+              {alreadyAccepted ? (
+                <div className="rounded-md border border-navy-secondary bg-navy-secondary/40 p-4 space-y-3">
+                  <div className="flex items-center gap-2 text-white font-medium">
+                    <LogIn className="h-4 w-4 text-gold shrink-0" />
+                    They already have an account — have them sign in
+                  </div>
+                  <p className="text-sm text-silver">
+                    The invite link can't be reissued once accepted. Open the
+                    login page on this device and let{' '}
+                    {detail.associateName.split(' ')[0] ?? 'the associate'} sign
+                    in with their own credentials.
+                  </p>
+                  <div className="text-2xl font-semibold text-gold font-mono break-all select-all">
+                    {window.location.origin}
+                  </div>
+                  <Button variant="secondary" onClick={copyLoginUrl}>
+                    <Copy className="h-4 w-4" />
+                    Copy login URL
+                  </Button>
+                </div>
+              ) : (
+                <Button variant="secondary" onClick={handleResendInvite}>
+                  Copy fresh invite link
+                </Button>
+              )}
             </CardContent>
           </Card>
         )}

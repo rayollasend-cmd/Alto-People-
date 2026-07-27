@@ -217,7 +217,7 @@ documentsRouter.post('/me/upload', upload.single('file'), async (req, res, next)
       documentKind: created.kind.replace(/_/g, ' ').toLowerCase(),
       filename: created.filename,
       uploadedAt: new Date(created.createdAt).toISOString().replace('T', ' ').slice(0, 16) + ' UTC',
-      documentsUrl: `${env.APP_BASE_URL}/admin/associates/${created.associateId}/documents`,
+      documentsUrl: `${env.APP_BASE_URL}/documents`,
     });
     void notifyAllAdmins({ subject: tpl.subject, body: tpl.text, html: tpl.html, category: 'documents' });
 
@@ -581,6 +581,38 @@ documentsRouter.post('/admin/:id/reject', MANAGE, async (req, res, next) => {
         });
         if (liveApp) {
           liveApplicationId = liveApp.id;
+          // The application is no longer "ready for review": clear the
+          // submitted stamp (and roll SUBMITTED back to DRAFT) so the
+          // ready-for-review notification RE-FIRES when the associate
+          // fixes the document — without this, the app sat at 100% again
+          // with nobody told.
+          if (liveApp.submittedAt || liveApp.status === 'SUBMITTED') {
+            await prisma.application.update({
+              where: { id: liveApp.id },
+              data: {
+                submittedAt: null,
+                ...(liveApp.status === 'SUBMITTED' ? { status: 'DRAFT' } : {}),
+              },
+            });
+          }
+          // An I-9-class rejection also reopens the associate's I-9 upload
+          // step — documentsSubmittedAt was set-once, which left them
+          // staring at "awaiting HR" with no way to act.
+          if (
+            updated.kind === 'ID' ||
+            updated.kind === 'SSN_CARD' ||
+            updated.kind === 'I9_SUPPORTING' ||
+            updated.kind === 'J1_VISA' ||
+            updated.kind === 'J1_DS2019'
+          ) {
+            await prisma.i9Verification.updateMany({
+              where: {
+                associateId: updated.associateId,
+                section2CompletedAt: null,
+              },
+              data: { documentsSubmittedAt: null },
+            });
+          }
           if (liveApp.checklist) {
             const reopened = await markTaskTodoByKind(
               prisma,

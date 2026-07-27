@@ -327,6 +327,7 @@ async function inviteOneApplicant(
                 title: t.title,
                 description: t.description,
                 order: t.order,
+                dueOffsetDays: t.dueOffsetDays ?? null,
               })),
             },
           },
@@ -505,7 +506,18 @@ onboardingRouter.get('/applications', async (req, res, next) => {
         include: {
           associate: { select: { firstName: true, lastName: true } },
           client: { select: { name: true } },
-          checklist: { include: { tasks: { select: { status: true } } } },
+          checklist: {
+            include: {
+              tasks: {
+                select: {
+                  status: true,
+                  title: true,
+                  order: true,
+                  completedAt: true,
+                },
+              },
+            },
+          },
         },
       }),
       prisma.application.count({ where }),
@@ -515,19 +527,36 @@ onboardingRouter.get('/applications', async (req, res, next) => {
       rows.map((r) => r.associateId)
     );
 
-    const applications: ApplicationSummary[] = rows.map((row) => ({
-      id: row.id,
-      associateName: `${row.associate.firstName} ${row.associate.lastName}`,
-      clientName: row.client.name,
-      onboardingTrack: row.onboardingTrack,
-      status: row.status,
-      position: row.position,
-      startDate: row.startDate ? row.startDate.toISOString() : null,
-      invitedAt: row.invitedAt.toISOString(),
-      submittedAt: row.submittedAt ? row.submittedAt.toISOString() : null,
-      percentComplete: computePercent(row.checklist?.tasks ?? []),
-      lastInviteDelivery: deliveryByAssociate.get(row.associateId) ?? null,
-    }));
+    const applications: ApplicationSummary[] = rows.map((row) => {
+      const tasks = row.checklist?.tasks ?? [];
+      // What the hire is actually stuck on, and when anything last moved —
+      // the two facts HR needs to babysit 50 applications without opening
+      // each one.
+      const blocked = [...tasks]
+        .sort((a, b) => a.order - b.order)
+        .find((t) => t.status !== 'DONE' && t.status !== 'SKIPPED');
+      const lastActivityMs = Math.max(
+        row.invitedAt.getTime(),
+        ...tasks
+          .filter((t) => t.completedAt)
+          .map((t) => t.completedAt!.getTime()),
+      );
+      return {
+        id: row.id,
+        associateName: `${row.associate.firstName} ${row.associate.lastName}`,
+        clientName: row.client.name,
+        onboardingTrack: row.onboardingTrack,
+        status: row.status,
+        position: row.position,
+        startDate: row.startDate ? row.startDate.toISOString() : null,
+        invitedAt: row.invitedAt.toISOString(),
+        submittedAt: row.submittedAt ? row.submittedAt.toISOString() : null,
+        percentComplete: computePercent(tasks),
+        lastInviteDelivery: deliveryByAssociate.get(row.associateId) ?? null,
+        blockedOnTitle: blocked?.title ?? null,
+        lastActivityAt: new Date(lastActivityMs).toISOString(),
+      };
+    });
 
     const payload: ApplicationListResponse = {
       applications,
@@ -667,6 +696,7 @@ onboardingRouter.get('/applications/:id', async (req, res, next) => {
       order: t.order,
       documentId: t.documentId,
       completedAt: t.completedAt ? t.completedAt.toISOString() : null,
+      dueOffsetDays: t.dueOffsetDays,
     }));
 
     const deliveryByAssociate = await fetchLatestInviteDeliveryByAssociate([
@@ -758,6 +788,53 @@ onboardingRouter.post(
           409,
           'checklist_incomplete',
           `Checklist is ${percent}% complete — finish all tasks before approving.`
+        );
+      }
+
+      // 100% is not the same as VERIFIED: skipped tasks count as complete
+      // and an uploaded-but-unreviewed document completes the upload task.
+      // Surface every verification gap and require explicit acknowledgement
+      // — a hire must not be silently activated with no I-9 on file and no
+      // document ever opened by a human.
+      const approvalWarnings: string[] = [];
+      const tasks = app.checklist?.tasks ?? [];
+      const skipped = tasks.filter((t) => t.status === 'SKIPPED');
+      for (const t of skipped) {
+        approvalWarnings.push(`Task skipped without completion: ${t.title}`);
+      }
+      const idClassDocs = await prisma.documentRecord.findMany({
+        where: {
+          associateId: app.associateId,
+          deletedAt: null,
+          kind: { in: ['ID', 'SSN_CARD', 'I9_SUPPORTING', 'J1_VISA', 'J1_DS2019'] },
+        },
+        select: { status: true },
+      });
+      if (
+        idClassDocs.length > 0 &&
+        !idClassDocs.some((d) => d.status === 'VERIFIED')
+      ) {
+        approvalWarnings.push(
+          'Identity documents were uploaded but none have been verified by a reviewer.',
+        );
+      }
+      if (tasks.some((t) => t.kind === 'I9_VERIFICATION')) {
+        const i9 = await prisma.i9Verification.findUnique({
+          where: { associateId: app.associateId },
+          select: { section2CompletedAt: true },
+        });
+        if (!i9?.section2CompletedAt) {
+          approvalWarnings.push(
+            'I-9 Section 2 has not been completed — federal law requires it within 3 business days of the start date.',
+          );
+        }
+      }
+      if (approvalWarnings.length > 0 && !parsed.data.acknowledgeWarnings) {
+        throw new HttpError(
+          409,
+          'approval_warnings',
+          'This application has verification gaps. Review them and re-submit with acknowledgeWarnings to approve anyway.',
+          { warnings: approvalWarnings },
         );
       }
 
@@ -917,6 +994,9 @@ onboardingRouter.post(
         body: rejTpl.text,
         html: rejTpl.html,
         category: 'onboarding',
+        // Rejected candidates usually never activated an account — the
+        // decline must still reach their email.
+        emailFallback: true,
       });
       // Manager copy so the team owner knows the candidate isn't joining.
       void notifyManager(app.associateId, {
@@ -959,6 +1039,7 @@ function toTemplate(row: {
     title: string;
     description: string | null;
     order: number;
+    dueOffsetDays: number | null;
   }>;
 }): OnboardingTemplate {
   return {
@@ -973,6 +1054,7 @@ function toTemplate(row: {
         title: t.title,
         description: t.description,
         order: t.order,
+        dueOffsetDays: t.dueOffsetDays,
       })
     ),
   };
@@ -1031,6 +1113,7 @@ onboardingRouter.post('/templates', MANAGE, async (req, res, next) => {
             description: t.description ?? null,
             // Normalize order by array position — clients can leave it out.
             order: t.order ?? i,
+            dueOffsetDays: t.dueOffsetDays ?? null,
           })),
         },
       },
@@ -1072,6 +1155,7 @@ onboardingRouter.put('/templates/:id', MANAGE, async (req, res, next) => {
               title: t.title.trim(),
               description: t.description ?? null,
               order: t.order ?? i,
+              dueOffsetDays: t.dueOffsetDays ?? null,
             })),
           },
         },
@@ -1475,6 +1559,42 @@ onboardingRouter.post('/applications', MANAGE, async (req, res, next) => {
 /* ===== TASK WRITES ======================================================= */
 
 /* PROFILE_INFO ----------------------------------------------------------- */
+// GET — what's on file, so the profile form hydrates instead of making
+// the new hire retype the name the recruiter already entered. W-4 and
+// direct-deposit have always done this; profile was the odd one out.
+onboardingRouter.get('/applications/:id/profile', async (req, res, next) => {
+  try {
+    const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+    const a = await prisma.associate.findUniqueOrThrow({
+      where: { id: app.associateId },
+      select: {
+        firstName: true,
+        lastName: true,
+        dob: true,
+        phone: true,
+        addressLine1: true,
+        addressLine2: true,
+        city: true,
+        state: true,
+        zip: true,
+      },
+    });
+    res.json({
+      firstName: a.firstName,
+      lastName: a.lastName,
+      dob: a.dob ? a.dob.toISOString().slice(0, 10) : null,
+      phone: a.phone,
+      addressLine1: a.addressLine1,
+      addressLine2: a.addressLine2,
+      city: a.city,
+      state: a.state,
+      zip: a.zip,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 onboardingRouter.post('/applications/:id/profile', async (req, res, next) => {
   try {
     const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
@@ -2496,12 +2616,17 @@ onboardingRouter.post('/applications/:id/i9/section1', async (req, res, next) =>
       select: { name: true },
     });
     const associateName = assoc ? `${assoc.firstName} ${assoc.lastName}` : 'an associate';
-    const hireDateStr = assoc?.hireDate ? assoc.hireDate.toISOString().slice(0, 10) : null;
+    // Hire date is only stamped at APPROVAL — which happens after Section 1
+    // — so it was ALWAYS null here and every deadline email said nothing.
+    // The application's planned start date is the real anchor for the
+    // USCIS 3-business-day clock.
+    const startAnchor = assoc?.hireDate ?? app.startDate ?? null;
+    const hireDateStr = startAnchor ? startAnchor.toISOString().slice(0, 10) : null;
     let section2Due: string | null = null;
-    if (assoc?.hireDate) {
-      // Three business days from hire date (cheap calendar approximation —
-      // skips weekends, ignores federal holidays).
-      let due = new Date(assoc.hireDate);
+    if (startAnchor) {
+      // Three business days from the start date (cheap calendar
+      // approximation — skips weekends, ignores federal holidays).
+      let due = new Date(startAnchor);
       let added = 0;
       while (added < 3) {
         due = new Date(due.getTime() + 24 * 60 * 60 * 1000);
@@ -2515,7 +2640,7 @@ onboardingRouter.post('/applications/:id/i9/section1', async (req, res, next) =>
       clientName: i9Client?.name ?? 'the client',
       hireDate: hireDateStr,
       section2DueDate: section2Due,
-      i9Url: `${env.APP_BASE_URL}/admin/applications/${app.id}/i9`,
+      i9Url: `${env.APP_BASE_URL}/onboarding/applications/${app.id}`,
     });
     void notifyAllAdmins({
       subject: i9Tpl.subject,
@@ -3400,6 +3525,7 @@ onboardingRouter.post(
             body: rejTpl.text,
             html: rejTpl.html,
             category: 'onboarding',
+            emailFallback: true,
           });
           void notifyManager(app.associateId, {
             subject: 'Application declined on your team',

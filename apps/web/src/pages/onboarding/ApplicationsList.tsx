@@ -28,9 +28,11 @@ import {
   bulkResendInvite,
   getApplicationStats,
   listApplications,
+  nudgeApplicant,
   resendInvite,
 } from '@/lib/onboardingApi';
-import { usePrompt } from '@/lib/confirm';
+import { useConfirm, usePrompt } from '@/lib/confirm';
+import { fmtDate } from '@/lib/format';
 import { listClients } from '@/lib/clientsApi';
 import type { ClientSummary } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
@@ -221,10 +223,66 @@ function daysSince(iso: string, now: number): number {
   return Math.floor((now - new Date(iso).getTime()) / ONE_DAY_MS);
 }
 
+function isTerminal(a: ApplicationSummary): boolean {
+  return a.status === 'APPROVED' || a.status === 'REJECTED';
+}
+
+/** Last movement on the application: latest task completion, else the invite. */
+function lastActivityIso(a: ApplicationSummary): string {
+  return a.lastActivityAt ?? a.invitedAt;
+}
+
+// Bulk-nudge staleness is deliberately more aggressive than the 7-day
+// "stuck" banner — 3 idle days is when a gentle poke still lands well.
+const NUDGE_STALE_DAYS = 3;
+
+function isNudgeStale(a: ApplicationSummary, now: number): boolean {
+  if (isTerminal(a)) return false;
+  if (a.percentComplete >= 100) return false;
+  return now - new Date(lastActivityIso(a)).getTime() > NUDGE_STALE_DAYS * ONE_DAY_MS;
+}
+
+/** Idle-days tone for the "Blocked on" column. */
+function idleTone(days: number): string {
+  if (days >= 7) return 'text-alert';
+  if (days >= 3) return 'text-warning';
+  return 'text-silver/60';
+}
+
+/** Start-date risk chip: unfinished checklist vs. an imminent/past start. */
+function startRisk(a: ApplicationSummary, now: number): 'past' | 'at-risk' | null {
+  if (!a.startDate || a.percentComplete >= 100 || isTerminal(a)) return null;
+  const startMs = new Date(a.startDate).getTime();
+  if (startMs < now) return 'past';
+  if (startMs - now <= 7 * ONE_DAY_MS) return 'at-risk';
+  return null;
+}
+
+/** Personalized nudge subject/body — used both by the single-row dialog
+ *  prefill and the bulk "Nudge all stale" loop. The server appends the
+ *  portal link, so the body doesn't need one. */
+function nudgeContentFor(a: ApplicationSummary): { subject: string; body: string } {
+  const firstName = a.associateName.trim().split(/\s+/)[0] || 'there';
+  const subject = a.blockedOnTitle
+    ? `Quick nudge: ${a.blockedOnTitle}`
+    : 'Quick check-in on your onboarding';
+  const body = [
+    `Hi ${firstName},`,
+    '',
+    a.blockedOnTitle
+      ? `Your onboarding is ${a.percentComplete}% done — the next step is '${a.blockedOnTitle}'. It only takes a few minutes.`
+      : `Your onboarding is ${a.percentComplete}% done — just a few tasks left, and each only takes a few minutes.`,
+    '',
+    "Let us know if you're stuck.",
+  ].join('\n');
+  return { subject, body };
+}
+
 export function ApplicationsList() {
   const { can } = useAuth();
   const canManage = can('manage:onboarding');
   const prompt = usePrompt();
+  const confirm = useConfirm();
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Default lands on ACTIVE so terminal applications (Approved/Rejected)
@@ -299,14 +357,15 @@ export function ApplicationsList() {
   const [resendingIds, setResendingIds] = useState<Set<string>>(new Set());
   const [bulkResending, setBulkResending] = useState(false);
   const [bulkRejecting, setBulkRejecting] = useState(false);
+  const [bulkNudging, setBulkNudging] = useState(false);
 
   // Bulk-select state. The set holds applicationIds; "select all" applies
   // to the *currently visible* (filtered) rows so it never spans pages
   // worth of work the user can't see.
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  // Single-row nudge dialog (one applicant at a time — bulk nudge is
-  // intentionally not a thing because the body is per-recipient).
+  // Single-row nudge dialog. Bulk nudge exists too ("Nudge all stale") —
+  // bodies are personalized per recipient via nudgeContentFor.
   const [nudgeTarget, setNudgeTarget] = useState<ApplicationSummary | null>(null);
 
   // Phase 72 — slide-over detail drawer. Click a row → keep the list mounted
@@ -384,11 +443,19 @@ export function ApplicationsList() {
   const now = Date.now();
   const stats = statsData ?? EMPTY_STATS;
 
+  // Visible rows that qualify for a bulk nudge: unfinished, non-terminal,
+  // and no movement (task completion, else invite) for > 3 days.
+  const staleNudgeTargets = (items ?? []).filter((a) => isNudgeStale(a, now));
+
   const onResend = async (a: ApplicationSummary) => {
     if (resendingIds.has(a.id)) return;
-    const next = new Set(resendingIds);
-    next.add(a.id);
-    setResendingIds(next);
+    // Functional updates — a plain `new Set(resendingIds)` here would close
+    // over a stale set and concurrent resends would clear each other.
+    setResendingIds((prev) => {
+      const n = new Set(prev);
+      n.add(a.id);
+      return n;
+    });
     try {
       const res = await resendInvite(a.id);
       if (res.inviteUrl) {
@@ -406,9 +473,11 @@ export function ApplicationsList() {
         toast.error('Resend failed');
       }
     } finally {
-      const after = new Set(resendingIds);
-      after.delete(a.id);
-      setResendingIds(after);
+      setResendingIds((prev) => {
+        const n = new Set(prev);
+        n.delete(a.id);
+        return n;
+      });
     }
   };
 
@@ -519,6 +588,57 @@ export function ApplicationsList() {
     } finally {
       setBulkRejecting(false);
     }
+  };
+
+  // Bulk nudge — sequential (one email API call at a time, no thundering
+  // herd), each with a body personalized via nudgeContentFor.
+  const onBulkNudge = async () => {
+    if (bulkNudging) return;
+    const targets = staleNudgeTargets;
+    if (targets.length === 0) return;
+    const n = targets.length;
+    const ok = await confirm({
+      title: `Nudge ${n} stale applicant${n === 1 ? '' : 's'}?`,
+      description:
+        `Sends ${n} personalized email${n === 1 ? '' : 's'} — each mentions the recipient's progress and the task they're stuck on. Doesn't rotate invite tokens.`,
+      confirmLabel: `Send ${n} nudge${n === 1 ? '' : 's'}`,
+    });
+    if (!ok) return;
+    setBulkNudging(true);
+    let sent = 0;
+    const failures: string[] = [];
+    try {
+      for (const a of targets) {
+        const { subject, body } = nudgeContentFor(a);
+        try {
+          const res = await nudgeApplicant(a.id, { subject, body });
+          if (res.emailSent) {
+            sent += 1;
+          } else {
+            failures.push(`${a.associateName}: email delivery failed`);
+          }
+        } catch (err) {
+          failures.push(
+            `${a.associateName}: ${err instanceof ApiError ? err.message : 'request failed'}`,
+          );
+        }
+      }
+    } finally {
+      setBulkNudging(false);
+    }
+    if (failures.length === 0) {
+      toast.success(`Nudged ${sent} applicant${sent === 1 ? '' : 's'}`);
+    } else if (sent === 0) {
+      toast.error(`All ${failures.length} nudges failed`, {
+        description: failures[0],
+      });
+    } else {
+      toast.message(`Nudged ${sent}, ${failures.length} failed`, {
+        description: failures[0],
+      });
+    }
+    refresh();
+    refreshStats();
   };
 
   return (
@@ -781,6 +901,18 @@ export function ApplicationsList() {
               );
             })}
           </div>
+          {staleNudgeTargets.length > 0 && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={onBulkNudge}
+              loading={bulkNudging}
+              title={`Send a personalized nudge to every visible applicant idle for more than ${NUDGE_STALE_DAYS} days`}
+            >
+              <MessageCircle className="h-4 w-4" />
+              Nudge all stale ({staleNudgeTargets.length})
+            </Button>
+          )}
           <span className="ml-auto text-[10px] text-silver/80 tabular-nums">
             {items ? `${items.length} shown` : ''}
           </span>
@@ -864,6 +996,12 @@ export function ApplicationsList() {
         onOpenChange={(v) => !v && setNudgeTarget(null)}
         applicationId={nudgeTarget?.id ?? null}
         associateName={nudgeTarget?.associateName ?? ''}
+        suggestedSubject={
+          nudgeTarget?.blockedOnTitle
+            ? `Quick nudge: ${nudgeTarget.blockedOnTitle}`
+            : undefined
+        }
+        suggestedBody={nudgeTarget ? nudgeContentFor(nudgeTarget).body : undefined}
       />
 
       {/* Bulk-actions toolbar — only visible when at least one row is selected.
@@ -930,6 +1068,8 @@ export function ApplicationsList() {
                 <TableHead className="hidden md:table-cell">Invited</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="w-56">Progress</TableHead>
+                <TableHead className="hidden lg:table-cell">Blocked on</TableHead>
+                <TableHead className="hidden md:table-cell">Start</TableHead>
                 {canManage && <TableHead className="w-24" aria-label="Actions" />}
               </TableRow>
             </TableHeader>
@@ -937,6 +1077,8 @@ export function ApplicationsList() {
               {items.map((a) => {
                 const stale = isStale(a, now);
                 const isSelected = selected.has(a.id);
+                const idleDays = daysSince(lastActivityIso(a), now);
+                const risk = startRisk(a, now);
                 return (
                   <TableRow
                     key={a.id}
@@ -1052,6 +1194,35 @@ export function ApplicationsList() {
                           {a.percentComplete}%
                         </span>
                       </div>
+                    </TableCell>
+                    <TableCell className="hidden lg:table-cell text-xs">
+                      {isTerminal(a) ||
+                      a.percentComplete === 100 ||
+                      !a.blockedOnTitle ? (
+                        <span className="text-silver/50">—</span>
+                      ) : (
+                        <span className="text-silver">
+                          {a.blockedOnTitle}
+                          <span className={cn('tabular-nums', idleTone(idleDays))}>
+                            {' '}· {idleDays}d idle
+                          </span>
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell text-xs whitespace-nowrap">
+                      <span className="text-silver tabular-nums">
+                        {fmtDate(a.startDate)}
+                      </span>
+                      {risk === 'past' && (
+                        <Badge variant="destructive" className="ml-1.5">
+                          past start
+                        </Badge>
+                      )}
+                      {risk === 'at-risk' && (
+                        <Badge variant="pending" className="ml-1.5">
+                          at risk
+                        </Badge>
+                      )}
                     </TableCell>
                     {canManage && (
                       <TableCell className="text-right whitespace-nowrap no-print">

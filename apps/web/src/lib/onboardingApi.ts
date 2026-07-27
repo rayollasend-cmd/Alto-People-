@@ -270,6 +270,25 @@ export function getApplicationAudit(
   );
 }
 
+export interface OnboardingProfile {
+  firstName: string;
+  lastName: string;
+  /** YYYY-MM-DD or null. */
+  dob: string | null;
+  phone: string | null;
+  addressLine1: string | null;
+  addressLine2: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+}
+
+export function getProfile(applicationId: string): Promise<OnboardingProfile> {
+  return apiFetch<OnboardingProfile>(
+    `/onboarding/applications/${applicationId}/profile`
+  );
+}
+
 export function submitProfile(
   applicationId: string,
   body: ProfileSubmission

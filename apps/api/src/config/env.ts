@@ -109,7 +109,9 @@ const EnvSchema = z.object({
   // Phase 17 — invite reminder cron. 0 (default) disables. Set e.g. 1800
   // (every 30 min) in production. The threshold for "stale" is hard-coded
   // at 48h in lib/inviteReminder.ts; this only controls scan cadence.
-  INVITE_REMINDER_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(0),
+  // On by default (6h) — the sweep is the only automation keeping stalled
+  // onboarding moving. Set 0 to disable.
+  INVITE_REMINDER_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(21600),
   // Manual compliance attestation reminder cron. 0 (default) disables;
   // production should set 3600 (hourly) so HR gets pinged the day a
   // weekly/monthly compliance attestation comes due. Per-signal de-dup

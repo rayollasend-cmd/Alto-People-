@@ -196,6 +196,7 @@ export function DocumentUploadTask() {
           ref={fileInputRef}
           type="file"
           accept={ACCEPTED_MIMES}
+          capture="environment"
           onChange={onFileChange}
           className="hidden"
         />
