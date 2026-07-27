@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Briefcase, MapPin, Send, Users } from 'lucide-react';
 import { toast } from 'sonner';
+import { cn } from '@/lib/cn';
 import { ApiError } from '@/lib/api';
 import {
   applyToInternalJob,
@@ -23,19 +24,21 @@ import {
   Button,
   Card,
   CardContent,
+  ConfirmDialog,
   Drawer,
   DrawerBody,
   DrawerFooter,
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  Input,
   PageHeader,
   Select,
   SkeletonRows,
   Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, fmtMoney } from '@/lib/format';
 
 const STATUS_VARIANT: Record<
   InternalApplicationStatus,
@@ -50,31 +53,89 @@ const STATUS_VARIANT: Record<
   WITHDRAWN: 'outline',
 };
 
+/** The my-applications DTO may carry the last status-change stamp
+ *  (server sets reviewedAt on every manager decision). */
+type MyApplicationWithReview = MyApplicationRow & { reviewedAt?: string | null };
+
+/** Inline load-failure affordance: real error + Retry, never a fake empty. */
+function LoadErrorState({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="p-6 text-center">
+      <p role="alert" className="text-sm text-alert mb-3">
+        {message}
+      </p>
+      <Button size="sm" variant="secondary" onClick={onRetry}>
+        Retry
+      </Button>
+    </div>
+  );
+}
+
+function errMessage(err: unknown, fallback: string): string {
+  return err instanceof ApiError ? err.message : fallback;
+}
+
 export function InternalJobsHome() {
   const { user } = useAuth();
   const confirm = useConfirm();
   const canManage = user ? hasCapability(user.role, 'manage:recruiting') : false;
   const [tab, setTab] = useState<'browse' | 'mine'>('browse');
   const [jobs, setJobs] = useState<JobRow[] | null>(null);
-  const [mine, setMine] = useState<MyApplicationRow[] | null>(null);
+  const [jobsError, setJobsError] = useState<string | null>(null);
+  const [mine, setMine] = useState<MyApplicationWithReview[] | null>(null);
+  const [mineError, setMineError] = useState<string | null>(null);
   const [applyJob, setApplyJob] = useState<JobRow | null>(null);
   const [reviewJob, setReviewJob] = useState<JobRow | null>(null);
+  const [search, setSearch] = useState('');
+  const [locationFilter, setLocationFilter] = useState<string | null>(null);
 
   const refresh = () => {
     setJobs(null);
+    setJobsError(null);
     listInternalJobs()
       .then((r) => setJobs(r.jobs))
-      .catch(() => setJobs([]));
+      .catch((err) => setJobsError(errMessage(err, 'Failed to load open positions.')));
     if (tab === 'mine') {
       setMine(null);
+      setMineError(null);
       listMyApplications()
         .then((r) => setMine(r.applications))
-        .catch(() => setMine([]));
+        .catch((err) =>
+          setMineError(errMessage(err, 'Failed to load your applications.')),
+        );
     }
   };
   useEffect(() => {
     refresh();
   }, [tab]);
+
+  // Distinct locations across open jobs power the filter chips.
+  const locations = useMemo(() => {
+    if (!jobs) return [];
+    return Array.from(
+      new Set(jobs.map((j) => j.location).filter((l): l is string => Boolean(l))),
+    ).sort((a, b) => a.localeCompare(b));
+  }, [jobs]);
+
+  const visibleJobs = useMemo(() => {
+    if (!jobs) return null;
+    const q = search.trim().toLowerCase();
+    return jobs.filter((j) => {
+      if (locationFilter && j.location !== locationFilter) return false;
+      if (!q) return true;
+      return (
+        j.title.toLowerCase().includes(q) ||
+        (j.location ?? '').toLowerCase().includes(q) ||
+        (j.clientName ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [jobs, search, locationFilter]);
 
   return (
     <div className="space-y-5">
@@ -102,25 +163,96 @@ export function InternalJobsHome() {
       </div>
 
       {tab === 'browse' ? (
-        jobs === null ? (
-          <Card>
-            <CardContent className="p-6">
-              <SkeletonRows count={4} />
-            </CardContent>
-          </Card>
-        ) : jobs.length === 0 ? (
-          <Card>
-            <CardContent className="p-0">
-              <EmptyState
-                icon={Briefcase}
-                title="No open positions"
-                description="Check back — internal openings are posted here as roles open up."
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="w-full sm:w-72">
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search title, client, or location…"
+                aria-label="Search internal jobs"
               />
-            </CardContent>
-          </Card>
-        ) : (
+            </div>
+            {locations.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  onClick={() => setLocationFilter(null)}
+                  className={cn(
+                    locationFilter === null &&
+                      'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold',
+                  )}
+                >
+                  All locations
+                </Button>
+                {locations.map((l) => (
+                  <Button
+                    key={l}
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    onClick={() =>
+                      setLocationFilter(locationFilter === l ? null : l)
+                    }
+                    className={cn(
+                      locationFilter === l &&
+                        'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold',
+                    )}
+                  >
+                    {l}
+                  </Button>
+                ))}
+              </div>
+            )}
+          </div>
+          {jobsError ? (
+            <Card>
+              <CardContent className="p-0">
+                <LoadErrorState message={jobsError} onRetry={refresh} />
+              </CardContent>
+            </Card>
+          ) : visibleJobs === null ? (
+            <Card>
+              <CardContent className="p-6">
+                <SkeletonRows count={4} />
+              </CardContent>
+            </Card>
+          ) : visibleJobs.length === 0 ? (
+            <Card>
+              <CardContent className="p-0">
+                <EmptyState
+                  icon={Briefcase}
+                  title={
+                    search.trim() || locationFilter
+                      ? 'No positions match your filters'
+                      : 'No open positions'
+                  }
+                  description={
+                    search.trim() || locationFilter
+                      ? 'Try a different search or clear the location filter.'
+                      : 'Check back — internal openings are posted here as roles open up.'
+                  }
+                  action={
+                    search.trim() || locationFilter ? (
+                      <Button
+                        variant="secondary"
+                        onClick={() => {
+                          setSearch('');
+                          setLocationFilter(null);
+                        }}
+                      >
+                        Clear filters
+                      </Button>
+                    ) : undefined
+                  }
+                />
+              </CardContent>
+            </Card>
+          ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {jobs.map((j) => (
+            {visibleJobs.map((j) => (
               <Card key={j.id}>
                 <CardContent className="p-4 space-y-2">
                   <div className="flex items-start justify-between">
@@ -148,7 +280,8 @@ export function InternalJobsHome() {
                     )}
                     {j.minSalary && j.maxSalary && (
                       <span>
-                        {j.currency} {j.minSalary}–{j.maxSalary}
+                        {fmtMoney(j.minSalary, { currency: j.currency })}–
+                        {fmtMoney(j.maxSalary, { currency: j.currency })}
                       </span>
                     )}
                   </div>
@@ -201,7 +334,14 @@ export function InternalJobsHome() {
               </Card>
             ))}
           </div>
-        )
+          )}
+        </div>
+      ) : mineError ? (
+        <Card>
+          <CardContent className="p-0">
+            <LoadErrorState message={mineError} onRetry={refresh} />
+          </CardContent>
+        </Card>
       ) : mine === null ? (
         <Card>
           <CardContent className="p-6">
@@ -230,6 +370,7 @@ export function InternalJobsHome() {
                   <div className="text-xs text-silver">
                     Applied {fmtDate(a.createdAt)}
                     {a.posting.location && ` · ${a.posting.location}`}
+                    {a.reviewedAt && ` · Status updated ${fmtDate(a.reviewedAt)}`}
                   </div>
                 </div>
                 <Badge variant={STATUS_VARIANT[a.status]}>
@@ -338,9 +479,9 @@ function ApplyDrawer({
         </div>
         <div>
           <Label>Resume URL (optional)</Label>
-          <input
+          <Input
             type="url"
-            className="mt-1 w-full bg-midnight border border-navy-secondary rounded p-2 text-white text-sm"
+            className="mt-1"
             value={resumeUrl}
             onChange={(e) => setResumeUrl(e.target.value)}
             placeholder="https://…"
@@ -369,16 +510,45 @@ function ReviewDrawer({
   onChanged: () => void;
 }) {
   const [apps, setApps] = useState<ApplicationDetail[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // REJECTED is destructive from the applicant's side, so it routes
+  // through a confirm with an optional reviewer note; other statuses
+  // apply immediately.
+  const [rejectTarget, setRejectTarget] = useState<ApplicationDetail | null>(null);
+  const [deciding, setDeciding] = useState(false);
 
   const refresh = () => {
     setApps(null);
+    setError(null);
     listApplicationsForJob(job.id)
       .then((r) => setApps(r.applications))
-      .catch(() => setApps([]));
+      .catch((err) => setError(errMessage(err, 'Failed to load applicants.')));
   };
   useEffect(() => {
     refresh();
   }, [job.id]);
+
+  const applyStatus = async (
+    id: string,
+    status: InternalApplicationStatus,
+    reviewerNotes?: string | null,
+  ) => {
+    setDeciding(true);
+    try {
+      await decideApplication(id, {
+        status,
+        ...(reviewerNotes !== undefined ? { reviewerNotes } : {}),
+      });
+      toast.success(`Status updated to ${STATUS_LABELS[status]}.`);
+      setRejectTarget(null);
+      refresh();
+      onChanged();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setDeciding(false);
+    }
+  };
 
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
@@ -386,10 +556,16 @@ function ReviewDrawer({
         <DrawerTitle>Applicants — {job.title}</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-3">
-        {apps === null ? (
+        {error ? (
+          <LoadErrorState message={error} onRetry={refresh} />
+        ) : apps === null ? (
           <SkeletonRows count={3} />
         ) : apps.length === 0 ? (
-          <div className="text-sm text-silver">No applicants yet.</div>
+          <EmptyState
+            icon={Users}
+            title="No applicants yet"
+            description="Associates who apply to this posting will show up here."
+          />
         ) : (
           apps.map((a) => (
             <Card key={a.id}>
@@ -407,18 +583,15 @@ function ReviewDrawer({
                   <Select
                     size="sm"
                     value={a.status}
-                    onChange={async (e) => {
-                      try {
-                        await decideApplication(a.id, {
-                          status: e.target.value as InternalApplicationStatus,
-                        });
-                        refresh();
-                        onChanged();
-                      } catch (err) {
-                        toast.error(
-                          err instanceof ApiError ? err.message : 'Failed.',
-                        );
+                    disabled={deciding}
+                    onChange={(e) => {
+                      const next = e.target.value as InternalApplicationStatus;
+                      if (next === a.status) return;
+                      if (next === 'REJECTED') {
+                        setRejectTarget(a);
+                        return;
                       }
+                      void applyStatus(a.id, next);
                     }}
                   >
                     {(Object.keys(STATUS_LABELS) as InternalApplicationStatus[]).map(
@@ -453,6 +626,26 @@ function ReviewDrawer({
       <DrawerFooter>
         <Button onClick={onClose}>Close</Button>
       </DrawerFooter>
+      <ConfirmDialog
+        open={rejectTarget !== null}
+        onOpenChange={(o) => !o && setRejectTarget(null)}
+        title={
+          rejectTarget
+            ? `Reject ${rejectTarget.associateName}'s application?`
+            : 'Reject application'
+        }
+        description="They'll be notified that their internal application was not selected."
+        confirmLabel="Reject application"
+        destructive
+        requireReason="optional"
+        reasonLabel="Reason (optional)"
+        reasonPlaceholder="e.g., Another applicant was a closer fit for this role."
+        busy={deciding}
+        onConfirm={(reason) => {
+          if (!rejectTarget) return;
+          void applyStatus(rejectTarget.id, 'REJECTED', reason.trim() || null);
+        }}
+      />
     </Drawer>
   );
 }

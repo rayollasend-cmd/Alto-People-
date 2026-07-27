@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { CalendarRange, Pencil, Plus } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { CalendarRange, Download, Pencil, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
   TimeOffCategory,
@@ -10,7 +10,8 @@ import {
   upsertAdminEntitlement,
 } from '@/lib/timeOffApi';
 import { ApiError } from '@/lib/api';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, ymdLocal } from '@/lib/format';
+import { downloadCsv } from '@/lib/csv';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import {
@@ -28,6 +29,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
@@ -51,7 +53,29 @@ const CATEGORIES: TimeOffCategory[] = [
   'OTHER',
 ];
 
+const MONTH_NAMES = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
+/** Days in a month, 1-based month. Year 2000 is a leap year, so February
+ *  offers the 29th — a valid (if unusual) yearly anchor. */
+const daysInMonth = (month: number) => new Date(2000, month, 0).getDate();
+
 const fmtHours = (mins: number) => `${(mins / 60).toFixed(1)}h`;
+
+const fmtAnchor = (month: number, day: number) =>
+  `${MONTH_NAMES[month - 1]?.slice(0, 3) ?? month} ${day}`;
 
 interface Props {
   canManage: boolean;
@@ -60,6 +84,10 @@ interface Props {
 export function AdminTimeOffEntitlementsView({ canManage }: Props) {
   const [items, setItems] = useState<TimeOffEntitlement[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState<TimeOffCategory | 'ALL'>(
+    'ALL',
+  );
   const [editing, setEditing] = useState<TimeOffEntitlement | null>(null);
   const [creating, setCreating] = useState(false);
 
@@ -77,6 +105,38 @@ export function AdminTimeOffEntitlementsView({ canManage }: Props) {
     refresh();
   }, [refresh]);
 
+  const visible = useMemo(() => {
+    if (!items) return null;
+    const q = search.trim().toLowerCase();
+    return items.filter(
+      (e) =>
+        (categoryFilter === 'ALL' || e.category === categoryFilter) &&
+        (!q || e.associateName.toLowerCase().includes(q)),
+    );
+  }, [items, search, categoryFilter]);
+
+  const exportCsv = () => {
+    if (!visible || visible.length === 0) return;
+    downloadCsv(`time-off-entitlements-${ymdLocal()}.csv`, [
+      [
+        'Associate',
+        'Category',
+        'Annual hours',
+        'Carryover cap hours',
+        'Anchor',
+        'Last grant',
+      ],
+      ...visible.map((e) => [
+        e.associateName,
+        e.category,
+        e.annualMinutes / 60,
+        e.carryoverMaxMinutes / 60,
+        fmtAnchor(e.policyAnchorMonth, e.policyAnchorDay),
+        e.lastGrantedAt ? fmtDate(e.lastGrantedAt) : '',
+      ]),
+    ]);
+  };
+
   return (
     <Card>
       <CardHeader>
@@ -93,29 +153,94 @@ export function AdminTimeOffEntitlementsView({ canManage }: Props) {
               accrual model and isn't shown here.
             </CardDescription>
           </div>
-          {canManage && (
-            <Button size="sm" onClick={() => setCreating(true)}>
-              <Plus className="h-4 w-4" />
-              New entitlement
+          <div className="flex shrink-0 gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={exportCsv}
+              disabled={!visible || visible.length === 0}
+            >
+              <Download className="h-4 w-4" />
+              Export CSV
             </Button>
+            {canManage && (
+              <Button size="sm" onClick={() => setCreating(true)}>
+                <Plus className="h-4 w-4" />
+                New entitlement
+              </Button>
+            )}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 mt-3">
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search associate…"
+            aria-label="Search by associate name"
+            className="w-full sm:w-56"
+          />
+          <Select
+            value={categoryFilter}
+            onChange={(e) =>
+              setCategoryFilter(e.target.value as TimeOffCategory | 'ALL')
+            }
+            aria-label="Filter by category"
+            className="w-auto"
+          >
+            <option value="ALL">All categories</option>
+            {CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </Select>
+          {items && visible && (
+            <span className="text-xs text-silver/80 tabular-nums">
+              {visible.length === items.length
+                ? `${items.length} row${items.length === 1 ? '' : 's'}`
+                : `${visible.length} of ${items.length} rows`}
+            </span>
           )}
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        {error && <ErrorBanner className="m-4">{error}</ErrorBanner>}
-        {!items && (
+        {error && (
+          <div className="m-4 space-y-3">
+            <ErrorBanner>{error}</ErrorBanner>
+            <Button size="sm" variant="secondary" onClick={refresh}>
+              Retry
+            </Button>
+          </div>
+        )}
+        {!error && !items && (
           <div className="p-4 space-y-2">
             <Skeleton className="h-10" />
             <Skeleton className="h-10" />
           </div>
         )}
-        {items && items.length === 0 && (
+        {!error && items && items.length === 0 && (
+          <div className="p-6">
+            <EmptyState
+              icon={CalendarRange}
+              title="No entitlements yet"
+              description="Set up a VACATION or PTO allowance for an associate to start granting annual balances."
+              action={
+                canManage ? (
+                  <Button onClick={() => setCreating(true)}>
+                    <Plus className="h-4 w-4" />
+                    New entitlement
+                  </Button>
+                ) : undefined
+              }
+            />
+          </div>
+        )}
+        {!error && items && items.length > 0 && visible && visible.length === 0 && (
           <p className="text-sm text-silver p-6 text-center">
-            No entitlements configured yet. Click "New entitlement" to set up
-            a VACATION or PTO allowance for an associate.
+            No entitlements match your filters.
           </p>
         )}
-        {items && items.length > 0 && (
+        {!error && visible && visible.length > 0 && (
           <Table>
             <TableHeader>
               <TableRow>
@@ -129,7 +254,7 @@ export function AdminTimeOffEntitlementsView({ canManage }: Props) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {items.map((e) => (
+              {visible.map((e) => (
                 <TableRow key={e.id}>
                   <TableCell className="text-white">{e.associateName}</TableCell>
                   <TableCell>
@@ -144,8 +269,7 @@ export function AdminTimeOffEntitlementsView({ canManage }: Props) {
                     {fmtHours(e.carryoverMaxMinutes)}
                   </TableCell>
                   <TableCell className="hidden lg:table-cell text-silver text-xs">
-                    {String(e.policyAnchorMonth).padStart(2, '0')}-
-                    {String(e.policyAnchorDay).padStart(2, '0')}
+                    {fmtAnchor(e.policyAnchorMonth, e.policyAnchorDay)}
                   </TableCell>
                   <TableCell className="hidden lg:table-cell text-silver text-xs">
                     {fmtDate(e.lastGrantedAt)}
@@ -344,26 +468,41 @@ function EntitlementDialog({ open, onOpenChange, existing, onSaved }: DialogProp
           <div className="grid grid-cols-2 gap-3">
             <Field label="Anchor month">
               {(p) => (
-                <Input
-                  type="number"
-                  min="1"
-                  max="12"
-                  value={anchorMonth}
-                  onChange={(e) => setAnchorMonth(Number(e.target.value))}
+                <Select
+                  value={String(anchorMonth)}
+                  onChange={(e) => {
+                    const m = Number(e.target.value);
+                    setAnchorMonth(m);
+                    // Keep the day valid for the new month (e.g. Jan 31 → Feb 29).
+                    const max = daysInMonth(m);
+                    setAnchorDay((d) => (d > max ? max : d));
+                  }}
                   {...p}
-                />
+                >
+                  {MONTH_NAMES.map((name, i) => (
+                    <option key={name} value={i + 1}>
+                      {name}
+                    </option>
+                  ))}
+                </Select>
               )}
             </Field>
             <Field label="Anchor day" hint="Reset fires on this date each year.">
               {(p) => (
-                <Input
-                  type="number"
-                  min="1"
-                  max="31"
-                  value={anchorDay}
+                <Select
+                  value={String(anchorDay)}
                   onChange={(e) => setAnchorDay(Number(e.target.value))}
                   {...p}
-                />
+                >
+                  {Array.from(
+                    { length: daysInMonth(anchorMonth) },
+                    (_, i) => i + 1,
+                  ).map((d) => (
+                    <option key={d} value={d}>
+                      {d}
+                    </option>
+                  ))}
+                </Select>
               )}
             </Field>
           </div>
@@ -372,11 +511,7 @@ function EntitlementDialog({ open, onOpenChange, existing, onSaved }: DialogProp
             anchorMonth >= 1 &&
             anchorMonth <= 12 && (
               <p className="text-xs text-silver">
-                Renews every{' '}
-                {new Date(2000, anchorMonth - 1, 1).toLocaleString('en-US', {
-                  month: 'long',
-                })}{' '}
-                {anchorDay} · up to{' '}
+                Renews every {MONTH_NAMES[anchorMonth - 1]} {anchorDay} · up to{' '}
                 <span className="text-gold">
                   {Number(annualHours) + Number(carryoverHours)}h
                 </span>{' '}

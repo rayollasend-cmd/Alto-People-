@@ -34,7 +34,7 @@ describe('<Login>', () => {
   it('renders email and password fields and a sign-in button', () => {
     renderLogin();
     expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/password/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^password/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument();
   });
 
@@ -44,11 +44,11 @@ describe('<Login>', () => {
     const button = screen.getByRole('button', { name: /sign in/i });
     expect(button).toBeDisabled();
 
-    await user.type(screen.getByLabelText(/password/i), 'short');
+    await user.type(screen.getByLabelText(/^password/i), 'short');
     expect(button).toBeDisabled();
 
-    await user.clear(screen.getByLabelText(/password/i));
-    await user.type(screen.getByLabelText(/password/i), 'twelve-chars');
+    await user.clear(screen.getByLabelText(/^password/i));
+    await user.type(screen.getByLabelText(/^password/i), 'twelve-chars');
     expect(button).not.toBeDisabled();
   });
 
@@ -59,7 +59,7 @@ describe('<Login>', () => {
 
     await user.clear(screen.getByLabelText(/email/i));
     await user.type(screen.getByLabelText(/email/i), '  admin@altohr.com  ');
-    await user.type(screen.getByLabelText(/password/i), 'password-1234');
+    await user.type(screen.getByLabelText(/^password/i), 'password-1234');
     await user.click(screen.getByRole('button', { name: /sign in/i }));
 
     await waitFor(() => expect(signIn).toHaveBeenCalledTimes(1));
@@ -74,7 +74,7 @@ describe('<Login>', () => {
     renderLogin(signIn);
 
     await user.type(screen.getByLabelText(/email/i), 'admin@altohr.com');
-    await user.type(screen.getByLabelText(/password/i), 'password-1234');
+    await user.type(screen.getByLabelText(/^password/i), 'password-1234');
     await user.click(screen.getByRole('button', { name: /sign in/i }));
 
     const alert = await screen.findByRole('alert');
@@ -89,7 +89,7 @@ describe('<Login>', () => {
     renderLogin(signIn);
 
     await user.type(screen.getByLabelText(/email/i), 'admin@altohr.com');
-    await user.type(screen.getByLabelText(/password/i), 'password-1234');
+    await user.type(screen.getByLabelText(/^password/i), 'password-1234');
     await user.click(screen.getByRole('button', { name: /sign in/i }));
 
     const alert = await screen.findByRole('alert');
@@ -104,7 +104,7 @@ describe('<Login>', () => {
     renderLogin(signIn);
 
     await user.type(screen.getByLabelText(/email/i), 'admin@altohr.com');
-    await user.type(screen.getByLabelText(/password/i), 'password-1234');
+    await user.type(screen.getByLabelText(/^password/i), 'password-1234');
     await user.click(screen.getByRole('button', { name: /sign in/i }));
 
     const alert = await screen.findByRole('alert');

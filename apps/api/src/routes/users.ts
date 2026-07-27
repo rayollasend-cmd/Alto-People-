@@ -43,27 +43,29 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
   const status = STATUS_FILTER.optional().parse(req.query.status);
   const q = z.string().min(1).max(200).optional().parse(req.query.q);
 
-  const rows = await prisma.user.findMany({
-    where: {
-      deletedAt: null,
-      ...(role ? { role } : {}),
-      ...(status ? { status } : {}),
-      ...(q
-        ? {
-            OR: [
-              { email: { contains: q, mode: 'insensitive' as const } },
-              {
-                associate: {
-                  OR: [
-                    { firstName: { contains: q, mode: 'insensitive' as const } },
-                    { lastName: { contains: q, mode: 'insensitive' as const } },
-                  ],
-                },
+  const where = {
+    deletedAt: null,
+    ...(role ? { role } : {}),
+    ...(status ? { status } : {}),
+    ...(q
+      ? {
+          OR: [
+            { email: { contains: q, mode: 'insensitive' as const } },
+            {
+              associate: {
+                OR: [
+                  { firstName: { contains: q, mode: 'insensitive' as const } },
+                  { lastName: { contains: q, mode: 'insensitive' as const } },
+                ],
               },
-            ],
-          }
-        : {}),
-    },
+            },
+          ],
+        }
+      : {}),
+  };
+  const total = await prisma.user.count({ where });
+  const rows = await prisma.user.findMany({
+    where,
     select: {
       id: true,
       email: true,
@@ -97,8 +99,30 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
       clientId: u.clientId,
       clientName: u.client?.name ?? null,
     })),
+    // True row count before the 500 cap — the UI (and the billing seat
+    // count) must never present a capped page length as the total.
+    total,
   });
 });
+
+/**
+ * Aggregate seat counts. BillingHome used to derive "active seats" from
+ * the capped list length, silently under-billing past 500 accounts.
+ */
+usersRouter.get(
+  '/admin/users/counts',
+  requireCapability('view:hr-admin'),
+  async (_req, res) => {
+    const grouped = await prisma.user.groupBy({
+      by: ['status'],
+      where: { deletedAt: null },
+      _count: { _all: true },
+    });
+    const counts: Record<string, number> = { ACTIVE: 0, INVITED: 0, DISABLED: 0 };
+    for (const g of grouped) counts[g.status] = g._count._all;
+    res.json({ counts, total: Object.values(counts).reduce((a, b) => a + b, 0) });
+  },
+);
 
 // ----- Patch role / status -------------------------------------------------
 

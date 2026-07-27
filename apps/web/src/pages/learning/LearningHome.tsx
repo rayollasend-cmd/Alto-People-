@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle, BookOpen, GraduationCap, Plus, X } from 'lucide-react';
 import { ApiError } from '@/lib/api';
-import { fmtDate } from '@/lib/format';
+import { downloadCsv } from '@/lib/csv';
+import { fmtDate, ymdLocal } from '@/lib/format';
 import {
   archiveCourse,
   completeEnrollment,
@@ -14,6 +15,7 @@ import {
   publishCourse,
   waiveEnrollment,
   type Course,
+  type CourseStatus,
   type Enrollment,
   type EnrollmentStatus,
   type ExpiringEnrollment,
@@ -35,6 +37,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -86,6 +89,20 @@ export function LearningHome() {
   );
 }
 
+/** Shared load-failure block: message + Retry. Never fake an empty state. */
+function LoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="p-6 space-y-3">
+      <p role="alert" className="text-sm text-alert">
+        {message}
+      </p>
+      <Button size="sm" variant="secondary" onClick={onRetry}>
+        Retry
+      </Button>
+    </div>
+  );
+}
+
 const COURSE_BADGE: Record<Course['status'], 'pending' | 'success' | 'default'> = {
   DRAFT: 'pending',
   PUBLISHED: 'success',
@@ -95,37 +112,79 @@ const COURSE_BADGE: Record<Course['status'], 'pending' | 'success' | 'default'> 
 function CoursesTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
   const [rows, setRows] = useState<Course[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<CourseStatus | 'ALL'>('ALL');
   const [showNew, setShowNew] = useState(false);
   const [enrollFor, setEnrollFor] = useState<Course | null>(null);
 
   const refresh = () => {
     setRows(null);
+    setError(null);
     listCourses()
       .then((r) => setRows(r.courses))
-      .catch(() => setRows([]));
+      .catch((err) =>
+        setError(err instanceof ApiError ? err.message : 'Failed to load courses.'),
+      );
   };
   useEffect(() => {
     refresh();
   }, []);
 
+  const q = search.trim().toLowerCase();
+  const filtered = (rows ?? []).filter(
+    (c) =>
+      (!q || c.title.toLowerCase().includes(q)) &&
+      (statusFilter === 'ALL' || c.status === statusFilter),
+  );
+
   return (
     <div className="space-y-4">
-      {canManage && (
-        <div className="flex justify-end">
-          <Button onClick={() => setShowNew(true)}>
-            <Plus className="mr-2 h-4 w-4" /> New course
-          </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          className="h-8 w-56"
+          placeholder="Search courses…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          aria-label="Search courses by name"
+        />
+        <Select
+          size="sm"
+          className="w-40"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as CourseStatus | 'ALL')}
+          aria-label="Filter courses by status"
+        >
+          <option value="ALL">All statuses</option>
+          <option value="DRAFT">Draft</option>
+          <option value="PUBLISHED">Published</option>
+          <option value="ARCHIVED">Archived</option>
+        </Select>
+        <div className="ml-auto">
+          {canManage && (
+            <Button onClick={() => setShowNew(true)}>
+              <Plus className="mr-2 h-4 w-4" /> New course
+            </Button>
+          )}
         </div>
-      )}
+      </div>
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {error ? (
+            <LoadError message={error} onRetry={refresh} />
+          ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
               icon={BookOpen}
               title="No courses"
               description="Build a course catalog with required and optional training."
+            />
+          ) : filtered.length === 0 ? (
+            <EmptyState
+              icon={BookOpen}
+              title="No matching courses"
+              description="Adjust the search or status filter."
             />
           ) : (
             <Table>
@@ -141,7 +200,7 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((c) => (
+                {filtered.map((c) => (
                   <TableRow key={c.id} className="group">
                     <TableCell className="font-medium text-white">
                       {c.title}
@@ -165,8 +224,15 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
                         <Button
                           size="sm"
                           onClick={async () => {
-                            await publishCourse(c.id);
-                            refresh();
+                            try {
+                              await publishCourse(c.id);
+                              toast.success(`Published "${c.title}".`);
+                              refresh();
+                            } catch (err) {
+                              toast.error(
+                                err instanceof ApiError ? err.message : 'Failed to publish.',
+                              );
+                            }
                           }}
                         >
                           Publish
@@ -181,8 +247,24 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
                             size="sm"
                             variant="ghost"
                             onClick={async () => {
-                              await archiveCourse(c.id);
-                              refresh();
+                              if (
+                                !(await confirm({
+                                  title: 'Archive this course?',
+                                  description: `"${c.title}" will stop accepting new enrollments. Existing enrollments are kept.`,
+                                  confirmLabel: 'Archive',
+                                  destructive: true,
+                                }))
+                              )
+                                return;
+                              try {
+                                await archiveCourse(c.id);
+                                toast.success(`Archived "${c.title}".`);
+                                refresh();
+                              } catch (err) {
+                                toast.error(
+                                  err instanceof ApiError ? err.message : 'Failed to archive.',
+                                );
+                              }
                             }}
                           >
                             Archive
@@ -294,11 +376,14 @@ function NewCourseDrawer({
         </div>
         <div className="flex items-center gap-3">
           <input
+            id="new-course-required"
             type="checkbox"
             checked={isRequired}
             onChange={(e) => setIsRequired(e.target.checked)}
           />
-          <Label>Required for compliance</Label>
+          <Label htmlFor="new-course-required" className="mb-0">
+            Required for compliance
+          </Label>
         </div>
         <div>
           <Label>Validity (days) — leave empty for never expires</Label>
@@ -348,7 +433,18 @@ function EnrollDrawer({
     setSaving(true);
     try {
       const r = await enrollAssociates(course.id, associateIds);
-      toast.success(`Enrolled ${r.created}, skipped ${r.skipped}.`);
+      // The API may grow a skippedNames list; prefer names over a bare
+      // count when they're provided so HR knows exactly who was skipped.
+      const skippedNames = (r as { skippedNames?: string[] }).skippedNames;
+      if (r.skipped > 0 && skippedNames && skippedNames.length > 0) {
+        toast.success(
+          `Enrolled ${r.created}. Skipped (already enrolled): ${skippedNames.join(', ')}.`,
+        );
+      } else if (r.skipped > 0) {
+        toast.success(`Enrolled ${r.created}, skipped ${r.skipped}.`);
+      } else {
+        toast.success(`Enrolled ${r.created}.`);
+      }
       onSaved();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -422,6 +518,9 @@ const ENROLL_BADGE: Record<EnrollmentStatus, 'pending' | 'accent' | 'success' | 
 
 function EnrollmentsTab({ canManage }: { canManage: boolean }) {
   const [rows, setRows] = useState<Enrollment[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<EnrollmentStatus | 'ALL'>('ALL');
   const [completeId, setCompleteId] = useState<string | null>(null);
   const [completing, setCompleting] = useState(false);
   const [waiveId, setWaiveId] = useState<string | null>(null);
@@ -429,9 +528,12 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
 
   const refresh = () => {
     setRows(null);
+    setError(null);
     listEnrollments()
       .then((r) => setRows(r.enrollments))
-      .catch(() => setRows([]));
+      .catch((err) =>
+        setError(err instanceof ApiError ? err.message : 'Failed to load enrollments.'),
+      );
   };
   useEffect(() => {
     refresh();
@@ -440,16 +542,81 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
   const onComplete = (id: string) => setCompleteId(id);
   const onWaive = (id: string) => setWaiveId(id);
 
+  const q = search.trim().toLowerCase();
+  const filtered = (rows ?? []).filter(
+    (e) =>
+      (!q ||
+        e.associateName.toLowerCase().includes(q) ||
+        e.courseTitle.toLowerCase().includes(q)) &&
+      (statusFilter === 'ALL' || e.status === statusFilter),
+  );
+
+  const exportCsv = () => {
+    downloadCsv(`enrollments-${ymdLocal()}.csv`, [
+      ['Course', 'Associate', 'Status', 'Completed', 'Expires', 'Score', 'Assigned'],
+      ...filtered.map((e) => [
+        e.courseTitle,
+        e.associateName,
+        e.status,
+        e.completedAt ? fmtDate(e.completedAt) : '',
+        e.expiresAt ? fmtDate(e.expiresAt) : '',
+        e.score ?? '',
+        fmtDate(e.assignedAt),
+      ]),
+    ]);
+  };
+
   return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          className="h-8 w-56"
+          placeholder="Search associate or course…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          aria-label="Search enrollments by associate or course"
+        />
+        <Select
+          size="sm"
+          className="w-40"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as EnrollmentStatus | 'ALL')}
+          aria-label="Filter enrollments by status"
+        >
+          <option value="ALL">All statuses</option>
+          <option value="ASSIGNED">Assigned</option>
+          <option value="IN_PROGRESS">In progress</option>
+          <option value="COMPLETED">Completed</option>
+          <option value="EXPIRED">Expired</option>
+          <option value="WAIVED">Waived</option>
+        </Select>
+        <Button
+          size="sm"
+          variant="secondary"
+          className="ml-auto"
+          onClick={exportCsv}
+          disabled={filtered.length === 0}
+        >
+          Export CSV
+        </Button>
+      </div>
     <Card>
       <CardContent className="p-0">
-        {rows === null ? (
+        {error ? (
+          <LoadError message={error} onRetry={refresh} />
+        ) : rows === null ? (
           <div className="p-6"><SkeletonRows count={3} /></div>
         ) : rows.length === 0 ? (
           <EmptyState
             icon={GraduationCap}
             title="No enrollments"
             description="Assign associates to a course from the Courses tab."
+          />
+        ) : filtered.length === 0 ? (
+          <EmptyState
+            icon={GraduationCap}
+            title="No matching enrollments"
+            description="Adjust the search or status filter."
           />
         ) : (
           <Table>
@@ -465,7 +632,7 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((e) => (
+              {filtered.map((e) => (
                 <TableRow key={e.id}>
                   <TableCell className="font-medium text-white">
                     {e.courseTitle}
@@ -553,44 +720,77 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
         }}
       />
     </Card>
+    </div>
   );
 }
 
+const EXPIRING_WINDOWS = [30, 60, 90] as const;
+
 function ExpiringTab() {
-  const [days, setDays] = useState('30');
+  const [days, setDays] = useState<number>(30);
   const [rows, setRows] = useState<ExpiringEnrollment[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = async () => {
     setRows(null);
+    setError(null);
     try {
-      const r = await listExpiring(Number(days));
+      const r = await listExpiring(days);
       setRows(r.expiring);
-    } catch {
-      setRows([]);
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : 'Failed to load expiring enrollments.',
+      );
     }
   };
   useEffect(() => {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [days]);
+
+  const exportCsv = () => {
+    downloadCsv(`expiring-${days}d-${ymdLocal()}.csv`, [
+      ['Course', 'Associate', 'Required', 'Expires', 'Days left'],
+      ...(rows ?? []).map((e) => [
+        e.courseTitle,
+        e.associateName,
+        e.isRequired ? 'Yes' : 'No',
+        fmtDate(e.expiresAt),
+        e.daysLeft,
+      ]),
+    ]);
+  };
 
   return (
     <div className="space-y-4">
-      <div className="flex items-end gap-3">
-        <div>
-          <Label>Window (days)</Label>
-          <Input
-            type="number"
-            className="mt-1 w-28"
-            value={days}
-            onChange={(e) => setDays(e.target.value)}
-          />
-        </div>
-        <Button onClick={refresh}>Refresh</Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs uppercase tracking-wider text-silver">Window</span>
+        {EXPIRING_WINDOWS.map((w) => (
+          <Button
+            key={w}
+            size="xs"
+            variant={days === w ? 'primary' : 'outline'}
+            aria-pressed={days === w}
+            onClick={() => setDays(w)}
+          >
+            {w} days
+          </Button>
+        ))}
+        <Button
+          size="sm"
+          variant="secondary"
+          className="ml-auto"
+          onClick={exportCsv}
+          disabled={!rows || rows.length === 0}
+        >
+          Export CSV
+        </Button>
       </div>
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {error ? (
+            <LoadError message={error} onRetry={() => void refresh()} />
+          ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState

@@ -14,6 +14,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { emit as emitWorkflow } from '../lib/workflow.js';
 import { enqueueAudit } from '../lib/audit.js';
+import { notifyAssociate, notifyManager } from '../lib/notify.js';
 
 export const positionsRouter = Router();
 
@@ -348,6 +349,23 @@ positionsRouter.post(
         position: { id: updated.id, code: updated.code, title: updated.title },
         associateId: input.associateId,
       },
+    });
+    // Fire-and-forget, after the write: tell the person and their
+    // manager about the placement.
+    void notifyAssociate(input.associateId, {
+      subject: "You've been placed in a new position",
+      body: `You now fill ${updated.code} · ${updated.title}. Open your profile for details.`,
+      category: 'org',
+      linkUrl: '/me',
+    });
+    void notifyManager(input.associateId, {
+      subject: 'Position filled on your team',
+      body: `${updated.code} · ${updated.title} is now filled${
+        updated.filledBy
+          ? ` by ${updated.filledBy.firstName} ${updated.filledBy.lastName}`
+          : ''
+      }.`,
+      category: 'org',
     });
     res.json(shape(updated));
   },

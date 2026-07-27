@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { notifyUser } from '../lib/notify.js';
 
 /**
  * Phase 87 — Directory + broadcast + surveys.
@@ -223,6 +224,32 @@ directoryAndCommsRouter.post(
         data: { status: 'SENT', sentAt: new Date() },
       });
     });
+
+    // Fire-and-forget fan-out AFTER the receipts are written: every
+    // recipient also gets a bell notification (+ best-effort email via
+    // notifyUser) pointing at their inbox. Non-blocking — the send
+    // response never waits on, or fails because of, notification I/O.
+    if (userIds.length > 0) {
+      const bodyText =
+        b.body.length > 500 ? `${b.body.slice(0, 500)}…` : b.body;
+      void (async () => {
+        await Promise.allSettled(
+          userIds.map((uid) =>
+            notifyUser(uid, {
+              subject: b.title || 'Company announcement',
+              body: bodyText,
+              category: 'broadcast',
+              linkUrl: '/inbox',
+            }),
+          ),
+        );
+      })().catch((err: unknown) => {
+        console.warn(
+          '[directoryAndComms] broadcast notification fan-out failed:',
+          err instanceof Error ? err.message : err,
+        );
+      });
+    }
 
     res.json({ recipientCount: userIds.length });
   },

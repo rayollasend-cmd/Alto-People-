@@ -167,8 +167,9 @@ describe('<AssociateTimeOffView>', () => {
     await waitFor(() => {
       expect(screen.getAllByText('Vacation · 8h')).toHaveLength(2);
     });
-    // Only one Withdraw button (for the PENDING row).
-    const withdrawButtons = screen.getAllByRole('button', { name: /withdraw/i });
+    // Only one Withdraw button (for the PENDING row). Exact-match the
+    // accessible name so the "Withdrawn" status filter chip doesn't count.
+    const withdrawButtons = screen.getAllByRole('button', { name: /^withdraw$/i });
     expect(withdrawButtons).toHaveLength(1);
   });
 });

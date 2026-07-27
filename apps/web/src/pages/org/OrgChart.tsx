@@ -1,11 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Network, Search, Users } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { ChevronDown, ChevronRight, Download, Network, Search, Users } from 'lucide-react';
 import type { AssociateOrgSummary } from '@alto-people/shared';
 import { listOrgAssociates } from '@/lib/orgApi';
+import { ApiError } from '@/lib/api';
+import { downloadCsv } from '@/lib/csv';
+import { ymdLocal } from '@/lib/format';
 import {
+  Button,
   Card,
   CardContent,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
   SkeletonRows,
@@ -69,18 +75,54 @@ function filterTree(nodes: Node[], query: string): Node[] {
 
 export function OrgChart() {
   const [rows, setRows] = useState<AssociateOrgSummary[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  // Bumping seq re-applies the open/closed signal to every node even if
+  // the previous click was the same action.
+  const [expandSignal, setExpandSignal] = useState<{
+    open: boolean;
+    seq: number;
+  } | null>(null);
 
-  useEffect(() => {
+  const load = () => {
+    setRows(null);
+    setError(null);
     listOrgAssociates()
       .then((r) => setRows(r.associates))
-      .catch(() => setRows([]));
-  }, []);
+      .catch((err) =>
+        setError(
+          err instanceof ApiError ? err.message : 'Could not load the org chart.',
+        ),
+      );
+  };
+  useEffect(load, []);
 
   const tree = useMemo(
     () => (rows ? filterTree(buildTree(rows), query.trim()) : []),
     [rows, query],
   );
+
+  // People whose manager exists but isn't in the fetched set — their
+  // subtree silently detaches to the root level, which reads as "no
+  // manager" unless we call it out.
+  const outOfViewManagerCount = useMemo(() => {
+    if (!rows) return 0;
+    const ids = new Set(rows.map((r) => r.id));
+    return rows.filter((r) => r.managerId && !ids.has(r.managerId)).length;
+  }, [rows]);
+
+  const exportCsv = () => {
+    if (!rows || rows.length === 0) return;
+    downloadCsv(`org-chart-${ymdLocal()}.csv`, [
+      ['Name', 'Title', 'Manager', 'Department'],
+      ...rows.map((r) => [
+        `${r.firstName} ${r.lastName}`,
+        r.jobProfileTitle ?? '',
+        r.managerName ?? '',
+        r.departmentName ?? '',
+      ]),
+    ]);
+  };
 
   return (
     <div className="space-y-5">
@@ -89,15 +131,60 @@ export function OrgChart() {
         subtitle="Reporting hierarchy across the company. Search to focus on a person or team."
         breadcrumbs={[{ label: 'Org' }, { label: 'Chart' }]}
       />
-      <div className="max-w-sm relative">
-        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-silver pointer-events-none" />
-        <Input
-          className="pl-8"
-          placeholder="Search by name, title, department…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
+      <div className="flex items-end gap-2 flex-wrap">
+        <div className="max-w-sm flex-1 min-w-[220px] relative">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-silver pointer-events-none" />
+          <Input
+            className="pl-8"
+            placeholder="Search by name, title, department…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setExpandSignal((s) => ({ open: true, seq: (s?.seq ?? 0) + 1 }))}
+          disabled={!rows || rows.length === 0}
+        >
+          Expand all
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setExpandSignal((s) => ({ open: false, seq: (s?.seq ?? 0) + 1 }))}
+          disabled={!rows || rows.length === 0}
+        >
+          Collapse all
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={exportCsv}
+          disabled={!rows || rows.length === 0}
+        >
+          <Download className="h-3.5 w-3.5" />
+          Export CSV
+        </Button>
       </div>
+      {outOfViewManagerCount > 0 && (
+        <ErrorBanner severity="warning">
+          {outOfViewManagerCount}{' '}
+          {outOfViewManagerCount === 1 ? 'person has' : 'people have'} an
+          unassigned or out-of-view manager — they appear at the top level.
+        </ErrorBanner>
+      )}
+      {error && (
+        <div className="space-y-2">
+          <p role="alert" className="text-sm text-alert">
+            {error}
+          </p>
+          <Button variant="outline" size="sm" onClick={load}>
+            Retry
+          </Button>
+        </div>
+      )}
+      {!error && (
       <Card>
         <CardContent className="p-4">
           {rows === null ? (
@@ -115,12 +202,19 @@ export function OrgChart() {
           ) : (
             <div className="space-y-1">
               {tree.map((root) => (
-                <TreeNode key={root.id} node={root} depth={0} expanded={query.length > 0} />
+                <TreeNode
+                  key={root.id}
+                  node={root}
+                  depth={0}
+                  expanded={query.length > 0}
+                  signal={expandSignal}
+                />
               ))}
             </div>
           )}
         </CardContent>
       </Card>
+      )}
     </div>
   );
 }
@@ -129,13 +223,21 @@ function TreeNode({
   node,
   depth,
   expanded: defaultExpanded,
+  signal,
 }: {
   node: Node;
   depth: number;
   expanded: boolean;
+  signal: { open: boolean; seq: number } | null;
 }) {
   const [open, setOpen] = useState(defaultExpanded || depth < 2);
   const hasChildren = node.children.length > 0;
+
+  // Expand-all / collapse-all broadcast from the toolbar.
+  useEffect(() => {
+    if (signal) setOpen(signal.open);
+  }, [signal]);
+
   return (
     <div>
       <div
@@ -155,18 +257,24 @@ function TreeNode({
             <ChevronRight className="h-4 w-4" />
           ))}
         </button>
-        <div className="h-7 w-7 rounded-full bg-gold/15 border border-gold/40 grid place-items-center text-xs text-gold">
-          {`${node.firstName.charAt(0)}${node.lastName.charAt(0)}`.toUpperCase()}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-sm text-white truncate">
-            {node.firstName} {node.lastName}
+        <Link
+          to={`/people?associateId=${node.id}`}
+          className="flex items-center gap-2 flex-1 min-w-0 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+          title={`Open ${node.firstName} ${node.lastName} in the directory`}
+        >
+          <div className="h-7 w-7 rounded-full bg-gold/15 border border-gold/40 grid place-items-center text-xs text-gold shrink-0">
+            {`${node.firstName.charAt(0)}${node.lastName.charAt(0)}`.toUpperCase()}
           </div>
-          <div className="text-xs text-silver truncate">
-            {node.jobProfileTitle ?? 'No title'}
-            {node.departmentName ? ` • ${node.departmentName}` : ''}
+          <div className="flex-1 min-w-0">
+            <div className="text-sm text-white truncate group-hover:underline decoration-silver/40 underline-offset-2">
+              {node.firstName} {node.lastName}
+            </div>
+            <div className="text-xs text-silver truncate">
+              {node.jobProfileTitle ?? 'No title'}
+              {node.departmentName ? ` • ${node.departmentName}` : ''}
+            </div>
           </div>
-        </div>
+        </Link>
         {hasChildren && (
           <div className="text-xs text-silver opacity-60 group-hover:opacity-100 transition-opacity flex items-center gap-1">
             <Users className="h-3 w-3" />
@@ -177,7 +285,13 @@ function TreeNode({
       {hasChildren && open && (
         <div>
           {node.children.map((c) => (
-            <TreeNode key={c.id} node={c} depth={depth + 1} expanded={defaultExpanded} />
+            <TreeNode
+              key={c.id}
+              node={c}
+              depth={depth + 1}
+              expanded={defaultExpanded}
+              signal={signal}
+            />
           ))}
         </div>
       )}

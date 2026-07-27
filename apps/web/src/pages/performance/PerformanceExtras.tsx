@@ -1,14 +1,18 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Heart, Plus, Target } from 'lucide-react';
+import { AlertTriangle, CalendarPlus, Download, Heart, Plus, Target } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
   closeReview360,
   createGoal,
+  createKeyResult,
   createKudo,
+  createOneOnOne,
   createPip,
   createReview360,
   deleteGoal,
+  getAggregate,
   getPerfTimeline,
   listGoals,
   listKudos,
@@ -16,14 +20,25 @@ import {
   listPips,
   listReviews360,
   prefillPipFromGoal,
+  prefillReviewFromPip,
+  submitFeedback,
   updateGoal,
+  updateKeyResult,
+  updateOneOnOne,
   updatePip,
   type Goal,
   type GoalStatus,
+  type KeyResult,
+  type OneOnOne,
   type PerfTimelineEntry,
   type Pip,
+  type Review360,
 } from '@/lib/perf84Api';
+import { createReview } from '@/lib/performanceApi';
+import { fmtDate, fmtDateTime, parseYmd } from '@/lib/format';
+import { downloadCsv } from '@/lib/csv';
 import { useAuth } from '@/lib/auth';
+import { cn } from '@/lib/cn';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
@@ -66,6 +81,21 @@ function ymd(d: Date) {
 
 function todayYmd() {
   return ymd(new Date());
+}
+
+/** Render a date-only "YYYY-MM-DD" as "May 13, 2026" (parsed as LOCAL
+ *  midnight so it never shifts a day west of UTC). */
+function fmtYmd(s: string) {
+  return fmtDate(parseYmd(s));
+}
+
+/** Displayed goal progress: mean of key-result progress when KRs exist,
+ *  otherwise the goal's own manually-tracked progressPct. */
+function goalProgress(g: Goal): number {
+  if (g.keyResults.length === 0) return g.progressPct;
+  return Math.round(
+    g.keyResults.reduce((sum, k) => sum + k.progressPct, 0) / g.keyResults.length,
+  );
 }
 
 function planDaysHint(start: string, end: string) {
@@ -140,6 +170,9 @@ function GoalsTab() {
   const qc = useQueryClient();
   const [draft, setDraft] = useState<GoalDraft | null>(null);
   const [pipDraft, setPipDraft] = useState<PipDraft | null>(null);
+  const [assocFilter, setAssocFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState<GoalStatus | 'ALL'>('ALL');
+  const [krGoalId, setKrGoalId] = useState<string | null>(null);
 
   const q = useQuery({
     queryKey: perfKeys.goals(),
@@ -147,12 +180,29 @@ function GoalsTab() {
   });
   const rows = q.data ?? null;
 
+  const filtered = useMemo(() => {
+    if (!rows) return null;
+    const term = assocFilter.trim().toLowerCase();
+    return rows.filter(
+      (g) =>
+        (statusFilter === 'ALL' || g.status === statusFilter) &&
+        (!term || (g.associateName ?? '').toLowerCase().includes(term)),
+    );
+  }, [rows, assocFilter, statusFilter]);
+
+  // Drawer target resolved from the live query rows so a KR add/update
+  // re-renders the drawer with fresh data after invalidation.
+  const krGoal = rows?.find((g) => g.id === krGoalId) ?? null;
+
   const invalidateGoals = () =>
     qc.invalidateQueries({ queryKey: perfKeys.goals() });
 
   const onProgress = async (g: Goal, pct: number) => {
+    const clamped = Math.max(0, Math.min(100, pct));
+    if (!Number.isFinite(clamped) || clamped === g.progressPct) return;
     try {
-      await updateGoal(g.id, { progressPct: Math.max(0, Math.min(100, pct)) });
+      await updateGoal(g.id, { progressPct: clamped });
+      toast.success('Progress saved.');
       invalidateGoals();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -160,12 +210,42 @@ function GoalsTab() {
   };
 
   const onStatus = async (g: Goal, status: GoalStatus) => {
+    if (status === g.status) return;
+    if (status === 'COMPLETED' || status === 'CANCELLED') {
+      const ok = await confirm({
+        title: `Mark this goal ${status === 'COMPLETED' ? 'completed' : 'cancelled'}?`,
+        description: `"${g.title}" — this is a terminal status.`,
+        destructive: status === 'CANCELLED',
+      });
+      if (!ok) {
+        // Snap the (controlled) select back to the server value.
+        invalidateGoals();
+        return;
+      }
+    }
     try {
       await updateGoal(g.id, { status });
+      toast.success(`Goal marked ${status.replace('_', ' ').toLowerCase()}.`);
       invalidateGoals();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
     }
+  };
+
+  const onExportCsv = () => {
+    if (!filtered || filtered.length === 0) return;
+    downloadCsv(`goals-${todayYmd()}.csv`, [
+      ['Associate', 'Kind', 'Title', 'Period start', 'Period end', 'Status', 'Progress %'],
+      ...filtered.map((g) => [
+        g.associateName ?? '',
+        g.kind === 'OBJECTIVE' ? 'OKR' : 'Goal',
+        g.title,
+        g.periodStart,
+        g.periodEnd,
+        g.status,
+        goalProgress(g),
+      ]),
+    ]);
   };
 
   const onDelete = async (id: string) => {
@@ -180,46 +260,86 @@ function GoalsTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
-        <Button
-          onClick={() =>
-            setDraft({
-              associate: null,
-              kind: 'GOAL',
-              title: '',
-              description: '',
-              periodStart: todayYmd(),
-              periodEnd: `${new Date().getFullYear()}-12-31`,
-            })
-          }
-        >
-          <Plus className="mr-2 h-4 w-4" /> New goal
-        </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        {(['ALL', 'DRAFT', 'ACTIVE', 'AT_RISK', 'COMPLETED', 'CANCELLED'] as const).map(
+          (s) => (
+            <Button
+              key={s}
+              type="button"
+              size="xs"
+              variant="outline"
+              onClick={() => setStatusFilter(s)}
+              className={cn(
+                'uppercase tracking-wider',
+                statusFilter === s &&
+                  'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold',
+              )}
+            >
+              {s === 'ALL' ? 'All' : s.replace('_', ' ')}
+            </Button>
+          ),
+        )}
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <div className="w-52 max-w-full">
+            <Input
+              value={assocFilter}
+              onChange={(e) => setAssocFilter(e.target.value)}
+              placeholder="Filter by associate…"
+              aria-label="Filter goals by associate"
+            />
+          </div>
+          <Button
+            variant="outline"
+            onClick={onExportCsv}
+            disabled={!filtered || filtered.length === 0}
+          >
+            <Download className="mr-2 h-4 w-4" /> Export CSV
+          </Button>
+          <Button
+            onClick={() =>
+              setDraft({
+                associate: null,
+                kind: 'GOAL',
+                title: '',
+                description: '',
+                periodStart: todayYmd(),
+                periodEnd: `${new Date().getFullYear()}-12-31`,
+              })
+            }
+          >
+            <Plus className="mr-2 h-4 w-4" /> New goal
+          </Button>
+        </div>
       </div>
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {filtered === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
-          ) : rows.length === 0 ? (
+          ) : filtered.length === 0 ? (
             <EmptyState
               icon={Target}
-              title="No goals yet"
-              description="Track personal goals or company-aligned OKRs with measurable key results."
+              title={rows && rows.length > 0 ? 'No goals match your filters' : 'No goals yet'}
+              description={
+                rows && rows.length > 0
+                  ? 'Try a different status chip or associate filter.'
+                  : 'Track personal goals or company-aligned OKRs with measurable key results.'
+              }
             />
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Title</TableHead>
+                  <TableHead>Associate</TableHead>
                   <TableHead className="hidden md:table-cell">Kind</TableHead>
                   <TableHead className="hidden md:table-cell">Period</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Progress</TableHead>
-                  <TableHead className="w-32 text-right">Actions</TableHead>
+                  <TableHead className="w-44 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((g) => (
+                {filtered.map((g) => (
                   <TableRow key={g.id}>
                     <TableCell className="font-medium text-white">
                       <div className="truncate">{g.title}</div>
@@ -227,6 +347,7 @@ function GoalsTab() {
                         {g.kind === 'OBJECTIVE' ? 'OKR' : 'Goal'} · {g.periodStart} – {g.periodEnd}
                       </div>
                     </TableCell>
+                    <TableCell>{g.associateName ?? '—'}</TableCell>
                     <TableCell className="hidden md:table-cell">{g.kind === 'OBJECTIVE' ? 'OKR' : 'Goal'}</TableCell>
                     <TableCell className="hidden md:table-cell">
                       {g.periodStart} – {g.periodEnd}
@@ -249,18 +370,35 @@ function GoalsTab() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Input
-                        className="h-8 w-20"
-                        type="number"
-                        min={0}
-                        max={100}
-                        defaultValue={g.progressPct}
-                        onBlur={(e) => onProgress(g, Number(e.target.value))}
-                      />
-                      %
+                      {g.keyResults.length > 0 ? (
+                        <span
+                          className="tabular-nums"
+                          title={`Derived from ${g.keyResults.length} key result${g.keyResults.length === 1 ? '' : 's'}`}
+                        >
+                          {goalProgress(g)}%
+                          <span className="ml-1 text-[11px] text-silver/70">
+                            ({g.keyResults.length} KR{g.keyResults.length === 1 ? '' : 's'})
+                          </span>
+                        </span>
+                      ) : (
+                        <>
+                          <Input
+                            className="h-8 w-20"
+                            type="number"
+                            min={0}
+                            max={100}
+                            defaultValue={g.progressPct}
+                            onBlur={(e) => onProgress(g, Number(e.target.value))}
+                          />
+                          %
+                        </>
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
+                        <Button size="sm" variant="outline" onClick={() => setKrGoalId(g.id)}>
+                          Key results
+                        </Button>
                         {g.status === 'AT_RISK' && canManage && (
                           <Button
                             size="sm"
@@ -331,7 +469,217 @@ function GoalsTab() {
           />
         )}
       </Drawer>
+      <Drawer
+        open={krGoal !== null}
+        onOpenChange={(o) => !o && setKrGoalId(null)}
+        width="max-w-xl"
+      >
+        {krGoal && (
+          <KeyResultsDrawer
+            goal={krGoal}
+            onClose={() => setKrGoalId(null)}
+            onChanged={invalidateGoals}
+          />
+        )}
+      </Drawer>
     </div>
+  );
+}
+
+function KeyResultsDrawer({
+  goal,
+  onClose,
+  onChanged,
+}: {
+  goal: Goal;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const [newTitle, setNewTitle] = useState('');
+  const [newTarget, setNewTarget] = useState('');
+  const [newUnit, setNewUnit] = useState('');
+  const [adding, setAdding] = useState(false);
+
+  const saveCurrent = async (k: KeyResult, raw: string) => {
+    const val = Number(raw);
+    if (!Number.isFinite(val) || raw.trim() === '' || val === Number(k.currentValue)) return;
+    // The API stores currentValue and progressPct separately; when a target
+    // exists, derive the pct here so the two never disagree.
+    const target = k.targetValue !== null ? Number(k.targetValue) : null;
+    const progressPct =
+      target !== null && target > 0
+        ? Math.max(0, Math.min(100, Math.round((val / target) * 100)))
+        : undefined;
+    try {
+      await updateKeyResult(k.id, {
+        currentValue: val,
+        ...(progressPct !== undefined ? { progressPct } : {}),
+      });
+      toast.success('Key result saved.');
+      onChanged();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    }
+  };
+
+  const saveProgress = async (k: KeyResult, raw: string) => {
+    const val = Number(raw);
+    if (!Number.isFinite(val) || raw.trim() === '' || val === k.progressPct) return;
+    try {
+      await updateKeyResult(k.id, {
+        progressPct: Math.max(0, Math.min(100, Math.round(val))),
+      });
+      toast.success('Key result saved.');
+      onChanged();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    }
+  };
+
+  const onAdd = async () => {
+    if (!newTitle.trim()) {
+      toast.error('Key result title required.');
+      return;
+    }
+    const target = newTarget.trim() === '' ? null : Number(newTarget);
+    if (target !== null && !Number.isFinite(target)) {
+      toast.error('Target must be a number.');
+      return;
+    }
+    setAdding(true);
+    try {
+      await createKeyResult(goal.id, {
+        title: newTitle.trim(),
+        targetValue: target,
+        unit: newUnit.trim() || null,
+      });
+      toast.success('Key result added.');
+      setNewTitle('');
+      setNewTarget('');
+      setNewUnit('');
+      onChanged();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  return (
+    <>
+      <DrawerHeader>
+        <DrawerTitle>Key results</DrawerTitle>
+      </DrawerHeader>
+      <DrawerBody className="space-y-4">
+        <div>
+          <div className="text-sm font-medium text-white truncate">{goal.title}</div>
+          <p className="mt-1 text-xs text-silver">
+            {goal.keyResults.length > 0
+              ? `Goal progress is derived from key results: ${goalProgress(goal)}%.`
+              : 'This goal has no key results yet — progress is tracked manually until one is added.'}
+          </p>
+        </div>
+        {goal.keyResults.length > 0 && (
+          <div className="space-y-2">
+            {goal.keyResults.map((k) => (
+              <div
+                key={k.id}
+                className="rounded-lg border border-navy-secondary bg-navy-secondary/30 p-3"
+              >
+                <div className="text-sm text-white">{k.title}</div>
+                <div className="mt-2 flex flex-wrap items-end gap-3 text-xs text-silver">
+                  <label className="block">
+                    <span className="block text-[10px] uppercase tracking-widest text-silver/70 mb-1">
+                      Current
+                    </span>
+                    <Input
+                      className="h-8 w-24"
+                      type="number"
+                      defaultValue={Number(k.currentValue)}
+                      onBlur={(e) => saveCurrent(k, e.target.value)}
+                    />
+                  </label>
+                  <div>
+                    <span className="block text-[10px] uppercase tracking-widest text-silver/70 mb-1">
+                      Target
+                    </span>
+                    <span className="inline-block py-1.5 tabular-nums">
+                      {k.targetValue ?? '—'}
+                      {k.unit ? ` ${k.unit}` : ''}
+                    </span>
+                  </div>
+                  {k.targetValue !== null ? (
+                    <div>
+                      <span className="block text-[10px] uppercase tracking-widest text-silver/70 mb-1">
+                        Progress
+                      </span>
+                      <span className="inline-block py-1.5 tabular-nums">{k.progressPct}%</span>
+                    </div>
+                  ) : (
+                    <label className="block">
+                      <span className="block text-[10px] uppercase tracking-widest text-silver/70 mb-1">
+                        Progress %
+                      </span>
+                      <Input
+                        className="h-8 w-20"
+                        type="number"
+                        min={0}
+                        max={100}
+                        defaultValue={k.progressPct}
+                        onBlur={(e) => saveProgress(k, e.target.value)}
+                      />
+                    </label>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="rounded-lg border border-dashed border-navy-secondary p-3 space-y-3">
+          <div className="text-[10px] uppercase tracking-widest text-silver/70">
+            Add key result
+          </div>
+          <div>
+            <Label>Title</Label>
+            <Input
+              className="mt-1"
+              value={newTitle}
+              onChange={(e) => setNewTitle(e.target.value)}
+              placeholder="e.g. Close 20 support tickets"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Target (optional)</Label>
+              <Input
+                className="mt-1"
+                type="number"
+                value={newTarget}
+                onChange={(e) => setNewTarget(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label>Unit (optional)</Label>
+              <Input
+                className="mt-1"
+                value={newUnit}
+                onChange={(e) => setNewUnit(e.target.value)}
+                placeholder="tickets, %, hrs…"
+              />
+            </div>
+          </div>
+          <Button size="sm" variant="outline" onClick={onAdd} disabled={adding}>
+            <Plus className="mr-1.5 h-3.5 w-3.5" />
+            {adding ? 'Adding…' : 'Add key result'}
+          </Button>
+        </div>
+      </DrawerBody>
+      <DrawerFooter>
+        <Button variant="ghost" onClick={onClose}>
+          Close
+        </Button>
+      </DrawerFooter>
+    </>
   );
 }
 
@@ -653,7 +1001,7 @@ function KudosTab() {
                   </div>
                 )}
                 <div className="mt-2 text-xs text-silver">
-                  {new Date(k.createdAt).toLocaleString()}
+                  {fmtDateTime(k.createdAt)}
                 </div>
               </CardContent>
             </Card>
@@ -703,56 +1051,222 @@ function KudosTab() {
 // ============ 1:1s ============
 
 function OneOnOnesTab() {
+  const { user } = useAuth();
+  const canManage = user ? hasCapability(user.role, 'manage:performance') : false;
+  const confirm = useConfirm();
+  const qc = useQueryClient();
+  const [showSchedule, setShowSchedule] = useState(false);
+
   const q = useQuery({
     queryKey: perfKeys.oneOnOnes(),
     queryFn: async () => (await listOneOnOnes()).meetings,
   });
   const rows = q.data ?? null;
 
+  const invalidate = () =>
+    qc.invalidateQueries({ queryKey: perfKeys.oneOnOnes() });
+
+  const onSetStatus = async (m: OneOnOne, status: 'COMPLETED' | 'CANCELLED') => {
+    if (status === 'CANCELLED') {
+      const ok = await confirm({
+        title: 'Cancel this 1:1?',
+        description: `Scheduled for ${fmtDateTime(m.scheduledFor)}.`,
+        destructive: true,
+      });
+      if (!ok) return;
+    }
+    try {
+      await updateOneOnOne(m.id, { status });
+      toast.success(status === 'COMPLETED' ? '1:1 marked completed.' : '1:1 cancelled.');
+      invalidate();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    }
+  };
+
+  const scheduleButton = canManage ? (
+    <Button onClick={() => setShowSchedule(true)}>
+      <CalendarPlus className="mr-2 h-4 w-4" /> Schedule 1:1
+    </Button>
+  ) : undefined;
+
   return (
-    <Card>
-      <CardContent className="p-0">
-        {rows === null ? (
-          <div className="p-6"><SkeletonRows count={3} /></div>
-        ) : rows.length === 0 ? (
-          <EmptyState
-            title="No 1:1s scheduled"
-            description="Managers schedule recurring 1:1s with each direct report."
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Scheduled</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Agenda</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((m) => (
-                <TableRow key={m.id}>
-                  <TableCell>{new Date(m.scheduledFor).toLocaleString()}</TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={
-                        m.status === 'COMPLETED'
-                          ? 'success'
-                          : m.status === 'CANCELLED'
-                            ? 'destructive'
-                            : 'pending'
-                      }
-                    >
-                      {m.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="max-w-md truncate">{m.agenda ?? '—'}</TableCell>
+    <div className="space-y-4">
+      {scheduleButton && <div className="flex justify-end">{scheduleButton}</div>}
+      <Card>
+        <CardContent className="p-0">
+          {rows === null ? (
+            <div className="p-6"><SkeletonRows count={3} /></div>
+          ) : rows.length === 0 ? (
+            <EmptyState
+              icon={CalendarPlus}
+              title="No 1:1s scheduled"
+              description="Managers schedule recurring 1:1s with each direct report."
+              action={scheduleButton}
+            />
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Associate</TableHead>
+                  <TableHead className="hidden md:table-cell">Manager</TableHead>
+                  <TableHead>Scheduled</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="hidden md:table-cell">Agenda</TableHead>
+                  <TableHead className="w-40 text-right">Actions</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </CardContent>
-    </Card>
+              </TableHeader>
+              <TableBody>
+                {rows.map((m) => (
+                  <TableRow key={m.id}>
+                    <TableCell className="font-medium text-white">
+                      <div className="truncate">{m.associateName ?? '—'}</div>
+                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        {m.managerEmail ?? '—'}
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">
+                      {m.managerEmail ?? '—'}
+                    </TableCell>
+                    <TableCell>{fmtDateTime(m.scheduledFor)}</TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={
+                          m.status === 'COMPLETED'
+                            ? 'success'
+                            : m.status === 'CANCELLED'
+                              ? 'destructive'
+                              : 'pending'
+                        }
+                      >
+                        {m.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="max-w-md truncate hidden md:table-cell">
+                      {m.agenda ?? '—'}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {canManage && m.status === 'SCHEDULED' && (
+                        <div className="inline-flex gap-1">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => onSetStatus(m, 'COMPLETED')}
+                          >
+                            Complete
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => onSetStatus(m, 'CANCELLED')}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+      {showSchedule && user && (
+        <ScheduleOneOnOneDrawer
+          managerUserId={user.id}
+          onClose={() => setShowSchedule(false)}
+          onSaved={() => {
+            setShowSchedule(false);
+            invalidate();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ScheduleOneOnOneDrawer({
+  managerUserId,
+  onClose,
+  onSaved,
+}: {
+  managerUserId: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [associate, setAssociate] = useState<PickedAssociate | null>(null);
+  const [when, setWhen] = useState('');
+  const [agenda, setAgenda] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const onSubmit = async () => {
+    if (!associate) {
+      toast.error('Pick an associate.');
+      return;
+    }
+    const scheduledFor = when ? new Date(when) : null;
+    if (!scheduledFor || Number.isNaN(scheduledFor.getTime())) {
+      toast.error('Pick a valid date and time.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await createOneOnOne({
+        associateId: associate.id,
+        managerUserId,
+        scheduledFor: scheduledFor.toISOString(),
+        agenda: agenda.trim() || null,
+      });
+      toast.success('1:1 scheduled.');
+      onSaved();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()} width="max-w-lg">
+      <DrawerHeader>
+        <DrawerTitle>Schedule 1:1</DrawerTitle>
+      </DrawerHeader>
+      <DrawerBody className="space-y-4">
+        <div>
+          <Label>Associate</Label>
+          <div className="mt-1">
+            <AssociatePicker value={associate} onChange={setAssociate} />
+          </div>
+        </div>
+        <div>
+          <Label>When</Label>
+          <Input
+            className="mt-1"
+            type="datetime-local"
+            value={when}
+            onChange={(e) => setWhen(e.target.value)}
+          />
+        </div>
+        <div>
+          <Label>Agenda (optional)</Label>
+          <Textarea
+            className="mt-1"
+            value={agenda}
+            onChange={(e) => setAgenda(e.target.value)}
+            placeholder="Topics to cover…"
+          />
+        </div>
+      </DrawerBody>
+      <DrawerFooter>
+        <Button variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button onClick={onSubmit} disabled={saving}>
+          {saving ? 'Saving…' : 'Schedule'}
+        </Button>
+      </DrawerFooter>
+    </Drawer>
   );
 }
 
@@ -761,13 +1275,23 @@ function OneOnOnesTab() {
 function PipsTab({ canManage }: { canManage: boolean }) {
   const qc = useQueryClient();
   const prompt = usePrompt();
+  const navigate = useNavigate();
   const [showNew, setShowNew] = useState(false);
+  const [assocFilter, setAssocFilter] = useState('');
+  const [reviewBusyId, setReviewBusyId] = useState<string | null>(null);
 
   const q = useQuery({
     queryKey: perfKeys.pips(),
     queryFn: async () => (await listPips()).pips,
   });
   const rows = q.data ?? null;
+
+  const filtered = useMemo(() => {
+    if (!rows) return null;
+    const term = assocFilter.trim().toLowerCase();
+    if (!term) return rows;
+    return rows.filter((p) => (p.associateName ?? '').toLowerCase().includes(term));
+  }, [rows, assocFilter]);
 
   const invalidatePips = () =>
     qc.invalidateQueries({ queryKey: perfKeys.pips() });
@@ -789,39 +1313,82 @@ function PipsTab({ canManage }: { canManage: boolean }) {
     }
   };
 
+  const onWriteReview = async (p: Pip) => {
+    setReviewBusyId(p.id);
+    try {
+      const pre = await prefillReviewFromPip(p.id);
+      await createReview({
+        associateId: pre.associateId,
+        periodStart: pre.periodStart,
+        periodEnd: pre.periodEnd,
+        overallRating: pre.overallRating,
+        summary: pre.summary,
+        strengths: pre.strengths ?? undefined,
+        improvements: pre.improvements ?? undefined,
+        goals: pre.goals ?? undefined,
+        sourcePipId: pre.sourcePipId,
+      });
+      toast.success('Draft review created from this PIP.', {
+        action: { label: 'Open reviews', onClick: () => navigate('/performance') },
+      });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setReviewBusyId(null);
+    }
+  };
+
   return (
     <div className="space-y-4">
-      {canManage && (
-        <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <div className="w-52 max-w-full">
+          <Input
+            value={assocFilter}
+            onChange={(e) => setAssocFilter(e.target.value)}
+            placeholder="Filter by associate…"
+            aria-label="Filter PIPs by associate"
+          />
+        </div>
+        {canManage && (
           <Button onClick={() => setShowNew(true)}>
             <Plus className="mr-2 h-4 w-4" /> New PIP
           </Button>
-        </div>
-      )}
+        )}
+      </div>
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {filtered === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
-          ) : rows.length === 0 ? (
+          ) : filtered.length === 0 ? (
             <EmptyState
-              title="No active PIPs"
-              description="Performance Improvement Plans give associates a structured chance to remediate."
+              title={rows && rows.length > 0 ? 'No PIPs match your filter' : 'No active PIPs'}
+              description={
+                rows && rows.length > 0
+                  ? 'Try a different associate name.'
+                  : 'Performance Improvement Plans give associates a structured chance to remediate.'
+              }
             />
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead>Associate</TableHead>
                   <TableHead>Period</TableHead>
                   <TableHead className="hidden md:table-cell">Reason</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead className="text-right w-44">Decide</TableHead>
+                  <TableHead className="text-right w-52">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((p) => (
+                {filtered.map((p) => (
                   <TableRow key={p.id}>
+                    <TableCell className="font-medium text-white">
+                      {p.associateName ?? '—'}
+                    </TableCell>
                     <TableCell>
-                      <div className="truncate">{p.startDate} – {p.endDate}</div>
+                      <div className="truncate">
+                        {fmtYmd(p.startDate)} – {fmtYmd(p.endDate)}
+                      </div>
                       <div className="md:hidden text-[11px] text-silver/70 truncate max-w-[24ch]">
                         {p.reason}
                       </div>
@@ -850,6 +1417,16 @@ function PipsTab({ canManage }: { canManage: boolean }) {
                             Fail
                           </Button>
                         </div>
+                      )}
+                      {canManage && (p.status === 'PASSED' || p.status === 'FAILED') && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => onWriteReview(p)}
+                          disabled={reviewBusyId === p.id}
+                        >
+                          {reviewBusyId === p.id ? 'Creating…' : 'Write review'}
+                        </Button>
                       )}
                     </TableCell>
                   </TableRow>
@@ -968,6 +1545,8 @@ function Reviews360Tab({ canManage }: { canManage: boolean }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const [showNew, setShowNew] = useState(false);
+  const [feedbackFor, setFeedbackFor] = useState<Review360 | null>(null);
+  const [resultsFor, setResultsFor] = useState<Review360 | null>(null);
 
   const q = useQuery({
     queryKey: perfKeys.reviews360(),
@@ -1014,19 +1593,23 @@ function Reviews360Tab({ canManage }: { canManage: boolean }) {
                   <TableHead className="hidden md:table-cell">Period</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="hidden md:table-cell">Feedback</TableHead>
-                  <TableHead className="w-32 text-right">Action</TableHead>
+                  <TableHead className="w-64 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((r) => (
                   <TableRow key={r.id}>
-                    <TableCell className="font-mono text-xs">
-                      <div className="truncate">{r.subjectAssociateId}</div>
-                      <div className="md:hidden font-sans text-[11px] text-silver/70 truncate">
-                        {r.periodStart} – {r.periodEnd} · {r.feedbackCount} feedback
+                    <TableCell className="font-medium text-white">
+                      <div className="truncate">
+                        {r.subjectAssociateName ?? r.subjectAssociateId}
+                      </div>
+                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        {fmtYmd(r.periodStart)} – {fmtYmd(r.periodEnd)} · {r.feedbackCount} feedback
                       </div>
                     </TableCell>
-                    <TableCell className="hidden md:table-cell">{r.periodStart} – {r.periodEnd}</TableCell>
+                    <TableCell className="hidden md:table-cell">
+                      {fmtYmd(r.periodStart)} – {fmtYmd(r.periodEnd)}
+                    </TableCell>
                     <TableCell>
                       <Badge
                         variant={
@@ -1042,11 +1625,25 @@ function Reviews360Tab({ canManage }: { canManage: boolean }) {
                     </TableCell>
                     <TableCell className="hidden md:table-cell">{r.feedbackCount}</TableCell>
                     <TableCell className="text-right">
-                      {canManage && r.status === 'COLLECTING' && (
-                        <Button size="sm" variant="ghost" onClick={() => onClose(r.id)}>
-                          Close
+                      <div className="inline-flex gap-1">
+                        {r.status === 'COLLECTING' && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => setFeedbackFor(r)}
+                          >
+                            Give feedback
+                          </Button>
+                        )}
+                        <Button size="sm" variant="outline" onClick={() => setResultsFor(r)}>
+                          Results
                         </Button>
-                      )}
+                        {canManage && r.status === 'COLLECTING' && (
+                          <Button size="sm" variant="ghost" onClick={() => onClose(r.id)}>
+                            Close
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -1056,7 +1653,224 @@ function Reviews360Tab({ canManage }: { canManage: boolean }) {
         </CardContent>
       </Card>
       {showNew && <NewReview360Drawer onClose={() => setShowNew(false)} onSaved={() => { setShowNew(false); invalidate(); }} />}
+      {feedbackFor && (
+        <FeedbackDrawer
+          review={feedbackFor}
+          onClose={() => setFeedbackFor(null)}
+          onSaved={() => {
+            setFeedbackFor(null);
+            invalidate();
+          }}
+        />
+      )}
+      {resultsFor && (
+        <AggregateDrawer review={resultsFor} onClose={() => setResultsFor(null)} />
+      )}
     </div>
+  );
+}
+
+function FeedbackDrawer({
+  review,
+  onClose,
+  onSaved,
+}: {
+  review: Review360;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [rating, setRating] = useState('');
+  const [strengths, setStrengths] = useState('');
+  const [improvements, setImprovements] = useState('');
+  const [isAnonymous, setIsAnonymous] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const onSubmit = async () => {
+    if (!rating && !strengths.trim() && !improvements.trim()) {
+      toast.error('Add a rating or some written feedback.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await submitFeedback(review.id, {
+        isAnonymous,
+        rating: rating ? Number(rating) : null,
+        strengths: strengths.trim() || null,
+        improvements: improvements.trim() || null,
+      });
+      toast.success('Feedback submitted.');
+      onSaved();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()} width="max-w-lg">
+      <DrawerHeader>
+        <DrawerTitle>
+          Feedback for {review.subjectAssociateName ?? 'associate'}
+        </DrawerTitle>
+      </DrawerHeader>
+      <DrawerBody className="space-y-4">
+        <p className="text-xs text-silver">
+          Review period {fmtYmd(review.periodStart)} – {fmtYmd(review.periodEnd)}.
+        </p>
+        <div>
+          <Label>Rating (optional)</Label>
+          <Select
+            className="mt-1"
+            value={rating}
+            onChange={(e) => setRating(e.target.value)}
+          >
+            <option value="">No rating</option>
+            {[1, 2, 3, 4, 5].map((n) => (
+              <option key={n} value={String(n)}>
+                {n} / 5
+              </option>
+            ))}
+          </Select>
+        </div>
+        <div>
+          <Label>Strengths</Label>
+          <Textarea
+            className="mt-1"
+            value={strengths}
+            onChange={(e) => setStrengths(e.target.value)}
+            placeholder="What do they do well?"
+          />
+        </div>
+        <div>
+          <Label>Areas to improve</Label>
+          <Textarea
+            className="mt-1"
+            value={improvements}
+            onChange={(e) => setImprovements(e.target.value)}
+            placeholder="Where could they grow?"
+          />
+        </div>
+        <label className="flex items-center gap-2 text-sm text-silver">
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-gold"
+            checked={isAnonymous}
+            onChange={(e) => setIsAnonymous(e.target.checked)}
+          />
+          Submit anonymously
+        </label>
+      </DrawerBody>
+      <DrawerFooter>
+        <Button variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button onClick={onSubmit} disabled={saving}>
+          {saving ? 'Submitting…' : 'Submit feedback'}
+        </Button>
+      </DrawerFooter>
+    </Drawer>
+  );
+}
+
+function AggregateDrawer({
+  review,
+  onClose,
+}: {
+  review: Review360;
+  onClose: () => void;
+}) {
+  const q = useQuery({
+    queryKey: [...perfKeys.reviews360(), review.id, 'aggregate'] as const,
+    queryFn: () => getAggregate(review.id),
+  });
+  const data = q.data ?? null;
+  const error =
+    q.error instanceof ApiError ? q.error.message : q.error ? 'Failed to load.' : null;
+
+  return (
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()} width="max-w-xl">
+      <DrawerHeader>
+        <DrawerTitle>
+          360 results — {review.subjectAssociateName ?? 'associate'}
+        </DrawerTitle>
+      </DrawerHeader>
+      <DrawerBody className="space-y-4">
+        <p className="text-xs text-silver">
+          {fmtYmd(review.periodStart)} – {fmtYmd(review.periodEnd)} · {review.status}
+        </p>
+        {error && (
+          <p role="alert" className="text-sm text-alert">
+            {error}
+          </p>
+        )}
+        {!data && !error && <SkeletonRows count={3} />}
+        {data && (
+          <>
+            <div className="flex items-center gap-6 rounded-lg border border-navy-secondary bg-navy-secondary/30 p-4">
+              <div>
+                <div className="text-[10px] uppercase tracking-widest text-silver/70">
+                  Responses
+                </div>
+                <div className="font-display text-2xl text-white tabular-nums">
+                  {data.count}
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-widest text-silver/70">
+                  Average rating
+                </div>
+                <div className="font-display text-2xl text-gold tabular-nums">
+                  {data.averageRating !== null
+                    ? `${Math.round(data.averageRating * 10) / 10}/5`
+                    : '—'}
+                </div>
+              </div>
+            </div>
+            {data.entries.length === 0 && (
+              <p className="text-sm text-silver">No feedback submitted yet.</p>
+            )}
+            {data.entries.map((f) => (
+              <div
+                key={f.id}
+                className="rounded-lg border border-navy-secondary bg-navy-secondary/30 p-3 space-y-2"
+              >
+                <div className="flex items-center justify-between text-xs text-silver">
+                  <span>{f.isAnonymous ? 'Anonymous' : 'Named respondent'}</span>
+                  <span className="tabular-nums">
+                    {f.rating !== null ? `${f.rating}/5 · ` : ''}
+                    {fmtDateTime(f.submittedAt)}
+                  </span>
+                </div>
+                {f.strengths && (
+                  <div>
+                    <div className="text-[10px] uppercase tracking-widest text-silver/70">
+                      Strengths
+                    </div>
+                    <div className="text-sm text-white whitespace-pre-wrap">{f.strengths}</div>
+                  </div>
+                )}
+                {f.improvements && (
+                  <div>
+                    <div className="text-[10px] uppercase tracking-widest text-silver/70">
+                      Areas to improve
+                    </div>
+                    <div className="text-sm text-white whitespace-pre-wrap">
+                      {f.improvements}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </>
+        )}
+      </DrawerBody>
+      <DrawerFooter>
+        <Button variant="ghost" onClick={onClose}>
+          Close
+        </Button>
+      </DrawerFooter>
+    </Drawer>
   );
 }
 
@@ -1136,48 +1950,36 @@ const TIMELINE_KIND_META: Record<
 
 function TimelineTab() {
   const [associate, setAssociate] = useState<PickedAssociate | null>(null);
-  // Locked-in associate id we last loaded for. Lets the input keep
-  // changing without re-firing the query on every keystroke — the
-  // useQuery only enables when the user clicks "Load timeline".
-  const [loadedId, setLoadedId] = useState<string | null>(null);
-  const [localError, setLocalError] = useState<string | null>(null);
 
+  // The picker resolves to a stable {id, name} only when the user selects
+  // a result, so the query can key directly off it — no Load button needed.
   const q = useQuery({
-    queryKey: perfKeys.timeline(loadedId ?? ''),
-    queryFn: async () => (await getPerfTimeline(loadedId!)).entries,
-    enabled: loadedId !== null,
+    queryKey: perfKeys.timeline(associate?.id ?? ''),
+    queryFn: async () => (await getPerfTimeline(associate!.id)).entries,
+    enabled: associate !== null,
   });
-  const entries = loadedId !== null ? q.data ?? null : null;
+  const entries = associate !== null ? q.data ?? null : null;
   const error =
-    localError ??
-    (q.error instanceof ApiError ? q.error.message : q.error ? 'Failed to load.' : null);
-  const loading = q.isFetching && q.fetchStatus !== 'idle';
-
-  const load = () => {
-    if (!associate) {
-      setLocalError('Pick an associate.');
-      return;
-    }
-    setLocalError(null);
-    setLoadedId(associate.id);
-  };
+    q.error instanceof ApiError ? q.error.message : q.error ? 'Failed to load.' : null;
+  const loading = associate !== null && entries === null && !error;
 
   return (
     <div className="space-y-4">
       <Card>
-        <CardContent className="p-4 flex items-end gap-3">
-          <div className="flex-1">
-            <Label>Associate</Label>
-            <div className="mt-1">
-              <AssociatePicker value={associate} onChange={setAssociate} />
-            </div>
+        <CardContent className="p-4">
+          <Label>Associate</Label>
+          <div className="mt-1">
+            <AssociatePicker value={associate} onChange={setAssociate} />
           </div>
-          <Button onClick={load} disabled={loading}>
-            {loading ? 'Loading…' : 'Load timeline'}
-          </Button>
+          {!associate && (
+            <p className="mt-2 text-xs text-silver">
+              Pick an associate to see their goals, PIPs, and reviews on one timeline.
+            </p>
+          )}
         </CardContent>
       </Card>
       {error && <p role="alert" className="text-sm text-alert">{error}</p>}
+      {loading && <SkeletonRows count={3} />}
       {entries && entries.length === 0 && (
         <EmptyState
           icon={Target}

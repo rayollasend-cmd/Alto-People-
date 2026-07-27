@@ -4,6 +4,7 @@ import { randomBytes } from 'crypto';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { send } from '../lib/notifications.js';
 
 /**
  * Phase 128 — Anonymous reporting / whistleblower hotline.
@@ -21,6 +22,26 @@ export const anonReport128Router = Router();
 const MANAGE_PERF = requireCapability('manage:performance');
 
 // ----- Helpers --------------------------------------------------------------
+
+/**
+ * Fire-and-forget email nudge to the reporter's optional contact address.
+ * Deliberately content-free: no reply text, no tracking code, no status —
+ * the email itself must never leak anything if the inbox is shared. The
+ * reporter re-enters their code on the public hotline page to read it.
+ */
+function nudgeReporter(contactEmail: string): void {
+  void send({
+    channel: 'EMAIL',
+    recipient: { userId: null, phone: null, email: contactEmail },
+    subject: 'Update on your confidential report',
+    body: 'There is a new reply on your report. Visit the hotline page and enter your tracking code to read it.',
+  }).catch((err: unknown) => {
+    console.warn(
+      '[anonReport128] reporter email nudge failed:',
+      err instanceof Error ? err.message : err,
+    );
+  });
+}
 
 function generateTrackingCode(): string {
   // 16 uppercase alphanum chars; ambiguous chars (0, O, 1, I, L) excluded so
@@ -365,6 +386,15 @@ anonReport128Router.patch(
       data.resolution = input.resolution;
     }
     await prisma.anonymousReport.update({ where: { id }, data });
+    // Email nudge AFTER the write: status moved to RESOLVED and the
+    // reporter left a contact address. Content-free by design.
+    if (
+      input.status === 'RESOLVED' &&
+      existing.status !== 'RESOLVED' &&
+      existing.contactEmail
+    ) {
+      nudgeReporter(existing.contactEmail);
+    }
     res.json({ ok: true });
   },
 );
@@ -384,7 +414,7 @@ anonReport128Router.post(
     const input = HrMessageSchema.parse(req.body);
     const existing = await prisma.anonymousReport.findUnique({
       where: { id },
-      select: { id: true },
+      select: { id: true, contactEmail: true },
     });
     if (!existing) {
       throw new HttpError(404, 'not_found', 'Report not found.');
@@ -398,6 +428,11 @@ anonReport128Router.post(
         internalOnly: input.internalOnly,
       },
     });
+    // Visible replies nudge the reporter (if they left an email). Internal
+    // notes must never trigger any external signal.
+    if (!input.internalOnly && existing.contactEmail) {
+      nudgeReporter(existing.contactEmail);
+    }
     res.status(201).json({ ok: true });
   },
 );

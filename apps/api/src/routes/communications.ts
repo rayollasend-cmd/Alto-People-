@@ -2,8 +2,10 @@ import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import {
   NotificationBroadcastInputSchema,
+  NotificationChannelSchema,
   NotificationListResponseSchema,
   NotificationSendInputSchema,
+  NotificationStatusSchema,
   PushPublicKeyResponseSchema,
   PushSubscribeInputSchema,
   PushUnsubscribeInputSchema,
@@ -169,13 +171,18 @@ communicationsRouter.post('/me/inbox/:id/read', async (req, res, next) => {
 
 communicationsRouter.get('/admin', MANAGE, async (req, res, next) => {
   try {
-    const channel = req.query.channel?.toString();
-    const status = req.query.status?.toString();
+    // Optional ?channel= and ?status= filters. Validated against the shared
+    // enums so a garbage value is ignored (unfiltered) instead of bubbling a
+    // Prisma enum error out of the list endpoint.
+    const channelParsed = NotificationChannelSchema.safeParse(
+      req.query.channel?.toString(),
+    );
+    const statusParsed = NotificationStatusSchema.safeParse(
+      req.query.status?.toString(),
+    );
     const where: Prisma.NotificationWhereInput = {
-      ...(channel
-        ? { channel: channel as Prisma.NotificationWhereInput['channel'] }
-        : {}),
-      ...(status ? { status: status as Prisma.NotificationWhereInput['status'] } : {}),
+      ...(channelParsed.success ? { channel: channelParsed.data } : {}),
+      ...(statusParsed.success ? { status: statusParsed.data } : {}),
     };
     const rows = await prisma.notification.findMany({
       where,

@@ -52,6 +52,13 @@ export const createPulseSurvey = (input: {
 export const deletePulseSurvey = (id: string) =>
   apiFetch<void>(`/pulse-surveys/${id}`, { method: 'DELETE' });
 
+/** End a survey early (openUntil → now). Responses are kept — unlike delete. */
+export const closePulseSurvey = (id: string) =>
+  apiFetch<{ ok: true }>(`/pulse-surveys/${id}/close`, {
+    method: 'POST',
+    body: {},
+  });
+
 export const getPulseResults = (id: string) =>
   apiFetch<PulseResults>(`/pulse-surveys/${id}/results`);
 

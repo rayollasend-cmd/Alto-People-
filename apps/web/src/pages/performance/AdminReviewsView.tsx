@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
-import { ClipboardList, Plus, Star } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ClipboardList, Download, Plus, Star } from 'lucide-react';
+import { toast } from 'sonner';
 import type {
   PerformanceReview,
   PerformanceReviewStatus,
@@ -11,7 +12,11 @@ import {
 } from '@/lib/performanceApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { fmtDate, fmtDateTime, parseYmd, ymdLocal } from '@/lib/format';
+import { downloadCsv } from '@/lib/csv';
 import {
+  AssociatePicker,
+  type PickedAssociate,
   Avatar,
   Badge,
   Button,
@@ -36,6 +41,20 @@ import {
   SkeletonRows,
   Textarea,
 } from '@/components/ui';
+
+/** Start/end of the most recently COMPLETED calendar quarter, as local
+ *  "YYYY-MM-DD" — the natural default period for a new review. */
+function lastCompletedQuarter(now = new Date()): { start: string; end: string } {
+  const currentQuarterStartMonth = Math.floor(now.getMonth() / 3) * 3;
+  const start = new Date(now.getFullYear(), currentQuarterStartMonth - 3, 1);
+  // Day 0 of the current quarter's first month = last day of the previous quarter.
+  const end = new Date(now.getFullYear(), currentQuarterStartMonth, 0);
+  return { start: ymdLocal(start), end: ymdLocal(end) };
+}
+
+function fmtPeriod(start: string, end: string): string {
+  return `${fmtDate(parseYmd(start))} → ${fmtDate(parseYmd(end))}`;
+}
 
 const STATUS_FILTERS: Array<{ value: PerformanceReviewStatus | 'ALL'; label: string }> = [
   { value: 'DRAFT', label: 'Draft' },
@@ -67,12 +86,24 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [submitTarget, setSubmitTarget] = useState<PerformanceReview | null>(null);
   const [drawerTarget, setDrawerTarget] = useState<PerformanceReview | null>(null);
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [bulkConfirm, setBulkConfirm] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
       setError(null);
       const res = await listReviews(filter === 'ALL' ? {} : { status: filter });
       setReviews(res.reviews);
+      // Drop selections for rows no longer present (or no longer DRAFT).
+      setSelected((prev) => {
+        const next = new Set<string>();
+        for (const r of res.reviews) {
+          if (r.status === 'DRAFT' && prev.has(r.id)) next.add(r.id);
+        }
+        return next;
+      });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load.');
     }
@@ -81,6 +112,22 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  const filtered = useMemo(() => {
+    if (!reviews) return null;
+    const term = search.trim().toLowerCase();
+    if (!term) return reviews;
+    return reviews.filter((r) => r.associateName.toLowerCase().includes(term));
+  }, [reviews, search]);
+
+  const toggleSelected = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const onConfirmSubmit = async () => {
     if (!submitTarget) return;
@@ -94,6 +141,46 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
     } finally {
       setPendingId(null);
     }
+  };
+
+  const onConfirmBulkSubmit = async () => {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    setBulkBusy(true);
+    let ok = 0;
+    let failed = 0;
+    // The API only exposes single-review submit; loop it sequentially so
+    // one failure doesn't abort the rest of the batch.
+    for (const id of ids) {
+      try {
+        await submitReview(id);
+        ok += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    setBulkBusy(false);
+    setBulkConfirm(false);
+    setSelected(new Set());
+    if (failed > 0) {
+      toast.error(`${ok} submitted, ${failed} failed.`);
+    } else {
+      toast.success(`${ok} review${ok === 1 ? '' : 's'} submitted.`);
+    }
+    await refresh();
+  };
+
+  const onExportCsv = () => {
+    if (!filtered || filtered.length === 0) return;
+    downloadCsv(`performance-reviews-${ymdLocal()}.csv`, [
+      ['Associate', 'Period', 'Rating', 'Status'],
+      ...filtered.map((r) => [
+        r.associateName,
+        `${r.periodStart} – ${r.periodEnd}`,
+        r.overallRating,
+        r.status,
+      ]),
+    ]);
   };
 
   return (
@@ -115,7 +202,7 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
         }
       />
 
-      <div className="flex flex-wrap gap-2 mb-5">
+      <div className="flex flex-wrap gap-2 mb-3">
         {STATUS_FILTERS.map((f) => (
           <Button
             key={f.value}
@@ -134,12 +221,41 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
         ))}
       </div>
 
+      <div className="flex flex-wrap items-center gap-2 mb-5">
+        <div className="w-64 max-w-full">
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search associate…"
+            aria-label="Search reviews by associate"
+          />
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={onExportCsv}
+          disabled={!filtered || filtered.length === 0}
+        >
+          <Download className="h-4 w-4" />
+          Export CSV
+        </Button>
+        {canManage && selected.size > 0 && (
+          <Button type="button" size="sm" onClick={() => setBulkConfirm(true)}>
+            Submit selected drafts ({selected.size})
+          </Button>
+        )}
+      </div>
+
       {error && (
         <p role="alert" className="text-sm text-alert mb-3">
           {error}
         </p>
       )}
       {!reviews && <SkeletonRows count={4} rowHeight="h-20" />}
+      {filtered && filtered.length === 0 && reviews && reviews.length > 0 && (
+        <p className="text-sm text-silver">No reviews match “{search.trim()}”.</p>
+      )}
       {reviews && reviews.length === 0 && (
         <EmptyState
           icon={ClipboardList}
@@ -159,9 +275,9 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
           }
         />
       )}
-      {reviews && reviews.length > 0 && (
+      {filtered && filtered.length > 0 && (
         <ul className="space-y-2">
-          {reviews.map((r) => (
+          {filtered.map((r) => (
             <li key={r.id}>
               <Card
                 className="group cursor-pointer transition-colors hover:border-gold/40"
@@ -175,12 +291,21 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
                 <CardContent className="p-4">
                   <div className="flex items-start justify-between gap-3 flex-wrap">
                     <div className="flex items-start gap-3 min-w-0 flex-1">
+                      {canManage && r.status === 'DRAFT' && (
+                        <input
+                          type="checkbox"
+                          className="mt-3 h-4 w-4 shrink-0 accent-gold"
+                          checked={selected.has(r.id)}
+                          onChange={() => toggleSelected(r.id)}
+                          aria-label={`Select draft review for ${r.associateName}`}
+                        />
+                      )}
                       <Avatar name={r.associateName} size="md" />
                       <div className="min-w-0 flex-1">
                         <div className="text-white font-medium">
                           {r.associateName}
                           <span className="text-silver text-xs ml-2 font-normal">
-                            {r.periodStart} → {r.periodEnd}
+                            {fmtPeriod(r.periodStart, r.periodEnd)}
                           </span>
                         </div>
                         <div className="text-sm text-silver line-clamp-1 mt-0.5">
@@ -239,6 +364,16 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
         onConfirm={onConfirmSubmit}
       />
 
+      <ConfirmDialog
+        open={bulkConfirm}
+        onOpenChange={(o) => !o && !bulkBusy && setBulkConfirm(false)}
+        title={`Submit ${selected.size} draft review${selected.size === 1 ? '' : 's'}?`}
+        description="Each associate will be able to see their review immediately. Drafts can no longer be edited after submitting."
+        confirmLabel="Submit selected"
+        busy={bulkBusy}
+        onConfirm={onConfirmBulkSubmit}
+      />
+
       <Drawer
         open={!!drawerTarget}
         onOpenChange={(o) => !o && setDrawerTarget(null)}
@@ -276,7 +411,7 @@ function ReviewDetailPanel({
           <div className="min-w-0">
             <DrawerTitle className="truncate">{r.associateName}</DrawerTitle>
             <DrawerDescription>
-              {r.periodStart} → {r.periodEnd}
+              {fmtPeriod(r.periodStart, r.periodEnd)}
             </DrawerDescription>
           </div>
         </div>
@@ -299,13 +434,9 @@ function ReviewDetailPanel({
         <ReviewSection label="Goals" body={r.goals} />
 
         <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-2 text-xs text-silver">
-          <DetailRow label="Created">{new Date(r.createdAt).toLocaleString()}</DetailRow>
-          <DetailRow label="Submitted">
-            {r.submittedAt ? new Date(r.submittedAt).toLocaleString() : '—'}
-          </DetailRow>
-          <DetailRow label="Acknowledged">
-            {r.acknowledgedAt ? new Date(r.acknowledgedAt).toLocaleString() : '—'}
-          </DetailRow>
+          <DetailRow label="Created">{fmtDateTime(r.createdAt)}</DetailRow>
+          <DetailRow label="Submitted">{fmtDateTime(r.submittedAt)}</DetailRow>
+          <DetailRow label="Acknowledged">{fmtDateTime(r.acknowledgedAt)}</DetailRow>
         </dl>
       </DrawerBody>
       {canManage && r.status === 'DRAFT' && (
@@ -351,7 +482,7 @@ function CreateReviewDialog({
   onOpenChange,
   onCreated,
 }: CreateReviewDialogProps) {
-  const [associateId, setAssociateId] = useState('');
+  const [associate, setAssociate] = useState<PickedAssociate | null>(null);
   const [periodStart, setPeriodStart] = useState('');
   const [periodEnd, setPeriodEnd] = useState('');
   const [overallRating, setOverallRating] = useState(3);
@@ -364,9 +495,10 @@ function CreateReviewDialog({
 
   useEffect(() => {
     if (open) {
-      setAssociateId('');
-      setPeriodStart('');
-      setPeriodEnd('');
+      const quarter = lastCompletedQuarter();
+      setAssociate(null);
+      setPeriodStart(quarter.start);
+      setPeriodEnd(quarter.end);
       setOverallRating(3);
       setSummary('');
       setStrengths('');
@@ -379,11 +511,15 @@ function CreateReviewDialog({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
+    if (!associate) {
+      setError('Pick an associate.');
+      return;
+    }
     setError(null);
     setSubmitting(true);
     try {
       await createReview({
-        associateId,
+        associateId: associate.id,
         periodStart,
         periodEnd,
         overallRating,
@@ -411,13 +547,8 @@ function CreateReviewDialog({
         </DialogHeader>
         <form onSubmit={handleSubmit} className="grid gap-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Field label="Associate ID" required>
-              <Input
-                required
-                value={associateId}
-                onChange={(e) => setAssociateId(e.target.value)}
-                placeholder="00000000-0000-4000-8000-…"
-              />
+            <Field label="Associate" required>
+              <AssociatePicker value={associate} onChange={setAssociate} />
             </Field>
             <Field label="Overall rating (1–5)" required>
               <Input

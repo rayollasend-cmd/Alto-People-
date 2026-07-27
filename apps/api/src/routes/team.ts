@@ -11,6 +11,7 @@ import {
 } from '../lib/timeOffRequests.js';
 import { recordTimeEvent } from '../lib/audit.js';
 import { accrueSickLeaveForEntry } from '../lib/timeOffAccrual.js';
+import { notifyAssociate } from '../lib/notify.js';
 
 /**
  * Phase 79 — Manager-scoped routes.
@@ -451,6 +452,13 @@ teamRouter.post(
         : {},
       req,
     });
+    void notifyAssociate(updated.associateId, {
+      subject: 'Your timesheet was approved',
+      body: `Your time entry for ${updated.clockInAt.toISOString().slice(0, 10)} was approved by your manager.`,
+      category: 'team',
+      linkUrl: '/me',
+      emailFallback: true,
+    });
     res.json({ ok: true });
   },
 );
@@ -498,6 +506,13 @@ teamRouter.post(
       clientId: entry.clientId,
       metadata: { reason },
       req,
+    });
+    void notifyAssociate(entry.associateId, {
+      subject: 'Your timesheet was rejected',
+      body: `Your time entry for ${entry.clockInAt.toISOString().slice(0, 10)} was rejected. Reason: ${reason}`,
+      category: 'team',
+      linkUrl: '/me',
+      emailFallback: true,
     });
     res.json({ ok: true });
   },
@@ -552,6 +567,13 @@ teamRouter.post(
               : {}),
           },
           req,
+        });
+        void notifyAssociate(updated.associateId, {
+          subject: 'Your timesheet was approved',
+          body: `Your time entry for ${updated.clockInAt.toISOString().slice(0, 10)} was approved by your manager.`,
+          category: 'team',
+          linkUrl: '/me',
+          emailFallback: true,
         });
         approved++;
       } catch (err) {
@@ -633,6 +655,17 @@ teamRouter.post(
       }
       throw err;
     }
+    const note = (req.body?.note ?? '').toString().trim();
+    void notifyAssociate(reqRow.associateId, {
+      subject: 'Your time off was approved',
+      body:
+        `Your ${reqRow.category} request (${reqRow.startDate.toISOString().slice(0, 10)} → ` +
+        `${reqRow.endDate.toISOString().slice(0, 10)}) was approved.` +
+        (note ? ` Note: ${note}` : ''),
+      category: 'team',
+      linkUrl: '/time-off',
+      emailFallback: true,
+    });
     res.json({ ok: true });
   },
 );
@@ -656,6 +689,15 @@ teamRouter.post(
         }
         await requireDirectReportAssociate(user.associateId, reqRow.associateId);
         await approveRequest(prisma, id, user.id, null);
+        void notifyAssociate(reqRow.associateId, {
+          subject: 'Your time off was approved',
+          body:
+            `Your ${reqRow.category} request (${reqRow.startDate.toISOString().slice(0, 10)} → ` +
+            `${reqRow.endDate.toISOString().slice(0, 10)}) was approved.`,
+          category: 'team',
+          linkUrl: '/time-off',
+          emailFallback: true,
+        });
         approved++;
       } catch (err) {
         if (err instanceof IllegalStateError) {
@@ -703,6 +745,15 @@ teamRouter.post(
         reviewerNote: note,
         decidedAt: new Date(),
       },
+    });
+    void notifyAssociate(reqRow.associateId, {
+      subject: 'Your time off was denied',
+      body:
+        `Your ${reqRow.category} request (${reqRow.startDate.toISOString().slice(0, 10)} → ` +
+        `${reqRow.endDate.toISOString().slice(0, 10)}) was denied. Reason: ${note}`,
+      category: 'team',
+      linkUrl: '/time-off',
+      emailFallback: true,
     });
     res.json({ ok: true });
   },

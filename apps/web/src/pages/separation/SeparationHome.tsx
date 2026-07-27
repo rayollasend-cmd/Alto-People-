@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
-import { LogOut, MessageSquareQuote, Plus } from 'lucide-react';
+import { Download, LogOut, MessageSquareQuote, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
+import { useConfirm } from '@/lib/confirm';
+import { downloadCsv } from '@/lib/csv';
+import { fmtDate, fmtDateTime, parseYmd, ymdLocal } from '@/lib/format';
 import {
   advanceSeparation,
   getSeparationSummary,
@@ -52,20 +55,34 @@ const STATUS_VARIANT: Record<
   COMPLETE: 'success',
 };
 
+const STATUS_LABELS: Record<SeparationStatus, string> = {
+  PLANNED: 'Planned',
+  IN_PROGRESS: 'In progress',
+  COMPLETE: 'Complete',
+};
+
 export function SeparationHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:onboarding') : false;
   const [summary, setSummary] = useState<SeparationSummary | null>(null);
   const [rows, setRows] = useState<SeparationRow[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [filter, setFilter] = useState<SeparationStatus | 'ALL'>('PLANNED');
   const [showNew, setShowNew] = useState(false);
   const [openRow, setOpenRow] = useState<SeparationRow | null>(null);
 
   const refresh = () => {
     setRows(null);
+    setLoadError(null);
     listSeparations({ status: filter === 'ALL' ? undefined : filter })
       .then((r) => setRows(r.separations))
-      .catch(() => setRows([]));
+      .catch((err) =>
+        setLoadError(
+          err instanceof ApiError
+            ? err.message
+            : 'Failed to load separations.',
+        ),
+      );
     getSeparationSummary(90)
       .then(setSummary)
       .catch(() => setSummary(null));
@@ -73,6 +90,42 @@ export function SeparationHome() {
   useEffect(() => {
     refresh();
   }, [filter]);
+
+  const exportCsv = () => {
+    if (!rows) return;
+    downloadCsv(`separations-${ymdLocal()}.csv`, [
+      [
+        'Associate',
+        'Email',
+        'Reason',
+        'Status',
+        'Notice date',
+        'Last day worked',
+        'Final paycheck',
+        'Exit interview',
+        'Rating',
+        'Would recommend',
+        'Would return',
+        'Initiated by',
+        'Completed at',
+      ],
+      ...rows.map((s) => [
+        s.associateName,
+        s.associateEmail,
+        REASON_LABELS[s.reason],
+        STATUS_LABELS[s.status],
+        s.noticeDate ?? '',
+        s.lastDayWorked,
+        s.finalPaycheckDate ?? '',
+        s.exitInterviewCompletedAt ? 'Done' : 'Pending',
+        s.rating ?? '',
+        s.wouldRecommend === null ? '' : s.wouldRecommend ? 'Yes' : 'No',
+        s.wouldReturn === null ? '' : s.wouldReturn ? 'Yes' : 'No',
+        s.initiatedByEmail ?? '',
+        s.completedAt ? fmtDateTime(s.completedAt) : '',
+      ]),
+    ]);
+  };
 
   return (
     <div className="space-y-5">
@@ -112,20 +165,39 @@ export function SeparationHome() {
               variant={filter === s ? 'primary' : 'ghost'}
               onClick={() => setFilter(s)}
             >
-              {s}
+              {s === 'ALL' ? 'All' : STATUS_LABELS[s]}
             </Button>
           ))}
         </div>
-        {canManage && (
-          <Button onClick={() => setShowNew(true)}>
-            <Plus className="mr-2 h-4 w-4" /> Initiate separation
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={exportCsv}
+            disabled={!rows || rows.length === 0}
+          >
+            <Download className="mr-2 h-4 w-4" /> Export CSV
           </Button>
-        )}
+          {canManage && (
+            <Button onClick={() => setShowNew(true)}>
+              <Plus className="mr-2 h-4 w-4" /> Initiate separation
+            </Button>
+          )}
+        </div>
       </div>
 
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {loadError ? (
+            <div className="p-6 space-y-3">
+              <p role="alert" className="text-sm text-alert">
+                {loadError}
+              </p>
+              <Button size="sm" variant="secondary" onClick={refresh}>
+                Retry
+              </Button>
+            </div>
+          ) : rows === null ? (
             <div className="p-6">
               <SkeletonRows count={4} />
             </div>
@@ -164,17 +236,20 @@ export function SeparationHome() {
                       </div>
                       <div className="text-xs text-silver">{s.associateEmail}</div>
                       <div className="text-[11px] text-silver/70 md:hidden">
-                        {s.lastDayWorked} · {REASON_LABELS[s.reason]}
+                        {fmtDate(parseYmd(s.lastDayWorked))} ·{' '}
+                        {REASON_LABELS[s.reason]}
                       </div>
                     </TableCell>
                     <TableCell className="hidden md:table-cell text-sm text-silver">
                       {REASON_LABELS[s.reason]}
                     </TableCell>
                     <TableCell className="hidden md:table-cell text-sm text-silver">
-                      {s.lastDayWorked}
+                      {fmtDate(parseYmd(s.lastDayWorked))}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={STATUS_VARIANT[s.status]}>{s.status}</Badge>
+                      <Badge variant={STATUS_VARIANT[s.status]}>
+                        {STATUS_LABELS[s.status]}
+                      </Badge>
                     </TableCell>
                     <TableCell className="hidden lg:table-cell">
                       {s.exitInterviewCompletedAt ? (
@@ -247,11 +322,15 @@ function NewSeparationDrawer({
   const [reason, setReason] = useState<SeparationReason>(
     'VOLUNTARY_OTHER_OPPORTUNITY',
   );
-  const today = new Date().toISOString().slice(0, 10);
-  const [noticeDate, setNoticeDate] = useState(today);
-  const [lastDayWorked, setLastDayWorked] = useState(
-    new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-  );
+  const [noticeDate, setNoticeDate] = useState(() => ymdLocal());
+  // Two weeks out, computed via local date parts — epoch math around DST
+  // (and UTC slicing) can land a day off for evening users west of UTC.
+  const [lastDayWorked, setLastDayWorked] = useState(() => {
+    const t = new Date();
+    return ymdLocal(new Date(t.getFullYear(), t.getMonth(), t.getDate() + 14));
+  });
+  // Defaults to the last day worked; tracks it until manually edited.
+  const [finalPaycheckDate, setFinalPaycheckDate] = useState(lastDayWorked);
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
@@ -266,6 +345,7 @@ function NewSeparationDrawer({
         reason,
         noticeDate,
         lastDayWorked,
+        finalPaycheckDate: finalPaycheckDate || null,
       });
       toast.success('Separation initiated.');
       onSaved();
@@ -318,7 +398,22 @@ function NewSeparationDrawer({
               type="date"
               className="mt-1"
               value={lastDayWorked}
-              onChange={(e) => setLastDayWorked(e.target.value)}
+              onChange={(e) => {
+                const v = e.target.value;
+                // Keep the paycheck date in lockstep until it's been
+                // deliberately changed away from the last day worked.
+                setFinalPaycheckDate((p) => (p === lastDayWorked ? v : p));
+                setLastDayWorked(v);
+              }}
+            />
+          </div>
+          <div>
+            <Label>Final paycheck date</Label>
+            <Input
+              type="date"
+              className="mt-1"
+              value={finalPaycheckDate}
+              onChange={(e) => setFinalPaycheckDate(e.target.value)}
             />
           </div>
         </div>
@@ -359,6 +454,34 @@ function DetailDrawer({
     row.wouldReturn === null ? '' : row.wouldReturn ? 'yes' : 'no',
   );
   const [busy, setBusy] = useState(false);
+  const confirm = useConfirm();
+
+  const advance = async () => {
+    const next = row.status === 'PLANNED' ? 'IN_PROGRESS' : 'COMPLETE';
+    if (next === 'COMPLETE') {
+      const ok = await confirm({
+        title: 'Complete this separation?',
+        description:
+          `This marks ${row.associateName}'s separation COMPLETE. Their ` +
+          'access is revoked and their biometric consent data (check-in ' +
+          'selfies and face reference) is permanently purged — it cannot ' +
+          'be recovered.',
+        confirmLabel: 'Complete separation',
+        destructive: true,
+      });
+      if (!ok) return;
+    }
+    setBusy(true);
+    try {
+      const r = await advanceSeparation(row.id);
+      toast.success(`Advanced to ${STATUS_LABELS[r.status]}.`);
+      onChanged();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
@@ -367,33 +490,24 @@ function DetailDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div className="flex items-center gap-2">
-          <Badge variant={STATUS_VARIANT[row.status]}>{row.status}</Badge>
+          <Badge variant={STATUS_VARIANT[row.status]}>
+            {STATUS_LABELS[row.status]}
+          </Badge>
           <span className="text-sm text-silver">{REASON_LABELS[row.reason]}</span>
         </div>
         <div className="text-xs text-silver">
-          {row.noticeDate && `Notice ${row.noticeDate} · `}
-          Last day {row.lastDayWorked}
-          {row.finalPaycheckDate && ` · Final paycheck ${row.finalPaycheckDate}`}
+          {row.noticeDate && `Notice ${fmtDate(parseYmd(row.noticeDate))} · `}
+          Last day {fmtDate(parseYmd(row.lastDayWorked))}
+          {row.finalPaycheckDate &&
+            ` · Final paycheck ${fmtDate(parseYmd(row.finalPaycheckDate))}`}
         </div>
 
         {canManage && row.status !== 'COMPLETE' && (
-          <Button
-            variant="primary"
-            onClick={async () => {
-              setBusy(true);
-              try {
-                const r = await advanceSeparation(row.id);
-                toast.success(`Advanced to ${r.status}.`);
-                onChanged();
-              } catch (err) {
-                toast.error(err instanceof ApiError ? err.message : 'Failed.');
-              } finally {
-                setBusy(false);
-              }
-            }}
-            disabled={busy}
-          >
-            Advance to {row.status === 'PLANNED' ? 'IN_PROGRESS' : 'COMPLETE'}
+          <Button variant="primary" onClick={advance} disabled={busy}>
+            Advance to{' '}
+            {row.status === 'PLANNED'
+              ? STATUS_LABELS.IN_PROGRESS
+              : STATUS_LABELS.COMPLETE}
           </Button>
         )}
 

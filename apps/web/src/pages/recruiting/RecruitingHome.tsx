@@ -4,6 +4,7 @@ import {
   Award,
   Briefcase,
   CheckCircle2,
+  Download,
   FileText,
   Kanban,
   Link2,
@@ -20,6 +21,9 @@ import {
   hireCandidate,
   listCandidates,
 } from '@/lib/recruitingApi';
+import { listPositions } from '@/lib/positionsApi';
+import { downloadCsv } from '@/lib/csv';
+import { fmtDate, ymdLocal } from '@/lib/format';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
@@ -42,6 +46,7 @@ import {
   EmptyState,
   Input,
   PageHeader,
+  Select,
   Skeleton,
   SkeletonRows,
   Table,
@@ -81,6 +86,25 @@ const NEXT_STAGE: Partial<Record<CandidateStage, CandidateStage>> = {
   INTERVIEW: 'OFFER',
 };
 
+/** Where candidates come from — the funnels HR actually tracks. */
+const CANDIDATE_SOURCES = [
+  'referral',
+  'careers-page',
+  'indeed',
+  'linkedin',
+  'walk-in',
+  'agency',
+  'other',
+] as const;
+
+/** Whole days since an ISO timestamp; the pipeline-age badge. The DTO only
+ *  carries createdAt (no per-stage stamp), so this is days since applied. */
+function daysSince(iso: string): number {
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return 0;
+  return Math.max(0, Math.floor((Date.now() - t) / 86_400_000));
+}
+
 type DialogState =
   | { kind: 'reject'; candidate: Candidate }
   | { kind: 'withdraw'; candidate: Candidate }
@@ -117,8 +141,16 @@ export function RecruitingHome() {
   const [allCandidates, setAllCandidates] = useState<Candidate[] | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [kpiError, setKpiError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search.trim().toLowerCase()), 250);
+    return () => clearTimeout(t);
+  }, [search]);
 
   const setViewPersisted = useCallback((v: ViewMode) => {
     setView(v);
@@ -138,10 +170,12 @@ export function RecruitingHome() {
   // KPI strip wants stage counts independent of the active filter.
   const refreshKpis = useCallback(async () => {
     try {
+      setKpiError(null);
       const res = await listCandidates({});
       setAllCandidates(res.candidates);
-    } catch {
-      /* best-effort */
+    } catch (err) {
+      // Surface the failure — eternal skeletons read as "still loading."
+      setKpiError(err instanceof ApiError ? err.message : 'Failed to load pipeline stats.');
     }
   }, []);
 
@@ -195,6 +229,9 @@ export function RecruitingHome() {
         stage: 'WITHDRAWN',
         withdrawnReason: reason,
       });
+      toast.success(
+        `${dialog.candidate.firstName} ${dialog.candidate.lastName} marked withdrawn.`,
+      );
       setDialog(null);
       await Promise.all([refresh(), refreshKpis()]);
     } catch (err) {
@@ -209,6 +246,7 @@ export function RecruitingHome() {
     setPendingId(dialog.candidate.id);
     try {
       await hireCandidate(dialog.candidate.id);
+      toast.success('Hired — associate record created.');
       setDialog(null);
       await Promise.all([refresh(), refreshKpis()]);
     } catch (err) {
@@ -234,6 +272,42 @@ export function RecruitingHome() {
     return { inFunnel, interviewing, outstandingOffers, hiredThisMonth };
   }, [allCandidates]);
 
+  // Client-side name/email/position search, applied to both views.
+  const candidateMatches = useCallback(
+    (c: Candidate) =>
+      !debouncedSearch ||
+      `${c.firstName} ${c.lastName}`.toLowerCase().includes(debouncedSearch) ||
+      c.email.toLowerCase().includes(debouncedSearch) ||
+      (c.position ?? '').toLowerCase().includes(debouncedSearch),
+    [debouncedSearch],
+  );
+  const visibleCandidates = useMemo(
+    () => (candidates ? candidates.filter(candidateMatches) : null),
+    [candidates, candidateMatches],
+  );
+  const visibleAll = useMemo(
+    () => (allCandidates ? allCandidates.filter(candidateMatches) : null),
+    [allCandidates, candidateMatches],
+  );
+
+  const onExportCsv = () => {
+    const rows = view === 'list' ? visibleCandidates : visibleAll;
+    if (!rows || rows.length === 0) return;
+    downloadCsv(`candidates-${ymdLocal()}.csv`, [
+      ['First name', 'Last name', 'Email', 'Phone', 'Position', 'Source', 'Stage', 'Applied'],
+      ...rows.map((c) => [
+        c.firstName,
+        c.lastName,
+        c.email,
+        c.phone ?? '',
+        c.position ?? '',
+        c.source ?? '',
+        c.stage,
+        c.createdAt.slice(0, 10),
+      ]),
+    ]);
+  };
+
   return (
     <div className="mx-auto">
       <PageHeader
@@ -253,32 +327,43 @@ export function RecruitingHome() {
         }
       />
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-        <KpiCard
-          icon={Users}
-          label="In funnel"
-          value={kpis ? String(kpis.inFunnel) : null}
-          tone="default"
-        />
-        <KpiCard
-          icon={Briefcase}
-          label="Interviewing"
-          value={kpis ? String(kpis.interviewing) : null}
-          tone="warning"
-        />
-        <KpiCard
-          icon={Award}
-          label="Open offers"
-          value={kpis ? String(kpis.outstandingOffers) : null}
-          tone="default"
-        />
-        <KpiCard
-          icon={CheckCircle2}
-          label="Hired this month"
-          value={kpis ? String(kpis.hiredThisMonth) : null}
-          tone="success"
-        />
-      </div>
+      {kpiError && !allCandidates ? (
+        <Card className="p-4 mb-6 flex flex-wrap items-center justify-between gap-3">
+          <p role="alert" className="text-sm text-alert">
+            {kpiError}
+          </p>
+          <Button size="sm" variant="secondary" onClick={() => refreshKpis()}>
+            Retry
+          </Button>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+          <KpiCard
+            icon={Users}
+            label="In funnel"
+            value={kpis ? String(kpis.inFunnel) : null}
+            tone="default"
+          />
+          <KpiCard
+            icon={Briefcase}
+            label="Interviewing"
+            value={kpis ? String(kpis.interviewing) : null}
+            tone="warning"
+          />
+          <KpiCard
+            icon={Award}
+            label="Open offers"
+            value={kpis ? String(kpis.outstandingOffers) : null}
+            tone="default"
+          />
+          <KpiCard
+            icon={CheckCircle2}
+            label="Hired this month"
+            value={kpis ? String(kpis.hiredThisMonth) : null}
+            tone="success"
+          />
+        </div>
+      )}
 
       <Card>
         <CardHeader className="pb-3">
@@ -286,6 +371,30 @@ export function RecruitingHome() {
             <div className="flex items-center gap-3">
               <CardTitle className="text-base">Candidates</CardTitle>
               <ViewToggle value={view} onChange={setViewPersisted} />
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="w-full sm:w-60">
+                <Input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search name, email, position…"
+                  aria-label="Search candidates"
+                />
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={onExportCsv}
+                disabled={
+                  view === 'list'
+                    ? !visibleCandidates || visibleCandidates.length === 0
+                    : !visibleAll || visibleAll.length === 0
+                }
+              >
+                <Download className="h-3.5 w-3.5" />
+                Export CSV
+              </Button>
             </div>
             {view === 'list' && (
               <div className="flex flex-wrap gap-2">
@@ -317,10 +426,20 @@ export function RecruitingHome() {
           )}
           {view === 'board' && (
             <>
-              {!allCandidates && <SkeletonRows count={5} rowHeight="h-24" />}
-              {allCandidates && (
+              {!visibleAll && kpiError && (
+                <div className="py-8 text-center">
+                  <p role="alert" className="text-sm text-alert mb-3">
+                    {kpiError}
+                  </p>
+                  <Button size="sm" variant="secondary" onClick={() => refreshKpis()}>
+                    Retry
+                  </Button>
+                </div>
+              )}
+              {!visibleAll && !kpiError && <SkeletonRows count={5} rowHeight="h-24" />}
+              {visibleAll && (
                 <CandidateBoard
-                  candidates={allCandidates}
+                  candidates={visibleAll}
                   pendingId={pendingId}
                   onAdvance={(c, target) => advance(c, target)}
                   onRequestReject={(c) => setDialog({ kind: 'reject', candidate: c })}
@@ -330,18 +449,30 @@ export function RecruitingHome() {
               )}
             </>
           )}
-          {view === 'list' && !candidates && <SkeletonRows count={5} rowHeight="h-12" />}
-          {view === 'list' && candidates && candidates.length === 0 && (
+          {view === 'list' && !visibleCandidates && (
+            <SkeletonRows count={5} rowHeight="h-12" />
+          )}
+          {view === 'list' && visibleCandidates && visibleCandidates.length === 0 && (
             <EmptyState
               icon={UserPlus}
-              title="No candidates match this filter"
+              title={
+                debouncedSearch
+                  ? 'No candidates match your search'
+                  : 'No candidates match this filter'
+              }
               description={
-                canManage
-                  ? 'Add a candidate or switch to a different stage.'
-                  : 'Switch to a different stage to see more candidates.'
+                debouncedSearch
+                  ? 'Try a different name, email, or position.'
+                  : canManage
+                    ? 'Add a candidate or switch to a different stage.'
+                    : 'Switch to a different stage to see more candidates.'
               }
               action={
-                canManage ? (
+                debouncedSearch ? (
+                  <Button variant="outline" onClick={() => setSearch('')}>
+                    Clear search
+                  </Button>
+                ) : canManage ? (
                   <Button onClick={() => setShowCreate(true)}>
                     <Plus className="h-4 w-4" />
                     New candidate
@@ -350,7 +481,7 @@ export function RecruitingHome() {
               }
             />
           )}
-          {view === 'list' && candidates && candidates.length > 0 && (
+          {view === 'list' && visibleCandidates && visibleCandidates.length > 0 && (
             <>
               {/* Desktop: dense 6-col table. Hidden below lg because the
                   combined width (Name + Email + Position + Source + Stage
@@ -363,6 +494,7 @@ export function RecruitingHome() {
                       <TableHead>Email</TableHead>
                       <TableHead>Position</TableHead>
                       <TableHead>Source</TableHead>
+                      <TableHead>Applied</TableHead>
                       <TableHead>Stage</TableHead>
                       {canManage && (
                         <TableHead className="text-right">Actions</TableHead>
@@ -370,7 +502,7 @@ export function RecruitingHome() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {candidates.map((c) => (
+                    {visibleCandidates.map((c) => (
                       <TableRow key={c.id} className="group">
                         <TableCell className="font-medium">
                           <CandidateNameCell c={c} />
@@ -381,6 +513,14 @@ export function RecruitingHome() {
                         </TableCell>
                         <TableCell className="text-silver">
                           {c.source ?? '—'}
+                        </TableCell>
+                        <TableCell className="text-silver whitespace-nowrap">
+                          {fmtDate(c.createdAt)}
+                          <span title="Days in stage (since applied)">
+                            <Badge variant="outline" className="ml-2 tabular-nums">
+                              {daysSince(c.createdAt)}d
+                            </Badge>
+                          </span>
                         </TableCell>
                         <TableCell>
                           <Badge variant={STAGE_VARIANT[c.stage]}>{c.stage}</Badge>
@@ -416,7 +556,7 @@ export function RecruitingHome() {
               {/* Mobile / iPad portrait: card stack. Same data, vertical
                   layout, action buttons always visible (no hover gating). */}
               <ul className="lg:hidden space-y-2">
-                {candidates.map((c) => (
+                {visibleCandidates.map((c) => (
                   <li
                     key={c.id}
                     className="rounded-md border border-navy-secondary bg-navy/40 p-3"
@@ -440,6 +580,9 @@ export function RecruitingHome() {
                         {c.source ?? 'manual'}
                       </div>
                     )}
+                    <div className="mt-0.5 ml-[2.4rem] text-[11px] text-silver/70">
+                      Applied {fmtDate(c.createdAt)} · {daysSince(c.createdAt)}d in stage
+                    </div>
                     {c.rejectedReason && (
                       <div className="mt-2 ml-[2.4rem] text-[11px] text-alert/90">
                         {c.rejectedReason}
@@ -684,6 +827,9 @@ function CreateCandidateDialog({
   const [source, setSource] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Distinct position titles for the Select. null = not loaded / failed —
+  // in that case we fall back to the free-text input rather than blocking.
+  const [positionOptions, setPositionOptions] = useState<string[] | null>(null);
 
   // Clear the form whenever the dialog re-opens.
   useEffect(() => {
@@ -697,6 +843,26 @@ function CreateCandidateDialog({
       setError(null);
     }
   }, [open]);
+
+  useEffect(() => {
+    if (!open || positionOptions !== null) return;
+    let live = true;
+    listPositions()
+      .then((r) => {
+        if (!live) return;
+        setPositionOptions(
+          Array.from(new Set(r.positions.map((p) => p.title))).sort((a, b) =>
+            a.localeCompare(b),
+          ),
+        );
+      })
+      .catch(() => {
+        /* fall back to free-text input */
+      });
+    return () => {
+      live = false;
+    };
+  }, [open, positionOptions]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -764,17 +930,34 @@ function CreateCandidateDialog({
               />
             </Field>
             <Field label="Position">
-              <Input
-                value={position}
-                onChange={(e) => setPosition(e.target.value)}
-              />
+              {positionOptions && positionOptions.length > 0 ? (
+                <Select
+                  value={position}
+                  onChange={(e) => setPosition(e.target.value)}
+                >
+                  <option value="">Select a position…</option>
+                  {positionOptions.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </Select>
+              ) : (
+                <Input
+                  value={position}
+                  onChange={(e) => setPosition(e.target.value)}
+                />
+              )}
             </Field>
             <Field label="Source">
-              <Input
-                placeholder="referral / careers-page / indeed"
-                value={source}
-                onChange={(e) => setSource(e.target.value)}
-              />
+              <Select value={source} onChange={(e) => setSource(e.target.value)}>
+                <option value="">Select a source…</option>
+                {CANDIDATE_SOURCES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </Select>
             </Field>
           </div>
           {error && (

@@ -24,6 +24,7 @@ import {
   type LoginEvent,
 } from '@/lib/settingsApi';
 import { deleteProfilePhoto, uploadProfilePhoto } from '@/lib/selfApi';
+import { fmtDateTime } from '@/lib/format';
 import {
   ROLE_LABELS,
   SUPPORTED_TIMEZONES,
@@ -932,8 +933,10 @@ function SessionsCard() {
           Active sessions
         </CardTitle>
         <CardDescription>
-          See a sign-in below you don't recognise? Sign out everywhere else
-          immediately. This device keeps its session.
+          Signs your account out of every other device and browser in one go
+          — this device keeps its session. Use it if you left yourself signed
+          in somewhere or spot unfamiliar activity in the sign-in history
+          below.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -1285,7 +1288,6 @@ function shortenAgent(ua: string | null): string {
 const LOGIN_HISTORY_PREVIEW = 5;
 
 function LoginHistoryCard() {
-  const { user } = useAuth();
   const [expanded, setExpanded] = useState(false);
 
   const { data: events, error: eventsError } = useQuery({
@@ -1297,25 +1299,6 @@ function LoginHistoryCard() {
       ? eventsError.message
       : 'Failed to load activity.'
     : null;
-
-  // When the user has a saved timezone, format every timestamp through it
-  // so the table reads consistently across devices. Falls back to the
-  // browser locale when null. Constructed once per render — DateTimeFormat
-  // throws on bad TZ strings, so guard with a try/catch.
-  const formatter = (() => {
-    try {
-      return new Intl.DateTimeFormat(undefined, {
-        dateStyle: 'medium',
-        timeStyle: 'short',
-        timeZone: user?.timezone ?? undefined,
-      });
-    } catch {
-      return new Intl.DateTimeFormat(undefined, {
-        dateStyle: 'medium',
-        timeStyle: 'short',
-      });
-    }
-  })();
 
   return (
     <Card>
@@ -1360,7 +1343,7 @@ function LoginHistoryCard() {
                   <TableRow key={e.id}>
                     <TableCell className="text-white">{ACTION_LABEL[e.action]}</TableCell>
                     <TableCell className="text-silver">
-                      {formatter.format(new Date(e.at))}
+                      {fmtDateTime(e.at)}
                     </TableCell>
                     <TableCell className="hidden sm:table-cell text-silver">
                       {shortenAgent(e.userAgent)}

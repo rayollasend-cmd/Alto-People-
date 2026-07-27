@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Copy, Key, Plus, Webhook } from 'lucide-react';
+import { Copy, Download, Key, Plus, Webhook } from 'lucide-react';
 import type { ClientSummary } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import {
@@ -18,7 +18,8 @@ import {
 import { listClients } from '@/lib/clientsApi';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
-import { hasCapability } from '@/lib/roles';
+import { hasCapability, ROLE_CAPABILITIES } from '@/lib/roles';
+import { downloadCsv } from '@/lib/csv';
 import {
   Badge,
   Button,
@@ -30,8 +31,10 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
+  SegmentedControl,
   Select,
   SkeletonRows,
   Table,
@@ -50,6 +53,29 @@ import { fmtDate } from '@/lib/format';
 import { toast } from 'sonner';
 
 type Tab = 'keys' | 'webhooks';
+
+/**
+ * Known outbound webhook event types. The server exposes no registry
+ * endpoint — the only event the emitter dispatches today is `test.ping`
+ * (apps/api/src/routes/apiKeysWebhooks93.ts POST /webhooks/:id/test);
+ * domain events mirror the workflow trigger enum
+ * (apps/api/src/routes/workflows.ts TriggerSchema) in the dotted form the
+ * original free-text placeholder documented (`payroll.finalized`,
+ * `onboarding.completed`). Keep in sync with that enum.
+ */
+const WEBHOOK_EVENT_TYPES = [
+  'associate.hired',
+  'associate.terminated',
+  'time_off.requested',
+  'time_off.approved',
+  'time_off.denied',
+  'position.opened',
+  'position.filled',
+  'payroll.finalized',
+  'onboarding.completed',
+  'compliance.expiring',
+  'test.ping',
+] as const;
 
 export function IntegrationsHome() {
   const { user } = useAuth();
@@ -79,9 +105,20 @@ export function IntegrationsHome() {
   );
 }
 
+type KeyStatus = 'active' | 'revoked' | 'expired';
+
+function keyStatus(k: ApiKeyRecord): KeyStatus {
+  if (k.revokedAt) return 'revoked';
+  if (k.expiresAt && new Date(k.expiresAt) < new Date()) return 'expired';
+  return 'active';
+}
+
 function KeysTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
   const [keys, setKeys] = useState<ApiKeyRecord[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | KeyStatus>('all');
   const [showNew, setShowNew] = useState(false);
   const [showSecret, setShowSecret] = useState<{ plaintext: string; last4: string } | null>(
     null,
@@ -89,19 +126,50 @@ function KeysTab({ canManage }: { canManage: boolean }) {
 
   const refresh = () => {
     setKeys(null);
+    setLoadError(null);
     listApiKeys()
       .then((r) => setKeys(r.keys))
-      .catch(() => setKeys([]));
+      .catch((err) =>
+        setLoadError(err instanceof ApiError ? err.message : 'Failed to load API keys.'),
+      );
   };
   useEffect(() => {
     refresh();
   }, []);
+
+  const filtered = useMemo(() => {
+    if (!keys) return [];
+    const q = search.trim().toLowerCase();
+    return keys.filter((k) => {
+      if (q && !k.name.toLowerCase().includes(q)) return false;
+      if (statusFilter !== 'all' && keyStatus(k) !== statusFilter) return false;
+      return true;
+    });
+  }, [keys, search, statusFilter]);
+
+  const exportCsv = () => {
+    downloadCsv('api-key-inventory.csv', [
+      ['Name', 'Key', 'Client', 'Capabilities', 'Created by', 'Last used', 'Expires', 'Status', 'Created'],
+      ...filtered.map((k) => [
+        k.name,
+        `altop_…${k.last4}`,
+        k.clientName ?? '',
+        k.capabilities.length > 0 ? k.capabilities.join(', ') : '(inherits creator)',
+        k.createdByEmail,
+        fmtDate(k.lastUsedAt),
+        fmtDate(k.expiresAt),
+        keyStatus(k),
+        fmtDate(k.createdAt),
+      ]),
+    ]);
+  };
 
   const onRevoke = async (id: string) => {
     if (!(await confirm({ title: 'Revoke this key?', description: 'Active integrations will start failing.', destructive: true })))
       return;
     try {
       await revokeApiKey(id);
+      toast.success('API key revoked.');
       refresh();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -112,6 +180,7 @@ function KeysTab({ canManage }: { canManage: boolean }) {
     if (!(await confirm({ title: 'Permanently delete this key?', destructive: true }))) return;
     try {
       await deleteApiKey(id);
+      toast.success('API key deleted.');
       refresh();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -120,23 +189,68 @@ function KeysTab({ canManage }: { canManage: boolean }) {
 
   return (
     <div className="space-y-4">
-      {canManage && (
-        <div className="flex justify-end">
-          <Button onClick={() => setShowNew(true)}>
-            <Plus className="mr-2 h-4 w-4" /> New key
-          </Button>
+      {keys !== null && keys.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            className="max-w-xs h-8 text-xs"
+            placeholder="Search keys by name…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            aria-label="Search API keys"
+          />
+          <div className="w-36">
+            <Select
+              size="sm"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as 'all' | KeyStatus)}
+              aria-label="Filter keys by status"
+            >
+              <option value="all">All statuses</option>
+              <option value="active">Active</option>
+              <option value="revoked">Revoked</option>
+              <option value="expired">Expired</option>
+            </Select>
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={exportCsv} disabled={filtered.length === 0}>
+              <Download className="mr-1.5 h-3.5 w-3.5" /> Export CSV
+            </Button>
+            {canManage && (
+              <Button size="sm" onClick={() => setShowNew(true)}>
+                <Plus className="mr-1.5 h-3.5 w-3.5" /> New key
+              </Button>
+            )}
+          </div>
         </div>
       )}
       <Card>
         <CardContent className="p-0">
-          {keys === null ? (
+          {loadError ? (
+            <div className="p-6 space-y-3">
+              <ErrorBanner>{loadError}</ErrorBanner>
+              <Button size="sm" variant="outline" onClick={refresh}>
+                Retry
+              </Button>
+            </div>
+          ) : keys === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : keys.length === 0 ? (
             <EmptyState
               icon={Key}
               title="No API keys"
               description="Create a key to call the platform programmatically. The plaintext is shown ONCE."
+              action={
+                canManage ? (
+                  <Button onClick={() => setShowNew(true)}>
+                    <Plus className="mr-2 h-4 w-4" /> New key
+                  </Button>
+                ) : undefined
+              }
             />
+          ) : filtered.length === 0 ? (
+            <div className="p-6 text-sm text-silver">
+              No keys match the current search / filter.
+            </div>
           ) : (
             <Table>
               <TableHeader>
@@ -150,7 +264,7 @@ function KeysTab({ canManage }: { canManage: boolean }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {keys.map((k) => (
+                {filtered.map((k) => (
                   <TableRow key={k.id} className="group">
                     <TableCell className="font-medium text-white">
                       <div className="truncate">{k.name}</div>
@@ -172,9 +286,9 @@ function KeysTab({ canManage }: { canManage: boolean }) {
                       {fmtDate(k.lastUsedAt)}
                     </TableCell>
                     <TableCell>
-                      {k.revokedAt ? (
+                      {keyStatus(k) === 'revoked' ? (
                         <Badge variant="destructive">Revoked</Badge>
-                      ) : k.expiresAt && new Date(k.expiresAt) < new Date() ? (
+                      ) : keyStatus(k) === 'expired' ? (
                         <Badge variant="default">Expired</Badge>
                       ) : (
                         <Badge variant="success">Active</Badge>
@@ -233,6 +347,19 @@ const ASN_CAPABILITIES = [
   'asn:read:kpis',
 ] as const;
 
+/**
+ * Full capability registry for custom-mode keys. Derived from the shared
+ * ROLE_CAPABILITIES map (the same registry `hasCapability` reads) plus the
+ * key-only ASN capabilities, so the checkbox list can never drift from
+ * what the server actually understands.
+ */
+const ALL_CAPABILITY_OPTIONS: readonly string[] = Array.from(
+  new Set<string>([
+    ...Object.values(ROLE_CAPABILITIES).flatMap((set) => Array.from(set)),
+    ...ASN_CAPABILITIES,
+  ]),
+).sort();
+
 interface AsnPreset {
   id: 'asn-supervisor' | 'asn-lead' | 'asn-command-desk' | 'asn-ops-mgr';
   label: string;
@@ -289,18 +416,26 @@ function NewKeyDrawer({
   const [presetId, setPresetId] = useState<AsnPreset['id']>('asn-supervisor');
   const [storeId, setStoreId] = useState<string>('');
   const [name, setName] = useState('');
-  const [capabilities, setCapabilities] = useState('');
+  const [capabilities, setCapabilities] = useState<string[]>([]);
   const [expiresAt, setExpiresAt] = useState('');
   const [saving, setSaving] = useState(false);
   const [stores, setStores] = useState<ClientSummary[] | null>(null);
+  const [storesError, setStoresError] = useState<string | null>(null);
 
   // Load active stores once when the drawer opens — used by every
   // store-scoped preset to populate the picker. Cheap and cached for
   // the drawer's lifetime.
-  useEffect(() => {
+  const loadStores = () => {
+    setStores(null);
+    setStoresError(null);
     listClients({ status: 'ACTIVE' })
       .then((r) => setStores(r.clients))
-      .catch(() => setStores([]));
+      .catch((err) =>
+        setStoresError(err instanceof ApiError ? err.message : 'Failed to load stores.'),
+      );
+  };
+  useEffect(() => {
+    loadStores();
   }, []);
 
   const preset = useMemo(
@@ -337,6 +472,12 @@ function NewKeyDrawer({
     });
   }, [mode, preset, selectedStore]);
 
+  const toggleCapability = (cap: string) => {
+    setCapabilities((cs) =>
+      cs.includes(cap) ? cs.filter((c) => c !== cap) : [...cs, cap],
+    );
+  };
+
   const canSubmit = (() => {
     if (!name.trim()) return false;
     if (mode === 'preset' && preset.storeScoped && !storeId) return false;
@@ -364,13 +505,11 @@ function NewKeyDrawer({
             }
           : {
               name: name.trim(),
-              capabilities: capabilities
-                .split(',')
-                .map((c) => c.trim())
-                .filter(Boolean),
+              capabilities,
               expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
             };
       const r = await createApiKey(payload);
+      toast.success('API key created.');
       onSaved({ plaintext: r.plaintext, last4: r.last4 });
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -385,31 +524,16 @@ function NewKeyDrawer({
         <DrawerTitle>New API key</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
-        {/* Mode toggle — preset (curated) vs custom (raw capability strings) */}
-        <div className="inline-flex rounded-md border border-navy-secondary p-0.5">
-          <button
-            type="button"
-            onClick={() => setMode('preset')}
-            className={`px-3 py-1 text-xs rounded ${
-              mode === 'preset'
-                ? 'bg-gold/20 text-gold'
-                : 'text-silver hover:text-white'
-            }`}
-          >
-            ASN preset
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode('custom')}
-            className={`px-3 py-1 text-xs rounded ${
-              mode === 'custom'
-                ? 'bg-gold/20 text-gold'
-                : 'text-silver hover:text-white'
-            }`}
-          >
-            Custom
-          </button>
-        </div>
+        {/* Mode toggle — preset (curated) vs custom (explicit capability picks) */}
+        <SegmentedControl
+          ariaLabel="Key mode"
+          value={mode}
+          onChange={(v) => setMode(v)}
+          options={[
+            { value: 'preset', label: 'ASN preset' },
+            { value: 'custom', label: 'Custom' },
+          ]}
+        />
 
         {mode === 'preset' && (
           <>
@@ -434,25 +558,36 @@ function NewKeyDrawer({
             {preset.storeScoped && (
               <div>
                 <Label required>Store</Label>
-                <Select
-                  className="mt-1"
-                  value={storeId}
-                  onChange={(e) => setStoreId(e.target.value)}
-                  disabled={stores === null}
-                >
-                  <option value="">
-                    {stores === null ? 'Loading…' : 'Select a store'}
-                  </option>
-                  {stores?.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                      {s.state ? ` (${s.state})` : ''}
-                    </option>
-                  ))}
-                </Select>
-                <div className="text-xs text-silver mt-1">
-                  This key will only see data for the selected store.
-                </div>
+                {storesError ? (
+                  <div className="mt-1 space-y-2">
+                    <ErrorBanner>{storesError}</ErrorBanner>
+                    <Button size="sm" variant="outline" onClick={loadStores}>
+                      Retry
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    <Select
+                      className="mt-1"
+                      value={storeId}
+                      onChange={(e) => setStoreId(e.target.value)}
+                      disabled={stores === null}
+                    >
+                      <option value="">
+                        {stores === null ? 'Loading…' : 'Select a store'}
+                      </option>
+                      {stores?.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                          {s.state ? ` (${s.state})` : ''}
+                        </option>
+                      ))}
+                    </Select>
+                    <div className="text-xs text-silver mt-1">
+                      This key will only see data for the selected store.
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
@@ -483,15 +618,31 @@ function NewKeyDrawer({
 
         {mode === 'custom' && (
           <div>
-            <Label>Capabilities (comma separated)</Label>
-            <Input
-              className="mt-1 font-mono text-xs"
-              value={capabilities}
-              onChange={(e) => setCapabilities(e.target.value)}
-              placeholder="view:clients, view:onboarding"
-            />
+            <div className="flex items-center justify-between">
+              <Label>Capabilities ({capabilities.length} selected)</Label>
+              {capabilities.length > 0 && (
+                <Button size="xs" variant="ghost" onClick={() => setCapabilities([])}>
+                  Clear
+                </Button>
+              )}
+            </div>
+            <div className="mt-1 max-h-48 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1.5 rounded-md border border-navy-secondary bg-navy-secondary/20 p-3">
+              {ALL_CAPABILITY_OPTIONS.map((cap) => (
+                <label
+                  key={cap}
+                  className="flex items-center gap-2 text-xs font-mono text-silver hover:text-white cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={capabilities.includes(cap)}
+                    onChange={() => toggleCapability(cap)}
+                  />
+                  {cap}
+                </label>
+              ))}
+            </div>
             <div className="text-xs text-silver mt-1">
-              Leave empty to inherit your own capabilities.
+              Leave everything unchecked to inherit your own capabilities.
             </div>
           </div>
         )}
@@ -557,18 +708,35 @@ function SecretRevealDrawer({
 function WebhooksTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
   const [rows, setRows] = useState<WebhookRecord[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'paused'>('all');
   const [showNew, setShowNew] = useState(false);
   const [showSecret, setShowSecret] = useState<string | null>(null);
 
   const refresh = () => {
     setRows(null);
+    setLoadError(null);
     listWebhooks()
       .then((r) => setRows(r.webhooks))
-      .catch(() => setRows([]));
+      .catch((err) =>
+        setLoadError(err instanceof ApiError ? err.message : 'Failed to load webhooks.'),
+      );
   };
   useEffect(() => {
     refresh();
   }, []);
+
+  const filtered = useMemo(() => {
+    if (!rows) return [];
+    const q = search.trim().toLowerCase();
+    return rows.filter((w) => {
+      if (q && !w.name.toLowerCase().includes(q)) return false;
+      if (statusFilter === 'active' && !w.isActive) return false;
+      if (statusFilter === 'paused' && w.isActive) return false;
+      return true;
+    });
+  }, [rows, search, statusFilter]);
 
   const onTest = async (id: string) => {
     try {
@@ -586,7 +754,8 @@ function WebhooksTab({ canManage }: { canManage: boolean }) {
 
   const onToggle = async (id: string) => {
     try {
-      await toggleWebhook(id);
+      const r = await toggleWebhook(id);
+      toast.success(r.isActive ? 'Webhook resumed.' : 'Webhook paused.');
       refresh();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -597,6 +766,7 @@ function WebhooksTab({ canManage }: { canManage: boolean }) {
     if (!(await confirm({ title: 'Delete this webhook?', destructive: true }))) return;
     try {
       await deleteWebhook(id);
+      toast.success('Webhook deleted.');
       refresh();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -605,23 +775,66 @@ function WebhooksTab({ canManage }: { canManage: boolean }) {
 
   return (
     <div className="space-y-4">
-      {canManage && (
-        <div className="flex justify-end">
-          <Button onClick={() => setShowNew(true)}>
-            <Plus className="mr-2 h-4 w-4" /> New webhook
-          </Button>
+      {rows !== null && rows.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            className="max-w-xs h-8 text-xs"
+            placeholder="Search webhooks by name…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            aria-label="Search webhooks"
+          />
+          <div className="w-36">
+            <Select
+              size="sm"
+              value={statusFilter}
+              onChange={(e) =>
+                setStatusFilter(e.target.value as 'all' | 'active' | 'paused')
+              }
+              aria-label="Filter webhooks by status"
+            >
+              <option value="all">All statuses</option>
+              <option value="active">Active</option>
+              <option value="paused">Paused</option>
+            </Select>
+          </div>
+          {canManage && (
+            <div className="ml-auto">
+              <Button size="sm" onClick={() => setShowNew(true)}>
+                <Plus className="mr-1.5 h-3.5 w-3.5" /> New webhook
+              </Button>
+            </div>
+          )}
         </div>
       )}
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {loadError ? (
+            <div className="p-6 space-y-3">
+              <ErrorBanner>{loadError}</ErrorBanner>
+              <Button size="sm" variant="outline" onClick={refresh}>
+                Retry
+              </Button>
+            </div>
+          ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
               icon={Webhook}
               title="No webhooks"
               description="Subscribe an HTTPS endpoint to receive payroll, onboarding, and other events."
+              action={
+                canManage ? (
+                  <Button onClick={() => setShowNew(true)}>
+                    <Plus className="mr-2 h-4 w-4" /> New webhook
+                  </Button>
+                ) : undefined
+              }
             />
+          ) : filtered.length === 0 ? (
+            <div className="p-6 text-sm text-silver">
+              No webhooks match the current search / filter.
+            </div>
           ) : (
             <Table>
               <TableHeader>
@@ -635,7 +848,7 @@ function WebhooksTab({ canManage }: { canManage: boolean }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((w) => (
+                {filtered.map((w) => (
                   <TableRow key={w.id} className="group">
                     <TableCell className="font-medium text-white">
                       <div className="truncate">{w.name}</div>
@@ -736,12 +949,23 @@ function NewWebhookDrawer({
 }) {
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
-  const [eventTypes, setEventTypes] = useState('');
+  const [allEvents, setAllEvents] = useState(true);
+  const [eventTypes, setEventTypes] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+
+  const toggleEvent = (ev: string) => {
+    setEventTypes((es) =>
+      es.includes(ev) ? es.filter((e) => e !== ev) : [...es, ev],
+    );
+  };
 
   const onSubmit = async () => {
     if (!name.trim() || !url.trim()) {
       toast.error('Name and URL required.');
+      return;
+    }
+    if (!allEvents && eventTypes.length === 0) {
+      toast.error('Pick at least one event, or switch on "All events".');
       return;
     }
     setSaving(true);
@@ -749,11 +973,10 @@ function NewWebhookDrawer({
       const r = await createWebhook({
         name: name.trim(),
         url: url.trim(),
-        eventTypes: eventTypes
-          .split(',')
-          .map((e) => e.trim())
-          .filter(Boolean),
+        // Empty list = subscribe to everything (server convention).
+        eventTypes: allEvents ? [] : eventTypes,
       });
+      toast.success('Webhook created.');
       onSaved(r.secret);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -785,15 +1008,36 @@ function NewWebhookDrawer({
           />
         </div>
         <div>
-          <Label>Event types (comma separated)</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={eventTypes}
-            onChange={(e) => setEventTypes(e.target.value)}
-            placeholder="payroll.finalized, onboarding.completed"
-          />
+          <Label>Event types</Label>
+          <label className="mt-1 flex items-center gap-2 text-sm text-white cursor-pointer">
+            <input
+              type="checkbox"
+              checked={allEvents}
+              onChange={(e) => setAllEvents(e.target.checked)}
+            />
+            All events
+          </label>
+          {!allEvents && (
+            <div className="mt-2 max-h-48 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1.5 rounded-md border border-navy-secondary bg-navy-secondary/20 p-3">
+              {WEBHOOK_EVENT_TYPES.map((ev) => (
+                <label
+                  key={ev}
+                  className="flex items-center gap-2 text-xs font-mono text-silver hover:text-white cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={eventTypes.includes(ev)}
+                    onChange={() => toggleEvent(ev)}
+                  />
+                  {ev}
+                </label>
+              ))}
+            </div>
+          )}
           <div className="text-xs text-silver mt-1">
-            Leave empty to receive all events.
+            {allEvents
+              ? 'The endpoint receives every event the platform emits.'
+              : `${eventTypes.length} event type${eventTypes.length === 1 ? '' : 's'} selected.`}
           </div>
         </div>
       </DrawerBody>

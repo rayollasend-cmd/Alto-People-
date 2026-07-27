@@ -22,7 +22,7 @@ import { useI18n, type MessageKey } from '@/lib/i18n';
 import { ApiError } from '@/lib/api';
 import { getActiveTimeEntry } from '@/lib/timeApi';
 import { listMyShifts } from '@/lib/schedulingApi';
-import { fmtDate, fmtRelativeDayTz, fmtShiftRangeTz, fmtTime } from '@/lib/format';
+import { fmtDate, fmtMoney, fmtRelativeDayTz, fmtShiftRangeTz, fmtTime } from '@/lib/format';
 import { listMyPayrollItems } from '@/lib/payrollApi';
 import { getMyBalance } from '@/lib/timeOffApi';
 import { Button } from '@/components/ui/Button';
@@ -37,9 +37,6 @@ import { getPushStatus, subscribeToPush } from '@/lib/push';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { OnboardingBanner } from '@/components/OnboardingBanner';
 import { cn } from '@/lib/cn';
-
-const fmtMoney = (n: number) =>
-  n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
 
 /**
  * 403/404 are fully expected for accounts without the linked records
@@ -65,7 +62,10 @@ export function AssociateDashboard() {
   const navigate = useNavigate();
 
   const greetingName =
-    user?.email ? user.email.split('@')[0].split('.')[0].replace(/^\w/, (c) => c.toUpperCase()) : 'there';
+    user?.firstName?.trim() ||
+    (user?.email
+      ? user.email.split('@')[0].split('.')[0].replace(/^\w/, (c) => c.toUpperCase())
+      : 'there');
 
   // Each fetch is an independent query; one failing shouldn't blank out
   // the others. Cached results render instantly on revisit and refresh
@@ -462,6 +462,14 @@ function PaystubCard({
           </div>
           <div className="font-display text-xl text-white mt-2">{t('dash.noPaystubs')}</div>
           <p className="text-sm text-silver mt-1">{t('dash.firstPaystub')}</p>
+          <button
+            type="button"
+            onClick={onView}
+            className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 coarse:min-h-11"
+          >
+            {t('dash.viewPayHistory')}
+            <ArrowRight className="h-3.5 w-3.5" />
+          </button>
         </CardContent>
       </Card>
     );

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { notifyAssociate } from '../lib/notify.js';
 
 /**
  * Phase 112 — Mentorship matching.
@@ -82,6 +83,28 @@ mentorship112Router.post('/mentorships', MANAGE, async (req, res) => {
       goals: input.goals ?? null,
       proposedById: req.user!.id,
     },
+    include: {
+      mentor: { select: { firstName: true, lastName: true } },
+      mentee: { select: { firstName: true, lastName: true } },
+      focusSkill: { select: { name: true } },
+    },
+  });
+  const mentorName = `${created.mentor.firstName} ${created.mentor.lastName}`;
+  const menteeName = `${created.mentee.firstName} ${created.mentee.lastName}`;
+  const focusLine = created.focusSkill ? ` Focus skill: ${created.focusSkill.name}.` : '';
+  void notifyAssociate(input.mentorAssociateId, {
+    subject: "You've been proposed as a mentor",
+    body: `You've been proposed as a mentor for ${menteeName}.${focusLine} Review the pairing on the Mentorship page.`,
+    category: 'mentorship',
+    linkUrl: '/mentorship',
+    emailFallback: true,
+  });
+  void notifyAssociate(input.menteeAssociateId, {
+    subject: 'A mentor has been proposed for you',
+    body: `${mentorName} has been proposed as your mentor.${focusLine} Review the pairing on the Mentorship page.`,
+    category: 'mentorship',
+    linkUrl: '/mentorship',
+    emailFallback: true,
   });
   res.status(201).json({ id: created.id });
 });
@@ -98,7 +121,14 @@ mentorship112Router.post(
     const input = TransitionSchema.parse(req.body);
     const m = await prisma.mentorship.findUnique({
       where: { id: req.params.id },
-      select: { status: true },
+      select: {
+        status: true,
+        mentorAssociateId: true,
+        menteeAssociateId: true,
+        mentor: { select: { firstName: true, lastName: true } },
+        mentee: { select: { firstName: true, lastName: true } },
+        focusSkill: { select: { name: true } },
+      },
     });
     if (!m) throw new HttpError(404, 'not_found', 'Mentorship not found.');
     // Forward-only transitions: PROPOSED -> ACTIVE / DECLINED;
@@ -128,6 +158,30 @@ mentorship112Router.post(
         endedReason: input.endedReason ?? null,
       },
     });
+    if (input.status === 'ACTIVE' || input.status === 'DECLINED') {
+      const mentorName = `${m.mentor.firstName} ${m.mentor.lastName}`;
+      const menteeName = `${m.mentee.firstName} ${m.mentee.lastName}`;
+      const focusLine = m.focusSkill ? ` Focus skill: ${m.focusSkill.name}.` : '';
+      const subject =
+        input.status === 'ACTIVE'
+          ? 'Your mentorship pairing is active'
+          : 'A pairing was declined';
+      const verb = input.status === 'ACTIVE' ? 'is now active' : 'was declined';
+      void notifyAssociate(m.mentorAssociateId, {
+        subject,
+        body: `Your mentorship pairing with ${menteeName} ${verb}.${focusLine}`,
+        category: 'mentorship',
+        linkUrl: '/mentorship',
+        emailFallback: true,
+      });
+      void notifyAssociate(m.menteeAssociateId, {
+        subject,
+        body: `Your mentorship pairing with ${mentorName} ${verb}.${focusLine}`,
+        category: 'mentorship',
+        linkUrl: '/mentorship',
+        emailFallback: true,
+      });
+    }
     res.json({ ok: true });
   },
 );

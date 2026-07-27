@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Plus, Receipt, Trash2 } from 'lucide-react';
+import { Download, Plus, Receipt, Trash2 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
-import { fmtDate } from '@/lib/format';
+import { downloadCsv } from '@/lib/csv';
+import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import {
   addExpenseLine,
   createReimbursement,
@@ -19,7 +20,7 @@ import {
   type ReimbursementSummary,
 } from '@/lib/reimbursements97Api';
 import { useAuth } from '@/lib/auth';
-import { usePrompt } from '@/lib/confirm';
+import { useConfirm, usePrompt } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -44,7 +45,7 @@ import {
   TableRow,
   Textarea,
 } from '@/components/ui';
-import { Label } from '@/components/ui/Label';
+import { FormHint, Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
 
 const STATUS_BADGE: Record<ReimbursementStatus, 'pending' | 'accent' | 'success' | 'destructive' | 'default'> = {
@@ -77,18 +78,77 @@ export function ReimbursementsHome() {
   const canApprove = user ? hasCapability(user.role, 'approve:reimbursement') : false;
   const canSettle = user ? hasCapability(user.role, 'settle:reimbursement') : false;
   const [rows, setRows] = useState<ReimbursementSummary[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [active, setActive] = useState<ReimbursementSummary | null>(null);
+  const [statusFilter, setStatusFilter] = useState<ReimbursementStatus | 'ALL'>('ALL');
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const refresh = () => {
     setRows(null);
+    setLoadError(null);
+    setSelected(new Set());
     listReimbursements()
       .then((r) => setRows(r.reimbursements))
-      .catch(() => setRows([]));
+      .catch(() => setLoadError('Failed to load reimbursements.'));
   };
   useEffect(() => {
     refresh();
   }, []);
+
+  const q = search.trim().toLowerCase();
+  const visible = (rows ?? []).filter(
+    (r) =>
+      (statusFilter === 'ALL' || r.status === statusFilter) &&
+      (!q ||
+        r.associateName.toLowerCase().includes(q) ||
+        r.title.toLowerCase().includes(q)),
+  );
+  const pending = (rows ?? []).filter(
+    (r) => r.status === 'SUBMITTED' || r.status === 'MANAGER_APPROVED',
+  );
+  const pendingTotal = pending.reduce((s, r) => s + Number(r.totalAmount), 0);
+
+  const toggleSelected = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const onBulkApprove = async () => {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    setBulkBusy(true);
+    const results = await Promise.allSettled(
+      ids.map((id) => managerApproveReimbursement(id)),
+    );
+    setBulkBusy(false);
+    const ok = results.filter((r) => r.status === 'fulfilled').length;
+    const failed = results.length - ok;
+    if (ok > 0) toast.success(`Approved ${ok} report${ok === 1 ? '' : 's'}.`);
+    if (failed > 0) toast.error(`${failed} approval${failed === 1 ? '' : 's'} failed.`);
+    refresh();
+  };
+
+  const onExportCsv = () => {
+    downloadCsv(`reimbursements-${ymdLocal()}.csv`, [
+      ['Title', 'Submitter', 'Status', 'Lines', 'Total', 'Currency', 'Submitted'],
+      ...visible.map((r) => [
+        r.title,
+        r.associateName,
+        STATUS_LABEL[r.status],
+        r.lineCount,
+        Number(r.totalAmount).toFixed(2),
+        r.currency,
+        r.submittedAt ? fmtDate(r.submittedAt) : '',
+      ]),
+    ]);
+  };
 
   return (
     <div className="space-y-5">
@@ -97,14 +157,74 @@ export function ReimbursementsHome() {
         subtitle="Submit, approve, and pay associate expense reports."
         breadcrumbs={[{ label: 'Payroll' }, { label: 'Spend' }]}
       />
-      <div className="flex justify-end">
-        <Button onClick={() => setShowNew(true)}>
-          <Plus className="mr-2 h-4 w-4" /> New report
-        </Button>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="text-sm text-silver">
+          Total pending:{' '}
+          <span className="font-medium text-white">{fmtMoney(pendingTotal)}</span>{' '}
+          across {pending.length} report{pending.length === 1 ? '' : 's'}
+        </div>
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {canApprove && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={onBulkApprove}
+              disabled={bulkBusy || selected.size === 0}
+            >
+              {bulkBusy
+                ? 'Approving…'
+                : `Approve selected (${selected.size})`}
+            </Button>
+          )}
+          <Button size="sm" variant="secondary" onClick={onExportCsv} disabled={visible.length === 0}>
+            <Download className="mr-2 h-4 w-4" /> Export CSV
+          </Button>
+          <Button onClick={() => setShowNew(true)}>
+            <Plus className="mr-2 h-4 w-4" /> New report
+          </Button>
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {(
+          ['ALL', ...(Object.keys(STATUS_LABEL) as ReimbursementStatus[])] as (
+            | 'ALL'
+            | ReimbursementStatus
+          )[]
+        ).map(
+          (s) => (
+            <Button
+              key={s}
+              type="button"
+              size="xs"
+              variant={statusFilter === s ? 'primary' : 'secondary'}
+              className="rounded-full"
+              aria-pressed={statusFilter === s}
+              onClick={() => setStatusFilter(s)}
+            >
+              {s === 'ALL' ? 'All' : STATUS_LABEL[s]}
+            </Button>
+          ),
+        )}
+        <Input
+          className="ml-auto w-56"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search associate or title…"
+          aria-label="Search reimbursements"
+        />
       </div>
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {loadError ? (
+            <div className="p-6 space-y-3">
+              <p role="alert" className="text-sm text-alert">
+                {loadError}
+              </p>
+              <Button size="sm" variant="secondary" onClick={refresh}>
+                Retry
+              </Button>
+            </div>
+          ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
@@ -112,10 +232,15 @@ export function ReimbursementsHome() {
               title="No reimbursements"
               description="Submit your first expense report to get started."
             />
+          ) : visible.length === 0 ? (
+            <div className="p-6 text-sm text-silver">
+              No reports match the current filters.
+            </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
+                  {canApprove && <TableHead className="w-8"></TableHead>}
                   <TableHead>Title</TableHead>
                   <TableHead className="hidden md:table-cell">Submitter</TableHead>
                   <TableHead className="hidden lg:table-cell">Lines</TableHead>
@@ -125,12 +250,24 @@ export function ReimbursementsHome() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((r) => (
+                {visible.map((r) => (
                   <TableRow
                     key={r.id}
                     className="cursor-pointer"
                     onClick={() => setActive(r)}
                   >
+                    {canApprove && (
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        {r.status === 'SUBMITTED' && (
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${r.title} for bulk approval`}
+                            checked={selected.has(r.id)}
+                            onChange={() => toggleSelected(r.id)}
+                          />
+                        )}
+                      </TableCell>
+                    )}
                     <TableCell className="font-medium text-white">
                       {r.title}
                       <div className="text-[11px] text-silver/70 md:hidden">
@@ -141,7 +278,7 @@ export function ReimbursementsHome() {
                     <TableCell className="hidden md:table-cell">{r.associateName}</TableCell>
                     <TableCell className="hidden lg:table-cell">{r.lineCount}</TableCell>
                     <TableCell>
-                      {r.currency} {Number(r.totalAmount).toFixed(2)}
+                      {fmtMoney(r.totalAmount, { currency: r.currency })}
                     </TableCell>
                     <TableCell>
                       <Badge variant={STATUS_BADGE[r.status]}>{STATUS_LABEL[r.status]}</Badge>
@@ -258,14 +395,17 @@ function ReimbursementDrawer({
   onChanged: () => void;
 }) {
   const prompt = usePrompt();
+  const confirm = useConfirm();
   const [data, setData] = useState<ReimbursementFull | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showAddLine, setShowAddLine] = useState(false);
   const [showSettle, setShowSettle] = useState(false);
 
   const refresh = () => {
+    setLoadError(null);
     getReimbursement(summary.id)
       .then(setData)
-      .catch(() => setData(null));
+      .catch(() => setLoadError('Failed to load this reimbursement.'));
   };
   useEffect(() => {
     refresh();
@@ -319,9 +459,19 @@ function ReimbursementDrawer({
     }
   };
 
-  const onDeleteLine = async (lineId: string) => {
+  const onDeleteLine = async (line: { id: string; description: string; amount: string }) => {
+    const ok = await confirm({
+      title: 'Remove this expense line?',
+      description: `"${line.description}" (${fmtMoney(line.amount, {
+        currency: data?.currency,
+      })}) will be removed from the report.`,
+      confirmLabel: 'Remove line',
+      destructive: true,
+    });
+    if (!ok) return;
     try {
-      await deleteExpenseLine(lineId);
+      await deleteExpenseLine(line.id);
+      toast.success('Line removed.');
       refresh();
       onChanged();
     } catch (err) {
@@ -337,14 +487,23 @@ function ReimbursementDrawer({
         <DrawerTitle>{summary.title}</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
-        {!data ? (
+        {loadError ? (
+          <div className="space-y-3">
+            <p role="alert" className="text-sm text-alert">
+              {loadError}
+            </p>
+            <Button size="sm" variant="secondary" onClick={refresh}>
+              Retry
+            </Button>
+          </div>
+        ) : !data ? (
           <SkeletonRows count={3} />
         ) : (
           <>
             <div className="flex items-center gap-3">
               <Badge variant={STATUS_BADGE[data.status]}>{STATUS_LABEL[data.status]}</Badge>
               <div className="text-sm text-silver">
-                Total: {data.currency} {Number(data.totalAmount).toFixed(2)}
+                Total: {fmtMoney(data.totalAmount, { currency: data.currency })}
               </div>
             </div>
             {data.managerNote && (
@@ -402,17 +561,18 @@ function ReimbursementDrawer({
                     <TableBody>
                       {data.lines.map((l) => (
                         <TableRow key={l.id}>
-                          <TableCell>{l.incurredOn}</TableCell>
+                          <TableCell>{fmtDate(parseYmd(l.incurredOn))}</TableCell>
                           <TableCell className="hidden md:table-cell">{KIND_LABEL[l.kind]}</TableCell>
                           <TableCell>
                             {l.description}
                             <div className="text-[11px] text-silver/70 md:hidden">{KIND_LABEL[l.kind]}</div>
                           </TableCell>
-                          <TableCell>${Number(l.amount).toFixed(2)}</TableCell>
+                          <TableCell>{fmtMoney(l.amount, { currency: data.currency })}</TableCell>
                           {editable && (
                             <TableCell>
                               <button
-                                onClick={() => onDeleteLine(l.id)}
+                                onClick={() => onDeleteLine(l)}
+                                aria-label={`Remove line ${l.description}`}
                                 className="text-silver hover:text-alert"
                               >
                                 <Trash2 className="h-3 w-3" />
@@ -460,6 +620,7 @@ function ReimbursementDrawer({
       {showAddLine && data && (
         <AddLineDrawer
           reimbursementId={data.id}
+          currency={data.currency}
           existingTotal={Number(data.totalAmount)}
           existingLineCount={data.lines.length}
           onClose={() => setShowAddLine(false)}
@@ -530,7 +691,7 @@ function SettleDialog({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div className="text-sm text-silver">
-          This will queue {data.currency} {Number(data.totalAmount).toFixed(2)} to
+          This will queue {fmtMoney(data.totalAmount, { currency: data.currency })} to
           be added to {data.associateName}'s next regular payroll, after taxes.
         </div>
         {needsWaiver && (
@@ -577,22 +738,16 @@ function SettleDialog({
   );
 }
 
-/** Today as YYYY-MM-DD in the user's local timezone. */
-const todayLocal = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
-    d.getDate(),
-  ).padStart(2, '0')}`;
-};
-
 function AddLineDrawer({
   reimbursementId,
+  currency,
   existingTotal,
   existingLineCount,
   onClose,
   onSaved,
 }: {
   reimbursementId: string;
+  currency: string;
   existingTotal: number;
   existingLineCount: number;
   onClose: () => void;
@@ -600,7 +755,7 @@ function AddLineDrawer({
 }) {
   const [kind, setKind] = useState<ExpenseLineKind>('RECEIPT');
   const [description, setDescription] = useState('');
-  const [incurredOn, setIncurredOn] = useState(todayLocal());
+  const [incurredOn, setIncurredOn] = useState(ymdLocal());
   const [amount, setAmount] = useState('');
   const [miles, setMiles] = useState('');
   const [ratePerMile, setRatePerMile] = useState('0.67');
@@ -737,7 +892,8 @@ function AddLineDrawer({
             </div>
             {mileageValid && (
               <div className="mt-1 text-xs text-silver/70">
-                {milesNum} mi × ${rateNum}/mi = ${(milesNum * rateNum).toFixed(2)}
+                {milesNum} mi × {fmtMoney(rateNum, { currency, precise: true })}/mi ={' '}
+                {fmtMoney(milesNum * rateNum, { currency })}
               </div>
             )}
           </div>
@@ -779,18 +935,25 @@ function AddLineDrawer({
           </div>
         </div>
         <div>
-          <Label>Receipt URL (optional)</Label>
+          <Label htmlFor="add-line-receipt-url">Receipt link (URL)</Label>
           <Input
+            id="add-line-receipt-url"
             className="mt-1"
             value={receiptUrl}
             onChange={(e) => setReceiptUrl(e.target.value)}
+            placeholder="https://…"
+            aria-describedby="add-line-receipt-url-hint"
           />
+          <FormHint id="add-line-receipt-url-hint">
+            Paste a link to the receipt — a shared-drive file, scan, or photo URL.
+            Receipt lines without a link can only be settled with an HR waiver.
+          </FormHint>
         </div>
         <div className="text-xs text-silver border-t border-navy-secondary pt-2">
-          Report total: ${existingTotal.toFixed(2)} across {existingLineCount}{' '}
+          Report total: {fmtMoney(existingTotal, { currency })} across {existingLineCount}{' '}
           line{existingLineCount === 1 ? '' : 's'}
           {Number.isFinite(lineAmount) &&
-            ` — $${(existingTotal + lineAmount).toFixed(2)} with this line`}
+            ` — ${fmtMoney(existingTotal + lineAmount, { currency })} with this line`}
         </div>
       </DrawerBody>
       <DrawerFooter>

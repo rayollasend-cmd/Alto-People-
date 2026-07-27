@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import {
   TimeOffAdminListQuerySchema,
   TimeOffEntitlementListResponseSchema,
@@ -18,7 +19,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
-import { notifyAllAdmins, notifyManager } from '../lib/notify.js';
+import { notifyAllAdmins, notifyAssociate, notifyManager } from '../lib/notify.js';
 import { timeOffRequestTemplate } from '../lib/emailTemplates.js';
 import { env } from '../config/env.js';
 import {
@@ -271,17 +272,125 @@ timeOffRouter.get('/admin/requests', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_query', 'Invalid query', queryParsed.error.flatten());
     }
     const query = queryParsed.data;
-    const rows = await prisma.timeOffRequest.findMany({
-      where: query.status ? { status: query.status } : undefined,
-      orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
-      take: 200,
-      include: REQUEST_INCLUDE,
+    const where = query.status ? { status: query.status } : undefined;
+    const [rows, total] = await Promise.all([
+      prisma.timeOffRequest.findMany({
+        where,
+        orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
+        take: 200,
+        include: REQUEST_INCLUDE,
+      }),
+      prisma.timeOffRequest.count({ where }),
+    ]);
+    // Attach each associate's current balance for the requested category so
+    // the approver sees "24h requested · 16h available" before clicking —
+    // over-draw used to surface only as a 409 after the fact.
+    const balances = await prisma.timeOffBalance.findMany({
+      where: {
+        OR: rows.map((r) => ({
+          associateId: r.associateId,
+          category: r.category,
+        })),
+      },
+      select: { associateId: true, category: true, balanceMinutes: true },
     });
+    const balanceKey = (associateId: string, category: string) =>
+      `${associateId}:${category}`;
+    const balanceMap = new Map(
+      balances.map((b) => [balanceKey(b.associateId, b.category), b.balanceMinutes]),
+    );
     res.json(
       TimeOffRequestListResponseSchema.parse({
-        requests: rows.map(toRequestDTO),
+        requests: rows.map((r) => ({
+          ...toRequestDTO(r),
+          balanceMinutes:
+            balanceMap.get(balanceKey(r.associateId, r.category)) ?? null,
+        })),
+        total,
       })
     );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Bulk decide — clearing a Monday-morning queue of 40 requests should be
+ * one click, not 40 round-trips. Each id is decided independently; partial
+ * failure returns per-id results rather than aborting the batch.
+ */
+timeOffRouter.post('/admin/requests/bulk-decide', MANAGE, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    const input = z
+      .object({
+        ids: z.array(z.string().uuid()).min(1).max(200),
+        decision: z.enum(['APPROVE', 'DENY']),
+        // Required for DENY (mirrors the single-row rule), optional for APPROVE.
+        note: z.string().trim().max(1000).optional(),
+      })
+      .superRefine((v, ctx) => {
+        if (v.decision === 'DENY' && !v.note) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['note'],
+            message: 'A note is required when denying.',
+          });
+        }
+      })
+      .parse(req.body);
+
+    const results: Array<{ id: string; ok: boolean; error?: string }> = [];
+    for (const id of input.ids) {
+      try {
+        if (input.decision === 'APPROVE') {
+          await approveRequest(prisma, id, user.id, input.note ?? null);
+        } else {
+          const row = await prisma.timeOffRequest.findUnique({ where: { id } });
+          if (!row) throw new IllegalStateError('Request not found');
+          if (row.status !== 'PENDING') {
+            throw new IllegalStateError(`Cannot deny a ${row.status} request`);
+          }
+          await prisma.timeOffRequest.update({
+            where: { id },
+            data: {
+              status: 'DENIED',
+              reviewerUserId: user.id,
+              reviewerNote: input.note,
+              decidedAt: new Date(),
+            },
+          });
+        }
+        const decided = await prisma.timeOffRequest.findUnique({
+          where: { id },
+          select: { associateId: true, category: true, startDate: true, endDate: true },
+        });
+        if (decided) {
+          const verb = input.decision === 'APPROVE' ? 'approved' : 'denied';
+          void notifyAssociate(decided.associateId, {
+            subject: `Time off ${verb}: ${formatDateUTC(decided.startDate)} – ${formatDateUTC(decided.endDate)}`,
+            body:
+              `Your ${decided.category.toLowerCase().replace(/_/g, ' ')} request for ` +
+              `${formatDateUTC(decided.startDate)} – ${formatDateUTC(decided.endDate)} was ${verb}.` +
+              (input.note ? `\n\nReviewer note: ${input.note}` : ''),
+            category: 'time-off',
+            linkUrl: '/time-off',
+            emailFallback: true,
+          });
+        }
+        results.push({ id, ok: true });
+      } catch (err) {
+        const msg =
+          err instanceof InsufficientBalanceError || err instanceof IllegalStateError
+            ? err.message
+            : 'Failed to decide request.';
+        results.push({ id, ok: false, error: msg });
+      }
+    }
+    res.json({
+      decided: results.filter((r) => r.ok).length,
+      failed: results.filter((r) => !r.ok),
+    });
   } catch (err) {
     next(err);
   }
@@ -320,6 +429,18 @@ timeOffRouter.post('/admin/requests/:id/approve', MANAGE, async (req, res, next)
       include: REQUEST_INCLUDE,
     });
     if (!updated) throw new HttpError(404, 'not_found', 'Request not found after approve');
+    // The associate hears the decision the moment it's made — before this,
+    // approvals were only discoverable by re-opening the page.
+    void notifyAssociate(updated.associateId, {
+      subject: `Time off approved: ${formatDateUTC(updated.startDate)} – ${formatDateUTC(updated.endDate)}`,
+      body:
+        `Your ${updated.category.toLowerCase().replace(/_/g, ' ')} request for ` +
+        `${formatDateUTC(updated.startDate)} – ${formatDateUTC(updated.endDate)} was approved.` +
+        (input.note ? `\n\nReviewer note: ${input.note}` : ''),
+      category: 'time-off',
+      linkUrl: '/time-off',
+      emailFallback: true,
+    });
     res.json(
       TimeOffRequestResponseSchema.parse({ request: toRequestDTO(updated) })
     );
@@ -351,6 +472,16 @@ timeOffRouter.post('/admin/requests/:id/deny', MANAGE, async (req, res, next) =>
         decidedAt: new Date(),
       },
       include: REQUEST_INCLUDE,
+    });
+    void notifyAssociate(updated.associateId, {
+      subject: `Time off request denied: ${formatDateUTC(updated.startDate)} – ${formatDateUTC(updated.endDate)}`,
+      body:
+        `Your ${updated.category.toLowerCase().replace(/_/g, ' ')} request for ` +
+        `${formatDateUTC(updated.startDate)} – ${formatDateUTC(updated.endDate)} was denied.` +
+        `\n\nReason: ${input.note}`,
+      category: 'time-off',
+      linkUrl: '/time-off',
+      emailFallback: true,
     });
     res.json(
       TimeOffRequestResponseSchema.parse({ request: toRequestDTO(updated) })

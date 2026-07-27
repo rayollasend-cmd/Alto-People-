@@ -4,6 +4,8 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { effectiveClientIdFilter } from '../lib/scope.js';
+import { notifyAssociate, notifyManager } from '../lib/notify.js';
+import { formatShiftLine } from '../lib/notifyShift.js';
 
 /**
  * Phase 85 — Qualifications + open-shift marketplace.
@@ -345,7 +347,11 @@ qualificationsRouter.post(
     const shiftId = req.params.shiftId;
     const shift = await prisma.shift.findUnique({
       where: { id: shiftId },
-      include: { qualReqs: true },
+      include: {
+        qualReqs: true,
+        client: { select: { name: true } },
+        locationRel: { select: { timezone: true } },
+      },
     });
     if (!shift) throw new HttpError(404, 'not_found', 'Shift not found.');
     if (shift.status !== 'OPEN') {
@@ -383,6 +389,25 @@ qualificationsRouter.post(
     const created = await prisma.openShiftClaim.create({
       data: { shiftId, associateId },
     });
+    const claimant = await prisma.associate.findUnique({
+      where: { id: associateId },
+      select: { firstName: true, lastName: true },
+    });
+    const claimantName = claimant
+      ? `${claimant.firstName} ${claimant.lastName}`
+      : 'An associate';
+    void notifyManager(associateId, {
+      subject: 'Shift claim awaiting your approval',
+      body: `${claimantName} claimed the open shift ${formatShiftLine({
+        position: shift.position,
+        clientName: shift.client.name,
+        startsAt: shift.startsAt,
+        endsAt: shift.endsAt,
+        timezone: shift.locationRel?.timezone ?? null,
+      })}. Approve or reject it on the Open shifts page.`,
+      category: 'marketplace',
+      linkUrl: '/marketplace',
+    });
     res.status(201).json({ id: created.id });
   },
 );
@@ -400,6 +425,17 @@ qualificationsRouter.put(
       .parse(req.body);
     const claim = await prisma.openShiftClaim.findUnique({
       where: { id: claimId },
+      include: {
+        shift: {
+          select: {
+            position: true,
+            startsAt: true,
+            endsAt: true,
+            client: { select: { name: true } },
+            locationRel: { select: { timezone: true } },
+          },
+        },
+      },
     });
     if (!claim || claim.shiftId !== shiftId) {
       throw new HttpError(404, 'not_found', 'Claim not found.');
@@ -456,6 +492,31 @@ qualificationsRouter.put(
         });
       }
     });
+
+    if (input.status === 'APPROVED' || input.status === 'REJECTED') {
+      const shiftLine = formatShiftLine({
+        position: claim.shift.position,
+        clientName: claim.shift.client.name,
+        startsAt: claim.shift.startsAt,
+        endsAt: claim.shift.endsAt,
+        timezone: claim.shift.locationRel?.timezone ?? null,
+      });
+      void notifyAssociate(claim.associateId, {
+        subject:
+          input.status === 'APPROVED'
+            ? 'Your shift claim was approved'
+            : 'Your shift claim was rejected',
+        body:
+          input.status === 'APPROVED'
+            ? `You've been assigned the shift ${shiftLine}. It now appears on your schedule.`
+            : `Your claim on the shift ${shiftLine} was rejected.${
+                input.decisionNote ? ` Reason: ${input.decisionNote}` : ''
+              }`,
+        category: 'marketplace',
+        linkUrl: '/marketplace',
+        emailFallback: true,
+      });
+    }
 
     res.json({ ok: true });
   },

@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Lock, Mail, ShieldCheck } from 'lucide-react';
+import { Eye, EyeOff, Lock, Mail, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { ApiError, NetworkError } from '@/lib/api';
@@ -26,6 +26,7 @@ export function Login() {
   const location = useLocation();
   const [email, setEmail] = useState(DEFAULT_DEV_EMAIL);
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [step, setStep] = useState<Step>('password');
   const [code, setCode] = useState('');
   const [useRecovery, setUseRecovery] = useState(false);
@@ -163,14 +164,26 @@ export function Login() {
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/70 pointer-events-none" />
                   <Input
                     id="login-password"
-                    type="password"
+                    type={showPassword ? 'text' : 'password'}
                     autoComplete="current-password"
                     required
                     minLength={12}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="pl-9"
+                    className="pl-9 pr-10"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded text-silver/70 hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                  >
+                    {showPassword ? (
+                      <EyeOff className="h-4 w-4" aria-hidden="true" />
+                    ) : (
+                      <Eye className="h-4 w-4" aria-hidden="true" />
+                    )}
+                  </button>
                 </div>
                 <FormHint>{t('login.minChars')}</FormHint>
               </div>

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { AlertCircle, Calendar, Clock, ShieldAlert } from 'lucide-react';
+import { AlertCircle, Calendar, Clock, Download, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
+import { downloadCsv } from '@/lib/csv';
 import {
   getExpirations,
   type ExpirationItem,
@@ -32,7 +33,7 @@ import {
   TableRow,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, ymdLocal } from '@/lib/format';
 
 /**
  * Phase 113 — Expiration dashboard.
@@ -50,24 +51,59 @@ export function ExpirationsHome() {
     ? hasCapability(user.role, 'manage:scheduling')
     : false;
   const [data, setData] = useState<ExpirationsResponse | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [days, setDays] = useState<30 | 60 | 90>(60);
   const [filter, setFilter] = useState<'all' | 'cert'>('all');
+  const [search, setSearch] = useState('');
   const [renewTarget, setRenewTarget] = useState<ExpirationItem | null>(null);
 
   const refresh = () => {
     setData(null);
+    setLoadError(null);
     getExpirations({
       days,
       isCert: filter === 'cert' ? true : undefined,
     })
       .then(setData)
-      .catch(() => setData(null));
+      .catch(() => setLoadError('Failed to load expirations.'));
   };
 
   useEffect(() => {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [days, filter]);
+
+  const q = search.trim().toLowerCase();
+  const matches = (i: ExpirationItem) =>
+    !q ||
+    i.associateName.toLowerCase().includes(q) ||
+    i.associateEmail.toLowerCase().includes(q) ||
+    i.qualificationName.toLowerCase().includes(q) ||
+    i.qualificationCode.toLowerCase().includes(q);
+  const expired = data ? data.expired.filter(matches) : [];
+  const dueSoon = data ? data.dueSoon.filter(matches) : [];
+  const dueLater = data ? data.dueLater.filter(matches) : [];
+
+  const onExportCsv = () => {
+    if (!data) return;
+    const bucketRows = (bucket: string, items: ExpirationItem[]) =>
+      items.map((i) => [
+        bucket,
+        i.associateName,
+        i.associateEmail,
+        i.qualificationName,
+        i.qualificationCode,
+        i.isCert ? 'Yes' : 'No',
+        fmtDate(i.expiresAt),
+        i.daysUntilExpiry,
+      ]);
+    downloadCsv(`expirations-${ymdLocal()}.csv`, [
+      ['Bucket', 'Associate', 'Email', 'Qualification', 'Code', 'Cert', 'Expires', 'Days until expiry'],
+      ...bucketRows('Expired', expired),
+      ...bucketRows(`Due in ${data.days} days`, dueSoon),
+      ...bucketRows('Due later (within 1 year)', dueLater),
+    ]);
+  };
 
   return (
     <div className="space-y-5">
@@ -112,9 +148,35 @@ export function ExpirationsHome() {
         >
           Certs only
         </Button>
+        <Input
+          className="ml-auto w-64"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search associate or qualification…"
+          aria-label="Search expirations"
+        />
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={onExportCsv}
+          disabled={!data}
+        >
+          <Download className="mr-2 h-4 w-4" /> Export CSV
+        </Button>
       </div>
 
-      {data === null ? (
+      {loadError ? (
+        <Card>
+          <CardContent className="p-6 space-y-3">
+            <p role="alert" className="text-sm text-alert">
+              {loadError}
+            </p>
+            <Button size="sm" variant="secondary" onClick={refresh}>
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
+      ) : data === null ? (
         <Card><CardContent><SkeletonRows count={5} /></CardContent></Card>
       ) : (
         <div className="space-y-4">
@@ -122,9 +184,9 @@ export function ExpirationsHome() {
             title="Expired"
             icon={AlertCircle}
             accent="text-alert"
-            count={data.counts.expired}
-            items={data.expired}
-            emptyHint="Nothing expired."
+            count={q ? expired.length : data.counts.expired}
+            items={expired}
+            emptyHint={q ? 'No matches.' : 'Nothing expired.'}
             canRenew={canRenew}
             onRenew={setRenewTarget}
           />
@@ -132,9 +194,9 @@ export function ExpirationsHome() {
             title={`Due in next ${data.days} days`}
             icon={ShieldAlert}
             accent="text-warning"
-            count={data.counts.dueSoon}
-            items={data.dueSoon}
-            emptyHint="Nothing due soon."
+            count={q ? dueSoon.length : data.counts.dueSoon}
+            items={dueSoon}
+            emptyHint={q ? 'No matches.' : 'Nothing due soon.'}
             canRenew={canRenew}
             onRenew={setRenewTarget}
           />
@@ -142,9 +204,9 @@ export function ExpirationsHome() {
             title="Due later (within 1 year)"
             icon={Calendar}
             accent="text-gold"
-            count={data.counts.dueLater}
-            items={data.dueLater}
-            emptyHint="Nothing further out."
+            count={q ? dueLater.length : data.counts.dueLater}
+            items={dueLater}
+            emptyHint={q ? 'No matches.' : 'Nothing further out.'}
             canRenew={canRenew}
             onRenew={setRenewTarget}
           />
@@ -184,6 +246,9 @@ function Bucket({
   canRenew: boolean;
   onRenew: (item: ExpirationItem) => void;
 }) {
+  const [showAll, setShowAll] = useState(false);
+  const truncated = !showAll && items.length > 100;
+  const shown = truncated ? items.slice(0, 100) : items;
   return (
     <Card>
       <CardContent className="p-0">
@@ -210,7 +275,7 @@ function Bucket({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {items.slice(0, 100).map((i) => (
+              {shown.map((i) => (
                 <TableRow
                   key={i.id}
                   className={canRenew ? 'cursor-pointer' : ''}
@@ -257,6 +322,23 @@ function Bucket({
             </TableBody>
           </Table>
         )}
+        {items.length > 100 && (
+          <div className="px-4 py-2 flex items-center gap-3 text-xs text-silver border-t border-navy-secondary">
+            <span>
+              {truncated
+                ? `Showing 100 of ${items.length}`
+                : `Showing all ${items.length}`}
+            </span>
+            <Button
+              type="button"
+              size="xs"
+              variant="secondary"
+              onClick={() => setShowAll((v) => !v)}
+            >
+              {truncated ? 'Show all' : 'Show first 100'}
+            </Button>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -271,12 +353,14 @@ function RenewDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  // Local-timezone defaults — toISOString() is UTC and pre-fills tomorrow's
+  // date for evening users west of UTC.
+  const today = ymdLocal();
   // Default new expiry to one year from today — typical cert renewal cycle.
   const oneYearOut = (() => {
     const d = new Date();
     d.setFullYear(d.getFullYear() + 1);
-    return d.toISOString().slice(0, 10);
+    return ymdLocal(d);
   })();
   const [acquiredAt, setAcquiredAt] = useState(today);
   const [expiresAt, setExpiresAt] = useState(oneYearOut);

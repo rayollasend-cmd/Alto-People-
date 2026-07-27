@@ -25,6 +25,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { asOf, recordChange } from '../lib/associateHistory.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
+import { notifyAssociate, notifyManager } from '../lib/notify.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { decryptString } from '../lib/crypto.js';
 import { z } from 'zod';
@@ -684,6 +685,27 @@ orgRouter.put(
       costCenterId: updated.costCenterId,
       jobProfileId: updated.jobProfileId,
     });
+    // Fire-and-forget: tell the associate (and their new manager) what
+    // changed. After the write, never inside a transaction.
+    const changed: string[] = [];
+    if (existing.managerId !== updated.managerId) changed.push('manager');
+    if (existing.departmentId !== updated.departmentId) changed.push('department');
+    if (existing.costCenterId !== updated.costCenterId) changed.push('cost center');
+    if (existing.jobProfileId !== updated.jobProfileId) changed.push('job profile');
+    if (changed.length > 0) {
+      const what = changed.join(', ');
+      void notifyAssociate(id, {
+        subject: 'Your assignment was updated',
+        body: `Your ${what} ${changed.length === 1 ? 'was' : 'were'} updated. Open your profile for details.`,
+        category: 'org',
+        linkUrl: '/me',
+      });
+      void notifyManager(id, {
+        subject: 'Assignment updated on your team',
+        body: `${existing.firstName} ${existing.lastName}: ${what} updated.`,
+        category: 'org',
+      });
+    }
     res.json({
       id: updated.id,
       managerId: updated.managerId,
@@ -1460,6 +1482,18 @@ orgRouter.post(
       fromAssignmentId: open?.id ?? null,
       toLocationId: target.id,
       startedAt: input.startedAt,
+    });
+    // Fire-and-forget, after the transaction has committed.
+    void notifyAssociate(id, {
+      subject: 'Your assignment was updated',
+      body: `You were ${open ? 'transferred' : 'assigned'} to ${target.name}, starting ${input.startedAt}.`,
+      category: 'org',
+      linkUrl: '/me',
+    });
+    void notifyManager(id, {
+      subject: 'Team member location change',
+      body: `${associate.firstName} ${associate.lastName} moves to ${target.name} on ${input.startedAt}.`,
+      category: 'org',
     });
     const response: AssociateTransferResponse = {
       id: created.id,

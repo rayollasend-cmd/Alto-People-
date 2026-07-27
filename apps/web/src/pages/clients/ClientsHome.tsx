@@ -79,6 +79,8 @@ export function ClientsHome() {
   const canManage = can('manage:clients');
 
   const [items, setItems] = useState<ClientListItem[] | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [statusFilter, setStatusFilter] = useState<ClientStatus | 'ALL'>('ALL');
@@ -97,10 +99,33 @@ export function ClientsHome() {
         q: appliedQuery,
       });
       setItems(res.clients);
+      setNextCursor(res.nextCursor ?? null);
+      setError(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load.');
     }
   }, [statusFilter, appliedQuery]);
+
+  const loadMore = async () => {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await listClients({
+        status: statusFilter === 'ALL' ? undefined : statusFilter,
+        q: appliedQuery,
+        cursor: nextCursor,
+      });
+      setItems((prev) => [...(prev ?? []), ...res.clients]);
+      setNextCursor(res.nextCursor ?? null);
+    } catch (err) {
+      // The "Load more" button stays visible, so pressing it again retries.
+      toast.error('Could not load more clients', {
+        description: err instanceof ApiError ? err.message : String(err),
+      });
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   useEffect(() => {
     refresh();
@@ -167,7 +192,13 @@ export function ClientsHome() {
           />
         </div>
         <span className="ml-auto text-[10px] text-silver/80 tabular-nums">
-          {items ? `${items.length} client${items.length === 1 ? '' : 's'}` : ''}
+          {items
+            ? nextCursor
+              ? // More pages exist server-side — don't present the page
+                // length as the total.
+                `${items.length} shown`
+              : `${items.length} client${items.length === 1 ? '' : 's'}`
+            : ''}
         </span>
         <ViewToggle<ClientsView>
           value={view}
@@ -291,6 +322,14 @@ export function ClientsHome() {
             </TableBody>
           </Table>
         </Card>
+      )}
+
+      {items && nextCursor && (
+        <div className="mt-4 flex justify-center">
+          <Button variant="outline" onClick={loadMore} loading={loadingMore}>
+            Load more
+          </Button>
+        </div>
       )}
 
       <NewClientDialog

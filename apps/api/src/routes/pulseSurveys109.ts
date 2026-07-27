@@ -72,7 +72,62 @@ pulseSurveysRouter.post('/pulse-surveys', VIEW_ADMIN, async (req, res) => {
       createdById: req.user!.id,
     },
   });
+  // The UI says "Survey sent." — make that true. Fan out an in-app nudge to
+  // the resolved audience (fire-and-forget; capped as a runaway backstop).
+  void (async () => {
+    try {
+      const { notifyUser } = await import('../lib/notify.js');
+      const recipients = await prisma.user.findMany({
+        take: 5000,
+        where: {
+          status: 'ACTIVE',
+          associate: {
+            is: {
+              ...(input.audience === 'BY_DEPARTMENT'
+                ? { departmentId: input.audienceDepartmentId! }
+                : {}),
+              ...(input.audience === 'BY_CLIENT'
+                ? { applications: { some: { clientId: input.audienceClientId! } } }
+                : {}),
+            },
+          },
+        },
+        select: { id: true },
+      });
+      await Promise.allSettled(
+        recipients.map((r) =>
+          notifyUser(r.id, {
+            subject: 'Quick pulse check — your input is wanted',
+            body: `"${input.question}" — takes ten seconds, closes ${openUntil.toISOString().slice(0, 10)}.`,
+            category: 'pulse',
+            linkUrl: '/pulse',
+          }),
+        ),
+      );
+    } catch (err) {
+      console.warn('[pulse] survey fan-out failed:', err);
+    }
+  })();
   res.status(201).json({ id: created.id });
+});
+
+/**
+ * Close a survey early WITHOUT destroying its responses — before this the
+ * only lifecycle control was Delete, which threw away collected data.
+ */
+pulseSurveysRouter.post('/pulse-surveys/:id/close', VIEW_ADMIN, async (req, res) => {
+  const survey = await prisma.pulseSurvey.findUnique({ where: { id: req.params.id } });
+  if (!survey) throw new HttpError(404, 'not_found', 'Survey not found.');
+  const now = new Date();
+  if (survey.openUntil <= now) {
+    res.json({ ok: true, alreadyClosed: true });
+    return;
+  }
+  await prisma.pulseSurvey.update({
+    where: { id: survey.id },
+    data: { openUntil: now },
+  });
+  res.json({ ok: true });
 });
 
 pulseSurveysRouter.get('/pulse-surveys', VIEW_ADMIN, async (_req, res) => {

@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react';
-import { CalendarDays, FileSpreadsheet, HeartPulse, Plus, ShieldOff } from 'lucide-react';
-import { ApiError } from '@/lib/api';
+import {
+  CalendarDays,
+  Download,
+  FileSpreadsheet,
+  HeartPulse,
+  Plus,
+  ShieldOff,
+} from 'lucide-react';
+import { ApiError, apiFetch } from '@/lib/api';
 import {
   createCobra,
   createOpenEnrollment,
@@ -21,8 +28,10 @@ import {
   type QleKind,
 } from '@/lib/benefitsLifecycle92Api';
 import { listClients } from '@/lib/clientsApi';
-import { fmtDate } from '@/lib/format';
+import { downloadCsv } from '@/lib/csv';
+import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { useAuth } from '@/lib/auth';
+import { useConfirm, usePrompt } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -35,6 +44,7 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
   Select,
@@ -57,20 +67,38 @@ import { toast } from 'sonner';
 
 type Tab = 'oe' | 'qle' | 'cobra' | 'aca';
 
-// Today as YYYY-MM-DD in LOCAL time — toISOString() would shift the date
-// for evening users west of UTC.
-function todayYmd(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+// Format a date-only "YYYY-MM-DD" string via the shared formatter. Parsing
+// through parseYmd keeps the day stable west of UTC (new Date('YYYY-MM-DD')
+// is UTC midnight and renders a day early there).
+const fmtYmd = (s: string | null | undefined) => fmtDate(parseYmd(s));
+
+// Add n days to a YYYY-MM-DD string (local calendar math).
+function addDaysYmd(ymd: string, days: number): string {
+  const d = parseYmd(ymd);
+  if (!d) return ymd;
+  d.setDate(d.getDate() + days);
+  return ymdLocal(d);
 }
 
-// Parse an <input type="date"> value into a LOCAL Date. new Date('YYYY-MM-DD')
-// parses as UTC midnight and can render a day off in fmtDate.
-function parseYmd(s: string): Date | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
-  if (!m) return null;
-  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-  return Number.isNaN(d.getTime()) ? null : d;
+const MONTHS_SHORT = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+] as const;
+
+/** Shared "section failed to load" body with a Retry affordance. */
+function LoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="p-6">
+      <ErrorBanner>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <span>{message}</span>
+          <Button size="sm" variant="secondary" onClick={onRetry}>
+            Retry
+          </Button>
+        </div>
+      </ErrorBanner>
+    </div>
+  );
 }
 
 export function BenefitsLifecycle() {
@@ -117,17 +145,45 @@ const OE_BADGE: Record<OpenEnrollmentWindow['status'], 'pending' | 'success' | '
 
 function OeTab({ canManage }: { canManage: boolean }) {
   const [rows, setRows] = useState<OpenEnrollmentWindow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
 
   const refresh = () => {
     setRows(null);
+    setError(null);
     listOpenEnrollment()
       .then((r) => setRows(r.windows))
-      .catch(() => setRows([]));
+      .catch((err) =>
+        setError(
+          err instanceof ApiError
+            ? err.message
+            : 'Could not load open enrollment windows.',
+        ),
+      );
   };
   useEffect(() => {
     refresh();
   }, []);
+
+  const onOpen = async (w: OpenEnrollmentWindow) => {
+    try {
+      await openEnrollmentOpen(w.id);
+      toast.success(`${w.name} is now open for elections.`);
+      refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not open the window.');
+    }
+  };
+
+  const onCloseWindow = async (w: OpenEnrollmentWindow) => {
+    try {
+      await openEnrollmentClose(w.id);
+      toast.success(`${w.name} closed.`);
+      refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not close the window.');
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -140,7 +196,9 @@ function OeTab({ canManage }: { canManage: boolean }) {
       )}
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {error !== null ? (
+            <LoadError message={error} onRetry={refresh} />
+          ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
@@ -170,38 +228,25 @@ function OeTab({ canManage }: { canManage: boolean }) {
                         {w.clientName}
                       </div>
                       <div className="sm:hidden text-[10px] text-silver/80 tabular-nums">
-                        {w.startsOn} → {w.endsOn}
+                        {fmtYmd(w.startsOn)} → {fmtYmd(w.endsOn)}
                       </div>
                     </TableCell>
                     <TableCell className="hidden md:table-cell">{w.clientName}</TableCell>
                     <TableCell className="hidden sm:table-cell tabular-nums">
-                      {w.startsOn} → {w.endsOn}
+                      {fmtYmd(w.startsOn)} → {fmtYmd(w.endsOn)}
                     </TableCell>
-                    <TableCell className="hidden lg:table-cell tabular-nums">{w.effectiveOn}</TableCell>
+                    <TableCell className="hidden lg:table-cell tabular-nums">{fmtYmd(w.effectiveOn)}</TableCell>
                     <TableCell>
                       <Badge variant={OE_BADGE[w.status]}>{w.status}</Badge>
                     </TableCell>
                     <TableCell className="text-right space-x-2">
                       {canManage && w.status === 'DRAFT' && (
-                        <Button
-                          size="sm"
-                          onClick={async () => {
-                            await openEnrollmentOpen(w.id);
-                            refresh();
-                          }}
-                        >
+                        <Button size="sm" onClick={() => onOpen(w)}>
                           Open
                         </Button>
                       )}
                       {canManage && w.status === 'OPEN' && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={async () => {
-                            await openEnrollmentClose(w.id);
-                            refresh();
-                          }}
-                        >
+                        <Button size="sm" variant="ghost" onClick={() => onCloseWindow(w)}>
                           Close
                         </Button>
                       )}
@@ -228,22 +273,38 @@ function OeTab({ canManage }: { canManage: boolean }) {
 
 function NewOeDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [clientId, setClientId] = useState('');
-  const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
+  const [clients, setClients] = useState<{ id: string; name: string }[] | null>(null);
+  const [clientsError, setClientsError] = useState<string | null>(null);
   const [name, setName] = useState('');
-  const [startsOn, setStartsOn] = useState(todayYmd());
-  const [endsOn, setEndsOn] = useState('');
-  const [effectiveOn, setEffectiveOn] = useState('');
+  // Defaults: a 30-day window starting today, coverage effective next Jan 1
+  // (the typical plan-year boundary). All editable.
+  const [startsOn, setStartsOn] = useState(ymdLocal());
+  const [endsOn, setEndsOn] = useState(addDaysYmd(ymdLocal(), 30));
+  const [effectiveOn, setEffectiveOn] = useState(
+    `${new Date().getFullYear() + 1}-01-01`,
+  );
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
+  const loadClients = () => {
+    setClients(null);
+    setClientsError(null);
     listClients()
       .then((r) => setClients(r.clients.map((c) => ({ id: c.id, name: c.name }))))
-      .catch(() => {
-        // Silent — the field falls back to raw UUID entry.
-      });
+      .catch((err) =>
+        setClientsError(
+          err instanceof ApiError ? err.message : 'Could not load the client list.',
+        ),
+      );
+  };
+  useEffect(() => {
+    loadClients();
   }, []);
 
   const onSubmit = async () => {
+    if (clientsError || clients === null) {
+      toast.error('The client list failed to load — retry it before creating a window.');
+      return;
+    }
     if (!clientId || !name || !startsOn || !endsOn || !effectiveOn) {
       toast.error('All fields required.');
       return;
@@ -273,28 +334,32 @@ function NewOeDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
       <DrawerBody className="space-y-4">
         <div>
           <Label htmlFor="bl-oe-client">Client</Label>
-          {clients.length > 0 ? (
+          {clientsError !== null ? (
+            <ErrorBanner className="mt-1">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <span>{clientsError}</span>
+                <Button size="sm" variant="secondary" onClick={loadClients}>
+                  Retry
+                </Button>
+              </div>
+            </ErrorBanner>
+          ) : (
             <Select
               id="bl-oe-client"
               className="mt-1"
               value={clientId}
               onChange={(e) => setClientId(e.target.value)}
+              disabled={clients === null}
             >
-              <option value="">Select a client…</option>
-              {clients.map((c) => (
+              <option value="">
+                {clients === null ? 'Loading clients…' : 'Select a client…'}
+              </option>
+              {(clients ?? []).map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
                 </option>
               ))}
             </Select>
-          ) : (
-            <Input
-              id="bl-oe-client"
-              className="mt-1 font-mono text-xs"
-              placeholder="Client UUID"
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-            />
           )}
         </div>
         <div>
@@ -340,7 +405,10 @@ function NewOeDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
         <Button variant="ghost" onClick={onClose}>
           Cancel
         </Button>
-        <Button onClick={onSubmit} disabled={saving}>
+        <Button
+          onClick={onSubmit}
+          disabled={saving || clients === null || clientsError !== null}
+        >
           {saving ? 'Saving…' : 'Create'}
         </Button>
       </DrawerFooter>
@@ -368,26 +436,60 @@ const QLE_BADGE: Record<Qle['status'], 'pending' | 'success' | 'destructive' | '
 };
 
 function QleTab({ canManage }: { canManage: boolean }) {
+  const prompt = usePrompt();
   const [rows, setRows] = useState<Qle[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
 
   const refresh = () => {
     setRows(null);
+    setError(null);
     listQles()
       .then((r) => setRows(r.qles))
-      .catch(() => setRows([]));
+      .catch((err) =>
+        setError(
+          err instanceof ApiError
+            ? err.message
+            : 'Could not load qualifying life events.',
+        ),
+      );
   };
   useEffect(() => {
     refresh();
   }, []);
 
-  const onDecide = async (id: string, decision: 'APPROVED' | 'DENIED') => {
+  const onApprove = async (q: Qle) => {
     try {
-      await decideQle(id, decision);
-      toast.success(`QLE ${decision.toLowerCase()}.`);
+      await decideQle(q.id, 'APPROVED');
+      toast.success(`${q.associateName}'s QLE approved.`);
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not approve the QLE.');
+    }
+  };
+
+  const onDeny = async (q: Qle) => {
+    const reason = await prompt({
+      title: `Deny ${q.associateName}'s QLE?`,
+      description:
+        'The associate will be notified that their qualifying life event was denied, along with this reason.',
+      reasonLabel: 'Denial reason',
+      reasonPlaceholder: 'Missing documentation, event outside the window, …',
+      confirmLabel: 'Deny QLE',
+      destructive: true,
+    });
+    if (reason === null) return;
+    try {
+      // decideQle() doesn't carry a reason; POST directly so the API can
+      // include it in the associate's denial notification.
+      await apiFetch<{ ok: true }>(`/qles/${q.id}/decide`, {
+        method: 'POST',
+        body: { decision: 'DENIED', reason },
+      });
+      toast.success(`${q.associateName}'s QLE denied.`);
+      refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not deny the QLE.');
     }
   };
 
@@ -400,7 +502,9 @@ function QleTab({ canManage }: { canManage: boolean }) {
       </div>
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {error !== null ? (
+            <LoadError message={error} onRetry={refresh} />
+          ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
@@ -433,26 +537,22 @@ function QleTab({ canManage }: { canManage: boolean }) {
                         {QLE_KIND_LABEL[q.kind]}
                       </div>
                       <div className="md:hidden text-[10px] text-silver/80 tabular-nums">
-                        {q.eventDate} → {q.allowedUntil}
+                        {fmtYmd(q.eventDate)} → {fmtYmd(q.allowedUntil)}
                       </div>
                     </TableCell>
                     <TableCell className="hidden sm:table-cell">{QLE_KIND_LABEL[q.kind]}</TableCell>
-                    <TableCell className="hidden md:table-cell tabular-nums">{q.eventDate}</TableCell>
-                    <TableCell className="hidden md:table-cell tabular-nums">{q.allowedUntil}</TableCell>
+                    <TableCell className="hidden md:table-cell tabular-nums">{fmtYmd(q.eventDate)}</TableCell>
+                    <TableCell className="hidden md:table-cell tabular-nums">{fmtYmd(q.allowedUntil)}</TableCell>
                     <TableCell>
                       <Badge variant={QLE_BADGE[q.status]}>{q.status}</Badge>
                     </TableCell>
                     <TableCell className="text-right space-x-2">
                       {canManage && q.status === 'PENDING' && (
                         <>
-                          <Button size="sm" onClick={() => onDecide(q.id, 'APPROVED')}>
+                          <Button size="sm" onClick={() => onApprove(q)}>
                             Approve
                           </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => onDecide(q.id, 'DENIED')}
-                          >
+                          <Button size="sm" variant="ghost" onClick={() => onDeny(q)}>
                             Deny
                           </Button>
                         </>
@@ -481,7 +581,7 @@ function QleTab({ canManage }: { canManage: boolean }) {
 function NewQleDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
   const [kind, setKind] = useState<QleKind>('MARRIAGE');
-  const [eventDate, setEventDate] = useState(todayYmd());
+  const [eventDate, setEventDate] = useState(ymdLocal());
   const [evidenceUrl, setEvidenceUrl] = useState('');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
@@ -600,18 +700,65 @@ const COBRA_BADGE: Record<CobraOffer['status'], 'pending' | 'success' | 'default
 };
 
 function CobraTab({ canManage }: { canManage: boolean }) {
+  const confirm = useConfirm();
   const [rows, setRows] = useState<CobraOffer[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
 
   const refresh = () => {
     setRows(null);
+    setError(null);
     listCobra()
       .then((r) => setRows(r.offers))
-      .catch(() => setRows([]));
+      .catch((err) =>
+        setError(
+          err instanceof ApiError ? err.message : 'Could not load COBRA offers.',
+        ),
+      );
   };
   useEffect(() => {
     refresh();
   }, []);
+
+  const onElect = async (c: CobraOffer) => {
+    if (
+      !(await confirm({
+        title: `Record COBRA election for ${c.associateName}?`,
+        description: `Marks this offer as ELECTED — continuation coverage runs through ${fmtYmd(c.coverageEndsOn)}.`,
+        confirmLabel: 'Record election',
+      }))
+    ) {
+      return;
+    }
+    try {
+      await electCobra(c.id);
+      toast.success(`COBRA election recorded for ${c.associateName}.`);
+      refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not record the election.');
+    }
+  };
+
+  const onWaive = async (c: CobraOffer) => {
+    if (
+      !(await confirm({
+        title: `Waive COBRA for ${c.associateName}?`,
+        description:
+          'Marks this offer as WAIVED. The associate declines continuation coverage — this closes their election window.',
+        confirmLabel: 'Waive coverage',
+        destructive: true,
+      }))
+    ) {
+      return;
+    }
+    try {
+      await waiveCobra(c.id);
+      toast.success(`COBRA waived for ${c.associateName}.`);
+      refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not waive the offer.');
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -624,7 +771,9 @@ function CobraTab({ canManage }: { canManage: boolean }) {
       )}
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {error !== null ? (
+            <LoadError message={error} onRetry={refresh} />
+          ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
@@ -659,38 +808,25 @@ function CobraTab({ canManage }: { canManage: boolean }) {
                         {c.qualifyingEvent}
                       </div>
                       <div className="md:hidden text-[10px] text-silver/80 tabular-nums">
-                        {c.premiumPerMonth ? `$${c.premiumPerMonth}/mo` : '—'}
+                        {c.premiumPerMonth ? `${fmtMoney(c.premiumPerMonth)}/mo` : '—'}
                         {' · elect by '}
-                        {c.electionDeadline}
+                        {fmtYmd(c.electionDeadline)}
                       </div>
                     </TableCell>
                     <TableCell className="hidden sm:table-cell">{c.qualifyingEvent}</TableCell>
-                    <TableCell className="hidden md:table-cell tabular-nums">{c.qeDate}</TableCell>
-                    <TableCell className="hidden lg:table-cell tabular-nums">{c.electionDeadline}</TableCell>
-                    <TableCell className="hidden md:table-cell tabular-nums">{c.premiumPerMonth ? `$${c.premiumPerMonth}` : '—'}</TableCell>
+                    <TableCell className="hidden md:table-cell tabular-nums">{fmtYmd(c.qeDate)}</TableCell>
+                    <TableCell className="hidden lg:table-cell tabular-nums">{fmtYmd(c.electionDeadline)}</TableCell>
+                    <TableCell className="hidden md:table-cell tabular-nums">{fmtMoney(c.premiumPerMonth)}</TableCell>
                     <TableCell>
                       <Badge variant={COBRA_BADGE[c.status]}>{c.status}</Badge>
                     </TableCell>
                     <TableCell className="text-right space-x-2">
                       {canManage && c.status === 'NOTIFIED' && (
                         <>
-                          <Button
-                            size="sm"
-                            onClick={async () => {
-                              await electCobra(c.id);
-                              refresh();
-                            }}
-                          >
+                          <Button size="sm" onClick={() => onElect(c)}>
                             Elect
                           </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={async () => {
-                              await waiveCobra(c.id);
-                              refresh();
-                            }}
-                          >
+                          <Button size="sm" variant="ghost" onClick={() => onWaive(c)}>
                             Waive
                           </Button>
                         </>
@@ -725,7 +861,7 @@ function NewCobraDrawer({
 }) {
   const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
   const [qualifyingEvent, setQualifyingEvent] = useState('TERMINATION');
-  const [qeDate, setQeDate] = useState(todayYmd());
+  const [qeDate, setQeDate] = useState(ymdLocal());
   const [premium, setPremium] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -832,46 +968,135 @@ function formatAcaCell(m: AcaEmployeeMonths['months'][number]): string {
   return `${offer}/${safe}`;
 }
 
+/** An employee is "missing codes" when any month has no row or no offer code. */
+function hasMissingCodes(e: AcaEmployeeMonths): boolean {
+  return e.months.some((m) => !m || !m.offerOfCoverage);
+}
+
 function AcaTab() {
-  const [year, setYear] = useState(String(new Date().getFullYear() - 1));
+  // Last 5 completed-ish tax years — 1095-C reporting is for the prior year.
+  const currentYear = new Date().getFullYear();
+  const yearOptions = Array.from({ length: 5 }, (_, i) => String(currentYear - 1 - i));
+  const [year, setYear] = useState(yearOptions[0]);
   const [employees, setEmployees] = useState<AcaEmployeeMonths[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [nameFilter, setNameFilter] = useState('');
+  const [missingOnly, setMissingOnly] = useState(false);
 
   const refresh = async () => {
     setEmployees(null);
+    setError(null);
     try {
       const r = await get1095c(Number(year));
       setEmployees(r.employees);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
-      setEmployees([]);
+      setError(
+        err instanceof ApiError ? err.message : 'Could not load the 1095-C grid.',
+      );
     }
+  };
+
+  const filtered = (employees ?? []).filter(
+    (e) =>
+      e.associateName.toLowerCase().includes(nameFilter.trim().toLowerCase()) &&
+      (!missingOnly || hasMissingCodes(e)),
+  );
+
+  const exportCsv = () => {
+    downloadCsv(`1095c-${year}.csv`, [
+      ['Associate', ...MONTHS_SHORT],
+      ...filtered.map((e) => [
+        e.associateName,
+        ...e.months.map((m) => (m ? formatAcaCell(m) : '')),
+      ]),
+    ]);
   };
 
   return (
     <div className="space-y-4">
-      <div className="flex items-end gap-3">
+      <div className="flex items-end gap-3 flex-wrap">
         <div>
-          <Label>Tax year</Label>
-          <Input
-            type="number"
+          <Label htmlFor="bl-aca-year">Tax year</Label>
+          <Select
+            id="bl-aca-year"
             className="mt-1 w-32"
             value={year}
             onChange={(e) => setYear(e.target.value)}
-          />
+          >
+            {yearOptions.map((y) => (
+              <option key={y} value={y}>
+                {y}
+              </option>
+            ))}
+          </Select>
         </div>
         <Button onClick={refresh}>Load grid</Button>
+        {employees !== null && employees.length > 0 && (
+          <>
+            <div className="flex-1 min-w-[10rem]">
+              <Label htmlFor="bl-aca-filter">Associate</Label>
+              <Input
+                id="bl-aca-filter"
+                className="mt-1"
+                placeholder="Filter by name…"
+                value={nameFilter}
+                onChange={(e) => setNameFilter(e.target.value)}
+              />
+            </div>
+            <label className="flex items-center gap-2 pb-2.5 text-sm text-silver whitespace-nowrap">
+              <input
+                type="checkbox"
+                checked={missingOnly}
+                onChange={(e) => setMissingOnly(e.target.checked)}
+              />
+              Missing codes only
+            </label>
+            <Button variant="secondary" onClick={exportCsv}>
+              <Download className="mr-2 h-4 w-4" /> Export CSV
+            </Button>
+          </>
+        )}
       </div>
       <Card>
         <CardContent className="p-0">
-          {employees === null ? (
+          {error !== null ? (
+            <LoadError message={error} onRetry={refresh} />
+          ) : employees === null ? (
             <div className="p-6 text-sm text-silver">
               Choose a year and click Load grid.
             </div>
           ) : employees.length === 0 ? (
             <EmptyState
               icon={FileSpreadsheet}
-              title="No ACA data"
-              description="Upsert AcaMonth rows via /aca/months or wait for the year-end importer."
+              title={`No 1095-C data for ${year}`}
+              description="Nothing has been imported for this tax year yet. Monthly coverage codes show up here after the year-end ACA import runs for your clients — pick a different year, or retry once the import has landed."
+              action={
+                <Button variant="secondary" onClick={refresh}>
+                  Retry load
+                </Button>
+              }
+            />
+          ) : filtered.length === 0 ? (
+            <EmptyState
+              icon={FileSpreadsheet}
+              title="No associates match"
+              description={
+                missingOnly
+                  ? 'Every associate matching your filter has a full set of codes.'
+                  : 'No associate names match your filter.'
+              }
+              action={
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setNameFilter('');
+                    setMissingOnly(false);
+                  }}
+                >
+                  Clear filters
+                </Button>
+              }
             />
           ) : (
             <>
@@ -883,15 +1108,15 @@ function AcaTab() {
                   <thead className="text-silver">
                     <tr>
                       <th className="text-left px-3 py-2">Associate</th>
-                      {Array.from({ length: 12 }, (_, i) => (
-                        <th key={i} className="text-left px-2 py-2">
-                          {new Date(0, i).toLocaleString('en-US', { month: 'short' })}
+                      {MONTHS_SHORT.map((mo) => (
+                        <th key={mo} className="text-left px-2 py-2">
+                          {mo}
                         </th>
                       ))}
                     </tr>
                   </thead>
                   <tbody className="text-white">
-                    {employees.map((e) => (
+                    {filtered.map((e) => (
                       <tr key={e.associateId} className="border-t border-navy-secondary">
                         <td className="px-3 py-2 font-medium">{e.associateName}</td>
                         {e.months.map((m, i) => (
@@ -908,7 +1133,7 @@ function AcaTab() {
                   4×3 month grid so all twelve months stay on-screen
                   without horizontal scroll. */}
               <ul className="md:hidden divide-y divide-navy-secondary">
-                {employees.map((e) => (
+                {filtered.map((e) => (
                   <li key={e.associateId} className="p-4">
                     <div className="font-medium text-white text-sm mb-3 truncate">
                       {e.associateName}
@@ -920,7 +1145,7 @@ function AcaTab() {
                           className="rounded border border-navy-secondary bg-navy-secondary/30 px-2 py-1.5"
                         >
                           <div className="text-[10px] uppercase tracking-wider text-silver">
-                            {new Date(0, i).toLocaleString('en-US', { month: 'short' })}
+                            {MONTHS_SHORT[i]}
                           </div>
                           <div className="font-mono text-xs text-white truncate">
                             {formatAcaCell(m)}

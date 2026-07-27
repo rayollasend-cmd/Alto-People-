@@ -11,6 +11,7 @@ import {
 } from '@/lib/clientsApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import {
@@ -57,6 +58,7 @@ export function ClientDetail() {
   const navigate = useNavigate();
   const { can } = useAuth();
   const canManage = can('manage:clients');
+  const confirm = useConfirm();
 
   const [client, setClient] = useState<ClientSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -64,7 +66,17 @@ export function ClientDetail() {
 
   const onArchive = async () => {
     if (!client) return;
-    if (!confirm(`Archive "${client.name}"? They'll be hidden from the clients list. Open applications, payroll, and associates aren't deleted.`)) return;
+    if (
+      !(await confirm({
+        title: `Archive "${client.name}"?`,
+        description:
+          "They'll be hidden from the clients list. Open applications, payroll, and associates aren't deleted.",
+        confirmLabel: 'Archive',
+        destructive: true,
+      }))
+    ) {
+      return;
+    }
     setArchiving(true);
     try {
       await archiveClient(client.id);

@@ -1,10 +1,19 @@
 import { useEffect, useState } from 'react';
-import { Plus } from 'lucide-react';
+import { Download, Plus } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
+import { downloadCsv } from '@/lib/csv';
+import {
+  fmtDate,
+  fmtMoney,
+  localInputToUtcIso,
+  parseYmd,
+  ymdLocal,
+} from '@/lib/format';
 import { listClients } from '@/lib/clientsApi';
 import type { ClientListItem } from '@alto-people/shared';
 import {
+  addAllocation,
   autoAllocate,
   closeTipPool,
   createPremiumPayRule,
@@ -17,6 +26,7 @@ import {
   listProjects,
   listTipPools,
   payOutTipPool,
+  updateProject,
   type PremiumPayKind,
   type PremiumPayRule,
   type Project,
@@ -49,6 +59,7 @@ import {
   TabsList,
   TabsTrigger,
 } from '@/components/ui';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
 
@@ -123,15 +134,19 @@ export function PayRulesHome() {
 function ProjectsTab({ clientId }: { clientId: string }) {
   const confirm = useConfirm();
   const [rows, setRows] = useState<Project[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
+  const [editTarget, setEditTarget] = useState<Project | null>(null);
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
+  const [isBillable, setIsBillable] = useState(true);
 
   const refresh = () => {
     setRows(null);
+    setLoadError(null);
     listProjects(clientId)
       .then((r) => setRows(r.projects))
-      .catch(() => setRows([]));
+      .catch(() => setLoadError('Failed to load projects.'));
   };
   useEffect(() => {
     refresh();
@@ -143,11 +158,17 @@ function ProjectsTab({ clientId }: { clientId: string }) {
       return;
     }
     try {
-      await createProject({ clientId, code: code.trim(), name: name.trim() });
+      await createProject({
+        clientId,
+        code: code.trim(),
+        name: name.trim(),
+        isBillable,
+      });
       toast.success('Project created.');
       setShowNew(false);
       setCode('');
       setName('');
+      setIsBillable(true);
       refresh();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -173,7 +194,14 @@ function ProjectsTab({ clientId }: { clientId: string }) {
       </div>
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {loadError ? (
+            <div className="p-6 space-y-3">
+              <p role="alert" className="text-sm text-alert">{loadError}</p>
+              <Button size="sm" variant="secondary" onClick={refresh}>
+                Retry
+              </Button>
+            </div>
+          ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
@@ -193,7 +221,11 @@ function ProjectsTab({ clientId }: { clientId: string }) {
               </TableHeader>
               <TableBody>
                 {rows.map((p) => (
-                  <TableRow key={p.id}>
+                  <TableRow
+                    key={p.id}
+                    className="cursor-pointer"
+                    onClick={() => setEditTarget(p)}
+                  >
                     <TableCell className="font-mono text-xs">{p.code}</TableCell>
                     <TableCell className="text-white">{p.name}</TableCell>
                     <TableCell>{p.isBillable ? 'Yes' : 'No'}</TableCell>
@@ -202,7 +234,10 @@ function ProjectsTab({ clientId }: { clientId: string }) {
                         {p.isActive ? 'Active' : 'Inactive'}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                      <Button size="sm" variant="ghost" onClick={() => setEditTarget(p)}>
+                        Edit
+                      </Button>
                       {p.isActive && (
                         <Button size="sm" variant="ghost" onClick={() => onDeactivate(p.id)}>
                           Deactivate
@@ -229,6 +264,14 @@ function ProjectsTab({ clientId }: { clientId: string }) {
             <Label>Name</Label>
             <Input className="mt-1" value={name} onChange={(e) => setName(e.target.value)} />
           </div>
+          <label className="flex items-center gap-2 text-sm text-white">
+            <input
+              type="checkbox"
+              checked={isBillable}
+              onChange={(e) => setIsBillable(e.target.checked)}
+            />
+            Billable to the client
+          </label>
         </DrawerBody>
         <DrawerFooter>
           <Button variant="ghost" onClick={() => setShowNew(false)}>
@@ -237,7 +280,87 @@ function ProjectsTab({ clientId }: { clientId: string }) {
           <Button onClick={onCreate}>Create</Button>
         </DrawerFooter>
       </Drawer>
+      {editTarget && (
+        <EditProjectDrawer
+          project={editTarget}
+          onClose={() => setEditTarget(null)}
+          onSaved={() => {
+            setEditTarget(null);
+            refresh();
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function EditProjectDrawer({
+  project,
+  onClose,
+  onSaved,
+}: {
+  project: Project;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [code, setCode] = useState(project.code);
+  const [name, setName] = useState(project.name);
+  const [isBillable, setIsBillable] = useState(project.isBillable);
+  const [saving, setSaving] = useState(false);
+
+  const onSubmit = async () => {
+    if (!code.trim() || !name.trim()) {
+      toast.error('Code and name required.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateProject(project.id, {
+        code: code.trim(),
+        name: name.trim(),
+        isBillable,
+      });
+      toast.success('Project updated.');
+      onSaved();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+      <DrawerHeader>
+        <DrawerTitle>Edit project</DrawerTitle>
+      </DrawerHeader>
+      <DrawerBody className="space-y-4">
+        <div>
+          <Label>Code</Label>
+          <Input className="mt-1 font-mono" value={code} onChange={(e) => setCode(e.target.value)} />
+        </div>
+        <div>
+          <Label>Name</Label>
+          <Input className="mt-1" value={name} onChange={(e) => setName(e.target.value)} />
+        </div>
+        <label className="flex items-center gap-2 text-sm text-white">
+          <input
+            type="checkbox"
+            checked={isBillable}
+            onChange={(e) => setIsBillable(e.target.checked)}
+          />
+          Billable to the client
+        </label>
+      </DrawerBody>
+      <DrawerFooter>
+        <Button variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button onClick={onSubmit} disabled={saving}>
+          {saving ? 'Saving…' : 'Save'}
+        </Button>
+      </DrawerFooter>
+    </Drawer>
   );
 }
 
@@ -257,13 +380,15 @@ const KIND_LABEL: Record<PremiumPayKind, string> = {
 function PremiumTab({ clientId }: { clientId: string }) {
   const confirm = useConfirm();
   const [rows, setRows] = useState<PremiumPayRule[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
 
   const refresh = () => {
     setRows(null);
+    setLoadError(null);
     listPremiumPayRules(clientId)
       .then((r) => setRows(r.rules))
-      .catch(() => setRows([]));
+      .catch(() => setLoadError('Failed to load premium pay rules.'));
   };
   useEffect(() => {
     refresh();
@@ -288,7 +413,14 @@ function PremiumTab({ clientId }: { clientId: string }) {
       </div>
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {loadError ? (
+            <div className="p-6 space-y-3">
+              <p role="alert" className="text-sm text-alert">{loadError}</p>
+              <Button size="sm" variant="secondary" onClick={refresh}>
+                Retry
+              </Button>
+            </div>
+          ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
@@ -314,7 +446,7 @@ function PremiumTab({ clientId }: { clientId: string }) {
                     <TableCell className="font-medium text-white">{r.name}</TableCell>
                     <TableCell>{KIND_LABEL[r.kind] ?? r.kind}</TableCell>
                     <TableCell>{r.multiplier ? `×${r.multiplier}` : '—'}</TableCell>
-                    <TableCell>{r.addPerHour ? `$${r.addPerHour}` : '—'}</TableCell>
+                    <TableCell>{r.addPerHour ? fmtMoney(r.addPerHour) : '—'}</TableCell>
                     <TableCell>{r.thresholdHours ? `${r.thresholdHours} hr` : '—'}</TableCell>
                     <TableCell>
                       <Badge variant={r.isActive ? 'success' : 'default'}>
@@ -364,6 +496,18 @@ function PremiumDrawer({
   const [addPerHour, setAddPerHour] = useState('');
   const [thresholdHours, setThresholdHours] = useState('8');
   const [saving, setSaving] = useState(false);
+
+  // Live worked example so the admin can sanity-check the rule before
+  // saving: base $18/hr → multiplier × base + flat add-on.
+  const exampleBase = 18;
+  const multNum = multiplier !== '' ? Number(multiplier) : null;
+  const addNum = addPerHour !== '' ? Number(addPerHour) : null;
+  const multOk = multNum !== null && Number.isFinite(multNum) && multNum > 0;
+  const addOk = addNum !== null && Number.isFinite(addNum) && addNum >= 0;
+  const examplePay =
+    multOk || addOk
+      ? exampleBase * (multOk ? multNum : 1) + (addOk ? addNum : 0)
+      : null;
 
   const onSubmit = async () => {
     if (!name.trim()) {
@@ -443,6 +587,12 @@ function PremiumDrawer({
             />
           </div>
         </div>
+        {examplePay !== null && (
+          <div className="text-xs text-silver bg-navy-secondary/40 border border-navy-secondary rounded-md p-3">
+            Example: at a {fmtMoney(exampleBase)}/hr base this rule pays{' '}
+            <span className="text-white font-medium">{fmtMoney(examplePay)}/hr</span>.
+          </div>
+        )}
         <div>
           <Label>Threshold hours (for OT kinds)</Label>
           <Input
@@ -470,14 +620,16 @@ function PremiumDrawer({
 
 function TipsTab({ clientId }: { clientId: string }) {
   const [rows, setRows] = useState<TipPool[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [active, setActive] = useState<TipPool | null>(null);
 
   const refresh = () => {
     setRows(null);
+    setLoadError(null);
     listTipPools(clientId)
       .then((r) => setRows(r.pools))
-      .catch(() => setRows([]));
+      .catch(() => setLoadError('Failed to load tip pools.'));
   };
   useEffect(() => {
     refresh();
@@ -492,7 +644,14 @@ function TipsTab({ clientId }: { clientId: string }) {
       </div>
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {loadError ? (
+            <div className="p-6 space-y-3">
+              <p role="alert" className="text-sm text-alert">{loadError}</p>
+              <Button size="sm" variant="secondary" onClick={refresh}>
+                Retry
+              </Button>
+            </div>
+          ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
@@ -517,9 +676,9 @@ function TipsTab({ clientId }: { clientId: string }) {
                     className="cursor-pointer"
                     onClick={() => setActive(p)}
                   >
-                    <TableCell>{p.shiftDate}</TableCell>
+                    <TableCell>{fmtDate(parseYmd(p.shiftDate))}</TableCell>
                     <TableCell className="text-white">{p.name}</TableCell>
-                    <TableCell>${p.totalAmount}</TableCell>
+                    <TableCell>{fmtMoney(p.totalAmount, { currency: p.currency })}</TableCell>
                     <TableCell>{p.allocationCount}</TableCell>
                     <TableCell>
                       <Badge
@@ -574,17 +733,23 @@ function NewTipPoolDrawer({
   onSaved: () => void;
 }) {
   const [name, setName] = useState('');
-  const [shiftDate, setShiftDate] = useState('');
+  // Tip pools are usually reconciled the morning after the shift, so
+  // default to yesterday's date.
+  const [shiftDate, setShiftDate] = useState(() =>
+    ymdLocal(new Date(Date.now() - 86_400_000)),
+  );
   const [total, setTotal] = useState('');
+  const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const onSubmit = async () => {
+    setError(null);
     if (!name.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(shiftDate)) {
-      toast.error('Name and YYYY-MM-DD date required.');
+      setError('Name and shift date are required.');
       return;
     }
     const t = Number(total);
-    if (!Number.isFinite(t) || t < 0) {
-      toast.error('Total must be ≥ 0.');
+    if (!Number.isFinite(t) || t <= 0) {
+      setError('Tip pool total must be greater than $0.');
       return;
     }
     setSaving(true);
@@ -616,10 +781,10 @@ function NewTipPoolDrawer({
         <div>
           <Label>Shift date</Label>
           <Input
+            type="date"
             className="mt-1"
             value={shiftDate}
             onChange={(e) => setShiftDate(e.target.value)}
-            placeholder="2026-04-27"
           />
         </div>
         <div>
@@ -628,10 +793,16 @@ function NewTipPoolDrawer({
             className="mt-1"
             type="number"
             step="0.01"
+            min="0.01"
             value={total}
             onChange={(e) => setTotal(e.target.value)}
           />
         </div>
+        {error && (
+          <p role="alert" className="text-sm text-alert">
+            {error}
+          </p>
+        )}
       </DrawerBody>
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>
@@ -654,25 +825,46 @@ function TipPoolDrawer({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const confirm = useConfirm();
   const [allocations, setAllocations] = useState<TipAllocation[] | null>(null);
+  const [allocError, setAllocError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [from, setFrom] = useState(`${pool.shiftDate}T00:00:00.000Z`);
-  const [to, setTo] = useState(`${pool.shiftDate}T23:59:59.000Z`);
+  // datetime-local wall-clock values; converted to UTC ISO on submit.
+  const [from, setFrom] = useState(`${pool.shiftDate}T00:00`);
+  const [to, setTo] = useState(`${pool.shiftDate}T23:59`);
+  const [manualAssociate, setManualAssociate] = useState<PickedAssociate | null>(null);
+  const [manualAmount, setManualAmount] = useState('');
 
   const refresh = () => {
     setAllocations(null);
+    setAllocError(null);
     listAllocations(pool.id)
       .then((r) => setAllocations(r.allocations))
-      .catch(() => setAllocations([]));
+      .catch(() => setAllocError('Failed to load allocations.'));
   };
   useEffect(() => {
     refresh();
   }, [pool.id]);
 
+  const headcount = allocations?.length ?? 0;
+  const allocatedTotal = (allocations ?? []).reduce(
+    (s, a) => s + Number(a.amount),
+    0,
+  );
+  const remainder = Number(pool.totalAmount) - allocatedTotal;
+  const remainderNonZero = Math.abs(remainder) >= 0.005;
+
   const onAuto = async () => {
+    if (!from || !to) {
+      toast.error('From and to times are required.');
+      return;
+    }
     setBusy(true);
     try {
-      const r = await autoAllocate(pool.id, { from, to });
+      const r = await autoAllocate(pool.id, {
+        from: localInputToUtcIso(from),
+        to: localInputToUtcIso(to),
+      });
       toast.success(
         `Allocated to ${r.allocated} associates (${r.totalHours.toFixed(2)} hrs total).`,
       );
@@ -685,7 +877,44 @@ function TipPoolDrawer({
     }
   };
 
+  const onAddManual = async () => {
+    if (!manualAssociate) {
+      toast.error('Pick an associate.');
+      return;
+    }
+    const amt = Number(manualAmount);
+    if (!Number.isFinite(amt) || amt <= 0) {
+      toast.error('Amount must be greater than $0.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await addAllocation(pool.id, {
+        associateId: manualAssociate.id,
+        amount: amt,
+      });
+      toast.success('Allocation added.');
+      setManualAssociate(null);
+      setManualAmount('');
+      onChanged();
+      refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const onClose_ = async () => {
+    const ok = await confirm({
+      title: 'Close this tip pool?',
+      description: `This locks ${fmtMoney(pool.totalAmount, {
+        currency: pool.currency,
+      })} allocated across ${headcount} associate${headcount === 1 ? '' : 's'}. Allocations can no longer be changed after closing.`,
+      confirmLabel: 'Close pool',
+      destructive: true,
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       await closeTipPool(pool.id);
@@ -700,6 +929,15 @@ function TipPoolDrawer({
   };
 
   const onPayOut = async () => {
+    const ok = await confirm({
+      title: 'Pay out this tip pool?',
+      description: `This pays out ${fmtMoney(pool.totalAmount, {
+        currency: pool.currency,
+      })} to ${headcount} associate${headcount === 1 ? '' : 's'}. This cannot be undone.`,
+      confirmLabel: 'Pay out',
+      destructive: true,
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       await payOutTipPool(pool.id);
@@ -713,6 +951,20 @@ function TipPoolDrawer({
     }
   };
 
+  const onExportCsv = () => {
+    downloadCsv(`tip-pool-${pool.shiftDate}-allocations.csv`, [
+      ['Associate', 'Hours', 'Share %', 'Amount'],
+      ...(allocations ?? []).map((a) => [
+        a.associateName,
+        a.hoursWorked,
+        a.sharePct ?? '',
+        Number(a.amount).toFixed(2),
+      ]),
+      ['Total allocated', '', '', allocatedTotal.toFixed(2)],
+      ['Unallocated remainder', '', '', remainder.toFixed(2)],
+    ]);
+  };
+
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()} width="max-w-2xl">
       <DrawerHeader>
@@ -720,8 +972,11 @@ function TipPoolDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div className="text-sm text-silver">
-          {pool.shiftDate} • <span className="text-white">${pool.totalAmount}</span> •{' '}
-          status: <span className="text-white">{pool.status}</span>
+          {fmtDate(parseYmd(pool.shiftDate))} •{' '}
+          <span className="text-white">
+            {fmtMoney(pool.totalAmount, { currency: pool.currency })}
+          </span>{' '}
+          • status: <span className="text-white">{pool.status}</span>
         </div>
         {pool.status === 'OPEN' && (
           <Card>
@@ -731,16 +986,18 @@ function TipPoolDrawer({
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <Label>From (ISO)</Label>
+                  <Label>From</Label>
                   <Input
+                    type="datetime-local"
                     className="mt-1 text-xs"
                     value={from}
                     onChange={(e) => setFrom(e.target.value)}
                   />
                 </div>
                 <div>
-                  <Label>To (ISO)</Label>
+                  <Label>To</Label>
                   <Input
+                    type="datetime-local"
                     className="mt-1 text-xs"
                     value={to}
                     onChange={(e) => setTo(e.target.value)}
@@ -753,31 +1010,114 @@ function TipPoolDrawer({
             </CardContent>
           </Card>
         )}
-        {allocations === null ? (
+        {pool.status === 'OPEN' && (
+          <Card>
+            <CardContent className="p-4 space-y-3">
+              <div className="text-sm text-white font-medium">
+                Add manual allocation
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Associate</Label>
+                  <div className="mt-1">
+                    <AssociatePicker
+                      value={manualAssociate}
+                      onChange={setManualAssociate}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <Label>Amount ($)</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    className="mt-1"
+                    value={manualAmount}
+                    onChange={(e) => setManualAmount(e.target.value)}
+                  />
+                </div>
+              </div>
+              <Button variant="secondary" onClick={onAddManual} disabled={busy}>
+                Add allocation
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+        {allocError ? (
+          <div className="space-y-3">
+            <p role="alert" className="text-sm text-alert">{allocError}</p>
+            <Button size="sm" variant="secondary" onClick={refresh}>
+              Retry
+            </Button>
+          </div>
+        ) : allocations === null ? (
           <SkeletonRows count={3} />
         ) : allocations.length === 0 ? (
-          <EmptyState title="No allocations" description="Allocate by hours or add manually." />
+          <EmptyState
+            title="No allocations yet"
+            description={
+              pool.status === 'OPEN'
+                ? 'Auto-allocate by hours worked above, or add an allocation manually.'
+                : 'This pool was closed without any allocations.'
+            }
+          />
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Associate</TableHead>
-                <TableHead>Hours</TableHead>
-                <TableHead>Share %</TableHead>
-                <TableHead>Amount</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {allocations.map((a) => (
-                <TableRow key={a.id}>
-                  <TableCell className="text-white">{a.associateName}</TableCell>
-                  <TableCell>{a.hoursWorked}</TableCell>
-                  <TableCell>{a.sharePct ? `${a.sharePct}%` : '—'}</TableCell>
-                  <TableCell>${a.amount}</TableCell>
+          <div className="space-y-2">
+            <div className="flex justify-end">
+              <Button size="sm" variant="secondary" onClick={onExportCsv}>
+                <Download className="mr-2 h-4 w-4" /> Export CSV
+              </Button>
+            </div>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Associate</TableHead>
+                  <TableHead>Hours</TableHead>
+                  <TableHead>Share %</TableHead>
+                  <TableHead>Amount</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {allocations.map((a) => (
+                  <TableRow key={a.id}>
+                    <TableCell className="text-white">{a.associateName}</TableCell>
+                    <TableCell>{a.hoursWorked}</TableCell>
+                    <TableCell>{a.sharePct ? `${a.sharePct}%` : '—'}</TableCell>
+                    <TableCell>
+                      {fmtMoney(a.amount, { currency: pool.currency })}
+                    </TableCell>
+                  </TableRow>
+                ))}
+                <TableRow>
+                  <TableCell className="font-medium text-white">
+                    Total allocated ({headcount})
+                  </TableCell>
+                  <TableCell />
+                  <TableCell />
+                  <TableCell className="font-medium text-white">
+                    {fmtMoney(allocatedTotal, { currency: pool.currency })}
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell
+                    className={remainderNonZero ? 'text-alert' : 'text-silver'}
+                  >
+                    Unallocated remainder
+                  </TableCell>
+                  <TableCell />
+                  <TableCell />
+                  <TableCell
+                    className={
+                      remainderNonZero ? 'text-alert font-medium' : 'text-silver'
+                    }
+                  >
+                    {fmtMoney(remainder, { currency: pool.currency })}
+                  </TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+          </div>
         )}
       </DrawerBody>
       <DrawerFooter>

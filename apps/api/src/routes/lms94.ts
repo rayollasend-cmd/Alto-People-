@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { notifyAssociate } from '../lib/notify.js';
 
 /**
  * Phase 94 — Learning Management System (LMS).
@@ -166,6 +167,7 @@ lms94Router.post('/courses/:id/enroll', MANAGE, async (req, res) => {
 
   let created = 0;
   let skipped = 0;
+  const enrolledIds: string[] = [];
   for (const associateId of input.associateIds) {
     try {
       await prisma.courseEnrollment.create({
@@ -176,6 +178,7 @@ lms94Router.post('/courses/:id/enroll', MANAGE, async (req, res) => {
         },
       });
       created++;
+      enrolledIds.push(associateId);
     } catch (err) {
       if (
         err instanceof Prisma.PrismaClientKnownRequestError &&
@@ -187,6 +190,24 @@ lms94Router.post('/courses/:id/enroll', MANAGE, async (req, res) => {
       }
       throw err;
     }
+  }
+  // Fire-and-forget, per enrolled row, after the writes have landed.
+  // The course has no explicit due date field; surface the validity
+  // window (the closest thing to a deadline) when one is configured.
+  for (const associateId of enrolledIds) {
+    void notifyAssociate(associateId, {
+      subject: `You've been enrolled: ${course.title}`,
+      body:
+        `You have been enrolled in "${course.title}".` +
+        (course.isRequired ? ' This course is required.' : '') +
+        (course.validityDays
+          ? ` Once completed, it stays valid for ${course.validityDays} days before renewal is due.`
+          : '') +
+        ' Open the Learning page to get started.',
+      category: 'learning',
+      linkUrl: '/learning',
+      emailFallback: true,
+    });
   }
   res.status(201).json({ created, skipped });
 });

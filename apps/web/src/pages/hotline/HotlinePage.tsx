@@ -1,5 +1,12 @@
-import { useState } from 'react';
-import { ShieldQuestion, FileText, Search } from 'lucide-react';
+import { useRef, useState } from 'react';
+import {
+  Check,
+  Copy,
+  Download,
+  FileText,
+  Search,
+  ShieldQuestion,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { Logo } from '@/components/Logo';
@@ -9,7 +16,7 @@ import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Badge } from '@/components/ui/Badge';
 import { cn } from '@/lib/cn';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, fmtDateTime } from '@/lib/format';
 import {
   fileAnonymousReport,
   lookupReportByCode,
@@ -233,6 +240,40 @@ function FiledConfirmation({
   onLookup: () => void;
   onAnother: () => void;
 }) {
+  const [copied, setCopied] = useState(false);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const copyCode = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error('Could not copy — select the code and copy it manually.');
+    }
+  };
+
+  const downloadCode = () => {
+    const text = [
+      'Confidential report tracking code',
+      '',
+      code,
+      '',
+      'Keep this file private. Enter the code on the confidential reporting',
+      'page to check status or reply to HR. The code cannot be recovered if',
+      'this file is lost.',
+      '',
+    ].join('\n');
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'report-tracking-code.txt';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="space-y-4">
       <div className="rounded-md border border-success/40 bg-success/10 p-4">
@@ -245,6 +286,34 @@ function FiledConfirmation({
         </div>
         <div className="font-mono text-xl tracking-wider bg-navy border border-navy-secondary rounded-md p-3 text-center select-all">
           {code}
+        </div>
+        <div className="flex flex-col sm:flex-row gap-2 mt-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="flex-1"
+            onClick={() => void copyCode()}
+          >
+            {copied ? (
+              <>
+                <Check className="mr-1.5 h-3.5 w-3.5 text-success" /> Copied
+              </>
+            ) : (
+              <>
+                <Copy className="mr-1.5 h-3.5 w-3.5" /> Copy code
+              </>
+            )}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="flex-1"
+            onClick={downloadCode}
+          >
+            <Download className="mr-1.5 h-3.5 w-3.5" /> Download as .txt
+          </Button>
         </div>
       </div>
       <div className="text-xs text-silver">
@@ -398,7 +467,7 @@ function LookupForm() {
               >
                 <div className="text-xs text-silver mb-1">
                   {u.isFromReporter ? 'You' : 'HR'} ·{' '}
-                  {new Date(u.createdAt).toLocaleString()}
+                  {fmtDateTime(u.createdAt)}
                 </div>
                 <div className="text-white whitespace-pre-wrap">{u.body}</div>
               </div>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Plus, Trash2 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
@@ -60,17 +61,20 @@ import {
   Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { toast } from 'sonner';
 
-type Tab =
-  | 'profile'
-  | 'emergency'
-  | 'dependents'
-  | 'beneficiaries'
-  | 'life-events'
-  | 'tax-docs';
+const TAB_VALUES = [
+  'profile',
+  'emergency',
+  'dependents',
+  'beneficiaries',
+  'life-events',
+  'tax-docs',
+] as const;
+
+type Tab = (typeof TAB_VALUES)[number];
 
 type ContactDraft = {
   id?: string;
@@ -97,6 +101,7 @@ type BeneficiaryDraft = {
   relation: Beneficiary['relation'];
   kind: Beneficiary['kind'];
   percentage: number;
+  dependentId: string | null;
 };
 
 const RELATION_LABEL: Record<string, string> = {
@@ -127,8 +132,43 @@ const TAX_DOC_LABEL: Record<TaxDoc['kind'], string> = {
   N_1095_C: 'Form 1095-C',
 };
 
+type SectionErrors = {
+  profile: string | null;
+  contacts: string | null;
+  dependents: string | null;
+  beneficiaries: string | null;
+  events: string | null;
+  taxDocs: string | null;
+};
+
+const NO_SECTION_ERRORS: SectionErrors = {
+  profile: null,
+  contacts: null,
+  dependents: null,
+  beneficiaries: null,
+  events: null,
+  taxDocs: null,
+};
+
+function settledError(r: PromiseSettledResult<unknown>): string | null {
+  if (r.status === 'fulfilled') return null;
+  return r.reason instanceof ApiError
+    ? r.reason.message
+    : 'Failed to load this section.';
+}
+
 export function MeHome() {
-  const [tab, setTab] = useState<Tab>('profile');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const tab: Tab = (TAB_VALUES as readonly string[]).includes(tabParam ?? '')
+    ? (tabParam as Tab)
+    : 'profile';
+  const setTab = (v: Tab) => {
+    const next = new URLSearchParams(searchParams);
+    if (v === 'profile') next.delete('tab');
+    else next.set('tab', v);
+    setSearchParams(next, { replace: true });
+  };
   const [profile, setProfile] = useState<SelfProfile | null>(null);
   const [employeeNumber, setEmployeeNumberState] =
     useState<EmployeeNumber | null>(null);
@@ -138,30 +178,54 @@ export function MeHome() {
   const [events, setEvents] = useState<LifeEvent[] | null>(null);
   const [taxDocs, setTaxDocs] = useState<TaxDoc[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sectionErrors, setSectionErrors] =
+    useState<SectionErrors>(NO_SECTION_ERRORS);
 
+  // allSettled, not all: one flaky endpoint must not blank the whole
+  // portal. Each section keeps its own data/error; the page-level error
+  // only fires when everything failed (likely network/auth-wide).
   const refresh = async () => {
-    try {
-      setError(null);
-      const [p, n, c, d, b, e, t] = await Promise.all([
-        getProfile(),
-        getEmployeeNumber(),
-        listEmergency(),
-        listDependents(),
-        listBeneficiaries(),
-        listLifeEvents(),
-        listTaxDocs(),
-      ]);
-      setProfile(p);
-      setEmployeeNumberState(n);
-      setContacts(c.contacts);
-      setDependents(d.dependents);
-      setBeneficiaries(b.beneficiaries);
-      setEvents(e.events);
-      setTaxDocs(t.documents);
-    } catch (err) {
-      const msg =
-        err instanceof ApiError ? err.message : 'Failed to load self-service data.';
-      setError(msg);
+    setError(null);
+    const results = await Promise.allSettled([
+      getProfile(),
+      getEmployeeNumber(),
+      listEmergency(),
+      listDependents(),
+      listBeneficiaries(),
+      listLifeEvents(),
+      listTaxDocs(),
+    ] as const);
+    const [p, n, c, d, b, e, t] = results;
+    if (p.status === 'fulfilled') setProfile(p.value as SelfProfile);
+    if (n.status === 'fulfilled')
+      setEmployeeNumberState(n.value as EmployeeNumber);
+    if (c.status === 'fulfilled')
+      setContacts((c.value as { contacts: EmergencyContact[] }).contacts);
+    if (d.status === 'fulfilled')
+      setDependents((d.value as { dependents: Dependent[] }).dependents);
+    if (b.status === 'fulfilled')
+      setBeneficiaries(
+        (b.value as { beneficiaries: Beneficiary[] }).beneficiaries,
+      );
+    if (e.status === 'fulfilled')
+      setEvents((e.value as { events: LifeEvent[] }).events);
+    if (t.status === 'fulfilled')
+      setTaxDocs((t.value as { documents: TaxDoc[] }).documents);
+    setSectionErrors({
+      profile: settledError(p) ?? settledError(n),
+      contacts: settledError(c),
+      dependents: settledError(d),
+      beneficiaries: settledError(b),
+      events: settledError(e),
+      taxDocs: settledError(t),
+    });
+    if (results.every((r) => r.status === 'rejected')) {
+      const first = results[0];
+      setError(
+        first.status === 'rejected' && first.reason instanceof ApiError
+          ? first.reason.message
+          : 'Failed to load self-service data.',
+      );
     }
   };
 
@@ -179,7 +243,14 @@ export function MeHome() {
 
       {error && (
         <Card>
-          <CardContent className="p-4 text-sm text-alert">{error}</CardContent>
+          <CardContent className="p-4 space-y-3">
+            <p role="alert" className="text-sm text-alert">
+              {error}
+            </p>
+            <Button size="sm" variant="secondary" onClick={refresh}>
+              Retry
+            </Button>
+          </CardContent>
         </Card>
       )}
 
@@ -197,30 +268,77 @@ export function MeHome() {
           <ProfilePanel
             profile={profile}
             employeeNumber={employeeNumber}
+            error={sectionErrors.profile}
+            onRetry={refresh}
             onSaved={refresh}
           />
         </TabsContent>
 
         <TabsContent value="emergency">
-          <EmergencyPanel rows={contacts} onChange={refresh} />
+          <EmergencyPanel
+            rows={contacts}
+            error={sectionErrors.contacts}
+            onRetry={refresh}
+            onChange={refresh}
+          />
         </TabsContent>
 
         <TabsContent value="dependents">
-          <DependentsPanel rows={dependents} onChange={refresh} />
+          <DependentsPanel
+            rows={dependents}
+            error={sectionErrors.dependents}
+            onRetry={refresh}
+            onChange={refresh}
+          />
         </TabsContent>
 
         <TabsContent value="beneficiaries">
-          <BeneficiariesPanel rows={beneficiaries} onChange={refresh} />
+          <BeneficiariesPanel
+            rows={beneficiaries}
+            dependents={dependents}
+            error={sectionErrors.beneficiaries}
+            onRetry={refresh}
+            onChange={refresh}
+          />
         </TabsContent>
 
         <TabsContent value="life-events">
-          <LifeEventsPanel rows={events} onChange={refresh} />
+          <LifeEventsPanel
+            rows={events}
+            error={sectionErrors.events}
+            onRetry={refresh}
+            onChange={refresh}
+          />
         </TabsContent>
 
         <TabsContent value="tax-docs">
-          <TaxDocsPanel rows={taxDocs} />
+          <TaxDocsPanel
+            rows={taxDocs}
+            error={sectionErrors.taxDocs}
+            onRetry={refresh}
+          />
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+/** Shared per-section failure UI: alert copy + a Retry button. */
+function SectionError({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="p-6 space-y-3">
+      <p role="alert" className="text-sm text-alert">
+        {message}
+      </p>
+      <Button size="sm" variant="secondary" onClick={onRetry}>
+        Retry
+      </Button>
     </div>
   );
 }
@@ -230,10 +348,14 @@ export function MeHome() {
 function ProfilePanel({
   profile,
   employeeNumber,
+  error,
+  onRetry,
   onSaved,
 }: {
   profile: SelfProfile | null;
   employeeNumber: EmployeeNumber | null;
+  error: string | null;
+  onRetry: () => void;
   onSaved: () => void;
 }) {
   const [phone, setPhone] = useState('');
@@ -257,8 +379,12 @@ function ProfilePanel({
   if (!profile) {
     return (
       <Card>
-        <CardContent className="p-6">
-          <SkeletonRows count={4} />
+        <CardContent className={error ? 'p-0' : 'p-6'}>
+          {error ? (
+            <SectionError message={error} onRetry={onRetry} />
+          ) : (
+            <SkeletonRows count={4} />
+          )}
         </CardContent>
       </Card>
     );
@@ -313,6 +439,8 @@ function ProfilePanel({
               value={phone}
               onChange={setPhone}
               placeholder="+1 555 555 5555"
+              type="tel"
+              inputMode="tel"
             />
             <FieldInput
               label="Address line 1"
@@ -362,17 +490,30 @@ function ProfilePanel({
 function FaceConsentRow() {
   const confirm = useConfirm();
   const [consent, setConsent] = useState<FaceConsent | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const [busy, setBusy] = useState(false);
 
+  // A failed fetch must NOT render as "Not set" — that's a real consent
+  // state with its own copy. Show a retry affordance instead.
   useEffect(() => {
     let cancelled = false;
+    setConsent(null);
+    setLoadError(null);
     getFaceConsent()
       .then((c) => !cancelled && setConsent(c))
-      .catch(() => !cancelled && setConsent({ status: null, at: null }));
+      .catch((err) => {
+        if (cancelled) return;
+        setLoadError(
+          err instanceof ApiError
+            ? err.message
+            : 'Couldn’t load your face-verification setting.',
+        );
+      });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [attempt]);
 
   const change = async (next: boolean) => {
     const ok = await confirm(
@@ -411,7 +552,20 @@ function FaceConsentRow() {
       <div className="text-xs uppercase tracking-widest text-silver">
         Kiosk face verification
       </div>
-      {consent === null ? (
+      {loadError ? (
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <p role="alert" className="text-sm text-alert">
+            {loadError}
+          </p>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => setAttempt((a) => a + 1)}
+          >
+            Retry
+          </Button>
+        </div>
+      ) : consent === null ? (
         <Skeleton className="mt-2 h-9 w-56" />
       ) : (
         <div className="mt-2 flex flex-wrap items-center gap-3">
@@ -492,11 +646,15 @@ function FieldInput({
   value,
   onChange,
   placeholder,
+  type,
+  inputMode,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
+  type?: string;
+  inputMode?: 'tel' | 'numeric' | 'email';
 }) {
   return (
     <div>
@@ -506,6 +664,8 @@ function FieldInput({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
+        type={type}
+        inputMode={inputMode}
       />
     </div>
   );
@@ -515,13 +675,26 @@ function FieldInput({
 
 function EmergencyPanel({
   rows,
+  error,
+  onRetry,
   onChange,
 }: {
   rows: EmergencyContact[] | null;
+  error: string | null;
+  onRetry: () => void;
   onChange: () => void;
 }) {
   const confirm = useConfirm();
   const [draft, setDraft] = useState<ContactDraft | null>(null);
+
+  const openAdd = () =>
+    setDraft({
+      name: '',
+      relation: 'SPOUSE',
+      phone: '',
+      email: '',
+      isPrimary: rows?.length === 0,
+    });
 
   const onDelete = async (id: string) => {
     if (!(await confirm({ title: 'Remove this emergency contact?', destructive: true }))) return;
@@ -537,28 +710,27 @@ function EmergencyPanel({
   return (
     <div className="space-y-4">
       <div className="flex justify-end">
-        <Button
-          onClick={() =>
-            setDraft({
-              name: '',
-              relation: 'SPOUSE',
-              phone: '',
-              email: '',
-              isPrimary: rows?.length === 0,
-            })
-          }
-        >
+        <Button onClick={openAdd}>
           <Plus className="mr-2 h-4 w-4" /> Add contact
         </Button>
       </div>
       <Card>
         <CardContent className="p-0">
           {rows === null ? (
-            <div className="p-6"><SkeletonRows count={3} /></div>
+            error ? (
+              <SectionError message={error} onRetry={onRetry} />
+            ) : (
+              <div className="p-6"><SkeletonRows count={3} /></div>
+            )
           ) : rows.length === 0 ? (
             <EmptyState
               title="No emergency contacts"
               description="Add at least one person we can reach in case of an emergency."
+              action={
+                <Button onClick={openAdd}>
+                  <Plus className="mr-2 h-4 w-4" /> Add contact
+                </Button>
+              }
             />
           ) : (
             <Table>
@@ -708,6 +880,8 @@ function ContactDrawer({
           <Label>Phone</Label>
           <Input
             className="mt-1"
+            type="tel"
+            inputMode="tel"
             value={draft.phone}
             onChange={(e) => setDraft({ ...draft, phone: e.target.value })}
           />
@@ -746,13 +920,27 @@ function ContactDrawer({
 
 function DependentsPanel({
   rows,
+  error,
+  onRetry,
   onChange,
 }: {
   rows: Dependent[] | null;
+  error: string | null;
+  onRetry: () => void;
   onChange: () => void;
 }) {
   const confirm = useConfirm();
   const [draft, setDraft] = useState<DependentDraft | null>(null);
+
+  const openAdd = () =>
+    setDraft({
+      firstName: '',
+      lastName: '',
+      relation: 'CHILD',
+      dob: '',
+      ssnLast4: '',
+      isCovered: true,
+    });
 
   const onDelete = async (id: string) => {
     if (!(await confirm({ title: 'Remove this dependent?', destructive: true }))) return;
@@ -768,29 +956,27 @@ function DependentsPanel({
   return (
     <div className="space-y-4">
       <div className="flex justify-end">
-        <Button
-          onClick={() =>
-            setDraft({
-              firstName: '',
-              lastName: '',
-              relation: 'CHILD',
-              dob: '',
-              ssnLast4: '',
-              isCovered: true,
-            })
-          }
-        >
+        <Button onClick={openAdd}>
           <Plus className="mr-2 h-4 w-4" /> Add dependent
         </Button>
       </div>
       <Card>
         <CardContent className="p-0">
           {rows === null ? (
-            <div className="p-6"><SkeletonRows count={3} /></div>
+            error ? (
+              <SectionError message={error} onRetry={onRetry} />
+            ) : (
+              <div className="p-6"><SkeletonRows count={3} /></div>
+            )
           ) : rows.length === 0 ? (
             <EmptyState
               title="No dependents"
               description="Add a spouse, child, or domestic partner to enroll them in benefits."
+              action={
+                <Button onClick={openAdd}>
+                  <Plus className="mr-2 h-4 w-4" /> Add dependent
+                </Button>
+              }
             />
           ) : (
             <Table>
@@ -827,13 +1013,13 @@ function DependentsPanel({
                           {row.firstName} {row.lastName}
                         </div>
                         <div className="md:hidden text-[11px] text-silver/70 truncate">
-                          {row.dob ? `DOB ${row.dob.slice(0, 10)}` : '—'}
+                          {row.dob ? `DOB ${fmtDate(parseYmd(row.dob))}` : '—'}
                           {row.ssnLast4 ? ` · •••-••-${row.ssnLast4}` : ''}
                         </div>
                       </div>
                     </TableCell>
                     <TableCell>{RELATION_LABEL[row.relation] ?? row.relation}</TableCell>
-                    <TableCell className="hidden md:table-cell">{row.dob ? row.dob.slice(0, 10) : '—'}</TableCell>
+                    <TableCell className="hidden md:table-cell">{fmtDate(parseYmd(row.dob))}</TableCell>
                     <TableCell className="hidden lg:table-cell">{row.ssnLast4 ? `•••-••-${row.ssnLast4}` : '—'}</TableCell>
                     <TableCell>
                       {row.isCovered ? <Badge variant="accent">Yes</Badge> : 'No'}
@@ -893,10 +1079,6 @@ function DependentDrawer({
     }
     if (draft.ssnLast4 && !/^\d{4}$/.test(draft.ssnLast4)) {
       toast.error('SSN last 4 must be exactly 4 digits.');
-      return;
-    }
-    if (draft.dob && !/^\d{4}-\d{2}-\d{2}$/.test(draft.dob)) {
-      toast.error('Date of birth must be YYYY-MM-DD.');
       return;
     }
     setSaving(true);
@@ -960,12 +1142,13 @@ function DependentDrawer({
           </Select>
         </div>
         <div>
-          <Label>Date of birth (YYYY-MM-DD)</Label>
+          <Label>Date of birth</Label>
           <Input
             className="mt-1"
+            type="date"
+            max={ymdLocal()}
             value={draft.dob}
             onChange={(e) => setDraft({ ...draft, dob: e.target.value })}
-            placeholder="1990-01-31"
           />
         </div>
         <div>
@@ -1005,17 +1188,35 @@ function DependentDrawer({
 
 function BeneficiariesPanel({
   rows,
+  dependents,
+  error,
+  onRetry,
   onChange,
 }: {
   rows: Beneficiary[] | null;
+  dependents: Dependent[] | null;
+  error: string | null;
+  onRetry: () => void;
   onChange: () => void;
 }) {
   const confirm = useConfirm();
   const [draft, setDraft] = useState<BeneficiaryDraft | null>(null);
 
-  const primaryTotal = (rows ?? [])
-    .filter((b) => b.kind === 'PRIMARY')
-    .reduce((sum, b) => sum + b.percentage, 0);
+  const tierTotal = (kind: Beneficiary['kind']) =>
+    (rows ?? [])
+      .filter((b) => b.kind === kind)
+      .reduce((sum, b) => sum + b.percentage, 0);
+  const primaryTotal = tierTotal('PRIMARY');
+  const contingentTotal = tierTotal('CONTINGENT');
+
+  const openAdd = () =>
+    setDraft({
+      name: '',
+      relation: 'SPOUSE',
+      kind: 'PRIMARY',
+      percentage: Math.max(0, 100 - primaryTotal),
+      dependentId: null,
+    });
 
   const onDelete = async (id: string) => {
     if (!(await confirm({ title: 'Remove this beneficiary?', destructive: true }))) return;
@@ -1030,43 +1231,62 @@ function BeneficiariesPanel({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="text-sm text-silver">
-          Primary allocation:{' '}
-          <span
-            className={
-              primaryTotal === 100
-                ? 'text-success'
-                : primaryTotal > 0
-                  ? 'text-alert'
-                  : 'text-silver'
-            }
-          >
-            {primaryTotal}%
-          </span>{' '}
-          {primaryTotal !== 100 && primaryTotal > 0 && '— must total 100%'}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="text-sm text-silver space-x-4">
+          <span>
+            Primary:{' '}
+            <span
+              className={
+                primaryTotal === 100
+                  ? 'text-success'
+                  : primaryTotal > 0
+                    ? 'text-alert'
+                    : 'text-silver'
+              }
+            >
+              {primaryTotal}%
+            </span>
+            {primaryTotal !== 100 && primaryTotal > 0 && ' — must total 100%'}
+          </span>
+          <span>
+            Contingent:{' '}
+            <span
+              className={
+                contingentTotal === 100
+                  ? 'text-success'
+                  : contingentTotal > 0
+                    ? 'text-alert'
+                    : 'text-silver'
+              }
+            >
+              {contingentTotal}%
+            </span>
+            {contingentTotal !== 100 &&
+              contingentTotal > 0 &&
+              ' — must total 100%'}
+          </span>
         </div>
-        <Button
-          onClick={() =>
-            setDraft({
-              name: '',
-              relation: 'SPOUSE',
-              kind: 'PRIMARY',
-              percentage: Math.max(0, 100 - primaryTotal),
-            })
-          }
-        >
+        <Button onClick={openAdd}>
           <Plus className="mr-2 h-4 w-4" /> Add beneficiary
         </Button>
       </div>
       <Card>
         <CardContent className="p-0">
           {rows === null ? (
-            <div className="p-6"><SkeletonRows count={3} /></div>
+            error ? (
+              <SectionError message={error} onRetry={onRetry} />
+            ) : (
+              <div className="p-6"><SkeletonRows count={3} /></div>
+            )
           ) : rows.length === 0 ? (
             <EmptyState
               title="No beneficiaries"
               description="Designate who receives life-insurance and 401(k) proceeds."
+              action={
+                <Button onClick={openAdd}>
+                  <Plus className="mr-2 h-4 w-4" /> Add beneficiary
+                </Button>
+              }
             />
           ) : (
             <Table>
@@ -1091,6 +1311,7 @@ function BeneficiariesPanel({
                         relation: row.relation,
                         kind: row.kind,
                         percentage: row.percentage,
+                        dependentId: row.dependentId,
                       })
                     }
                   >
@@ -1133,6 +1354,8 @@ function BeneficiariesPanel({
           <BeneficiaryDrawer
             draft={draft}
             setDraft={setDraft}
+            rows={rows ?? []}
+            dependents={dependents ?? []}
             onClose={() => setDraft(null)}
             onSaved={() => {
               setDraft(null);
@@ -1148,15 +1371,28 @@ function BeneficiariesPanel({
 function BeneficiaryDrawer({
   draft,
   setDraft,
+  rows,
+  dependents,
   onClose,
   onSaved,
 }: {
   draft: BeneficiaryDraft;
   setDraft: (d: BeneficiaryDraft) => void;
+  rows: Beneficiary[];
+  dependents: Dependent[];
   onClose: () => void;
   onSaved: () => void;
 }) {
   const [saving, setSaving] = useState(false);
+  const [tierError, setTierError] = useState<string | null>(null);
+
+  // What the draft's tier would total AFTER this save (other rows in the
+  // same tier + the draft itself, replacing its own stored row on edit).
+  const tierTotalAfter =
+    rows
+      .filter((b) => b.kind === draft.kind && b.id !== draft.id)
+      .reduce((sum, b) => sum + b.percentage, 0) + draft.percentage;
+
   const onSubmit = async () => {
     if (!draft.name.trim()) {
       toast.error('Name required.');
@@ -1166,6 +1402,17 @@ function BeneficiaryDrawer({
       toast.error('Percentage must be between 0 and 100.');
       return;
     }
+    // Hard-block only over-allocation: requiring exactly 100% on every
+    // save would deadlock incremental entry (a first 50% row could never
+    // be added). Under-allocation saves but the panel banner keeps
+    // flagging the tier until it totals 100%.
+    if (tierTotalAfter > 100) {
+      setTierError(
+        `${draft.kind} allocations would total ${tierTotalAfter}% — a tier cannot exceed 100%.`,
+      );
+      return;
+    }
+    setTierError(null);
     setSaving(true);
     try {
       const body = {
@@ -1173,9 +1420,10 @@ function BeneficiaryDrawer({
         relation: draft.relation,
         kind: draft.kind,
         percentage: draft.percentage,
+        dependentId: draft.dependentId,
       };
       if (draft.id) await updateBeneficiary(draft.id, body);
-      else await createBeneficiary({ ...body, dependentId: null });
+      else await createBeneficiary(body);
       toast.success(draft.id ? 'Beneficiary updated.' : 'Beneficiary added.');
       onSaved();
     } catch (err) {
@@ -1190,6 +1438,36 @@ function BeneficiaryDrawer({
         <DrawerTitle>{draft.id ? 'Edit beneficiary' : 'Add beneficiary'}</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
+        {dependents.length > 0 && (
+          <div>
+            <Label>Copy from dependent</Label>
+            <Select
+              className="mt-1"
+              value={draft.dependentId ?? ''}
+              onChange={(e) => {
+                const dep = dependents.find((d) => d.id === e.target.value);
+                if (!dep) {
+                  setDraft({ ...draft, dependentId: null });
+                  return;
+                }
+                setDraft({
+                  ...draft,
+                  dependentId: dep.id,
+                  name: `${dep.firstName} ${dep.lastName}`,
+                  relation: dep.relation,
+                });
+              }}
+            >
+              <option value="">— none —</option>
+              {dependents.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.firstName} {d.lastName} (
+                  {RELATION_LABEL[d.relation] ?? d.relation})
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
         <div>
           <Label>Name</Label>
           <Input
@@ -1219,9 +1497,10 @@ function BeneficiaryDrawer({
           <Select
             className="mt-1"
             value={draft.kind}
-            onChange={(e) =>
-              setDraft({ ...draft, kind: e.target.value as BeneficiaryDraft['kind'] })
-            }
+            onChange={(e) => {
+              setTierError(null);
+              setDraft({ ...draft, kind: e.target.value as BeneficiaryDraft['kind'] });
+            }}
           >
             <option value="PRIMARY">Primary</option>
             <option value="CONTINGENT">Contingent</option>
@@ -1235,9 +1514,25 @@ function BeneficiaryDrawer({
             min={0}
             max={100}
             value={draft.percentage}
-            onChange={(e) => setDraft({ ...draft, percentage: Number(e.target.value) || 0 })}
+            onChange={(e) => {
+              setTierError(null);
+              setDraft({ ...draft, percentage: Number(e.target.value) || 0 });
+            }}
           />
+          <p
+            className={`mt-1 text-xs ${
+              tierTotalAfter === 100 ? 'text-success' : 'text-silver'
+            }`}
+          >
+            {draft.kind} tier will total {tierTotalAfter}% after saving
+            {tierTotalAfter !== 100 && ' (must reach exactly 100%)'}.
+          </p>
         </div>
+        {tierError && (
+          <p role="alert" className="text-sm text-alert">
+            {tierError}
+          </p>
+        )}
       </DrawerBody>
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>
@@ -1255,20 +1550,24 @@ function BeneficiaryDrawer({
 
 function LifeEventsPanel({
   rows,
+  error,
+  onRetry,
   onChange,
 }: {
   rows: LifeEvent[] | null;
+  error: string | null;
+  onRetry: () => void;
   onChange: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [kind, setKind] = useState<typeof LIFE_EVENT_KINDS[number]>('MARRIAGE');
-  const [eventDate, setEventDate] = useState('');
+  const [eventDate, setEventDate] = useState(ymdLocal());
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
 
   const onSubmit = async () => {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(eventDate)) {
-      toast.error('Event date must be YYYY-MM-DD.');
+    if (!eventDate) {
+      toast.error('Event date is required.');
       return;
     }
     setSaving(true);
@@ -1280,7 +1579,7 @@ function LifeEventsPanel({
       });
       toast.success('Life event submitted for review.');
       setOpen(false);
-      setEventDate('');
+      setEventDate(ymdLocal());
       setNotes('');
       onChange();
     } catch (err) {
@@ -1300,11 +1599,20 @@ function LifeEventsPanel({
       <Card>
         <CardContent className="p-0">
           {rows === null ? (
-            <div className="p-6"><SkeletonRows count={3} /></div>
+            error ? (
+              <SectionError message={error} onRetry={onRetry} />
+            ) : (
+              <div className="p-6"><SkeletonRows count={3} /></div>
+            )
           ) : rows.length === 0 ? (
             <EmptyState
               title="No life events"
               description="Marriage, birth, address changes — report them here so HR can update benefits and tax setup."
+              action={
+                <Button onClick={() => setOpen(true)}>
+                  <Plus className="mr-2 h-4 w-4" /> Report event
+                </Button>
+              }
             />
           ) : (
             <Table>
@@ -1329,7 +1637,7 @@ function LifeEventsPanel({
                         </div>
                       </div>
                     </TableCell>
-                    <TableCell>{row.eventDate.slice(0, 10)}</TableCell>
+                    <TableCell>{fmtDate(parseYmd(row.eventDate))}</TableCell>
                     <TableCell>
                       <Badge
                         variant={
@@ -1372,12 +1680,13 @@ function LifeEventsPanel({
             </Select>
           </div>
           <div>
-            <Label>Event date (YYYY-MM-DD)</Label>
+            <Label>Event date</Label>
             <Input
               className="mt-1"
+              type="date"
+              max={ymdLocal()}
               value={eventDate}
               onChange={(e) => setEventDate(e.target.value)}
-              placeholder="2026-04-27"
             />
           </div>
           <div>
@@ -1388,6 +1697,9 @@ function LifeEventsPanel({
               onChange={(e) => setNotes(e.target.value)}
             />
           </div>
+          <p className="text-xs text-silver">
+            HR reviews these within 3 business days.
+          </p>
         </DrawerBody>
         <DrawerFooter>
           <Button variant="ghost" onClick={() => setOpen(false)}>
@@ -1404,12 +1716,24 @@ function LifeEventsPanel({
 
 // ============ Tax documents ============
 
-function TaxDocsPanel({ rows }: { rows: TaxDoc[] | null }) {
+function TaxDocsPanel({
+  rows,
+  error,
+  onRetry,
+}: {
+  rows: TaxDoc[] | null;
+  error: string | null;
+  onRetry: () => void;
+}) {
   return (
     <Card>
       <CardContent className="p-0">
         {rows === null ? (
-          <div className="p-6"><SkeletonRows count={3} /></div>
+          error ? (
+            <SectionError message={error} onRetry={onRetry} />
+          ) : (
+            <div className="p-6"><SkeletonRows count={3} /></div>
+          )
         ) : rows.length === 0 ? (
           <EmptyState
             title="No tax documents yet"
@@ -1446,9 +1770,22 @@ function TaxDocsPanel({ rows }: { rows: TaxDoc[] | null }) {
                     {row.fileSize ? `${Math.round(row.fileSize / 1024)} KB` : '—'}
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button variant="ghost" disabled>
-                      Download
-                    </Button>
+                    {row.downloadUrl ? (
+                      <Button asChild variant="ghost" size="sm">
+                        <a href={row.downloadUrl} download>
+                          Download
+                        </a>
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled
+                        title="Legacy document — contact HR for a copy"
+                      >
+                        Download
+                      </Button>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}

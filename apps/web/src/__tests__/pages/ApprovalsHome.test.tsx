@@ -5,17 +5,25 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { TimeOffRequest } from '@alto-people/shared';
 
-// The scheduling panels are integration-tested with the scheduling page;
-// here they'd drag in the whole admin scheduling API surface, so stub them.
+// The unconfirmed-shifts panel is integration-tested with the scheduling
+// page; the swap/pickup panels are now ApprovalsHome-local, so their API
+// calls are mocked below instead.
 vi.mock('@/pages/scheduling/AdminApprovalPanels', () => ({
-  AdminSwapsPanel: () => <div data-testid="swaps-panel" />,
-  AdminPickupPanel: () => <div data-testid="pickup-panel" />,
   AdminUnconfirmedPanel: () => null,
 }));
 vi.mock('@/lib/timeOffApi', () => ({
   listAdminRequests: vi.fn(),
   approveAdminRequest: vi.fn(),
   denyAdminRequest: vi.fn(),
+  bulkDecideRequests: vi.fn(),
+}));
+vi.mock('@/lib/schedulingApi', () => ({
+  listAdminSwaps: vi.fn(),
+  listOpenShiftClaims: vi.fn(),
+  managerApproveSwap: vi.fn(),
+  managerRejectSwap: vi.fn(),
+  approveOpenShiftClaim: vi.fn(),
+  rejectOpenShiftClaim: vi.fn(),
 }));
 vi.mock('@/lib/timeApi', () => ({
   countAdminTimeEntries: vi.fn(),
@@ -25,6 +33,7 @@ import {
   approveAdminRequest,
   listAdminRequests,
 } from '@/lib/timeOffApi';
+import { listAdminSwaps, listOpenShiftClaims } from '@/lib/schedulingApi';
 import { countAdminTimeEntries } from '@/lib/timeApi';
 import { ApprovalsHome } from '@/pages/approvals/ApprovalsHome';
 
@@ -67,6 +76,12 @@ function renderPage() {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(listAdminRequests).mockResolvedValue({ requests: [] });
+  vi.mocked(listAdminSwaps).mockResolvedValue({
+    requests: [],
+  } as unknown as Awaited<ReturnType<typeof listAdminSwaps>>);
+  vi.mocked(listOpenShiftClaims).mockResolvedValue({
+    claims: [],
+  } as unknown as Awaited<ReturnType<typeof listOpenShiftClaims>>);
   vi.mocked(countAdminTimeEntries).mockResolvedValue({ count: 3 });
 });
 
@@ -74,8 +89,10 @@ describe('<ApprovalsHome>', () => {
   it('renders every queue plus the timesheet KPI', async () => {
     renderPage();
     expect(screen.getByText('Approvals')).toBeInTheDocument();
-    expect(screen.getByTestId('swaps-panel')).toBeInTheDocument();
-    expect(screen.getByTestId('pickup-panel')).toBeInTheDocument();
+    expect(
+      screen.getByText('Swap requests awaiting your approval'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Open-shift pickup requests')).toBeInTheDocument();
     expect(await screen.findByText('3')).toBeInTheDocument();
     expect(
       await screen.findByText(/No time-off requests waiting/)

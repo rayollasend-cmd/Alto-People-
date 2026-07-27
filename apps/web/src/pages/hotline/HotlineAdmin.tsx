@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useMemo, useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Clock, ShieldQuestion } from 'lucide-react';
+import { AlertTriangle, Clock, Download, Search, ShieldQuestion } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {
@@ -24,6 +24,7 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  Input,
   PageHeader,
   Select,
   SkeletonRows,
@@ -36,7 +37,10 @@ import {
   Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
-import { fmtDate } from '@/lib/format';
+import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
+import { downloadCsv } from '@/lib/csv';
+import { fmtDate, fmtDateTime, ymdLocal } from '@/lib/format';
 
 const CATEGORY_LABELS: Record<ReportCategory, string> = {
   HARASSMENT: 'Harassment',
@@ -74,6 +78,10 @@ export function HotlineAdmin() {
   const [statusFilter, setStatusFilter] = useState<ReportStatus | 'ALL'>(
     'RECEIVED',
   );
+  const [categoryFilter, setCategoryFilter] = useState<ReportCategory | 'ALL'>(
+    'ALL',
+  );
+  const [q, setQ] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
 
   const queueQ = useQuery({
@@ -90,8 +98,53 @@ export function HotlineAdmin() {
     queryFn: getHotlineSummary,
   });
 
-  const rows = queueQ.data ?? null;
+  const allRows = queueQ.data ?? null;
   const summary = summaryQ.data ?? null;
+
+  // Client-side search (tracking code / subject) + category filter over the
+  // server-filtered status slice.
+  const rows = useMemo(() => {
+    if (allRows === null) return null;
+    const term = q.trim().toLowerCase();
+    return allRows.filter((r) => {
+      if (categoryFilter !== 'ALL' && r.category !== categoryFilter) {
+        return false;
+      }
+      if (!term) return true;
+      return (
+        r.trackingCode.toLowerCase().includes(term) ||
+        r.subject.toLowerCase().includes(term)
+      );
+    });
+  }, [allRows, q, categoryFilter]);
+
+  const exportCsv = () => {
+    if (!rows || rows.length === 0) return;
+    downloadCsv(`hotline-reports-${ymdLocal()}.csv`, [
+      [
+        'Tracking code',
+        'Category',
+        'Subject',
+        'Status',
+        'Assignee',
+        'Filed',
+        'Replies',
+        'Overdue',
+        'Resolved at',
+      ],
+      ...rows.map((r) => [
+        r.trackingCode,
+        CATEGORY_LABELS[r.category],
+        r.subject,
+        r.status,
+        r.assignedToEmail ?? '',
+        fmtDateTime(r.createdAt),
+        r.updateCount,
+        r.sla.isOverdue ? 'yes' : 'no',
+        r.resolvedAt ? fmtDateTime(r.resolvedAt) : '',
+      ]),
+    ]);
+  };
 
   return (
     <div className="space-y-5">
@@ -128,7 +181,32 @@ export function HotlineAdmin() {
         </div>
       )}
 
-      <div className="flex justify-end">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative flex-1 min-w-48">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver" />
+          <Input
+            className="pl-9"
+            aria-label="Search by tracking code or subject"
+            placeholder="Search tracking code or subject…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+        </div>
+        <Select
+          size="sm"
+          aria-label="Filter by category"
+          value={categoryFilter}
+          onChange={(e) =>
+            setCategoryFilter(e.target.value as ReportCategory | 'ALL')
+          }
+        >
+          <option value="ALL">All categories</option>
+          {(Object.keys(CATEGORY_LABELS) as ReportCategory[]).map((c) => (
+            <option key={c} value={c}>
+              {CATEGORY_LABELS[c]}
+            </option>
+          ))}
+        </Select>
         <Select
           size="sm"
           aria-label="Filter by status"
@@ -144,6 +222,14 @@ export function HotlineAdmin() {
           <option value="RESOLVED">Resolved</option>
           <option value="CLOSED">Closed</option>
         </Select>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={exportCsv}
+          disabled={!rows || rows.length === 0}
+        >
+          <Download className="mr-1.5 h-3.5 w-3.5" /> Export CSV
+        </Button>
       </div>
 
       <Card>
@@ -167,6 +253,7 @@ export function HotlineAdmin() {
                   <TableHead>Subject</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>SLA</TableHead>
+                  <TableHead className="hidden md:table-cell">Assignee</TableHead>
                   <TableHead className="hidden lg:table-cell">Filed</TableHead>
                   <TableHead className="hidden lg:table-cell">Replies</TableHead>
                 </TableRow>
@@ -201,6 +288,13 @@ export function HotlineAdmin() {
                     </TableCell>
                     <TableCell>
                       <SlaChip sla={r.sla} />
+                    </TableCell>
+                    <TableCell className="text-xs text-silver hidden md:table-cell max-w-40">
+                      <div className="truncate">
+                        {r.assignedToEmail ?? (
+                          <span className="text-silver/50">Unassigned</span>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="text-xs text-silver hidden lg:table-cell">
                       {fmtDate(r.createdAt)}
@@ -296,6 +390,8 @@ function ReportDrawer({
   onClose: () => void;
 }) {
   const qc = useQueryClient();
+  const confirm = useConfirm();
+  const { user } = useAuth();
   const detailQ = useQuery({
     queryKey: hotlineKeys.detail(id),
     queryFn: async () => (await getReportDetail(id)).report,
@@ -304,6 +400,8 @@ function ReportDrawer({
 
   const [reply, setReply] = useState('');
   const [internalOnly, setInternalOnly] = useState(false);
+  // Inline blocker shown when RESOLVED is chosen with an empty note.
+  const [resolutionError, setResolutionError] = useState<string | null>(null);
   // Local-only resolution draft. We seed it from the loaded report on
   // first render but keep it as local state so the textarea isn't
   // overwritten while the user is typing during a background refetch.
@@ -347,10 +445,55 @@ function ReportDrawer({
       toast.error(err instanceof ApiError ? err.message : 'Failed.'),
   });
 
-  const busy = triageM.isPending || messageM.isPending;
+  // Saves the resolution note WITHOUT touching status, so drafting the
+  // note isn't coupled to the RESOLVED transition.
+  const saveResolutionM = useMutation({
+    mutationFn: (text: string) =>
+      triageReport(id, { resolution: text.trim() || null }),
+    onSuccess: () => {
+      toast.success('Resolution note saved.');
+      invalidate();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'Failed.'),
+  });
 
-  const setStatus = (status: ReportStatus) => {
-    triageM.mutate({ status, resolutionText: (resolution ?? '').trim() || null });
+  const assignM = useMutation({
+    mutationFn: (assignedToId: string) => triageReport(id, { assignedToId }),
+    onSuccess: () => {
+      toast.success('Assigned to you.');
+      invalidate();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'Failed.'),
+  });
+
+  const busy =
+    triageM.isPending ||
+    messageM.isPending ||
+    saveResolutionM.isPending ||
+    assignM.isPending;
+
+  const setStatus = async (status: ReportStatus) => {
+    const resolutionText = (resolution ?? '').trim() || null;
+    if (status === 'RESOLVED' && !resolutionText) {
+      setResolutionError(
+        'Add a resolution summary before marking this resolved — the reporter sees it.',
+      );
+      return;
+    }
+    setResolutionError(null);
+    if (status === 'CLOSED') {
+      const ok = await confirm({
+        title: 'Close this report?',
+        description:
+          'Closing is terminal for the reporter: they can no longer reply using their tracking code. Use RESOLVED if the case is settled but follow-ups should stay possible.',
+        confirmLabel: 'Close report',
+        destructive: true,
+      });
+      if (!ok) return;
+    }
+    triageM.mutate({ status, resolutionText });
   };
 
   const send = () => {
@@ -375,7 +518,7 @@ function ReportDrawer({
               <SlaChip sla={report.sla} />
               <span className="text-xs text-silver">
                 {CATEGORY_LABELS[report.category]} · Filed{' '}
-                {new Date(report.createdAt).toLocaleString()}
+                {fmtDateTime(report.createdAt)}
               </span>
             </div>
             {report.sla.isOverdue && (
@@ -390,7 +533,7 @@ function ReportDrawer({
                     </div>
                     <div className="text-xs mt-0.5 text-alert/80">
                       {report.sla.lastReporterAt &&
-                        `Last reporter message: ${new Date(report.sla.lastReporterAt).toLocaleString()}`}
+                        `Last reporter message: ${fmtDateTime(report.sla.lastReporterAt)}`}
                     </div>
                   </div>
                 </div>
@@ -408,6 +551,22 @@ function ReportDrawer({
                 <span className="text-white">{report.contactEmail}</span>
               </div>
             )}
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-silver">Assignee:</span>
+              <span className="text-white">
+                {report.assignedTo?.email ?? 'Unassigned'}
+              </span>
+              {user && report.assignedTo?.id !== user.id && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => assignM.mutate(user.id)}
+                >
+                  Assign to me
+                </Button>
+              )}
+            </div>
             <div className="rounded border border-navy-secondary p-3">
               <div className="text-xs text-silver mb-1">Original report</div>
               <div className="text-sm text-white whitespace-pre-wrap">
@@ -431,7 +590,7 @@ function ReportDrawer({
                     key={s}
                     size="sm"
                     variant={report.status === s ? 'primary' : 'ghost'}
-                    onClick={() => setStatus(s)}
+                    onClick={() => void setStatus(s)}
                     disabled={busy || report.status === s}
                   >
                     {s}
@@ -445,9 +604,27 @@ function ReportDrawer({
               <Textarea
                 className="mt-1 h-20"
                 value={resolution ?? ''}
-                onChange={(e) => setResolution(e.target.value)}
-                placeholder="Saved when status moves to RESOLVED. Visible to the reporter."
+                onChange={(e) => {
+                  setResolution(e.target.value);
+                  if (e.target.value.trim()) setResolutionError(null);
+                }}
+                placeholder="Visible to the reporter. Required before marking RESOLVED."
               />
+              {resolutionError && (
+                <p role="alert" className="text-xs text-alert mt-1">
+                  {resolutionError}
+                </p>
+              )}
+              <div className="mt-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => saveResolutionM.mutate(resolution ?? '')}
+                >
+                  Save note
+                </Button>
+              </div>
             </div>
 
             <div>
@@ -480,7 +657,7 @@ function ReportDrawer({
                             INTERNAL
                           </Badge>
                         )}
-                        <span>· {new Date(u.createdAt).toLocaleString()}</span>
+                        <span>· {fmtDateTime(u.createdAt)}</span>
                       </div>
                       <div className="text-white whitespace-pre-wrap">
                         {u.body}
