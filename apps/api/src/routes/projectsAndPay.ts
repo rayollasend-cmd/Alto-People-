@@ -400,28 +400,28 @@ projectsAndPayRouter.post(
     const totalCents = Math.round(Number(pool.totalAmount) * 100);
     const associates = Array.from(hoursMap.entries());
     let allocated = 0;
-    await prisma.$transaction(async (tx) => {
-      // Wipe any prior allocations on this pool — auto-allocate is idempotent.
-      await tx.tipPoolAllocation.deleteMany({ where: { tipPoolId } });
-      for (let i = 0; i < associates.length; i++) {
-        const [associateId, hrs] = associates[i];
-        const isLast = i === associates.length - 1;
-        const cents = isLast
-          ? totalCents - allocated
-          : Math.floor((hrs / totalHours) * totalCents);
-        allocated += cents;
-        const sharePct = (hrs / totalHours) * 100;
-        await tx.tipPoolAllocation.create({
-          data: {
-            tipPoolId,
-            associateId,
-            hoursWorked: new Prisma.Decimal(hrs.toFixed(2)),
-            sharePct: new Prisma.Decimal(sharePct.toFixed(3)),
-            amount: new Prisma.Decimal((cents / 100).toFixed(2)),
-          },
-        });
-      }
+    // Compute every row up front, then wipe + insert in one batched
+    // transaction (was one create round trip per associate inside the tx).
+    const allocationRows = associates.map(([associateId, hrs], i) => {
+      const isLast = i === associates.length - 1;
+      const cents = isLast
+        ? totalCents - allocated
+        : Math.floor((hrs / totalHours) * totalCents);
+      allocated += cents;
+      const sharePct = (hrs / totalHours) * 100;
+      return {
+        tipPoolId,
+        associateId,
+        hoursWorked: new Prisma.Decimal(hrs.toFixed(2)),
+        sharePct: new Prisma.Decimal(sharePct.toFixed(3)),
+        amount: new Prisma.Decimal((cents / 100).toFixed(2)),
+      };
     });
+    await prisma.$transaction([
+      // Wipe any prior allocations on this pool — auto-allocate is idempotent.
+      prisma.tipPoolAllocation.deleteMany({ where: { tipPoolId } }),
+      prisma.tipPoolAllocation.createMany({ data: allocationRows }),
+    ]);
     res.json({ allocated: associates.length, totalHours });
   },
 );

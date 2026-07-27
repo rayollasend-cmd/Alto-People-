@@ -24,9 +24,31 @@ function emitAssetManifest(): Plugin {
     apply: 'build',
     writeBundle(options, bundle) {
       const outDir = options.dir ?? path.resolve(__dirname, 'dist');
+      // PERF: allowlist, not "everything". The SW used to precache all
+      // ~166 chunks (~4 MB — face-api, every admin route, both chart
+      // bundles) on every visitor's FIRST load. Precache only the shell +
+      // the highest-traffic route chunks; everything else loads (and then
+      // SW-caches) on demand.
+      const PRECACHE_PATTERNS = [
+        /^assets\/main-/,
+        /^assets\/react-vendor-/,
+        /^assets\/radix-/,
+        /^assets\/style-utils-/,
+        // Highest-traffic role surfaces.
+        /^assets\/AssociateScheduleView-/,
+        /^assets\/AssociateTimeOffView-/,
+        /^assets\/AssociatePayrollView-/,
+        /^assets\/MyTimesheet-/,
+        /^assets\/TimeHome-/,
+        /^assets\/MeHome-/,
+        /^assets\/AssociateInboxView-/,
+        /^assets\/SupervisorDashboard-/,
+      ];
       const chunks: string[] = [];
       for (const fileName of Object.keys(bundle)) {
-        if (fileName.endsWith('.js') || fileName.endsWith('.css')) {
+        const isAsset = fileName.endsWith('.js') || fileName.endsWith('.css');
+        if (!isAsset) continue;
+        if (fileName.endsWith('.css') || PRECACHE_PATTERNS.some((re) => re.test(fileName))) {
           chunks.push('/' + fileName);
         }
       }
@@ -85,8 +107,15 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (!id.includes('node_modules')) return undefined;
+          // PERF: tiny styling utils get their own named bucket FIRST.
+          // Without this, Rollup's min-chunk-size merging folded clsx
+          // (imported by every component via lib/cn.ts) into the recharts
+          // chunk — making 321 KB of charting code a blocking dependency
+          // of first paint for every visitor.
+          if (/\/node_modules\/(clsx|tailwind-merge|class-variance-authority)\//.test(id)) {
+            return 'style-utils';
+          }
           if (id.includes('@radix-ui')) return 'radix';
-          if (id.includes('framer-motion')) return 'motion';
           // face-api.js is a 600+ KB ML library used only by the kiosk
           // punch flow. Naming the chunk so the build output isn't a
           // confusing second `index.js`.
@@ -97,8 +126,11 @@ export default defineConfig({
           if (id.includes('/recharts/') || id.includes('/d3-')) {
             return 'recharts';
           }
+          // NOTE '/node_modules/react/' (not '/react/') — the loose test
+          // used to also match @sentry/react, shipping the whole Sentry
+          // SDK in the blocking react-vendor chunk even with no DSN set.
           if (
-            id.includes('/react/') ||
+            id.includes('/node_modules/react/') ||
             id.includes('/react-dom/') ||
             id.includes('/react-router') ||
             id.includes('/scheduler/')
@@ -108,9 +140,9 @@ export default defineConfig({
         },
       },
     },
-    // Bumped from default 500 KB. The kiosk chunk legitimately exceeds it
-    // because of face-api.js — gating it behind a separate route chunk is
-    // already the win we wanted; warning at every build adds noise.
-    chunkSizeWarningLimit: 1000,
+    // face-api's chunk legitimately exceeds any sane limit (it's gated
+    // behind the kiosk route); everything else should stay under ~600 KB
+    // raw so a regression like clsx-in-recharts warns at build time.
+    chunkSizeWarningLimit: 700,
   },
 });

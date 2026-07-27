@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/lib/timeApi', () => ({
   addTimeEntryBreak: vi.fn(async () => ({})),
@@ -47,7 +48,7 @@ import {
 } from '@/lib/timeApi';
 import { listDirectory } from '@/lib/directoryApi';
 import { listSchedulingAssociates, listShifts } from '@/lib/schedulingApi';
-import { AdminTimeView } from '@/pages/time/AdminTimeView';
+import { AdminTimeView, __resetPayPeriodsCacheForTests } from '@/pages/time/AdminTimeView';
 import { AuthContext } from '@/lib/auth';
 
 // Fixed windows from the MOCKED endpoint — the component only displays
@@ -79,12 +80,20 @@ const AUTH_VALUE = {
 } as never;
 
 function renderQueueTab() {
+  // Fresh client per render — the view's dialogs read the shared
+  // ['clients','list'] key via useClients(), and a leaked cache would
+  // couple tests.
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   render(
-    <AuthContext.Provider value={AUTH_VALUE}>
-      <MemoryRouter>
-        <AdminTimeView canManage />
-      </MemoryRouter>
-    </AuthContext.Provider>,
+    <QueryClientProvider client={queryClient}>
+      <AuthContext.Provider value={AUTH_VALUE}>
+        <MemoryRouter>
+          <AdminTimeView canManage />
+        </MemoryRouter>
+      </AuthContext.Provider>
+    </QueryClientProvider>,
   );
   return userEvent.setup();
 }
@@ -92,6 +101,9 @@ function renderQueueTab() {
 beforeEach(() => {
   // The status filter persists; a leaked value would change which chips render.
   localStorage.clear();
+  // Pay periods are module-cached in the component; reset so each test's
+  // mock actually takes effect.
+  __resetPayPeriodsCacheForTests();
   vi.mocked(listPayPeriods).mockResolvedValue({ periods: PERIODS });
   vi.mocked(listAdminTimeEntries).mockClear();
 });

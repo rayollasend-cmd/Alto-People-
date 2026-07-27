@@ -104,6 +104,9 @@ export async function runWeekAheadSweep(
   const windowStart = now;
   const windowEnd = new Date(now.getTime() + 9 * 24 * 3_600_000);
   const rows = await prisma.shift.findMany({
+    // Runaway backstop — a real week at every matching client is far
+    // smaller; without a cap a bad import could balloon this scan.
+    take: 5000,
     where: {
       status: 'ASSIGNED',
       publishedAt: { not: null },
@@ -148,8 +151,29 @@ export async function runWeekAheadSweep(
     select: { id: true, email: true, associateId: true },
   });
 
+  // Cheap batched pre-check: users who already got today's digest are
+  // skipped WITHOUT opening their advisory-lock transaction. The locked
+  // findFirst below stays for everyone else — it's what guards the race
+  // between overlapping sweeps.
+  const recentSends = await prisma.notification.findMany({
+    where: {
+      category: DIGEST_CATEGORY,
+      channel: 'IN_APP',
+      recipientUserId: { in: users.map((u) => u.id) },
+      // Generous UTC prefilter; exact membership is the LOCAL day check.
+      sentAt: { gte: new Date(now.getTime() - 36 * 3_600_000) },
+    },
+    select: { recipientUserId: true, sentAt: true },
+  });
+  const alreadySentToday = new Set(
+    recentSends
+      .filter((n) => n.sentAt && dayKey(n.sentAt, tz) === todayKey)
+      .map((n) => n.recipientUserId),
+  );
+
   let sent = 0;
   for (const u of users) {
+    if (alreadySentToday.has(u.id)) continue;
     const shifts = byAssociate.get(u.associateId!);
     if (!shifts) continue;
     const { subject, body } = buildBody(shifts, tz);

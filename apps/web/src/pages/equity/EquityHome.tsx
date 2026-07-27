@@ -136,7 +136,6 @@ export function EquityHome() {
     } else {
       setAdmin(null);
       setAdminError(null);
-      setSummaryError(null);
       listEquityGrants(statusFilter === 'ALL' ? undefined : statusFilter)
         .then((r) => setAdmin(r.grants))
         .catch((err) =>
@@ -144,21 +143,30 @@ export function EquityHome() {
             err instanceof ApiError ? err.message : 'Could not load grants.',
           ),
         );
-      getEquitySummary()
-        .then(setSummary)
-        .catch((err) => {
-          setSummary(null);
-          setSummaryError(
-            err instanceof ApiError
-              ? err.message
-              : 'Could not load the equity summary.',
-          );
-        });
     }
+  };
+  // Filter-independent KPI summary — fetched once on mount and re-fetched
+  // explicitly after mutations, never on tab/filter clicks.
+  const refreshSummary = () => {
+    setSummaryError(null);
+    getEquitySummary()
+      .then(setSummary)
+      .catch((err) => {
+        setSummary(null);
+        setSummaryError(
+          err instanceof ApiError
+            ? err.message
+            : 'Could not load the equity summary.',
+        );
+      });
   };
   useEffect(() => {
     refresh();
   }, [tab, statusFilter]);
+  useEffect(() => {
+    if (canManageComp) refreshSummary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canManageComp]);
 
   const q = search.trim().toLowerCase();
   const filteredAdmin = (admin ?? []).filter(
@@ -261,7 +269,7 @@ export function EquityHome() {
         <ErrorBanner>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <span>{summaryError}</span>
-            <Button size="sm" variant="secondary" onClick={refresh}>
+            <Button size="sm" variant="secondary" onClick={refreshSummary}>
               Retry
             </Button>
           </div>
@@ -445,6 +453,7 @@ export function EquityHome() {
           onSaved={() => {
             setShowNew(false);
             refresh();
+            if (canManageComp) refreshSummary();
           }}
         />
       )}
@@ -458,6 +467,7 @@ export function EquityHome() {
           onSaved={() => {
             setOpenAdminId(null);
             refresh();
+            if (canManageComp) refreshSummary();
           }}
         />
       )}

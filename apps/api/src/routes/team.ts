@@ -12,6 +12,7 @@ import {
 import { recordTimeEvent } from '../lib/audit.js';
 import { accrueSickLeaveForEntry } from '../lib/timeOffAccrual.js';
 import { notifyAssociate } from '../lib/notify.js';
+import { runWithConcurrency } from '../lib/concurrency.js';
 
 /**
  * Phase 79 — Manager-scoped routes.
@@ -528,21 +529,42 @@ teamRouter.post(
     const ids = z.array(z.string().uuid()).min(1).max(200).parse(req.body?.ids);
     let approved = 0;
     const skipped: { id: string; reason: string }[] = [];
-    for (const id of ids) {
+    // PERF: batch the entry load + the direct-report authorization set
+    // up front (was ~6 serial queries per id); the per-id remainder runs
+    // with bounded parallelism.
+    const entries = await prisma.timeEntry.findMany({
+      where: { id: { in: ids } },
+    });
+    const teamEntryById = new Map(entries.map((e) => [e.id, e]));
+    const bulkReportSet = new Set(
+      (
+        await prisma.associate.findMany({
+          where: {
+            id: { in: [...new Set(entries.map((e) => e.associateId))] },
+            ...managerScope(user),
+          },
+          select: { id: true },
+        })
+      ).map((a) => a.id),
+    );
+    await runWithConcurrency(ids, 6, async (id) => {
       try {
-        const entry = await prisma.timeEntry.findUnique({ where: { id } });
+        const entry = teamEntryById.get(id);
         if (!entry) {
           skipped.push({ id, reason: 'not_found' });
-          continue;
+          return;
         }
-        await requireDirectReportAssociate(user.associateId, entry.associateId);
+        if (!bulkReportSet.has(entry.associateId)) {
+          skipped.push({ id, reason: 'not_your_report' });
+          return;
+        }
         if (entry.status === 'ACTIVE') {
           skipped.push({ id, reason: 'still_active' });
-          continue;
+          return;
         }
         if (entry.status === 'APPROVED') {
           skipped.push({ id, reason: 'already_approved' });
-          continue;
+          return;
         }
         const updated = await prisma.timeEntry.update({
           where: { id },
@@ -579,7 +601,7 @@ teamRouter.post(
       } catch (err) {
         skipped.push({ id, reason: err instanceof HttpError ? err.code : 'error' });
       }
-    }
+    });
     res.json({ approved, skipped });
   },
 );
@@ -680,14 +702,34 @@ teamRouter.post(
     const ids = z.array(z.string().uuid()).min(1).max(200).parse(req.body?.ids);
     let approved = 0;
     const skipped: { id: string; reason: string }[] = [];
-    for (const id of ids) {
+    // PERF: batch the request load + authorization set up front; only
+    // approveRequest's balance CAS stays per-id (bounded-parallel).
+    const reqRows = await prisma.timeOffRequest.findMany({
+      where: { id: { in: ids } },
+    });
+    const ptoById = new Map(reqRows.map((r) => [r.id, r]));
+    const ptoReportSet = new Set(
+      (
+        await prisma.associate.findMany({
+          where: {
+            id: { in: [...new Set(reqRows.map((r) => r.associateId))] },
+            ...managerScope(user),
+          },
+          select: { id: true },
+        })
+      ).map((a) => a.id),
+    );
+    await runWithConcurrency(ids, 6, async (id) => {
       try {
-        const reqRow = await prisma.timeOffRequest.findUnique({ where: { id } });
+        const reqRow = ptoById.get(id);
         if (!reqRow) {
           skipped.push({ id, reason: 'not_found' });
-          continue;
+          return;
         }
-        await requireDirectReportAssociate(user.associateId, reqRow.associateId);
+        if (!ptoReportSet.has(reqRow.associateId)) {
+          skipped.push({ id, reason: 'not_your_report' });
+          return;
+        }
         await approveRequest(prisma, id, user.id, null);
         void notifyAssociate(reqRow.associateId, {
           subject: 'Your time off was approved',
@@ -702,11 +744,11 @@ teamRouter.post(
       } catch (err) {
         if (err instanceof IllegalStateError) {
           skipped.push({ id, reason: 'illegal_state' });
-          continue;
+          return;
         }
         skipped.push({ id, reason: err instanceof HttpError ? err.code : 'error' });
       }
-    }
+    });
     res.json({ approved, skipped });
   },
 );

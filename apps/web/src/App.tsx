@@ -218,14 +218,18 @@ registerDataPrefetch('/people', () => {
   });
   void queryClient.prefetchQuery({
     queryKey: ['clients', 'list'],
-    queryFn: async () => (await listClients()).clients,
+    // Full response object — must match useClients()'s cache shape, or a
+    // prefetch here poisons the shared key with a bare array.
+    queryFn: () => listClients({ status: 'ACTIVE' }),
     staleTime: 5 * 60_000,
   });
 });
 registerDataPrefetch('/clients', () => {
   void queryClient.prefetchQuery({
     queryKey: ['clients', 'list'],
-    queryFn: async () => (await listClients()).clients,
+    // Full response object — must match useClients()'s cache shape, or a
+    // prefetch here poisons the shared key with a bare array.
+    queryFn: () => listClients({ status: 'ACTIVE' }),
     staleTime: 5 * 60_000,
   });
 });

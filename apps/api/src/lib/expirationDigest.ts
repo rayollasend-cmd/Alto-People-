@@ -87,8 +87,11 @@ export async function runAgreementSweep(
       linkUrl: '/agreements',
       emailFallback: true,
     });
-    await prisma.agreement.update({
-      where: { id: a.id },
+  }
+  // PERF: identical stamp for every row — one updateMany, not N updates.
+  if (unsigned.length > 0) {
+    await prisma.agreement.updateMany({
+      where: { id: { in: unsigned.map((a) => a.id) } },
       data: { reminderSentAt: now },
     });
   }

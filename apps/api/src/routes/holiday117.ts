@@ -227,35 +227,20 @@ holiday117Router.post(
   '/holidays/import-us-federal-2026',
   MANAGE,
   async (req, res) => {
-    let inserted = 0;
-    for (const h of USFederalHolidays2026) {
-      try {
-        await prisma.holiday.create({
-          data: {
-            clientId: null,
-            name: h.name,
-            date: new Date(
-              Date.UTC(2026, h.month - 1, h.day),
-            ),
-            type: 'FEDERAL',
-            paid: true,
-            createdById: req.user!.id,
-          },
-        });
-        inserted++;
-      } catch (err: unknown) {
-        if (
-          err &&
-          typeof err === 'object' &&
-          'code' in err &&
-          (err as { code: string }).code === 'P2002'
-        ) {
-          // Already imported — skip.
-          continue;
-        }
-        throw err;
-      }
-    }
+    // Single batched insert; skipDuplicates makes re-runs idempotent (the
+    // unique index on (client, date, name) absorbs already-imported rows).
+    const result = await prisma.holiday.createMany({
+      data: USFederalHolidays2026.map((h) => ({
+        clientId: null,
+        name: h.name,
+        date: new Date(Date.UTC(2026, h.month - 1, h.day)),
+        type: 'FEDERAL' as const,
+        paid: true,
+        createdById: req.user!.id,
+      })),
+      skipDuplicates: true,
+    });
+    const inserted = result.count;
     res.json({ inserted, skipped: USFederalHolidays2026.length - inserted });
   },
 );
@@ -302,31 +287,18 @@ holiday117Router.post('/holidays/import-us-federal', MANAGE, async (req, res) =>
     .object({ year: z.number().int().min(2000).max(2100) })
     .parse(req.body);
   const holidays = usFederalHolidays(year);
-  let inserted = 0;
-  for (const h of holidays) {
-    try {
-      await prisma.holiday.create({
-        data: {
-          clientId: null,
-          name: h.name,
-          date: h.date,
-          type: 'FEDERAL',
-          paid: true,
-          createdById: req.user!.id,
-        },
-      });
-      inserted++;
-    } catch (err: unknown) {
-      if (
-        err &&
-        typeof err === 'object' &&
-        'code' in err &&
-        (err as { code: string }).code === 'P2002'
-      ) {
-        continue; // Already imported — idempotent.
-      }
-      throw err;
-    }
-  }
+  // Single batched insert; skipDuplicates keeps the call idempotent.
+  const result = await prisma.holiday.createMany({
+    data: holidays.map((h) => ({
+      clientId: null,
+      name: h.name,
+      date: h.date,
+      type: 'FEDERAL' as const,
+      paid: true,
+      createdById: req.user!.id,
+    })),
+    skipDuplicates: true,
+  });
+  const inserted = result.count;
   res.json({ inserted, skipped: holidays.length - inserted });
 });

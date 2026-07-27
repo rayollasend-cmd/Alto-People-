@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 import PDFDocument from 'pdfkit';
 import { round2 } from './payroll.js';
 
@@ -47,28 +47,60 @@ export async function accrueRemittancesForRun(
     byPayee.set(payee, acc);
   }
 
+  // One read for all payees (was a findUnique per payee), then pipelined
+  // batched writes. Payloads are payee-distinct, so the writes stay per-row
+  // but run as array-form transactions (one round of statements) instead of
+  // an awaited round trip each.
+  const existingRows = await prisma.garnishmentRemittance.findMany({
+    where: { payrollRunId: runId, payeeName: { in: [...byPayee.keys()] } },
+  });
+  const existingByPayee = new Map(existingRows.map((r) => [r.payeeName, r]));
+
+  const toCreate: Array<{ payeeName: string; acc: { address: string | null; total: number; ids: string[] } }> = [];
+  const writes: Prisma.PrismaPromise<unknown>[] = [];
   for (const [payeeName, acc] of byPayee) {
-    const existing = await prisma.garnishmentRemittance.findUnique({
-      where: { payrollRunId_payeeName: { payrollRunId: runId, payeeName } },
-    });
+    const existing = existingByPayee.get(payeeName);
     if (existing?.status === 'SENT') continue;
-    const remittance = existing
-      ? await prisma.garnishmentRemittance.update({
+    if (existing) {
+      writes.push(
+        prisma.garnishmentRemittance.update({
           where: { id: existing.id },
           data: { amount: acc.total, payeeAddress: acc.address },
-        })
-      : await prisma.garnishmentRemittance.create({
+        }),
+        prisma.garnishmentDeduction.updateMany({
+          where: { id: { in: acc.ids } },
+          data: { remittanceId: existing.id },
+        }),
+      );
+    } else {
+      toCreate.push({ payeeName, acc });
+    }
+  }
+
+  if (toCreate.length > 0) {
+    const created = await prisma.$transaction(
+      toCreate.map(({ payeeName, acc }) =>
+        prisma.garnishmentRemittance.create({
           data: {
             payrollRunId: runId,
             payeeName,
             payeeAddress: acc.address,
             amount: acc.total,
           },
-        });
-    await prisma.garnishmentDeduction.updateMany({
-      where: { id: { in: acc.ids } },
-      data: { remittanceId: remittance.id },
+        }),
+      ),
+    );
+    created.forEach((remittance, i) => {
+      writes.push(
+        prisma.garnishmentDeduction.updateMany({
+          where: { id: { in: toCreate[i]!.acc.ids } },
+          data: { remittanceId: remittance.id },
+        }),
+      );
     });
+  }
+  if (writes.length > 0) {
+    await prisma.$transaction(writes);
   }
 }
 

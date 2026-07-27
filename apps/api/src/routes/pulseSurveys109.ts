@@ -76,7 +76,6 @@ pulseSurveysRouter.post('/pulse-surveys', VIEW_ADMIN, async (req, res) => {
   // the resolved audience (fire-and-forget; capped as a runaway backstop).
   void (async () => {
     try {
-      const { notifyUser } = await import('../lib/notify.js');
       const recipients = await prisma.user.findMany({
         take: 5000,
         where: {
@@ -94,16 +93,26 @@ pulseSurveysRouter.post('/pulse-surveys', VIEW_ADMIN, async (req, res) => {
         },
         select: { id: true },
       });
-      await Promise.allSettled(
-        recipients.map((r) =>
-          notifyUser(r.id, {
-            subject: 'Quick pulse check — your input is wanted',
-            body: `"${input.question}" — takes ten seconds, closes ${openUntil.toISOString().slice(0, 10)}.`,
-            category: 'pulse',
-            linkUrl: '/pulse',
-          }),
-        ),
-      );
+      if (recipients.length === 0) return;
+      // PERF: one createMany instead of a 5,000-way Promise.allSettled of
+      // per-user notifyUser calls (~3 DB ops each) — the old shape could
+      // exhaust the connection pool and starve every concurrent request.
+      // In-app only by design: a pulse nudge doesn't warrant 5,000 emails.
+      const now = new Date();
+      await prisma.notification.createMany({
+        data: recipients.map((r) => ({
+          channel: 'IN_APP' as const,
+          status: 'SENT' as const,
+          recipientUserId: r.id,
+          subject: 'Quick pulse check — your input is wanted',
+          body: `"${input.question}" — takes ten seconds, closes ${openUntil.toISOString().slice(0, 10)}.`,
+          category: 'pulse',
+          linkUrl: '/pulse',
+          sentAt: now,
+        })),
+      });
+      const { emitLiveEvent } = await import('../lib/liveEvents.js');
+      for (const r of recipients) emitLiveEvent(r.id, 'notification');
     } catch (err) {
       console.warn('[pulse] survey fan-out failed:', err);
     }

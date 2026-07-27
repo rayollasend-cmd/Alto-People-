@@ -1,4 +1,7 @@
-import * as Sentry from '@sentry/react';
+// PERF: named imports only. The old `import * as Sentry` + namespace
+// re-export defeated tree-shaking, so the whole SDK core rode in the
+// blocking react-vendor chunk even with no DSN configured.
+import { captureException, init } from '@sentry/react';
 
 /**
  * Initialise Sentry on the browser. Reads VITE_SENTRY_DSN at build time
@@ -12,7 +15,7 @@ import * as Sentry from '@sentry/react';
 export function initSentry(): void {
   const dsn = import.meta.env.VITE_SENTRY_DSN as string | undefined;
   if (!dsn) return;
-  Sentry.init({
+  init({
     dsn,
     environment: import.meta.env.MODE,
     // Same conservative default as the API side. Bumpable per env via
@@ -32,4 +35,4 @@ export function initSentry(): void {
   });
 }
 
-export { Sentry };
+export { captureException };

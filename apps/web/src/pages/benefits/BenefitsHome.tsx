@@ -39,7 +39,7 @@ import { Input } from '@/components/ui/Input';
 import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { listClients } from '@/lib/onboardingApi';
+import { useClients } from '@/lib/useClients';
 
 const KIND_LABEL: Record<BenefitsPlanKind, string> = {
   HEALTH_MEDICAL: 'Medical',
@@ -66,29 +66,24 @@ export function BenefitsHome() {
   const [error, setError] = useState<string | null>(null);
   const [enrolling, setEnrolling] = useState<BenefitsPlan | null>(null);
 
+  // The associate's first client drives the available-plans pool. For
+  // multi-client associates this is a v1 simplification — pick the most
+  // recent application's client (matches backend logic). A failure here
+  // surfaces as the page-level error (with Retry) rather than silently
+  // pretending there are no plans to offer. Served from the app-wide
+  // react-query cache (5-minute staleTime).
+  const {
+    clients,
+    isLoading: clientsLoading,
+    isError: clientsError,
+    refetch: refetchClients,
+  } = useClients();
+
   const refresh = useCallback(async () => {
     try {
       setError(null);
-      const [mine, clientsRes] = await Promise.all([
-        listMyEnrollments(),
-        // The associate's first client drives the available-plans pool.
-        // For multi-client associates this is a v1 simplification — pick
-        // the most recent application's client (matches backend logic).
-        // A failure here surfaces as the page-level error (with Retry)
-        // rather than silently pretending there are no plans to offer.
-        listClients(),
-      ]);
+      const mine = await listMyEnrollments();
       setEnrollments(mine.enrollments);
-
-      // Pull plans for the associate's client. Backend already enforces
-      // the client match; this just feeds the picker.
-      const firstClient = clientsRes.clients[0];
-      if (firstClient) {
-        const plans = await listPlans({ clientId: firstClient.id });
-        setAvailablePlans(plans.plans);
-      } else {
-        setAvailablePlans([]);
-      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load.');
     }
@@ -97,6 +92,30 @@ export function BenefitsHome() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Pull plans for the associate's client once the client list is in.
+  // Backend already enforces the client match; this just feeds the picker.
+  useEffect(() => {
+    if (clientsLoading || clientsError) return;
+    const firstClient = clients[0];
+    if (!firstClient) {
+      setAvailablePlans([]);
+      return;
+    }
+    let live = true;
+    listPlans({ clientId: firstClient.id })
+      .then((plans) => {
+        if (live) setAvailablePlans(plans.plans);
+      })
+      .catch((err) => {
+        if (live) {
+          setError(err instanceof ApiError ? err.message : 'Could not load.');
+        }
+      });
+    return () => {
+      live = false;
+    };
+  }, [clients, clientsLoading, clientsError]);
 
   const enrolledPlanIds = new Set(
     (enrollments ?? [])
@@ -125,18 +144,25 @@ export function BenefitsHome() {
         subtitle="Pre-tax elections come out of every paycheck before federal, FICA, Medicare, and state tax. Your take-home goes down by less than the elected amount."
       />
 
-      {error && (
+      {(error || clientsError) && (
         <ErrorBanner>
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <span>{error}</span>
-            <Button size="sm" variant="secondary" onClick={refresh}>
+            <span>{error ?? 'Could not load.'}</span>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                void refresh();
+                if (clientsError) void refetchClients();
+              }}
+            >
               Retry
             </Button>
           </div>
         </ErrorBanner>
       )}
 
-      {!enrollments && !error && (
+      {!enrollments && !error && !clientsError && (
         <div className="space-y-2">
           <Skeleton className="h-20" />
           <Skeleton className="h-20" />

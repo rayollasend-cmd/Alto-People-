@@ -405,56 +405,61 @@ schedulingRouter.get('/kpis', MANAGE, async (req, res, next) => {
     const from = parseDateParam(fromParam, 'from') ?? defaultFrom;
     const to = parseDateParam(toParam, 'to') ?? defaultTo;
 
+    // Tenant clamp FIRST — the old spread let a bounded caller's clientId
+    // query param override scopeShifts' clamp (cross-tenant KPI read).
+    const kpiClientId = effectiveClientIdFilter(req.user!, clientId);
+    const effectiveKpiClient = kpiClientId === null ? NO_MATCH_ID : kpiClientId;
+    const scope = scopeShifts(req.user!);
     const where: Prisma.ShiftWhereInput = {
-      ...scopeShifts(req.user!),
-      ...(clientId ? { clientId } : {}),
+      ...scope,
+      ...(effectiveKpiClient ? { clientId: effectiveKpiClient } : {}),
       startsAt: { gte: from, lt: to },
       status: { not: 'CANCELLED' },
     };
 
-    const grouped = await prisma.shift.groupBy({
-      by: ['status'],
-      where,
-      _count: { _all: true },
-    });
-
-    // For total scheduled minutes + projected labor cost we need the rows
-    // (no SQL helper for computed durations in Prisma). Pull duration + the
-    // two rate columns and roll up. Page through ALL matching rows in batches
-    // — the old `take: 100` silently UNDER-reported minutes/cost for any week
-    // with >100 shifts. Bounded by a batch backstop so a pathologically wide
-    // window can't run unbounded.
-    const ROLLUP_BATCH = 1000;
-    const ROLLUP_MAX_BATCHES = 50; // 50k shifts — far beyond a real window
-    let totalScheduledMinutes = 0;
-    let projectedLaborCost = 0;
-    let shiftsWithoutRate = 0;
-    let cursor: string | undefined;
-    for (let batchNo = 0; batchNo < ROLLUP_MAX_BATCHES; batchNo++) {
-      const rows = await prisma.shift.findMany({
-        where,
-        select: { id: true, startsAt: true, endsAt: true, payRate: true },
-        orderBy: { id: 'asc' },
-        take: ROLLUP_BATCH,
-        ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
-      });
-      for (const r of rows) {
-        const minutes = Math.max(
-          0,
-          Math.round((r.endsAt.getTime() - r.startsAt.getTime()) / 60_000),
-        );
-        totalScheduledMinutes += minutes;
-        if (r.payRate === null) {
-          shiftsWithoutRate += 1;
-        } else {
-          projectedLaborCost += (Number(r.payRate) * minutes) / 60;
-        }
-      }
-      if (rows.length < ROLLUP_BATCH) break;
-      cursor = rows[rows.length - 1]!.id;
+    // PERF: minutes + labor cost summed in SQL. The old rollup paged up to
+    // 50k rows through the app (5–50 sequential batch queries per KPI-strip
+    // render) to compute three numbers. Conditions mirror `where` exactly.
+    const conds: Prisma.Sql[] = [
+      Prisma.sql`"startsAt" >= ${from}`,
+      Prisma.sql`"startsAt" < ${to}`,
+      Prisma.sql`"status" <> 'CANCELLED'::"ShiftStatus"`,
+    ];
+    if (effectiveKpiClient) {
+      conds.push(Prisma.sql`"clientId" = ${effectiveKpiClient}::uuid`);
     }
+    // ASSOCIATE scope (published + own shifts) — mirrors scopeShifts.
+    const assocScope = scope as { assignedAssociateId?: string; publishedAt?: unknown };
+    if (assocScope.assignedAssociateId) {
+      conds.push(Prisma.sql`"assignedAssociateId" = ${assocScope.assignedAssociateId}::uuid`);
+      conds.push(Prisma.sql`"publishedAt" IS NOT NULL`);
+    }
+
+    const [grouped, [rollup]] = await Promise.all([
+      prisma.shift.groupBy({
+        by: ['status'],
+        where,
+        _count: { _all: true },
+      }),
+      prisma.$queryRaw<
+        [{ minutes: bigint | null; cost: number | null; norate: bigint | null }]
+      >(Prisma.sql`
+        SELECT
+          COALESCE(SUM(GREATEST(0, ROUND(EXTRACT(EPOCH FROM ("endsAt" - "startsAt")) / 60))), 0)::bigint AS minutes,
+          COALESCE(SUM(
+            CASE WHEN "payRate" IS NOT NULL
+              THEN "payRate" * GREATEST(0, ROUND(EXTRACT(EPOCH FROM ("endsAt" - "startsAt")) / 60)) / 60
+              ELSE 0 END
+          ), 0)::float8 AS cost,
+          COUNT(*) FILTER (WHERE "payRate" IS NULL)::bigint AS norate
+        FROM "Shift"
+        WHERE ${Prisma.join(conds, ' AND ')}
+      `),
+    ]);
+    const totalScheduledMinutes = Number(rollup?.minutes ?? 0);
+    const shiftsWithoutRate = Number(rollup?.norate ?? 0);
     // Round to cents — JSON floats survive 2dp safely; the UI formats as $.
-    projectedLaborCost = Math.round(projectedLaborCost * 100) / 100;
+    const projectedLaborCost = Math.round(Number(rollup?.cost ?? 0) * 100) / 100;
 
     let openShifts = 0;
     let assignedShifts = 0;
@@ -892,7 +897,7 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
         timezone: location.timezone,
       });
       for (const associateId of toAssign) {
-        await notifyShift(prisma, {
+        void notifyShift(prisma, {
           associateId,
           subject: 'New shift',
           body: `You've been assigned: ${line}`,
@@ -1056,7 +1061,7 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
     // We don't notify on every PATCH — that would spam associates with
     // "your shift was edited" for trivial location/notes tweaks.
     if (data.publishedAt && updated.assignedAssociateId) {
-      await notifyShift(prisma, {
+      void notifyShift(prisma, {
         associateId: updated.assignedAssociateId,
         subject: 'Shift published',
         body: `Now on your schedule: ${formatShiftLine({
@@ -1214,7 +1219,7 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
     // to see yet. The publish PATCH route will fire its own notification
     // when the schedule actually goes out.
     if (updated.publishedAt) {
-      await notifyShift(prisma, {
+      void notifyShift(prisma, {
         associateId: associate.id,
         subject: 'New shift assigned',
         body: `You've been assigned: ${formatShiftLine({
@@ -1269,7 +1274,7 @@ schedulingRouter.post('/shifts/:id/unassign', MANAGE, async (req, res, next) => 
     // someone from a draft shift is invisible — they never knew they were
     // on it.
     if (shift.publishedAt) {
-      await notifyShift(prisma, {
+      void notifyShift(prisma, {
         associateId: previousAssociateId,
         subject: 'Shift removed from your schedule',
         body: `Removed: ${formatShiftLine({
@@ -1354,7 +1359,7 @@ schedulingRouter.post('/shifts/:id/cancel', MANAGE, async (req, res, next) => {
         for (const aid of [sw.requesterAssociateId, sw.counterpartyAssociateId]) {
           if (aid && !notified.has(aid)) {
             notified.add(aid);
-            await notifyShift(prisma, {
+            void notifyShift(prisma, {
               associateId: aid,
               subject: 'Swap cancelled',
               body: `A swap you were part of is off — the shift was cancelled. ${swapLine}`,
@@ -1369,7 +1374,7 @@ schedulingRouter.post('/shifts/:id/cancel', MANAGE, async (req, res, next) => {
     // Same draft rule as unassign — cancelling a never-published shift
     // is invisible to the associate, so no notification.
     if (shift.assignedAssociateId && shift.publishedAt) {
-      await notifyShift(prisma, {
+      void notifyShift(prisma, {
         associateId: shift.assignedAssociateId,
         subject: 'Shift cancelled',
         body: `Cancelled: ${formatShiftLine({
@@ -2192,7 +2197,7 @@ schedulingRouter.post('/open-shift-claims/:id/approve', MANAGE, async (req, res,
       endsAt: claim.shift.endsAt,
       timezone: claim.shift.locationRel?.timezone ?? null,
     });
-    await notifyShift(prisma, {
+    void notifyShift(prisma, {
       associateId: claim.associateId,
       subject: 'Pickup approved — shift is yours',
       body: `You're on: ${line}`,
@@ -2212,7 +2217,7 @@ schedulingRouter.post('/open-shift-claims/:id/approve', MANAGE, async (req, res,
       distinct: ['associateId'],
     });
     for (const l of losers) {
-      await notifyShift(prisma, {
+      void notifyShift(prisma, {
         associateId: l.associateId,
         subject: 'Open shift filled',
         body: `That open shift went to someone else: ${line}`,
@@ -2242,7 +2247,7 @@ schedulingRouter.post('/open-shift-claims/:id/reject', MANAGE, async (req, res, 
     if (cas.count === 0) {
       throw new HttpError(409, 'not_pending', `Request is ${claim.status}`);
     }
-    await notifyShift(prisma, {
+    void notifyShift(prisma, {
       associateId: claim.associateId,
       subject: 'Pickup request declined',
       body: `Your pickup request wasn't approved: ${formatShiftLine({
@@ -2762,7 +2767,7 @@ schedulingRouter.post('/swap-requests', async (req, res, next) => {
       include: SWAP_INCLUDE,
     });
 
-    await notifyShift(prisma, {
+    void notifyShift(prisma, {
       associateId: counterpartyAssociateId,
       subject: 'New swap request',
       body: `${created.requester.firstName} ${created.requester.lastName} is asking you to take their shift: ${formatShiftLine(
@@ -2928,7 +2933,7 @@ schedulingRouter.post('/swap-requests/:id/peer-accept', async (req, res, next) =
       include: SWAP_INCLUDE,
     });
 
-    await notifyShift(prisma, {
+    void notifyShift(prisma, {
       associateId: updated.requesterAssociateId,
       subject: 'Swap accepted — pending HR approval',
       body: `${updated.counterparty.firstName} ${updated.counterparty.lastName} accepted your swap request. Waiting on HR sign-off: ${formatShiftLine(
@@ -2977,7 +2982,7 @@ schedulingRouter.post('/swap-requests/:id/peer-decline', async (req, res, next) 
       include: SWAP_INCLUDE,
     });
 
-    await notifyShift(prisma, {
+    void notifyShift(prisma, {
       associateId: updated.requesterAssociateId,
       subject: 'Swap declined',
       body: `${updated.counterparty.firstName} ${updated.counterparty.lastName} declined your swap request for ${formatShiftLine(
@@ -3275,7 +3280,7 @@ schedulingRouter.post('/swap-requests/:id/manager-approve', MANAGE, async (req, 
           timezone: updated.counterpartShift.locationRel?.timezone ?? null,
         })
       : null;
-    await notifyShift(prisma, {
+    void notifyShift(prisma, {
       associateId: updated.counterpartyAssociateId,
       subject: 'Swap approved — shift is yours',
       body:
@@ -3284,7 +3289,7 @@ schedulingRouter.post('/swap-requests/:id/manager-approve', MANAGE, async (req, 
       category: 'swap_manager_approved',
       senderUserId: req.user!.id,
     });
-    await notifyShift(prisma, {
+    void notifyShift(prisma, {
       associateId: updated.requesterAssociateId,
       subject: 'Swap approved — shift handed off',
       body:
@@ -3340,14 +3345,14 @@ schedulingRouter.post('/swap-requests/:id/manager-reject', MANAGE, async (req, r
       endsAt: updated.shift.endsAt,
       timezone: updated.shift.locationRel?.timezone ?? null,
     });
-    await notifyShift(prisma, {
+    void notifyShift(prisma, {
       associateId: updated.requesterAssociateId,
       subject: 'Swap rejected by HR',
       body: `HR did not approve your swap for: ${shiftLine}`,
       category: 'swap_manager_rejected',
       senderUserId: req.user!.id,
     });
-    await notifyShift(prisma, {
+    void notifyShift(prisma, {
       associateId: updated.counterpartyAssociateId,
       subject: 'Swap rejected by HR',
       body: `HR did not approve the swap you accepted for: ${shiftLine}`,
@@ -4261,7 +4266,7 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
         shifts.length === 1
           ? `Now on your schedule: ${lines[0]}`
           : `Now on your schedule:\n${lines.map((l) => `• ${l}`).join('\n')}`;
-      await notifyShift(prisma, {
+      void notifyShift(prisma, {
         associateId,
         subject,
         body,

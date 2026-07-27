@@ -33,7 +33,9 @@ export function AssociatePicker({
     }
     let live = true;
     const t = setTimeout(() => {
-      listDirectory({ q: term.trim() })
+      // PERF: limit 8 — without it the server returned up to 1000 full
+      // directory records per keystroke, 992 of which were discarded.
+      listDirectory({ q: term.trim(), limit: 8 })
         .then((r) => {
           if (!live) return;
           setResults(

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { Prisma } from '@prisma/client';
+import { runWithConcurrency } from '../lib/concurrency.js';
 import {
   PayrollExceptionsInputSchema,
   PayrollExceptionsResponseSchema,
@@ -488,27 +489,51 @@ payrollRouter.get('/upcoming', async (req, res, next) => {
     let chosenWindow: { periodStart: string; periodEnd: string; payDate: string } | null = null;
     let chosenDraftRunId: string | null = null;
 
+    // PERF: one batched existing-run lookup for every schedule's current
+    // period instead of a findFirst per schedule (this is a landing-page
+    // endpoint; the loop used to be O(schedules) serial round-trips).
+    const currentBySchedule = new Map(
+      schedules.map((s) => [
+        s.id,
+        getCurrentPeriod(
+          {
+            frequency: s.frequency,
+            anchorDate: s.anchorDate,
+            payDateOffsetDays: s.payDateOffsetDays,
+          },
+          today,
+        ),
+      ]),
+    );
+    const runProbes = schedules.map((s) => ({
+      // Client-scoped schedules match their client's run; org-wide
+      // schedules matched ANY run at that periodStart before this
+      // batching, so the probe keeps only the periodStart filter.
+      ...(s.clientId ? { clientId: s.clientId } : {}),
+      periodStart: new Date(`${currentBySchedule.get(s.id)!.periodStart}T00:00:00.000Z`),
+    }));
+    const existingRuns =
+      runProbes.length > 0
+        ? await prisma.payrollRun.findMany({
+            where: { OR: runProbes },
+            select: { id: true, status: true, clientId: true, periodStart: true },
+          })
+        : [];
+    const findExistingRun = (clientId: string | null, periodStartMs: number) =>
+      existingRuns.find(
+        (r) =>
+          r.periodStart.getTime() === periodStartMs &&
+          (clientId === null || r.clientId === clientId),
+      ) ?? null;
+
     for (const s of schedules) {
-      const cur = getCurrentPeriod(
-        {
-          frequency: s.frequency,
-          anchorDate: s.anchorDate,
-          payDateOffsetDays: s.payDateOffsetDays,
-        },
-        today
-      );
+      const cur = currentBySchedule.get(s.id)!;
       // If a finalized/disbursed run exists for this period we've already
       // run it — skip to the next period. A DRAFT, however, means HR
       // started the run but didn't approve yet — that's the *resumable*
       // path the landing CTA points at.
       const periodStartDate = new Date(`${cur.periodStart}T00:00:00.000Z`);
-      const existingRun = await prisma.payrollRun.findFirst({
-        where: {
-          ...(s.clientId ? { clientId: s.clientId } : {}),
-          periodStart: periodStartDate,
-        },
-        select: { id: true, status: true },
-      });
+      const existingRun = findExistingRun(s.clientId, periodStartDate.getTime());
       const isCompleted =
         existingRun &&
         (existingRun.status === 'FINALIZED' ||
@@ -543,18 +568,20 @@ payrollRouter.get('/upcoming', async (req, res, next) => {
       const periodEndExclusive = new Date(`${chosenWindow.periodEnd}T00:00:00.000Z`);
       periodEndExclusive.setUTCDate(periodEndExclusive.getUTCDate() + 1);
 
-      const projection = await aggregatePayrollProjection(prisma, {
-        periodStart,
-        periodEndExclusive,
-        clientId: chosenSchedule.clientId,
-        defaultRate: 15,
-      });
-
-      const exceptions = await computePayrollExceptions(prisma, {
-        periodStart,
-        periodEndExclusive,
-        clientId: chosenSchedule.clientId,
-      });
+      // PERF: independent — run in parallel.
+      const [projection, exceptions] = await Promise.all([
+        aggregatePayrollProjection(prisma, {
+          periodStart,
+          periodEndExclusive,
+          clientId: chosenSchedule.clientId,
+          defaultRate: 15,
+        }),
+        computePayrollExceptions(prisma, {
+          periodStart,
+          periodEndExclusive,
+          clientId: chosenSchedule.clientId,
+        }),
+      ]);
 
       nextRun = {
         scheduleId: chosenSchedule.id,
@@ -1370,7 +1397,10 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
       },
     });
 
-    for (const item of items) {
+    // PERF: bounded parallelism. Each item is independent (idempotencyKey
+    // per item, per-item writes) — the old fully-serial walk blocked the
+    // HTTP request for minutes at 1,000 people × ~200ms adapter calls.
+    await runWithConcurrency(items, 8, async (item) => {
       // Gap 3 — AMENDMENT runs with non-positive net: no rail call. A
       // negative net is an overpayment clawback (queued as a
       // PendingPayrollDeduction the next REGULAR run will absorb); a
@@ -1395,7 +1425,7 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
           where: { id: item.id },
           data: { status: 'DISBURSED', disbursedAt: now, failureReason: null },
         });
-        continue;
+        return;
       }
 
       const primary = item.associate.payoutMethods[0] ?? null;
@@ -1468,7 +1498,7 @@ payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
           data: { status: 'HELD', failureReason: result.failureReason ?? 'unknown' },
         });
       }
-    }
+    });
     }
 
     // The run is complete only when NOTHING remains pending or held —
@@ -2150,7 +2180,8 @@ payrollRouter.post('/runs/:id/retry-failures', PROCESS, async (req, res, next) =
         },
       },
     });
-    for (const item of held) {
+    // PERF: bounded parallelism, same rationale as the disburse loop.
+    await runWithConcurrency(held, 8, async (item) => {
       const primary = item.associate.payoutMethods[0] ?? null;
       const result = await adapter.disburse({
         amount: Number(item.netPay),
@@ -2200,7 +2231,7 @@ payrollRouter.post('/runs/:id/retry-failures', PROCESS, async (req, res, next) =
           data: { failureReason: result.failureReason ?? 'unknown' },
         });
       }
-    }
+    });
     }
 
     // If every item is now DISBURSED, flip the run.
@@ -3397,7 +3428,11 @@ payrollRouter.get('/ytd', PROCESS, async (req, res, next) => {
     const yearStart = new Date(Date.UTC(yearParam, 0, 1));
     const yearEndExclusive = new Date(Date.UTC(yearParam + 1, 0, 1));
 
-    const items = await prisma.payrollItem.findMany({
+    // PERF: sum in SQL. This used to fetch every payroll item of the year
+    // (500 people × 26 periods = 13k rows + 13k joined associates) to add
+    // them up in JS; groupBy returns one row per associate.
+    const groups = await prisma.payrollItem.groupBy({
+      by: ['associateId'],
       where: {
         status: { not: 'VOIDED' },
         payrollRun: {
@@ -3405,8 +3440,7 @@ payrollRouter.get('/ytd', PROCESS, async (req, res, next) => {
           disbursedAt: { gte: yearStart, lt: yearEndExclusive },
         },
       },
-      select: {
-        associateId: true,
+      _sum: {
         grossPay: true,
         federalWithholding: true,
         fica: true,
@@ -3415,15 +3449,38 @@ payrollRouter.get('/ytd', PROCESS, async (req, res, next) => {
         netPay: true,
         preTaxDeductions: true,
         postTaxDeductions: true,
-        associate: {
-          select: {
-            firstName: true,
-            lastName: true,
-            email: true,
-            employmentType: true,
-          },
-        },
       },
+      _count: { _all: true },
+    });
+    const groupAssociates = await prisma.associate.findMany({
+      where: { id: { in: groups.map((g) => g.associateId) } },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        employmentType: true,
+      },
+    });
+    const assocById = new Map(groupAssociates.map((a) => [a.id, a]));
+    const items = groups.flatMap((g) => {
+      const a = assocById.get(g.associateId);
+      if (!a) return [];
+      return [
+        {
+          associateId: g.associateId,
+          grossPay: g._sum.grossPay ?? 0,
+          federalWithholding: g._sum.federalWithholding ?? 0,
+          fica: g._sum.fica ?? 0,
+          medicare: g._sum.medicare ?? 0,
+          stateWithholding: g._sum.stateWithholding ?? 0,
+          netPay: g._sum.netPay ?? 0,
+          preTaxDeductions: g._sum.preTaxDeductions ?? 0,
+          postTaxDeductions: g._sum.postTaxDeductions ?? 0,
+          paystubCount: g._count._all,
+          associate: a,
+        },
+      ];
     });
 
     type Bucket = {
@@ -3472,7 +3529,9 @@ payrollRouter.get('/ytd', PROCESS, async (req, res, next) => {
       b.preTax += Number(it.preTaxDeductions);
       b.postTax += Number(it.postTaxDeductions);
       b.net += Number(it.netPay);
-      b.paystubCount += 1;
+      // `items` is now one pre-summed group per associate, carrying its
+      // own stub count from the groupBy.
+      b.paystubCount += it.paystubCount;
     }
 
     const rows = [...buckets.values()]

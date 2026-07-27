@@ -577,18 +577,49 @@ interface TimelineEntry {
 
 performance84Router.get('/timeline', VIEW, async (req, res) => {
   const associateId = z.string().uuid().parse(req.query.associateId);
+  // Capped + narrowed to exactly the fields the timeline entries read.
   const [goals, pips, reviews] = await Promise.all([
     prisma.goal.findMany({
+      take: 200,
       where: { associateId, deletedAt: null },
       orderBy: { periodStart: 'asc' },
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        periodStart: true,
+        periodEnd: true,
+        parentGoalId: true,
+        progressPct: true,
+      },
     }),
     prisma.pip.findMany({
+      take: 200,
       where: { associateId },
       orderBy: { startDate: 'asc' },
+      select: {
+        id: true,
+        reason: true,
+        status: true,
+        startDate: true,
+        endDate: true,
+        sourceGoalId: true,
+        outcomeNote: true,
+      },
     }),
     prisma.performanceReview.findMany({
+      take: 200,
       where: { associateId },
       orderBy: { periodStart: 'asc' },
+      select: {
+        id: true,
+        summary: true,
+        status: true,
+        periodStart: true,
+        periodEnd: true,
+        sourcePipId: true,
+        overallRating: true,
+      },
     }),
   ]);
   const entries: TimelineEntry[] = [];

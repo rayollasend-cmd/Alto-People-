@@ -32,7 +32,7 @@ import {
   type SurveyQuestion,
   type SurveyQuestionKind,
 } from '@/lib/dirCommsApi';
-import { listClients } from '@/lib/clientsApi';
+import { useClients } from '@/lib/useClients';
 import { listCostCenters, listDepartments } from '@/lib/orgApi';
 import type { CostCenter, Department } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
@@ -472,19 +472,24 @@ function BroadcastDrawer({
   );
   const [saving, setSaving] = useState(false);
 
-  const [clients, setClients] = useState<{ id: string; name: string }[] | null>(null);
+  // Client targeting options come from the app-wide react-query cache
+  // (5-minute staleTime) instead of refetching per drawer open.
+  const {
+    clients,
+    isLoading: clientsLoading,
+    isError: clientsError,
+    refetch: refetchClients,
+  } = useClients();
   const [departments, setDepartments] = useState<Department[] | null>(null);
   const [costCenters, setCostCenters] = useState<CostCenter[] | null>(null);
   const [targetsError, setTargetsError] = useState<string | null>(null);
 
   const loadTargets = () => {
     setTargetsError(null);
-    setClients(null);
     setDepartments(null);
     setCostCenters(null);
-    Promise.all([listClients(), listDepartments(), listCostCenters()])
-      .then(([c, d, cc]) => {
-        setClients(c.clients.map((x) => ({ id: x.id, name: x.name })));
+    Promise.all([listDepartments(), listCostCenters()])
+      .then(([d, cc]) => {
         setDepartments(d.departments);
         setCostCenters(cc.costCenters);
       })
@@ -567,8 +572,14 @@ function BroadcastDrawer({
             onChange={(e) => setBody(e.target.value)}
           />
         </div>
-        {targetsError ? (
-          <RetryBanner message={targetsError} onRetry={loadTargets} />
+        {targetsError || clientsError ? (
+          <RetryBanner
+            message={targetsError ?? 'Could not load targeting options.'}
+            onRetry={() => {
+              loadTargets();
+              if (clientsError) void refetchClients();
+            }}
+          />
         ) : (
           <>
             <div>
@@ -576,7 +587,7 @@ function BroadcastDrawer({
               <Select
                 className="mt-1"
                 value={clientId}
-                disabled={clients === null}
+                disabled={clientsLoading}
                 onChange={(e) => {
                   setClientId(e.target.value);
                   // Narrowing the client invalidates any cross-client picks.
@@ -585,9 +596,9 @@ function BroadcastDrawer({
                 }}
               >
                 <option value="">
-                  {clients === null ? 'Loading…' : 'All clients'}
+                  {clientsLoading ? 'Loading…' : 'All clients'}
                 </option>
-                {(clients ?? []).map((c) => (
+                {clients.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>

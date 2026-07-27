@@ -459,17 +459,16 @@ directoryAndCommsRouter.post(
           respondentId: survey.isAnonymous ? null : req.user!.id,
         },
       });
-      for (const a of input.answers) {
-        await tx.surveyAnswer.create({
-          data: {
-            responseId: response.id,
-            questionId: a.questionId,
-            textValue: a.textValue ?? null,
-            intValue: a.intValue ?? null,
-            choiceValues: a.choiceValues ?? [],
-          },
-        });
-      }
+      // One batched insert for all answers instead of a create per row.
+      await tx.surveyAnswer.createMany({
+        data: input.answers.map((a) => ({
+          responseId: response.id,
+          questionId: a.questionId,
+          textValue: a.textValue ?? null,
+          intValue: a.intValue ?? null,
+          choiceValues: a.choiceValues ?? [],
+        })),
+      });
     });
     res.status(201).json({ ok: true });
   },

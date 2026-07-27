@@ -128,12 +128,15 @@ export async function expireLapsedDocs(
     },
     take: PURGE_BATCH,
   });
+  if (lapsed.length === 0) return { expired: 0 };
+  // PERF: one set-based flip instead of a round-trip per doc, and the
+  // notify import hoisted out of the loop.
+  await prisma.documentRecord.updateMany({
+    where: { id: { in: lapsed.map((d) => d.id) } },
+    data: { status: 'EXPIRED' },
+  });
+  const { notifyAssociate } = await import('./notify.js');
   for (const doc of lapsed) {
-    await prisma.documentRecord.update({
-      where: { id: doc.id },
-      data: { status: 'EXPIRED' },
-    });
-    const { notifyAssociate } = await import('./notify.js');
     void notifyAssociate(doc.associateId, {
       subject: `Your ${doc.kind.replace(/_/g, ' ').toLowerCase()} on file has expired`,
       body:

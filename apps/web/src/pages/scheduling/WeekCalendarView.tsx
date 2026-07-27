@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DndContext,
   PointerSensor,
@@ -53,6 +53,11 @@ const STATUS_VARIANT: Record<
 };
 
 const UNASSIGNED_ROW_ID = '__unassigned__';
+
+// Shared empty-cell fallback: `byCell.get(key) ?? EMPTY_SHIFTS` hands every
+// empty cell the SAME array identity, so memo'd Cells with no shifts see
+// referentially-equal props and skip re-rendering.
+const EMPTY_SHIFTS: Shift[] = [];
 
 function fmtTime(iso: string, timeZone?: string | null): string {
   return fmtTimeTz(iso, timeZone);
@@ -209,10 +214,29 @@ export function WeekCalendarView({
 }: Props) {
   const hover = useShiftHoverCard();
   const ctxMenu = useShiftContextMenu();
+  // hover.bind / ctxMenu.openFor are recreated by their hooks on every
+  // render; route them through refs so the memo'd Cells below receive
+  // stable handler identities (they only close over setState + refs, so
+  // any render's copy behaves identically).
+  const hoverBindFnRef = useRef(hover.bind);
+  hoverBindFnRef.current = hover.bind;
+  const hoverBind = useCallback(
+    (s: Shift) => hoverBindFnRef.current(s),
+    [],
+  );
+  const ctxOpenFnRef = useRef(ctxMenu.openFor);
+  ctxOpenFnRef.current = ctxMenu.openFor;
+  const openContextMenu = useCallback(
+    (s: Shift, e: React.MouseEvent) => ctxOpenFnRef.current(s, e),
+    [],
+  );
   const days = useMemo(
     () => Array.from({ length: dayCount }).map((_, i) => addDays(weekStart, i)),
     [weekStart, dayCount]
   );
+  // The 7 (or dayCount) "YYYY-MM-DD" column keys, computed ONCE per render
+  // instead of re-deriving ymd(d) inside every per-associate loop below.
+  const dayKeys = useMemo(() => days.map(ymd), [days]);
 
   // Bucket shifts by associateId × store-local day. Index by
   // `${associateId|unassigned}_${YYYY-MM-DD}` (null zone → browser-local).
@@ -238,9 +262,6 @@ export function WeekCalendarView({
   // Powers the footer row under each day column.
   const dayTotals = useMemo(() => {
     const out = new Map<string, { count: number; minutes: number; cost: number }>();
-    const dayKeys = Array.from({ length: dayCount }).map((_, i) =>
-      ymd(addDays(weekStart, i)),
-    );
     for (const k of dayKeys) {
       out.set(k, { count: 0, minutes: 0, cost: 0 });
     }
@@ -259,7 +280,7 @@ export function WeekCalendarView({
       }
     }
     return out;
-  }, [shifts, weekStart, dayCount, displayTimeZone]);
+  }, [shifts, dayKeys, displayTimeZone]);
 
   // Per-associate weekly minutes (only counting shifts in the visible range).
   const weeklyMinutes = useMemo(() => {
@@ -361,28 +382,33 @@ export function WeekCalendarView({
     // overlap with that associate's other shifts on that same day. The
     // dragged shift itself is excluded so dropping it back onto its own
     // cell never lights up red. Predict the drop in the grid's zone (null →
-    // browser-local, identical to the old setHours math).
+    // browser-local, identical to the old setHours math). The predicted
+    // instant depends only on the DAY, so it's computed once per column
+    // here, not once per associate × day.
+    const dayDrops = dayKeys.map((key) => {
+      const [yy, mm, dd] = key.split('-').map(Number);
+      const target = zonedWallTimeToUtc(
+        yy, mm, dd,
+        Math.floor(dayMinutes / 60), dayMinutes % 60,
+        displayTimeZone,
+      );
+      return { key, target, targetEnd: new Date(target.getTime() + durationMs) };
+    });
     for (const a of visibleAssociates) {
-      for (const d of days) {
-        const [yy, mm, dd] = ymd(d).split('-').map(Number);
-        const target = zonedWallTimeToUtc(
-          yy, mm, dd,
-          Math.floor(dayMinutes / 60), dayMinutes % 60,
-          displayTimeZone,
-        );
-        const targetEnd = new Date(target.getTime() + durationMs);
-        const cellShifts = byCell.get(`${a.id}_${ymd(d)}`) ?? [];
+      for (const { key, target, targetEnd } of dayDrops) {
+        const cellShifts = byCell.get(`${a.id}_${key}`);
+        if (!cellShifts) continue;
         const conflict = cellShifts.some((s) => {
           if (s.id === activeDragShift.id) return false;
           const sStart = new Date(s.startsAt);
           const sEnd = new Date(s.endsAt);
           return sStart < targetEnd && sEnd > target;
         });
-        if (conflict) out.add(`${a.id}_${ymd(d)}`);
+        if (conflict) out.add(`${a.id}_${key}`);
       }
     }
     return out;
-  }, [activeDragShift, visibleAssociates, days, byCell, displayTimeZone]);
+  }, [activeDragShift, visibleAssociates, dayKeys, byCell, displayTimeZone]);
 
   return (
     <DndContext
@@ -435,24 +461,25 @@ export function WeekCalendarView({
             sublabel="OPEN shifts"
             tone="warning"
           />
-          {days.map((d) => (
+          {days.map((d, i) => (
             <Cell
               key={`u_${d.getTime()}`}
               cellId={`cell:${UNASSIGNED_ROW_ID}:${d.getTime()}`}
-              shifts={byCell.get(`${UNASSIGNED_ROW_ID}_${ymd(d)}`) ?? []}
+              shifts={byCell.get(`${UNASSIGNED_ROW_ID}_${dayKeys[i]}`) ?? EMPTY_SHIFTS}
               dayStart={d}
+              associateId={null}
               isToday={sameDay(d, today)}
               canManage={canManage}
               onShiftClick={onShiftClick}
-              onCreate={() => onCellCreate(d, null)}
+              onCellCreate={onCellCreate}
               onShiftResize={onShiftResize}
-              hoverBind={hover.bind}
-              onContextMenu={ctxMenu.openFor}
+              hoverBind={hoverBind}
+              onContextMenu={openContextMenu}
               movingShiftId={movingShiftId}
               selectedIds={selectedIds}
               isConflictTarget={false}
               variant="unassigned"
-              onTemplateDrop={(tplId) => onTemplateDrop(tplId, d, null)}
+              onTemplateDrop={onTemplateDrop}
             />
           ))}
 
@@ -478,12 +505,13 @@ export function WeekCalendarView({
                 overTime={overTime}
                 nearOT={nearOT}
               >
-                {days.map((d) => {
+                {days.map((d, i) => {
+                  const dayKey = dayKeys[i];
                   // Availability shading: PTO-blocked days beat
                   // outside-weekly-availability days. Zero windows = no
                   // data, not "unavailable everywhere" → no shading.
                   const shade: 'blocked' | 'outside' | null = fit
-                    ? fit.blocked.has(ymd(d))
+                    ? fit.blocked.has(dayKey)
                       ? 'blocked'
                       : fit.dows.size > 0 && !fit.dows.has(d.getDay())
                         ? 'outside'
@@ -493,20 +521,21 @@ export function WeekCalendarView({
                     <Cell
                       key={`${a.id}_${d.getTime()}`}
                       cellId={`cell:${a.id}:${d.getTime()}`}
-                      shifts={byCell.get(`${a.id}_${ymd(d)}`) ?? []}
+                      shifts={byCell.get(`${a.id}_${dayKey}`) ?? EMPTY_SHIFTS}
                       dayStart={d}
+                      associateId={a.id}
                       isToday={sameDay(d, today)}
                       canManage={canManage}
                       onShiftClick={onShiftClick}
-                      onCreate={() => onCellCreate(d, a.id)}
+                      onCellCreate={onCellCreate}
                       onShiftResize={onShiftResize}
-                      hoverBind={hover.bind}
-                      onContextMenu={ctxMenu.openFor}
+                      hoverBind={hoverBind}
+                      onContextMenu={openContextMenu}
                       movingShiftId={movingShiftId}
                       selectedIds={selectedIds}
-                      isConflictTarget={conflictCellKeys.has(`${a.id}_${ymd(d)}`)}
+                      isConflictTarget={conflictCellKeys.has(`${a.id}_${dayKey}`)}
                       variant="default"
-                      onTemplateDrop={(tplId) => onTemplateDrop(tplId, d, a.id)}
+                      onTemplateDrop={onTemplateDrop}
                       availabilityShade={shade}
                     />
                   );
@@ -519,8 +548,8 @@ export function WeekCalendarView({
           <div className="sticky left-0 z-10 bg-navy/95 backdrop-blur border-t border-r border-navy-secondary px-3 py-2 text-[10px] uppercase tracking-wider text-silver/70">
             Daily total
           </div>
-          {days.map((d) => {
-            const t = dayTotals.get(ymd(d));
+          {days.map((d, i) => {
+            const t = dayTotals.get(dayKeys[i]);
             const count = t?.count ?? 0;
             const hrs = (t?.minutes ?? 0) / 60;
             const cost = t?.cost ?? 0;
@@ -599,7 +628,7 @@ export function WeekCalendarView({
 
 /* ===== Subcomponents ====================================================== */
 
-function Row({
+const Row = memo(function Row({
   associate,
   minutes,
   overTime,
@@ -640,7 +669,7 @@ function Row({
       {children}
     </>
   );
-}
+});
 
 function RailCell({
   label,
@@ -675,15 +704,16 @@ function RailCell({
   );
 }
 
-function Cell({
+const Cell = memo(function Cell({
   cellId,
   shifts,
-  dayStart: _dayStart,
+  dayStart,
+  associateId,
   isToday,
   canManage,
   onShiftClick,
   onContextMenu,
-  onCreate,
+  onCellCreate,
   onShiftResize,
   hoverBind,
   movingShiftId,
@@ -696,11 +726,13 @@ function Cell({
   cellId: string;
   shifts: Shift[];
   dayStart: Date;
+  /** Row owner — null for the Unassigned row. */
+  associateId: string | null;
   isToday: boolean;
   canManage: boolean;
   onShiftClick: (s: Shift, e: React.MouseEvent) => void;
   onContextMenu: (s: Shift, e: React.MouseEvent) => void;
-  onCreate: () => void;
+  onCellCreate: (dayStart: Date, associateId: string | null) => void;
   onShiftResize: (s: Shift, newEndsAt: Date) => Promise<void>;
   hoverBind: (s: Shift) => {
     onPointerEnter: (e: React.PointerEvent<HTMLElement>) => void;
@@ -710,7 +742,7 @@ function Cell({
   selectedIds: Set<string>;
   isConflictTarget: boolean;
   variant: 'default' | 'unassigned';
-  onTemplateDrop: (templateId: string) => void;
+  onTemplateDrop: (templateId: string, dayStart: Date, associateId: string | null) => void;
   /** Availability tint (associate rows only): PTO-blocked or outside windows. */
   availabilityShade?: 'blocked' | 'outside' | null;
 }) {
@@ -731,8 +763,9 @@ function Cell({
     const tplId = e.dataTransfer.getData(TEMPLATE_MIME);
     if (!tplId) return;
     e.preventDefault();
-    onTemplateDrop(tplId);
+    onTemplateDrop(tplId, dayStart, associateId);
   };
+  const onCreate = () => onCellCreate(dayStart, associateId);
 
   return (
     <div
@@ -811,7 +844,7 @@ function Cell({
       )}
     </div>
   );
-}
+});
 
 function ShiftChip({
   shift,

@@ -1,5 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
-import { Sentry } from '@/lib/sentry';
+import { captureException } from '@/lib/sentry';
 import { ApiError } from '@/lib/api';
 
 /**
@@ -32,9 +32,9 @@ export class GlobalErrorBoundary extends Component<{ children: ReactNode }, Stat
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    // Sentry.captureException no-ops when DSN unset. Component stack is
+    // captureException no-ops when DSN unset. Component stack is
     // the most useful extra to attach — points at which subtree blew up.
-    Sentry.captureException(error, {
+    captureException(error, {
       extra: { componentStack: info.componentStack },
     });
   }

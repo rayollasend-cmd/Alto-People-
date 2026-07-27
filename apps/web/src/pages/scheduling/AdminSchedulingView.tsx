@@ -845,6 +845,73 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     candidates: AutoFillCandidate[];
   } | null>(null);
 
+  // Identity key of ONLY the inputs the ACTIVE view's request reads. Each
+  // view fetches a different window: week → weekStart/weekEnd, day →
+  // dayAnchor, month → monthAnchor, list → status filter + listFrom/listTo.
+  // Client (and location, which only narrows within a client) apply to all.
+  // Keying the request on this string means touching a knob another view
+  // owns — e.g. clicking a list-only status chip while in week view — does
+  // NOT rebuild the args, recreate refresh(), or re-fire the fetch effect.
+  const requestKey = [
+    view === 'week'
+      ? `week|${weekStart.toISOString()}|${weekEnd.toISOString()}`
+      : view === 'day'
+        ? `day|${dayAnchor.toISOString()}`
+        : view === 'month'
+          ? `month|${monthAnchor.toISOString()}`
+          : `list|${filter}|${listFrom}|${listTo}`,
+    clientFilter,
+    clientFilter ? locationFilter : '',
+  ].join('|');
+
+  // Calendar views load the visible window; list view honors the status
+  // filter chips. Position/client/location filters apply client-side
+  // because they're cheap and lets the calendar respond instantly.
+  //
+  // requestKey encodes every value the active branch below reads, so the
+  // values are always fresh whenever this memo recomputes.
+  const requestArgs = useMemo<Parameters<typeof listShifts>[0]>(() => {
+    let args: Parameters<typeof listShifts>[0] = {};
+    if (view === 'week') {
+      args = { from: weekStart.toISOString(), to: weekEnd.toISOString() };
+    } else if (view === 'day') {
+      const dayEnd = new Date(dayAnchor);
+      dayEnd.setDate(dayEnd.getDate() + 1);
+      args = { from: dayAnchor.toISOString(), to: dayEnd.toISOString() };
+    } else if (view === 'month') {
+      // The month grid renders a full 6-week window (the Monday on/before
+      // the 1st through 42 days), so it shows trailing days of the prev/next
+      // month. Fetch that whole VISIBLE range — not just [1st, 1st-of-next)
+      // — or shifts on those adjacent-month cells render blank.
+      const gridStart = startOfWeekMonday(monthAnchor);
+      const gridEnd = addDaysLocal(gridStart, 42);
+      args = { from: gridStart.toISOString(), to: gridEnd.toISOString() };
+    } else {
+      args = filter === 'ALL' ? {} : { status: filter };
+      // Phase 54.2 — list view honors a date range alongside the status
+      // filter. Empty bounds = unbounded on that side.
+      if (listFrom) {
+        args = { ...args, from: fromYmd(listFrom).toISOString() };
+      }
+      if (listTo) {
+        // Inclusive end-of-day: send the *next* day at 00:00 as the exclusive
+        // upper bound (server uses `lt`), capturing the full last day.
+        const end = fromYmd(listTo);
+        end.setDate(end.getDate() + 1);
+        args = { ...args, to: end.toISOString() };
+      }
+    }
+    if (clientFilter) args = { ...args, clientId: clientFilter };
+    // Location only narrows within a client (a Location belongs to one).
+    if (clientFilter && locationFilter) {
+      args = { ...args, locationId: locationFilter };
+    }
+    return args;
+    // requestKey is a serialized identity of exactly the inputs the active
+    // branch reads, so depending on it alone is safe.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestKey]);
+
   // Monotonic request id: a newer refresh() supersedes any in-flight one, so
   // a slow earlier response can't land last and repaint stale shifts (rapid
   // week paging, or a mutation's refresh racing a navigation's).
@@ -852,45 +919,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const refresh = useCallback(async () => {
     const seq = ++reqSeq.current;
     try {
-      // Calendar views load the visible window; list view honors the status
-      // filter chips. Position/client/location filters apply client-side
-      // because they're cheap and lets the calendar respond instantly.
-      let args: Parameters<typeof listShifts>[0] = {};
-      if (view === 'week') {
-        args = { from: weekStart.toISOString(), to: weekEnd.toISOString() };
-      } else if (view === 'day') {
-        const dayEnd = new Date(dayAnchor);
-        dayEnd.setDate(dayEnd.getDate() + 1);
-        args = { from: dayAnchor.toISOString(), to: dayEnd.toISOString() };
-      } else if (view === 'month') {
-        // The month grid renders a full 6-week window (the Monday on/before
-        // the 1st through 42 days), so it shows trailing days of the prev/next
-        // month. Fetch that whole VISIBLE range — not just [1st, 1st-of-next)
-        // — or shifts on those adjacent-month cells render blank.
-        const gridStart = startOfWeekMonday(monthAnchor);
-        const gridEnd = addDaysLocal(gridStart, 42);
-        args = { from: gridStart.toISOString(), to: gridEnd.toISOString() };
-      } else {
-        args = filter === 'ALL' ? {} : { status: filter };
-        // Phase 54.2 — list view honors a date range alongside the status
-        // filter. Empty bounds = unbounded on that side.
-        if (listFrom) {
-          args = { ...args, from: fromYmd(listFrom).toISOString() };
-        }
-        if (listTo) {
-          // Inclusive end-of-day: send the *next* day at 00:00 as the exclusive
-          // upper bound (server uses `lt`), capturing the full last day.
-          const end = fromYmd(listTo);
-          end.setDate(end.getDate() + 1);
-          args = { ...args, to: end.toISOString() };
-        }
-      }
-      if (clientFilter) args = { ...args, clientId: clientFilter };
-      // Location only narrows within a client (a Location belongs to one).
-      if (clientFilter && locationFilter) {
-        args = { ...args, locationId: locationFilter };
-      }
-      const res = await listShifts(args);
+      const res = await listShifts(requestArgs);
       // A newer request started while we were awaiting → discard this result.
       if (seq !== reqSeq.current) return;
       setShifts(res.shifts);
@@ -900,7 +929,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       const msg = err instanceof ApiError ? err.message : 'Failed to load shifts.';
       toast.error(msg);
     }
-  }, [filter, view, weekStart, weekEnd, dayAnchor, monthAnchor, clientFilter, locationFilter, listFrom, listTo]);
+  }, [requestArgs]);
 
   useEffect(() => {
     refresh();
@@ -985,6 +1014,14 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     if (!pos) return shifts;
     return shifts.filter((s) => s.position.trim().toLowerCase() === pos);
   }, [shifts, posFilter]);
+
+  // Shift objects behind the current bulk selection — memoized so the
+  // SelectionToolbar doesn't get a freshly-allocated array (new identity)
+  // on every parent render.
+  const selectedShifts = useMemo(
+    () => (filteredShifts ?? []).filter((s) => selectedIds.has(s.id)),
+    [filteredShifts, selectedIds],
+  );
 
   // The distinct positions actually used in the loaded schedule — drives the
   // position filter dropdown (Sling-style: pick from what you've scheduled
@@ -2377,7 +2414,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       )}
 
       {/* List view: empty state */}
-      {shifts && view === 'list' && shifts.length === 0 && (
+      {filteredShifts && view === 'list' && filteredShifts.length === 0 && (
         <EmptyState
           icon={Calendar}
           title="No shifts match this filter"
@@ -2406,7 +2443,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         </ErrorBanner>
       )}
 
-      {shifts && view === 'list' && shifts.length > 0 && (
+      {filteredShifts && view === 'list' && filteredShifts.length > 0 && (
         <Card className="overflow-hidden">
           <Table>
             <TableHeader>
@@ -2421,7 +2458,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {shifts.map((s) => (
+              {filteredShifts.map((s) => (
                 <TableRow key={s.id}>
                   <TableCell className="font-medium">
                     <div className="min-w-0">
@@ -2721,7 +2758,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           one or more chips are selected. Lives at the page level so it
           floats over both week-view layouts. */}
       <SelectionToolbar
-        selected={(filteredShifts ?? []).filter((s) => selectedIds.has(s.id))}
+        selected={selectedShifts}
         onClear={clearSelection}
         onAfterAction={refresh}
       />

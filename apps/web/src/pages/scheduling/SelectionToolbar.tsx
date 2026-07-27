@@ -75,17 +75,35 @@ export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
     let ok = 0;
     let fail = 0;
     const failures: string[] = [];
-    for (const s of selected) {
-      try {
-        await action(s);
-        ok += 1;
-      } catch (err) {
-        fail += 1;
-        if (failures.length < 3) {
-          failures.push(err instanceof ApiError ? err.message : 'Unknown error');
+    // Bounded-concurrency runner: up to 6 requests in flight so a 50-shift
+    // publish isn't 50 sequential round-trips. Each item keeps
+    // Promise.allSettled semantics — one failure never tanks the batch, it
+    // just counts toward the same success/failure tally the old serial
+    // loop kept. Workers pull the next index from a shared cursor; the
+    // cursor read+bump is synchronous, so two workers can't claim one item.
+    const CONCURRENCY = 6;
+    let cursor = 0;
+    const worker = async (): Promise<void> => {
+      while (cursor < selected.length) {
+        const s = selected[cursor];
+        cursor += 1;
+        try {
+          await action(s);
+          ok += 1;
+        } catch (err) {
+          fail += 1;
+          if (failures.length < 3) {
+            failures.push(err instanceof ApiError ? err.message : 'Unknown error');
+          }
         }
       }
-    }
+    };
+    await Promise.all(
+      Array.from(
+        { length: Math.min(CONCURRENCY, selected.length) },
+        () => worker(),
+      ),
+    );
     if (ok > 0 && fail === 0) {
       toast.success(`${label} ${ok} shift${ok === 1 ? '' : 's'}.`);
     } else if (ok > 0 && fail > 0) {

@@ -17,7 +17,7 @@ import {
   type PulseSurveyOpen,
 } from '@/lib/pulseSurveys109Api';
 import { listDepartments } from '@/lib/orgApi';
-import { listClients } from '@/lib/clientsApi';
+import { useClients } from '@/lib/useClients';
 import type { Department } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
@@ -498,8 +498,14 @@ function NewSurveyDrawer({
   const [saving, setSaving] = useState(false);
   const [departments, setDepartments] = useState<Department[] | null>(null);
   const [departmentsError, setDepartmentsError] = useState<string | null>(null);
-  const [clients, setClients] = useState<{ id: string; name: string }[] | null>(null);
-  const [clientsError, setClientsError] = useState<string | null>(null);
+  // Shared react-query cache; only fetched once a BY_CLIENT audience is
+  // picked (most surveys go to everyone, so don't fetch upfront).
+  const {
+    clients,
+    isLoading: clientsLoading,
+    isError: clientsError,
+    refetch: refetchClients,
+  } = useClients({ enabled: audience === 'BY_CLIENT' });
 
   const loadDepartments = () => {
     setDepartments(null);
@@ -512,28 +518,12 @@ function NewSurveyDrawer({
         ),
       );
   };
-  const loadClients = () => {
-    setClients(null);
-    setClientsError(null);
-    listClients()
-      .then((r) =>
-        setClients(r.clients.map((c) => ({ id: c.id, name: c.name }))),
-      )
-      .catch((err) =>
-        setClientsError(
-          err instanceof ApiError ? err.message : 'Could not load clients.',
-        ),
-      );
-  };
 
   // Lazy-load the picker source the first time the user picks a non-ALL
   // audience. Most surveys go to everyone, so don't fetch upfront.
   useEffect(() => {
     if (audience === 'BY_DEPARTMENT' && departments === null && !departmentsError) {
       loadDepartments();
-    }
-    if (audience === 'BY_CLIENT' && clients === null && !clientsError) {
-      loadClients();
     }
     // Reset selection when the audience type changes.
     setAudienceId('');
@@ -654,8 +644,12 @@ function NewSurveyDrawer({
             {clientsError ? (
               <ErrorBanner className="mt-1">
                 <div className="flex items-center justify-between gap-3">
-                  <span>{clientsError}</span>
-                  <Button size="sm" variant="outline" onClick={loadClients}>
+                  <span>Could not load clients.</span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void refetchClients()}
+                  >
                     Retry
                   </Button>
                 </div>
@@ -665,12 +659,12 @@ function NewSurveyDrawer({
                 className="mt-1"
                 value={audienceId}
                 onChange={(e) => setAudienceId(e.target.value)}
-                disabled={clients === null}
+                disabled={clientsLoading}
               >
                 <option value="">
-                  {clients === null ? 'Loading…' : 'Select a client…'}
+                  {clientsLoading ? 'Loading…' : 'Select a client…'}
                 </option>
-                {(clients ?? []).map((c) => (
+                {clients.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>

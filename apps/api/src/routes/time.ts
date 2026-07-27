@@ -29,6 +29,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopeTimeEntries, scopeShifts, effectiveClientIdFilter } from '../lib/scope.js';
+import { runWithConcurrency } from '../lib/concurrency.js';
 import { z } from 'zod';
 import { recordTimeEvent } from '../lib/audit.js';
 import { recomputeEntryAnomalies } from '../lib/recomputeEntryAnomalies.js';
@@ -1598,13 +1599,17 @@ timeRouter.post('/admin/bulk-approve', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
     const user = req.user!;
-    const results: BulkTimeResultRow[] = [];
     let succeeded = 0;
     let failed = 0;
     // One SUMMARY notification per associate, not one per entry — a
     // Friday bulk-approve of 40 entries must not buzz a phone 5 times.
     const approvedByAssociate = new Map<string, { count: number; minutes: number }>();
-    for (const entryId of parsed.data.entryIds) {
+    // PERF: bounded parallelism — each entry costs several queries
+    // (scope check, update, accrual); fully-serial was ~5 round-trips ×
+    // 500 ids per request. Results are index-addressed so response order
+    // stays stable under concurrency.
+    const results: BulkTimeResultRow[] = new Array(parsed.data.entryIds.length);
+    await runWithConcurrency(parsed.data.entryIds, 6, async (entryId, i) => {
       try {
         const done = await approveOneEntry(user, entryId, req);
         if (done) {
@@ -1613,15 +1618,15 @@ timeRouter.post('/admin/bulk-approve', MANAGE, async (req, res, next) => {
           agg.minutes += done.minutes;
           approvedByAssociate.set(done.associateId, agg);
         }
-        results.push({ entryId, ok: true, errorCode: null, errorMessage: null });
+        results[i] = { entryId, ok: true, errorCode: null, errorMessage: null };
         succeeded++;
       } catch (err) {
         const errorCode = err instanceof HttpError ? err.code : 'approve_failed';
         const errorMessage = err instanceof Error ? err.message : String(err);
-        results.push({ entryId, ok: false, errorCode, errorMessage });
+        results[i] = { entryId, ok: false, errorCode, errorMessage };
         failed++;
       }
-    }
+    });
     for (const [associateId, agg] of approvedByAssociate) {
       void notifyAssociate(associateId, {
         subject: 'Hours approved',
@@ -1645,11 +1650,12 @@ timeRouter.post('/admin/bulk-reject', MANAGE, async (req, res, next) => {
     }
     const user = req.user!;
     const { entryIds, reason } = parsed.data;
-    const results: BulkTimeResultRow[] = [];
     let succeeded = 0;
     let failed = 0;
     const rejectedByAssociate = new Map<string, number>();
-    for (const entryId of entryIds) {
+    // PERF: bounded parallelism, order-stable results (see bulk-approve).
+    const results: BulkTimeResultRow[] = new Array(entryIds.length);
+    await runWithConcurrency(entryIds, 6, async (entryId, i) => {
       try {
         const done = await rejectOneEntry(user, entryId, reason, req);
         if (done) {
@@ -1658,15 +1664,15 @@ timeRouter.post('/admin/bulk-reject', MANAGE, async (req, res, next) => {
             (rejectedByAssociate.get(done.associateId) ?? 0) + 1,
           );
         }
-        results.push({ entryId, ok: true, errorCode: null, errorMessage: null });
+        results[i] = { entryId, ok: true, errorCode: null, errorMessage: null };
         succeeded++;
       } catch (err) {
         const errorCode = err instanceof HttpError ? err.code : 'reject_failed';
         const errorMessage = err instanceof Error ? err.message : String(err);
-        results.push({ entryId, ok: false, errorCode, errorMessage });
+        results[i] = { entryId, ok: false, errorCode, errorMessage };
         failed++;
       }
-    }
+    });
     for (const [associateId, count] of rejectedByAssociate) {
       void notifyAssociate(associateId, {
         subject: 'Time entries rejected',
@@ -1705,15 +1711,19 @@ timeRouter.post('/admin/bulk-apply-break', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
     const user = req.user!;
-    const results: BulkTimeResultRow[] = [];
     let succeeded = 0;
     let failed = 0;
-    for (const entryId of parsed.data.entryIds) {
+    // PERF: one batched scope+breaks read for the whole id set, then
+    // bounded-parallel writes (was ~5 serial queries × up to 500 ids).
+    const preloaded = await prisma.timeEntry.findMany({
+      where: { id: { in: parsed.data.entryIds }, ...scopeTimeEntries(user) },
+      include: { breaks: true },
+    });
+    const entryById = new Map(preloaded.map((e) => [e.id, e]));
+    const results: BulkTimeResultRow[] = new Array(parsed.data.entryIds.length);
+    await runWithConcurrency(parsed.data.entryIds, 6, async (entryId, i) => {
       try {
-        const entry = await prisma.timeEntry.findFirst({
-          where: { id: entryId, ...scopeTimeEntries(user) },
-          include: { breaks: true },
-        });
+        const entry = entryById.get(entryId);
         if (!entry) {
           throw new HttpError(404, 'not_found', 'Entry not found.');
         }
@@ -1742,7 +1752,9 @@ timeRouter.post('/admin/bulk-apply-break', MANAGE, async (req, res, next) => {
           },
         });
         // Break changes net minutes → NO_BREAK clears, OT flags may move.
-        await recomputeEntryAnomalies(prisma, entry.id);
+        // Fire-and-forget per its own contract (the helper's doc says
+        // callers should void it) — the anomaly chips are advisory.
+        void recomputeEntryAnomalies(prisma, entry.id);
         await recordTimeEvent({
           actorUserId: user.id,
           action: 'time.break_applied',
@@ -1752,15 +1764,15 @@ timeRouter.post('/admin/bulk-apply-break', MANAGE, async (req, res, next) => {
           metadata: { minutes: APPLIED_BREAK_MINUTES, standard: true },
           req,
         });
-        results.push({ entryId, ok: true, errorCode: null, errorMessage: null });
+        results[i] = { entryId, ok: true, errorCode: null, errorMessage: null };
         succeeded++;
       } catch (err) {
         const errorCode = err instanceof HttpError ? err.code : 'apply_break_failed';
         const errorMessage = err instanceof Error ? err.message : String(err);
-        results.push({ entryId, ok: false, errorCode, errorMessage });
+        results[i] = { entryId, ok: false, errorCode, errorMessage };
         failed++;
       }
-    }
+    });
     const response: BulkTimeResponse = { succeeded, failed, results };
     res.status(200).json(response);
   } catch (err) {

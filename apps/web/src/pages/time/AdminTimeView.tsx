@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Activity,
@@ -43,7 +43,8 @@ import {
   listPayPeriods,
   rejectTimeEntry,
 } from '@/lib/timeApi';
-import { listClients, listClientLocations } from '@/lib/clientsApi';
+import { listClientLocations } from '@/lib/clientsApi';
+import { useClients } from '@/lib/useClients';
 import { listShifts, listSchedulingAssociates } from '@/lib/schedulingApi';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -102,6 +103,24 @@ function formatHM(mins: number): string {
   const m = mins % 60;
   if (h === 0) return `${m}m`;
   return `${h}h ${m.toString().padStart(2, '0')}m`;
+}
+
+// PERF: the desktop table and the phone card stack used to BOTH mount — CSS
+// (`hidden md:block` / `md:hidden`) hid one, but React still committed up to
+// 500 dead heavy rows for the hidden list. This matchMedia hook (Tailwind's
+// `md:` breakpoint) lets us mount only the list the viewport can show, and
+// re-render on breakpoint crossings (resize / rotation).
+function useIsDesktop(): boolean {
+  const [isDesktop, setIsDesktop] = useState(
+    () => window.matchMedia('(min-width: 768px)').matches,
+  );
+  useEffect(() => {
+    const mql = window.matchMedia('(min-width: 768px)');
+    const onChange = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, []);
+  return isDesktop;
 }
 
 function statusVariant(s: TimeEntryStatus): 'success' | 'pending' | 'destructive' | 'accent' | 'default' {
@@ -283,6 +302,17 @@ function ymdToIsoEndExclusive(ymd: string): string {
   return d.toISOString();
 }
 
+// Pay periods are static config for the tenant — cache them at module level
+// so remounting this view (tab hops, route changes) doesn't refetch.
+// Failures are NOT cached, so the next mount retries.
+let payPeriodsCache: PayPeriod[] | null = null;
+
+/** Tests mock listPayPeriods per-case; the module cache would otherwise
+ *  leak the first case's periods into the rest of the file's tests. */
+export function __resetPayPeriodsCacheForTests(): void {
+  payPeriodsCache = null;
+}
+
 interface AdminTimeViewProps {
   canManage: boolean;
 }
@@ -321,6 +351,7 @@ function liveEntryToTimeEntry(e: ActiveDashboardEntry): TimeEntry {
 
 export function AdminTimeView({ canManage }: AdminTimeViewProps) {
   const navigate = useNavigate();
+  const isDesktop = useIsDesktop();
   const [tab, setTab] = useState<Tab>('live');
   // Persisted list filter — a reviewer who works the Approved slice gets it
   // back next visit. A stored value no longer in STATUS_FILTERS falls back
@@ -376,11 +407,16 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     name: string;
   } | null>(null);
 
-  const focusOn = (e: TimeEntry) => {
-    setFocusAssociate({ id: e.associateId, name: e.associateName ?? '—' });
-    // Their full timesheet, not just the current status slice.
-    setFilter('ALL');
-  };
+  // Stable (useCallback, empty-ish deps) so the memoised queue rows don't
+  // re-render when unrelated parent state changes.
+  const focusOn = useCallback(
+    (e: TimeEntry) => {
+      setFocusAssociate({ id: e.associateId, name: e.associateName ?? '—' });
+      // Their full timesheet, not just the current status slice.
+      setFilter('ALL');
+    },
+    [setFilter],
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -429,10 +465,17 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     ]);
   }, [tab, refresh, refreshActive, refreshPendingCount]);
 
+  // Two effects, one per tab, each depending only on its own tab's inputs.
+  // A single combined effect used to re-run refreshActive() whenever a
+  // queue-only filter changed `refresh`'s identity while the live tab was
+  // open — a pointless dashboard refetch per keystroke/date change.
   useEffect(() => {
     if (tab === 'queue') refresh();
-    else refreshActive();
-  }, [tab, refresh, refreshActive]);
+  }, [tab, refresh]);
+
+  useEffect(() => {
+    if (tab === 'live') refreshActive();
+  }, [tab, refreshActive]);
 
   // KPI: pending count loads independent of which tab is open.
   useEffect(() => {
@@ -445,11 +488,19 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     return () => clearTimeout(id);
   }, [queueSearch]);
 
-  // Pay-period options load once; on failure the picker simply stays hidden
-  // and the manual From/To range keeps working.
+  // Pay-period options load once per app session (module-level cache — they
+  // are static config); on failure the picker simply stays hidden and the
+  // manual From/To range keeps working.
   useEffect(() => {
+    if (payPeriodsCache) {
+      setPayPeriods(payPeriodsCache);
+      return;
+    }
     listPayPeriods()
-      .then((r) => setPayPeriods(r.periods))
+      .then((r) => {
+        payPeriodsCache = r.periods;
+        setPayPeriods(r.periods);
+      })
       .catch(() => setPayPeriods([]));
   }, []);
 
@@ -462,30 +513,63 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     setToYmd(p.end);
   };
 
-  // Auto-refresh the live tab every 30s while it's open.
+  // Auto-refresh the live tab every 30s while it's open — paused while the
+  // browser tab is hidden (mirrors NotificationsBell): no point polling a
+  // dashboard nobody can see, and no backlog of throttled fires dumping at
+  // once on return. Coming back refetches immediately and restarts the timer.
   useEffect(() => {
     if (tab !== 'live') return;
-    const id = setInterval(refreshActive, 30_000);
-    return () => clearInterval(id);
+    let id = window.setInterval(refreshActive, 30_000);
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        window.clearInterval(id);
+        refreshActive();
+        id = window.setInterval(refreshActive, 30_000);
+      } else {
+        window.clearInterval(id);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, [tab, refreshActive]);
 
-  const onApprove = async (id: string) => {
-    if (pendingId) return;
-    setPendingId(id);
-    try {
-      await approveTimeEntry(id);
-      await Promise.all([refresh(), refreshPendingCount()]);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Approve failed.');
-    } finally {
-      setPendingId(null);
-    }
-  };
+  // Ref-mirrored guard so this callback stays identity-stable across
+  // pendingId flips — a stable handler is what lets the memoised queue rows
+  // skip re-rendering 500 rows on one Approve click.
+  const pendingIdRef = useRef<string | null>(null);
+  const onApprove = useCallback(
+    async (id: string) => {
+      if (pendingIdRef.current) return;
+      pendingIdRef.current = id;
+      setPendingId(id);
+      try {
+        await approveTimeEntry(id);
+        await Promise.all([refresh(), refreshPendingCount()]);
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : 'Approve failed.');
+      } finally {
+        pendingIdRef.current = null;
+        setPendingId(null);
+      }
+    },
+    [refresh, refreshPendingCount],
+  );
+
+  // Stable id-taking openers for the memoised queue rows.
+  const openRejectOne = useCallback(
+    (id: string) => setRejectOpen({ mode: 'one', id }),
+    [],
+  );
+  const openDrawer = useCallback((e: TimeEntry) => setDrawerTarget(e), []);
 
   const onSubmitReject = async (reason: string) => {
     if (!rejectOpen) return;
     if (rejectOpen.mode === 'one') {
       const id = rejectOpen.id;
+      pendingIdRef.current = id;
       setPendingId(id);
       try {
         await rejectTimeEntry(id, { reason });
@@ -494,6 +578,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
       } catch (err) {
         setError(err instanceof ApiError ? err.message : 'Reject failed.');
       } finally {
+        pendingIdRef.current = null;
         setPendingId(null);
       }
       return;
@@ -637,14 +722,14 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     else setSelected(new Set(selectableIds));
   };
 
-  const toggleOne = (id: string) => {
+  const toggleOne = useCallback((id: string) => {
     setSelected((s) => {
       const next = new Set(s);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
-  };
+  }, []);
 
   return (
     <div className="mx-auto">
@@ -771,8 +856,11 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
             )}
             {active && active.length > 0 && filteredActive && (
               <>
-                {/* md+ : full columnar table. */}
-                <div className="hidden md:block">
+                {/* md+ : full columnar table. Only the breakpoint-active
+                    list mounts (useIsDesktop) — the hidden twin used to
+                    double the DOM for nothing. */}
+                {isDesktop && (
+                <div>
                   <Table caption="Currently clocked in">
                     <TableHeader>
                       <TableRow>
@@ -837,11 +925,13 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                     </TableBody>
                   </Table>
                 </div>
+                )}
 
                 {/* Phone: card stack. Manager scans for "who's on shift" /
                     "is anyone off-site"; the elapsed counter and break
                     state are the load-bearing bits. */}
-                <ul className="md:hidden space-y-2">
+                {!isDesktop && (
+                <ul className="space-y-2">
                   {filteredActive.map((e) => (
                     <li
                       key={e.id}
@@ -895,6 +985,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                     </li>
                   ))}
                 </ul>
+                )}
                 {filteredActive.length === 0 && (
                   <p className="text-sm text-silver mt-3">
                     No matches for &ldquo;{liveSearch}&rdquo;.
@@ -1146,8 +1237,10 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
             )}
             {visibleEntries && visibleEntries.length > 0 && (
               <>
-                {/* md+ : full sortable table. */}
-                <div className="hidden md:block">
+                {/* md+ : full sortable table. Only the breakpoint-active
+                    list mounts (useIsDesktop). */}
+                {isDesktop && (
+                <div>
                   <Table caption="Time entries">
                     <TableHeader>
                       <TableRow>
@@ -1187,109 +1280,34 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {sortedEntries.map((e) => {
-                        const isSelectable = canManage && filter === 'COMPLETED' && e.status === 'COMPLETED';
-                        return (
-                          <TableRow
-                            key={e.id}
-                            className="group cursor-pointer"
-                            data-state={selected.has(e.id) ? 'selected' : undefined}
-                            onClick={(ev) => {
-                              const target = ev.target as HTMLElement;
-                              if (target.closest('button, a, input, [data-no-row-click]')) return;
-                              if (window.getSelection()?.toString()) return;
-                              setDrawerTarget(e);
-                            }}
-                          >
-                            {canManage && filter === 'COMPLETED' && (
-                              <TableCell className="w-8">
-                                {isSelectable && (
-                                  <input
-                                    type="checkbox"
-                                    aria-label={`Select entry for ${e.associateName ?? 'associate'}`}
-                                    checked={selected.has(e.id)}
-                                    onChange={() => toggleOne(e.id)}
-                                    className="h-4 w-4 rounded border-navy-secondary bg-navy-secondary/40 text-gold focus:ring-gold"
-                                  />
-                                )}
-                              </TableCell>
-                            )}
-                            <TableCell className="font-medium">
-                              <button
-                                type="button"
-                                onClick={() => focusOn(e)}
-                                title="View individual timesheet"
-                                className="flex items-center gap-2.5 rounded text-left hover:text-gold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-                              >
-                                <Avatar name={e.associateName ?? '—'} size="sm" />
-                                <span className="underline-offset-2 hover:underline">
-                                  {e.associateName ?? '—'}
-                                </span>
-                              </button>
-                            </TableCell>
-                            <TableCell className="text-silver">{e.clientName ?? '—'}</TableCell>
-                            <TableCell className="tabular-nums">
-                              {fmtDateTime(e.clockInAt)}
-                            </TableCell>
-                            <TableCell className="tabular-nums">
-                              {e.clockOutAt ? fmtTime(e.clockOutAt) : '—'}
-                            </TableCell>
-                            <TableCell>
-                              <DurationCell entry={e} />
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <Badge variant={statusVariant(e.status)}>{e.status}</Badge>
-                                <LateChip entry={e} />
-                              </div>
-                              <AnomalyChips anomalies={e.anomalies} />
-                              {e.rejectionReason && (
-                                <div className="text-alert text-[10px] mt-1">
-                                  {e.rejectionReason}
-                                </div>
-                              )}
-                            </TableCell>
-                            {canManage && (
-                              <TableCell className="text-right whitespace-nowrap">
-                                <div className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity inline-flex items-center gap-1">
-                                  {(e.status === 'COMPLETED' || e.status === 'REJECTED') && (
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => onApprove(e.id)}
-                                      loading={pendingId === e.id}
-                                      disabled={pendingId === e.id || bulkBusy}
-                                    >
-                                      Approve
-                                    </Button>
-                                  )}
-                                  {(e.status === 'COMPLETED' || e.status === 'APPROVED') && (
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
-                                      className="text-alert hover:text-alert hover:bg-alert/10"
-                                      onClick={() => setRejectOpen({ mode: 'one', id: e.id })}
-                                      disabled={pendingId === e.id || bulkBusy}
-                                    >
-                                      Reject
-                                    </Button>
-                                  )}
-                                </div>
-                              </TableCell>
-                            )}
-                          </TableRow>
-                        );
-                      })}
+                      {sortedEntries.map((e) => (
+                        <QueueEntryRow
+                          key={e.id}
+                          entry={e}
+                          canManage={canManage}
+                          showSelect={canManage && filter === 'COMPLETED'}
+                          isSelected={selected.has(e.id)}
+                          isPending={pendingId === e.id}
+                          bulkBusy={bulkBusy}
+                          onToggleSelect={toggleOne}
+                          onFocus={focusOn}
+                          onOpen={openDrawer}
+                          onApprove={onApprove}
+                          onReject={openRejectOne}
+                        />
+                      ))}
                     </TableBody>
                   </Table>
                 </div>
+                )}
 
                 {/* Phone: card stack. Approve/Reject are inline on each
                     card instead of hover-revealed; the row is also tap-to-
                     open the detail drawer (managers reach the audit trail
                     + edits there). Selection checkbox top-left when
                     bulk-eligible. */}
-                <ul className="md:hidden space-y-2">
+                {!isDesktop && (
+                <ul className="space-y-2">
                   {visibleEntries.map((e) => {
                     const isSelectable = canManage && filter === 'COMPLETED' && e.status === 'COMPLETED';
                     const showCheckbox = canManage && filter === 'COMPLETED';
@@ -1408,6 +1426,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                     );
                   })}
                 </ul>
+                )}
               </>
             )}
           </CardContent>
@@ -1493,6 +1512,127 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     </div>
   );
 }
+
+// One desktop queue row, memoised on the entry object + the few bits of
+// parent state that actually concern it (selection, its own pending flag,
+// bulk busy). With stable id-taking handlers, approving one entry no longer
+// re-renders the other ~499 rows.
+const QueueEntryRow = memo(function QueueEntryRow({
+  entry: e,
+  canManage,
+  showSelect,
+  isSelected,
+  isPending,
+  bulkBusy,
+  onToggleSelect,
+  onFocus,
+  onOpen,
+  onApprove,
+  onReject,
+}: {
+  entry: TimeEntry;
+  canManage: boolean;
+  showSelect: boolean;
+  isSelected: boolean;
+  isPending: boolean;
+  bulkBusy: boolean;
+  onToggleSelect: (id: string) => void;
+  onFocus: (entry: TimeEntry) => void;
+  onOpen: (entry: TimeEntry) => void;
+  onApprove: (id: string) => void;
+  onReject: (id: string) => void;
+}) {
+  const isSelectable = showSelect && e.status === 'COMPLETED';
+  return (
+    <TableRow
+      className="group cursor-pointer"
+      data-state={isSelected ? 'selected' : undefined}
+      onClick={(ev) => {
+        const target = ev.target as HTMLElement;
+        if (target.closest('button, a, input, [data-no-row-click]')) return;
+        if (window.getSelection()?.toString()) return;
+        onOpen(e);
+      }}
+    >
+      {showSelect && (
+        <TableCell className="w-8">
+          {isSelectable && (
+            <input
+              type="checkbox"
+              aria-label={`Select entry for ${e.associateName ?? 'associate'}`}
+              checked={isSelected}
+              onChange={() => onToggleSelect(e.id)}
+              className="h-4 w-4 rounded border-navy-secondary bg-navy-secondary/40 text-gold focus:ring-gold"
+            />
+          )}
+        </TableCell>
+      )}
+      <TableCell className="font-medium">
+        <button
+          type="button"
+          onClick={() => onFocus(e)}
+          title="View individual timesheet"
+          className="flex items-center gap-2.5 rounded text-left hover:text-gold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+        >
+          <Avatar name={e.associateName ?? '—'} size="sm" />
+          <span className="underline-offset-2 hover:underline">
+            {e.associateName ?? '—'}
+          </span>
+        </button>
+      </TableCell>
+      <TableCell className="text-silver">{e.clientName ?? '—'}</TableCell>
+      <TableCell className="tabular-nums">
+        {fmtDateTime(e.clockInAt)}
+      </TableCell>
+      <TableCell className="tabular-nums">
+        {e.clockOutAt ? fmtTime(e.clockOutAt) : '—'}
+      </TableCell>
+      <TableCell>
+        <DurationCell entry={e} />
+      </TableCell>
+      <TableCell>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <Badge variant={statusVariant(e.status)}>{e.status}</Badge>
+          <LateChip entry={e} />
+        </div>
+        <AnomalyChips anomalies={e.anomalies} />
+        {e.rejectionReason && (
+          <div className="text-alert text-[10px] mt-1">
+            {e.rejectionReason}
+          </div>
+        )}
+      </TableCell>
+      {canManage && (
+        <TableCell className="text-right whitespace-nowrap">
+          <div className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity inline-flex items-center gap-1">
+            {(e.status === 'COMPLETED' || e.status === 'REJECTED') && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => onApprove(e.id)}
+                loading={isPending}
+                disabled={isPending || bulkBusy}
+              >
+                Approve
+              </Button>
+            )}
+            {(e.status === 'COMPLETED' || e.status === 'APPROVED') && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-alert hover:text-alert hover:bg-alert/10"
+                onClick={() => onReject(e.id)}
+                disabled={isPending || bulkBusy}
+              >
+                Reject
+              </Button>
+            )}
+          </div>
+        </TableCell>
+      )}
+    </TableRow>
+  );
+});
 
 function TimeEntryDetailPanel({
   entry,
@@ -2382,26 +2522,15 @@ function SummaryExportDialog({
   const boundedClient = user?.clientId
     ? { id: user.clientId, name: user.clientName ?? 'Your client' }
     : null;
-  const [clients, setClients] = useState<Array<{ id: string; name: string }>>([]);
-  const [clientId, setClientId] = useState('');
+  // Shared 5-min-cached client list; only fetched while the dialog is open
+  // and the viewer isn't pinned to a single client.
+  const { clients } = useClients({ enabled: open && !boundedClient });
+  const [clientId, setClientId] = useState(boundedClient?.id ?? '');
   const [locations, setLocations] = useState<Array<{ id: string; name: string }>>([]);
   const [locationId, setLocationId] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    if (boundedClient) {
-      setClients([boundedClient]);
-      setClientId(boundedClient.id);
-      return;
-    }
-    listClients()
-      .then((r) => setClients(r.clients.map((c) => ({ id: c.id, name: c.name }))))
-      .catch(() => setClients([]));
-    // boundedClient is stable for the session (derived from the signed-in user).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
   useEffect(() => {
     setLocationId('');
     if (!clientId) {
@@ -2524,8 +2653,10 @@ function PayrollSheetDialog({
   const boundedClient = user?.clientId
     ? { id: user.clientId, name: user.clientName ?? 'Your client' }
     : null;
-  const [clients, setClients] = useState<Array<{ id: string; name: string }>>([]);
-  const [clientId, setClientId] = useState('');
+  // Shared 5-min-cached client list; only fetched while the dialog is open
+  // and the viewer isn't pinned to a single client.
+  const { clients } = useClients({ enabled: open && !boundedClient });
+  const [clientId, setClientId] = useState(boundedClient?.id ?? '');
   const [fromYmd, setFromYmd] = useState(defaultFromYmd);
   const [toYmd, setToYmd] = useState(defaultToYmd);
   const [busy, setBusy] = useState<'pdf' | 'xlsx' | null>(null);
@@ -2536,16 +2667,6 @@ function PayrollSheetDialog({
     setFromYmd(defaultFromYmd);
     setToYmd(defaultToYmd);
     setErr(null);
-    if (boundedClient) {
-      setClients([boundedClient]);
-      setClientId(boundedClient.id);
-      return;
-    }
-    listClients()
-      .then((r) => setClients(r.clients.map((c) => ({ id: c.id, name: c.name }))))
-      .catch(() => setClients([]));
-    // boundedClient is stable for the session (derived from the signed-in user).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, defaultFromYmd, defaultToYmd]);
 
   const download = async (format: 'pdf' | 'xlsx') => {

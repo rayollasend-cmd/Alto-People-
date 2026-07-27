@@ -11,7 +11,7 @@ import {
   type HolidayRow,
   type HolidayType,
 } from '@/lib/holiday117Api';
-import { listClients } from '@/lib/clientsApi';
+import { useClients } from '@/lib/useClients';
 import type { ClientListItem } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
@@ -164,16 +164,26 @@ export function HolidaysHome() {
   // Client-bound roles (SHIFT_SUPERVISOR) can't list clients — /clients
   // 403s for them. Seed the chips/drawers with their one client so the
   // filter and CLIENT_SPECIFIC holidays still work.
-  const boundedClient = user?.clientId
-    ? { id: user.clientId, name: user.clientName ?? 'Your client' }
-    : null;
+  const boundedClient = useMemo(
+    () =>
+      user?.clientId
+        ? { id: user.clientId, name: user.clientName ?? 'Your client' }
+        : null,
+    [user?.clientId, user?.clientName],
+  );
   const [year, setYear] = useState(CURRENT_YEAR);
   const [typeFilter, setTypeFilter] = useState<HolidayType | 'ALL'>('ALL');
   const [clientFilter, setClientFilter] = useState<string>('ALL');
   const [rows, setRows] = useState<HolidayRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [clients, setClients] = useState<Array<Pick<ClientListItem, 'id' | 'name'>>>(
-    boundedClient ? [boundedClient] : [],
+  // Best-effort client list for the filter chips — a failure (or a role
+  // without client access) just leaves the chips hidden. Client-bound
+  // viewers are seeded with their one client and never fetch (the
+  // endpoint would 403). Served from the app-wide react-query cache.
+  const { clients: fetchedClients } = useClients({ enabled: !boundedClient });
+  const clients = useMemo<Array<Pick<ClientListItem, 'id' | 'name'>>>(
+    () => (boundedClient ? [boundedClient] : fetchedClients),
+    [boundedClient, fetchedClients],
   );
   const [showNew, setShowNew] = useState(false);
   const [editing, setEditing] = useState<HolidayRow | null>(null);
@@ -198,24 +208,6 @@ export function HolidaysHome() {
   useEffect(() => {
     refresh();
   }, [refresh]);
-
-  // Best-effort client list for the filter chips — a failure (or a role
-  // without client access) just leaves the chips hidden. Client-bound
-  // viewers are seeded above and never fetch (the endpoint would 403).
-  useEffect(() => {
-    if (boundedClient) return;
-    let cancelled = false;
-    listClients()
-      .then((r) => {
-        if (!cancelled) setClients(r.clients);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-    // boundedClient is stable for the session (derived from the signed-in user).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // One POST — the server computes floating holidays (MLK Day,
   // Thanksgiving, …) and skips rows already present.

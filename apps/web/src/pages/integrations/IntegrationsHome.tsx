@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Copy, Download, Key, Plus, Webhook } from 'lucide-react';
-import type { ClientSummary } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import {
   createApiKey,
@@ -15,7 +14,7 @@ import {
   type ApiKeyRecord,
   type WebhookRecord,
 } from '@/lib/apiKeysWebhooks93Api';
-import { listClients } from '@/lib/clientsApi';
+import { useClients } from '@/lib/useClients';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability, ROLE_CAPABILITIES } from '@/lib/roles';
@@ -419,31 +418,21 @@ function NewKeyDrawer({
   const [capabilities, setCapabilities] = useState<string[]>([]);
   const [expiresAt, setExpiresAt] = useState('');
   const [saving, setSaving] = useState(false);
-  const [stores, setStores] = useState<ClientSummary[] | null>(null);
-  const [storesError, setStoresError] = useState<string | null>(null);
-
-  // Load active stores once when the drawer opens — used by every
-  // store-scoped preset to populate the picker. Cheap and cached for
-  // the drawer's lifetime.
-  const loadStores = () => {
-    setStores(null);
-    setStoresError(null);
-    listClients({ status: 'ACTIVE' })
-      .then((r) => setStores(r.clients))
-      .catch((err) =>
-        setStoresError(err instanceof ApiError ? err.message : 'Failed to load stores.'),
-      );
-  };
-  useEffect(() => {
-    loadStores();
-  }, []);
+  // Active stores for the store-scoped presets — served from the app-wide
+  // react-query cache (5-minute staleTime), so re-opening the drawer is free.
+  const {
+    clients: stores,
+    isLoading: storesLoading,
+    isError: storesError,
+    refetch: refetchStores,
+  } = useClients();
 
   const preset = useMemo(
     () => ASN_PRESETS.find((p) => p.id === presetId) ?? ASN_PRESETS[0],
     [presetId],
   );
   const selectedStore = useMemo(
-    () => stores?.find((s) => s.id === storeId) ?? null,
+    () => stores.find((s) => s.id === storeId) ?? null,
     [stores, storeId],
   );
 
@@ -560,8 +549,12 @@ function NewKeyDrawer({
                 <Label required>Store</Label>
                 {storesError ? (
                   <div className="mt-1 space-y-2">
-                    <ErrorBanner>{storesError}</ErrorBanner>
-                    <Button size="sm" variant="outline" onClick={loadStores}>
+                    <ErrorBanner>Failed to load stores.</ErrorBanner>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void refetchStores()}
+                    >
                       Retry
                     </Button>
                   </div>
@@ -571,12 +564,12 @@ function NewKeyDrawer({
                       className="mt-1"
                       value={storeId}
                       onChange={(e) => setStoreId(e.target.value)}
-                      disabled={stores === null}
+                      disabled={storesLoading}
                     >
                       <option value="">
-                        {stores === null ? 'Loading…' : 'Select a store'}
+                        {storesLoading ? 'Loading…' : 'Select a store'}
                       </option>
-                      {stores?.map((s) => (
+                      {stores.map((s) => (
                         <option key={s.id} value={s.id}>
                           {s.name}
                           {s.state ? ` (${s.state})` : ''}

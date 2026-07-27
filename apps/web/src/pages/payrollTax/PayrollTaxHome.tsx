@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ChevronDown, Download, FileText, Plus, Receipt, Scale } from 'lucide-react';
 import { ApiError } from '@/lib/api';
@@ -47,8 +47,8 @@ import {
   type TaxFormKind,
   type TaxFormStatus,
 } from '@/lib/payrollTax91Api';
-import { listClients } from '@/lib/clientsApi';
-import type { ClientListItem } from '@alto-people/shared';
+import { useClients } from '@/lib/useClients';
+import type { ClientSummary } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
@@ -776,9 +776,14 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
     refresh();
   }, []);
 
-  const years = rows
-    ? Array.from(new Set(rows.map((r) => r.taxYear))).sort((a, b) => b - a)
-    : [];
+  // Derived once per data load, not on every keystroke/filter re-render.
+  const years = useMemo(
+    () =>
+      rows
+        ? Array.from(new Set(rows.map((r) => r.taxYear))).sort((a, b) => b - a)
+        : [],
+    [rows],
+  );
   const filtered = rows
     ? rows.filter(
         (f) =>
@@ -1254,24 +1259,13 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
 }
 
 /**
- * Client list for the W-2 / 1099 generator drawers' scope select. One
- * fetch per drawer open; a load failure just leaves "All clients" as the
- * only option (the generators accept a null clientId anyway).
+ * Client list for the W-2 / 1099 generator drawers' scope select. Served
+ * from the app-wide react-query cache (5-minute staleTime) — no refetch
+ * per drawer open; a load failure just leaves "All clients" as the only
+ * option (the generators accept a null clientId anyway).
  */
-function useClientOptions(): ClientListItem[] {
-  const [clients, setClients] = useState<ClientListItem[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    listClients()
-      .then((r) => {
-        if (!cancelled) setClients(r.clients);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  return clients;
+function useClientOptions(): ClientSummary[] {
+  return useClients().clients;
 }
 
 function W2GenerateDrawer({

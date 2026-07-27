@@ -113,14 +113,21 @@ export function HrCasesHome() {
             err instanceof ApiError ? err.message : 'Failed to load the queue.',
           ),
         );
-      getCaseSummary()
-        .then(setSummary)
-        .catch(() => setSummary(null));
     }
+  };
+  // Filter-independent KPI summary — fetched once on mount and re-fetched
+  // explicitly after mutations, never on tab/filter clicks.
+  const refreshSummary = () => {
+    getCaseSummary()
+      .then(setSummary)
+      .catch(() => setSummary(null));
   };
   useEffect(() => {
     refresh();
   }, [tab, statusFilter, categoryFilter, assignedToMe]);
+  useEffect(() => {
+    if (canManage) refreshSummary();
+  }, [canManage]);
 
   const visibleQueue = useMemo(() => {
     const rows = queue ?? [];
@@ -410,6 +417,7 @@ export function HrCasesHome() {
             setShowNew(false);
             setOpenId(id);
             refresh();
+            if (canManage) refreshSummary();
           }}
         />
       )}
@@ -420,6 +428,7 @@ export function HrCasesHome() {
           onClose={() => {
             setOpenId(null);
             refresh();
+            if (canManage) refreshSummary();
           }}
         />
       )}

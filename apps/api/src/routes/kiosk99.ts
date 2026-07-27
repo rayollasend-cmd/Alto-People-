@@ -1032,9 +1032,29 @@ kiosk99Router.get('/kiosk-punches', MANAGE, async (req, res) => {
   // Peek one row past the page to learn whether there's a next cursor.
   // (createdAt, id) ordering keeps pagination stable across same-timestamp
   // punches.
+  //
+  // PERF: explicit `select` — never `include` — on this table. `include`
+  // pulls every scalar including `selfie Bytes?` (≤1 MB/row), which at the
+  // 500-row page size meant up to ~500 MB detoasted per HR page load just
+  // to compute a boolean. hasSelfie comes from a second, byte-free id query.
   const rows = await prisma.kioskPunch.findMany({
     where,
-    include: {
+    select: {
+      id: true,
+      kioskDeviceId: true,
+      associateId: true,
+      timeEntryId: true,
+      action: true,
+      rejectReason: true,
+      distanceMeters: true,
+      faceDistance: true,
+      faceMismatch: true,
+      anomalyKind: true,
+      anomalyDetail: true,
+      reviewStatus: true,
+      reviewedAt: true,
+      reviewNotes: true,
+      createdAt: true,
       device: { select: { name: true, clientId: true } },
       associate: { select: { firstName: true, lastName: true } },
       reviewedBy: { select: { email: true } },
@@ -1046,6 +1066,15 @@ kiosk99Router.get('/kiosk-punches', MANAGE, async (req, res) => {
   const hasMore = rows.length > limit;
   const page = hasMore ? rows.slice(0, limit) : rows;
   const nextCursor = hasMore ? page[page.length - 1]!.id : null;
+
+  const withSelfie = new Set(
+    (
+      await prisma.kioskPunch.findMany({
+        where: { id: { in: page.map((p) => p.id) }, selfie: { not: null } },
+        select: { id: true },
+      })
+    ).map((r) => r.id),
+  );
 
   res.json({
     nextCursor,
@@ -1059,7 +1088,7 @@ kiosk99Router.get('/kiosk-punches', MANAGE, async (req, res) => {
         : null,
       timeEntryId: p.timeEntryId,
       action: p.action,
-      hasSelfie: p.selfie != null,
+      hasSelfie: withSelfie.has(p.id),
       rejectReason: p.rejectReason,
       distanceMeters: p.distanceMeters,
       faceDistance: p.faceDistance,
@@ -1112,8 +1141,8 @@ kiosk99Router.post('/kiosk-punches/review', MANAGE, async (req, res) => {
   const reviewedById = req.user!.id;
   const reviewNotes = notes ?? null;
 
-  let reviewed = 0;
   const skipped: { id: string; reason: 'not_found' | 'not_pending' }[] = [];
+  const actionable: { id: string; timeEntryId: string | null }[] = [];
   for (const id of ids) {
     const punch = byId.get(id);
     if (!punch) {
@@ -1124,12 +1153,17 @@ kiosk99Router.post('/kiosk-punches/review', MANAGE, async (req, res) => {
       skipped.push({ id, reason: 'not_pending' });
       continue;
     }
-    // Loop one txn per punch — keeps the failure radius small and lets
-    // the bulk request succeed-partial. 50 punches × ~30ms ≈ 1.5s, fine
-    // for an HR batch action.
+    actionable.push({ id: punch.id, timeEntryId: punch.timeEntryId });
+  }
+
+  // PERF: the decision payload is identical for every row, so the whole
+  // batch is three set-based statements instead of one transaction per
+  // punch (50 punches used to be ~150 round-trips).
+  if (actionable.length > 0) {
+    const punchIds = actionable.map((p) => p.id);
     await prisma.$transaction(async (tx) => {
-      await tx.kioskPunch.update({
-        where: { id: punch.id },
+      await tx.kioskPunch.updateMany({
+        where: { id: { in: punchIds }, reviewStatus: 'PENDING' },
         data: {
           reviewStatus: decision,
           reviewedById,
@@ -1138,9 +1172,12 @@ kiosk99Router.post('/kiosk-punches/review', MANAGE, async (req, res) => {
         },
       });
       if (decision === 'REJECTED') {
-        if (punch.timeEntryId) {
-          await tx.timeEntry.update({
-            where: { id: punch.timeEntryId },
+        const entryIds = actionable
+          .map((p) => p.timeEntryId)
+          .filter((x): x is string => x != null);
+        if (entryIds.length > 0) {
+          await tx.timeEntry.updateMany({
+            where: { id: { in: entryIds } },
             data: {
               status: 'REJECTED',
               notes: notes
@@ -1149,19 +1186,17 @@ kiosk99Router.post('/kiosk-punches/review', MANAGE, async (req, res) => {
             },
           });
         }
-        // If THIS punch is the one that enrolled the associate's face
-        // reference (FACE_ENROLLMENT review), rejecting it means the
-        // reviewer believes the enrollment selfie wasn't the associate —
-        // so the template must die with the punch, or the imposter's
-        // face stays "correct" forever. No-op for ordinary punches.
+        // If any of these punches enrolled the associate's face reference
+        // (FACE_ENROLLMENT review), rejecting means the reviewer believes
+        // the enrollment selfie wasn't the associate — the template dies
+        // with the punch. No-op for ordinary punches.
         await tx.kioskFaceReference.deleteMany({
-          where: { enrolledByPunchId: punch.id },
+          where: { enrolledByPunchId: { in: punchIds } },
         });
       }
     });
-    reviewed++;
   }
-  res.json({ reviewed, skipped });
+  res.json({ reviewed: actionable.length, skipped });
 });
 
 kiosk99Router.post('/kiosk-punches/:id/review', MANAGE, async (req, res) => {
@@ -1538,6 +1573,27 @@ async function matchDeviceToken(
   return verifyDeviceTokenHash(d.tokenHash, plaintext);
 }
 
+// PERF: the legacy fallback (pre-prefix devices) used to scan + hash-verify
+// up to 500 rows on EVERY unknown/expired token — including scripted probes.
+// Cache "do any legacy devices exist at all?" for a minute; once every
+// device has a prefix (the steady state) the fallback costs one cached
+// boolean instead of 500 argon2 verifies.
+let legacyDevicesExist: { value: boolean; checkedAt: number } | null = null;
+const LEGACY_CHECK_TTL_MS = 60_000;
+
+async function anyLegacyDevices(): Promise<boolean> {
+  const now = Date.now();
+  if (legacyDevicesExist && now - legacyDevicesExist.checkedAt < LEGACY_CHECK_TTL_MS) {
+    return legacyDevicesExist.value;
+  }
+  const one = await prisma.kioskDevice.findFirst({
+    where: { isActive: true, tokenPrefix: null },
+    select: { id: true },
+  });
+  legacyDevicesExist = { value: one != null, checkedAt: now };
+  return legacyDevicesExist.value;
+}
+
 async function findDeviceByPlaintextToken(plaintext: string) {
   const prefix = tokenLookupPrefix(plaintext);
   const fast = await prisma.kioskDevice.findMany({
@@ -1548,6 +1604,7 @@ async function findDeviceByPlaintextToken(plaintext: string) {
   for (const d of fast) {
     if (await matchDeviceToken(d, plaintext)) return d;
   }
+  if (!(await anyLegacyDevices())) return null;
   const legacy = await prisma.kioskDevice.findMany({
     where: { isActive: true, tokenPrefix: null },
     select: DEVICE_SCAN_FIELDS,
@@ -1757,9 +1814,15 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
   // sent before (e.g., the previous response timed out), we don't want
   // to double-clock. Look up the original by idempotencyKey.
   if (input.idempotencyKey) {
+    // PERF: select — include would pull the stored selfie bytes on every
+    // offline-queue replay.
     const prior = await prisma.kioskPunch.findUnique({
       where: { idempotencyKey: input.idempotencyKey },
-      include: {
+      select: {
+        id: true,
+        action: true,
+        rejectReason: true,
+        createdAt: true,
         timeEntry: { select: { id: true, updatedAt: true } },
         associate: { select: { firstName: true, lastName: true } },
       },
@@ -1967,6 +2030,9 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
           select: { descriptor: true },
         })
       : Promise.resolve(null),
+    // PERF: `select`, never `include` — this runs on EVERY punch, inside
+    // the latency-critical path; `include` dragged the previous punch's
+    // selfie bytes (≤1 MB) across the wire to read two coordinates.
     prisma.kioskPunch.findFirst({
       where: {
         associateId: pinRow.associateId,
@@ -1975,7 +2041,10 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
         createdAt: { gte: lookbackSince },
       },
       orderBy: { createdAt: 'desc' },
-      include: {
+      select: {
+        createdAt: true,
+        punchLat: true,
+        punchLng: true,
         device: {
           select: {
             location: {
