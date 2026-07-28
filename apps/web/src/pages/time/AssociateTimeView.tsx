@@ -12,7 +12,14 @@ import {
 import { listJobs } from '@/lib/jobsApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
-import { fmtDateTime, fmtPayRate, fmtTime, ymdLocal } from '@/lib/format';
+import {
+  fmtDateTime,
+  fmtPayRate,
+  fmtTime,
+  ymdLocal,
+  ymdToIsoEndExclusive,
+  ymdToIsoStart,
+} from '@/lib/format';
 import { hapticSuccess } from '@/lib/haptics';
 import { timeAnomalyLabel } from '@/lib/timeLabels';
 import { Badge } from '@/components/ui/Badge';
@@ -66,16 +73,6 @@ function defaultHistoryFromYmd(): string {
 
 function defaultHistoryToYmd(): string {
   return ymdLocal(new Date());
-}
-
-function ymdToIsoStart(ymd: string): string {
-  return new Date(`${ymd}T00:00:00`).toISOString();
-}
-
-function ymdToIsoEndExclusive(ymd: string): string {
-  const d = new Date(`${ymd}T00:00:00`);
-  d.setDate(d.getDate() + 1);
-  return d.toISOString();
 }
 
 export function AssociateTimeView() {
@@ -207,9 +204,20 @@ export function AssociateTimeView() {
   const weekStart = new Date();
   weekStart.setHours(0, 0, 0, 0);
   weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+  // The open shift is excluded from the history sum and re-added as
+  // liveMinutes: /me/entries applies no status filter, so the ACTIVE entry is
+  // already in `entries` with minutesElapsed = now - clockInAt — the very same
+  // quantity liveMinutes computes. Adding both counted the current shift
+  // twice and pushed the overtime warning hours early. REJECTED time is
+  // dropped too; it was never worked hours.
   const weekMinutes =
     (entries ?? [])
-      .filter((e) => new Date(e.clockInAt) >= weekStart)
+      .filter(
+        (e) =>
+          new Date(e.clockInAt) >= weekStart &&
+          e.status !== 'REJECTED' &&
+          e.id !== active?.id,
+      )
       .reduce((sum, e) => sum + (e.minutesElapsed ?? 0), 0) + liveMinutes;
   const weekHours = (weekMinutes / 60).toFixed(1);
   const overtimeNudge =

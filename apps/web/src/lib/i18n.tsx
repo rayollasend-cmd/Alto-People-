@@ -232,6 +232,7 @@ const en = {
   'pay.title': 'My pay',
   'pay.subtitle': 'Recent paystubs with year-to-date totals.',
   'pay.loadFailed': 'Failed to load.',
+  'pay.ytdLoadFailed': "Couldn't load year-to-date totals.",
   'pay.noPaystubs': 'No paystubs yet',
   'pay.noPaystubsDesc':
     'Your first paystub will appear here after payroll runs for a period you worked.',
@@ -502,6 +503,7 @@ const es: Record<MessageKey, string> = {
   'pay.title': 'Mi pago',
   'pay.subtitle': 'Recibos de pago recientes con totales acumulados del año.',
   'pay.loadFailed': 'No se pudo cargar.',
+  'pay.ytdLoadFailed': 'No se pudieron cargar los totales del año.',
   'pay.noPaystubs': 'Aún no hay recibos',
   'pay.noPaystubsDesc':
     'Tu primer recibo aparecerá aquí cuando se procese la nómina de un período que trabajaste.',

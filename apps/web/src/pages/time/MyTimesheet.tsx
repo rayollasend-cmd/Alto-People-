@@ -7,7 +7,15 @@ import { listMyTimeEntries } from '@/lib/timeApi';
 import { fileCase } from '@/lib/hrCases123Api';
 import { ApiError } from '@/lib/api';
 import { useI18n, type MessageKey } from '@/lib/i18n';
-import { fmtDateTz, fmtMoney, fmtTime, fmtWeekdayTz, ymdLocal } from '@/lib/format';
+import {
+  fmtDateTz,
+  fmtMoney,
+  fmtTime,
+  fmtWeekdayTz,
+  ymdLocal,
+  ymdToIsoEndExclusive,
+  ymdToIsoStart,
+} from '@/lib/format';
 import { Button } from '@/components/ui/Button';
 import {
   Card,
@@ -133,10 +141,8 @@ export function MyTimesheet() {
     queryFn: async () => {
       try {
         return await listMyTimeEntries({
-          from: new Date(`${fromYmd}T00:00:00`).toISOString(),
-          to: new Date(
-            new Date(`${toYmd}T00:00:00`).getTime() + 24 * 3_600_000,
-          ).toISOString(),
+          from: ymdToIsoStart(fromYmd),
+          to: ymdToIsoEndExclusive(toYmd),
         });
       } catch (err) {
         // Not linked to an associate record yet → honest empty state.
@@ -182,9 +188,17 @@ export function MyTimesheet() {
 
   // "This week" / "Last week" instead of anonymous dates where they apply.
   const currentWeekMs = weekStartMs(new Date());
+  // Stepped back a calendar week, not 7×24h: across a DST change last week's
+  // local-midnight anchor is an hour off a fixed-millisecond subtraction, and
+  // the equality below would miss — labelling last week as a bare date.
+  const lastWeekMs = (() => {
+    const d = new Date(currentWeekMs);
+    d.setDate(d.getDate() - 7);
+    return d.getTime();
+  })();
   const weekLabel = (weekMs: number): string => {
     if (weekMs === currentWeekMs) return t('sched.thisWeek');
-    if (weekMs === currentWeekMs - 7 * 86_400_000) return t('time.lastWeek');
+    if (weekMs === lastWeekMs) return t('time.lastWeek');
     return t('time.weekOf', { date: fmtDateTz(new Date(weekMs)) });
   };
 

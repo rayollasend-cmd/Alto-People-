@@ -361,8 +361,19 @@ function ActionNeededCard({ shifts }: { shifts: Shift[] | null | undefined }) {
     !inboxQuery.isPending &&
     shifts !== undefined;
 
+  // A source that failed resolved to null, which is indistinguishable from
+  // "nothing pending" once its row is omitted. Claiming "all caught up" off
+  // that is a false all-clear on unsigned agreements and expired documents —
+  // exactly what this card exists to catch. Stay silent instead: the card
+  // under-reporting is survivable, telling someone they're clear is not.
+  const anySourceFailed =
+    agreementsQuery.data === null ||
+    documentsQuery.data === null ||
+    inboxQuery.data === null ||
+    shifts === null;
+
   if (rows.length === 0) {
-    if (!settled) return null;
+    if (!settled || anySourceFailed) return null;
     return (
       <p className="mb-4 text-xs text-silver/70">{t('dash.allCaughtUp')}</p>
     );

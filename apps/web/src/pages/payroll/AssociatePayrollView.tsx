@@ -5,7 +5,7 @@
 // the page. Associates can also download their own paystub as a PDF —
 // the backend authorizes the item owner on GET /payroll/items/:id/paystub.pdf.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -14,6 +14,7 @@ import {
   downloadMyPaystub,
   getMyPayoutMethod,
   getMyW4,
+  getMyPayrollItemYtd,
   listMyPayrollItems,
   updateMyPayoutMethod,
   updateMyW4,
@@ -174,7 +175,6 @@ export function AssociatePayrollView() {
               <PaystubGroup
                 heading={t('pay.pendingCount', { count: pending.length })}
                 items={pending}
-                allItems={items}
                 expanded={expanded}
                 onToggle={toggle}
                 onAsk={setAskItem}
@@ -190,7 +190,6 @@ export function AssociatePayrollView() {
                     : dayHeading(g.key)
                 }
                 items={g.entries}
-                allItems={items}
                 expanded={expanded}
                 onToggle={toggle}
                 onAsk={setAskItem}
@@ -580,7 +579,6 @@ function NumField({
 function PaystubGroup({
   heading,
   items,
-  allItems,
   expanded,
   onToggle,
   onAsk,
@@ -588,7 +586,6 @@ function PaystubGroup({
 }: {
   heading: string;
   items: PayrollItem[];
-  allItems: PayrollItem[];
   expanded: Set<string>;
   onToggle: (id: string) => void;
   onAsk: (item: PayrollItem) => void;
@@ -614,7 +611,6 @@ function PaystubGroup({
           <PaystubCard
             key={it.id}
             item={it}
-            allItems={allItems}
             expanded={expanded.has(it.id)}
             onToggle={() => onToggle(it.id)}
             onAsk={() => onAsk(it)}
@@ -627,19 +623,27 @@ function PaystubGroup({
 
 function PaystubCard({
   item,
-  allItems,
   expanded,
   onToggle,
   onAsk,
 }: {
   item: PayrollItem;
-  allItems: PayrollItem[];
   expanded: boolean;
   onToggle: () => void;
   onAsk: () => void;
 }) {
   const { t } = useI18n();
-  const ytd = useMemo(() => computeYtd(item, allItems), [item, allItems]);
+  // YTD comes from the server, not from summing the loaded stubs: the list
+  // endpoint returns at most 50, so a client-side sum silently understates
+  // the tax and net columns for anyone paid weekly for a year or more.
+  // Fetched only once the card is open — it's the only place YTD is shown.
+  const ytdQuery = useQuery({
+    queryKey: ['me', 'paystubYtd', item.id],
+    queryFn: () => getMyPayrollItemYtd(item.id),
+    enabled: expanded,
+    staleTime: 5 * 60_000,
+  });
+  const ytd = ytdQuery.data ?? null;
   const [downloading, setDownloading] = useState(false);
 
   const onDownload = async () => {
@@ -699,7 +703,31 @@ function PaystubCard({
         </div>
       </button>
 
-      {expanded && (
+      {expanded && !ytd && (
+        <div className="border-t border-navy-secondary p-4">
+          {ytdQuery.isError ? (
+            // Every row in the breakdown carries a YTD column, so a partial
+            // render would put blanks beside real money. Say it failed.
+            <ErrorBanner
+              action={
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => void ytdQuery.refetch()}
+                >
+                  {t('common.retry')}
+                </Button>
+              }
+            >
+              {t('pay.ytdLoadFailed')}
+            </ErrorBanner>
+          ) : (
+            <SkeletonRows count={4} />
+          )}
+        </div>
+      )}
+
+      {expanded && ytd && (
         <div className="border-t border-navy-secondary p-4 space-y-5 text-xs">
           <Section title={t('pay.earnings')}>
             <PaystubTable
@@ -724,7 +752,7 @@ function PaystubCard({
                   e.hours == null ? '—' : e.hours.toFixed(2),
                   e.rate == null ? '—' : fmtMoney(e.rate),
                   fmtMoney(e.amount),
-                  fmtMoney(ytd.byKind.get(e.kind) ?? e.amount),
+                  fmtMoney(ytd.byKind[e.kind] ?? e.amount),
                 ],
               }))}
               footer={[t('pay.grossPay'), '', '', fmtMoney(item.grossPay), fmtMoney(ytd.gross)]}
@@ -737,7 +765,7 @@ function PaystubCard({
               rows={[
                 {
                   key: 'fit',
-                  cells: [t('pay.fedIncomeTax'), '', '', `−${fmtMoney(item.federalWithholding)}`, `−${fmtMoney(ytd.fit)}`],
+                  cells: [t('pay.fedIncomeTax'), '', '', `−${fmtMoney(item.federalWithholding)}`, `−${fmtMoney(ytd.federalWithholding)}`],
                 },
                 {
                   key: 'fica',
@@ -754,7 +782,7 @@ function PaystubCard({
                     '',
                     '',
                     `−${fmtMoney(item.stateWithholding)}`,
-                    `−${fmtMoney(ytd.sit)}`,
+                    `−${fmtMoney(ytd.stateWithholding)}`,
                   ],
                 },
                 ...(item.postTaxDeductions > 0
@@ -766,7 +794,7 @@ function PaystubCard({
                           '',
                           '',
                           `−${fmtMoney(item.postTaxDeductions)}`,
-                          `−${fmtMoney(ytd.postTax)}`,
+                          `−${fmtMoney(ytd.postTaxDeductions)}`,
                         ],
                       },
                     ]
@@ -777,7 +805,7 @@ function PaystubCard({
                 '',
                 '',
                 `−${fmtMoney(item.federalWithholding + item.fica + item.medicare + item.stateWithholding + item.postTaxDeductions)}`,
-                `−${fmtMoney(ytd.fit + ytd.fica + ytd.medicare + ytd.sit + ytd.postTax)}`,
+                `−${fmtMoney(ytd.federalWithholding + ytd.fica + ytd.medicare + ytd.stateWithholding + ytd.postTaxDeductions)}`,
               ]}
             />
           </Section>
@@ -788,19 +816,19 @@ function PaystubCard({
               rows={[
                 {
                   key: 'efica',
-                  cells: [t('pay.employerFica'), '', '', fmtMoney(item.employerFica), fmtMoney(ytd.empFica)],
+                  cells: [t('pay.employerFica'), '', '', fmtMoney(item.employerFica), fmtMoney(ytd.employerFica)],
                 },
                 {
                   key: 'emed',
-                  cells: [t('pay.employerMedicare'), '', '', fmtMoney(item.employerMedicare), fmtMoney(ytd.empMed)],
+                  cells: [t('pay.employerMedicare'), '', '', fmtMoney(item.employerMedicare), fmtMoney(ytd.employerMedicare)],
                 },
                 {
                   key: 'futa',
-                  cells: [t('pay.futa'), '', '', fmtMoney(item.employerFuta), fmtMoney(ytd.futa)],
+                  cells: [t('pay.futa'), '', '', fmtMoney(item.employerFuta), fmtMoney(ytd.employerFuta)],
                 },
                 {
                   key: 'suta',
-                  cells: [t('pay.suta'), '', '', fmtMoney(item.employerSuta), fmtMoney(ytd.suta)],
+                  cells: [t('pay.suta'), '', '', fmtMoney(item.employerSuta), fmtMoney(ytd.employerSuta)],
                 },
               ]}
             />
@@ -813,7 +841,7 @@ function PaystubCard({
                 {fmtMoney(item.netPay)}
               </div>
               <div className="text-2xs uppercase tracking-wide text-silver/70">
-                {t('pay.ytdNet', { amount: fmtMoney(ytd.net) })}
+                {t('pay.ytdNet', { amount: fmtMoney(ytd.netPay) })}
               </div>
             </div>
           </div>
@@ -1021,80 +1049,3 @@ function PaystubTable({
   );
 }
 
-interface YtdSummary {
-  gross: number;
-  fit: number;
-  fica: number;
-  medicare: number;
-  sit: number;
-  postTax: number;
-  net: number;
-  empFica: number;
-  empMed: number;
-  futa: number;
-  suta: number;
-  byKind: Map<PayrollItemEarning['kind'], number>;
-}
-
-/**
- * Computes year-to-date totals for a paystub by summing it plus every
- * earlier item from the same calendar year. We use the embedded ytdWages
- * snapshot as a sanity check on the total earnings — if we have all the
- * items in the response, our sum should equal `ytdWages + grossPay`. If
- * the response is paginated and we're missing earlier items, we fall back
- * to the snapshot for gross.
- */
-function computeYtd(item: PayrollItem, all: PayrollItem[]): YtdSummary {
-  // Bucket items by createdAt year — close enough as a proxy for periodEnd
-  // year since runs almost always finalize within their period's year.
-  const inYear = all.filter((i) => sameYearAs(i, item) && createdAtLeq(i, item));
-
-  const sum = (sel: (i: PayrollItem) => number) =>
-    inYear.reduce((acc, i) => acc + sel(i), 0);
-
-  const byKind = new Map<PayrollItemEarning['kind'], number>();
-  for (const i of inYear) {
-    for (const e of i.earnings) {
-      byKind.set(e.kind, (byKind.get(e.kind) ?? 0) + e.amount);
-    }
-  }
-
-  const grossFromSnapshot = item.ytdWages + item.grossPay;
-  const grossFromSum = sum((i) => i.grossPay);
-  const gross = Math.max(grossFromSnapshot, grossFromSum);
-
-  return {
-    gross,
-    fit: sum((i) => i.federalWithholding),
-    fica: sum((i) => i.fica),
-    medicare: sum((i) => i.medicare),
-    sit: sum((i) => i.stateWithholding),
-    postTax: sum((i) => i.postTaxDeductions),
-    net: sum((i) => i.netPay),
-    empFica: sum((i) => i.employerFica),
-    empMed: sum((i) => i.employerMedicare),
-    futa: sum((i) => i.employerFuta),
-    suta: sum((i) => i.employerSuta),
-    byKind,
-  };
-}
-
-function sameYearAs(a: PayrollItem, b: PayrollItem): boolean {
-  // PayrollItem doesn't expose createdAt in the shared contract — derive
-  // year from disbursedAt if available, otherwise treat as same-year. The
-  // ytdWages snapshot in `b` already encodes a year boundary, so this
-  // approximation is corrected by the snapshot fallback in computeYtd.
-  const yearOf = (it: PayrollItem) => {
-    if (it.disbursedAt) return new Date(it.disbursedAt).getUTCFullYear();
-    return new Date().getUTCFullYear();
-  };
-  return yearOf(a) === yearOf(b);
-}
-
-function createdAtLeq(a: PayrollItem, b: PayrollItem): boolean {
-  // Without createdAt in the shared contract, fall back to comparing
-  // disbursedAt; if either lacks a date, include `a` (caller filters
-  // by year already).
-  if (a.disbursedAt && b.disbursedAt) return a.disbursedAt <= b.disbursedAt;
-  return true;
-}

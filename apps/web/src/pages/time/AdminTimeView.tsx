@@ -52,7 +52,15 @@ import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { timeAnomalyLabel } from '@/lib/timeLabels';
-import { fmtDateTime, fmtDateTz, fmtPayRate, fmtTime, ymdLocal } from '@/lib/format';
+import {
+  fmtDateTime,
+  fmtDateTz,
+  fmtPayRate,
+  fmtTime,
+  ymdLocal,
+  ymdToIsoEndExclusive,
+  ymdToIsoStart,
+} from '@/lib/format';
 import {
   AssociatePicker,
   Avatar,
@@ -291,20 +299,10 @@ function defaultToYmd(): string {
   return ymdLocal(new Date());
 }
 
-function ymdToIsoStart(ymd: string): string {
-  return new Date(`${ymd}T00:00:00`).toISOString();
-}
-
 // "Jun 22 – Jul 5" — compact label for a pay-period option. Bare YYYY-MM-DD
 // parses as UTC midnight, so format in UTC or the day shifts west of GMT.
 function periodLabel(p: PayPeriod): string {
   return `${fmtDateTz(p.start, 'UTC')} – ${fmtDateTz(p.end, 'UTC')}`;
-}
-
-function ymdToIsoEndExclusive(ymd: string): string {
-  const d = new Date(`${ymd}T00:00:00`);
-  d.setDate(d.getDate() + 1);
-  return d.toISOString();
 }
 
 // Pay periods are static config for the tenant — cache them at module level

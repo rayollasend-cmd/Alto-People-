@@ -138,3 +138,67 @@ describe('<AssociateTimeView>', () => {
     expect(screen.getByText(/no clock-out/i)).toBeInTheDocument();
   });
 });
+
+describe("<AssociateTimeView> overtime nudge", () => {
+  // The in-progress shift is in BOTH the active payload and the history list
+  // (/me/entries has no status filter, and minutesElapsed on an open entry is
+  // now - clockInAt). Summing the list and then adding the live counter
+  // counted it twice and tripped the warning hours early.
+  const HOURS = (h: number) => h * 60;
+
+  function activeShift(minutes: number) {
+    return entry({
+      id: "active-1",
+      clockInAt: new Date(Date.now() - minutes * 60_000).toISOString(),
+      minutesElapsed: minutes,
+      status: "ACTIVE",
+    });
+  }
+
+  function finished(id: string, minutes: number, daysAgo = 0) {
+    // Anchored after this week’s Sunday so it lands inside the window.
+    const start = new Date();
+    start.setHours(12, 0, 0, 0);
+    start.setDate(start.getDate() - start.getDay() + daysAgo);
+    return entry({
+      id,
+      clockInAt: start.toISOString(),
+      clockOutAt: new Date(start.getTime() + minutes * 60_000).toISOString(),
+      minutesElapsed: minutes,
+      status: "COMPLETED",
+    });
+  }
+
+  it("counts the open shift once, not twice", async () => {
+    const open = activeShift(HOURS(4));
+    vi.mocked(getActiveTimeEntry).mockResolvedValueOnce({ active: open });
+    vi.mocked(listMyTimeEntries).mockResolvedValueOnce({
+      entries: [open, finished("done-1", HOURS(33))],
+    });
+    renderView();
+
+    // 33h history + 4h open = 37h. Double-counting the open shift gives 41h
+    // and flips the copy to the past-40 warning.
+    expect(await screen.findByText(/37.0h this workweek/)).toBeInTheDocument();
+    expect(screen.queryByText(/past the 40h line/i)).not.toBeInTheDocument();
+  });
+
+  it("ignores rejected time", async () => {
+    vi.mocked(getActiveTimeEntry).mockResolvedValueOnce({ active: null });
+    vi.mocked(listMyTimeEntries).mockResolvedValueOnce({
+      entries: [
+        finished("done-1", HOURS(36)),
+        entry({
+          id: "rej-1",
+          clockInAt: finished("x", 0).clockInAt,
+          clockOutAt: new Date().toISOString(),
+          minutesElapsed: HOURS(8),
+          status: "REJECTED",
+        }),
+      ],
+    });
+    renderView();
+
+    expect(await screen.findByText(/36.0h this workweek/)).toBeInTheDocument();
+  });
+});

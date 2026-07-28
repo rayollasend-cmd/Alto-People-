@@ -21,6 +21,15 @@ vi.mock('@/lib/payrollApi', () => ({
 vi.mock('@/lib/timeOffApi', () => ({
   getMyBalance: vi.fn(),
 }));
+vi.mock('@/lib/agreements122Api', () => ({
+  listMyAgreements: vi.fn(),
+}));
+vi.mock('@/lib/documentsApi', () => ({
+  listMyDocuments: vi.fn(),
+}));
+vi.mock('@/lib/communicationsApi', () => ({
+  listMyInbox: vi.fn(),
+}));
 vi.mock('@/lib/onboardingApi', () => ({
   listApplications: vi.fn().mockResolvedValue({
     applications: [],
@@ -32,6 +41,9 @@ vi.mock('@/lib/onboardingApi', () => ({
 
 import { clockIn, clockOut, getActiveTimeEntry } from '@/lib/timeApi';
 import { listMyShifts } from '@/lib/schedulingApi';
+import { listMyAgreements } from '@/lib/agreements122Api';
+import { listMyDocuments } from '@/lib/documentsApi';
+import { listMyInbox } from '@/lib/communicationsApi';
 import { listMyPayrollItems } from '@/lib/payrollApi';
 import { getMyBalance } from '@/lib/timeOffApi';
 import { ApiError } from '@/lib/api';
@@ -106,6 +118,9 @@ beforeEach(() => {
   vi.mocked(listMyShifts).mockResolvedValue({ shifts: [] });
   vi.mocked(listMyPayrollItems).mockResolvedValue({ items: [] });
   vi.mocked(getMyBalance).mockResolvedValue({ balances: [], recentLedger: [] });
+  vi.mocked(listMyAgreements).mockResolvedValue({ agreements: [] } as never);
+  vi.mocked(listMyDocuments).mockResolvedValue({ documents: [] } as never);
+  vi.mocked(listMyInbox).mockResolvedValue({ notifications: [] } as never);
 });
 
 describe('<AssociateDashboard>', () => {
@@ -247,5 +262,37 @@ describe('<AssociateDashboard>', () => {
     renderDashboard();
     await waitFor(() => expect(listMyPayrollItems).toHaveBeenCalled());
     expect(await screen.findByText(/\$490\.25/)).toBeInTheDocument();
+  });
+});
+
+describe("<AssociateDashboard> action-needed card", () => {
+  it("says all caught up when every source loaded and found nothing", async () => {
+    renderDashboard();
+    expect(await screen.findByText(/all caught up/i)).toBeInTheDocument();
+  });
+
+  it("stays silent instead of claiming all caught up when a source failed", async () => {
+    // The sources swallow errors to null, which is indistinguishable from
+    // "nothing pending" once the row is omitted. Rendering the all-clear off
+    // that told associates they had no unsigned agreements when we simply
+    // had not managed to check.
+    vi.mocked(listMyAgreements).mockRejectedValue(new Error("network down"));
+    renderDashboard();
+
+    // Wait for a settled dashboard before asserting the absence.
+    await screen.findByText(/my schedule|upcoming|next shift/i);
+    await waitFor(() =>
+      expect(screen.queryByText(/all caught up/i)).not.toBeInTheDocument(),
+    );
+  });
+
+  it("still lists the rows it did manage to load", async () => {
+    vi.mocked(listMyAgreements).mockResolvedValue({
+      agreements: [{ id: "ag-1", status: "PENDING_SIGNATURE" }],
+    } as never);
+    renderDashboard();
+
+    expect(await screen.findByText(/agreement/i)).toBeInTheDocument();
+    expect(screen.queryByText(/all caught up/i)).not.toBeInTheDocument();
   });
 });
