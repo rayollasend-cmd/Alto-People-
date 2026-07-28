@@ -13,6 +13,7 @@ import {
   updateEVerifyIdentity,
 } from '@/lib/complianceApi';
 import { ApiError } from '@/lib/api';
+import { DocumentThumbnails } from '@/components/DocumentViewer';
 import { cn } from '@/lib/cn';
 import { fmtDate } from '@/lib/format';
 import { toast } from 'sonner';
@@ -511,36 +512,18 @@ function CaseDrawer({
                 <div className="text-2xs uppercase tracking-widest text-silver/80">
                   Identity documents
                 </div>
-                {detail.documents.length === 0 ? (
-                  <p className="mt-1 text-xs text-warning">
-                    No documents uploaded — Section 2 can&apos;t be evidenced.
-                  </p>
-                ) : (
-                  <ul className="mt-1 space-y-1">
-                    {detail.documents.map((d) => (
-                      <li
-                        key={d.id}
-                        className="flex items-center justify-between gap-2 text-xs"
-                      >
-                        <a
-                          href={`/api/documents/${d.id}/download`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="min-w-0 truncate text-white underline underline-offset-2 hover:text-gold"
-                        >
-                          {d.filename}
-                        </a>
-                        <span className="shrink-0 text-silver/70">
-                          {d.kind}
-                          {d.side ? ` · ${d.side.toLowerCase()}` : ''}
-                        </span>
-                        {!d.fileAvailable && (
-                          <Badge variant="destructive">File missing</Badge>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                <p className="mb-2 mt-0.5 text-2xs text-silver/60">
+                  Click to view in place — zoom and rotate for small print.
+                  Nothing is saved to your computer.
+                </p>
+                {/* Viewed in-site rather than downloaded: reviewing an ID used
+                    to drop a copy of someone's passport into the reviewer's
+                    Downloads folder on every case, outside the product's
+                    retention rules. */}
+                <DocumentThumbnails
+                  documents={detail.documents}
+                  emptyMessage="No documents uploaded — Section 2 can't be evidenced."
+                />
               </div>
             </Section>
 
