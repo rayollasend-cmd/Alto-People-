@@ -83,8 +83,13 @@ async function seedComplete(clientId: string) {
       associateId: associate.id,
       type: 'BANK_ACCOUNT',
       accountType: 'CHECKING',
+      bankName: 'Chase',
       isPrimary: true,
-      routingNumberEnc: encryptString('021000021'),
+      // Plain UTF-8, matching what the direct-deposit route actually writes —
+      // routing numbers are public so they aren't encrypted, despite the
+      // column name. Seeding this as ciphertext (as this fixture first did)
+      // hides a reader that decrypts instead of decoding.
+      routingNumberEnc: Buffer.from('021000021', 'utf8'),
       accountNumberEnc: encryptString('000123456789012'),
     },
   });
@@ -187,8 +192,28 @@ describe('external payroll sheet — content', () => {
     expect(cellText(4)).toBe('012-34-5678'); // SSN, leading zero intact
     expect(cellText(11)).toBe('021000021'); // routing, leading zero intact
     expect(cellText(12)).toBe('000123456789012'); // account, no sci-notation
-    expect(cellText(9)).toBe(''); // bank name — no source in the schema
+    expect(cellText(9)).toBe('Chase'); // bank name from the payout method
     expect(dataRow!.getCell(15).value).toBe(8); // regular hours
+  });
+
+  // Regression: the first version of the reader ran routingNumberEnc through
+  // tryDecryptString. Routing numbers are stored as plain UTF-8 (they're
+  // public), so that returned null for every real record — blanking the
+  // column and inflating missingBankDetails on a file whose entire purpose
+  // is to carry routing numbers to a bank.
+  it('reads a plaintext routing number without counting it as a gap', async () => {
+    const client = await createClient();
+    await seedComplete(client.id);
+    const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(user.email);
+
+    const res = await a
+      .post('/time/admin/external-payroll-sheet.xlsx')
+      .send({ ...RANGE, clientId: client.id });
+
+    expect(res.status).toBe(200);
+    const gaps = JSON.parse(res.headers['x-sheet-gaps']);
+    expect(gaps.missingBankDetails).toBe(0);
   });
 
   it('counts gaps instead of silently shipping blank cells', async () => {

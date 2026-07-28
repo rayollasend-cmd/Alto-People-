@@ -2844,7 +2844,8 @@ function ExternalPayrollSheetDialog({
 
           <p className="text-xs text-silver">
             Overtime = hours over 40 per week (federal), matching payroll. Bank
-            name is not stored in Alto People — that column ships blank.
+            name comes from each associate&apos;s direct-deposit setup and is
+            blank on records saved before that field existed.
           </p>
         </div>
         <DialogFooter>

@@ -954,6 +954,7 @@ orgRouter.post(
     res.json({
       type: payout.type,
       accountType: payout.accountType,
+      bankName: payout.bankName,
       routingNumber,
       accountNumber,
       branchCardId: payout.branchCardId,

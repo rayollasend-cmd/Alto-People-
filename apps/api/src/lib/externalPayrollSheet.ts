@@ -41,7 +41,9 @@ export interface ExternalPayrollRow {
   w4FilingStatus: string;
   clientName: string;
   paymentMethod: string;
-  bankName: string; // always '' — see BANK_NAME_UNAVAILABLE below
+  /** Institution name as entered at direct-deposit setup. Blank on records
+   *  that predate the field and on Branch-card methods. */
+  bankName: string;
   accountType: string;
   routingNumber: string;
   accountNumber: string;
@@ -61,15 +63,6 @@ export interface ExternalPayrollSheetResult {
   truncated: boolean;
 }
 
-/**
- * There is no bank-name column anywhere in the schema, and no routing-number
- * lookup table to derive one from. The column ships blank so the file shape
- * matches what a bureau template expects; populating it needs either a new
- * field on PayoutMethod (captured at direct-deposit setup) or an ABA
- * routing directory. Flagged rather than dropped so the gap is visible.
- */
-const BANK_NAME_UNAVAILABLE = '';
-
 /** Matches the internal payroll sheet's scan cap so the two agree. */
 const MAX_ENTRIES = 20_000;
 
@@ -83,6 +76,26 @@ const PAYOUT_TYPE_LABEL: Record<string, string> = {
   BANK_ACCOUNT: 'Direct deposit',
   BRANCH_CARD: 'Branch card',
 };
+
+/**
+ * Read a stored routing number.
+ *
+ * Despite the column name, `routingNumberEnc` holds PLAIN UTF-8 bytes — the
+ * writer in onboarding.ts stores it that way on the reasoning that routing
+ * numbers are public (they're printed on every cheque), and both existing
+ * readers (the redacted onboarding GET and the audited org reveal) decode it
+ * with toString('utf8'). Running it through the decrypter instead returns
+ * null for every real record, which silently blanks the column and inflates
+ * the missing-bank-details count.
+ *
+ * The decrypt fallback covers any row that predates that convention; a
+ * 9-digit result is the tell for which encoding we're looking at.
+ */
+function readRoutingNumber(blob: Buffer): string {
+  const utf8 = blob.toString('utf8');
+  if (/^\d{9}$/.test(utf8)) return utf8;
+  return tryDecryptString(blob) ?? '';
+}
 
 function money(v: Prisma.Decimal | null | undefined): number | null {
   return v === null || v === undefined ? null : Number(v);
@@ -196,6 +209,7 @@ export async function buildExternalPayrollSheet(
         associateId: true,
         type: true,
         accountType: true,
+        bankName: true,
         routingNumberEnc: true,
         accountNumberEnc: true,
       },
@@ -281,7 +295,7 @@ export async function buildExternalPayrollSheet(
       gaps.missingBankDetails += 1;
     } else {
       routingNumber = payout.routingNumberEnc
-        ? (tryDecryptString(Buffer.from(payout.routingNumberEnc)) ?? '')
+        ? readRoutingNumber(Buffer.from(payout.routingNumberEnc))
         : '';
       accountNumber = payout.accountNumberEnc
         ? (tryDecryptString(Buffer.from(payout.accountNumberEnc)) ?? '')
@@ -304,7 +318,7 @@ export async function buildExternalPayrollSheet(
       clientName:
         client?.name ?? clientNameByAssociate.get(a.associateId) ?? '',
       paymentMethod: payout ? (PAYOUT_TYPE_LABEL[payout.type] ?? payout.type) : '',
-      bankName: BANK_NAME_UNAVAILABLE,
+      bankName: payout?.bankName ?? '',
       accountType: payout?.accountType ?? '',
       routingNumber,
       accountNumber,

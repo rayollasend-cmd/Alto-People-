@@ -1244,9 +1244,19 @@ model PayoutMethod {
   id               String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId      String     @db.Uuid
   type             PayoutType
+  // Despite the name, routingNumberEnc holds PLAIN UTF-8 bytes — routing
+  // numbers are public (printed on every cheque) so they're stored
+  // unencrypted. Only accountNumberEnc is real ciphertext. Read routing
+  // with toString('utf8'), not decryptString.
   routingNumberEnc Bytes?
   accountNumberEnc Bytes?
   accountType      String?
+  // Free-text institution name ("Chase", "Bank of America"). Collected at
+  // direct-deposit setup because nothing derives it: there's no ABA routing
+  // directory in the product, and external payroll providers expect the
+  // column on their intake file. Nullable — every row predating this and
+  // every Branch-card method leaves it empty.
+  bankName         String?
   branchCardId     String?
   isPrimary        Boolean    @default(false)
   verifiedAt       DateTime?  @db.Timestamptz(6)

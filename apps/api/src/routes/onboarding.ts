@@ -1853,6 +1853,9 @@ onboardingRouter.get(
         hasPayoutMethod: true,
         type: payout.type,
         accountType: payout.accountType,
+        // Not sensitive on its own — surfaced so the form can prefill it
+        // rather than making the associate retype it on every edit.
+        bankName: payout.bankName,
         routingMasked,
         accountLast4,
         branchCardId: payout.branchCardId,
@@ -1895,6 +1898,7 @@ onboardingRouter.post(
             routingNumberEnc: Buffer.from(input.routingNumber, 'utf8'),
             accountNumberEnc: encryptString(input.accountNumber),
             accountType: input.accountType,
+            bankName: input.bankName ?? null,
             branchCardId: null,
             isPrimary: true,
             verifiedAt: null,
@@ -1912,6 +1916,9 @@ onboardingRouter.post(
             routingNumberEnc: null,
             accountNumberEnc: null,
             accountType: null,
+            // Switching to a card clears the bank name with the rest of the
+            // account details — leaving it would misdescribe the method.
+            bankName: null,
             branchCardId: input.branchCardId,
             isPrimary: true,
             verifiedAt: null,

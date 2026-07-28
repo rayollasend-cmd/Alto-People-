@@ -36,6 +36,7 @@ export function DirectDepositTask() {
   const [routingNumber, setRoutingNumber] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
   const [accountType, setAccountType] = useState<'CHECKING' | 'SAVINGS'>('CHECKING');
+  const [bankName, setBankName] = useState('');
   const [branchCardId, setBranchCardId] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -57,6 +58,9 @@ export function DirectDepositTask() {
         if (s.accountType === 'CHECKING' || s.accountType === 'SAVINGS') {
           setAccountType(s.accountType);
         }
+        // Safe to prefill — a bank's name isn't a secret, and retyping it on
+        // every edit is how it ends up blank or inconsistent.
+        if (s.bankName) setBankName(s.bankName);
       }
     });
   }, [applicationId]);
@@ -85,6 +89,7 @@ export function DirectDepositTask() {
               routingNumber,
               accountNumber,
               accountType,
+              ...(bankName.trim() ? { bankName: bankName.trim() } : {}),
             }
           : {
               type: 'BRANCH_CARD' as const,
@@ -190,6 +195,20 @@ export function DirectDepositTask() {
                     <option value="CHECKING">Checking</option>
                     <option value="SAVINGS">Savings</option>
                   </Select>
+                </Field>
+                <Field
+                  label="Bank name"
+                  hint="The institution that holds this account — e.g. Chase, Wells Fargo. Your payroll provider needs it on file."
+                >
+                  <input
+                    type="text"
+                    value={bankName}
+                    onChange={(e) => setBankName(e.target.value.slice(0, 120))}
+                    className={inputCls}
+                    maxLength={120}
+                    autoComplete="off"
+                    placeholder="Chase"
+                  />
                 </Field>
               </>
             ) : (

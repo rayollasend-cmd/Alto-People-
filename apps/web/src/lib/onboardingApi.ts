@@ -346,6 +346,9 @@ export interface DirectDepositStatus {
   hasPayoutMethod: boolean;
   type?: 'BANK_ACCOUNT' | 'BRANCH_CARD' | string | null;
   accountType?: 'CHECKING' | 'SAVINGS' | string | null;
+  /** Institution name. Returned unredacted — a bank's name isn't a secret,
+   *  and the form prefills it so it doesn't drift on every edit. */
+  bankName?: string | null;
   routingMasked?: string | null;
   accountLast4?: string | null;
   branchCardId?: string | null;

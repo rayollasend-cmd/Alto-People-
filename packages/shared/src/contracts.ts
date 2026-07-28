@@ -660,6 +660,10 @@ export const DirectDepositInputSchema = z.discriminatedUnion('type', [
     routingNumber: z.string().regex(/^\d{9}$/, 'Routing number must be 9 digits'),
     accountNumber: z.string().regex(/^\d{4,17}$/, 'Account number must be 4–17 digits'),
     accountType: z.enum(['CHECKING', 'SAVINGS']),
+    // Institution name for the external payroll file. Optional so existing
+    // clients and the Branch-card path keep working; the form asks for it
+    // but an associate who leaves it blank still gets paid.
+    bankName: z.string().trim().min(1).max(120).optional(),
   }),
   z.object({
     type: z.literal('BRANCH_CARD'),
