@@ -28,6 +28,7 @@ import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { CandidateBoard } from './CandidateBoard';
+import { CandidateDetailDrawer } from './CandidateDetailDrawer';
 import {
   Avatar,
   Badge,
@@ -169,6 +170,10 @@ export function RecruitingHome() {
   const [kpiError, setKpiError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
+  // The candidate whose detail drawer is open. Held by id rather than by
+  // value so a refresh after an advance re-renders the drawer with the new
+  // stage instead of leaving a stale snapshot on screen.
+  const [detailId, setDetailId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
 
@@ -282,6 +287,20 @@ export function RecruitingHome() {
       setPendingId(null);
     }
   };
+
+  // Resolved from the lists rather than fetched: GET /candidates/:id returns
+  // the same shape the list already carries, so a second request would buy
+  // nothing. allCandidates is the unfiltered set, which keeps the drawer open
+  // when an advance moves someone out of the active stage filter.
+  const detailCandidate = useMemo(
+    () =>
+      detailId
+        ? (candidates?.find((c) => c.id === detailId) ??
+          allCandidates?.find((c) => c.id === detailId) ??
+          null)
+        : null,
+    [detailId, candidates, allCandidates],
+  );
 
   const kpis = useMemo(() => {
     if (!allCandidates) return null;
@@ -487,6 +506,7 @@ export function RecruitingHome() {
                   onRequestReject={(c) => setDialog({ kind: 'reject', candidate: c })}
                   onRequestWithdraw={(c) => setDialog({ kind: 'withdraw', candidate: c })}
                   onRequestHire={(c) => setDialog({ kind: 'hire', candidate: c })}
+                  onOpen={(c) => setDetailId(c.id)}
                 />
               )}
             </>
@@ -547,7 +567,7 @@ export function RecruitingHome() {
                     {visibleCandidates.map((c) => (
                       <TableRow key={c.id} className="group">
                         <TableCell className="font-medium">
-                          <CandidateNameCell c={c} />
+                          <CandidateNameCell c={c} onOpen={(x) => setDetailId(x.id)} />
                         </TableCell>
                         <TableCell className="text-silver">{c.email}</TableCell>
                         <TableCell className="text-silver">
@@ -606,7 +626,7 @@ export function RecruitingHome() {
                     className="rounded-md border border-navy-secondary bg-navy/40 p-3"
                   >
                     <div className="flex items-start justify-between gap-2">
-                      <CandidateNameCell c={c} />
+                      <CandidateNameCell c={c} onOpen={(x) => setDetailId(x.id)} />
                       <Badge
                         variant={STAGE_VARIANT[c.stage]}
                         className="shrink-0"
@@ -713,11 +733,34 @@ export function RecruitingHome() {
         busy={pendingId !== null}
         onConfirm={onConfirmHire}
       />
+
+      <CandidateDetailDrawer
+        candidate={detailCandidate}
+        onOpenChange={(o) => !o && setDetailId(null)}
+        actions={
+          canManage && detailCandidate ? (
+            <CandidateActions
+              c={detailCandidate}
+              pendingId={pendingId}
+              onAdvance={advance}
+              onRequest={(kind) =>
+                setDialog({ kind, candidate: detailCandidate })
+              }
+            />
+          ) : null
+        }
+      />
     </div>
   );
 }
 
-function CandidateNameCell({ c }: { c: Candidate }) {
+function CandidateNameCell({
+  c,
+  onOpen,
+}: {
+  c: Candidate;
+  onOpen: (c: Candidate) => void;
+}) {
   return (
     <div className="flex items-center gap-2.5 min-w-0">
       <Avatar
@@ -725,9 +768,16 @@ function CandidateNameCell({ c }: { c: Candidate }) {
         email={c.email}
         size="sm"
       />
-      <span className="truncate">
+      {/* The name is the affordance here rather than the whole row: these
+          rows already carry advance/reject/withdraw buttons, and a row-wide
+          click target would swallow them. */}
+      <button
+        type="button"
+        onClick={() => onOpen(c)}
+        className="truncate text-left hover:text-gold hover:underline transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded-sm"
+      >
         {c.firstName} {c.lastName}
-      </span>
+      </button>
       {c.resumeUrl && (
         <a
           href={c.resumeUrl}

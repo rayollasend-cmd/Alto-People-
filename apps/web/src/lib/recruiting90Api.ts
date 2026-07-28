@@ -106,8 +106,13 @@ export interface OfferRecord {
   createdAt: string;
 }
 
-export const listOffers = () =>
-  apiFetch<{ offers: OfferRecord[] }>('/offers');
+// candidateId mirrors listInterviews — the server has always supported the
+// filter; without it the candidate drawer would pull all 200 offers to show
+// the two that belong to the person on screen.
+export const listOffers = (candidateId?: string) =>
+  apiFetch<{ offers: OfferRecord[] }>(
+    candidateId ? `/offers?candidateId=${candidateId}` : '/offers',
+  );
 
 export const createOffer = (input: {
   candidateId: string;
