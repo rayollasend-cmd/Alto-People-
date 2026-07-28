@@ -658,14 +658,17 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     setExportBusy(format);
     try {
       // Mirror the queue's filters exactly — a download that quietly ignored
-      // the associate/search narrowing handed back every associate in the
-      // range and read as if it were the filtered list.
+      // the associate/search/anomaly narrowing handed back every associate in
+      // the range and read as if it were the filtered list. anomaliesOnly is
+      // applied server-side, so the file covers the whole range rather than
+      // just the page the screen had fetched.
       await exportTimeEntries(format, {
         from: ymdToIsoStart(fromYmd),
         to: ymdToIsoEndExclusive(toYmd),
         ...(filter !== 'ALL' ? { status: filter } : {}),
         ...(focusAssociate ? { associateId: focusAssociate.id } : {}),
         ...(appliedSearch ? { search: appliedSearch } : {}),
+        ...(anomaliesOnly ? { anomaliesOnly: true } : {}),
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Export failed.');
@@ -1168,15 +1171,6 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                 </div>
               )}
 
-              {/* Range, status, associate and search all reach the export;
-                  anomalies is a client-side view over the fetched page, so it
-                  can't. Say so rather than hand back a wider file silently. */}
-              {canManage && anomaliesOnly && (
-                <p className="w-full text-2xs text-silver/80">
-                  Downloads cover every entry in the range — the anomalies-only
-                  view is not applied to CSV or PDF.
-                </p>
-              )}
             </div>
           </CardHeader>
 

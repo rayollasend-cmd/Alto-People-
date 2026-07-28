@@ -365,6 +365,19 @@ describe('<AdminTimeView> export scope', () => {
     expect(vi.mocked(exportTimeEntries).mock.calls.at(-1)![1].search).toBe('lopez');
   });
 
+  it('carries the anomalies-only toggle into the download', async () => {
+    const user = renderQueueTab();
+    await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
+
+    await user.click(screen.getByRole('button', { name: /anomalies only/i }));
+    await user.click(screen.getByRole('button', { name: /^csv$/i }));
+
+    await waitFor(() => expect(exportTimeEntries).toHaveBeenCalled());
+    expect(
+      vi.mocked(exportTimeEntries).mock.calls.at(-1)![1].anomaliesOnly,
+    ).toBe(true);
+  });
+
   it('sends no person filter when nothing is narrowed', async () => {
     const user = renderQueueTab();
     await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
@@ -375,6 +388,7 @@ describe('<AdminTimeView> export scope', () => {
     const body = vi.mocked(exportTimeEntries).mock.calls.at(-1)![1];
     expect(body.associateId).toBeUndefined();
     expect(body.search).toBeUndefined();
+    expect(body.anomaliesOnly).toBeUndefined();
     expect(body.from).toBeTruthy();
     expect(body.to).toBeTruthy();
   });

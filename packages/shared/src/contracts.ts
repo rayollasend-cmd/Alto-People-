@@ -1164,6 +1164,12 @@ export const TimeExportInputSchema = z.object({
    * download still returned every associate in the range.
    */
   search: z.string().trim().min(1).max(100).optional(),
+  /**
+   * Restrict to entries carrying at least one anomaly flag, matching the
+   * queue's "Anomalies only" toggle. Applied server-side across the whole
+   * range, so the file isn't limited to the page the screen had loaded.
+   */
+  anomaliesOnly: z.boolean().optional(),
 });
 export type TimeExportInput = z.infer<typeof TimeExportInputSchema>;
 

@@ -762,20 +762,42 @@ timeRouter.get('/admin/active', MANAGE, async (req, res, next) => {
  * Per-term AND across (first OR last) so a full-name search works: "Maria
  * Lopez" → Maria must hit first/last AND Lopez must hit first/last. A single
  * OR over the whole string matched neither field and returned nothing.
+ *
+ * Returns clauses rather than a `{ AND: [...] }` object: callers merge these
+ * with other clause producers into one AND array. Two helpers each spreading
+ * their own `AND` key into the same where object would silently drop the
+ * first — object spread keeps only the last.
  */
-function associateNameSearchWhere(search: string | undefined): Prisma.TimeEntryWhereInput {
+function associateNameSearchClauses(
+  search: string | undefined,
+): Prisma.TimeEntryWhereInput[] {
   const trimmed = search?.trim();
-  if (!trimmed) return {};
-  return {
-    AND: trimmed.split(/\s+/).map((term) => ({
-      associate: {
-        OR: [
-          { firstName: { contains: term, mode: 'insensitive' as const } },
-          { lastName: { contains: term, mode: 'insensitive' as const } },
-        ],
-      },
-    })),
-  };
+  if (!trimmed) return [];
+  return trimmed.split(/\s+/).map((term) => ({
+    associate: {
+      OR: [
+        { firstName: { contains: term, mode: 'insensitive' as const } },
+        { lastName: { contains: term, mode: 'insensitive' as const } },
+      ],
+    },
+  }));
+}
+
+/**
+ * "Anomalies only" — entries carrying at least one flag (missed punch,
+ * geofence violation, forgotten clock-out…).
+ *
+ * `anomalies` is a stored `Json?` column, so this is a real query rather than
+ * a post-filter: the export can apply it across the whole range instead of
+ * only the page the screen happened to fetch. Both the SQL NULL (older rows
+ * predating the column) and the empty array have to be excluded.
+ */
+function anomaliesOnlyClauses(on: boolean | undefined): Prisma.TimeEntryWhereInput[] {
+  if (!on) return [];
+  return [
+    { anomalies: { not: Prisma.DbNull } },
+    { NOT: { anomalies: { equals: [] } } },
+  ];
 }
 
 // Selectable pay-period windows for the review picker — derived from the
@@ -830,7 +852,7 @@ timeRouter.get('/admin/entries', MANAGE, async (req, res, next) => {
             },
           }
         : {}),
-      ...associateNameSearchWhere(search),
+      AND: associateNameSearchClauses(search),
     };
 
     // Fetch cap+1 so the response can SAY it was cut — a partial list that
@@ -1824,7 +1846,10 @@ async function loadExportRows(
     ...(input.clientId ? { clientId: input.clientId } : {}),
     ...(input.locationId ? { locationId: input.locationId } : {}),
     ...(input.associateId ? { associateId: input.associateId } : {}),
-    ...associateNameSearchWhere(input.search),
+    AND: [
+      ...associateNameSearchClauses(input.search),
+      ...anomaliesOnlyClauses(input.anomaliesOnly),
+    ],
   };
   const rows = await prisma.timeEntry.findMany({
     where,
