@@ -70,6 +70,8 @@ interface CandidateBoardProps {
   onRequestReject: (c: Candidate) => void;
   onRequestWithdraw: (c: Candidate) => void;
   onRequestHire: (c: Candidate) => void;
+  /** Open the full detail drawer. Cards were drag-only before this. */
+  onOpen: (c: Candidate) => void;
 }
 
 export function CandidateBoard({
@@ -79,6 +81,7 @@ export function CandidateBoard({
   onRequestReject,
   onRequestWithdraw,
   onRequestHire,
+  onOpen,
 }: CandidateBoardProps) {
   const grouped = useMemo(() => {
     const out: Record<CandidateStage, Candidate[]> = {
@@ -127,6 +130,7 @@ export function CandidateBoard({
               stage={stage}
               candidates={grouped[stage]}
               pendingId={pendingId}
+              onOpen={onOpen}
             />
           </div>
         ))}
@@ -139,10 +143,12 @@ function Column({
   stage,
   candidates,
   pendingId,
+  onOpen,
 }: {
   stage: CandidateStage;
   candidates: Candidate[];
   pendingId: string | null;
+  onOpen: (c: Candidate) => void;
 }) {
   const { isOver, setNodeRef } = useDroppable({ id: stage });
   return (
@@ -173,6 +179,7 @@ function Column({
               key={c.id}
               candidate={c}
               pending={pendingId === c.id}
+              onOpen={onOpen}
             />
           ))
         )}
@@ -184,9 +191,11 @@ function Column({
 function CandidateCard({
   candidate,
   pending,
+  onOpen,
 }: {
   candidate: Candidate;
   pending: boolean;
+  onOpen: (c: Candidate) => void;
 }) {
   const locked = TERMINAL_STAGES.has(candidate.stage);
   const { attributes, listeners, setNodeRef, transform, isDragging } =
@@ -201,16 +210,33 @@ function CandidateCard({
 
   const fullName = `${candidate.firstName} ${candidate.lastName}`;
 
+  // Click-to-open layers on top of dragging: the PointerSensor activates only
+  // past 6px of travel, so a stationary press stays a click. Terminal cards
+  // can't be dragged but must still open — a hired candidate's record is
+  // exactly the one you want to read back. Only the PointerSensor is
+  // registered, so dnd-kit claims no keyboard handler and Enter/Space are
+  // ours to bind.
   return (
     <div
       ref={setNodeRef}
       style={style}
       {...(locked ? {} : attributes)}
       {...(locked ? {} : listeners)}
+      role="button"
+      tabIndex={0}
+      aria-label={`Open ${fullName}'s details`}
+      onClick={() => onOpen(candidate)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen(candidate);
+        }
+      }}
       className={cn(
         'rounded-md border border-navy-secondary bg-navy p-3 text-sm elev-1 transition-all',
+        'text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
         !locked && 'cursor-grab active:cursor-grabbing hover:border-silver/40',
-        locked && 'opacity-80',
+        locked && 'opacity-80 cursor-pointer hover:border-silver/40',
         isDragging && 'opacity-60 ring-1 ring-gold/60',
         pending && 'opacity-60',
       )}
@@ -242,6 +268,7 @@ function CandidateCard({
               title="Resume"
               aria-label="Open resume in a new tab"
               onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
               className="text-silver/70 hover:text-gold transition-colors"
             >
               <FileText className="h-3.5 w-3.5" />
@@ -255,6 +282,7 @@ function CandidateCard({
               title="LinkedIn"
               aria-label="Open LinkedIn profile in a new tab"
               onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
               className="text-silver/70 hover:text-gold transition-colors"
             >
               <Link2 className="h-3.5 w-3.5" />
