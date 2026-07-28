@@ -4,6 +4,7 @@ import type {
   ExternalPayrollSheetInput,
 } from '@alto-people/shared';
 import { tryDecryptString } from './crypto.js';
+import { readRoutingNumber } from './payoutMethod.js';
 import { buildPayrollSheet, type PayrollSheetInputRow } from './payrollSheet.js';
 
 /**
@@ -76,26 +77,6 @@ const PAYOUT_TYPE_LABEL: Record<string, string> = {
   BANK_ACCOUNT: 'Direct deposit',
   BRANCH_CARD: 'Branch card',
 };
-
-/**
- * Read a stored routing number.
- *
- * Despite the column name, `routingNumberEnc` holds PLAIN UTF-8 bytes — the
- * writer in onboarding.ts stores it that way on the reasoning that routing
- * numbers are public (they're printed on every cheque), and both existing
- * readers (the redacted onboarding GET and the audited org reveal) decode it
- * with toString('utf8'). Running it through the decrypter instead returns
- * null for every real record, which silently blanks the column and inflates
- * the missing-bank-details count.
- *
- * The decrypt fallback covers any row that predates that convention; a
- * 9-digit result is the tell for which encoding we're looking at.
- */
-function readRoutingNumber(blob: Buffer): string {
-  const utf8 = blob.toString('utf8');
-  if (/^\d{9}$/.test(utf8)) return utf8;
-  return tryDecryptString(blob) ?? '';
-}
 
 function money(v: Prisma.Decimal | null | undefined): number | null {
   return v === null || v === undefined ? null : Number(v);

@@ -216,6 +216,65 @@ describe('external payroll sheet — content', () => {
     expect(gaps.missingBankDetails).toBe(0);
   });
 
+  // The two writers disagree: onboarding stores the routing number as plain
+  // UTF-8, self-service stores ciphertext. Rows exist in both formats, so
+  // the sheet has to read both or it blanks the column for half the roster.
+  it('reads an encrypted routing number too (self-service format)', async () => {
+    const client = await createClient();
+    const associate = await createAssociate({ firstName: 'Enc', lastName: 'Format' });
+    await prisma.w4Submission.create({
+      data: {
+        associateId: associate.id,
+        filingStatus: 'SINGLE',
+        ssnEncrypted: encryptString('111-22-3333'),
+      },
+    });
+    await prisma.payoutMethod.create({
+      data: {
+        associateId: associate.id,
+        type: 'BANK_ACCOUNT',
+        accountType: 'CHECKING',
+        isPrimary: true,
+        routingNumberEnc: encryptString('021000021'),
+        accountNumberEnc: encryptString('55554444'),
+      },
+    });
+    await prisma.compensationRecord.create({
+      data: { associateId: associate.id, amount: 20, payType: 'HOURLY' },
+    });
+    const clockInAt = new Date('2026-06-17T09:00:00.000Z');
+    await prisma.timeEntry.create({
+      data: {
+        associateId: associate.id,
+        clientId: client.id,
+        clockInAt,
+        clockOutAt: new Date(clockInAt.getTime() + 4 * 3600_000),
+        status: 'APPROVED',
+      },
+    });
+
+    const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(user.email);
+    const res = await a
+      .post('/time/admin/external-payroll-sheet.xlsx')
+      .send({ ...RANGE, clientId: client.id })
+      .buffer()
+      .parse(binaryParser);
+
+    expect(res.status).toBe(200);
+    const gaps = JSON.parse(res.headers['x-sheet-gaps']);
+    expect(gaps.missingBankDetails).toBe(0);
+
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(res.body);
+    const ws = wb.getWorksheet('External Payroll');
+    let dataRow: ExcelJS.Row | null = null;
+    ws!.eachRow((row) => {
+      if (row.getCell(1).value === 'Enc Format') dataRow = row;
+    });
+    expect(String(dataRow!.getCell(11).value)).toBe('021000021');
+  });
+
   it('counts gaps instead of silently shipping blank cells', async () => {
     const client = await createClient();
     // No W-4, no payout method, no compensation record.

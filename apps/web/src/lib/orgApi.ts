@@ -43,6 +43,7 @@ export interface PayoutMethodSummary {
   hasPayoutMethod: boolean;
   type?: 'BANK_ACCOUNT' | 'BRANCH_CARD';
   accountType?: string | null;
+  bankName?: string | null;
   routingMasked?: string | null;
   accountLast4?: string | null;
   branchCardId?: string | null;
@@ -53,6 +54,7 @@ export interface PayoutMethodSummary {
 export interface PayoutMethodReveal {
   type: 'BANK_ACCOUNT' | 'BRANCH_CARD';
   accountType: string | null;
+  bankName: string | null;
   routingNumber: string | null;
   accountNumber: string | null;
   branchCardId: string | null;
@@ -73,6 +75,25 @@ export function revealAssociatePayoutMethod(
   return apiFetch(`/org/associates/${associateId}/payout-method/reveal`, {
     method: 'POST',
     body: { reason },
+  });
+}
+
+/**
+ * Set the institution name on an existing bank-account payout method.
+ *
+ * Backfill path: bankName was added after most associates onboarded, so
+ * their records carry a blank the external payroll file expects. Scoped to
+ * the label — routing and account numbers stay writable only by the
+ * associate (via self-service, which emails a change confirmation) so no
+ * admin endpoint can redirect where money lands.
+ */
+export function setAssociateBankName(
+  associateId: string,
+  bankName: string,
+): Promise<{ bankName: string }> {
+  return apiFetch(`/org/associates/${associateId}/payout-method`, {
+    method: 'PATCH',
+    body: { bankName },
   });
 }
 

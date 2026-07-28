@@ -60,6 +60,7 @@ import {
 } from '../lib/checklist.js';
 import multer from 'multer';
 import { decryptString, encryptString, tryDecryptString } from '../lib/crypto.js';
+import { maskRoutingNumber } from '../lib/payoutMethod.js';
 import { recordOnboardingEvent } from '../lib/audit.js';
 import {
   notifyAllAdmins,
@@ -1433,10 +1434,14 @@ onboardingRouter.get(
               let routingMasked: string | null = null;
               let accountLast4: string | null = null;
               try {
-                if (payout.routingNumberEnc) {
-                  const r = decryptString(payout.routingNumberEnc);
-                  routingMasked = `•••••${r.slice(-4)}`;
-                }
+                // This used to call decryptString on the routing number,
+                // which THROWS for the plaintext rows the direct-deposit
+                // route writes — and the catch below then dropped the
+                // account last-4 as well, so the auditor's packet silently
+                // showed neither. maskRoutingNumber handles both formats and
+                // the account number is decrypted separately so one failing
+                // can't take the other down.
+                routingMasked = maskRoutingNumber(payout.routingNumberEnc);
                 if (payout.accountNumberEnc) {
                   const a = decryptString(payout.accountNumberEnc);
                   accountLast4 = a.slice(-4);
@@ -1835,12 +1840,8 @@ onboardingRouter.get(
       let routingMasked: string | null = null;
       let accountLast4: string | null = null;
       try {
-        if (payout.routingNumberEnc) {
-          // Routing is stored as plain UTF-8 bytes — see the comment in the
-          // POST handler. Just decode as a string.
-          const r = payout.routingNumberEnc.toString('utf8');
-          routingMasked = `•••••${r.slice(-4)}`;
-        }
+        // Handles both storage formats — see lib/payoutMethod.ts.
+        routingMasked = maskRoutingNumber(payout.routingNumberEnc);
         if (payout.accountNumberEnc) {
           const a = decryptString(payout.accountNumberEnc);
           accountLast4 = a.slice(-4);

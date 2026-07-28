@@ -678,6 +678,7 @@ const PayoutUpdateSchema = z.object({
   routingNumber: z.string().regex(/^\d{9}$/),
   accountNumber: z.string().regex(/^\d{4,17}$/),
   accountType: z.enum(['CHECKING', 'SAVINGS']),
+  bankName: z.string().trim().min(1).max(120).optional(),
 });
 
 selfServiceRouter.get('/me/payout-method', async (req, res) => {
@@ -694,6 +695,7 @@ selfServiceRouter.get('/me/payout-method', async (req, res) => {
     method: {
       type: pm.type,
       accountType: pm.accountType,
+      bankName: pm.bankName,
       accountLast4: account ? account.slice(-4) : null,
       branchCard: pm.branchCardId !== null,
       verifiedAt: pm.verifiedAt?.toISOString() ?? null,
@@ -727,6 +729,10 @@ selfServiceRouter.post('/me/payout-method', async (req, res) => {
     routingNumberEnc: encryptString(input.routingNumber),
     accountNumberEnc: encryptString(input.accountNumber),
     accountType: input.accountType,
+    // This replaces the whole account, so a bank name carried over from the
+    // previous one would name the wrong institution on the payroll file.
+    // Take the new value, or clear it.
+    bankName: input.bankName ?? null,
     verifiedAt: null,
     isPrimary: true,
   };
