@@ -408,19 +408,28 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
         ))}
       </section>
 
-      {detail.tasks.some((t) => t.kind === 'I9_VERIFICATION') && (
+      {/* I-9 Section 1 data and the uploaded identity documents behind it are
+          HR-only — invite-scoped roles (SHIFT_SUPERVISOR) see checklist
+          progress, never the documents. The API enforces the same boundary in
+          assertCanModifyApplication; this just avoids rendering a card that
+          would only 403. */}
+      {canManage && detail.tasks.some((t) => t.kind === 'I9_VERIFICATION') && (
         <section className="mb-6">
           <I9Card applicationId={detail.id} startDate={detail.startDate} />
         </section>
       )}
 
-      <section className="mb-6">
-        <EsignSection
-          applicationId={detail.id}
-          canManage={canManage}
-          esignTasks={detail.tasks.filter((t) => t.kind === 'E_SIGN')}
-        />
-      </section>
+      {/* Same reasoning — EsignSection loads signed agreement bodies on mount,
+          which are now gated server-side. */}
+      {canManage && (
+        <section className="mb-6">
+          <EsignSection
+            applicationId={detail.id}
+            canManage={canManage}
+            esignTasks={detail.tasks.filter((t) => t.kind === 'E_SIGN')}
+          />
+        </section>
+      )}
 
       {canManage && (
         <Card>

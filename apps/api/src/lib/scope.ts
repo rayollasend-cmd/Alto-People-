@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient, Application } from '@prisma/client';
+import { hasCapability } from '@alto-people/shared';
 import type { SessionUser } from '../types/express.js';
 import { HttpError } from '../middleware/error.js';
 
@@ -41,6 +42,13 @@ export function scopeApplications(
   }
   if (user.role === 'ASSOCIATE' && user.associateId) {
     return { ...base, associateId: user.associateId };
+  }
+  // SHIFT_SUPERVISOR sends onboarding invites and watches checklist progress
+  // for its own client only (fail closed if unassigned). Without this branch
+  // the role reads every application org-wide the moment it holds
+  // view:onboarding — same hazard scopeClients guards against above.
+  if (user.role === 'SHIFT_SUPERVISOR') {
+    return { ...base, clientId: user.clientId ?? NO_CLIENT };
   }
   return base;
 }
@@ -198,17 +206,40 @@ export function effectiveClientIdFilter(
 }
 
 /**
- * Loads an application the caller is allowed to modify, or throws 404.
- * Use 404 (not 403) so existence isn't leaked across tenants.
+ * What the caller is reaching for. Drives the PII gate below.
+ *
+ *  - 'applicant-record' (default) — the personal record behind the
+ *    application: profile/DOB/address, W-4 + SSN last-4, I-9 Section 1,
+ *    uploaded identity documents, signed agreements. Restricted to the
+ *    applicant themselves and holders of manage:onboarding.
+ *  - 'invite' — the delivery mechanics only (send/resend an invite, nudge
+ *    a stalled applicant). No personal data is returned, so invite-only
+ *    roles are allowed through.
+ */
+export type ApplicationAccessIntent = 'applicant-record' | 'invite';
+
+/**
+ * Loads an application the caller is allowed to modify, or throws.
+ * Use 404 (not 403) for scope misses so existence isn't leaked across
+ * tenants; 403 once scope passes but the capability doesn't, since at
+ * that point the caller already knows the record exists.
  *
  * Defense-in-depth: even though `scopeApplications` already filters
  * Associates to their own application, we re-check here so a future
  * scope-helper bug doesn't become a write leak.
+ *
+ * The PII gate defaults to the strict intent so a route added later
+ * inherits the safe behavior without having to know this rule exists.
+ * Scope alone is not enough: SHIFT_SUPERVISOR is client-bounded and may
+ * legitimately watch an application's *progress*, but must never read or
+ * write the identity documents behind it — untrained review of I-9
+ * documents carries INA §274B document-abuse exposure.
  */
 export async function assertCanModifyApplication(
   tx: Tx,
   user: SessionUser,
-  applicationId: string
+  applicationId: string,
+  opts: { intent?: ApplicationAccessIntent } = {}
 ): Promise<Application> {
   const app = await tx.application.findFirst({
     where: { ...scopeApplications(user), id: applicationId },
@@ -221,6 +252,18 @@ export async function assertCanModifyApplication(
     app.associateId !== user.associateId
   ) {
     throw new HttpError(404, 'application_not_found', 'Application not found');
+  }
+  const intent = opts.intent ?? 'applicant-record';
+  if (
+    intent === 'applicant-record' &&
+    !(user.associateId && app.associateId === user.associateId) &&
+    !hasCapability(user.role, 'manage:onboarding')
+  ) {
+    throw new HttpError(
+      403,
+      'forbidden',
+      'Missing capability: manage:onboarding'
+    );
   }
   return app;
 }

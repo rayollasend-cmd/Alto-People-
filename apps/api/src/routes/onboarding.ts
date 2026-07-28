@@ -49,6 +49,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   assertCanModifyApplication,
+  effectiveClientIdFilter,
   scopeApplications,
   scopeTemplates,
 } from '../lib/scope.js';
@@ -81,6 +82,10 @@ import { AGREEMENT_BODY, AGREEMENT_TITLE } from '../lib/altoHrContent.js';
 export const onboardingRouter = Router();
 
 const MANAGE = requireCapability('manage:onboarding');
+// Invite delivery only — send, resend, nudge. Held by every manage:onboarding
+// role plus SHIFT_SUPERVISOR, who invites their own client's new hires and
+// watches checklist progress but never reviews the application itself.
+const INVITE = requireCapability('invite:onboarding');
 
 // Prisma's interactive-transaction default ceiling is 5 s. Neon (over the
 // internet) routinely exceeds that for the multi-statement writes below, so
@@ -3238,10 +3243,12 @@ function slugify(s: string): string {
 // already accepted (status=ACTIVE with a passwordHash).
 onboardingRouter.post(
   '/applications/:id/resend-invite',
-  MANAGE,
+  INVITE,
   async (req, res, next) => {
     try {
-      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id, {
+        intent: 'invite',
+      });
       const user = await prisma.user.findFirst({
         where: { associateId: app.associateId },
       });
@@ -3304,14 +3311,26 @@ onboardingRouter.post(
 // per-row in the response so HR can fix and retry just those.
 onboardingRouter.post(
   '/applications/bulk',
-  MANAGE,
+  INVITE,
   async (req, res, next) => {
     try {
       const parsed = BulkInviteInputSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
       }
-      const { clientId, templateId, employmentType, applicants } = parsed.data;
+      const { templateId, employmentType, applicants } = parsed.data;
+
+      // Tenant-bounded callers (SHIFT_SUPERVISOR) are clamped to their own
+      // client whatever the body asked for — the dialog preselecting it is a
+      // convenience, not a control. Admins pass through unchanged.
+      const clientId = effectiveClientIdFilter(req.user!, parsed.data.clientId);
+      if (!clientId) {
+        throw new HttpError(
+          400,
+          'client_required',
+          'Your account has no client assigned — ask an administrator to set one before inviting.',
+        );
+      }
 
       const results: BulkInviteResultRow[] = [];
       let succeeded = 0;
@@ -3371,7 +3390,7 @@ onboardingRouter.post(
 // users are skipped with a 409 in the row error.
 onboardingRouter.post(
   '/applications/bulk-resend',
-  MANAGE,
+  INVITE,
   async (req, res, next) => {
     try {
       const parsed = BulkResendInputSchema.safeParse(req.body);
@@ -3578,7 +3597,7 @@ onboardingRouter.post(
 // rate-limit later if needed.
 onboardingRouter.post(
   '/applications/:id/nudge',
-  MANAGE,
+  INVITE,
   async (req, res, next) => {
     try {
       const parsed = NudgeInputSchema.safeParse(req.body);
@@ -3586,7 +3605,9 @@ onboardingRouter.post(
         throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
       }
       const { subject, body } = parsed.data;
-      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id, {
+        intent: 'invite',
+      });
       const user = await prisma.user.findFirst({
         where: { associateId: app.associateId },
       });

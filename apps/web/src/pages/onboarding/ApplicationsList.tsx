@@ -282,6 +282,11 @@ function nudgeContentFor(a: ApplicationSummary): { subject: string; body: string
 export function ApplicationsList() {
   const { can } = useAuth();
   const canManage = can('manage:onboarding');
+  // Superset of canManage (every manage:onboarding role also holds
+  // invite:onboarding). Gates the send-and-monitor surface — bulk invite,
+  // the progress KPIs, and the per-row nudge/resend actions — so a
+  // SHIFT_SUPERVISOR gets those without the HR review affordances.
+  const canInvite = can('invite:onboarding');
   const prompt = usePrompt();
   const confirm = useConfirm();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -648,20 +653,24 @@ export function ApplicationsList() {
         title="Onboarding"
         subtitle="Active applications and their checklist progress."
         secondaryActions={
-          canManage ? (
+          canInvite ? (
             <>
-              <Link to="/onboarding/analytics">
-                <Button variant="ghost">
-                  <BarChart3 className="h-4 w-4" />
-                  Analytics
-                </Button>
-              </Link>
-              <Link to="/onboarding/templates">
-                <Button variant="ghost">
-                  <LayoutTemplate className="h-4 w-4" />
-                  Templates
-                </Button>
-              </Link>
+              {canManage && (
+                <>
+                  <Link to="/onboarding/analytics">
+                    <Button variant="ghost">
+                      <BarChart3 className="h-4 w-4" />
+                      Analytics
+                    </Button>
+                  </Link>
+                  <Link to="/onboarding/templates">
+                    <Button variant="ghost">
+                      <LayoutTemplate className="h-4 w-4" />
+                      Templates
+                    </Button>
+                  </Link>
+                </>
+              )}
               <Button variant="secondary" onClick={() => setOpenBulkInvite(true)}>
                 <Users className="h-4 w-4" />
                 Bulk invite
@@ -680,7 +689,7 @@ export function ApplicationsList() {
       />
 
       {/* KPI strip — always visible (empty-zero state is fine). */}
-      {canManage && statsData && statsData.total > 0 && (
+      {canInvite && statsData && statsData.total > 0 && (
         <div className="mb-5 flex flex-wrap gap-x-6 gap-y-2 px-4 py-3 rounded-md border border-navy-secondary bg-navy-secondary/30">
           <Kpi label="Total" value={String(stats.total)} />
           <Kpi label="In flight" value={String(stats.inFlight)} />
@@ -723,7 +732,7 @@ export function ApplicationsList() {
       {/* Email-bounce banner — fires when at least one in-flight invite/nudge
           came back FAILED from the provider. Distinct from the stale banner
           (which is just "old"); a bounce is *actionable* (fix the email). */}
-      {canManage && stats.bounced > 0 && (
+      {canInvite && stats.bounced > 0 && (
         <div className="mb-4 flex items-start gap-2 p-3 rounded-md border border-alert/40 bg-alert/[0.07] text-sm">
           <MailWarning className="h-4 w-4 text-alert mt-0.5 shrink-0" />
           <div className="flex-1 min-w-0">
@@ -758,7 +767,7 @@ export function ApplicationsList() {
       )}
 
       {/* Stale-application banner — only when there's something to nudge about. */}
-      {canManage && stats.stale > 0 && (
+      {canInvite && stats.stale > 0 && (
         <div className="mb-4 flex items-start gap-2 p-3 rounded-md border border-alert/40 bg-alert/[0.07] text-sm">
           <AlertTriangle className="h-4 w-4 text-alert mt-0.5 shrink-0" />
           <div className="flex-1 min-w-0">
@@ -800,7 +809,7 @@ export function ApplicationsList() {
       )}
 
       {/* Filter row: search input + status pills */}
-      {canManage && (
+      {canInvite && (
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <div className="relative flex-1 w-full sm:min-w-[200px] max-w-xs">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-silver/70 pointer-events-none" />
@@ -935,7 +944,9 @@ export function ApplicationsList() {
               ? 'Clear the filter to see all applications.'
               : canManage
                 ? 'Click "New application" to invite the first associate.'
-                : "When HR creates an onboarding application, it'll show up here with live checklist progress."
+                : canInvite
+                  ? 'Click "Bulk invite" to send the first onboarding invitation.'
+                  : "When HR creates an onboarding application, it'll show up here with live checklist progress."
           }
           action={
             urlQ || status !== 'ALL' ? (
@@ -952,6 +963,11 @@ export function ApplicationsList() {
               <Button onClick={() => setOpenCreate(true)}>
                 <Plus className="h-4 w-4" />
                 New application
+              </Button>
+            ) : canInvite ? (
+              <Button onClick={() => setOpenBulkInvite(true)}>
+                <Users className="h-4 w-4" />
+                Bulk invite
               </Button>
             ) : undefined
           }
@@ -991,7 +1007,7 @@ export function ApplicationsList() {
 
       {/* Bulk-actions toolbar — only visible when at least one row is selected.
           Sits above the table so it doesn't shift row layout when it appears. */}
-      {canManage && selected.size > 0 && (
+      {canInvite && selected.size > 0 && (
         <div className="mb-3 flex items-center gap-3 px-3 py-2 rounded-md border border-gold/40 bg-gold/[0.06] text-sm">
           <span className="text-white font-medium">
             {selected.size} selected
@@ -1007,17 +1023,19 @@ export function ApplicationsList() {
             <MailPlus className="h-4 w-4" />
             Resend invite
           </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={onBulkReject}
-            loading={bulkRejecting}
-            disabled={bulkResending}
-            className="text-alert hover:text-alert"
-          >
-            <Ban className="h-4 w-4" />
-            Reject
-          </Button>
+          {canManage && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={onBulkReject}
+              loading={bulkRejecting}
+              disabled={bulkResending}
+              className="text-alert hover:text-alert"
+            >
+              <Ban className="h-4 w-4" />
+              Reject
+            </Button>
+          )}
           <Button
             size="sm"
             variant="ghost"
@@ -1034,7 +1052,7 @@ export function ApplicationsList() {
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
-                {canManage && (
+                {canInvite && (
                   <TableHead className="w-8 px-3 no-print">
                     <input
                       type="checkbox"
@@ -1055,7 +1073,7 @@ export function ApplicationsList() {
                 <TableHead className="w-56">Progress</TableHead>
                 <TableHead className="hidden lg:table-cell">Blocked on</TableHead>
                 <TableHead className="hidden md:table-cell">Start</TableHead>
-                {canManage && <TableHead className="w-24" aria-label="Actions" />}
+                {canInvite && <TableHead className="w-24" aria-label="Actions" />}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -1080,7 +1098,7 @@ export function ApplicationsList() {
                       isSelected && 'bg-gold/[0.04]'
                     )}
                   >
-                    {canManage && (
+                    {canInvite && (
                       <TableCell className="px-3 no-print">
                         <input
                           type="checkbox"
@@ -1209,13 +1227,13 @@ export function ApplicationsList() {
                         </Badge>
                       )}
                     </TableCell>
-                    {canManage && (
+                    {canInvite && (
                       <TableCell className="text-right whitespace-nowrap no-print">
                         <div
                           className="flex items-center justify-end gap-0.5 opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
                           data-no-row-click
                         >
-                          {a.status !== 'APPROVED' && a.status !== 'REJECTED' && (
+                          {canManage && a.status !== 'APPROVED' && a.status !== 'REJECTED' && (
                             <Button
                               asChild
                               variant="ghost"
@@ -1277,6 +1295,7 @@ export function ApplicationsList() {
                 stale={stale}
                 isSelected={isSelected}
                 canManage={canManage}
+                canInvite={canInvite}
                 onOpen={() => setDrawerTarget(a)}
                 onToggleSelect={() => toggleOne(a.id)}
                 onNudge={() => setNudgeTarget(a)}
@@ -1360,7 +1379,10 @@ interface ApplicationCardProps {
   a: ApplicationSummary;
   stale: boolean;
   isSelected: boolean;
+  /** HR review powers — gates the in-person onboarding workspace link. */
   canManage: boolean;
+  /** Send/monitor powers — gates selection and the nudge/resend strip. */
+  canInvite: boolean;
   onOpen: () => void;
   onToggleSelect: () => void;
   onNudge: () => void;
@@ -1373,6 +1395,7 @@ function ApplicationCard({
   stale,
   isSelected,
   canManage,
+  canInvite,
   onOpen,
   onToggleSelect,
   onNudge,
@@ -1403,7 +1426,7 @@ function ApplicationCard({
       )}
     >
       <div className="flex items-start gap-3">
-        {canManage && (
+        {canInvite && (
           <input
             type="checkbox"
             checked={isSelected}
@@ -1474,12 +1497,12 @@ function ApplicationCard({
         </span>
       </div>
 
-      {canManage && (
+      {canInvite && (
         <div
           className="flex items-center gap-1 opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
           data-no-row-click
         >
-          {a.status !== 'APPROVED' && a.status !== 'REJECTED' && (
+          {canManage && a.status !== 'APPROVED' && a.status !== 'REJECTED' && (
             <Button
               asChild
               variant="ghost"

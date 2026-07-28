@@ -4,8 +4,10 @@ import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
 import {
   DEFAULT_TEST_PASSWORD,
+  createApplicationWithChecklist,
   createAssociate,
   createClient,
+  createStandardTemplate,
   createUser,
   prisma,
   truncateAll,
@@ -15,8 +17,8 @@ import {
  * SHIFT_SUPERVISOR is a client-bounded role. These tests pin the tenant
  * boundary on the surfaces that used to leak org-wide: time-off decisions,
  * kiosk PINs/punches/selfies/devices, shift templates (incl. the apply
- * path that creates shifts), marketplace claim decisions, and the
- * approvals badge counts.
+ * path that creates shifts), marketplace claim decisions, the approvals
+ * badge counts, and onboarding applications.
  */
 
 const app = () => createApp();
@@ -305,5 +307,163 @@ describe('approvals badge', () => {
     const res = await sup.get('/approvals/count');
     expect(res.status).toBe(200);
     expect(res.body.timeOff).toBe(1);
+  });
+});
+
+/**
+ * Supervisors hold invite:onboarding (send/resend/nudge + watch progress)
+ * but NOT manage:onboarding (approve/reject, I-9 Section 2, applicant PII).
+ * These pin both halves — the capability split and the tenant boundary that
+ * scopeApplications was missing entirely before this feature.
+ */
+describe('onboarding tenant boundary', () => {
+  it('supervisor invites into their own client and is clamped to it', async () => {
+    const { mine, other, sup } = await seedTwoClients();
+    const template = await createStandardTemplate();
+
+    const ok = await sup.post('/onboarding/applications/bulk').send({
+      clientId: mine.id,
+      templateId: template.id,
+      applicants: [
+        { email: 'floor.hire@example.com', firstName: 'Floor', lastName: 'Hire' },
+      ],
+    });
+    expect(ok.status).toBe(200);
+    expect(ok.body.succeeded).toBe(1);
+    expect(ok.body.failed).toBe(0);
+
+    // Asking for the other tenant lands on their own client anyway — the
+    // dialog preselecting the client is convenience, not a control.
+    const clamped = await sup.post('/onboarding/applications/bulk').send({
+      clientId: other.id,
+      templateId: template.id,
+      applicants: [
+        { email: 'poached@example.com', firstName: 'Poach', lastName: 'Ed' },
+      ],
+    });
+    expect(clamped.status).toBe(200);
+    expect(clamped.body.succeeded).toBe(1);
+    const poached = await prisma.application.findFirstOrThrow({
+      where: { associate: { email: 'poached@example.com' } },
+    });
+    expect(poached.clientId).toBe(mine.id);
+    expect(poached.clientId).not.toBe(other.id);
+  });
+
+  it('supervisor lists only their own client applications', async () => {
+    const { mine, other, myAssoc, otherAssoc, sup } = await seedTwoClients();
+    const mineApp = await createApplicationWithChecklist({
+      associateId: myAssoc.id,
+      clientId: mine.id,
+    });
+    const theirsApp = await createApplicationWithChecklist({
+      associateId: otherAssoc.id,
+      clientId: other.id,
+    });
+
+    const list = await sup.get('/onboarding/applications?status=ALL');
+    expect(list.status).toBe(200);
+    const ids = list.body.applications.map((r: { id: string }) => r.id);
+    expect(ids).toContain(mineApp.id);
+    expect(ids).not.toContain(theirsApp.id);
+
+    // Progress on their own client is readable — that's the point of the role.
+    const detail = await sup.get(`/onboarding/applications/${mineApp.id}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.tasks.length).toBeGreaterThan(0);
+    expect(detail.body.percentComplete).toBe(0);
+
+    // The other tenant 404s rather than 403 — no existence leak.
+    expect((await sup.get(`/onboarding/applications/${theirsApp.id}`)).status).toBe(404);
+  });
+
+  it('supervisor cannot review an application or read applicant PII', async () => {
+    const { mine, myAssoc, sup } = await seedTwoClients();
+    const template = await createStandardTemplate();
+    const app = await createApplicationWithChecklist({
+      associateId: myAssoc.id,
+      clientId: mine.id,
+    });
+
+    // HR review powers — blocked at the capability guard.
+    expect(
+      (await sup.post(`/onboarding/applications/${app.id}/approve`).send({
+        hireDate: '2026-09-01',
+      })).status,
+    ).toBe(403);
+    expect(
+      (await sup.post(`/onboarding/applications/${app.id}/reject`).send({
+        reason: 'no',
+      })).status,
+    ).toBe(403);
+    expect(
+      (await sup.post(`/onboarding/applications/${app.id}/i9/section2`).send({
+        documentList: 'LIST_A',
+        supportingDocIds: ['00000000-0000-0000-0000-000000000001'],
+      })).status,
+    ).toBe(403);
+
+    // Single-invite carries hireRole, which would let a supervisor mint an
+    // admin account — stays on manage:onboarding for exactly that reason.
+    expect(
+      (await sup.post('/onboarding/applications').send({
+        associateEmail: 'confederate@example.com',
+        associateFirstName: 'Con',
+        associateLastName: 'Federate',
+        clientId: mine.id,
+        templateId: template.id,
+        hireRole: 'OPERATIONS_MANAGER',
+      })).status,
+    ).toBe(403);
+
+    // Applicant PII on their OWN client — scope passes, capability doesn't.
+    expect((await sup.get(`/onboarding/applications/${app.id}/w4`)).status).toBe(403);
+    expect((await sup.get(`/onboarding/applications/${app.id}/i9`)).status).toBe(403);
+    expect((await sup.get(`/onboarding/applications/${app.id}/profile`)).status).toBe(403);
+    expect(
+      (await sup.get(`/onboarding/applications/${app.id}/i9/documents`)).status,
+    ).toBe(403);
+    expect(
+      (await sup.get(`/onboarding/applications/${app.id}/esign/agreements`)).status,
+    ).toBe(403);
+
+    // ...and cannot write it either.
+    expect(
+      (await sup.post(`/onboarding/applications/${app.id}/w4`).send({
+        filingStatus: 'SINGLE',
+        multipleJobs: false,
+        dependentsAmount: 0,
+        otherIncome: 0,
+        deductions: 0,
+        extraWithholding: 0,
+        signature: 'Not Me',
+      })).status,
+    ).toBe(403);
+  });
+
+  it('HR admin keeps full access to the same surfaces', async () => {
+    const { mine, other, myAssoc, otherAssoc } = await seedTwoClients();
+    const { user: hrUser } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hr = await loginAs(hrUser.email);
+    const mineApp = await createApplicationWithChecklist({
+      associateId: myAssoc.id,
+      clientId: mine.id,
+    });
+    const theirsApp = await createApplicationWithChecklist({
+      associateId: otherAssoc.id,
+      clientId: other.id,
+    });
+
+    const list = await hr.get('/onboarding/applications?status=ALL');
+    expect(list.status).toBe(200);
+    const ids = list.body.applications.map((r: { id: string }) => r.id);
+    expect(ids).toEqual(expect.arrayContaining([mineApp.id, theirsApp.id]));
+
+    // The new PII gate is a no-op for manage:onboarding holders.
+    expect((await hr.get(`/onboarding/applications/${mineApp.id}/w4`)).status).toBe(200);
+    expect((await hr.get(`/onboarding/applications/${mineApp.id}/i9`)).status).toBe(200);
+    expect(
+      (await hr.get(`/onboarding/applications/${mineApp.id}/profile`)).status,
+    ).toBe(200);
   });
 });

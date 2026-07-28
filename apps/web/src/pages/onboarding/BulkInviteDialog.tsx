@@ -195,7 +195,14 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
     let cancelled = false;
     if (!clients) {
       listClients()
-        .then((r) => !cancelled && setClients(r.clients))
+        .then((r) => {
+          if (cancelled) return;
+          setClients(r.clients);
+          // Client-bounded callers (SHIFT_SUPERVISOR) only ever get their own
+          // client back from the scoped list — don't make them answer a
+          // question with one possible answer. The server clamps this anyway.
+          if (r.clients.length === 1) setClientId(r.clients[0].id);
+        })
         .catch(() => !cancelled && setClients([]));
     }
     if (!templates) {
