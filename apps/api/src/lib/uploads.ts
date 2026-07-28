@@ -86,6 +86,27 @@ export function verifyFileMagic(
         return null;
       }
       return 'File contents do not match a WebP image.';
+    case 'application/zip':
+    case 'application/x-zip-compressed':
+      // PK\x03\x04 (normal), PK\x05\x06 (empty), PK\x07\x08 (spanned).
+      // Windows reports x-zip-compressed, macOS and Linux report
+      // application/zip, so both declared types map here.
+      //
+      // Archives are STORED, never extracted — nothing in the product
+      // decompresses an upload — so the usual zip hazards (zip bombs, path
+      // traversal on extract) don't apply. Zip is also deliberately absent
+      // from INLINEABLE_MIMES, so it always downloads as an attachment
+      // rather than being rendered.
+      if (
+        head[0] === 0x50 &&
+        head[1] === 0x4b &&
+        ((head[2] === 0x03 && head[3] === 0x04) ||
+          (head[2] === 0x05 && head[3] === 0x06) ||
+          (head[2] === 0x07 && head[3] === 0x08))
+      ) {
+        return null;
+      }
+      return 'File contents do not match a ZIP archive.';
     default:
       return null;
   }

@@ -3992,6 +3992,14 @@ export const EVerifyCaseDetailSchema = z.object({
   // --- Section 2: employer review and verification ---
   documentList: I9DocumentListSchema.nullable(),
   documents: z.array(EVerifyDocumentSchema),
+  /**
+   * The case packet E-Verify hands back once a case is closed — HR downloads
+   * it from the federal portal and uploads it here. Stored as
+   * I9_VERIFICATION_RESULT documents; kept separate from `documents` (the
+   * associate's identity papers) because they answer different questions:
+   * one is what was inspected, the other is what the government returned.
+   */
+  packets: z.array(EVerifyDocumentSchema),
   section1CompletedAt: z.string().datetime().nullable(),
   section2CompletedAt: z.string().datetime().nullable(),
   section2VerifierEmail: z.string().nullable(),

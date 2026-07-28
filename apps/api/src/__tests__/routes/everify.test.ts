@@ -210,6 +210,46 @@ describe('GET /compliance/everify/:associateId — aggregation', () => {
     expect(res.body.blockers).toContain('NO_SSN');
   });
 
+  // The packet E-Verify returns and the papers the verifier inspected answer
+  // different questions — what the government said vs what was examined — so
+  // they come back as separate lists rather than one mixed pile.
+  it('separates the E-Verify packet from the identity documents', async () => {
+    const client = await createClient();
+    const ready = await readyAssociate(client.id);
+    await prisma.documentRecord.create({
+      data: {
+        associateId: ready.id,
+        kind: 'ID',
+        filename: 'license-front.jpg',
+        mimeType: 'image/jpeg',
+        size: 10,
+        s3Key: null,
+        status: 'UPLOADED',
+      },
+    });
+    await prisma.documentRecord.create({
+      data: {
+        associateId: ready.id,
+        kind: 'I9_VERIFICATION_RESULT',
+        filename: 'everify-case-closure.pdf',
+        mimeType: 'application/pdf',
+        size: 10,
+        s3Key: null,
+        status: 'VERIFIED',
+      },
+    });
+
+    const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(user.email);
+    const res = await a.get(`/compliance/everify/${ready.id}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.documents.map((d: { kind: string }) => d.kind)).toEqual(['ID']);
+    expect(res.body.packets.map((d: { filename: string }) => d.filename)).toEqual([
+      'everify-case-closure.pdf',
+    ]);
+  });
+
   it('audits the disclosure', async () => {
     const client = await createClient();
     const ready = await readyAssociate(client.id);

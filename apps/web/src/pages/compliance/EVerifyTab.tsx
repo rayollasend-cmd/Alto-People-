@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Check, Copy, ShieldCheck } from 'lucide-react';
 import type {
   EVerifyBlocker,
@@ -14,7 +14,7 @@ import {
 } from '@/lib/complianceApi';
 import { ApiError } from '@/lib/api';
 import { DocumentThumbnails } from '@/components/DocumentViewer';
-import { IDENTITY_DOC_KINDS } from '@/lib/documentsApi';
+import { IDENTITY_DOC_KINDS, uploadAdminDocument } from '@/lib/documentsApi';
 import { cn } from '@/lib/cn';
 import { fmtDate } from '@/lib/format';
 import { toast } from 'sonner';
@@ -542,6 +542,15 @@ function CaseDrawer({
                 }}
               />
             </Section>
+
+            <Section title="E-Verify packet">
+              <PacketSection
+                associateId={associateId}
+                packets={detail.packets}
+                canManage={canManage}
+                onUploaded={() => void load()}
+              />
+            </Section>
           </div>
         )}
       </DrawerBody>
@@ -563,6 +572,101 @@ function Section({
       </h3>
       {children}
     </section>
+  );
+}
+
+/**
+ * The packet E-Verify returns once a case closes.
+ *
+ * HR downloads it from the federal portal and files it here, against the
+ * associate, so the government's answer lives next to the case number rather
+ * than in someone's Downloads folder. Stored as I9_VERIFICATION_RESULT
+ * documents, which is what that kind was always meant for.
+ *
+ * Multi-select because the portal hands back a folder, not a single file —
+ * and the API accepts a .zip on the HR path so the archive can go up whole
+ * if that's how it arrived.
+ */
+function PacketSection({
+  associateId,
+  packets,
+  canManage,
+  onUploaded,
+}: {
+  associateId: string;
+  packets: EVerifyCaseDetail['packets'];
+  canManage: boolean;
+  onUploaded: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const upload = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setBusy(true);
+    setErr(null);
+    const failures: string[] = [];
+    let ok = 0;
+    // Sequential, not Promise.all: each file is its own audited write, and a
+    // partial failure should say which file rather than rejecting the batch.
+    for (const file of Array.from(files)) {
+      try {
+        await uploadAdminDocument(file, 'I9_VERIFICATION_RESULT', associateId);
+        ok += 1;
+      } catch (e) {
+        failures.push(`${file.name}: ${e instanceof Error ? e.message : 'failed'}`);
+      }
+    }
+    setBusy(false);
+    if (inputRef.current) inputRef.current.value = '';
+    if (ok > 0) onUploaded();
+    if (failures.length === 0) {
+      toast.success(`Uploaded ${ok} file${ok === 1 ? '' : 's'}.`);
+    } else {
+      setErr(failures.join(' · '));
+      if (ok > 0) toast.warning(`Uploaded ${ok}, ${failures.length} failed.`);
+    }
+  };
+
+  return (
+    <div>
+      {err && <ErrorBanner className="mb-2">{err}</ErrorBanner>}
+
+      {packets.length === 0 ? (
+        <p className="mb-2 text-xs text-silver">
+          Nothing filed yet. Once the case is closed, download the packet from
+          E-Verify and upload it here.
+        </p>
+      ) : (
+        <div className="mb-3">
+          <DocumentThumbnails
+            documents={packets}
+            bulkDownloadAssociateId={associateId}
+            bulkDownloadKinds={['I9_VERIFICATION_RESULT']}
+          />
+        </div>
+      )}
+
+      {canManage && (
+        <div>
+          <input
+            ref={inputRef}
+            type="file"
+            multiple
+            accept=".pdf,.png,.jpg,.jpeg,.webp,.zip"
+            onChange={(e) => void upload(e.target.files)}
+            disabled={busy}
+            className="block w-full text-xs text-silver file:mr-3 file:rounded file:border file:border-navy-secondary file:bg-navy-secondary/40 file:px-3 file:py-1.5 file:text-xs file:text-white hover:file:border-gold/60 disabled:opacity-50"
+          />
+          <p className="mt-1 text-2xs text-silver/60">
+            PDF, image, or a .zip of the whole folder. Up to 10 MB per file —
+            select several at once if the packet is multiple documents.
+          </p>
+          {busy && <p className="mt-1 text-2xs text-gold">Uploading…</p>}
+        </div>
+      )}
+    </div>
   );
 }
 

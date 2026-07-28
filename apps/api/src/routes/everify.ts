@@ -58,6 +58,13 @@ const IDENTITY_DOC_KINDS = [
   'J1_DS2019',
 ] as const;
 
+/**
+ * The packet E-Verify returns when a case closes. Reuses the existing
+ * I9_VERIFICATION_RESULT kind, whose schema comment already names E-Verify as
+ * an intended source — no new enum value, so no migration.
+ */
+const EVERIFY_PACKET_KIND = 'I9_VERIFICATION_RESULT' as const;
+
 function ymd(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
@@ -231,17 +238,19 @@ everifyRouter.get('/:associateId', MANAGE, async (req, res, next) => {
     // signal (the deploy target's ephemeral disk can leave rows whose blobs
     // are gone, and a broken <img> in a compliance screen reads as "no
     // document on file").
+    // One query for both sets, partitioned below — the identity papers the
+    // verifier inspected, and the packet the government returned.
     const docRows = await prisma.documentRecord.findMany({
       take: 500,
       where: {
         associateId: associate.id,
         deletedAt: null,
-        kind: { in: [...IDENTITY_DOC_KINDS] },
+        kind: { in: [...IDENTITY_DOC_KINDS, EVERIFY_PACKET_KIND] },
       },
       orderBy: { createdAt: 'asc' },
       select: { id: true, kind: true, filename: true, mimeType: true, s3Key: true },
     });
-    const documents = docRows.map((d) => {
+    const toDoc = (d: (typeof docRows)[number]) => {
       const lower = d.filename.toLowerCase();
       return {
         id: d.id,
@@ -255,7 +264,13 @@ everifyRouter.get('/:associateId', MANAGE, async (req, res, next) => {
             : null,
         fileAvailable: d.s3Key !== null && existsSync(resolveStoragePath(d.s3Key)),
       };
-    });
+    };
+    const documents = docRows
+      .filter((d) => d.kind !== EVERIFY_PACKET_KIND)
+      .map(toDoc);
+    const packets = docRows
+      .filter((d) => d.kind === EVERIFY_PACKET_KIND)
+      .map(toDoc);
 
     await recordComplianceEvent({
       actorUserId: req.user!.id,
@@ -263,7 +278,11 @@ everifyRouter.get('/:associateId', MANAGE, async (req, res, next) => {
       entityType: 'Associate',
       entityId: associate.id,
       associateId: associate.id,
-      metadata: { ssnDisclosed: ssn !== null, documentCount: documents.length },
+      metadata: {
+        ssnDisclosed: ssn !== null,
+        documentCount: documents.length,
+        packetCount: packets.length,
+      },
       req,
     });
 
@@ -282,6 +301,7 @@ everifyRouter.get('/:associateId', MANAGE, async (req, res, next) => {
         workAuthExpiresAt: i9?.workAuthExpiresAt ? ymd(i9.workAuthExpiresAt) : null,
         documentList: i9?.documentList ?? null,
         documents,
+        packets,
         section1CompletedAt: i9?.section1CompletedAt?.toISOString() ?? null,
         section2CompletedAt: i9?.section2CompletedAt?.toISOString() ?? null,
         section2VerifierEmail: i9?.section2Verifier?.email ?? null,

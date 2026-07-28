@@ -85,6 +85,33 @@ const upload = multer({
   },
 });
 
+// HR-side uploads additionally accept a ZIP. E-Verify hands the employer a
+// case-closure packet as a folder, which downloads as an archive — without
+// this the only route was for HR to unzip and upload each PDF by hand.
+//
+// Kept OFF the associate-facing `/me/upload`: widening what an unauthenticated-
+// adjacent role can push into storage is a different risk calculation, and
+// associates have no reason to submit archives. Archives are stored and never
+// extracted, and ZIP is absent from INLINEABLE_MIMES so it always downloads
+// as an attachment.
+const ADMIN_ALLOWED_MIMES = new Set([
+  ...ALLOWED_MIMES,
+  'application/zip',
+  'application/x-zip-compressed',
+]);
+
+const adminUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_BYTES },
+  fileFilter: (_req, file, cb) => {
+    if (!ADMIN_ALLOWED_MIMES.has(file.mimetype)) {
+      cb(new HttpError(400, 'invalid_mime', `Unsupported file type: ${file.mimetype}`));
+      return;
+    }
+    cb(null, true);
+  },
+});
+
 type RawDoc = Prisma.DocumentRecordGetPayload<{
   include: {
     associate: { select: { firstName: true; lastName: true } };
@@ -242,7 +269,7 @@ documentsRouter.post('/me/upload', upload.single('file'), async (req, res, next)
 documentsRouter.post(
   '/admin/upload',
   MANAGE,
-  upload.single('file'),
+  adminUpload.single('file'),
   async (req, res, next) => {
     try {
       const user = req.user!;
