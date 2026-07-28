@@ -3,6 +3,7 @@ import type {
   PayrollExceptionsInput,
   PayrollExceptionsResponse,
   PayrollItemListResponse,
+  PayrollItemYtdResponse,
   PayrollRunCreateInput,
   PayrollRunDetail,
   PayrollRunListResponse,
@@ -157,6 +158,17 @@ export function setBranchEnrollment(
 
 export function listMyPayrollItems(): Promise<PayrollItemListResponse> {
   return apiFetch<PayrollItemListResponse>('/payroll/me/items');
+}
+
+/**
+ * Authoritative YTD as of one paystub. The list above is capped at 50 rows,
+ * so YTD can't be summed client-side without understating it once someone
+ * has more stubs than that.
+ */
+export function getMyPayrollItemYtd(
+  itemId: string,
+): Promise<PayrollItemYtdResponse> {
+  return apiFetch<PayrollItemYtdResponse>(`/payroll/me/items/${itemId}/ytd`);
 }
 
 /**

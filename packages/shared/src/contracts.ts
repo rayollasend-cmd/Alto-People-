@@ -2195,6 +2195,35 @@ export const PayrollItemListResponseSchema = z.object({
 });
 export type PayrollItemListResponse = z.infer<typeof PayrollItemListResponseSchema>;
 
+/**
+ * Authoritative year-to-date totals as of one paystub — every DISBURSED item
+ * of that stub's year up to and including it, summed in SQL.
+ *
+ * The client cannot compute this: GET /payroll/me/items returns only the
+ * most recent 50 stubs, so summing what's loaded silently understates YTD
+ * once an associate has more (a weekly payer passes 50 inside one year).
+ */
+export const PayrollItemYtdResponseSchema = z.object({
+  year: z.number().int(),
+  /** Paystubs summed into these totals — lets the UI show what it's based on. */
+  paystubCount: z.number().int().nonnegative(),
+  gross: z.number(),
+  federalWithholding: z.number(),
+  fica: z.number(),
+  medicare: z.number(),
+  stateWithholding: z.number(),
+  preTaxDeductions: z.number(),
+  postTaxDeductions: z.number(),
+  netPay: z.number(),
+  employerFica: z.number(),
+  employerMedicare: z.number(),
+  employerFuta: z.number(),
+  employerSuta: z.number(),
+  /** Earning kind → YTD amount, for the earnings table's YTD column. */
+  byKind: z.record(PayrollEarningKindSchema, z.number()),
+});
+export type PayrollItemYtdResponse = z.infer<typeof PayrollItemYtdResponseSchema>;
+
 /* -------------------------------------------------------------------------- *
  *  Wave 1.1 — Pay schedules (QuickBooks Online Payroll parity)
  * -------------------------------------------------------------------------- */

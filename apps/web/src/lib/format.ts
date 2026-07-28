@@ -402,6 +402,26 @@ export function ymdLocal(d: Date = new Date()): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+/** Local midnight on `ymd`, as an ISO instant — the inclusive start of a range. */
+export function ymdToIsoStart(ymd: string): string {
+  return new Date(`${ymd}T00:00:00`).toISOString();
+}
+
+/**
+ * Local midnight on the day AFTER `ymd` — the exclusive end of a range.
+ *
+ * Uses calendar arithmetic (`setDate(+1)`), not `+ 24h`. A local day is 23 or
+ * 25 hours long across a DST change, so adding a fixed 24h lands at 23:00 or
+ * 01:00 rather than midnight: on the fall-back day that silently drops the
+ * final hour of the range, and on spring-forward it pulls in an hour of the
+ * next day.
+ */
+export function ymdToIsoEndExclusive(ymd: string): string {
+  const d = new Date(`${ymd}T00:00:00`);
+  d.setDate(d.getDate() + 1);
+  return d.toISOString();
+}
+
 /**
  * Parse a date-only "YYYY-MM-DD" string as LOCAL midnight. `new Date(s)`
  * parses date-only strings as UTC midnight, which renders/compares as the

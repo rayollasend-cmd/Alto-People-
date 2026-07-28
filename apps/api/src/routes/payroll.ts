@@ -5,6 +5,7 @@ import {
   PayrollExceptionsInputSchema,
   PayrollExceptionsResponseSchema,
   PayrollItemListResponseSchema,
+  PayrollItemYtdResponseSchema,
   PayrollRunAmendInputSchema,
   PayrollRunCreateInputSchema,
   PayrollRunDetailSchema,
@@ -2895,6 +2896,96 @@ payrollRouter.get('/me/items', async (req, res, next) => {
     });
     const payload: PayrollItemListResponse = PayrollItemListResponseSchema.parse({
       items: rows.map(toItem),
+    });
+    res.json(payload);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * YTD totals as of one paystub: every DISBURSED item of that stub's year up
+ * to and including it.
+ *
+ * The list above is capped at 50 rows, so the client used to sum whatever it
+ * had loaded — which quietly understated YTD tax and net figures for anyone
+ * with more stubs than that (a weekly payer crosses 50 inside a single year).
+ * Gross was shielded by the ytdWages snapshot; the tax lines had no such
+ * fallback, so the same paystub could show a correct gross above understated
+ * withholding. Aggregated in SQL here so the numbers are complete regardless
+ * of tenure.
+ */
+payrollRouter.get('/me/items/:id/ytd', async (req, res, next) => {
+  try {
+    const user = req.user!;
+    if (!user.associateId) {
+      throw new HttpError(403, 'not_an_associate', 'No associate record');
+    }
+    // Scoped to the caller's own associateId — an id belonging to someone
+    // else 404s rather than revealing that it exists.
+    const item = await prisma.payrollItem.findFirst({
+      where: { id: req.params.id, associateId: user.associateId, status: 'DISBURSED' },
+      select: { id: true, disbursedAt: true, createdAt: true },
+    });
+    if (!item) {
+      throw new HttpError(404, 'item_not_found', 'Paystub not found');
+    }
+    // disbursedAt is the pay date and the right YTD axis; createdAt only
+    // stands in for rows disbursed before the column was populated.
+    const asOf = item.disbursedAt ?? item.createdAt;
+    const year = asOf.getUTCFullYear();
+    const yearStart = new Date(Date.UTC(year, 0, 1));
+    const yearEndExclusive = new Date(Date.UTC(year + 1, 0, 1));
+
+    const where: Prisma.PayrollItemWhereInput = {
+      associateId: user.associateId,
+      status: 'DISBURSED',
+      disbursedAt: { gte: yearStart, lt: yearEndExclusive, lte: asOf },
+    };
+
+    const [agg, earnings] = await Promise.all([
+      prisma.payrollItem.aggregate({
+        where,
+        _sum: {
+          grossPay: true,
+          federalWithholding: true,
+          fica: true,
+          medicare: true,
+          stateWithholding: true,
+          preTaxDeductions: true,
+          postTaxDeductions: true,
+          netPay: true,
+          employerFica: true,
+          employerMedicare: true,
+          employerFuta: true,
+          employerSuta: true,
+        },
+        _count: { _all: true },
+      }),
+      prisma.payrollItemEarning.groupBy({
+        by: ['kind'],
+        where: { payrollItem: where },
+        _sum: { amount: true },
+      }),
+    ]);
+
+    const n = (v: Prisma.Decimal | null | undefined) => (v ? Number(v) : 0);
+    const payload = PayrollItemYtdResponseSchema.parse({
+      year,
+      paystubCount: agg._count._all,
+      gross: n(agg._sum.grossPay),
+      federalWithholding: n(agg._sum.federalWithholding),
+      fica: n(agg._sum.fica),
+      medicare: n(agg._sum.medicare),
+      stateWithholding: n(agg._sum.stateWithholding),
+      preTaxDeductions: n(agg._sum.preTaxDeductions),
+      postTaxDeductions: n(agg._sum.postTaxDeductions),
+      netPay: n(agg._sum.netPay),
+      employerFica: n(agg._sum.employerFica),
+      employerMedicare: n(agg._sum.employerMedicare),
+      employerFuta: n(agg._sum.employerFuta),
+      employerSuta: n(agg._sum.employerSuta),
+      byKind: Object.fromEntries(earnings.map((e) => [e.kind, n(e._sum.amount)])),
     });
     res.json(payload);
   } catch (err) {
