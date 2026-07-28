@@ -118,3 +118,54 @@ describe('<DocumentThumbnails>', () => {
     expect(screen.getByRole('button', { name: /view id front/i })).toBeDisabled();
   });
 });
+
+describe('<DocumentThumbnails> bulk download', () => {
+  const ASSOCIATE = '00000000-0000-4000-8000-00000000cccc';
+
+  it('is hidden unless an associate is supplied', () => {
+    render(<DocumentThumbnails documents={[FRONT, BACK]} />);
+    expect(screen.queryByRole('link', { name: /download all/i })).not.toBeInTheDocument();
+  });
+
+  // Scoped to identity documents rather than the associate's whole file:
+  // a reviewer working an I-9 wants the four IDs, not the offer letter and
+  // every signed policy. Exporting more PII than the task needs is a habit
+  // worth designing out.
+  it('scopes the archive to the kinds it was given', () => {
+    render(
+      <DocumentThumbnails
+        documents={[FRONT, BACK]}
+        bulkDownloadAssociateId={ASSOCIATE}
+        bulkDownloadKinds={['ID', 'SSN_CARD']}
+      />,
+    );
+    const href = screen
+      .getByRole('link', { name: /download all/i })
+      .getAttribute('href')!;
+    expect(href).toContain(`associateId=${ASSOCIATE}`);
+    expect(href).toContain('kinds=ID%2CSSN_CARD');
+  });
+
+  // The count is what's actually retrievable, not the row count — an archive
+  // advertising 4 documents that contains 2 is worse than saying 2.
+  it('counts only documents whose file is still on the server', () => {
+    render(
+      <DocumentThumbnails
+        documents={[FRONT, { ...BACK, fileAvailable: false }]}
+        bulkDownloadAssociateId={ASSOCIATE}
+      />,
+    );
+    expect(screen.getByRole('link', { name: /download all \(1\)/i })).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 available')).toBeInTheDocument();
+  });
+
+  it('offers nothing to download when every file is gone', () => {
+    render(
+      <DocumentThumbnails
+        documents={[{ ...FRONT, fileAvailable: false }]}
+        bulkDownloadAssociateId={ASSOCIATE}
+      />,
+    );
+    expect(screen.queryByRole('link', { name: /download all/i })).not.toBeInTheDocument();
+  });
+});

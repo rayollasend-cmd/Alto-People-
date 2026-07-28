@@ -74,9 +74,30 @@ export function downloadDocumentUrl(id: string): string {
 
 // Streams a zip of every available document for one associate. Plain URL —
 // consumed via an <a href> just like the per-document download route.
-export function downloadAllDocumentsUrl(associateId: string): string {
-  return `/api/documents/admin/all.zip?associateId=${encodeURIComponent(associateId)}`;
+export function downloadAllDocumentsUrl(
+  associateId: string,
+  /**
+   * Restrict the archive to these document kinds. Omit for the associate's
+   * whole file. A reviewer working an I-9 or E-Verify case wants the identity
+   * documents, not the offer letter and every signed policy — exporting more
+   * PII than the task needs is worth designing out, and the archive is
+   * audited either way.
+   */
+  kinds?: readonly string[],
+): string {
+  const params = new URLSearchParams({ associateId });
+  if (kinds && kinds.length > 0) params.set('kinds', kinds.join(','));
+  return `/api/documents/admin/all.zip?${params.toString()}`;
 }
+
+/** The kinds that make up an identity check — I-9 Section 2 and E-Verify. */
+export const IDENTITY_DOC_KINDS = [
+  'I9_SUPPORTING',
+  'ID',
+  'SSN_CARD',
+  'J1_VISA',
+  'J1_DS2019',
+] as const;
 
 // Same endpoint, but the API responds with `Content-Disposition: inline` so
 // browsers render PDFs / images in an iframe or <img> instead of downloading.

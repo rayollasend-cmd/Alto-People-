@@ -10,7 +10,11 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { previewDocumentUrl, isPreviewable } from '@/lib/documentsApi';
+import {
+  downloadAllDocumentsUrl,
+  isPreviewable,
+  previewDocumentUrl,
+} from '@/lib/documentsApi';
 
 /**
  * In-site viewer for identity documents.
@@ -291,9 +295,15 @@ function Message({ children }: { children: React.ReactNode }) {
 export function DocumentThumbnails({
   documents,
   emptyMessage = 'No documents uploaded.',
+  bulkDownloadAssociateId,
+  bulkDownloadKinds,
 }: {
   documents: ViewableDocument[];
   emptyMessage?: string;
+  /** Enables "Download all" for this associate. Omit to hide the action. */
+  bulkDownloadAssociateId?: string;
+  /** Restricts the archive to these kinds — see downloadAllDocumentsUrl. */
+  bulkDownloadKinds?: readonly string[];
 }) {
   const [openAt, setOpenAt] = useState<number | null>(null);
 
@@ -301,8 +311,24 @@ export function DocumentThumbnails({
     return <p className="text-xs text-warning">{emptyMessage}</p>;
   }
 
+  const available = documents.filter((d) => d.fileAvailable).length;
+
   return (
     <>
+      {bulkDownloadAssociateId && available > 0 && (
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <span className="text-2xs text-silver/60">
+            {available} of {documents.length} available
+          </span>
+          <a
+            href={downloadAllDocumentsUrl(bulkDownloadAssociateId, bulkDownloadKinds)}
+            className="inline-flex items-center gap-1.5 rounded border border-navy-secondary px-2 py-1 text-xs text-silver/80 transition-colors hover:border-gold/60 hover:text-gold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Download all ({available})
+          </a>
+        </div>
+      )}
       <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         {documents.map((d, i) => (
           <li key={d.id}>

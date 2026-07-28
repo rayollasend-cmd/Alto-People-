@@ -17,7 +17,11 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopeDocuments } from '../lib/scope.js';
-import { recordDocumentEvent, recordOnboardingEvent } from '../lib/audit.js';
+import {
+  recordCriticalAudit,
+  recordDocumentEvent,
+  recordOnboardingEvent,
+} from '../lib/audit.js';
 import { markTaskTodoByKind } from '../lib/checklist.js';
 import { notifyAllAdmins, notifyAssociate, notifyManager } from '../lib/notify.js';
 import {
@@ -435,6 +439,16 @@ documentsRouter.get('/admin/all.zip', MANAGE, async (req, res, next) => {
     if (!associateId) {
       throw new HttpError(400, 'associate_required', 'associateId is required');
     }
+    // Optional `kinds=ID,SSN_CARD,...` filter. Without it a reviewer working
+    // an I-9 or E-Verify case gets the associate's ENTIRE file — offer
+    // letters, signed policies, tax forms — when they wanted the four
+    // identity documents. Exporting more PII than the task needs is a habit
+    // worth designing out.
+    const kindsRaw = req.query.kinds?.toString().trim();
+    const kinds = kindsRaw
+      ? (kindsRaw.split(',').map((k) => k.trim()).filter(Boolean) as DocumentKind[])
+      : null;
+
     const [associate, docs] = await Promise.all([
       prisma.associate.findFirst({
         where: { id: associateId, deletedAt: null },
@@ -446,6 +460,7 @@ documentsRouter.get('/admin/all.zip', MANAGE, async (req, res, next) => {
           associateId,
           deletedAt: null,
           s3Key: { not: null },
+          ...(kinds && kinds.length > 0 ? { kind: { in: kinds } } : {}),
         },
         orderBy: { createdAt: 'asc' },
         take: 500,
@@ -454,25 +469,92 @@ documentsRouter.get('/admin/all.zip', MANAGE, async (req, res, next) => {
     if (!associate) {
       throw new HttpError(404, 'associate_not_found', 'Associate not found');
     }
+
     const { default: archiver } = await import('archiver');
     const { createReadStream, existsSync } = await import('node:fs');
+
+    // Decide what's actually going in BEFORE streaming: the audit row and the
+    // manifest both need the real list, and once the archive starts piping
+    // the response headers are gone.
+    const included: Array<{ id: string; kind: string; entry: string }> = [];
+    const skipped: Array<{ id: string; kind: string; filename: string }> = [];
+    const seen = new Set<string>();
+    for (const d of docs) {
+      if (!existsSync(resolveStoragePath(d.s3Key!))) {
+        // Purged or lost blob. This used to be a silent `continue`, so an
+        // auditor received an archive quietly missing documents with no way
+        // to tell — it looked like the associate never uploaded them.
+        skipped.push({ id: d.id, kind: d.kind, filename: d.filename });
+        continue;
+      }
+      let entry = `${d.kind.toLowerCase()}-${d.filename}`;
+      if (seen.has(entry)) entry = `${d.id.slice(0, 8)}-${entry}`;
+      seen.add(entry);
+      included.push({ id: d.id, kind: d.kind, entry });
+    }
+
+    // A bulk archive of one person's identity documents is the same class of
+    // disclosure as the SSN reveal and the external payroll sheet, and both
+    // of those record before the bytes leave. This endpoint recorded nothing
+    // at all — the highest-volume PII export in the module was invisible.
+    // Critical, so a failed insert aborts the download rather than handing
+    // over an untraceable copy of someone's passport.
+    await recordCriticalAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'document.bulk_exported',
+        entityType: 'Associate',
+        entityId: associateId,
+        metadata: {
+          documentCount: included.length,
+          kinds: included.map((i) => i.kind),
+          skippedCount: skipped.length,
+          filtered: kinds !== null,
+          ip: req.ip ?? null,
+          userAgent: req.get('user-agent') ?? null,
+        },
+      },
+      'documents.bulk_export',
+    );
+
     const zipName = `documents-${associate.lastName}-${associate.firstName}`
       .toLowerCase()
       .replace(/[^a-z0-9.-]+/g, '-');
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${zipName}.zip"`);
+    res.setHeader('Cache-Control', 'private, no-store');
     const archive = archiver('zip', { zlib: { level: 6 } });
     archive.pipe(res);
-    const seen = new Set<string>();
+
     for (const d of docs) {
-      const path = resolveStoragePath(d.s3Key!);
-      if (!existsSync(path)) continue; // purged / lost blob — skip quietly
-      // Prefix with kind + a uniquifier so same-named uploads don't clash.
-      let entry = `${d.kind.toLowerCase()}-${d.filename}`;
-      if (seen.has(entry)) entry = `${d.id.slice(0, 8)}-${entry}`;
-      seen.add(entry);
-      archive.append(createReadStream(path), { name: entry });
+      const inc = included.find((i) => i.id === d.id);
+      if (!inc) continue;
+      archive.append(createReadStream(resolveStoragePath(d.s3Key!)), {
+        name: inc.entry,
+      });
     }
+
+    // Manifest so the recipient can tell a complete archive from a partial
+    // one without cross-checking against the product.
+    const manifest = [
+      `Documents for ${associate.firstName} ${associate.lastName}`,
+      `Exported ${new Date().toISOString()}`,
+      kinds ? `Filtered to: ${kinds.join(', ')}` : 'All document types',
+      '',
+      `Included (${included.length}):`,
+      ...included.map((i) => `  ${i.entry}`),
+    ];
+    if (skipped.length > 0) {
+      manifest.push(
+        '',
+        `MISSING — file no longer on the server (${skipped.length}):`,
+        ...skipped.map((s) => `  ${s.kind.toLowerCase()}-${s.filename}`),
+        '',
+        'These need to be re-uploaded by the associate.',
+      );
+    }
+    archive.append(manifest.join('\n'), { name: 'MANIFEST.txt' });
+
     await archive.finalize();
   } catch (err) {
     next(err);

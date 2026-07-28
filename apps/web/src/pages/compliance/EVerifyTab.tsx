@@ -14,6 +14,7 @@ import {
 } from '@/lib/complianceApi';
 import { ApiError } from '@/lib/api';
 import { DocumentThumbnails } from '@/components/DocumentViewer';
+import { IDENTITY_DOC_KINDS } from '@/lib/documentsApi';
 import { cn } from '@/lib/cn';
 import { fmtDate } from '@/lib/format';
 import { toast } from 'sonner';
@@ -523,6 +524,9 @@ function CaseDrawer({
                 <DocumentThumbnails
                   documents={detail.documents}
                   emptyMessage="No documents uploaded — Section 2 can't be evidenced."
+                  bulkDownloadAssociateId={detail.associateId}
+                  // Identity documents only — not the associate's whole file.
+                  bulkDownloadKinds={IDENTITY_DOC_KINDS}
                 />
               </div>
             </Section>

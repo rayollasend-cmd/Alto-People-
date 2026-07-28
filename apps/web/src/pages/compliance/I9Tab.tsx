@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, FileCheck, XCircle } from 'lucide-react';
+import { CheckCircle2, Download, FileCheck, XCircle } from 'lucide-react';
 import type { I9DocumentList, I9Verification } from '@alto-people/shared';
 import { listI9s, upsertI9 } from '@/lib/complianceApi';
 import {
@@ -9,7 +9,11 @@ import {
 } from '@/lib/i9Api';
 import { ApiError } from '@/lib/api';
 import { DocumentViewer } from '@/components/DocumentViewer';
-import { previewDocumentUrl } from '@/lib/documentsApi';
+import {
+  downloadAllDocumentsUrl,
+  previewDocumentUrl,
+  IDENTITY_DOC_KINDS,
+} from '@/lib/documentsApi';
 import { cn } from '@/lib/cn';
 import { fmtDate, fmtDateTime } from '@/lib/format';
 import {
@@ -393,6 +397,7 @@ function I9DetailPanel({
         {showVerifier && current.applicationId && (
           <Section2Verifier
             applicationId={current.applicationId}
+            associateId={current.associateId}
             onDone={onDone}
           />
         )}
@@ -420,9 +425,11 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
 
 function Section2Verifier({
   applicationId,
+  associateId,
   onDone,
 }: {
   applicationId: string;
+  associateId: string;
   onDone: () => void;
 }) {
   const [docs, setDocs] = useState<I9DocumentListItem[] | null>(null);
@@ -519,9 +526,20 @@ function Section2Verifier({
 
       {docs && docs.length > 0 && (
         <div>
-          <p className="text-xs2 uppercase tracking-wider text-silver mb-2">
-            Pick the documents you inspected (need at least {minDocs})
-          </p>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs2 uppercase tracking-wider text-silver">
+              Pick the documents you inspected (need at least {minDocs})
+            </p>
+            {/* Identity documents only — not the associate's whole file.
+                Audited server-side like any bulk PII export. */}
+            <a
+              href={downloadAllDocumentsUrl(associateId, IDENTITY_DOC_KINDS)}
+              className="inline-flex items-center gap-1.5 rounded border border-navy-secondary px-2 py-1 text-xs text-silver/80 transition-colors hover:border-gold/60 hover:text-gold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Download all
+            </a>
+          </div>
           <ul className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             {docs.map((doc) => {
               const isImage = doc.mimeType.startsWith('image/');
