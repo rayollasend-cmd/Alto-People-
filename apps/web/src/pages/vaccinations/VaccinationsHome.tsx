@@ -74,13 +74,18 @@ export function VaccinationsHome() {
   const [showNew, setShowNew] = useState(false);
   const [filterKind, setFilterKind] = useState<VaccinationKind | 'ALL'>('ALL');
 
-  const refresh = () => {
+  // Filtered list only — depends on the kind filter.
+  const refreshRecords = () => {
     setRecords(null);
     listVaccinations({
       kind: filterKind === 'ALL' ? undefined : filterKind,
     })
       .then((r) => setRecords(r.records))
       .catch(() => setRecords([]));
+  };
+  // Filter-independent summaries (expiring + coverage) — fetched once on
+  // mount and re-fetched explicitly after mutations, never on filter clicks.
+  const refreshSummaries = () => {
     setExpiring(null);
     listExpiringSoon(60)
       .then((r) => setExpiring(r.records))
@@ -89,9 +94,16 @@ export function VaccinationsHome() {
       .then(setCoverage)
       .catch(() => setCoverage(null));
   };
+  const refresh = () => {
+    refreshRecords();
+    refreshSummaries();
+  };
   useEffect(() => {
-    refresh();
+    refreshRecords();
   }, [filterKind]);
+  useEffect(() => {
+    refreshSummaries();
+  }, []);
 
   return (
     <div className="space-y-5">

@@ -10,7 +10,7 @@ import { useNavigation } from 'react-router-dom';
  *
  * react-router's `useNavigation()` reports `state === 'loading'` for both
  * lazy-chunk fetches and loader runs — exactly the cases where the user
- * is waiting and nothing visible has changed yet. With our framer-motion
+ * is waiting and nothing visible has changed yet. With our CSS route
  * page transition the previous page stays on screen while the next chunk
  * loads, which is good UX except on a slow connection where it looks
  * like nothing happened. This bar fills that gap.

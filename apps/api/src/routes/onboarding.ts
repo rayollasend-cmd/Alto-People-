@@ -39,6 +39,7 @@ import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
 import { invalidateUserCache, requireCapability } from '../middleware/auth.js';
 import { generateInviteToken } from '../lib/inviteToken.js';
+import { runWithConcurrency } from '../lib/concurrency.js';
 import { sendReminderForUser } from '../lib/inviteReminder.js';
 import { send } from '../lib/notifications.js';
 import { hashSignedPdf, renderSignedAgreement } from '../lib/esign.js';
@@ -3379,16 +3380,42 @@ onboardingRouter.post(
       }
       const { applicationIds } = parsed.data;
 
-      const results: BulkResendResultRow[] = [];
+      // Batch the per-id lookups up front: one scoped application fetch for
+      // the whole id set (mirrors assertCanModifyApplication's where clause)
+      // and one user fetch keyed by associateId — instead of 2 queries per id.
+      const apps = await prisma.application.findMany({
+        where: { ...scopeApplications(req.user!), id: { in: applicationIds } },
+      });
+      const appById = new Map(apps.map((a) => [a.id, a]));
+      const associateIds = [...new Set(apps.map((a) => a.associateId))];
+      const userRows = await prisma.user.findMany({
+        where: { associateId: { in: associateIds } },
+      });
+      // Keep the first user per associate, mirroring the old findFirst.
+      const userByAssociateId = new Map<string, (typeof userRows)[number]>();
+      for (const u of userRows) {
+        if (u.associateId && !userByAssociateId.has(u.associateId)) {
+          userByAssociateId.set(u.associateId, u);
+        }
+      }
+
+      const results: BulkResendResultRow[] = new Array(applicationIds.length);
       let succeeded = 0;
       let failed = 0;
 
-      for (const applicationId of applicationIds) {
+      // Bounded parallelism (4 wide, matching the email sender's throttle) so
+      // a 200-id batch of live sends doesn't hold the request for minutes.
+      // Errors are caught per-item inside the worker.
+      await runWithConcurrency(applicationIds, 4, async (applicationId, idx) => {
         try {
-          const app = await assertCanModifyApplication(prisma, req.user!, applicationId);
-          const user = await prisma.user.findFirst({
-            where: { associateId: app.associateId },
-          });
+          const app = appById.get(applicationId);
+          if (
+            !app ||
+            (req.user!.role === 'ASSOCIATE' && app.associateId !== req.user!.associateId)
+          ) {
+            throw new HttpError(404, 'application_not_found', 'Application not found');
+          }
+          const user = userByAssociateId.get(app.associateId);
           if (!user) {
             throw new HttpError(404, 'no_invited_user', 'No user found for this associate');
           }
@@ -3419,27 +3446,27 @@ onboardingRouter.post(
             metadata: { invitedUserId: user.id, externalRef: result.externalRef, bulk: true },
             req,
           });
-          results.push({
+          results[idx] = {
             applicationId,
             ok: true,
             invitedUserId: user.id,
             errorCode: null,
             errorMessage: null,
-          });
+          };
           succeeded++;
         } catch (err) {
           const code = err instanceof HttpError ? err.code : 'resend_failed';
           const message = err instanceof Error ? err.message : String(err);
-          results.push({
+          results[idx] = {
             applicationId,
             ok: false,
             invitedUserId: null,
             errorCode: code,
             errorMessage: message,
-          });
+          };
           failed++;
         }
-      }
+      });
 
       const body: BulkResendResponse = { succeeded, failed, results };
       res.status(200).json(body);
@@ -3479,6 +3506,10 @@ onboardingRouter.post(
         try {
           const app = await prisma.application.findFirst({
             where: { ...scopeApplications(req.user!), id: applicationId },
+            include: {
+              associate: { select: { firstName: true, lastName: true } },
+              client: { select: { name: true } },
+            },
           });
           if (!app) {
             skipped.push({ applicationId, reason: 'not_found' });
@@ -3506,17 +3537,9 @@ onboardingRouter.post(
             req,
           });
 
-          const rejAssoc = await prisma.associate.findUnique({
-            where: { id: app.associateId },
-            select: { firstName: true, lastName: true },
-          });
-          const rejClient = await prisma.client.findUnique({
-            where: { id: app.clientId },
-            select: { name: true },
-          });
           const rejTpl = applicationRejectedTemplate({
-            firstName: rejAssoc?.firstName ?? 'there',
-            clientName: rejClient?.name ?? 'your assigned client',
+            firstName: app.associate?.firstName ?? 'there',
+            clientName: app.client?.name ?? 'your assigned client',
             rejectionReason: reason,
             decisionDate: new Date().toISOString().slice(0, 10),
           });

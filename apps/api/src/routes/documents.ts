@@ -546,44 +546,61 @@ documentsRouter.post('/admin/bulk-verify', MANAGE, async (req, res, next) => {
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'ids is required', parsed.error.flatten());
     }
-    let verified = 0;
+    // One fetch + one identical-payload updateMany instead of a
+    // findFirst/update pair per id. Per-id result reporting is preserved by
+    // classifying against the fetched set; audits stay per-row but are
+    // enqueue-only, so they run in a plain JS loop after the write.
+    const docs = await prisma.documentRecord.findMany({
+      where: { id: { in: parsed.data.ids }, deletedAt: null },
+      select: { id: true, status: true, associateId: true, clientId: true },
+    });
+    const docById = new Map(docs.map((d) => [d.id, d]));
+    const toVerify: typeof docs = [];
     const skipped: { id: string; reason: string }[] = [];
     for (const id of parsed.data.ids) {
+      const doc = docById.get(id);
+      if (!doc) {
+        skipped.push({ id, reason: 'not_found' });
+        continue;
+      }
+      if (doc.status === 'VERIFIED') {
+        skipped.push({ id, reason: 'already_verified' });
+        continue;
+      }
+      toVerify.push(doc);
+    }
+    let verified = 0;
+    if (toVerify.length > 0) {
       try {
-        const doc = await prisma.documentRecord.findFirst({
-          where: { id, deletedAt: null },
-          select: { id: true, status: true },
-        });
-        if (!doc) {
-          skipped.push({ id, reason: 'not_found' });
-          continue;
-        }
-        if (doc.status === 'VERIFIED') {
-          skipped.push({ id, reason: 'already_verified' });
-          continue;
-        }
-        const updated = await prisma.documentRecord.update({
-          where: { id: doc.id },
+        await prisma.documentRecord.updateMany({
+          where: { id: { in: toVerify.map((d) => d.id) }, deletedAt: null },
           data: {
             status: 'VERIFIED',
             verifiedById: user.id,
             verifiedAt: new Date(),
             rejectionReason: null,
           },
-          select: { id: true, associateId: true, clientId: true },
         });
+        verified = toVerify.length;
+      } catch {
+        for (const doc of toVerify) {
+          skipped.push({ id: doc.id, reason: 'error' });
+        }
+      }
+    }
+    if (verified > 0) {
+      // Per-row audits preserved; recordDocumentEvent enqueues (fire-and-
+      // forget) so this loop costs no extra DB round trips.
+      for (const doc of toVerify) {
         await recordDocumentEvent({
           actorUserId: user.id,
           action: 'document.verified',
-          documentId: updated.id,
-          associateId: updated.associateId,
-          clientId: updated.clientId,
+          documentId: doc.id,
+          associateId: doc.associateId,
+          clientId: doc.clientId,
           metadata: { bulk: true },
           req,
         });
-        verified += 1;
-      } catch {
-        skipped.push({ id, reason: 'error' });
       }
     }
     res.json({ verified, skipped });

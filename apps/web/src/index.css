@@ -496,6 +496,19 @@ input[type='radio'] {
   display: none;
 }
 
+/* Route-change fade. Applied to the keyed wrapper around <Outlet /> in
+ * Layout — the key remount replays the animation on every navigation.
+ * Replaces the old framer-motion AnimatePresence wrap (42 KB gz of JS
+ * for this one effect). Flattened by the prefers-reduced-motion block
+ * below like every other animation. */
+@keyframes route-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.route-fade {
+  animation: route-fade-in 0.18s ease-out;
+}
+
 /* ---------------------------------------------------------------------------
  * prefers-reduced-motion
  *
@@ -508,10 +521,9 @@ input[type='radio'] {
  *   2) Decorative transitions (color/transform/translate). We disable
  *      completely.
  *
- * Framer-motion respects useReducedMotion at the library level when its
- * inputs reach it; the surface where we use it is the route-change wrap
- * in Layout, which sets transitions in <0.2s — short enough that the OS-
- * level setting blunts the perceived motion as well.
+ * The route-change fade is a CSS keyframe (route-fade above), so the
+ * blanket animation-duration cap below flattens it for reduced-motion
+ * users like everything else.
  * ------------------------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

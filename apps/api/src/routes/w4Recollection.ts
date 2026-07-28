@@ -56,6 +56,8 @@ interface CampaignRow {
  */
 async function loadCampaignRows(): Promise<CampaignRow[]> {
   const rows = await prisma.w4Submission.findMany({
+    // PERF: runaway backstop — this is a full-campaign scan by design.
+    take: 10_000,
     where: { ssnEncrypted: { not: null }, associate: { deletedAt: null } },
     orderBy: { createdAt: 'asc' },
     select: {
@@ -101,6 +103,7 @@ async function loadSendHistory(): Promise<
   Map<string, { count: number; lastSentAt: Date | null }>
 > {
   const notifs = await prisma.notification.findMany({
+    take: 50_000,
     where: {
       category: W4_RECOLLECTION_CATEGORY,
       channel: 'EMAIL',
@@ -142,6 +145,7 @@ async function loadCampaign(): Promise<Campaign> {
 /** How many previously-notified associates have since fully resolved. */
 async function countResolved(outstandingIds: Set<string>): Promise<number> {
   const notifiedUserIds = await prisma.notification.findMany({
+    take: 50_000,
     where: {
       category: W4_RECOLLECTION_CATEGORY,
       channel: 'EMAIL',
@@ -153,6 +157,7 @@ async function countResolved(outstandingIds: Set<string>): Promise<number> {
   });
   if (notifiedUserIds.length === 0) return 0;
   const users = await prisma.user.findMany({
+    take: 10_000,
     where: { id: { in: notifiedUserIds.map((n) => n.recipientUserId!) } },
     select: { associateId: true },
   });

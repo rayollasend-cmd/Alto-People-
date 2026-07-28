@@ -27,7 +27,7 @@ import {
   type Qle,
   type QleKind,
 } from '@/lib/benefitsLifecycle92Api';
-import { listClients } from '@/lib/clientsApi';
+import { useClients } from '@/lib/useClients';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { useAuth } from '@/lib/auth';
@@ -273,8 +273,13 @@ function OeTab({ canManage }: { canManage: boolean }) {
 
 function NewOeDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [clientId, setClientId] = useState('');
-  const [clients, setClients] = useState<{ id: string; name: string }[] | null>(null);
-  const [clientsError, setClientsError] = useState<string | null>(null);
+  // Shared react-query cache — fetched at most once per 5 minutes app-wide.
+  const {
+    clients,
+    isLoading: clientsLoading,
+    isError: clientsError,
+    refetch: refetchClients,
+  } = useClients();
   const [name, setName] = useState('');
   // Defaults: a 30-day window starting today, coverage effective next Jan 1
   // (the typical plan-year boundary). All editable.
@@ -285,23 +290,8 @@ function NewOeDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
   );
   const [saving, setSaving] = useState(false);
 
-  const loadClients = () => {
-    setClients(null);
-    setClientsError(null);
-    listClients()
-      .then((r) => setClients(r.clients.map((c) => ({ id: c.id, name: c.name }))))
-      .catch((err) =>
-        setClientsError(
-          err instanceof ApiError ? err.message : 'Could not load the client list.',
-        ),
-      );
-  };
-  useEffect(() => {
-    loadClients();
-  }, []);
-
   const onSubmit = async () => {
-    if (clientsError || clients === null) {
+    if (clientsError || clientsLoading) {
       toast.error('The client list failed to load — retry it before creating a window.');
       return;
     }
@@ -334,11 +324,15 @@ function NewOeDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
       <DrawerBody className="space-y-4">
         <div>
           <Label htmlFor="bl-oe-client">Client</Label>
-          {clientsError !== null ? (
+          {clientsError ? (
             <ErrorBanner className="mt-1">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <span>{clientsError}</span>
-                <Button size="sm" variant="secondary" onClick={loadClients}>
+                <span>Could not load the client list.</span>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => void refetchClients()}
+                >
                   Retry
                 </Button>
               </div>
@@ -349,12 +343,12 @@ function NewOeDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
               className="mt-1"
               value={clientId}
               onChange={(e) => setClientId(e.target.value)}
-              disabled={clients === null}
+              disabled={clientsLoading}
             >
               <option value="">
-                {clients === null ? 'Loading clients…' : 'Select a client…'}
+                {clientsLoading ? 'Loading clients…' : 'Select a client…'}
               </option>
-              {(clients ?? []).map((c) => (
+              {clients.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
                 </option>

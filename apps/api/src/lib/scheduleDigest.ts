@@ -135,10 +135,25 @@ export async function runScheduleDigestSweep(
     return { sent: false, recipients: 0, shifts: 0, skipped: 'disabled_hour' };
   }
 
+  // Cheap "already sent today?" check FIRST — most sweep ticks after the
+  // digest has gone out can bail on this single indexed lookup instead of
+  // paying for the ±36h shift scan below. The advisory-locked re-check
+  // inside the claim transaction still guards the race between sweeps.
+  const lastSend = await prisma.notification.findFirst({
+    where: { category: DIGEST_CATEGORY, channel: 'IN_APP', sentAt: { not: null } },
+    orderBy: { sentAt: 'desc' },
+    select: { sentAt: true },
+  });
+  if (lastSend?.sentAt && dayKey(lastSend.sentAt, tz) === todayKey) {
+    return { sent: false, recipients: 0, shifts: 0, skipped: 'already_sent' };
+  }
+
   // Generous UTC prefilter; exact membership is the LOCAL calendar day.
   const windowStart = new Date(now.getTime() - 36 * 3_600_000);
   const windowEnd = new Date(now.getTime() + 36 * 3_600_000);
   const rows = await prisma.shift.findMany({
+    // Runaway backstop; a single day's schedule is far smaller in practice.
+    take: 5000,
     where: {
       status: { in: ['ASSIGNED', 'OPEN', 'COMPLETED'] },
       startsAt: { gte: windowStart, lte: windowEnd },

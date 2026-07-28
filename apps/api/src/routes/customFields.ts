@@ -208,20 +208,28 @@ customFieldsRouter.put(
       throw new HttpError(400, 'invalid_entity', 'Invalid entity type.');
     }
     const input = ValueUpdateSchema.parse(req.body);
-    await prisma.$transaction(async (tx) => {
-      for (const item of input.values) {
-        const def = await tx.customFieldDefinition.findUnique({
-          where: { id: item.definitionId },
-        });
-        if (!def || def.deletedAt) continue;
-        if (def.entityType !== entityType) {
-          throw new HttpError(
-            400,
-            'entity_mismatch',
-            `Definition ${item.definitionId} is not for ${entityType}.`,
-          );
-        }
-        await tx.customFieldValue.upsert({
+    // One definition fetch for the whole payload (was a findUnique per value
+    // inside an interactive transaction), then a pipelined array-form
+    // transaction of upserts. Validation failures still write nothing —
+    // the mismatch throw happens before any upsert runs, matching the old
+    // all-or-nothing rollback.
+    const defs = await prisma.customFieldDefinition.findMany({
+      where: { id: { in: input.values.map((v) => v.definitionId) } },
+    });
+    const defById = new Map(defs.map((d) => [d.id, d]));
+    const upserts: Prisma.PrismaPromise<unknown>[] = [];
+    for (const item of input.values) {
+      const def = defById.get(item.definitionId);
+      if (!def || def.deletedAt) continue;
+      if (def.entityType !== entityType) {
+        throw new HttpError(
+          400,
+          'entity_mismatch',
+          `Definition ${item.definitionId} is not for ${entityType}.`,
+        );
+      }
+      upserts.push(
+        prisma.customFieldValue.upsert({
           where: {
             definitionId_entityId: {
               definitionId: item.definitionId,
@@ -237,9 +245,12 @@ customFieldsRouter.put(
           update: {
             value: { v: item.value } as Prisma.InputJsonValue,
           },
-        });
-      }
-    });
+        }),
+      );
+    }
+    if (upserts.length > 0) {
+      await prisma.$transaction(upserts);
+    }
     res.json({ ok: true });
   },
 );

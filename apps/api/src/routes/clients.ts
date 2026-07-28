@@ -303,12 +303,28 @@ clientsRouter.get('/:id/locations', async (req, res, next) => {
       typeof req.query.includeInactive === 'string' &&
       req.query.includeInactive.toLowerCase() === 'true';
     const rows = await prisma.location.findMany({
+      take: 500,
       where: {
         clientId: client.id,
         deletedAt: null,
         ...(includeInactive ? {} : { isActive: true }),
       },
       orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
+      select: {
+        id: true,
+        clientId: true,
+        name: true,
+        addressLine1: true,
+        addressLine2: true,
+        city: true,
+        state: true,
+        zip: true,
+        latitude: true,
+        longitude: true,
+        geofenceRadiusMeters: true,
+        isActive: true,
+        timezone: true,
+      },
     });
     const locations: LocationSummary[] = rows.map((r) => ({
       id: r.id,

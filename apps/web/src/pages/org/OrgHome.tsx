@@ -3,14 +3,14 @@ import { Briefcase, Building2, CalendarClock, FolderTree, Hash, Plus, Search, Sp
 import { PositionsTab } from './PositionsTab';
 import { CustomFieldsTab } from './CustomFieldsTab';
 import type {
+  ClientSummary,
   CostCenter,
   Department,
   JobProfile,
   ShiftPosition,
   AssociateOrgSummary,
 } from '@alto-people/shared';
-import { listClients } from '@/lib/clientsApi';
-import type { ClientListItem } from '@alto-people/shared';
+import { useClients } from '@/lib/useClients';
 import {
   assignOrgFields,
   createCostCenter,
@@ -87,8 +87,12 @@ const TAB_VALUES: readonly Tab[] = [
 export function OrgHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:org') : false;
-  const [clients, setClients] = useState<ClientListItem[]>([]);
-  const [clientsError, setClientsError] = useState<string | null>(null);
+  // Shared react-query cache — fetched at most once per 5 minutes app-wide.
+  const {
+    clients,
+    isError: clientsError,
+    refetch: refetchClients,
+  } = useClients();
   const [clientId, setClientId] = useState<string>('');
   // ?tab= deep-link (the People-directory drawer's "Edit org assignment"
   // link lands on /org?tab=people&associateId=…). Seeded once at mount.
@@ -104,29 +108,12 @@ export function OrgHome() {
   const clientSelectRef = useRef<HTMLSelectElement>(null);
   const focusClientPicker = () => clientSelectRef.current?.focus();
 
-  // Load once — the client list doesn't change with the filter, so
-  // refetching it on every clientId change was pure churn (and any
-  // failure used to silently hide every "New …" button with no way
-  // to recover short of a full reload).
-  const loadClients = async () => {
-    setClientsError(null);
-    try {
-      const res = await listClients();
-      setClients(res.clients);
-      if (res.clients.length === 1) {
-        setClientId((prev) => prev || res.clients[0].id);
-      }
-    } catch (err) {
-      setClientsError(
-        err instanceof ApiError ? err.message : 'Could not load clients.',
-      );
-    }
-  };
-
+  // With exactly one client there is nothing to choose — preselect it.
   useEffect(() => {
-    void loadClients();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (clients.length === 1) {
+      setClientId((prev) => prev || clients[0].id);
+    }
+  }, [clients]);
 
   return (
     <div className="space-y-5">
@@ -139,8 +126,8 @@ export function OrgHome() {
       {clientsError && (
         <ErrorBanner>
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            <span>{clientsError}</span>
-            <Button size="sm" variant="outline" onClick={() => void loadClients()}>
+            <span>Could not load clients.</span>
+            <Button size="sm" variant="outline" onClick={() => void refetchClients()}>
               Retry
             </Button>
           </div>
@@ -1398,7 +1385,7 @@ function PeopleTab({
 }: {
   clientId: string;
   canManage: boolean;
-  clients: ClientListItem[];
+  clients: ClientSummary[];
   initialAssociateId: string | null;
 }) {
   const [rows, setRows] = useState<AssociateOrgSummary[] | null>(null);

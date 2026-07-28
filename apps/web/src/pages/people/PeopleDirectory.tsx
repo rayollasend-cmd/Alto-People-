@@ -37,8 +37,7 @@ import type {
   DocumentRecord,
 } from '@alto-people/shared';
 import { listDirectory, type DirectoryFilters } from '@/lib/directoryApi';
-import { listClients } from '@/lib/clientsApi';
-import type { ClientListItem } from '@alto-people/shared';
+import { useClients } from '@/lib/useClients';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtMoney, fmtPayRate, parseYmd, ymdLocal } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
@@ -187,8 +186,28 @@ const isEmploymentTypeFilter = (v: unknown): v is EmploymentTypeFilter | '' =>
   (typeof v === 'string' &&
     (EMPLOYMENT_TYPE_VALUES as readonly string[]).includes(v));
 
+// PERF: the desktop table and the phone card stack used to BOTH mount, with
+// CSS (`hidden md:block` / `md:hidden`) hiding the inactive one — React still
+// committed ~9,000 dead DOM nodes for the hidden list on large directories.
+// This matchMedia hook (same 768px breakpoint as Tailwind `md:`) lets us
+// mount only the list the viewport can actually show, and re-render on
+// breakpoint crossings (window resize / device rotation).
+function useIsDesktop(): boolean {
+  const [isDesktop, setIsDesktop] = useState(
+    () => window.matchMedia('(min-width: 768px)').matches,
+  );
+  useEffect(() => {
+    const mql = window.matchMedia('(min-width: 768px)');
+    const onChange = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, []);
+  return isDesktop;
+}
+
 export function PeopleDirectory() {
   const queryClient = useQueryClient();
+  const isDesktop = useIsDesktop();
   // Persisted list filters — status / workplace / employment type survive
   // revisits ('' = All). Free-text search and the cascading location /
   // department facets deliberately stay per-session.
@@ -275,14 +294,12 @@ export function PeopleDirectory() {
     return () => clearTimeout(id);
   }, [deferredSearch]);
 
-  // Clients change rarely; cache for a long time so the filter dropdown
-  // is instant on revisit. Failures are silent — the dropdown just shows
-  // "All clients" without specific options.
-  const { data: clients = [] as ClientListItem[] } = useQuery({
-    queryKey: ['clients', 'list'],
-    queryFn: async () => (await listClients()).clients,
-    staleTime: 5 * 60_000,
-  });
+  // Clients change rarely; the shared useClients() hook pins every picker
+  // in the app to one cached fetch (5-min staleTime, single query key —
+  // this also keeps the ['clients','list'] cache shape consistent with the
+  // other useClients() consumers). Failures are silent — the dropdown just
+  // shows "All clients" without specific options.
+  const { clients } = useClients();
 
   // Departments for the directory facet. Same long cache / silent-failure
   // treatment as clients — the picker just falls back to "All departments".
@@ -327,6 +344,10 @@ export function PeopleDirectory() {
     queryKey: ['directory', filters],
     queryFn: async () => (await listDirectory(filters)).associates,
     placeholderData: keepPreviousData,
+    // A minute of freshness: back-navigating to the directory (or re-
+    // applying a recent filter combo) renders instantly from cache instead
+    // of refetching up to 1,000 rows.
+    staleTime: 60_000,
   });
 
   // Resolve the deep-link associateId once rows load. setTarget is the
@@ -585,23 +606,23 @@ export function PeopleDirectory() {
       )}
 
       {rows && rows.length > 0 && (
-        <>
-          {/* md+ : columnar table. Columns reveal progressively as
+        // Only the breakpoint-active list is mounted (useIsDesktop) — the
+        // other used to render hidden, doubling DOM size for nothing.
+        isDesktop ? (
+          /* md+ : columnar table. Columns reveal progressively as
               viewport widens (md: Position, lg: Type + Pay, xl: Manager
               + Start). For lists past VIRTUALIZE_THRESHOLD we swap in a
               row virtualizer so DOM size stays bounded regardless of the
-              underlying list size. */}
-          <div className="hidden md:block">
-            <DirectoryTable rows={rows} onSelect={setTarget} />
-          </div>
-
-          {/* Phone: card stack. Tap card → drawer (same as table click). */}
-          <ul className="md:hidden space-y-2">
+              underlying list size. */
+          <DirectoryTable rows={rows} onSelect={setTarget} />
+        ) : (
+          /* Phone: card stack. Tap card → drawer (same as table click). */
+          <ul className="space-y-2">
             {rows.map((r) => (
               <DirectoryPhoneCard key={r.id} row={r} onSelect={setTarget} />
             ))}
           </ul>
-        </>
+        )
       )}
 
       <Drawer

@@ -123,6 +123,14 @@ export function UsersAdmin() {
   const [pendingId, setPendingId] = useState<string | null>(null);
 
   const [q, setQ] = useState('');
+  // PERF: debounced mirror of `q`. The list used to refetch on every
+  // keystroke ("christopher" = 11 requests) with no out-of-order guard,
+  // so a slow early response could clobber the final result.
+  const [appliedQ, setAppliedQ] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setAppliedQ(q), 250);
+    return () => clearTimeout(t);
+  }, [q]);
   const [role, setRole] = useState<Role | ''>('');
   const [status, setStatus] = useState<UserStatus | ''>('');
 
@@ -158,7 +166,7 @@ export function UsersAdmin() {
     setError(null);
     try {
       const res = await listAdminUsers({
-        q: q.trim() || undefined,
+        q: appliedQ.trim() || undefined,
         role: role || undefined,
         status: status || undefined,
       });
@@ -175,7 +183,7 @@ export function UsersAdmin() {
     } finally {
       setLoading(false);
     }
-  }, [q, role, status]);
+  }, [appliedQ, role, status]);
 
   useEffect(() => {
     load();

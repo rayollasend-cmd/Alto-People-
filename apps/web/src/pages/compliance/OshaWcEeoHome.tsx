@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Download, Plus } from 'lucide-react';
 import { ApiError } from '@/lib/api';
-import { listClients, listClientLocations } from '@/lib/clientsApi';
-import type { ClientListItem, LocationSummary } from '@alto-people/shared';
+import { listClientLocations } from '@/lib/clientsApi';
+import { useClients } from '@/lib/useClients';
+import type { LocationSummary } from '@alto-people/shared';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import {
   createOshaIncident,
@@ -58,20 +59,14 @@ import { toast } from 'sonner';
 type Tab = 'osha' | 'wc' | 'eeo';
 
 export function OshaWcEeoHome() {
-  const [clients, setClients] = useState<ClientListItem[]>([]);
+  // Shared react-query cache — fetched at most once per 5 minutes app-wide.
+  const { clients } = useClients();
   const [clientId, setClientId] = useState('');
   const [tab, setTab] = useState<Tab>('osha');
 
   useEffect(() => {
-    // Fetch once on mount — keying this on clientId made every dropdown
-    // selection re-fire listClients() for no reason.
-    listClients()
-      .then((r) => {
-        setClients(r.clients);
-        if (r.clients.length > 0) setClientId((prev) => prev || r.clients[0].id);
-      })
-      .catch(() => {});
-  }, []);
+    if (clients.length > 0) setClientId((prev) => prev || clients[0].id);
+  }, [clients]);
 
   return (
     <div className="space-y-5">

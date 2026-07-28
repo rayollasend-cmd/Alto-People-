@@ -190,6 +190,13 @@ export function tzAbbrev(
  * except inside the ~1h DST-transition gap, which shifts almost never start in.
  * Falls back to browser-local when `timeZone` is absent (location-less shift).
  */
+// PERF: Intl.DateTimeFormat construction is expensive (locale + tz data
+// resolution). zonedWallTimeToUtc runs associates × days times the moment
+// a shift chip is picked up in the scheduling grid (up to 3,500 calls per
+// drag-start), so the formatter is cached per zone — same treatment
+// zonedDayKey already had.
+const WALL_TIME_FMT_CACHE = new Map<string, Intl.DateTimeFormat>();
+
 export function zonedWallTimeToUtc(
   year: number,
   month: number, // 1-12
@@ -200,16 +207,20 @@ export function zonedWallTimeToUtc(
 ): Date {
   if (!timeZone) return new Date(year, month - 1, day, hour, minute, 0, 0);
   const asUtc = Date.UTC(year, month - 1, day, hour, minute, 0, 0);
-  const dtf = new Intl.DateTimeFormat(EN_US, {
-    timeZone,
-    hourCycle: 'h23',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
+  let dtf = WALL_TIME_FMT_CACHE.get(timeZone);
+  if (!dtf) {
+    dtf = new Intl.DateTimeFormat(EN_US, {
+      timeZone,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    WALL_TIME_FMT_CACHE.set(timeZone, dtf);
+  }
   const p: Record<string, number> = {};
   for (const part of dtf.formatToParts(new Date(asUtc))) {
     if (part.type !== 'literal') p[part.type] = Number(part.value);
@@ -305,18 +316,26 @@ export function zonedDayKey(
  * position a chip on the vertical hour axis so it lands at its store-local
  * time, matching its label. Browser-local when `timeZone` is absent.
  */
+// PERF: called once per shift chip for vertical positioning in the
+// calendar views — cache the formatter per zone (see WALL_TIME_FMT_CACHE).
+const MINUTES_FMT_CACHE = new Map<string, Intl.DateTimeFormat>();
+
 export function zonedMinutesOfDay(
   value: string | Date,
   timeZone?: string | null,
 ): number {
   const d = value instanceof Date ? value : new Date(value);
   if (!timeZone) return d.getHours() * 60 + d.getMinutes();
-  const dtf = new Intl.DateTimeFormat(EN_US, {
-    timeZone,
-    hourCycle: 'h23',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  let dtf = MINUTES_FMT_CACHE.get(timeZone);
+  if (!dtf) {
+    dtf = new Intl.DateTimeFormat(EN_US, {
+      timeZone,
+      hourCycle: 'h23',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    MINUTES_FMT_CACHE.set(timeZone, dtf);
+  }
   const p: Record<string, number> = {};
   for (const part of dtf.formatToParts(d)) {
     if (part.type !== 'literal') p[part.type] = Number(part.value);

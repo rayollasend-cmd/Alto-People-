@@ -1,4 +1,11 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Fragment,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import {
   ChevronRight,
   Download,
@@ -144,7 +151,12 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     (v): v is DocFilter => STATUS_FILTERS.some((f) => f.value === v),
   );
   const [kindFilter, setKindFilter] = useState<DocumentKind | 'ALL'>('ALL');
-  const [docs, setDocs] = useState<DocumentRecord[] | null>(null);
+  // Server-filtered slice — only populated when the active filter needs a
+  // server-side query (a specific status or kind). The client-expressible
+  // filters (ACTION_NEEDED / ALL with no kind) derive `docs` from allDocs
+  // below instead: the old refresh() hit the exact same unfiltered endpoint
+  // refreshAll() already calls, doubling the mount fetch for nothing.
+  const [serverDocs, setServerDocs] = useState<DocumentRecord[] | null>(null);
   // Unfiltered roll-up for the KPI / chip counts so they stay stable as
   // the user filters. Same pattern as the onboarding inbox. Doubles as the
   // source for the "By associate" view.
@@ -177,16 +189,31 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   const [bulkRejectOpen, setBulkRejectOpen] = useState(false);
   const [bulkRejectReason, setBulkRejectReason] = useState('');
 
+  // True when the active filter needs data the unfiltered overview can't
+  // answer: a specific status or kind is server-filtered, so past the
+  // server's row cap it can return rows the unfiltered slice doesn't hold.
+  // ACTION_NEEDED / ALL with no kind used to call listAdminDocuments({})
+  // anyway (same request, same cap, narrowed client-side) — those derive
+  // from allDocs instead of refetching.
+  const needsServerFilter =
+    kindFilter !== 'ALL' || (filter !== 'ALL' && filter !== 'ACTION_NEEDED');
+
   const refresh = useCallback(async () => {
+    if (!needsServerFilter) {
+      // The queue derives from allDocs (refreshAll's data) — nothing to fetch.
+      setError(null);
+      return;
+    }
     try {
       setError(null);
       const kindParam = kindFilter === 'ALL' ? undefined : kindFilter;
       // 'ACTION_NEEDED' spans two statuses, which the backend's single-status
-      // query can't express — fetch all (optionally kind-scoped) and narrow
-      // client-side. The other filters map straight to status + kind params.
+      // query can't express — fetch all (kind-scoped; the kind-less case is
+      // handled above) and narrow client-side. The other filters map straight
+      // to status + kind params.
       if (filter === 'ACTION_NEEDED') {
         const res = await listAdminDocuments(kindParam ? { kind: kindParam } : {});
-        setDocs(
+        setServerDocs(
           res.documents.filter((d) =>
             ACTION_NEEDED_STATUSES.includes(d.status),
           ),
@@ -197,11 +224,11 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         ...(filter === 'ALL' ? {} : { status: filter }),
         ...(kindParam ? { kind: kindParam } : {}),
       });
-      setDocs(res.documents);
+      setServerDocs(res.documents);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load.');
     }
-  }, [filter, kindFilter]);
+  }, [filter, kindFilter, needsServerFilter]);
 
   const refreshAll = useCallback(async () => {
     try {
@@ -230,6 +257,19 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     }
   }, []);
 
+  // What the queue works from: the server-filtered slice when a server-side
+  // filter is active, otherwise derived client-side from the unfiltered
+  // overview — identical data to what the dropped duplicate fetch returned,
+  // since both hit listAdminDocuments({}) under the same server cap.
+  const docs = useMemo(() => {
+    if (needsServerFilter) return serverDocs;
+    if (!allDocs) return null;
+    if (filter === 'ACTION_NEEDED') {
+      return allDocs.filter((d) => ACTION_NEEDED_STATUSES.includes(d.status));
+    }
+    return allDocs;
+  }, [needsServerFilter, serverDocs, allDocs, filter]);
+
   useEffect(() => {
     refresh();
   }, [refresh]);
@@ -256,9 +296,15 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     setSelectedDocs(new Set());
   }, [filter, kindFilter, view]);
 
+  // Day-granularity "now" for the fmtAge labels in the render body. NOT a
+  // dependency of the stats memo below — that made the memo's inputs change
+  // on every render, so it never cached and re-scanned all docs per keystroke.
   const now = Date.now();
 
   const stats = useMemo(() => {
+    // Fresh timestamp taken when the memo actually recomputes ([allDocs]
+    // changes) — day-level precision doesn't need one per render.
+    const nowMs = Date.now();
     const src = allDocs ?? [];
     const byStatus: Record<string, number> = {};
     for (const d of src) byStatus[d.status] = (byStatus[d.status] ?? 0) + 1;
@@ -278,9 +324,9 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
       oldestUploadedDays:
         oldestUploaded === null
           ? null
-          : Math.floor((now - oldestUploaded) / ONE_DAY_MS),
+          : Math.floor((nowMs - oldestUploaded) / ONE_DAY_MS),
     };
-  }, [allDocs, now]);
+  }, [allDocs]);
 
   // Only offer kinds that actually exist in the tenant, sorted, so the
   // dropdown stays short instead of listing all 16 possible kinds.
@@ -290,9 +336,14 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     return Array.from(set).sort();
   }, [allDocs]);
 
+  // Deferred search term for the heavy derived lists: the input repaints
+  // immediately while React filters the doc queue / regroups associates at
+  // background priority, keeping the previous results on screen meanwhile.
+  const deferredSearch = useDeferredValue(search);
+
   const visibleDocs = useMemo(() => {
     if (!docs) return null;
-    const q = search.trim().toLowerCase();
+    const q = deferredSearch.trim().toLowerCase();
     if (!q) return docs;
     return docs.filter(
       (d) =>
@@ -300,7 +351,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         (d.associateName && d.associateName.toLowerCase().includes(q)) ||
         d.kind.toLowerCase().includes(q)
     );
-  }, [docs, search]);
+  }, [docs, deferredSearch]);
 
   // Click-to-sort for the flat queue table. Operates on the filtered slice
   // the table renders; third click restores server order (newest first).
@@ -382,7 +433,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   // person without flipping views.
   const visibleAssociateGroups = useMemo(() => {
     if (!associateGroups) return null;
-    const q = search.trim().toLowerCase();
+    const q = deferredSearch.trim().toLowerCase();
     if (!q) return associateGroups;
     return associateGroups.filter(
       (g) =>
@@ -393,7 +444,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
             d.kind.toLowerCase().includes(q),
         ),
     );
-  }, [associateGroups, search]);
+  }, [associateGroups, deferredSearch]);
 
   const selectedGroup = useMemo(
     () =>

@@ -196,19 +196,21 @@ learningPaths114Router.post(
   MANAGE,
   async (req, res) => {
     const input = ReorderSchema.parse({ ...req.body, pathId: req.params.id });
-    await prisma.$transaction(async (tx) => {
+    // Array-form transaction pipelines the whole rewrite in one round of
+    // statements instead of an awaited round trip per step.
+    await prisma.$transaction([
       // Push everyone to negative orders first to dodge the unique index.
-      await tx.learningPathStep.updateMany({
+      prisma.learningPathStep.updateMany({
         where: { pathId: input.pathId },
         data: { order: -1 },
-      });
-      for (let i = 0; i < input.stepIds.length; i++) {
-        await tx.learningPathStep.update({
-          where: { id: input.stepIds[i] },
+      }),
+      ...input.stepIds.map((stepId, i) =>
+        prisma.learningPathStep.update({
+          where: { id: stepId },
           data: { order: i },
-        });
-      }
-    });
+        }),
+      ),
+    ]);
     res.json({ ok: true });
   },
 );

@@ -1,7 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { RouterProvider } from 'react-router-dom';
-import { MotionConfig } from 'framer-motion';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { initSentry } from '@/lib/sentry';
 
@@ -92,12 +91,9 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
 ReactDOM.createRoot(rootEl).render(
   <React.StrictMode>
     <GlobalErrorBoundary>
-      {/* index.css already flattens CSS animations under
-          prefers-reduced-motion; framer-motion animates via JS transforms
-          and needs its own switch — reducedMotion="user" makes every
-          motion.* component (route transitions, sheet slide-ups) snap
-          instead of animate for those users. */}
-      <MotionConfig reducedMotion="user">
+      {/* Route transitions are pure CSS (see Layout's route-fade class);
+          index.css flattens all CSS animations under
+          prefers-reduced-motion, so no JS animation switch is needed. */}
       <QueryClientProvider client={queryClient}>
         <I18nProvider>
           <ThemeProvider>
@@ -114,7 +110,6 @@ ReactDOM.createRoot(rootEl).render(
           </ThemeProvider>
         </I18nProvider>
       </QueryClientProvider>
-      </MotionConfig>
     </GlobalErrorBoundary>
   </React.StrictMode>
 );

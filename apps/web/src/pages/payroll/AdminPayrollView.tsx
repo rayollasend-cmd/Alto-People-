@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -133,6 +133,42 @@ type SortDir = 'asc' | 'desc';
 // the affordance instead of letting the user click and 409.
 const VOID_WINDOW_DAYS = 30;
 
+// Run-detail drawer renders this many paystub cards up front; a "Show
+// all N" button opts into the rest. A 1,000-item run otherwise mounts
+// 1,000 expandable cards the moment the drawer opens.
+const PAYSTUB_PAGE = 100;
+
+/**
+ * Run `task` over `items` with at most `limit` requests in flight,
+ * Promise.allSettled-style: never throws, every item gets a settled
+ * result in input order. Used by the bulk run actions so a 30-run
+ * finalize isn't 30 sequential round-trips (each run is independent —
+ * per-run server work doesn't race across different run ids).
+ */
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  task: (item: T) => Promise<R>,
+): Promise<PromiseSettledResult<R>[]> {
+  const results = new Array<PromiseSettledResult<R>>(items.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(limit, items.length) },
+    async () => {
+      while (nextIndex < items.length) {
+        const i = nextIndex++;
+        try {
+          results[i] = { status: 'fulfilled', value: await task(items[i]!) };
+        } catch (reason) {
+          results[i] = { status: 'rejected', reason };
+        }
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
+}
+
 /**
  * The typed-confirmation string the HR Admin must enter to void a run —
  * "MM/DD/YYYY - MM/DD/YYYY" (start - end). Required by product spec for
@@ -166,6 +202,16 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
   const [wcReport, setWcReport] = useState<WcPremiumReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [enrollFor, setEnrollFor] = useState<{ id: string; name: string | null } | null>(null);
+  // Stable identity so the memoized PaystubAdminCards don't all re-render
+  // whenever the drawer's parent state changes.
+  const openEnrollBranch = useCallback(
+    (associateId: string, associateName: string | null) =>
+      setEnrollFor({ id: associateId, name: associateName }),
+    [],
+  );
+  // Paystub list pagination — show the first PAYSTUB_PAGE cards, with an
+  // explicit opt-in to mount the rest. Reset per run.
+  const [showAllPaystubs, setShowAllPaystubs] = useState(false);
   // Wave 8 — hero summary card. One fetch, hydrates from /payroll/upcoming.
   const [upcoming, setUpcoming] = useState<PayrollUpcomingSummary | null>(null);
   const [upcomingLoading, setUpcomingLoading] = useState(true);
@@ -283,7 +329,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     const ok = await confirm({
       title: `${label} ${targets.length} run${targets.length === 1 ? '' : 's'}?`,
       description:
-        `${targets.length} of ${bulkSelected.size} selected run${bulkSelected.size === 1 ? ' is' : 's are'} eligible and will be processed one at a time.` +
+        `${targets.length} of ${bulkSelected.size} selected run${bulkSelected.size === 1 ? ' is' : 's are'} eligible and will be processed a few at a time.` +
         (skippedApproval > 0
           ? ` ${skippedApproval} will be skipped — ${skippedApproval === 1 ? 'it needs' : 'they need'} a second approval first.`
           : ''),
@@ -292,18 +338,16 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     });
     if (!ok) return;
     setBulkBusy(true);
-    let succeeded = 0;
-    let failed = 0;
-    for (const r of targets) {
-      try {
-        if (action === 'finalize') await finalizePayrollRun(r.id);
-        else if (action === 'approve') await approvePayrollRun(r.id);
-        else await disbursePayrollRun(r.id);
-        succeeded += 1;
-      } catch {
-        failed += 1;
-      }
-    }
+    // Bounded concurrency (4 in flight) — each target is a distinct run,
+    // so the requests are independent; allSettled semantics keep the
+    // succeeded/failed tallies identical to the old sequential loop.
+    const results = await mapWithConcurrency(targets, 4, (r) => {
+      if (action === 'finalize') return finalizePayrollRun(r.id);
+      if (action === 'approve') return approvePayrollRun(r.id);
+      return disbursePayrollRun(r.id);
+    });
+    const succeeded = results.filter((r) => r.status === 'fulfilled').length;
+    const failed = results.length - succeeded;
     setBulkBusy(false);
     setBulkSelected(new Set());
     refresh();
@@ -536,6 +580,24 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     selected.disbursedAt !== null &&
     Date.now() - new Date(selected.disbursedAt).getTime() <
       VOID_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+
+  useEffect(() => {
+    setShowAllPaystubs(false);
+  }, [selected?.id]);
+
+  // One pass over the run's items for everything the drawer needs from
+  // them (held count + the visible page) — previously three inline
+  // filter/some passes per render over a possibly 1,000+ item array.
+  const paystubView = useMemo(() => {
+    const items = selected?.items ?? [];
+    let heldCount = 0;
+    for (const it of items) if (it.status === 'HELD') heldCount += 1;
+    const visible =
+      showAllPaystubs || items.length <= PAYSTUB_PAGE
+        ? items
+        : items.slice(0, PAYSTUB_PAGE);
+    return { heldCount, visible };
+  }, [selected?.items, showAllPaystubs]);
 
   // Amendments are allowed against any non-CANCELLED run that has items.
   // Server enforces the same; UI gates on canVoid because amend lives on
@@ -1131,27 +1193,33 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                     <div className="text-[10px] uppercase tracking-widest text-silver/70">
                       Paystubs ({selected.items.length})
                     </div>
-                    {selected.items.some((it) => it.status === 'HELD') && (
+                    {paystubView.heldCount > 0 && (
                       <Badge variant="destructive" className="text-[10px]">
-                        {selected.items.filter((it) => it.status === 'HELD').length} held
+                        {paystubView.heldCount} held
                       </Badge>
                     )}
                   </div>
                   <ul className="space-y-1.5">
-                    {selected.items.map((it) => (
+                    {paystubView.visible.map((it) => (
                       <PaystubAdminCard
                         key={it.id}
                         item={it}
                         canProcess={canProcess}
-                        onEnrollBranch={() =>
-                          setEnrollFor({
-                            id: it.associateId,
-                            name: it.associateName,
-                          })
-                        }
+                        onEnrollBranch={openEnrollBranch}
                       />
                     ))}
                   </ul>
+                  {paystubView.visible.length < selected.items.length && (
+                    <div className="mt-2 flex justify-center">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setShowAllPaystubs(true)}
+                      >
+                        Show all {selected.items.length}
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1244,7 +1312,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                   </Button>
                 )}
                 {(selected.status === 'FINALIZED' || selected.status === 'DISBURSED') &&
-                  selected.items.some((it) => it.status === 'HELD') && (
+                  paystubView.heldCount > 0 && (
                     <Button variant="secondary" onClick={() => onRetryFailures()} loading={busy}>
                       <RotateCw className="h-4 w-4" />
                       Retry failed disbursements
@@ -2208,18 +2276,24 @@ function FailedPaymentsSummary({
   onRetry: (itemIds?: string[]) => void | Promise<void>;
   busy: boolean;
 }) {
-  const failed = items.filter((it) => it.status === 'HELD' || it.status === 'FAILED');
+  // One memoized pass — on a 1,000+ item run these ran in the render
+  // body on every parent re-render (each keystroke/toggle in the drawer).
+  const { failed, groups } = useMemo(() => {
+    const failed = items.filter(
+      (it) => it.status === 'HELD' || it.status === 'FAILED',
+    );
+    // Group by failure reason so five identical "no_payout_rail" rows read
+    // as one problem, not five. Map preserves first-seen order.
+    const groups = new Map<string, typeof failed>();
+    for (const it of failed) {
+      const key = it.failureReason ?? 'Held by HR';
+      const bucket = groups.get(key);
+      if (bucket) bucket.push(it);
+      else groups.set(key, [it]);
+    }
+    return { failed, groups };
+  }, [items]);
   if (failed.length === 0) return null;
-
-  // Group by failure reason so five identical "no_payout_rail" rows read
-  // as one problem, not five. Map preserves first-seen order.
-  const groups = new Map<string, typeof failed>();
-  for (const it of failed) {
-    const key = it.failureReason ?? 'Held by HR';
-    const bucket = groups.get(key);
-    if (bucket) bucket.push(it);
-    else groups.set(key, [it]);
-  }
 
   return (
     <Card className="mb-4 border-alert/40 bg-alert/5">
@@ -2334,14 +2408,15 @@ const PAYSTUB_STATUS_VARIANT: Record<
   HELD: 'pending',
 };
 
-function PaystubAdminCard({
+const PaystubAdminCard = memo(function PaystubAdminCard({
   item,
   canProcess,
   onEnrollBranch,
 }: {
   item: import('@alto-people/shared').PayrollItem;
   canProcess: boolean;
-  onEnrollBranch: () => void;
+  /** Stable callback (item identity passed as args) so memo() holds. */
+  onEnrollBranch: (associateId: string, associateName: string | null) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const totalTax =
@@ -2489,7 +2564,7 @@ function PaystubAdminCard({
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  onEnrollBranch();
+                  onEnrollBranch(item.associateId, item.associateName ?? null);
                 }}
                 className="inline-flex items-center gap-1.5 text-xs text-silver/70 hover:text-gold focus:outline-none focus-visible:text-gold"
               >
@@ -2502,7 +2577,7 @@ function PaystubAdminCard({
       )}
     </li>
   );
-}
+});
 
 function DrillRow({
   label,

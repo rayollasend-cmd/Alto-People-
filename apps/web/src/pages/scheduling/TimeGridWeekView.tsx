@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DndContext,
   PointerSensor,
@@ -69,6 +69,11 @@ const TOTAL_HEIGHT = HOURS_VISIBLE * PX_PER_HOUR;
 const SNAP_MIN = 15;
 const MIN_DURATION_MIN = 15;
 const UNASSIGNED_ROW_ID = '__unassigned__';
+
+// Shared empty-cell fallback: `byCell.get(key) ?? EMPTY_SHIFTS` hands every
+// empty cell the SAME array identity, so memo'd TimeCells with no shifts see
+// referentially-equal props and skip re-rendering.
+const EMPTY_SHIFTS: Shift[] = [];
 
 function fmtTime(d: Date, timeZone?: string | null): string {
   return fmtTimeTz(d, timeZone);
@@ -171,10 +176,29 @@ export function TimeGridWeekView({
 }: Props) {
   const hover = useShiftHoverCard();
   const ctxMenu = useShiftContextMenu();
+  // hover.bind / ctxMenu.openFor are recreated by their hooks on every
+  // render; route them through refs so the memo'd TimeCells below receive
+  // stable handler identities (they only close over setState + refs, so
+  // any render's copy behaves identically).
+  const hoverBindFnRef = useRef(hover.bind);
+  hoverBindFnRef.current = hover.bind;
+  const hoverBind = useCallback(
+    (s: Shift) => hoverBindFnRef.current(s),
+    [],
+  );
+  const ctxOpenFnRef = useRef(ctxMenu.openFor);
+  ctxOpenFnRef.current = ctxMenu.openFor;
+  const openContextMenu = useCallback(
+    (s: Shift, e: React.MouseEvent) => ctxOpenFnRef.current(s, e),
+    [],
+  );
   const days = useMemo(
     () => Array.from({ length: dayCount }).map((_, i) => addDays(weekStart, i)),
     [weekStart, dayCount],
   );
+  // The 7 (or dayCount) "YYYY-MM-DD" column keys, computed ONCE per render
+  // instead of re-deriving ymd(d) inside every per-associate loop below.
+  const dayKeys = useMemo(() => days.map(ymd), [days]);
 
   const byCell = useMemo(() => {
     const map = new Map<string, Shift[]>();
@@ -195,19 +219,19 @@ export function TimeGridWeekView({
   // rule as byCell (day key in the grid's zone must fall inside `days`), so the
   // rail total always agrees with what the cells actually show.
   const minutesByAssociate = useMemo(() => {
-    const dayKeys = new Set(days.map(ymd));
+    const daySet = new Set(dayKeys);
     const map = new Map<string, number>();
     for (const s of shifts) {
       if (s.status === 'CANCELLED') continue;
       if (!s.assignedAssociateId) continue;
-      if (!dayKeys.has(zonedDayKey(s.startsAt, displayTimeZone))) continue;
+      if (!daySet.has(zonedDayKey(s.startsAt, displayTimeZone))) continue;
       map.set(
         s.assignedAssociateId,
         (map.get(s.assignedAssociateId) ?? 0) + shiftMinutes(s),
       );
     }
     return map;
-  }, [shifts, days, displayTimeZone]);
+  }, [shifts, dayKeys, displayTimeZone]);
 
   // Per-day footer totals: shift count + scheduled minutes (CANCELLED
   // excluded) and how many of them are unassigned OPEN shifts.
@@ -253,29 +277,34 @@ export function TimeGridWeekView({
     const dragEnd = new Date(activeDrag.endsAt);
     const dayMinutes = zonedMinutesOfDay(dragStart, displayTimeZone);
     const durationMs = dragEnd.getTime() - dragStart.getTime();
+    // Predict the dropped instant in the grid's zone (null zone →
+    // browser-local, identical to the old setHours math). The predicted
+    // instant depends only on the DAY, so it's computed once per column
+    // here, not once per associate × day.
+    const dayDrops = dayKeys.map((key) => {
+      const [yy, mm, dd] = key.split('-').map(Number);
+      const target = zonedWallTimeToUtc(
+        yy, mm, dd,
+        Math.floor(dayMinutes / 60), dayMinutes % 60,
+        displayTimeZone,
+      );
+      return { key, target, targetEnd: new Date(target.getTime() + durationMs) };
+    });
     for (const a of visibleAssociates) {
-      for (const d of days) {
-        // Predict the dropped instant in the grid's zone (null zone →
-        // browser-local, identical to the old setHours math).
-        const [yy, mm, dd] = ymd(d).split('-').map(Number);
-        const target = zonedWallTimeToUtc(
-          yy, mm, dd,
-          Math.floor(dayMinutes / 60), dayMinutes % 60,
-          displayTimeZone,
-        );
-        const targetEnd = new Date(target.getTime() + durationMs);
-        const cell = byCell.get(`${a.id}_${ymd(d)}`) ?? [];
+      for (const { key, target, targetEnd } of dayDrops) {
+        const cell = byCell.get(`${a.id}_${key}`);
+        if (!cell) continue;
         const conflict = cell.some((s) => {
           if (s.id === activeDrag.id) return false;
           return (
             new Date(s.startsAt) < targetEnd && new Date(s.endsAt) > target
           );
         });
-        if (conflict) out.add(`${a.id}_${ymd(d)}`);
+        if (conflict) out.add(`${a.id}_${key}`);
       }
     }
     return out;
-  }, [activeDrag, visibleAssociates, days, byCell, displayTimeZone]);
+  }, [activeDrag, visibleAssociates, dayKeys, byCell, displayTimeZone]);
 
   const onDragStart = (e: DragStartEvent) => {
     const id = String(e.active.id);
@@ -370,11 +399,11 @@ export function TimeGridWeekView({
             tone="warning"
           />
           <HourGutter />
-          {days.map((d) => (
+          {days.map((d, i) => (
             <TimeCell
               key={`u_${d.getTime()}`}
               cellId={`tg-cell:${UNASSIGNED_ROW_ID}:${d.getTime()}`}
-              shifts={byCell.get(`${UNASSIGNED_ROW_ID}_${ymd(d)}`) ?? []}
+              shifts={byCell.get(`${UNASSIGNED_ROW_ID}_${dayKeys[i]}`) ?? EMPTY_SHIFTS}
               dayStart={d}
               displayTimeZone={displayTimeZone}
               isToday={sameDay(d, today)}
@@ -383,14 +412,14 @@ export function TimeGridWeekView({
               onCreate={onCellCreate}
               onCreateRange={onCellCreateRange}
               onShiftResize={onShiftResize}
-              hoverBind={hover.bind}
-              onContextMenu={ctxMenu.openFor}
+              hoverBind={hoverBind}
+              onContextMenu={openContextMenu}
               movingShiftId={movingShiftId}
               selectedIds={selectedIds}
               isConflictTarget={false}
               variant="unassigned"
               associateId={null}
-              onTemplateDrop={(tplId) => onTemplateDrop(tplId, d, null)}
+              onTemplateDrop={onTemplateDrop}
             />
           ))}
 
@@ -415,13 +444,14 @@ export function TimeGridWeekView({
                 scheduledMinutes={minutesByAssociate.get(a.id) ?? 0}
               >
                 <HourGutter />
-                {days.map((d) => {
+                {days.map((d, i) => {
+                  const dayKey = dayKeys[i];
                   // Availability fit for this cell. PTO/exception veto beats
                   // the weekly-pattern miss; an associate with NO windows at
                   // all gets no shading (absence of data ≠ unavailable).
                   let fitStatus: 'blocked' | 'unavailable' | null = null;
                   if (fit) {
-                    if (fit.blocked.has(ymd(d))) fitStatus = 'blocked';
+                    if (fit.blocked.has(dayKey)) fitStatus = 'blocked';
                     else if (fit.dows.size > 0 && !fit.dows.has(d.getDay())) {
                       fitStatus = 'unavailable';
                     }
@@ -430,7 +460,7 @@ export function TimeGridWeekView({
                     <TimeCell
                       key={`${a.id}_${d.getTime()}`}
                       cellId={`tg-cell:${a.id}:${d.getTime()}`}
-                      shifts={byCell.get(`${a.id}_${ymd(d)}`) ?? []}
+                      shifts={byCell.get(`${a.id}_${dayKey}`) ?? EMPTY_SHIFTS}
                       dayStart={d}
                       displayTimeZone={displayTimeZone}
                       isToday={sameDay(d, today)}
@@ -439,14 +469,14 @@ export function TimeGridWeekView({
                       onCreate={onCellCreate}
                       onCreateRange={onCellCreateRange}
                       onShiftResize={onShiftResize}
-                      hoverBind={hover.bind}
-                      onContextMenu={ctxMenu.openFor}
+                      hoverBind={hoverBind}
+                      onContextMenu={openContextMenu}
                       movingShiftId={movingShiftId}
                       selectedIds={selectedIds}
-                      isConflictTarget={conflictCellKeys.has(`${a.id}_${ymd(d)}`)}
+                      isConflictTarget={conflictCellKeys.has(`${a.id}_${dayKey}`)}
                       variant="default"
                       associateId={a.id}
-                      onTemplateDrop={(tplId) => onTemplateDrop(tplId, d, a.id)}
+                      onTemplateDrop={onTemplateDrop}
                       fitStatus={fitStatus}
                     />
                   );
@@ -460,8 +490,8 @@ export function TimeGridWeekView({
             Daily totals
           </div>
           <div className="border-t border-b border-r border-navy-secondary bg-navy/95" />
-          {days.map((d) => {
-            const t = dayTotals.get(ymd(d));
+          {days.map((d, i) => {
+            const t = dayTotals.get(dayKeys[i]);
             return (
               <div
                 key={`total_${d.getTime()}`}
@@ -531,7 +561,7 @@ export function TimeGridWeekView({
 
 /* ===== Subcomponents ====================================================== */
 
-function Row({
+const Row = memo(function Row({
   initials,
   firstName,
   lastName,
@@ -571,7 +601,7 @@ function Row({
       {children}
     </>
   );
-}
+});
 
 function RailCell({
   label,
@@ -627,7 +657,7 @@ function HourGutter() {
   );
 }
 
-function TimeCell({
+const TimeCell = memo(function TimeCell({
   cellId,
   shifts,
   dayStart,
@@ -668,7 +698,7 @@ function TimeCell({
   isConflictTarget: boolean;
   variant: 'default' | 'unassigned';
   associateId: string | null;
-  onTemplateDrop: (templateId: string) => void;
+  onTemplateDrop: (templateId: string, dayStart: Date, associateId: string | null) => void;
   /** Availability shading: 'blocked' = approved PTO/exception vetoes the day,
    *  'unavailable' = outside the associate's weekly windows. Lowest-priority
    *  background — never shown over drag/conflict/template tints. */
@@ -742,7 +772,7 @@ function TimeCell({
     const tplId = e.dataTransfer.getData(TEMPLATE_MIME);
     if (!tplId) return;
     e.preventDefault();
-    onTemplateDrop(tplId);
+    onTemplateDrop(tplId, dayStart, associateId);
   };
 
   const onClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -825,7 +855,7 @@ function TimeCell({
       ))}
     </div>
   );
-}
+});
 
 function TimeChip({
   shift,

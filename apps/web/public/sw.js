@@ -18,7 +18,7 @@
 // activate handler evicts the previous cache instead of leaving stale
 // entries (e.g. an old index.html with chunk hashes from a prior
 // deploy that no longer exist on the server) lying around.
-const CACHE_NAME = 'alto-shell-v13';
+const CACHE_NAME = 'alto-shell-v14';
 const SHELL = [
   '/',
   '/index.html',
@@ -46,6 +46,13 @@ const SHELL = [
 // plugin) the cache-on-first-fetch fallback below still works.
 async function precacheChunksFromManifest(cache) {
   try {
+    // Respect metered / constrained connections: precaching is a nicety,
+    // and on data-saver or 2G it's actively hostile. The manifest itself
+    // is now an allowlist (shell + top routes), not the whole build.
+    const conn = self.navigator && self.navigator.connection;
+    if (conn && (conn.saveData || conn.effectiveType === '2g' || conn.effectiveType === 'slow-2g')) {
+      return;
+    }
     const res = await fetch('/asset-manifest.json', {
       credentials: 'same-origin',
       cache: 'no-cache',

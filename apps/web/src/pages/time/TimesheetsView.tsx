@@ -17,7 +17,7 @@ import type {
   TimesheetIssueKind,
   ClientListItem,
 } from '@alto-people/shared';
-import { listClients } from '@/lib/clientsApi';
+import { useClients } from '@/lib/useClients';
 import {
   getTimesheetWeek,
   exportTimesheetXlsx,
@@ -97,9 +97,13 @@ export function TimesheetsView() {
   const canAttest = can('manage:compliance');
   // Client-bound roles (SHIFT_SUPERVISOR) can't list clients — /clients
   // 403s for them. Pin the client filter to their one client instead.
-  const boundedClient = user?.clientId
-    ? { id: user.clientId, name: user.clientName ?? 'Your client' }
-    : null;
+  const boundedClient = useMemo(
+    () =>
+      user?.clientId
+        ? { id: user.clientId, name: user.clientName ?? 'Your client' }
+        : null,
+    [user?.clientId, user?.clientName],
+  );
 
   const [weekStart, setWeekStart] = useState<Date>(() => lastCompletedWeekStart(new Date()));
   const [data, setData] = useState<TimesheetWeekResponse | null>(null);
@@ -117,24 +121,13 @@ export function TimesheetsView() {
   // Per-client filter — file one Fieldglass SOW at a time. '' = all clients.
   // Bounded viewers start (and stay) pinned to their client.
   const [clientId, setClientId] = useState(boundedClient?.id ?? '');
-  const [clients, setClients] = useState<Array<Pick<ClientListItem, 'id' | 'name'>>>(
-    boundedClient ? [boundedClient] : [],
+  // Shared react-query cache; the fetch is skipped entirely for bounded
+  // roles (a failure just leaves the dropdown at "All clients").
+  const { clients: fetchedClients } = useClients({ enabled: !boundedClient });
+  const clients = useMemo<Array<Pick<ClientListItem, 'id' | 'name'>>>(
+    () => (boundedClient ? [boundedClient] : fetchedClients),
+    [boundedClient, fetchedClients],
   );
-
-  useEffect(() => {
-    if (boundedClient) return; // seeded above; the fetch would 403
-    let live = true;
-    listClients({ status: 'ACTIVE' })
-      .then((r) => live && setClients(r.clients))
-      .catch(() => {
-        /* dropdown just stays at "All clients" */
-      });
-    return () => {
-      live = false;
-    };
-    // boundedClient is stable for the session (derived from the signed-in user).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const clientArg = clientId || undefined;
 

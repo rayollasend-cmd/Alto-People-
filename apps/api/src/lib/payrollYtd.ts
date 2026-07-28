@@ -56,6 +56,34 @@ export async function computeYtdWages(
 }
 
 /**
+ * Batched variant — one groupBy for a whole run's universe instead of one
+ * aggregate per associate (the aggregator used to issue 2N of these, N of
+ * them exact duplicates via computeYtdMedicareWages). Missing associates
+ * simply have no key → treat as 0.
+ */
+export async function computeYtdWagesBatch(
+  tx: Tx,
+  associateIds: string[],
+  yearStart: Date,
+  beforeDate: Date
+): Promise<Map<string, number>> {
+  if (associateIds.length === 0) return new Map();
+  const groups = await tx.payrollItem.groupBy({
+    by: ['associateId'],
+    where: {
+      associateId: { in: associateIds },
+      status: 'DISBURSED',
+      payrollRun: {
+        periodStart: { gte: yearStart, lt: beforeDate },
+        status: { not: 'CANCELLED' },
+      },
+    },
+    _sum: { grossPay: true },
+  });
+  return new Map(groups.map((g) => [g.associateId, Number(g._sum.grossPay ?? 0)]));
+}
+
+/**
  * Companion helper for Medicare wages. The Medicare base differs from the
  * FIT base: pre-tax 401(k) reduces FIT wages but not Medicare wages, so
  * Medicare YTD can run higher than FIT YTD. The current aggregator stores

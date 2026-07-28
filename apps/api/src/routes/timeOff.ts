@@ -322,15 +322,19 @@ timeOffRouter.get('/admin/requests', MANAGE, async (req, res, next) => {
     // Attach each associate's current balance for the requested category so
     // the approver sees "24h requested · 16h available" before clicking —
     // over-draw used to surface only as a 409 after the fact.
-    const balances = await prisma.timeOffBalance.findMany({
-      where: {
-        OR: rows.map((r) => ({
-          associateId: r.associateId,
-          category: r.category,
-        })),
-      },
-      select: { associateId: true, category: true, balanceMinutes: true },
-    });
+    // PERF: two IN filters instead of a 200-clause OR (which Postgres
+    // can't index-scan efficiently); the cross-product surplus is
+    // discarded by the Map lookup below.
+    const balances =
+      rows.length > 0
+        ? await prisma.timeOffBalance.findMany({
+            where: {
+              associateId: { in: [...new Set(rows.map((r) => r.associateId))] },
+              category: { in: [...new Set(rows.map((r) => r.category))] },
+            },
+            select: { associateId: true, category: true, balanceMinutes: true },
+          })
+        : [];
     const balanceKey = (associateId: string, category: string) =>
       `${associateId}:${category}`;
     const balanceMap = new Map(
@@ -377,21 +381,30 @@ timeOffRouter.post('/admin/requests/bulk-decide', MANAGE, async (req, res, next)
       })
       .parse(req.body);
 
+    // PERF: one batched scope+detail read for the whole id set (this used
+    // to be up to four queries per id, one of them a pure duplicate).
+    const scopedRows = await prisma.timeOffRequest.findMany({
+      where: { ...scopeTimeOffRequests(user), id: { in: input.ids } },
+      select: {
+        id: true,
+        status: true,
+        associateId: true,
+        category: true,
+        startDate: true,
+        endDate: true,
+      },
+    });
+    const rowById = new Map(scopedRows.map((r) => [r.id, r]));
+
     const results: Array<{ id: string; ok: boolean; error?: string }> = [];
     for (const id of input.ids) {
       try {
-        // Tenant boundary per id — a supervisor can only decide their own
-        // client's requests, even in a bulk batch.
-        const inScope = await prisma.timeOffRequest.findFirst({
-          where: { ...scopeTimeOffRequests(user), id },
-          select: { id: true },
-        });
-        if (!inScope) throw new IllegalStateError('Request not found');
+        const row = rowById.get(id);
+        if (!row) throw new IllegalStateError('Request not found');
         if (input.decision === 'APPROVE') {
+          // approveRequest owns the balance CAS — stays per-id.
           await approveRequest(prisma, id, user.id, input.note ?? null);
         } else {
-          const row = await prisma.timeOffRequest.findUnique({ where: { id } });
-          if (!row) throw new IllegalStateError('Request not found');
           if (row.status !== 'PENDING') {
             throw new IllegalStateError(`Cannot deny a ${row.status} request`);
           }
@@ -405,23 +418,17 @@ timeOffRouter.post('/admin/requests/bulk-decide', MANAGE, async (req, res, next)
             },
           });
         }
-        const decided = await prisma.timeOffRequest.findUnique({
-          where: { id },
-          select: { associateId: true, category: true, startDate: true, endDate: true },
+        const verb = input.decision === 'APPROVE' ? 'approved' : 'denied';
+        void notifyAssociate(row.associateId, {
+          subject: `Time off ${verb}: ${formatDateUTC(row.startDate)} – ${formatDateUTC(row.endDate)}`,
+          body:
+            `Your ${row.category.toLowerCase().replace(/_/g, ' ')} request for ` +
+            `${formatDateUTC(row.startDate)} – ${formatDateUTC(row.endDate)} was ${verb}.` +
+            (input.note ? `\n\nReviewer note: ${input.note}` : ''),
+          category: 'time-off',
+          linkUrl: '/time-off',
+          emailFallback: true,
         });
-        if (decided) {
-          const verb = input.decision === 'APPROVE' ? 'approved' : 'denied';
-          void notifyAssociate(decided.associateId, {
-            subject: `Time off ${verb}: ${formatDateUTC(decided.startDate)} – ${formatDateUTC(decided.endDate)}`,
-            body:
-              `Your ${decided.category.toLowerCase().replace(/_/g, ' ')} request for ` +
-              `${formatDateUTC(decided.startDate)} – ${formatDateUTC(decided.endDate)} was ${verb}.` +
-              (input.note ? `\n\nReviewer note: ${input.note}` : ''),
-            category: 'time-off',
-            linkUrl: '/time-off',
-            emailFallback: true,
-          });
-        }
         results.push({ id, ok: true });
       } catch (err) {
         const msg =

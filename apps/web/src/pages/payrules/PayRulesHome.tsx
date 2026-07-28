@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Download, Plus } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
@@ -10,9 +10,8 @@ import {
   parseYmd,
   ymdLocal,
 } from '@/lib/format';
-import { listClients } from '@/lib/clientsApi';
+import { useClients } from '@/lib/useClients';
 import { useAuth } from '@/lib/auth';
-import type { ClientListItem } from '@alto-people/shared';
 import {
   addAllocation,
   autoAllocate,
@@ -70,26 +69,25 @@ export function PayRulesHome() {
   const { user } = useAuth();
   // Client-bound roles (SHIFT_SUPERVISOR) can't list clients — /clients
   // 403s for them. Seed and pin the picker to their one client instead.
-  const boundedClient = user?.clientId
-    ? { id: user.clientId, name: user.clientName ?? 'Your client' }
-    : null;
-  const [clients, setClients] = useState<Array<Pick<ClientListItem, 'id' | 'name'>>>(
-    boundedClient ? [boundedClient] : [],
+  const boundedClient = useMemo(
+    () =>
+      user?.clientId
+        ? { id: user.clientId, name: user.clientName ?? 'Your client' }
+        : null,
+    [user?.clientId, user?.clientName],
+  );
+  // Shared react-query cache; the fetch is skipped entirely for bounded roles.
+  const { clients: fetchedClients } = useClients({ enabled: !boundedClient });
+  const clients = useMemo(
+    () => (boundedClient ? [boundedClient] : fetchedClients),
+    [boundedClient, fetchedClients],
   );
   const [clientId, setClientId] = useState(boundedClient?.id ?? '');
   const [tab, setTab] = useState<Tab>('projects');
 
   useEffect(() => {
-    if (boundedClient) return; // seeded above; the fetch would 403
-    listClients()
-      .then((r) => {
-        setClients(r.clients);
-        if (!clientId && r.clients.length > 0) setClientId(r.clients[0].id);
-      })
-      .catch(() => {});
-    // boundedClient is stable for the session (derived from the signed-in user).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientId]);
+    if (clients.length > 0) setClientId((prev) => prev || clients[0].id);
+  }, [clients]);
 
   return (
     <div className="space-y-5">

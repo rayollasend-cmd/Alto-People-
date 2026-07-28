@@ -130,21 +130,29 @@ export function TuitionHome() {
             err instanceof ApiError ? err.message : 'Failed to load the queue.',
           ),
         );
-      setSummaryError(null);
-      getTuitionSummary()
-        .then(setSummary)
-        .catch((err) => {
-          setSummary(null);
-          setSummaryError(
-            err instanceof ApiError ? err.message : 'Failed to load the summary.',
-          );
-        });
     }
+  };
+  // Filter-independent KPI summary — fetched once on mount and re-fetched
+  // explicitly after mutations, never on tab/filter clicks.
+  const refreshSummary = () => {
+    setSummaryError(null);
+    getTuitionSummary()
+      .then(setSummary)
+      .catch((err) => {
+        setSummary(null);
+        setSummaryError(
+          err instanceof ApiError ? err.message : 'Failed to load the summary.',
+        );
+      });
   };
   useEffect(() => {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, statusFilter]);
+  useEffect(() => {
+    if (canProcessPayroll) refreshSummary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canProcessPayroll]);
 
   // If the open queue row vanished after a refetch (decided elsewhere,
   // filter changed), close the drawer instead of crashing on a missing row.
@@ -239,6 +247,7 @@ export function TuitionHome() {
         toast.error(`Approved ${ok}; ${failed} failed.`);
       }
       refresh();
+      if (canProcessPayroll) refreshSummary();
     } finally {
       setBulkBusy(false);
     }
@@ -306,7 +315,7 @@ export function TuitionHome() {
             <p role="alert" className="text-sm text-alert">
               {summaryError}
             </p>
-            <Button size="sm" variant="secondary" onClick={refresh}>
+            <Button size="sm" variant="secondary" onClick={refreshSummary}>
               Retry
             </Button>
           </CardContent>
@@ -550,6 +559,7 @@ export function TuitionHome() {
           onSaved={() => {
             setShowNew(false);
             refresh();
+            if (canProcessPayroll) refreshSummary();
           }}
         />
       )}
@@ -560,6 +570,7 @@ export function TuitionHome() {
           onSaved={() => {
             setOpenMine(null);
             refresh();
+            if (canProcessPayroll) refreshSummary();
           }}
         />
       )}
@@ -570,6 +581,7 @@ export function TuitionHome() {
           onSaved={() => {
             setOpenId(null);
             refresh();
+            if (canProcessPayroll) refreshSummary();
           }}
         />
       )}

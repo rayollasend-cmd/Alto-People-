@@ -91,7 +91,6 @@ export function VtoHome() {
     } else {
       setQueue(null);
       setQueueError(null);
-      setSummaryError(null);
       setSelected(new Set());
       listVolunteerQueue(statusFilter === 'ALL' ? undefined : statusFilter)
         .then((r) => setQueue(r.entries))
@@ -102,20 +101,28 @@ export function VtoHome() {
               : 'Failed to load the review queue.',
           ),
         );
-      getVolunteerSummary()
-        .then(setSummary)
-        .catch((err) =>
-          setSummaryError(
-            err instanceof ApiError
-              ? err.message
-              : 'Failed to load the summary.',
-          ),
-        );
     }
+  };
+  // Filter-independent KPI summary — fetched once on mount and re-fetched
+  // explicitly after mutations, never on tab/filter clicks.
+  const refreshSummary = () => {
+    setSummaryError(null);
+    getVolunteerSummary()
+      .then(setSummary)
+      .catch((err) =>
+        setSummaryError(
+          err instanceof ApiError
+            ? err.message
+            : 'Failed to load the summary.',
+        ),
+      );
   };
   useEffect(() => {
     refresh();
   }, [tab, statusFilter]);
+  useEffect(() => {
+    if (canManage) refreshSummary();
+  }, [canManage]);
 
   const term = search.trim().toLowerCase();
   const filteredQueue =
@@ -164,6 +171,7 @@ export function VtoHome() {
       setBulkBusy(false);
       setSelected(new Set());
       refresh();
+      if (canManage) refreshSummary();
     }
   };
 
@@ -335,7 +343,7 @@ export function VtoHome() {
             <p role="alert" className="text-sm text-alert">
               {summaryError}
             </p>
-            <Button size="sm" variant="secondary" onClick={refresh}>
+            <Button size="sm" variant="secondary" onClick={refreshSummary}>
               Retry
             </Button>
           </CardContent>
@@ -584,6 +592,7 @@ export function VtoHome() {
           onSaved={() => {
             setShowNew(false);
             refresh();
+            if (canManage) refreshSummary();
           }}
         />
       )}
@@ -597,6 +606,7 @@ export function VtoHome() {
           onSaved={() => {
             setOpenQueueId(null);
             refresh();
+            if (canManage) refreshSummary();
           }}
         />
       )}

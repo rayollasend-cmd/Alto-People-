@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Download, Plus, Trash2 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
-import { listClients } from '@/lib/clientsApi';
+import { useClients } from '@/lib/useClients';
 import { downloadCsv } from '@/lib/csv';
 import {
   fmtDate,
@@ -11,7 +11,6 @@ import {
   parseYmd,
   ymdLocal,
 } from '@/lib/format';
-import type { ClientListItem } from '@alto-people/shared';
 import {
   applyCycle,
   createBand,
@@ -87,27 +86,20 @@ export function CompensationHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:comp') : false;
 
-  const [clients, setClients] = useState<ClientListItem[]>([]);
-  const [clientsError, setClientsError] = useState<string | null>(null);
+  // Shared react-query cache — fetched at most once per 5 minutes app-wide.
+  const {
+    clients,
+    isError: clientsError,
+    refetch: refetchClients,
+  } = useClients();
   const [clientId, setClientId] = useState<string>('');
   const [tab, setTab] = useState<Tab>('bands');
 
-  const loadClients = () => {
-    setClientsError(null);
-    listClients()
-      .then((res) => {
-        setClients(res.clients);
-        setClientId((prev) => prev || res.clients[0]?.id || '');
-      })
-      .catch((err) =>
-        setClientsError(
-          err instanceof ApiError ? err.message : 'Could not load the client list.',
-        ),
-      );
-  };
   useEffect(() => {
-    loadClients();
-  }, []);
+    if (clients.length > 0) {
+      setClientId((prev) => prev || clients[0].id);
+    }
+  }, [clients]);
 
   return (
     <div className="space-y-5">
@@ -141,8 +133,12 @@ export function CompensationHome() {
           {clientsError && (
             <ErrorBanner className="flex-1 min-w-[16rem]">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <span>{clientsError}</span>
-                <Button size="sm" variant="secondary" onClick={loadClients}>
+                <span>Could not load the client list.</span>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => void refetchClients()}
+                >
                   Retry
                 </Button>
               </div>

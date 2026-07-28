@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
   AlertTriangle,
   Check,
@@ -44,7 +45,8 @@ import {
   type KioskPunchSummary,
 } from '@/lib/kiosk99Api';
 import { listDirectory } from '@/lib/directoryApi';
-import { listClients, listClientLocations } from '@/lib/clientsApi';
+import { listClientLocations } from '@/lib/clientsApi';
+import { useClients } from '@/lib/useClients';
 import type { LocationSummary } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
@@ -554,34 +556,30 @@ function NewDeviceDrawer({
   const boundedClient = user?.clientId
     ? { id: user.clientId, name: user.clientName ?? 'Your client' }
     : null;
-  const [clients, setClients] = useState<
-    Array<{ id: string; name: string }> | null
-  >(boundedClient ? [boundedClient] : null);
+  // Shared react-query client list (5-min cache). Bounded viewers are
+  // seeded from the user and never fetch (the endpoint would 403).
+  const { clients: clientList, isLoading: clientsLoading } = useClients({
+    enabled: !boundedClient,
+  });
+  const clients: Array<{ id: string; name: string }> | null = boundedClient
+    ? [boundedClient]
+    : clientsLoading
+      ? null
+      : clientList.map((c) => ({ id: c.id, name: c.name }));
   const [clientId, setClientId] = useState(boundedClient?.id ?? '');
   const [locations, setLocations] = useState<LocationSummary[] | null>(null);
   const [locationId, setLocationId] = useState('');
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // Default to the first client once the list is in, matching the old
+  // fetch-then-preselect behavior.
   useEffect(() => {
-    if (boundedClient) return; // seeded above; the fetch would 403
-    let cancelled = false;
-    listClients()
-      .then((r) => {
-        if (cancelled) return;
-        const list = r.clients.map((c) => ({ id: c.id, name: c.name }));
-        setClients(list);
-        if (list.length > 0) setClientId(list[0]!.id);
-      })
-      .catch(() => {
-        if (!cancelled) setClients([]);
-      });
-    return () => {
-      cancelled = true;
-    };
+    if (boundedClient || clientsLoading) return;
+    if (!clientId && clientList.length > 0) setClientId(clientList[0]!.id);
     // boundedClient is stable for the session (derived from the signed-in user).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [clientsLoading, clientList]);
 
   // Phase 131 — load Locations when the client changes. Auto-pick the
   // first one so HR can hit Register without an extra click in the
@@ -888,9 +886,16 @@ function PinsTab({ canManage }: { canManage: boolean }) {
   const boundedClient = user?.clientId
     ? { id: user.clientId, name: user.clientName ?? 'Your client' }
     : null;
-  const [clients, setClients] = useState<
-    Array<{ id: string; name: string }> | null
-  >(boundedClient ? [boundedClient] : null);
+  // Shared react-query client list (5-min cache). Bounded viewers are
+  // seeded from the user and never fetch (the endpoint would 403).
+  const { clients: clientList, isLoading: clientsLoading } = useClients({
+    enabled: !boundedClient,
+  });
+  const clients: Array<{ id: string; name: string }> | null = boundedClient
+    ? [boundedClient]
+    : clientsLoading
+      ? null
+      : clientList.map((c) => ({ id: c.id, name: c.name }));
   const [clientId, setClientId] = useState(boundedClient?.id ?? '');
   const [rows, setRows] = useState<KioskPin[] | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -901,19 +906,12 @@ function PinsTab({ canManage }: { canManage: boolean }) {
     employeeNumber: string;
   } | null>(null);
   // Search box (with-codes view) + "With codes / Missing" roster toggle.
+  // The filter memo keys on the DEFERRED value so keystrokes commit
+  // instantly and the row re-filter lags a frame behind on big rosters
+  // (same pattern as PeopleDirectory).
   const [q, setQ] = useState('');
+  const deferredQ = useDeferredValue(q);
   const [view, setView] = useState<'with' | 'missing'>('with');
-  // PIN-eligible associates (ACTIVE = approved application) at the selected
-  // client, used to compute who is MISSING a code. Per-client only — the
-  // directory is cursor-paginated, so we don't diff across all clients.
-  const [eligible, setEligible] = useState<
-    Array<{
-      id: string;
-      name: string;
-      email: string;
-      currentLocationId: string | null;
-    }> | null
-  >(null);
   // Worksite filter — for a client with multiple stores/locations, narrow the
   // list to one location.
   const [locationOptions, setLocationOptions] = useState<
@@ -923,27 +921,12 @@ function PinsTab({ canManage }: { canManage: boolean }) {
   // When issuing from a "missing" row, preselect that associate in the drawer.
   const [issueFor, setIssueFor] = useState<string | null>(null);
 
-  // Load the client picker once. Default to the first client so HR
-  // doesn't land on an empty state. Bounded viewers are seeded above and
-  // never fetch (the endpoint would 403).
+  // Default to the first client so HR doesn't land on an empty state.
   useEffect(() => {
-    if (boundedClient) return;
-    let cancelled = false;
-    listClients()
-      .then((r) => {
-        if (cancelled) return;
-        const list = r.clients.map((c) => ({ id: c.id, name: c.name }));
-        setClients(list);
-        if (!clientId && list.length > 0) setClientId(list[0]!.id);
-      })
-      .catch(() => {
-        if (!cancelled) setClients([]);
-      });
-    return () => {
-      cancelled = true;
-    };
+    if (boundedClient || clientsLoading) return;
+    if (!clientId && clientList.length > 0) setClientId(clientList[0]!.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [clientsLoading, clientList]);
 
   const refresh = () => {
     if (!clientId) {
@@ -961,34 +944,36 @@ function PinsTab({ canManage }: { canManage: boolean }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientId]);
 
-  // Fetch PIN-eligible associates whenever a specific client is selected,
-  // so we can show both the "X missing" summary and the Missing view.
-  useEffect(() => {
-    if (!clientId || clientId === ALL_CLIENTS) {
-      setEligible(null);
-      return;
-    }
-    setEligible(null);
-    let cancelled = false;
-    listDirectory({ clientId, status: 'ACTIVE' })
-      .then((r) => {
-        if (cancelled) return;
-        setEligible(
-          r.associates.map((a) => ({
-            id: a.id,
-            name: `${a.firstName} ${a.lastName}`,
-            email: a.email,
-            currentLocationId: a.currentLocationId,
-          })),
-        );
-      })
-      .catch(() => {
-        if (!cancelled) setEligible([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [clientId]);
+  // PIN-eligible associates (ACTIVE = approved application) at the selected
+  // client, used to compute who is MISSING a code. Per-client only — the
+  // directory is cursor-paginated, so we don't diff across all clients.
+  // Cached for 60s so tab-hopping / drawer churn doesn't re-pull the
+  // roster; limit 500 (the server max) keeps it to one request instead of
+  // the default page size, and we keep only the fields the diff needs.
+  const eligibleQuery = useQuery({
+    queryKey: ['directory', clientId, 'ACTIVE'],
+    queryFn: () => listDirectory({ clientId, status: 'ACTIVE', limit: 500 }),
+    enabled: Boolean(clientId && clientId !== ALL_CLIENTS),
+    staleTime: 60_000,
+  });
+  const eligible = useMemo<
+    Array<{
+      id: string;
+      name: string;
+      email: string;
+      currentLocationId: string | null;
+    }> | null
+  >(() => {
+    if (!clientId || clientId === ALL_CLIENTS) return null;
+    if (eligibleQuery.isError) return [];
+    if (!eligibleQuery.data) return null; // loading — matches the old null state
+    return eligibleQuery.data.associates.map((a) => ({
+      id: a.id,
+      name: `${a.firstName} ${a.lastName}`,
+      email: a.email,
+      currentLocationId: a.currentLocationId,
+    }));
+  }, [clientId, eligibleQuery.data, eligibleQuery.isError]);
 
   // Locations for the selected client, for the worksite filter. Reset the
   // filter whenever the client changes.
@@ -1031,7 +1016,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
   const filteredRows = useMemo(() => {
     let list = rows ?? [];
     if (locationFilter) list = list.filter((p) => p.locationId === locationFilter);
-    const term = q.trim().toLowerCase();
+    const term = deferredQ.trim().toLowerCase();
     if (!term) return list;
     return list.filter(
       (p) =>
@@ -1040,7 +1025,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
         (p.employeeNumber ?? '').includes(term) ||
         p.clientName.toLowerCase().includes(term),
     );
-  }, [rows, q, locationFilter]);
+  }, [rows, deferredQ, locationFilter]);
   // Rows we can actually email — a recoverable (non-legacy) number. Drives
   // the "Email all" bulk action over whatever's currently in view.
   const emailableRows = useMemo(
@@ -1977,6 +1962,79 @@ type ActionFilter =
   | 'BREAK_END'
   | 'REJECTED';
 
+// One punch-log row, memoized: "Load more" appends to an accumulating
+// list, and without this every already-rendered row re-renders on each
+// page (and on every unrelated state change in the tab).
+const PunchLogRow = memo(function PunchLogRow({ p }: { p: KioskPunchSummary }) {
+  return (
+    <TableRow>
+      <TableCell>
+        <div className="min-w-0">
+          <div>{fmtDateTime(p.createdAt)}</div>
+          <div className="md:hidden text-[11px] text-silver/70 truncate">
+            {p.deviceName}
+          </div>
+        </div>
+      </TableCell>
+      <TableCell className="font-mono text-xs hidden md:table-cell">{p.deviceName}</TableCell>
+      <TableCell>{p.associateName ?? '—'}</TableCell>
+      <TableCell>
+        <Badge
+          variant={
+            p.action === 'CLOCK_IN'
+              ? 'success'
+              : p.action === 'CLOCK_OUT'
+                ? 'accent'
+                : p.action === 'BREAK_START' || p.action === 'BREAK_END'
+                  ? 'pending'
+                  : 'destructive'
+          }
+        >
+          {p.action}
+        </Badge>
+      </TableCell>
+      <TableCell className="text-xs hidden lg:table-cell">
+        {p.distanceMeters != null ? `${p.distanceMeters}m` : '—'}
+      </TableCell>
+      <TableCell className="text-xs hidden md:table-cell">
+        {p.faceDistance == null ? (
+          '—'
+        ) : p.faceMismatch ? (
+          <Badge variant="destructive">
+            Mismatch ({p.faceDistance.toFixed(2)})
+          </Badge>
+        ) : (
+          <Badge variant="success">
+            Match ({p.faceDistance.toFixed(2)})
+          </Badge>
+        )}
+      </TableCell>
+      <TableCell className="hidden lg:table-cell">
+        {p.hasSelfie ? (
+          <a
+            href={`/api/kiosk-punches/${p.id}/selfie`}
+            target="_blank"
+            rel="noreferrer"
+            className="text-gold hover:text-gold-bright underline underline-offset-2 text-xs"
+          >
+            view
+          </a>
+        ) : (
+          '—'
+        )}
+      </TableCell>
+      <TableCell className="text-xs text-silver hidden lg:table-cell">
+        {p.rejectReason ?? ''}
+      </TableCell>
+    </TableRow>
+  );
+});
+
+// "Load more" accumulates rows in memory with no upper bound; past this
+// many the DOM (not the network) is the bottleneck. CSV export walks the
+// cursor server-side for anything older.
+const LOG_CAP = 600;
+
 function LogTab() {
   const [rows, setRows] = useState<KioskPunchSummary[] | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -2042,15 +2100,21 @@ function LogTab() {
       .catch(() => setDevices([]));
   }, []);
 
+  const atCap = rows !== null && rows.length >= LOG_CAP;
+
   const loadMore = () => {
-    if (!nextCursor || loadingMore) return;
+    if (!nextCursor || loadingMore || atCap) return;
     const myId = loadIdRef.current;
     setLoadingMore(true);
     listKioskPunches(queryParams(nextCursor))
       .then((r) => {
         // Filters changed while this page was in flight — drop it.
         if (loadIdRef.current !== myId) return;
-        setRows((prev) => [...(prev ?? []), ...r.punches]);
+        setRows((prev) => {
+          const merged = [...(prev ?? []), ...r.punches];
+          // On-screen cap — anything past it is CSV-export territory.
+          return merged.length > LOG_CAP ? merged.slice(0, LOG_CAP) : merged;
+        });
         setNextCursor(r.nextCursor);
       })
       .catch(() => {
@@ -2067,16 +2131,29 @@ function LogTab() {
   // the tab; the toast says when the cap was hit.
   const [exporting, setExporting] = useState(false);
   const EXPORT_CAP = 10_000;
+  // The export walks pages at the server's max (500), not the on-screen
+  // page size (100) — a capped export is 20 round-trips instead of 100.
+  const EXPORT_PAGE = 500;
+  const EXPORT_TOAST_ID = 'kiosk-punch-export';
   const exportCsv = async () => {
     if (exporting) return;
     setExporting(true);
     try {
       const all: KioskPunchSummary[] = [];
       let cursor: string | undefined;
+      let pages = 0;
       do {
-        const r = await listKioskPunches(queryParams(cursor));
+        const r = await listKioskPunches({
+          ...queryParams(cursor),
+          limit: EXPORT_PAGE,
+        });
+        pages += 1;
         all.push(...r.punches);
         cursor = r.nextCursor ?? undefined;
+        toast.loading(
+          `Exporting… ${pages} page${pages === 1 ? '' : 's'} fetched (${all.length} punches)`,
+          { id: EXPORT_TOAST_ID },
+        );
       } while (cursor && all.length < EXPORT_CAP);
 
       const esc = (v: unknown) => {
@@ -2132,15 +2209,19 @@ function LogTab() {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+      // Same id as the progress toast so it replaces it in place.
       toast.success(
         `Exported ${all.length} punch${all.length === 1 ? '' : 'es'}${
           cursor
             ? ` (capped at ${EXPORT_CAP} — narrow the date range for the rest)`
             : ''
         }.`,
+        { id: EXPORT_TOAST_ID },
       );
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Export failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Export failed.', {
+        id: EXPORT_TOAST_ID,
+      });
     } finally {
       setExporting(false);
     }
@@ -2287,66 +2368,7 @@ function LogTab() {
               </TableHeader>
               <TableBody>
                 {rows.map((p) => (
-                  <TableRow key={p.id}>
-                    <TableCell>
-                      <div className="min-w-0">
-                        <div>{fmtDateTime(p.createdAt)}</div>
-                        <div className="md:hidden text-[11px] text-silver/70 truncate">
-                          {p.deviceName}
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs hidden md:table-cell">{p.deviceName}</TableCell>
-                    <TableCell>{p.associateName ?? '—'}</TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          p.action === 'CLOCK_IN'
-                            ? 'success'
-                            : p.action === 'CLOCK_OUT'
-                              ? 'accent'
-                              : p.action === 'BREAK_START' || p.action === 'BREAK_END'
-                                ? 'pending'
-                                : 'destructive'
-                        }
-                      >
-                        {p.action}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-xs hidden lg:table-cell">
-                      {p.distanceMeters != null ? `${p.distanceMeters}m` : '—'}
-                    </TableCell>
-                    <TableCell className="text-xs hidden md:table-cell">
-                      {p.faceDistance == null ? (
-                        '—'
-                      ) : p.faceMismatch ? (
-                        <Badge variant="destructive">
-                          Mismatch ({p.faceDistance.toFixed(2)})
-                        </Badge>
-                      ) : (
-                        <Badge variant="success">
-                          Match ({p.faceDistance.toFixed(2)})
-                        </Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell">
-                      {p.hasSelfie ? (
-                        <a
-                          href={`/api/kiosk-punches/${p.id}/selfie`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-gold hover:text-gold-bright underline underline-offset-2 text-xs"
-                        >
-                          view
-                        </a>
-                      ) : (
-                        '—'
-                      )}
-                    </TableCell>
-                    <TableCell className="text-xs text-silver hidden lg:table-cell">
-                      {p.rejectReason ?? ''}
-                    </TableCell>
-                  </TableRow>
+                  <PunchLogRow key={p.id} p={p} />
                 ))}
               </TableBody>
             </Table>
@@ -2354,11 +2376,18 @@ function LogTab() {
         </CardContent>
       </Card>
       {nextCursor && rows && rows.length > 0 && (
-        <div className="flex justify-center">
-          <Button variant="ghost" onClick={loadMore} disabled={loadingMore}>
-            {loadingMore ? 'Loading…' : 'Load more'}
-          </Button>
-        </div>
+        atCap ? (
+          <div className="text-center text-xs text-silver">
+            Showing the first {LOG_CAP} punches — refine filters or use CSV
+            export for older punches.
+          </div>
+        ) : (
+          <div className="flex justify-center">
+            <Button variant="ghost" onClick={loadMore} disabled={loadingMore}>
+              {loadingMore ? 'Loading…' : 'Load more'}
+            </Button>
+          </div>
+        )
       )}
     </div>
   );

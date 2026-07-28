@@ -694,6 +694,7 @@ model AssociateAssignment {
 
   @@index([associateId, endedAt])
   @@index([locationId, startedAt])
+  @@index([locationId, endedAt])
 }
 
 model Associate {
@@ -961,7 +962,7 @@ model Application {
   deletedAt       DateTime?            @db.Timestamptz(6)
 
   @@index([associateId])
-  @@index([clientId, status])
+  @@index([clientId, status, associateId])
   @@index([locationId])
   @@index([status])
   @@index([invitedAt])
@@ -1096,7 +1097,7 @@ model DocumentRecord {
   deletedAt           DateTime?                     @db.Timestamptz(6)
 
   @@index([associateId, kind])
-  @@index([status])
+  @@index([status, createdAt(sort: Desc)])
   @@index([expiresAt])
   @@index([clientId])
   @@index([deletedAt])
@@ -1314,9 +1315,9 @@ model TimeEntry {
   // At most one ACTIVE row per associate at any time. Postgres treats this
   // as a partial unique via the where clause below.
   @@index([associateId, clockInAt])
-  @@index([clientId, status])
+  @@index([clientId, status, clockInAt])
   @@index([locationId, status])
-  @@index([status])
+  @@index([status, clockInAt])
   @@index([jobId])
   @@index([projectId])
   @@index([shiftId])
@@ -1649,6 +1650,7 @@ model ShiftSwapRequest {
   updatedAt               DateTime        @updatedAt @db.Timestamptz(6)
 
   @@index([shiftId])
+  @@index([status, createdAt(sort: Desc)])
   @@index([counterpartyAssociateId, status])
   @@index([requesterAssociateId, status])
 }
@@ -1723,7 +1725,7 @@ model PayrollRun {
   updatedAt                DateTime                  @updatedAt @db.Timestamptz(6)
 
   @@index([clientId, periodStart])
-  @@index([status])
+  @@index([status, disbursedAt])
   @@index([kind])
   @@index([amendsRunId])
 }
@@ -2214,8 +2216,10 @@ model Notification {
   // ORDER BY createdAt DESC. Matching index order lets the planner do an
   // in-order index scan instead of reverse-scanning.
   @@index([recipientUserId, createdAt(sort: Desc)])
-  @@index([status])
-  @@index([category])
+  @@index([status, createdAt(sort: Desc)])
+  @@index([category, createdAt(sort: Desc)])
+  @@index([channel, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
 }
 
 model AuditLog {
@@ -2234,9 +2238,10 @@ model AuditLog {
   // Drops the previously-separate (entityType, entityId) index since this
   // composite is a strict superset.
   @@index([entityType, entityId, createdAt(sort: Desc)])
-  @@index([actorUserId])
-  @@index([clientId])
+  @@index([actorUserId, createdAt(sort: Desc)])
+  @@index([clientId, createdAt(sort: Desc)])
   @@index([createdAt])
+  @@index([action, createdAt(sort: Desc)])
 }
 
 // ===== Phase 42 — Benefits enrollment =====================================
@@ -4371,7 +4376,7 @@ model Reimbursement {
   lines             ExpenseLine[]
 
   @@index([associateId, status])
-  @@index([status])
+  @@index([status, createdAt(sort: Desc)])
 }
 
 model ExpenseLine {
@@ -4553,7 +4558,7 @@ model KioskPunch {
   enrolledFaceRefs KioskFaceReference[] @relation("KioskFaceEnrolledByPunch")
 
   @@index([kioskDeviceId])
-  @@index([associateId])
+  @@index([associateId, createdAt(sort: Desc)])
   @@index([createdAt])
   // Phase 131 hardening — the HR review queue lists PENDING punches
   // ordered by recency. Without this composite, Postgres scans every

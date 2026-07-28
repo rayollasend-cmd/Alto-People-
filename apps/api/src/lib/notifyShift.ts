@@ -48,7 +48,27 @@ export interface NotifyShiftParams {
   linkUrl?: string;
 }
 
+/**
+ * Never rejects. Every call site fires this `void`-style off the request
+ * path (a notification must never fail — or delay — the scheduling
+ * mutation that triggered it), so a thrown error here would surface as an
+ * unhandled rejection; swallow + log instead.
+ */
 export async function notifyShift(
+  tx: Tx,
+  params: NotifyShiftParams
+): Promise<void> {
+  try {
+    await notifyShiftInner(tx, params);
+  } catch (err) {
+    console.warn(
+      '[notifyShift] failed:',
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
+async function notifyShiftInner(
   tx: Tx,
   params: NotifyShiftParams
 ): Promise<void> {

@@ -41,10 +41,11 @@ test('associate visual walk', async ({ page }) => {
   await page.screenshot({ path: shot('05-month-view') });
   await page.getByRole('radio', { name: 'List' }).click();
 
-  // Clock screen.
-  await page.getByRole('navigation', { name: /primary/i }).getByRole('link', { name: /clock/i }).click();
+  // Pay screen (the associate tab bar now surfaces Pay where the old
+  // kiosk-only Clock tab used to dead-end).
+  await page.getByRole('navigation', { name: /primary/i }).getByRole('link', { name: /^pay$/i }).click();
   await page.waitForTimeout(1_200);
-  await page.screenshot({ path: shot('06-clock') });
+  await page.screenshot({ path: shot('06-pay') });
 
   // Time off + the request bottom sheet.
   await page.getByRole('navigation', { name: /primary/i }).getByRole('link', { name: /time off/i }).click();

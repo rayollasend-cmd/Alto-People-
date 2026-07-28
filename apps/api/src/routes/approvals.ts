@@ -36,8 +36,15 @@ approvalsRouter.get(
         prisma.timeOffRequest.count({
           where: { status: 'PENDING', ...scopeTimeOffRequests(user) },
         }),
+        // Bounded to a 90-day window: COMPLETED is a state entries can sit
+        // in forever, so an all-time count both grows unboundedly and
+        // stops matching what the queue page (recent-first, capped) shows.
         prisma.timeEntry.count({
-          where: { status: 'COMPLETED', ...scopeTimeEntries(user) },
+          where: {
+            status: 'COMPLETED',
+            clockInAt: { gte: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000) },
+            ...scopeTimeEntries(user),
+          },
         }),
       ]);
       res.json({

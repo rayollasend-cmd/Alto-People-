@@ -8,6 +8,7 @@ import {
   type OnboardingMonthlyPoint,
   type OnboardingTrackBreakdown,
 } from '@alto-people/shared';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { startOfWeekUTC } from '../lib/timeAnomalies.js';
 import { associatesOfClient, effectiveClientIdFilter } from '../lib/scope.js';
@@ -176,25 +177,34 @@ analyticsRouter.get('/dashboard', async (req, res, next) => {
         where: { deletedAt: null, ...clientClamp },
         _count: { _all: true },
       }),
-      // Trend feeds — timestamps only, bounded to the 8-week window.
-      // Hours worked: completed punches, approximated as clockOut−clockIn
-      // (there's no netMinutes column; break math isn't worth it here).
-      prisma.timeEntry.findMany({
-        where: {
-          clockInAt: { gte: trendStart, lt: trendEnd },
-          clockOutAt: { not: null },
-          ...clientClamp,
-        },
-        select: { clockInAt: true, clockOutAt: true },
-      }),
-      prisma.shift.findMany({
-        where: {
-          startsAt: { gte: trendStart, lt: trendEnd },
-          status: { not: 'CANCELLED' },
-          ...clientClamp,
-        },
-        select: { startsAt: true },
-      }),
+      // Trend feeds. Hours + shifts are aggregated in SQL — these two
+      // used to pull 10–20k timestamp rows through the app per dashboard
+      // load to produce 8 weekly numbers. The week index matches
+      // trendBucket exactly: floor((t − trendStart) / 1 week).
+      prisma.$queryRaw<{ wk: number; hours: number }[]>(Prisma.sql`
+        SELECT
+          FLOOR(EXTRACT(EPOCH FROM ("clockInAt" - ${trendStart})) / 604800)::int AS wk,
+          COALESCE(SUM(
+            CASE WHEN "clockOutAt" > "clockInAt"
+              THEN EXTRACT(EPOCH FROM ("clockOutAt" - "clockInAt")) / 3600
+              ELSE 0 END
+          ), 0)::float8 AS hours
+        FROM "TimeEntry"
+        WHERE "clockInAt" >= ${trendStart} AND "clockInAt" < ${trendEnd}
+          AND "clockOutAt" IS NOT NULL
+          ${boundedClientId ? Prisma.sql`AND "clientId" = ${boundedClientId}::uuid` : Prisma.empty}
+        GROUP BY 1
+      `),
+      prisma.$queryRaw<{ wk: number; n: bigint }[]>(Prisma.sql`
+        SELECT
+          FLOOR(EXTRACT(EPOCH FROM ("startsAt" - ${trendStart})) / 604800)::int AS wk,
+          COUNT(*)::bigint AS n
+        FROM "Shift"
+        WHERE "startsAt" >= ${trendStart} AND "startsAt" < ${trendEnd}
+          AND "status" <> 'CANCELLED'::"ShiftStatus"
+          ${boundedClientId ? Prisma.sql`AND "clientId" = ${boundedClientId}::uuid` : Prisma.empty}
+        GROUP BY 1
+      `),
       prisma.application.findMany({
         where: {
           deletedAt: null,
@@ -220,19 +230,17 @@ analyticsRouter.get('/dashboard', async (req, res, next) => {
 
     // Hours worked per week, bucketed by clock-in and rounded to 0.1h.
     const hoursSeries = new Array<number>(TREND_WEEKS).fill(0);
-    for (const e of trendTimeEntries) {
-      const i = trendBucket(e.clockInAt, trendStart);
-      if (i < 0 || !e.clockOutAt) continue;
-      const ms = e.clockOutAt.getTime() - e.clockInAt.getTime();
-      if (ms > 0) hoursSeries[i] += ms / (60 * 60 * 1000);
+    for (const g of trendTimeEntries) {
+      if (g.wk >= 0 && g.wk < TREND_WEEKS) {
+        hoursSeries[g.wk] = Math.round(g.hours * 10) / 10;
+      }
     }
-    for (let i = 0; i < hoursSeries.length; i++) {
-      hoursSeries[i] = Math.round(hoursSeries[i] * 10) / 10;
+    const shiftsSeries = new Array<number>(TREND_WEEKS).fill(0);
+    for (const g of trendShifts) {
+      if (g.wk >= 0 && g.wk < TREND_WEEKS) {
+        shiftsSeries[g.wk] = Number(g.n);
+      }
     }
-    const shiftsSeries = weeklyCounts(
-      trendShifts.map((s) => s.startsAt),
-      trendStart
-    );
     const applicationsSeries = weeklyCounts(
       trendApplications.map((a) => a.createdAt),
       trendStart

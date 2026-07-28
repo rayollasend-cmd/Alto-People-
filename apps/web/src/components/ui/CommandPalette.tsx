@@ -1,6 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
 import { Command } from 'cmdk';
 import {
   Banknote,
@@ -19,7 +18,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { DASHBOARD_NAV, MODULES } from '@/lib/modules';
-import { listClients } from '@/lib/clientsApi';
+import { useClients } from '@/lib/useClients';
 import { usePeopleSearch } from '@/lib/usePaletteSearch';
 import { cn } from '@/lib/cn';
 import {
@@ -103,10 +102,7 @@ export function CommandPalette({
   // Clients page / directory facet) and filter client-side. Only fetched
   // once the user actually types an entity-length query.
   const canSearchClients = can('view:clients');
-  const { data: allClients = [] } = useQuery({
-    queryKey: ['clients', 'list'],
-    queryFn: async () => (await listClients()).clients,
-    staleTime: 5 * 60_000,
+  const { clients: allClients } = useClients({
     enabled: open && entityQueryActive && canSearchClients,
   });
   const clientMatches =
@@ -120,7 +116,11 @@ export function CommandPalette({
           .slice(0, 5)
       : [];
 
-  const items: PaletteItem[] = [
+  // Static portion of the palette. The 60+ item objects (and the
+  // MODULES.filter().map() behind them) only depend on the signed-in
+  // user's capability set — memoize so they aren't rebuilt on every
+  // keystroke. Search-dependent results (people/clients) stay outside.
+  const items: PaletteItem[] = useMemo(() => [
     {
       id: 'nav-dashboard',
       label: DASHBOARD_NAV.label,
@@ -259,7 +259,7 @@ export function CommandPalette({
         onShowKeyboardShortcuts?.();
       },
     },
-  ];
+  ], [can, user, onShowKeyboardShortcuts]);
 
   // Manual filtering (cmdk shouldFilter is off). Same fields the old
   // cmdk value string covered: label + keywords.
